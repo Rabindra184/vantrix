@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { IngestError } from '@perfportal/core';
+import { IngestError, ingestError } from '@perfportal/core';
 import {
   MetricWriter,
   ProjectRepository,
@@ -65,6 +65,26 @@ export class PipelineService {
 
   async #ingest(run: RunRecord): Promise<void> {
     const archive = await this.blobs.get(run.bundleKey);
+
+    // spec §6.2 step 2: verify SHA-256 against what was recorded at upload
+    // time. A mismatch here means the object fetched back from the blob
+    // store is not the bytes that were durably written — storage-side
+    // corruption, not a malformed bundle — so it must not be blamed on the
+    // caller the way a parse failure would be.
+    const actualSha256 = createHash('sha256').update(archive).digest('hex');
+    if (actualSha256 !== run.bundleSha256) {
+      throw ingestError('BUNDLE_CHECKSUM_MISMATCH', {
+        message:
+          `The bundle fetched from object storage does not match the checksum recorded ` +
+          `at upload time (expected ${run.bundleSha256}, got ${actualSha256}).`,
+        remediation:
+          'This is a storage integrity problem, not a malformed upload — re-upload is unlikely ' +
+          'to help by itself. Escalate to the platform team to check the object store for ' +
+          'corruption or a bad replica before retrying.',
+        detail: { expected: run.bundleSha256, actual: actualSha256 },
+      });
+    }
+
     const project = await new ProjectRepository(this.prisma).byId(run.projectId);
     const maxTotalBytes =
       project?.settings.maxDecompressedBundleBytes ?? this.config.maxDecompressedBundleBytes;

@@ -8,6 +8,10 @@ const STATUS: Record<string, number> = {
   BUNDLE_TOO_LARGE: 413,
   BUNDLE_NOT_ARCHIVE: 400,
   BUNDLE_EMPTY: 400,
+  // A storage-side integrity failure, not a malformed upload — the object
+  // fetched back from the blob store no longer matches the hash recorded at
+  // upload time. That is not the caller's fault, so this is a 500, not 400.
+  BUNDLE_CHECKSUM_MISMATCH: 500,
   TOOL_AMBIGUOUS: 400,
   TOOL_UNKNOWN: 400,
   LOG_NOT_FOUND: 400,
