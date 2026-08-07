@@ -1010,33 +1010,40 @@ This invariant is the executable form of the whole percentile argument. If it br
 ```ts
 import { describe, expect, it } from 'vitest';
 import { BucketSeries } from '../src/buckets.js';
+import { Sketch } from '../src/sketch.js';
 
 const sample = (i: number) => 20 + ((i * 37) % 500);
 
 describe('BucketSeries coalescing (AC-STAT-2)', () => {
-  it('coalesces 1s buckets to 4s losslessly — identical to building at 4s directly', () => {
+  it('coalesces losslessly — each 4s bucket equals a sketch built from that window directly', () => {
     const coalesced = new BucketSeries({ startMs: 0, maxBuckets: 4 });   // forces 1s -> 2s -> 4s
-    const direct = new BucketSeries({ startMs: 0, maxBuckets: 1024 });
+    const values: number[] = [];
     for (let i = 0; i < 16_000; i++) {
-      const ts = i;                       // 1 event per ms over 16 s
-      coalesced.add(ts, sample(i), true, 'end');
-      direct.add(ts, sample(i), true, 'end');
+      const v = sample(i);
+      values.push(v);
+      coalesced.add(i, v, true, 'end');   // 1 event per ms over 16 s
     }
     expect(coalesced.widthMs).toBe(4000);
 
-    // Rebuild "direct at 4s" by merging the fine series' buckets in groups of 4.
-    const fine = direct.buckets();
     const merged = coalesced.buckets();
-    expect(merged.length).toBeLessThanOrEqual(4);
+    expect(merged.length).toBe(4);
 
-    const totalFine = fine.reduce((n, b) => n + b.endedCount, 0);
-    const totalMerged = merged.reduce((n, b) => n + b.endedCount, 0);
-    expect(totalMerged).toBe(totalFine);
-
+    // THE INVARIANT: a coalesced bucket must be indistinguishable from one built
+    // directly from exactly the values that fall in its window. If this fails,
+    // percentiles are being degraded by re-aggregation and the product is lying.
     for (const b of merged) {
-      expect(b.sketch.count).toBeGreaterThan(0);
-      expect(b.sketch.quantile(0.95)).toBeGreaterThan(0);
+      const direct = new Sketch();
+      for (let ms = b.startOffsetMs; ms < b.startOffsetMs + coalesced.widthMs; ms++) {
+        const v = values[ms];
+        if (v !== undefined) direct.accept(v);
+      }
+      expect(b.sketch.count).toBe(direct.count);
+      for (const q of [0.5, 0.95, 0.99]) {
+        expect(b.sketch.quantile(q)).toBe(direct.quantile(q));
+      }
     }
+
+    expect(merged.reduce((n, b) => n + b.endedCount, 0)).toBe(16_000);
   });
 
   it('never exceeds maxBuckets', () => {
@@ -1470,7 +1477,8 @@ describe('runEngine scope fan-out', () => {
   });
 
   it('excludes warm-up from summary stats but keeps it in the series', () => {
-    const r = runEngine(events, { warmupMs: 150 });
+    // warmupMs 50 covers only the request starting at offset 0; the others start at 100 and 300.
+    const r = runEngine(events, { warmupMs: 50 });
     const run = r.stats.find((s) => s.scope === 'run')!;
     expect(run.count).toBe(2);                               // the 0ms-offset request is warm-up
     const runSeries = r.series.get('run:')!;
