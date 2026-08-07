@@ -6,12 +6,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && pnpm --filter @perfportal/api build && pnpm --filter @perfportal/worker build",
     "test": "pnpm build && vitest run",
     "test:unit": "vitest run",
     "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
     "lint": "eslint .",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json"
   },
   "devDependencies": {
     "@perfportal/plugin-gatling": "workspace:*",

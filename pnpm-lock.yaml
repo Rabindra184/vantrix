@@ -115,6 +115,58 @@ importers:
         specifier: ^7.0.0
         version: 7.2.2
 
+  apps/worker:
+    dependencies:
+      '@nestjs/common':
+        specifier: ^11.1.6
+        version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core':
+        specifier: ^11.1.6
+        version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.28)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@perfportal/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@perfportal/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@perfportal/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@perfportal/plugin-gatling':
+        specifier: workspace:*
+        version: link:../../packages/plugin-gatling
+      '@perfportal/sla':
+        specifier: workspace:*
+        version: link:../../packages/sla
+      '@perfportal/statistics':
+        specifier: workspace:*
+        version: link:../../packages/statistics
+      '@perfportal/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      bullmq:
+        specifier: ^5.34.0
+        version: 5.81.3
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
+      pg:
+        specifier: ^8.13.0
+        version: 8.22.0
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
+      rxjs:
+        specifier: ^7.8.1
+        version: 7.8.2
+    devDependencies:
+      '@prisma/client':
+        specifier: ^6.19.3
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.4
+
   packages/contracts:
     dependencies:
       zod:
