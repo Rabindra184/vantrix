@@ -1,11 +1,10 @@
-import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type {
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
 } from '@perfportal/contracts';
 import { MetricReader, RunRepository } from '@perfportal/persistence';
-import { PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import pg from 'pg';
 import { Scopes } from '../auth/scopes.decorator.js';
@@ -16,8 +15,14 @@ import { Scopes } from '../auth/scopes.decorator.js';
 @Controller('/v1/runs/:id')
 export class MetricsController {
   constructor(
-    private readonly prisma: PrismaClient,
-    private readonly pool: pg.Pool,
+    private readonly runs: RunRepository,
+    private readonly reader: MetricReader,
+    // `pg.Pool` is a property-access type (a namespace member off a default
+    // import), not a plain class reference. tsc's emitDecoratorMetadata can't
+    // express that as a runtime value and silently degrades design:paramtypes
+    // to Object here — see health.controller.ts for the full explanation. An
+    // explicit @Inject sidesteps the reflection gap entirely.
+    @Inject(pg.Pool) private readonly pool: pg.Pool,
   ) {}
 
   /**
@@ -27,7 +32,7 @@ export class MetricsController {
    */
   async #run(req: Request, id: string) {
     const tenant = req.tenant!;
-    const run = await new RunRepository(this.prisma).findById(
+    const run = await this.runs.findById(
       { orgId: tenant.orgId, projectId: tenant.projectId },
       id,
     );
@@ -44,15 +49,13 @@ export class MetricsController {
     @Query('family') family?: string,
   ): Promise<StatsResponse> {
     const run = await this.#run(req, id);
-    const all = await new MetricReader(this.pool).stats(
+    const all = await this.reader.stats(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
     );
     const stats = all
       .filter((s) => (scope ? s.scope === scope : true))
       .filter((s) => (family ? s.family === family : true));
-
-    const runStat = all.find((s) => s.scope === 'run' && s.family === 'response_time');
 
     return {
       runId: run.id,
@@ -71,7 +74,7 @@ export class MetricsController {
         throughputRps: s.throughputRps,
         percentiles: s.percentiles,
       })),
-      indicators: await this.#indicators(run.id, run.orgId, run.projectId, runStat?.koCount ?? 0),
+      indicators: await this.#indicators(run.id, run.orgId, run.projectId),
     };
   }
 
@@ -80,19 +83,29 @@ export class MetricsController {
    * MetricWriter.persist) rather than recomputed from scalar buckets here, so
    * the global page's numbers can never disagree with the series it sits
    * above — recomputing from the response-time histogram would only be an
-   * estimate of what the engine already counted precisely.
+   * estimate of what the engine already counted precisely. `failed` used to
+   * be threaded in from the caller (`run_stat.ko_count`) instead of read from
+   * this table; the two happen to agree today only because the engine writes
+   * both from the same loop over the same filtered events. All four bands now
+   * come from this one query so that stops being a coincidence this endpoint
+   * depends on.
    */
   async #indicators(
     runId: string,
     orgId: string,
     projectId: string,
-    failed: number,
   ): Promise<StatsResponse['indicators']> {
-    const { rows } = await this.pool.query<{ under: string; between_: string; over: string }>(
+    const { rows } = await this.pool.query<{
+      under: string;
+      between_: string;
+      over: string;
+      failed: string;
+    }>(
       `SELECT
          coalesce(sum(under), 0)::text    AS under,
          coalesce(sum(between_), 0)::text AS between_,
-         coalesce(sum(over), 0)::text     AS over
+         coalesce(sum(over), 0)::text     AS over,
+         coalesce(sum(failed), 0)::text   AS failed
        FROM run_indicator
        WHERE run_id = $1 AND org_id = $2 AND project_id = $3`,
       [runId, orgId, projectId],
@@ -102,7 +115,7 @@ export class MetricsController {
       under: Number(r?.under ?? 0),
       between: Number(r?.between_ ?? 0),
       over: Number(r?.over ?? 0),
-      failed,
+      failed: Number(r?.failed ?? 0),
     };
   }
 
@@ -115,7 +128,7 @@ export class MetricsController {
     @Query('name') name = '',
   ): Promise<SeriesResponse> {
     const run = await this.#run(req, id);
-    const buckets = await new MetricReader(this.pool).series(
+    const buckets = await this.reader.series(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
       run.startedOn,
@@ -133,7 +146,7 @@ export class MetricsController {
   @Scopes('read')
   async errors(@Param('id') id: string, @Req() req: Request): Promise<ErrorsResponse> {
     const run = await this.#run(req, id);
-    const errors = await new MetricReader(this.pool).errors(
+    const errors = await this.reader.errors(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
     );
