@@ -39,14 +39,23 @@ export class PipelineService {
         err instanceof IngestError || (err instanceof Error && err.name === 'IngestError')
           ? (err as IngestError)
           : null;
-      await runs.fail(runId, {
+      const wrote = await runs.fail(runId, {
         code: structured?.code ?? 'INTERNAL',
         message: structured?.message ?? 'The run could not be ingested.',
         remediation:
           structured?.remediation ??
           'Retry the upload. If it keeps failing, the bundle may be incomplete.',
       });
-      await this.#publish(runId);
+      if (wrote) {
+        await this.#publish(runId);
+      } else {
+        // Lost the race: another worker already drove this run to a terminal
+        // state (complete or failed) before this transaction rolled back.
+        // Its write must stand, and it already published — don't do so again.
+        console.warn(
+          `run ${runId} reached a terminal state on another worker; discarding this failure`,
+        );
+      }
       throw err;                                        // let the consumer classify it
     }
 

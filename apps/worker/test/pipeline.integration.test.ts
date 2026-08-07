@@ -167,6 +167,35 @@ describe('PipelineService', () => {
     ]);
     expect(rows[0]?.n).toBe(0);
   });
+
+  it('does not let a losing concurrent worker clobber the winner\'s committed result', async () => {
+    // Two jobs for the same run racing (BullMQ default concurrency, or a
+    // stalled-job redelivery) both pass the pending guard before either
+    // commits. The loser's run_stat insert then hits the unique constraint,
+    // rolls back, and — if RunRepository.fail writes unconditionally —
+    // overwrites the winner's already-committed complete/verdict with
+    // failed/null, leaving orphaned run_stat rows behind: statistics with no
+    // verdict, which this task's design forbids.
+    const ctx = await seedRun(bundle);
+
+    const results = await Promise.allSettled([
+      pipeline().process(ctx.runId),
+      pipeline().process(ctx.runId),
+    ]);
+    // At least one side may legitimately throw (unique-constraint rollback);
+    // what matters is that the winner's row survives untouched.
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('complete');
+    expect(run?.verdict).not.toBeNull();
+
+    const { rows } = await pool.query(
+      'SELECT count(*)::int AS n FROM run_stat WHERE run_id = $1',
+      [ctx.runId],
+    );
+    expect(rows[0]?.n).toBeGreaterThan(0);
+  });
 });
 
 describe('Sweeper', () => {
@@ -186,6 +215,42 @@ describe('Sweeper', () => {
       await sweeper.close();
     }
     expect(fresh).toBeDefined();
+  });
+
+  it('uses a stable, run-derived job id so two sweeps of the same stale run dedupe to one job', async () => {
+    const { Sweeper } = await import('../src/sweeper.js');
+    const { Queue } = await import('bullmq');
+    const ctx = await seedRun(bundle);
+    await pool.query(`UPDATE run SET created_at = now() - interval '10 minutes' WHERE id = $1`, [
+      ctx.runId,
+    ]);
+    // A second run goes stale alongside the first, so the first sweep's
+    // batch has rows.length === 2. Reproduces the reviewer's finding: the
+    // old jobId (`sweep-${row.id}-${rows.length}`) baked the batch size in,
+    // so the same run gets a different job id once the batch size changes.
+    const other = await seedRunKeepingExisting();
+    await pool.query(`UPDATE run SET created_at = now() - interval '10 minutes' WHERE id = $1`, [
+      other.id,
+    ]);
+
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000 }, pool);
+    const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
+    try {
+      await sweeper.sweep(); // batch of 2 -> old code: jobId `sweep-${runId}-2`
+
+      // The other run gets picked up and leaves 'pending', so the next sweep
+      // finds only the target run: batch of 1 -> old code: `sweep-${runId}-1`.
+      await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [other.id]);
+      await sweeper.sweep(); // batch of 1, same target run still pending
+
+      const jobs = await queue.getJobs(['waiting', 'active', 'delayed']);
+      const forThisRun = jobs.filter((j) => j.data?.runId === ctx.runId);
+      expect(forThisRun).toHaveLength(1);
+    } finally {
+      await sweeper.close();
+      await queue.obliterate({ force: true });
+      await queue.close();
+    }
   });
 });
 
