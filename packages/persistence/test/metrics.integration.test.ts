@@ -1,7 +1,7 @@
 import { runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, MetricReader, MetricWriter } from '../src/index.js';
+import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -162,10 +162,12 @@ describe('MetricWriter / MetricReader', () => {
     const ctx = await seedRun();
     await persist(ctx);
 
+    // EXPLAIN the exact query MetricReader.series runs (same SQL, same parameter
+    // order) so that breaking the implementation's partition predicate breaks this
+    // test — see SERIES_SQL's docstring in src/metrics/read.ts.
     const { rows } = await pool.query<{ 'QUERY PLAN': string }>(
-      `EXPLAIN SELECT * FROM run_series_bucket
-        WHERE run_started_on = $1 AND run_id = $2 AND scope = $3 AND name = $4`,
-      [STARTED_ON, ctx.runId, 'run', ''],
+      `EXPLAIN ${SERIES_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId, 'run', ''],
     );
     const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
     // Distinct partition names, not raw substring matches: an index-scan plan names
