@@ -1,0 +1,8 @@
+{
+  "name": "@perfportal/plugin-gatling",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@perfportal/core": "workspace:*" }
+}
