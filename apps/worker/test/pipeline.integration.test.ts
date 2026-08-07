@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,7 +46,11 @@ const TABLES = [
   'run', 'sla_rule', 'api_token', 'project', 'org',
 ];
 
-async function seedRun(bundleBody: Buffer, engineOptions: Record<string, unknown> = {}) {
+async function seedRun(
+  bundleBody: Buffer,
+  engineOptions: Record<string, unknown> = {},
+  bundleSha256: string = createHash('sha256').update(bundleBody).digest('hex'),
+) {
   await pool.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
   const org = await prisma.org.create({ data: { slug: 'acme', name: 'Acme' } });
   const project = await prisma.project.create({
@@ -57,7 +62,7 @@ async function seedRun(bundleBody: Buffer, engineOptions: Record<string, unknown
   const run = await prisma.run.create({
     data: {
       orgId: org.id, projectId: project.id, status: 'pending', tool: 'gatling',
-      bundleKey: key, bundleSha256: 'x'.repeat(64), bundleBytes: BigInt(bundleBody.length),
+      bundleKey: key, bundleSha256, bundleBytes: BigInt(bundleBody.length),
       startedAt, startedOn: new Date('2026-08-07T00:00:00Z'),
       engineOptions: engineOptions as object,
     },
@@ -156,6 +161,24 @@ describe('PipelineService', () => {
       code: 'BUNDLE_NOT_ARCHIVE',
       remediation: expect.stringMatching(/.+/),
     });
+  });
+
+  it('fails with a storage-integrity error, not a bundle error, when the fetched bytes do not match the recorded checksum', async () => {
+    // The stored bundleSha256 is wrong relative to the object actually in the
+    // blob store — simulating corruption that happened after upload, on the
+    // storage side, not a bad upload from the caller (spec §6.2 step 2).
+    const ctx = await seedRun(bundle, {}, 'f'.repeat(64));
+    await expect(pipeline().process(ctx.runId)).rejects.toThrow();
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('failed');
+    expect(run?.error).toMatchObject({
+      code: 'BUNDLE_CHECKSUM_MISMATCH',
+      remediation: expect.stringMatching(/.+/),
+    });
+    // Not blamed on the caller: the remediation must not read like a
+    // malformed-upload message.
+    expect((run?.error as { remediation: string }).remediation).toMatch(/storage/i);
   });
 
   it('writes nothing at all when the run fails — no half-persisted statistics', async () => {
