@@ -71,6 +71,7 @@ model Run {
   startedAt      DateTime  @map("started_at")
   startedOn      DateTime  @map("started_on") @db.Date
   ingestedAt     DateTime? @map("ingested_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
   /// Frozen at accept time. Statistics are meaningless without the options
   /// that produced them, and a project changing its warm-up must not
   /// silently reinterpret its own history.
@@ -82,7 +83,7 @@ model Run {
 
   @@unique([projectId, idempotencyKey])
   @@index([projectId, startedAt(sort: Desc)])
-  @@index([status, startedAt])
+  @@index([status, createdAt])
   @@map("run")
 }
 
