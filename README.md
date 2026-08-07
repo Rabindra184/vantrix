@@ -56,7 +56,7 @@ pnpm test:integration   # needs the services above
 
 ## The verdict contract
 
-`POST /v1/runs` and `GET /v1/runs/{id}/verdict` return the same status code
+`POST /v1/runs` and `GET /v1/runs/{id}` return the same status code
 for the same run state, so a CI poll loop is identical to the initial post:
 
 | Code       | Run state          | Meaning to CI |
