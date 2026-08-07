@@ -15,7 +15,7 @@ import pg from 'pg';
 import { AppModule } from '../../src/app.module.js';
 import { ProblemFilter } from '../../src/common/problem.filter.js';
 import { mountOpenApi } from '../../src/openapi.js';
-import { hashToken, mintToken } from '../../src/auth/tokens.js';
+import { hashToken, mintToken } from '@perfportal/core';
 
 export interface TestContext {
   app: INestApplication;

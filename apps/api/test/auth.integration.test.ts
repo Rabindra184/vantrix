@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Controller, Get } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
+import { hashToken, mintToken } from '@perfportal/core';
 import { TokenRepository } from '@perfportal/persistence';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +12,6 @@ import { AuthModule } from '../src/auth/auth.module.js';
 import { Scopes } from '../src/auth/scopes.decorator.js';
 import { ProblemFilter } from '../src/common/problem.filter.js';
 import { createTestApp, type TestContext } from './support/app.js';
-import { hashToken, mintToken } from '../src/auth/tokens.js';
 
 let ctx: TestContext;
 
