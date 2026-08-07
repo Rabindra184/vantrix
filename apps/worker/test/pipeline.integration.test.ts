@@ -15,6 +15,17 @@ const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
 );
 
+// Closing a BullMQ Worker's blocking Redis connection can leave one
+// in-flight ioredis command rejecting asynchronously with "Connection is
+// closed." after close() has already resolved — a benign teardown artifact
+// of the library pairing, not a bug in application code (there is nothing
+// in this file that leaves that rejection unawaited on purpose). Only that
+// exact, known-benign rejection is swallowed; anything else still surfaces.
+process.on('unhandledRejection', (reason) => {
+  if (reason instanceof Error && reason.message === 'Connection is closed.') return;
+  throw reason;
+});
+
 const config = loadWorkerConfig({
   ...process.env,
   DATABASE_URL: process.env.DATABASE_URL ?? '',
@@ -269,6 +280,105 @@ describe('Sweeper', () => {
       const jobs = await queue.getJobs(['waiting', 'active', 'delayed']);
       const forThisRun = jobs.filter((j) => j.data?.runId === ctx.runId);
       expect(forThisRun).toHaveLength(1);
+    } finally {
+      await sweeper.close();
+      await queue.obliterate({ force: true });
+      await queue.close();
+    }
+  });
+
+  it('re-enqueues a run stuck in "parsing" past the parsing window, not just "pending" ones', async () => {
+    // markParsing moves a run to 'parsing' before any real work; a worker
+    // that dies right there (OOM, SIGKILL, eviction) leaves it stuck forever
+    // once BullMQ's attempts are exhausted — the original sweep only ever
+    // selected status = 'pending', so nothing ever revisited it.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const { Queue } = await import('bullmq');
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run SET status = 'parsing', created_at = now() - interval '20 minutes' WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
+    try {
+      const swept = await sweeper.sweep();
+      expect(swept).toBe(1);
+
+      const job = await queue.getJob(ctx.runId);
+      expect(job).toBeDefined();
+      const state = await job?.getState();
+      expect(['waiting', 'active', 'delayed', 'prioritized']).toContain(state);
+    } finally {
+      await sweeper.close();
+      await queue.obliterate({ force: true });
+      await queue.close();
+    }
+  });
+
+  it('does not re-select a "parsing" run that has not yet crossed the (longer) parsing window', async () => {
+    // A run that only just entered 'parsing' is presumably still being
+    // worked on — sweeping it immediately (the way 'pending' ages quickly)
+    // would race a healthy worker's in-flight job.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [ctx.runId]);
+
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    try {
+      const swept = await sweeper.sweep();
+      expect(swept).toBe(0);
+    } finally {
+      await sweeper.close();
+    }
+  });
+
+  it('re-queues a run whose existing job is sitting in the failed set, instead of silently skipping it', async () => {
+    // Queue.add with an existing jobId returns the existing job and enqueues
+    // NOTHING. With removeOnFail keeping failed jobs around, a run whose job
+    // already exhausted its attempts and landed in `failed` would be
+    // re-selected by every sweep tick forever while zero jobs actually ever
+    // get enqueued — proven here against live Redis, not mocked.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const { Queue, Worker } = await import('bullmq');
+    const ctx = await seedRun(bundle);
+    await pool.query(`UPDATE run SET created_at = now() - interval '10 minutes' WHERE id = $1`, [
+      ctx.runId,
+    ]);
+
+    const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
+    // Drive a real job for this run into the `failed` state via a real
+    // worker, the same way the production consumer would after attempts
+    // are exhausted — not a hand-constructed job record.
+    await queue.add('ingest', { runId: ctx.runId }, { jobId: ctx.runId, attempts: 1 });
+    const failingWorker = new Worker(
+      'ingest',
+      async () => {
+        throw new Error('simulated worker death mid-parse');
+      },
+      { connection: { url: config.redisUrl }, concurrency: 1 },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        failingWorker.on('failed', () => resolve());
+        failingWorker.on('error', reject);
+      });
+    } finally {
+      await failingWorker.close();
+    }
+
+    const beforeState = await (await queue.getJob(ctx.runId))?.getState();
+    expect(beforeState).toBe('failed');
+
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    try {
+      const swept = await sweeper.sweep();
+      expect(swept).toBe(1);
+
+      const afterState = await (await queue.getJob(ctx.runId))?.getState();
+      expect(afterState).not.toBe('failed');
+      expect(['waiting', 'active', 'delayed', 'prioritized']).toContain(afterState);
     } finally {
       await sweeper.close();
       await queue.obliterate({ force: true });
