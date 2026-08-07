@@ -56,6 +56,76 @@ describe('Sketch quantile (discontinuity regression)', () => {
   });
 });
 
+describe('Sketch quantile fuzz (regression for the float round-trip rank bug)', () => {
+  // Deterministic seeded PRNG (mulberry32) so any failure reproduces exactly. Never Math.random.
+  function mulberry32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  type Dist = { name: string; gen: (rnd: () => number, n: number) => number[] };
+  const distributions: Dist[] = [
+    { name: 'uniform', gen: (rnd, n) => Array.from({ length: n }, () => 1 + rnd() * 9999) },
+    {
+      // Log-normal-ish: exponentiate an approximate-normal (Box-Muller) variate. Always positive.
+      name: 'log-normal-ish',
+      gen: (rnd, n) => Array.from({ length: n }, () => {
+        const u1 = Math.max(rnd(), 1e-12);
+        const u2 = rnd();
+        const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+        return Math.exp(5 + z);
+      }),
+    },
+    {
+      name: 'bimodal',
+      gen: (rnd, n) => Array.from({ length: n }, () => (rnd() < 0.5 ? 90 + rnd() * 20 : 9900 + rnd() * 200)),
+    },
+    {
+      // Sharp discontinuities: three widely separated clusters, nothing between them.
+      name: 'sharp-discontinuity',
+      gen: (rnd, n) => Array.from({ length: n }, () => {
+        const r = rnd();
+        return r < 0.7 ? 10 : r < 0.9 ? 5000 : 200_000;
+      }),
+    },
+  ];
+
+  const nValues = [3, 5, 10, 17, 31, 50, 97, 149, 211, 337, 500, 733, 999, 1500, 1647, 2000, 2500, 3000];
+  const qValues = [0.01, 0.05, 0.5, 0.75, 0.95, 0.99, 0.999, 1.0];
+
+  const trueQ = (sorted: number[], q: number) =>
+    sorted[Math.max(0, Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1))]!;
+
+  it('is within 1% relative of the nearest-rank ground truth for every distribution/n/quantile combination', () => {
+    const violations: { dist: string; n: number; q: number; measured: number; truth: number; relErr: number }[] = [];
+    let seed = 1;
+    for (const dist of distributions) {
+      for (const n of nValues) {
+        const rnd = mulberry32(seed++);
+        const vals = dist.gen(rnd, n);
+        const sorted = [...vals].sort((a, b) => a - b);
+        const s = new Sketch();
+        for (const v of vals) s.accept(v);
+        for (const q of qValues) {
+          const measured = s.quantile(q);
+          const truth = trueQ(sorted, q);
+          const relErr = Math.abs(measured - truth) / Math.abs(truth);
+          // <= not <: the guarantee is exactly 1%, never a stricter bound.
+          if (!(relErr <= 0.01)) {
+            violations.push({ dist: dist.name, n, q, measured, truth, relErr });
+          }
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+});
+
 describe('Sketch merge', () => {
   it('merging halves equals accepting the whole', () => {
     const vals = latencies(50_000);
