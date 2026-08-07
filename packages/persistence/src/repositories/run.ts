@@ -120,10 +120,12 @@ export class RunRepository {
     return row ? toRecord(row) : null;
   }
 
+  /** Unscoped by design: the worker, acting on a job it has already dequeued. */
   async markParsing(id: string): Promise<void> {
     await this.prisma.run.update({ where: { id }, data: { status: 'parsing' } });
   }
 
+  /** Unscoped by design: the worker, acting on a job it has already dequeued. */
   async complete(id: string, verdict: string, toolVersion: string | null): Promise<void> {
     await this.prisma.run.update({
       where: { id },
@@ -131,6 +133,7 @@ export class RunRepository {
     });
   }
 
+  /** Unscoped by design: the worker, acting on a job it has already dequeued. */
   async fail(
     id: string,
     error: { code: string; message: string; remediation: string },
