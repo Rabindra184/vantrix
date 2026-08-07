@@ -40,6 +40,9 @@ importers:
       '@perfportal/core':
         specifier: workspace:*
         version: link:../core
+      '@perfportal/plugin-gatling':
+        specifier: workspace:*
+        version: link:../plugin-gatling
       protobufjs:
         specifier: ^7.4.0
         version: 7.6.5
