@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { RunResponse } from '@perfportal/contracts';
 import { RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
+import { statusForCode } from '../common/problem.js';
 
 @Injectable()
 export class RunsService {
@@ -18,7 +19,7 @@ export class RunsService {
    *   202  still processing
    */
   statusFor(run: RunRecord): number {
-    if (run.status === 'failed') return 400;
+    if (run.status === 'failed') return statusForCode(run.error?.code ?? 'INTERNAL');
     if (run.status !== 'complete') return 202;
     return run.verdict === 'failed' ? 422 : 200;
   }
