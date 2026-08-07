@@ -688,9 +688,16 @@ Written in Given/When/Then. Each maps to one or more user stories. These are the
 > **When** the platform's Run Detail, Request Detail, Group Detail, and Scenario Detail pages are compared element by element against the Gatling-generated HTML report,
 > **Then** every chart, table, statistic, and assertion listed in Appendix A is present, **and** every numeric value matches the Gatling report within the tolerances in AC-PARITY-2.
 
-> **AC-PARITY-2**
-> **Given** the same source data,
-> **Then** counts, KO counts, and percentages match **exactly**; min, max, and mean match exactly; standard deviation matches within 0.1%; percentiles match within **1% relative error** (the DDSketch guarantee); distribution bin counts match exactly when bin boundaries are aligned.
+> **AC-PARITY-2** *(revised after verification — see §A.9 F-6)*
+> **Given** the same source data, statistics fall into two classes with different obligations.
+>
+> **Exact quantities — must match Gatling's displayed value exactly:** total count, OK count, KO count, % KO, count/second, min, max, mean, standard deviation, indicator band counts, error message counts, and distribution bin counts where bin boundaries align.
+>
+> **Estimated quantities — percentiles — are compared against ground truth, NOT against Gatling's displayed value.** The platform's percentile must fall within **1% relative error of the true percentile computed from the fully sorted decoded event set**. Divergence from the number Gatling prints is expected and correct.
+
+> **Why percentiles are not compared to Gatling.** Gatling's reported percentiles are histogram estimates, not observations. In the reference fixture Gatling reports p99 = 2369 ms, and **2369 does not occur anywhere in the data** — the sorted tail jumps from 2287 to 2501. The true p99 is 2501, so Gatling's figure is 5.3% low.
+>
+> Requiring a match to Gatling would mean **deliberately reproducing its estimator's error**, which directly contradicts FR-STAT-4 and the product's central accuracy claim. The platform is required to be *more* accurate than the report it replaces, and to be able to say so. Expect Gatling to under-report extreme percentiles on small samples; the gap narrows as sample count grows.
 
 > **AC-PARITY-3**
 > **Given** the parity matrix in Appendix A,
@@ -2444,7 +2451,7 @@ The structure of Gatling's HTML report has changed materially across major versi
 
 **Reference fixture.** A two-scenario simulation (`Browse`, `Checkout`) with a nested group hierarchy, six endpoints of deliberately different latency shapes, two distinct failure modes, a ramp-then-steady injection profile, and three assertions — two passing, one failing. It targets a local seeded server, so the run is reproducible and no external service receives load. It exists specifically to make every row below observable in one report.
 
-**Tolerances** (AC-PARITY-2): counts, OK/KO counts, and percentages **exact**; min, max, mean **exact**; standard deviation within **0.1%**; percentiles within **1% relative** (the DDSketch guarantee); distribution bin counts **exact** when bin boundaries are aligned.
+**Tolerances** (AC-PARITY-2, revised — see §A.9 F-6): counts, OK/KO counts, percentages, min, max, mean, standard deviation, indicator bands, and error counts are **exact against Gatling's displayed value** — all verified exact against the fixture. **Percentiles are the exception:** Gatling's are histogram estimates, so they are compared against the **true percentile from the decoded event set** within 1% relative, never against Gatling's printed figure. Distribution bin counts **exact** when bin boundaries align.
 
 ### A.1 Global report page
 
@@ -2583,7 +2590,66 @@ Five corrections. Recorded rather than quietly patched, because the size of the 
 | **F-3** | **No scenario detail page exists.** The report is `index.html` + 7 `req_*.html` + 3 `group_*.html`. Rows S-01…S-04 replaced with two chart-series rows | High — parity scope over-claimed | §13.5 moved to §A.8 |
 | **F-4** | **Group pages have no per-second charts.** Exactly five containers: ranges, cumulated-RT distribution and over-time, duration distribution and over-time. Row GR-07 deleted | Medium | Removed |
 | **F-5** | **"Number of users started per second" chart was missing** from this matrix (`UserStartRateContainerId`) | Medium — parity scope under-claimed | Added as G-26 |
+| **F-6** | **Gatling's reported percentiles are histogram estimates, not observations.** Reported p99 = 2369 ms, a value that **does not occur in the data** (the sorted tail jumps 2287 → 2501). True p99 is 2501 — Gatling is 5.3% low | High — invalidates an acceptance criterion | AC-PARITY-2 split into exact vs. estimated quantities |
+| **F-7** | **The binary format was fully decoded and validated** (§A.10). Every exact statistic reproduced from raw bytes; clean EOF; nested group hierarchy recovered | — | Confirms F-1 is tractable |
 | — | Statistics table columns, indicator bands, error table, assertions table, ranges on request and group pages, and the response-time scatter **all verified present and exactly as specified** | — | No change |
+
+#### F-6 in detail — why parity tests must not chase Gatling's percentiles
+
+The original AC-PARITY-2 required percentiles to match Gatling within 1% relative. Against the fixture that is **unachievable for p99 and undesirable in principle**:
+
+| Statistic | Gatling reports | True value from decoded events | Divergence | Gatling's value occurs in the data? |
+|---|---|---|---|---|
+| p50 | 109 ms | 108 ms | −0.9% | **no** |
+| p75 | 250 ms | 251 ms | +0.4% | **no** |
+| p95 | 654 ms | 654 ms | 0.0% | yes |
+| **p99** | **2369 ms** | **2501 ms** | **+5.6%** | **no** |
+
+**Three of Gatling's four reported percentiles are values no request ever recorded.** They are artifacts of histogram bucketing, and the error is largest exactly where it matters most — in the tail, where p99 is 5.6% low. The sorted tail jumps straight from 2287 to 2501; nothing in the run took 2369 ms.
+
+Requiring the platform to match it would mean **deliberately reproducing another tool's estimator error**, which contradicts FR-STAT-4 and the accuracy claim the whole product rests on. The rule is therefore: **exact quantities are compared to Gatling; percentiles are compared to ground truth.** The platform is permitted — and required — to be more accurate than the report it replaces.
+
+This also gives the product a defensible, quantified claim: DDSketch guarantees 1% relative error at every quantile, where the static report it replaces is 5% off at p99 on a sample of this size.
+
+### A.10 Binary format specification — verified by decoder
+
+Recovered from the shipped jars (`io.gatling.core.stats.writer.{RecordHeader,*MessageSerializer,BufferedFileChannelWriter}`, `io.gatling.charts.stats.LogFileParser`) and **validated by a working decoder** ([`spikes/gatling-binary-log/`](spikes/gatling-binary-log/)) that reproduces every exact statistic in the report from raw bytes, consuming the file to a clean EOF.
+
+**Primitives**
+
+| Type | Encoding |
+|---|---|
+| `byte` / `boolean` | 1 byte; boolean is `0` = false, non-zero = true |
+| `int` | 4 bytes, big-endian, signed |
+| `long` | 8 bytes, big-endian, signed |
+| `string` | `int len`; **if `len == 0` the string is empty and nothing follows**; else `len` bytes then **1 trailing coder byte** (`0` = LATIN1, `1` = UTF16) |
+| `cachedString` | `int i`. **`i >= 0`: a new string follows inline**, cached under `i`. **`i < 0`: back-reference to `cache[-i]`.** The *sign* is the discriminator — index 0 can never be back-referenced since `-0 === 0` |
+| `groups` | `int count`, then `count` × `cachedString`, outermost first |
+
+**Record types** — `Run=0, Request=1, User=2, Group=3, Error=4`. Note Request and User are **not** in declaration order; assuming they were would silently corrupt every record.
+
+**Header** (one `Run` record, first in file)
+
+```
+byte 0x00 · string gatlingVersion · string simulationClassName · long runStartEpochMs
+string runDescription · int scenarioCount · string × scenarioCount
+int assertionCount · (int len + bytes) × assertionCount     // protobuf, opaque
+```
+
+**Body** — records until EOF, each prefixed by its type byte:
+
+```
+Request (1)  groups · cachedString name · int startOffsetMs · int endOffsetMs
+             · boolean ok · cachedString message
+User    (2)  int scenarioIndex · boolean isStart · int timestampOffsetMs
+Group   (3)  groups · int startOffsetMs · int endOffsetMs
+             · int cumulatedResponseTimeMs · boolean ok
+Error   (4)  cachedString message · int timestampOffsetMs
+```
+
+**All timestamps are `int` offsets in milliseconds from `runStartEpochMs`**, not absolute longs — which caps a single run at ~24.8 days and is worth asserting on at parse time.
+
+**Note for the canonical model:** `Group` records carry `cumulatedResponseTimeMs` explicitly, separate from `endOffset − startOffset`. This confirms Appendix B's decision to model both rather than derive one from the other (Appendix A GR-01/GR-02).
 
 #### F-1 in detail — why this reverses a decision
 
