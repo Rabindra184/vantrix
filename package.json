@@ -6,6 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "preinstall": "node -e \"const [maj]=process.versions.node.split('.').map(Number); if (maj < 22) { console.error('\\nNode ' + process.versions.node + ' is below this repo\\'s floor of 22. Run: nvm use\\n'); process.exit(1); }\"",
     "build": "tsc -b && pnpm --filter @perfportal/api build && pnpm --filter @perfportal/worker build",
     "test": "pnpm build && vitest run",
     "test:unit": "vitest run",
