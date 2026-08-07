@@ -243,7 +243,7 @@ describe('the adaptive verdict', () => {
     const otherProject = await ctx.prisma.project.create({
       data: { orgId: other.id, slug: 'p', name: 'P', settings: {} },
     });
-    const { mintToken, hashToken } = await import('../src/auth/tokens.js');
+    const { mintToken, hashToken } = await import('@perfportal/core');
     const t = mintToken();
     await ctx.prisma.apiToken.create({
       data: {

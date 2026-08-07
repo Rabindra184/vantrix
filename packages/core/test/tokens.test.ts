@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashToken, mintToken, splitToken, verifyToken } from '../src/auth/tokens.js';
+import { hashToken, mintToken, splitToken, verifyToken } from '../src/tokens.js';
 
 describe('token minting', () => {
   it('produces a token whose prefix is recoverable without the secret', () => {

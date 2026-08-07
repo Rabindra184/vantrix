@@ -6,10 +6,10 @@ import {
   type ExecutionContext,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { splitToken, verifyToken } from '@perfportal/core';
 import { TokenRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { IS_PUBLIC_KEY, SCOPES_KEY, type TokenScope } from './scopes.decorator.js';
-import { splitToken, verifyToken } from './tokens.js';
 
 export interface Tenant {
   orgId: string;

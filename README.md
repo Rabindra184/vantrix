@@ -7,13 +7,16 @@ HTTP.
 
 ## Apps
 
-- **`apps/api`** — Fastify/Nest HTTP surface: token auth, `POST /v1/runs`
-  (bundle ingest), run/status/verdict reads, stats/series/errors reads,
-  OpenAPI.
-- **`apps/worker`** — claims queued ingest jobs, stream-parses the bundle,
-  runs the aggregation engine and SLA evaluation, and persists the result. A
-  slow parse runs in its own process and event loop, so it can never block
-  API latency.
+- **`apps/api`** — NestJS on Express (`@nestjs/platform-express`; multipart
+  bodies are parsed by `busboy` piped straight from `req`): token auth,
+  `POST /v1/runs` (bundle ingest), run/status/verdict reads, stats/series/errors
+  reads, OpenAPI.
+- **`apps/worker`** — claims queued ingest jobs, decompresses the whole bundle
+  into memory (a deliberate design choice, not a streaming parse — see
+  `packages/storage/src/bundle.ts`'s `openTarGzBundle`, spec §5.1), runs the
+  aggregation engine and SLA evaluation behind an async contract, and
+  persists the result. It runs in its own process and event loop, so a slow
+  parse can never block API latency.
 
 Both apps are built from, and depend on, the packages below; `api` cannot
 import the parsing or aggregation packages directly — ingestion happens only
@@ -50,6 +53,7 @@ pnpm install
 pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma
 pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
 pnpm build
+pnpm bootstrap          # mints an org/project/API token — see infra/README.md
 pnpm test              # unit
 pnpm test:integration   # needs the services above
 ```
@@ -63,10 +67,10 @@ for the same run state, so a CI poll loop is identical to the initial post:
 |------------|---------------------|---------------|
 | `200`      | complete · pass     | Ingested; all SLA rules held. |
 | `422`      | complete · breach    | Ingested successfully — the gate failed. Body lists every breached rule with actual vs. threshold. |
-| `202`      | pending / parsing    | Still working. `Location` and `Retry-After: 5` returned. |
-| `400`      | failed               | Bundle could not be parsed. Body names likely cause and fix. |
+| `202`      | pending / parsing    | Still working. `Retry-After` header and a `statusUrl` body field are returned (no `Location` header). |
+| `400`      | failed               | Bundle could not be parsed — including an unrecognised archive (`BUNDLE_NOT_ARCHIVE`). Body names likely cause and fix. |
 | `401`/`403`| —                    | Invalid or revoked token / token not scoped to this project. |
-| `413`/`415`| —                    | Bundle over size cap / not a recognised archive. |
+| `413`      | —                    | Bundle over the decompressed-size cap. |
 
 **On 422:** this is a deliberate abuse of the status code — the run ingested
 perfectly and the gate failed, whereas 422 semantically means the request

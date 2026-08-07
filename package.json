@@ -12,7 +12,8 @@
     "test:unit": "vitest run",
     "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
     "lint": "eslint .",
-    "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json"
+    "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json",
+    "bootstrap": "pnpm --filter @perfportal/persistence run bootstrap"
   },
   "devDependencies": {
     "@perfportal/plugin-gatling": "workspace:*",

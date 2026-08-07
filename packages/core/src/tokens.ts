@@ -10,6 +10,11 @@ const SECRET_BYTES = 24;  // 48 hex chars
  * The prefix is stored in an indexed unique column so verification is exactly
  * one row read plus one Argon2 verification, rather than hashing against every
  * token in the table.
+ *
+ * Lives in @perfportal/core (not apps/api) so the API's auth guard and any
+ * out-of-process credential minting (see packages/persistence/scripts/bootstrap.ts)
+ * share exactly one implementation of the token format — a second one is
+ * exactly the kind of drift this codebase has already paid for twice.
  */
 export function mintToken(): { token: string; prefix: string } {
   const prefix = `pp_${randomBytes(PREFIX_BYTES).toString('hex')}`;
