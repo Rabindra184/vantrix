@@ -1,0 +1,16 @@
+{
+  "name": "@perfportal/contracts",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "perfportal-source": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "zod": "^3.23.8"
+  }
+}
