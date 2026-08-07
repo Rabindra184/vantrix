@@ -6,7 +6,11 @@ import { extract } from 'tar-stream';
 /** Rejects absolute paths and any traversal segment. */
 function safePath(name: string): string {
   const normalized = name.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
+  if (
+    normalized.startsWith('/') ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.split('/').includes('..')
+  ) {
     throw ingestError('BUNDLE_NOT_ARCHIVE', {
       message: `The archive contains an unsafe entry path: ${name}`,
       remediation:
