@@ -1,10 +1,41 @@
+> ## ⚠️ SUPERSEDED IN PART — 2026-08-07
+>
+> This spec was written against `PerfPortal_PRD.md` v1.0, which has since been superseded by [`PerfPortal_Enterprise_PRD.md`](../../../PerfPortal_Enterprise_PRD.md) v2.0. **The technology choices below no longer apply. The design reasoning does.**
+>
+> **Superseded — do not implement:**
+>
+> | This spec | v2.0 PRD | Why |
+> |---|---|---|
+> | Fastify | NestJS | Stack specified by the v2.0 brief |
+> | Raw `pg` throughout | Prisma for CRUD + raw SQL for the metrics read path | See v2.0 §16.8 — Prisma cannot express the analytical queries, so the boundary is mandated rather than left to preference |
+> | Postgres `LISTEN/NOTIFY` job queue | BullMQ on Redis | Redis is now a required dependency for cache and WebSocket pub/sub anyway |
+> | Local-directory blob store | S3-compatible object storage | Multi-pod deployment makes a shared local volume untenable |
+> | Six-package pnpm workspace | NestJS modules (v2.0 §15) | Same boundary discipline, different mechanism |
+> | M0 scope = ingest spine only | V1 = full Gatling parity | v2.0 §26 splits this across M0–M6 |
+>
+> **Still current — these were reasoned conclusions, not framework artifacts, and v2.0 asserts them without re-deriving them:**
+>
+> - **DDSketch over t-digest** (§2.2) — exact merges, 1% guaranteed relative error → v2.0 §24.2
+> - **Lossless bucket coalescing** (§7.1) — valid only because sketch merges are exact → v2.0 §20.2
+> - **Adaptive verdict** (§4.2) — bounded sync wait, then `202` + status URL, with POST and GET returning identical codes → v2.0 §17.5
+> - **Comparability fingerprint with components stored** for later recomputation (§7.5) → v2.0 §24.1
+> - **`not_applicable` assertion outcome** instead of a silent pass (§9.1) → v2.0 FR-SLA-6
+> - **Rule snapshots** for auditability (§9.2) → v2.0 FR-SLA-7
+> - **Required `remediation` field** on the error type (§10) → v2.0 §17.5, Appendix B.4
+> - **Endpoint cardinality cap** (§7.2) → v2.0 FR-ING-10
+> - **No aggregate fallback for binary logs** (§2.3) → v2.0 §21.8, Appendix A D-02
+>
+> Read this file for *why* those decisions hold. Read the v2.0 PRD for *what to build*.
+
+---
+
 # Perf Portal M0 — Ingest Spine
 
 **Design specification**
 
 | | |
 |---|---|
-| **Status** | Approved for planning |
+| **Status** | **Superseded in part** — see header · originally approved for planning |
 | **Date** | 2026-08-07 |
 | **Scope** | Milestone M0 of [PerfPortal_PRD.md](../../../PerfPortal_PRD.md) |
 | **Exit criterion (from PRD)** | One CI pipeline posts runs; nothing is lost |

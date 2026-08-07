@@ -1,10 +1,22 @@
+> ## ⚠️ SUPERSEDED — 2026-08-07
+>
+> **This document has been superseded by [`PerfPortal_Enterprise_PRD.md`](PerfPortal_Enterprise_PRD.md) (v2.0). Do not implement from this file.**
+>
+> What changed: single-tenant self-hosted reporting tool → multi-tenant, cloud-native enterprise platform. V1 scope moved from "ingest and report" to **complete, verifiable parity with the Gatling OSS HTML report** (enumerated and tested in Appendix A of v2.0). Live monitoring was added, which supersedes this document's reporting-only boundary by requiring streaming ingestion during a run. The technology stack is now specified (React/TypeScript/Vite, NestJS, PostgreSQL, Redis, BullMQ, Prisma, Kubernetes) where this document left it open.
+>
+> What carried forward unchanged: the correctness principles in §5 — percentiles never averaged, comparisons require a constant profile, warm-up shown but not counted, tools never numerically compared. Those survived every scope change and are restated in v2.0 §6.4, §24.1, and §24.2.
+>
+> Retained as history, and as the record of why those principles exist.
+
+---
+
 # Perf Portal — Product Requirements Document
 
 **Open-source performance reporting across builds, projects, and load-testing tools**
 
 | | |
 |---|---|
-| **Document status** | Draft v1.0 — for review |
+| **Document status** | **Superseded** by `PerfPortal_Enterprise_PRD.md` v2.0 · originally Draft v1.0 |
 | **Product type** | Open-source, self-hosted web application |
 | **Scope** | Reporting only (ingestion, aggregation, visualization, alerting) |
 | **Supported tools (v1)** | Gatling, k6, JMeter — pluggable adapter interface for others |
