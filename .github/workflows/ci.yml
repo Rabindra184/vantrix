@@ -25,7 +25,18 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
 
       minio:
-        image: bitnami/minio:latest
+        # bitnami/minio is used (not minio/minio, the local-compose image)
+        # because GitHub Actions service containers cannot override a
+        # container's command, and minio/minio's entrypoint requires an
+        # explicit `server /data` argument to start; bitnami's image starts
+        # the server automatically from MINIO_ROOT_USER/PASSWORD alone.
+        #
+        # The `bitnami/*` Docker Hub org stopped publishing free images in
+        # its August 2025 catalog change; `bitnami/minio:latest` no longer
+        # resolves. Existing free-tier tags moved to `bitnamilegacy/minio`,
+        # verified locally to pull, boot without a command, and pass this
+        # same health check.
+        image: bitnamilegacy/minio:latest
         env:
           MINIO_ROOT_USER: perfportal
           MINIO_ROOT_PASSWORD: perfportal123
