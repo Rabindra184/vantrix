@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
-    { "path": "packages/plugin-gatling" }
+    { "path": "packages/plugin-gatling" },
+    { "path": "packages/statistics" }
   ]
 }
