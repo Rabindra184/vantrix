@@ -33,10 +33,13 @@ export class BucketSeries {
       b = { startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0, okCount: 0, koCount: 0, sketch: new Sketch() };
       this.#buckets.set(idx, b);
     }
-    if (edge === 'start') { b.startedCount++; return; }
-    b.endedCount++;
-    if (ok) b.okCount++; else b.koCount++;
-    b.sketch.accept(value);
+    if (edge === 'start') {
+      b.startedCount++;
+    } else {
+      b.endedCount++;
+      if (ok) b.okCount++; else b.koCount++;
+      b.sketch.accept(value);
+    }
     if (this.#buckets.size > this.#maxBuckets) this.#coalesce();
   }
 
