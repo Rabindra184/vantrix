@@ -41,7 +41,7 @@ afterAll(async () => {
 });
 
 const TABLES = [
-  'run_assertion', 'run_error', 'run_series_bucket', 'run_stat',
+  'run_assertion', 'run_error', 'run_indicator', 'run_series_bucket', 'run_stat',
   'run', 'sla_rule', 'api_token', 'project', 'org',
 ];
 

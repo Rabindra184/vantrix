@@ -103,6 +103,17 @@ export class MetricWriter {
         crypto.randomUUID(), ctx.runId, ctx.orgId, ctx.projectId, e.message, e.count,
       ]),
     );
+
+    await insertBatched(
+      client,
+      'run_indicator',
+      ['id', 'run_id', 'org_id', 'project_id', 'under', 'between_', 'over', 'failed'],
+      [[
+        crypto.randomUUID(), ctx.runId, ctx.orgId, ctx.projectId,
+        result.indicators.under, result.indicators.between,
+        result.indicators.over, result.indicators.failed,
+      ]],
+    );
   }
 }
 

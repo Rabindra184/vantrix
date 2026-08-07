@@ -165,6 +165,19 @@ model SlaRule {
   @@map("sla_rule")
 }
 
+model RunIndicator {
+  id        String @id @default(uuid()) @db.Uuid
+  runId     String @unique @map("run_id") @db.Uuid
+  orgId     String @map("org_id") @db.Uuid
+  projectId String @map("project_id") @db.Uuid
+  under     Int
+  between   Int    @map("between_")
+  over      Int
+  failed    Int
+
+  @@map("run_indicator")
+}
+
 model RunAssertion {
   id           String  @id @default(uuid()) @db.Uuid
   runId        String  @map("run_id") @db.Uuid

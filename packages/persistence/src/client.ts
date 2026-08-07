@@ -23,6 +23,7 @@ export const SCHEMA_TABLES = [
   'run_stat',
   'run_series_bucket',
   'run_error',
+  'run_indicator',
   'sla_rule',
   'run_assertion',
 ] as const;
