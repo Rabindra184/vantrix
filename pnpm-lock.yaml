@@ -66,6 +66,15 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/sla:
+    dependencies:
+      '@perfportal/core':
+        specifier: workspace:*
+        version: link:../core
+      '@perfportal/statistics':
+        specifier: workspace:*
+        version: link:../statistics
+
   packages/statistics:
     dependencies:
       '@datadog/sketches-js':
