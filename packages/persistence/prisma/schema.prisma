@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Tenancy columns (org_id, project_id) begin at the tables below the tenant
+// root, not here. Org is the tenant root, so it carries no org_id of its
+// own; Project's own id is its project identity, so it carries org_id but
+// not project_id. Every table beneath these two is scoped by both.
 model Org {
   id        String    @id @default(uuid()) @db.Uuid
   slug      String    @unique

@@ -107,8 +107,10 @@ CREATE TABLE "run_series_bucket" (
       PRIMARY KEY ("run_started_on", "run_id", "scope", "name", "start_offset_ms")
 ) PARTITION BY RANGE ("run_started_on");
 
-CREATE INDEX "run_series_bucket_run_idx"
-  ON "run_series_bucket" ("run_started_on", "run_id", "scope", "name");
+-- No secondary index on (run_started_on, run_id, scope, name): those four
+-- columns are a strict prefix of the primary key above, so the PK's own
+-- btree already serves equality/range lookups on them. A matching index
+-- would be pure write and storage overhead, repeated per partition.
 
 -- Twelve months from 2026-01. Automatic rollover is a later milestone; until
 -- then a write past the last partition fails loudly rather than silently
