@@ -11,7 +11,22 @@ export class Sketch {
   }
 
   accept(value: number): void { this.#inner.accept(value); }
-  quantile(q: number): number { return this.#inner.getValueAtQuantile(q); }
+  /**
+   * `DDSketch#getValueAtQuantile` ranks with `q * (count - 1)` (linear-interpolation
+   * convention). This codebase's notion of "true" quantile — used consistently by every
+   * test that computes ground truth from sorted data — is the nearest-rank convention
+   * `sorted[ceil(q * n) - 1]`. The two conventions differ by at most one rank position,
+   * usually negligible, but on small/discontinuous samples (a sharp jump in the sorted
+   * tail) landing one rank off can select an entirely different — and much less
+   * accurate — bucket. Re-express the query as the exact nearest-rank index divided by
+   * (count - 1) so DDSketch's internal rank arithmetic resolves to that same index.
+   */
+  quantile(q: number): number {
+    const n = this.#inner.count;
+    if (n <= 1) return this.#inner.getValueAtQuantile(q);
+    const index = Math.min(n - 1, Math.max(0, Math.ceil(q * n) - 1));
+    return this.#inner.getValueAtQuantile(index / (n - 1));
+  }
   merge(other: Sketch): void { this.#inner.merge(other.#inner); }
 
   get count(): number { return this.#inner.count; }
