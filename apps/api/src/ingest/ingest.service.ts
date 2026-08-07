@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { Inject, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ingestError } from '@perfportal/core';
 import {
   ProjectRepository,
@@ -77,21 +78,61 @@ export class IngestService {
     const key = `runs/${tenant.projectId}/${randomUUID()}.tgz`;
     const { sha256, bytes } = await this.blobs.putStream(key, bundle, maxBytes);
 
-    const run = await this.runs.create({
-      orgId: tenant.orgId,
-      projectId: tenant.projectId,
-      tool: metadata.tool,
-      bundleKey: key,
-      bundleSha256: sha256,
-      bundleBytes: bytes,
-      ...(metadata.idempotencyKey ? { idempotencyKey: metadata.idempotencyKey } : {}),
-      startedAt: new Date(),
-      engineOptions: engineOptionsFrom(settings),
-    });
+    let run: RunRecord;
+    try {
+      run = await this.runs.create({
+        orgId: tenant.orgId,
+        projectId: tenant.projectId,
+        tool: metadata.tool,
+        bundleKey: key,
+        bundleSha256: sha256,
+        bundleBytes: bytes,
+        ...(metadata.idempotencyKey ? { idempotencyKey: metadata.idempotencyKey } : {}),
+        startedAt: new Date(),
+        engineOptions: engineOptionsFrom(settings),
+      });
+    } catch (err) {
+      // Lost a concurrent race against another request sharing this
+      // idempotency key: the unique index (projectId, idempotencyKey)
+      // rejected our insert after we had already durably uploaded `key`.
+      // The winner's row is the one true answer here — behave exactly like
+      // the sequential duplicate path above and hand back its run, not a
+      // 500. If the re-fetch somehow finds nothing, this wasn't actually an
+      // idempotency-key race; rethrow the original error rather than invent
+      // a response.
+      if (metadata.idempotencyKey && isUniqueConstraintViolation(err)) {
+        const winner = await this.runs.findByIdempotencyKey(scope, metadata.idempotencyKey);
+        if (winner) {
+          await this.deleteOrphanedBundle(key);
+          return winner;
+        }
+      }
+      throw err;
+    }
 
     await this.queue.add(run.id);
     return run;
   }
+
+  /**
+   * Best-effort cleanup of a bundle no row will ever reference (the loser of
+   * an idempotent-create race). A failure here must not fail the request —
+   * losing this cleanup leaves the same kind of orphan a lifecycle rule can
+   * still reap, whereas failing the request would turn an idempotent
+   * endpoint into one that 500s under contention, which is strictly worse.
+   */
+  private async deleteOrphanedBundle(key: string): Promise<void> {
+    try {
+      await this.blobs.delete(key);
+    } catch (err) {
+      console.error('failed to delete orphaned bundle after losing idempotency race', key, err);
+    }
+  }
+}
+
+/** Robust to message-text changes in Prisma: keys on the stable error code. */
+function isUniqueConstraintViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
 
 /**

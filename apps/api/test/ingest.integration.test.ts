@@ -104,6 +104,24 @@ describe('POST /v1/runs', () => {
     expect(await ctx.prisma.run.count()).toBe(1);
   });
 
+  it('a concurrent duplicate POST is idempotent, not a 500, and leaves exactly one row', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+    const post = () =>
+      request(ctx.app.getHttpServer())
+        .post('/v1/runs')
+        .set('Authorization', `Bearer ${ctx.ingestToken}`)
+        .field('metadata', JSON.stringify({ tool: 'gatling', idempotencyKey: 'concurrent-race' }))
+        .attach('bundle', bundle, 'bundle.tgz');
+
+    const [first, second] = await Promise.all([post(), post()]);
+
+    expect(first.status).toBeLessThan(300);
+    expect(second.status).toBeLessThan(300);
+    expect(first.body.id).toBe(second.body.id);
+    expect(await ctx.prisma.run.count()).toBe(1);
+  });
+
   it('rejects a token without the ingest scope', async () => {
     await drainQueue();
     ctx = await createTestApp();

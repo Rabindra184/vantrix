@@ -4,6 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   S3Client,
@@ -111,7 +112,20 @@ export class BlobStore {
       client: this.#s3,
       params: { Bucket: this.#bucket, Key: key, Body: meter },
     });
-    await Promise.all([pipeline(body, meter), upload.done()]);
+    try {
+      await Promise.all([pipeline(body, meter), upload.done()]);
+    } catch (err) {
+      // Best-effort: an abort failure must not mask the original error (the
+      // caller needs the IngestError's code/remediation intact), it can only
+      // leave behind the same incomplete-upload debris we were trying to
+      // avoid, for a lifecycle rule to reap later.
+      try {
+        await upload.abort();
+      } catch (abortErr) {
+        console.error('failed to abort incomplete multipart upload', key, abortErr);
+      }
+      throw err;
+    }
 
     return { sha256: hash.digest('hex'), bytes };
   }
@@ -123,5 +137,14 @@ export class BlobStore {
     const chunks: Buffer[] = [];
     for await (const c of body) chunks.push(Buffer.from(c as Buffer));
     return Buffer.concat(chunks);
+  }
+
+  /**
+   * Removes a bundle that no row will ever reference — e.g. the loser of a
+   * concurrent idempotent-create race, which already finished uploading
+   * before losing the unique-constraint race in Postgres.
+   */
+  async delete(key: string): Promise<void> {
+    await this.#s3.send(new DeleteObjectCommand({ Bucket: this.#bucket, Key: key }));
   }
 }
