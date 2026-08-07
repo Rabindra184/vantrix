@@ -73,6 +73,8 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       // separate families — they diverge whenever requests inside the group overlap,
       // so one must never be derived from the other.
       const name = e.groups.join('/');
+      // Summary stats exclude warm-up, same as the request path (PRD 7.4).
+      if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
       rollupFor('group', name, 'group_cumulated').add(e.cumulatedResponseTimeMs, e.ok);
       rollupFor('group', name, 'group_duration').add(e.endMs - e.startMs, e.ok);
       continue;

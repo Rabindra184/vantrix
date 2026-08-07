@@ -110,4 +110,21 @@ describe('group scopes', () => {
     const groupRows = r.stats.filter((s) => s.scope === 'group');
     expect(groupRows).toHaveLength(4);
   });
+
+  it('excludes warm-up group events from group rollups, matching the request path', () => {
+    // warmupMs 50 covers only the group starting at offset 0; the other starts at 100.
+    const r = runEngine([
+      { type: 'meta', simulation: 'S', toolVersion: 'v', startedAtMs: base },
+      grp(['Catalog'], 0, 200, 100),     // warm-up: start offset 0 < warmupMs 50
+      grp(['Catalog'], 100, 400, 250),   // post-warm-up: start offset 100 >= warmupMs 50
+    ], { warmupMs: 50 });
+
+    const cumulated = r.stats.find((s) => s.scope === 'group' && s.name === 'Catalog' && s.family === 'group_cumulated')!;
+    const duration = r.stats.find((s) => s.scope === 'group' && s.name === 'Catalog' && s.family === 'group_duration')!;
+
+    expect(cumulated.count).toBe(1);           // only the post-warm-up group counted
+    expect(cumulated.maxMs).toBe(250);          // the warm-up group's 100 must not appear
+    expect(duration.count).toBe(1);
+    expect(duration.maxMs).toBe(300);           // 400 - 100, not the warm-up group's 200
+  });
 });
