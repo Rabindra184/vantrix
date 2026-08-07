@@ -7,6 +7,7 @@
     "build": "tsc -b",
     "test": "pnpm build && vitest run",
     "test:unit": "vitest run",
+    "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
     "lint": "eslint .",
     "typecheck": "tsc -b"
   },
