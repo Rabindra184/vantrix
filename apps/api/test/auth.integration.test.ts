@@ -4,7 +4,7 @@ import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
 import { TokenRepository } from '@perfportal/persistence';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../src/app.module.js';
 import { AuthGuard } from '../src/auth/auth.guard.js';
 import { AuthModule } from '../src/auth/auth.module.js';
@@ -79,6 +79,39 @@ describe('health', () => {
     const ready = await request(ctx.app.getHttpServer()).get('/readyz');
     expect(health.status).toBe(200);
     expect(ready.status).toBe(200);
+  });
+});
+
+describe('AuthGuard short-circuits on req.tenant set by AuthMiddleware', () => {
+  // Every scope test below (in "global AuthGuard — scope enforcement cannot
+  // be forgotten") builds its app with `imports: [AuthModule]`, so
+  // AuthMiddleware — which only ever gets mounted onto the 'v1/*path'
+  // prefix by AppModule's own configure() — is never in front of AuthGuard
+  // there. AuthGuard.canActivate does `req.tenant ?? (await
+  // authenticateRequest(...))`; every test that only ever builds from
+  // AuthModule exercises exclusively the right-hand side of that `??`, so if
+  // the short-circuit were ever deleted, every one of those tests would
+  // still pass — they'd just each perform an extra, silently-redundant
+  // Argon2id verification. That is a real doubling of the hot path with zero
+  // test coverage protecting it. This test is built from AppModule instead,
+  // so the middleware is genuinely in front of the guard, and it counts the
+  // one database lookup Argon2id verification depends on.
+  it('performs exactly one TokenRepository.findByPrefix lookup per authenticated /v1 request', async () => {
+    const spy = vi.spyOn(TokenRepository.prototype, 'findByPrefix');
+    ctx = await createTestApp(); // built from AppModule — see support/app.ts
+    spy.mockClear(); // drop anything createTestApp's own fixture setup triggered
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    // The token is valid and has the required scope; the run itself simply
+    // doesn't exist. What matters here is the call count, not this status —
+    // 404 confirms authentication succeeded and the request reached the
+    // handler, rather than failing before AuthGuard ever ran.
+    expect(res.status).toBe(404);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });
 
