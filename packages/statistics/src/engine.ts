@@ -3,7 +3,6 @@ import { BucketSeries, type Bucket } from './buckets.js';
 import { ErrorRollup } from './errors-rollup.js';
 import { IndicatorCounter, isWarmup, type IndicatorBands } from './indicators.js';
 import { RollupBuilder, type StatRollup } from './rollup.js';
-import { scopeKey } from './scopes.js';
 
 export interface EngineOptions {
   warmupMs?: number;
@@ -17,7 +16,7 @@ export interface EngineOptions {
 
 export interface EngineResult {
   stats: StatRollup[];
-  series: Map<string, Bucket[]>;
+  series: Map<string, { scope: MetricScope; name: string; buckets: Bucket[] }>;
   indicators: IndicatorBands;
   errors: { message: string; count: number }[];
   endpointCount: number;
@@ -40,15 +39,20 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   // parsing the key, so a name containing the delimiter can never be truncated or
   // collide with another entry (see the "map delimiter" regression test).
   const rollups = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; builder: RollupBuilder }>();
-  const series = new Map<string, BucketSeries>();
+  // Keyed by (scope, name) the same way `rollups` is keyed by (scope, name, family): the
+  // key is an opaque lookup token only, never parsed back — scope and name are always
+  // read from the stored entry fields, so a request name containing a space or colon can
+  // never be truncated or collide with another entry.
+  const series = new Map<string, { scope: MetricScope; name: string; series: BucketSeries }>();
   const indicators = new IndicatorCounter({ lowerMs: opts.lowerMs ?? 800, higherMs: opts.higherMs ?? 1200 });
   const errors = new ErrorRollup();
   const endpoints = new Set<string>();
 
-  const seriesFor = (key: string, max: number): BucketSeries => {
-    let s = series.get(key);
-    if (!s) { s = new BucketSeries({ startMs: runStartMs, maxBuckets: max }); series.set(key, s); }
-    return s;
+  const seriesFor = (scope: MetricScope, name: string, max: number): BucketSeries => {
+    const key = `${scope} ${name}`;
+    let entry = series.get(key);
+    if (!entry) { entry = { scope, name, series: new BucketSeries({ startMs: runStartMs, maxBuckets: max }) }; series.set(key, entry); }
+    return entry.series;
   };
   // Space-joined lookup token. A group/request name may itself contain spaces, but
   // that can never fold two distinct (scope, name, family) triples onto one key:
@@ -95,10 +99,10 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     lastMs = Math.max(lastMs, e.endMs);
 
     // Series always includes warm-up (PRD 7.4).
-    const runSeries = seriesFor(scopeKey('run', ''), maxBucketsRun);
+    const runSeries = seriesFor('run', '', maxBucketsRun);
     runSeries.add(e.startMs, duration, e.ok, 'start');
     runSeries.add(e.endMs, duration, e.ok, 'end');
-    const epSeries = seriesFor(scopeKey('request', e.name), maxBucketsEndpoint);
+    const epSeries = seriesFor('request', e.name, maxBucketsEndpoint);
     epSeries.add(e.startMs, duration, e.ok, 'start');
     epSeries.add(e.endMs, duration, e.ok, 'end');
 
@@ -107,7 +111,10 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     rollupFor('run', '', 'response_time').add(duration, e.ok);
     rollupFor('request', e.name, 'response_time').add(duration, e.ok);
     indicators.add(duration, e.ok);
-    if (!e.ok && e.message) errors.add(e.message);
+    // A message-less failure still contributes to indicators.failed above; route it into
+    // an explicit bucket so `sum(errors[].count)` always reconciles with `failed` instead
+    // of silently undercounting.
+    if (!e.ok) errors.add(e.message && e.message.length > 0 ? e.message : '(no message)');
   }
 
   const windowMs = Math.max(0, lastMs - Math.max(firstMs, runStartMs + warmupMs));
@@ -118,7 +125,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
 
   return {
     stats,
-    series: new Map([...series].map(([k, v]) => [k, v.buckets()])),
+    series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, buckets: v.series.buckets() }])),
     indicators: indicators.bands(),
     errors: errors.top(200),
     endpointCount: endpoints.size,
