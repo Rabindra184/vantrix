@@ -18,7 +18,10 @@ describe('throughput (PRD NFR-PF-4)', () => {
     console.log(`\n  events/sec: ${rate.toLocaleString()}  wall: ${seconds.toFixed(1)}s  heap delta: ${peakMb.toFixed(0)} MB`);
     console.log(`  extrapolated 5M events: ${(5_000_000 / rate).toFixed(0)}s (budget 180s)\n`);
 
-    expect(r.stats.length).toBeGreaterThan(0);
+    // ENDPOINTS request-scope rollups plus one run-scope rollup — exact count, not just "some
+    // rows exist", so a badly broken engine (e.g. one that drops or duplicates scopes) can't
+    // silently pass this benchmark.
+    expect(r.stats.length).toBe(ENDPOINTS + 1);
     expect(peakMb).toBeLessThan(1024);          // hard guard: must not approach the 8 GiB worker
   }, 600_000);
 });
