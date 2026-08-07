@@ -1,6 +1,7 @@
 import { Controller, Get, NotFoundException, Param, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
+import { parseCursor, parseLimit, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
 import type { RunListResponse } from '@perfportal/contracts';
 import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
@@ -16,7 +17,11 @@ export class RunsController {
 
   @Get(':id')
   @Scopes('read')
-  async get(@Param('id') id: string, @Req() req: Request, @Res() res: Response): Promise<void> {
+  async get(
+    @Param('id', uuidParam('id')) id: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
     const tenant = req.tenant!;
     const run = await this.runs
       .runs()
@@ -98,9 +103,10 @@ export class ProjectRunsController {
       throw new NotFoundException(`No project "${slug}" available to this token.`);
     }
 
+    const parsedCursor = parseCursor(cursor);
     const page = await this.runs.runs().list(
       { orgId: tenant.orgId, projectId: tenant.projectId },
-      { limit: Math.min(Number(limit) || 25, 100), ...(cursor ? { cursor } : {}) },
+      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
     );
     return {
       items: page.items.map((r) => ({

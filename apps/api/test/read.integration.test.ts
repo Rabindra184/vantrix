@@ -53,7 +53,29 @@ async function ingested(): Promise<string> {
 
 const auth = () => ({ Authorization: `Bearer ${ctx.readToken}` });
 
+describe('GET /v1/runs/:id', () => {
+  it('rejects a malformed id with 400 and remediation that says what a valid value looks like, not "retry"', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs/not-a-uuid').set(auth());
+    expect(res.status).toBe(400);
+    expect(res.body.remediation).toMatch(/uuid/i);
+    // The old failure mode's remediation told the caller to retry — which
+    // can never succeed for a malformed id, since the id itself is the
+    // problem. Guard against regressing to that shape.
+    expect(res.body.remediation.toLowerCase()).not.toContain('retry the request');
+  });
+});
+
 describe('GET /v1/runs/:id/stats', () => {
+  it('rejects a malformed id with 400, not a 500 that leaks a Prisma error', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs/not-a-uuid/stats')
+      .set(auth());
+    expect(res.status).toBe(400);
+    expect(res.body.remediation).toMatch(/uuid/i);
+  });
+
   it('returns the run-scope statistics matching the fixture', async () => {
     ctx = await createTestApp();
     const id = await ingested();
@@ -190,6 +212,47 @@ describe('GET /v1/projects/:slug/runs', () => {
       .get('/v1/projects/some-other-project/runs')
       .set(auth());
     expect(res.status).toBe(404);
+  });
+
+  it('clamps a negative limit instead of silently returning zero items', async () => {
+    // Math.min(-5, 100) === -5, and Array.prototype.slice(0, -5) on a
+    // handful of rows returns [] — a paginating client would read that as
+    // "this project has no runs," a silent wrong answer, not an error it
+    // could act on. limit=-5 must behave like a sane positive limit instead.
+    ctx = await createTestApp();
+    await ingested();
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/checkout/runs?limit=-5')
+      .set(auth());
+    expect(res.status).toBe(200);
+    expect(() => RunListResponseSchema.parse(res.body)).not.toThrow();
+    expect(res.body.items.length).toBeGreaterThan(0);
+  });
+
+  it('clamps limit=0 to at least one item rather than returning an empty page', async () => {
+    ctx = await createTestApp();
+    await ingested();
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/checkout/runs?limit=0')
+      .set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.items.length).toBeGreaterThan(0);
+  });
+
+  it('clamps an excessive limit to the 100-item cap instead of passing it through', async () => {
+    ctx = await createTestApp();
+    await ingested();
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/checkout/runs?limit=99999')
+      .set(auth());
+    expect(res.status).toBe(200);
+    // Only one run was seeded, so this mainly asserts the request succeeds
+    // (does not 500 or otherwise choke on an out-of-range limit) — the cap
+    // itself is exercised directly in the parseLimit unit coverage.
+    expect(res.body.items.length).toBeGreaterThan(0);
   });
 });
 
