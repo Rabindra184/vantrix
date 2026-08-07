@@ -133,15 +133,26 @@ export class RunRepository {
     });
   }
 
-  /** Unscoped by design: the worker, acting on a job it has already dequeued. */
+  /**
+   * Unscoped by design: the worker, acting on a job it has already dequeued.
+   *
+   * Only writes when the run is not already terminal. Two jobs for the same
+   * run can race past the pending guard in PipelineService (BullMQ's default
+   * concurrency, or stalled-job redelivery); the loser's transaction rolls
+   * back and must not overwrite the winner's already-committed
+   * complete/verdict with failed/null. Returns whether it actually wrote,
+   * so the caller can tell it lost the race and skip publishing a terminal
+   * notification the winner already sent.
+   */
   async fail(
     id: string,
     error: { code: string; message: string; remediation: string },
-  ): Promise<void> {
-    await this.prisma.run.update({
-      where: { id },
+  ): Promise<boolean> {
+    const { count } = await this.prisma.run.updateMany({
+      where: { id, status: { notIn: ['complete', 'failed'] } },
       data: { status: 'failed', error, ingestedAt: new Date() },
     });
+    return count > 0;
   }
 
   async list(

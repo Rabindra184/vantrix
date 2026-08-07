@@ -32,7 +32,11 @@ export class Sweeper {
         [this.config.staleAfterMs],
       );
       for (const row of rows) {
-        await this.#queue.add('ingest', { runId: row.id }, { jobId: `sweep-${row.id}-${rows.length}` });
+        // Stable, run-derived id — matches what the API's own enqueue uses
+        // (IngestQueue.add uses jobId: runId), so a sweeper re-enqueue of a
+        // job that is still queued is a harmless no-op via BullMQ dedup,
+        // instead of minting a second job whenever the batch size differs.
+        await this.#queue.add('ingest', { runId: row.id }, { jobId: row.id });
       }
       await client.query('COMMIT');
       return rows.length;
