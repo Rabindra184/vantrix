@@ -10,6 +10,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const RECORD = { RUN: 0, REQUEST: 1, USER: 2, GROUP: 3, ERROR: 4 };
 
@@ -133,12 +134,18 @@ export function decode(path) {
 }
 
 // ---------------- validation against the report's published numbers ----------------
+// Guarded so this file stays importable: `import { decode } from './decode.mjs'`
+// must not run the CLI or call process.exit.
 
 const pct = (sorted, p) => {           // nearest-rank, matching Gatling's reported integers
   if (!sorted.length) return 0;
   const i = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
   return sorted[Math.max(0, i)];
 };
+
+const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (!isCli) { /* imported as a library — skip the report below */ }
+else {
 
 const path = process.argv[2];
 const d = decode(path);
@@ -216,3 +223,5 @@ console.log(
     : `FAIL — ${fails} exact value(s) mismatched`}\n`
 );
 process.exit(fails === 0 ? 0 : 1);
+
+}

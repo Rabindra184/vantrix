@@ -1917,14 +1917,16 @@ Techniques: streaming line-by-line parse with backpressure, never materializing 
 **Worked memory calculation** — this is the constraint that determines whether the design holds:
 
 ```
-Per-endpoint time series : 300 buckets × ~1.5 KB sketch  = ~450 KB per endpoint
-100 endpoints                                            = ~45 MB
-Run-wide series          : 1200 buckets × ~1.5 KB        = ~1.8 MB
-Per-endpoint summary sketches : 100 × ~1.5 KB            = ~0.15 MB
+Per-endpoint time series : 300 buckets × ~2.1 KB sketch  = ~630 KB per endpoint
+100 endpoints                                            = ~63 MB
+Run-wide series          : 1200 buckets × ~2.1 KB        = ~2.5 MB
+Per-endpoint summary sketches : 100 × ~2.1 KB            = ~0.21 MB
 Distribution + correlation accumulators                  = ~5 MB
 Parser and stream buffers                                = ~20 MB
-                                                    Total ≈ 72 MB
+                                                    Total ≈ 91 MB
 ```
+
+**Sketch size is measured, not assumed:** `@datadog/sketches-js` v2.1.1 at `relativeAccuracy: 0.01` serializes to **~2.1 KB** on 200k realistic latency samples (an earlier estimate of 1.5 KB was ~40% low). Tightening to 0.005 doubles it to ~4.1 KB, which would push the worst case to ~150 MB — still viable, but the accuracy gain is not needed: measured error at 0.01 was 0.597% across p50–p99.9, comfortably inside the 1% guarantee.
 
 Comfortably inside an 8 GiB worker with room for concurrency. The dominant term is per-endpoint time series, which is why endpoint cardinality is hard-capped (FR-ING-10) — an uncapped explosion is the one input that can exhaust a worker.
 
