@@ -2,3 +2,8 @@ node_modules/
 dist/
 .env
 .superpowers/
+*.tsbuildinfo
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts.map
