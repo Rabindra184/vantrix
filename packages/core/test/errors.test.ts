@@ -13,4 +13,10 @@ describe('ingestError', () => {
     expect(e.detail).toEqual({ found: 4812, limit: 2000 });
     expect(e).toBeInstanceOf(Error);
   });
+
+  it('does not compile when remediation is omitted', () => {
+    // @ts-expect-error - remediation is required; omitting it must be a type error.
+    const e = ingestError('NO_REQUESTS', { message: 'no requests parsed' });
+    expect(e.code).toBe('NO_REQUESTS');
+  });
 });
