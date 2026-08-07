@@ -4,3 +4,5 @@ export * from './repositories/project.js';
 export * from './repositories/token.js';
 export * from './repositories/run.js';
 export * from './repositories/rule.js';
+export * from './metrics/write.js';
+export * from './metrics/read.js';

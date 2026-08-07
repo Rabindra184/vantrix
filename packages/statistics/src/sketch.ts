@@ -55,6 +55,20 @@ export class Sketch {
     const sketch = new Sketch();
     /** fromProto returns a BaseDDSketch; it merges correctly, so the cast is safe. */
     sketch.#inner = DDSketch.fromProto(bytes) as unknown as DDSketch;
+    /**
+     * `fromProto` is documented upstream to lose summary min/max: the protobuf wire
+     * format carries only the bucket store, so the fresh Infinity/-Infinity sentinels
+     * from the constructor survive untouched. `quantile()` above returns `#inner.min`
+     * / `#inner.max` directly (not a bucket lookup) at the two boundary ranks, so an
+     * unrestored sketch would silently answer a boundary quantile — exactly the case
+     * this class exists to serve after a bytea round-trip — with an infinite sentinel.
+     * Bucket-approximate reconstruction carries the same relative-accuracy bound as
+     * every other quantile call, which is the best a lossy wire format allows.
+     */
+    if (sketch.#inner.count > 0) {
+      sketch.#inner.min = sketch.#inner.getValueAtQuantile(0);
+      sketch.#inner.max = sketch.#inner.getValueAtQuantile(1);
+    }
     return sketch;
   }
 }

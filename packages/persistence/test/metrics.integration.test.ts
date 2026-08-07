@@ -1,0 +1,179 @@
+import { runEngine } from '@perfportal/statistics';
+import type { CanonicalEvent } from '@perfportal/core';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { createPool, createPrisma, MetricReader, MetricWriter } from '../src/index.js';
+import { requireDatabaseUrl, resetDatabase } from './support/db.js';
+
+const url = requireDatabaseUrl();
+const pool = createPool(url);
+const prisma = createPrisma(url);
+
+const STARTED_AT = new Date('2026-08-07T10:00:00Z');
+const STARTED_ON = new Date('2026-08-07T00:00:00Z');
+
+function events(): CanonicalEvent[] {
+  const base = STARTED_AT.getTime();
+  const out: CanonicalEvent[] = [
+    { type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: base },
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push({
+      type: 'request',
+      name: i % 2 === 0 ? 'GET /a' : 'GET /b',
+      groups: [],
+      userId: String(i),
+      startMs: base + i * 25,
+      endMs: base + i * 25 + (i % 13) * 40 + 5,
+      ok: i % 17 !== 0,
+      message: i % 17 === 0 ? 'status 500' : undefined,
+    });
+  }
+  return out;
+}
+
+async function seedRun() {
+  await resetDatabase(pool);
+  const org = await prisma.org.create({ data: { slug: 'acme', name: 'Acme' } });
+  const project = await prisma.project.create({
+    data: { orgId: org.id, slug: 'checkout', name: 'Checkout', settings: {} },
+  });
+  const run = await prisma.run.create({
+    data: {
+      orgId: org.id,
+      projectId: project.id,
+      status: 'parsing',
+      tool: 'gatling',
+      bundleKey: 'k',
+      bundleSha256: 'a'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt: STARTED_AT,
+      startedOn: STARTED_ON,
+      engineOptions: {},
+    },
+  });
+  return { orgId: org.id, projectId: project.id, runId: run.id };
+}
+
+async function persist(ctx: { orgId: string; projectId: string; runId: string }) {
+  const result = runEngine(events(), { percentiles: [50, 95, 99] });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await new MetricWriter().persist(client, { ...ctx, runStartedOn: STARTED_ON }, result);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  return result;
+}
+
+beforeEach(async () => {
+  await resetDatabase(pool);
+});
+
+afterAll(async () => {
+  await pool.end();
+  await prisma.$disconnect();
+});
+
+describe('MetricWriter / MetricReader', () => {
+  it('round-trips stats with the values the engine produced', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+
+    const stored = await new MetricReader(pool).stats({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId);
+    const engineRun = result.stats.find((s) => s.scope === 'run');
+    const storedRun = stored.find((s) => s.scope === 'run');
+
+    expect(storedRun).toBeDefined();
+    expect(storedRun?.count).toBe(engineRun?.count);
+    expect(storedRun?.koCount).toBe(engineRun?.koCount);
+    expect(storedRun?.maxMs).toBeCloseTo(engineRun?.maxMs ?? -1, 6);
+    expect(storedRun?.stddevMs).toBeCloseTo(engineRun?.stddevMs ?? -1, 6);
+    expect(storedRun?.percentiles['p95']).toBeCloseTo(engineRun?.percentiles['p95'] ?? -1, 6);
+  });
+
+  it('round-trips the sketch through bytea so percentiles are answerable after reload', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+
+    const reloaded = await new MetricReader(pool).sketch(
+      { orgId: ctx.orgId, projectId: ctx.projectId },
+      ctx.runId,
+      { scope: 'run', name: '', family: 'response_time' },
+    );
+    const original = result.stats.find((s) => s.scope === 'run')?.sketch;
+
+    expect(reloaded).not.toBeNull();
+    expect(reloaded!.count).toBe(original!.count);
+    for (const q of [0.5, 0.95, 0.99]) {
+      expect(reloaded!.quantile(q)).toBeCloseTo(original!.quantile(q), 6);
+    }
+  });
+
+  it('answers a percentile that was never stored in the JSONB — the point of keeping the sketch', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const stored = await new MetricReader(pool).stats({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId);
+    expect(Object.keys(stored[0]!.percentiles)).not.toContain('p99.9');
+
+    const sketch = await new MetricReader(pool).sketch(
+      { orgId: ctx.orgId, projectId: ctx.projectId },
+      ctx.runId,
+      { scope: 'run', name: '', family: 'response_time' },
+    );
+    expect(Number.isFinite(sketch!.quantile(0.999))).toBe(true);
+  });
+
+  it('round-trips series buckets and error rows', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    const buckets = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '' });
+    const expected = result.series.get('run ')?.buckets ?? [];
+    expect(buckets).toHaveLength(expected.length);
+    expect(buckets.reduce((a, b) => a + b.startedCount, 0)).toBe(
+      expected.reduce((a, b) => a + b.startedCount, 0),
+    );
+
+    const errors = await reader.errors(tenant, ctx.runId);
+    expect(errors.reduce((a, e) => a + e.count, 0)).toBe(
+      result.errors.reduce((a, e) => a + e.count, 0),
+    );
+  });
+
+  it('will not read another project\'s metrics', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const stats = await new MetricReader(pool).stats(
+      { orgId: ctx.orgId, projectId: '00000000-0000-0000-0000-000000000000' },
+      ctx.runId,
+    );
+    expect(stats).toEqual([]);
+  });
+
+  it('prunes partitions — the series query plan touches one partition, not twelve', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query<{ 'QUERY PLAN': string }>(
+      `EXPLAIN SELECT * FROM run_series_bucket
+        WHERE run_started_on = $1 AND run_id = $2 AND scope = $3 AND name = $4`,
+      [STARTED_ON, ctx.runId, 'run', ''],
+    );
+    const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+    // Distinct partition names, not raw substring matches: an index-scan plan names
+    // the partition twice on one line (once as "<partition>_pkey", once as the bare
+    // relation) — e.g. "Index Scan using run_series_bucket_2026_08_pkey on
+    // run_series_bucket_2026_08 run_series_bucket" — which would otherwise double-count
+    // a single pruned partition and mask a real pruning failure the same way.
+    const scanned = new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size;
+    expect(scanned).toBe(1);
+  });
+});
