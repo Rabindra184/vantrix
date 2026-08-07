@@ -6,10 +6,26 @@ import {
   CreateBucketCommand,
   GetObjectCommand,
   HeadBucketCommand,
-  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { ingestError } from '@perfportal/core';
+
+/**
+ * True only for the "bucket does not exist" signal HeadBucket returns (404 /
+ * NotFound / NoSuchBucket). Any other failure — a network blip, bad
+ * credentials, an IAM policy that denies HeadBucket specifically — must not
+ * be treated as "go ahead and create it": on real S3, CreateBucket on a
+ * bucket you already own in us-east-1 returns success, which would silently
+ * paper over a genuine permissions problem and report the store as healthy.
+ */
+function isBucketMissing(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const name = (err as { name?: string }).name;
+  if (name === 'NotFound' || name === 'NoSuchBucket') return true;
+  const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+  return status === 404;
+}
 
 export interface BlobConfig {
   endpoint: string;
@@ -37,15 +53,25 @@ export class BlobStore {
   async ensureBucket(): Promise<void> {
     try {
       await this.#s3.send(new HeadBucketCommand({ Bucket: this.#bucket }));
-    } catch {
+    } catch (err) {
+      if (!isBucketMissing(err)) throw err;
       await this.#s3.send(new CreateBucketCommand({ Bucket: this.#bucket }));
     }
   }
 
   /**
-   * Streams the body to object storage, hashing and counting inline. The cap is
-   * enforced DURING the stream, so an oversized upload is aborted rather than
-   * buffered — this is what makes the in-memory parse of spec §5.1 safe.
+   * Streams the body to object storage as a genuine streaming multipart
+   * upload, hashing and counting bytes inline as they pass through. The body
+   * is never buffered in full: `Upload` (from @aws-sdk/lib-storage) reads
+   * the metered stream directly and ships it to S3 part by part (falling
+   * back to a single PutObject when the whole body fits in one part).
+   *
+   * The cap is enforced DURING the stream: once the running byte count
+   * exceeds maxBytes, the metering Transform errors out instead of emitting
+   * more data. `pipeline` propagates that error back through the source and
+   * `Upload` observes the same error while reading the metered stream, so
+   * both settle with the original `IngestError` — its `code` and
+   * `remediation` reach the caller unwrapped, not an opaque SDK error.
    *
    * The bundle is durable before any row references it (spec §6.1 step order).
    */
@@ -56,7 +82,6 @@ export class BlobStore {
   ): Promise<{ sha256: string; bytes: number }> {
     const hash = createHash('sha256');
     let bytes = 0;
-    const chunks: Buffer[] = [];
 
     const meter = new Transform({
       transform(chunk: Buffer, _enc, cb) {
@@ -73,16 +98,21 @@ export class BlobStore {
           return;
         }
         hash.update(chunk);
-        chunks.push(chunk);
         cb(null, chunk);
       },
     });
 
-    await pipeline(body, meter);
+    // Both sides run concurrently: `pipeline` feeds `body` into `meter`
+    // while `Upload` drains `meter`'s readable side as it uploads. Neither
+    // is awaited before the other starts — that concurrency is what
+    // prevents the stall the unmetered pipeline used to hit once the
+    // readable side's buffer filled up.
+    const upload = new Upload({
+      client: this.#s3,
+      params: { Bucket: this.#bucket, Key: key, Body: meter },
+    });
+    await Promise.all([pipeline(body, meter), upload.done()]);
 
-    await this.#s3.send(
-      new PutObjectCommand({ Bucket: this.#bucket, Key: key, Body: Buffer.concat(chunks) }),
-    );
     return { sha256: hash.digest('hex'), bytes };
   }
 

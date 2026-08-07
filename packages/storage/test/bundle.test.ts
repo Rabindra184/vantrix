@@ -19,10 +19,11 @@ function makeArchive(files: Record<string, Buffer | string>): Buffer {
   const out = join(dir, 'bundle.tgz');
   // COPYFILE_DISABLE suppresses AppleDouble ._name sidecar entries that
   // bsdtar (macOS) emits for files carrying extended attributes — macOS
-  // tags freshly-written files with com.apple.provenance asynchronously, so
-  // this is a real, timing-dependent local failure, not a hypothetical one.
-  // bsdtar hides those sidecar entries again on read, but a plain tar-stream
-  // reader does not, so they would otherwise leak into the file listing.
+  // tags freshly-written files with com.apple.provenance immediately (it is
+  // present as soon as writeFileSync returns, not added asynchronously), so
+  // this reproduces deterministically, not as a race. bsdtar hides those
+  // sidecar entries again on read, but a plain tar-stream reader does not,
+  // so they would otherwise leak into the file listing.
   // The env var is a no-op under GNU tar, so it is safe on Linux CI too.
   execFileSync('tar', ['-czf', out, '-C', dir, 'results'], {
     env: { ...process.env, COPYFILE_DISABLE: '1' },
