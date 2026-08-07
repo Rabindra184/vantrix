@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { TokenRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
-import { SCOPES_KEY, type TokenScope } from './scopes.decorator.js';
+import { IS_PUBLIC_KEY, SCOPES_KEY, type TokenScope } from './scopes.decorator.js';
 import { splitToken, verifyToken } from './tokens.js';
 
 export interface Tenant {
@@ -51,6 +51,13 @@ export async function authenticateRequest(req: Request, tokens: TokenRepository)
   };
 }
 
+/**
+ * Registered globally via APP_GUARD in auth.module.ts, so every route on
+ * the app authenticates and has its @Scopes() enforced by default — a
+ * handler can no longer skip scope enforcement just by forgetting
+ * @UseGuards(AuthGuard). Routes that must stay reachable with no token
+ * (/healthz, /readyz) opt out explicitly with @Public().
+ */
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -59,8 +66,17 @@ export class AuthGuard implements CanActivate {
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      ctx.getHandler(),
+      ctx.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const req = ctx.switchToHttp().getRequest<Request>();
 
+    // Reuse req.tenant when AuthMiddleware already authenticated this
+    // request (true for everything under /v1) to avoid a second database
+    // round-trip; only routes outside that prefix hit the database here.
     const tenant = req.tenant ?? (await authenticateRequest(req, this.tokens));
 
     const required = this.reflector.getAllAndOverride<TokenScope[]>(SCOPES_KEY, [

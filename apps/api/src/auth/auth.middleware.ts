@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { HttpException, Injectable, type NestMiddleware } from '@nestjs/common';
 import { TokenRepository } from '@perfportal/persistence';
 import type { NextFunction, Request, Response } from 'express';
 import { authenticateRequest } from './auth.guard.js';
-import { problem } from '../common/problem.js';
+import { internalProblem, logInternalError, problem } from '../common/problem.js';
 
 /**
  * AuthGuard (auth.guard.ts) only runs for requests Nest has already matched
@@ -30,15 +31,29 @@ export class AuthMiddleware implements NestMiddleware {
       req.tenant = await authenticateRequest(req, this.tokens);
       next();
     } catch (err) {
-      const status = err instanceof HttpException ? err.getStatus() : 401;
-      const detail = err instanceof Error ? err.message : 'Authentication failed.';
-      const body = problem(
-        'UNAUTHENTICATED',
-        status,
-        detail,
-        'Provide a valid bearer API token in the Authorization header.',
-      );
-      res.status(status).type('application/problem+json').send(body);
+      // A deliberate rejection from the authentication path itself (bad,
+      // missing, or revoked token) — safe to surface as-is; it never
+      // contains anything but the messages authenticateRequest constructs.
+      if (err instanceof HttpException) {
+        const status = err.getStatus();
+        const body = problem(
+          'UNAUTHENTICATED',
+          status,
+          err.message,
+          'Provide a valid bearer API token in the Authorization header.',
+        );
+        res.status(status).type('application/problem+json').send(body);
+        return;
+      }
+
+      // Anything else (e.g. the database is unreachable) is an outage, not
+      // an authentication failure, and its message may contain internal
+      // infrastructure detail (hosts, ports, ORM internals) that must never
+      // reach an unauthenticated caller. Mirror ProblemFilter's catch-all
+      // exactly via the shared helpers so the two paths can't drift apart.
+      const traceId = randomUUID();
+      logInternalError(err, traceId);
+      res.status(500).type('application/problem+json').send(internalProblem(traceId));
     }
   }
 }
