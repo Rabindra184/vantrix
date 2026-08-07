@@ -1,0 +1,12 @@
+{
+  "name": "@perfportal/statistics",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@perfportal/core": "workspace:*",
+    "@datadog/sketches-js": "^2.1.1",
+    "protobufjs": "^7.4.0"
+  }
+}
