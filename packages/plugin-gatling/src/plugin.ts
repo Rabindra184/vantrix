@@ -51,6 +51,12 @@ export class GatlingPlugin implements PerfPlugin {
     if (len <= 0 || 5 + len > buf.length) {
       return { matched: false, reason: `${path} has an unreadable version header` };
     }
+    // Decoded as latin1 unconditionally here, unlike header.ts's readString()
+    // which respects the coder byte (coder === 0 ? latin1 : utf16le). This is
+    // a hand-rolled partial reimplementation of that framing, kept separate
+    // because detect() only has a head-of-file slice, not a full BinaryReader.
+    // It's safe because Gatling version strings (e.g. "3.15.1") are ASCII and
+    // therefore decode identically under either coder.
     const version = buf.subarray(5, 5 + len).toString('latin1');
     const major = version.split('.')[0] ?? '';
     if (!SUPPORTED_GATLING_MAJORS.includes(major)) {
@@ -76,7 +82,21 @@ export class GatlingPlugin implements PerfPlugin {
     const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
     // Re-read the header for a precise version error before streaming records.
-    const version = readRunHeader(new BinaryReader(buf)).gatlingVersion;
+    // readRunHeader throws a bare Error on a structurally corrupt/truncated
+    // header; that must not escape parse() unstructured, so it is folded into
+    // the same LOG_MALFORMED shape used below for corruption found mid-stream.
+    let version: string;
+    try {
+      version = readRunHeader(new BinaryReader(buf)).gatlingVersion;
+    } catch (err) {
+      if (err instanceof Error && err.name === 'IngestError') throw err;
+      throw ingestError('LOG_MALFORMED', {
+        message: `simulation.log could not be decoded: ${err instanceof Error ? err.message : String(err)}`,
+        remediation:
+          'The file appears truncated or corrupt. Confirm the Gatling run finished and that the whole results directory was archived without modification.',
+        detail: { path },
+      });
+    }
     const major = version.split('.')[0] ?? '';
     if (!SUPPORTED_GATLING_MAJORS.includes(major)) {
       throw ingestError('LOG_BINARY_FORMAT', {

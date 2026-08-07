@@ -96,6 +96,40 @@ describe('GatlingPlugin.parse', () => {
       remediation: expect.stringMatching(/.+/),
     });
   });
+
+  it('rejects an unsupported major itself, without relying on detect() having run', async () => {
+    // Rewrite the length-prefixed version string "3.15.1" as "9.99.9" in place.
+    const other = new Uint8Array(realLog);
+    const buf = Buffer.from(other.buffer, other.byteOffset, other.byteLength);
+    buf.write('9.99.9', 5, 'latin1');
+    const plugin = new GatlingPlugin();
+    const iterate = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- drain-only loop; only completion/throw matters
+      for await (const _ of plugin.parse(sourceFrom({ 'simulation.log': other }))) {
+        /* drain */
+      }
+    };
+    await expect(iterate()).rejects.toMatchObject({
+      code: 'LOG_BINARY_FORMAT',
+      remediation: expect.stringMatching(/.+/),
+    });
+  });
+
+  it('converts a structurally corrupt log into a structured error', async () => {
+    const corrupt = new Uint8Array(realLog);
+    corrupt[0] = 9; // not a Run record
+    const plugin = new GatlingPlugin();
+    const iterate = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- drain-only loop; only completion/throw matters
+      for await (const _ of plugin.parse(sourceFrom({ 'simulation.log': corrupt }))) {
+        /* drain */
+      }
+    };
+    await expect(iterate()).rejects.toMatchObject({
+      code: 'LOG_MALFORMED',
+      remediation: expect.stringMatching(/.+/),
+    });
+  });
 });
 
 describe('GatlingPlugin.capabilities', () => {
