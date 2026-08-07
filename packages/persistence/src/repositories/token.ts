@@ -28,6 +28,7 @@ export class TokenRepository {
     };
   }
 
+  /** Unscoped by design: the auth guard, on a token it has just verified. */
   async touch(id: string): Promise<void> {
     await this.prisma.apiToken.update({ where: { id }, data: { lastUsedAt: new Date() } });
   }
