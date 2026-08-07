@@ -27,6 +27,35 @@ describe('Sketch accuracy (AC-STAT-1)', () => {
   });
 });
 
+describe('Sketch quantile (discontinuity regression)', () => {
+  it('handles sharp discontinuities at tail without interpolation artifacts', () => {
+    // Synthetic data designed to fail with naive linear interpolation:
+    // 845 values at 100 (tight low band), then hard jump to 1000 (high cluster), nothing between.
+    // For q ≈ 0.9446, old linear interpolation (q * (n-1)) lands in interpolation zone right at
+    // the discontinuity, picking an intermediate value instead of the true high-band value.
+    // New nearest-rank (ceil(q * n) - 1) resolves to exact indices, picking the correct value.
+    const vals: number[] = [];
+    for (let i = 0; i < 845; i++) vals.push(100);
+    for (let i = 0; i < 50; i++) vals.push(1000);
+
+    const sorted = [...vals].sort((a, b) => a - b);
+    const s = new Sketch();
+    for (const v of vals) s.accept(v);
+
+    // Test at q = 0.9446, where the old naive version's rank (0.9446 * 894 ≈ 844.47)
+    // interpolates across the discontinuity (indices 844→845, values 100→1000),
+    // yielding ~525. The true nearest-rank quantile (index 845, value 1000) differs by ~47%.
+    const q = 0.9446;
+    const measured = s.quantile(q);
+    const truth = trueQuantile(sorted, q);
+
+    expect(truth).toBe(1000); // Verify test setup: true answer is in high band
+
+    const relErr = Math.abs(measured - truth) / truth;
+    expect(relErr).toBeLessThanOrEqual(0.01); // Within 1% of true quantile
+  });
+});
+
 describe('Sketch merge', () => {
   it('merging halves equals accepting the whole', () => {
     const vals = latencies(50_000);
