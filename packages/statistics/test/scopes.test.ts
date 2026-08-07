@@ -3,8 +3,8 @@ import { runEngine } from '../src/engine.js';
 import { IngestError, type CanonicalEvent, type GroupEvent } from '@perfportal/core';
 
 const base = 1_000_000;
-const req = (name: string, groups: string[], off: number, dur: number, ok = true): CanonicalEvent => ({
-  type: 'request', name, groups, userId: 'u', startMs: base + off, endMs: base + off + dur, ok,
+const req = (name: string, groups: string[], off: number, dur: number, ok = true, message?: string): CanonicalEvent => ({
+  type: 'request', name, groups, userId: 'u', startMs: base + off, endMs: base + off + dur, ok, message,
 });
 
 describe('runEngine scope fan-out', () => {
@@ -43,12 +43,12 @@ describe('runEngine scope fan-out', () => {
     const r = runEngine(events, { warmupMs: 50 });
     const run = r.stats.find((s) => s.scope === 'run')!;
     expect(run.count).toBe(2);                               // the 0ms-offset request is warm-up
-    const runSeries = r.series.get('run:')!;
-    const total = runSeries.reduce((n, b) => n + b.endedCount, 0);
+    const runSeries = [...r.series.values()].find((v) => v.scope === 'run')!;
+    const total = runSeries.buckets.reduce((n, b) => n + b.endedCount, 0);
     expect(total).toBe(3);                                   // series still has all three
   });
 
-  it('preserves a request name containing a colon (round-trip must not parse a composite key)', () => {
+  it('preserves a request name containing a colon (no consumer ever parses a composite key)', () => {
     const colonEvents: CanonicalEvent[] = [
       { type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: base },
       req('GET /v1:users', [], 0, 100),
@@ -56,9 +56,9 @@ describe('runEngine scope fan-out', () => {
     const r = runEngine(colonEvents);
     const ep = r.stats.find((s) => s.scope === 'request')!;
     expect(ep.name).toBe('GET /v1:users');
-    // series key must refer to the same endpoint, not a truncated one.
-    const seriesEntry = [...r.series.entries()].find(([k]) => k !== 'run:');
-    expect(seriesEntry?.[0]).toContain('GET /v1:users');
+    // series entry must carry the exact, untruncated name via its structured field.
+    const seriesEntry = [...r.series.values()].find((v) => v.scope === 'request')!;
+    expect(seriesEntry.name).toBe('GET /v1:users');
   });
 });
 
@@ -126,5 +126,24 @@ describe('group scopes', () => {
     expect(cumulated.maxMs).toBe(250);          // the warm-up group's 100 must not appear
     expect(duration.count).toBe(1);
     expect(duration.maxMs).toBe(300);           // 400 - 100, not the warm-up group's 200
+  });
+});
+
+describe('runEngine error accounting', () => {
+  it('reconciles indicators.failed with sum(errors[].count) even when some failures carry no message', () => {
+    const events: CanonicalEvent[] = [
+      { type: 'meta', simulation: 'S', toolVersion: 'v', startedAtMs: base },
+      req('A', [], 0, 10, true),
+      req('B', [], 10, 10, false, 'timeout'),
+      req('C', [], 20, 10, false, 'timeout'),
+      req('D', [], 30, 10, false),                // failed, no message at all
+      req('E', [], 40, 10, false, ''),             // failed, empty-string message
+    ];
+    const r = runEngine(events);
+    const errorTotal = r.errors.reduce((n, e) => n + e.count, 0);
+    expect(r.indicators.failed).toBe(4);
+    expect(errorTotal).toBe(r.indicators.failed);      // totals must reconcile, not just both be positive
+    const noMessageRow = r.errors.find((e) => e.message === '(no message)');
+    expect(noMessageRow?.count).toBe(2);                // the unset-message and empty-message failures
   });
 });
