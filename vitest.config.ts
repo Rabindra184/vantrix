@@ -35,9 +35,9 @@ export default defineConfig({
   test: {
     include: ['packages/*/test/**/*.test.ts', 'apps/*/test/**/*.test.ts'],
     // Anything needing live Postgres, Redis, or MinIO is named
-    // *.integration.test.ts and runs only under vitest.integration.config.ts,
-    // so `pnpm test` stays runnable with no Docker.
-    exclude: ['**/node_modules/**', '**/dist/**', '**/*.integration.test.ts'],
+    // *.integration.test.ts or *.e2e.test.ts and runs only under
+    // vitest.integration.config.ts, so `pnpm test` stays runnable with no Docker.
+    exclude: ['**/node_modules/**', '**/dist/**', '**/*.integration.test.ts', '**/*.e2e.test.ts'],
     testTimeout: 30_000,
   },
 });
