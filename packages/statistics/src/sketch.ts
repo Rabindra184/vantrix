@@ -6,8 +6,8 @@ export const RELATIVE_ACCURACY = 0.01;
 
 export class Sketch {
   #inner: DDSketch;
-  constructor(inner?: DDSketch) {
-    this.#inner = inner ?? new DDSketch({ relativeAccuracy: RELATIVE_ACCURACY });
+  constructor() {
+    this.#inner = new DDSketch({ relativeAccuracy: RELATIVE_ACCURACY });
   }
 
   accept(value: number): void { this.#inner.accept(value); }
@@ -20,8 +20,10 @@ export class Sketch {
   get sum(): number { return this.#inner.sum; }
 
   serialize(): Uint8Array { return this.#inner.toProto(); }
-  /** fromProto returns a BaseDDSketch; it merges correctly, so the cast is safe. */
   static deserialize(bytes: Uint8Array): Sketch {
-    return new Sketch(DDSketch.fromProto(bytes) as unknown as DDSketch);
+    const sketch = new Sketch();
+    /** fromProto returns a BaseDDSketch; it merges correctly, so the cast is safe. */
+    sketch.#inner = DDSketch.fromProto(bytes) as unknown as DDSketch;
+    return sketch;
   }
 }

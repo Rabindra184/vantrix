@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Sketch } from '../src/sketch.js';
 
-/** Deterministic, roughly log-normal latency — no Math.random, so failures reproduce. */
+/** Deterministic three-segment mixture: 90% uniform [20,200], 9% uniform [300,800], 1% uniform [1500,3000] — no Math.random, so failures reproduce. */
 function latencies(n: number): number[] {
   let seed = 7;
   const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return Math.abs(seed) / 2147483647; };
@@ -11,7 +11,7 @@ function latencies(n: number): number[] {
   });
 }
 const trueQuantile = (sorted: number[], q: number) =>
-  sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)]!;
+  sorted[Math.max(0, Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1))]!;
 
 describe('Sketch accuracy (AC-STAT-1)', () => {
   it('is within 1% relative error of the true quantile at every percentile', () => {
