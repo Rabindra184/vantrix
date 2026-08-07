@@ -4,11 +4,15 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "vitest run",
+    "build": "tsc -b",
+    "test": "pnpm build && vitest run",
+    "test:unit": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc -b"
   },
   "devDependencies": {
+    "@perfportal/plugin-gatling": "workspace:*",
+    "@perfportal/statistics": "workspace:*",
     "@types/node": "^22.0.0",
     "eslint": "^9.0.0",
     "typescript": "^5.6.0",
