@@ -6,8 +6,9 @@
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
     "@perfportal/core": "workspace:*",
-    "@perfportal/plugin-gatling": "workspace:*",
-    "@datadog/sketches-js": "^2.1.1",
-    "protobufjs": "^7.4.0"
+    "@datadog/sketches-js": "^2.1.1"
+  },
+  "devDependencies": {
+    "@perfportal/plugin-gatling": "workspace:*"
   }
 }
