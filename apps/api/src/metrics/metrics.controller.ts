@@ -8,6 +8,7 @@ import { MetricReader, RunRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import pg from 'pg';
 import { Scopes } from '../auth/scopes.decorator.js';
+import { uuidParam } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -43,7 +44,7 @@ export class MetricsController {
   @Get('stats')
   @Scopes('read')
   async stats(
-    @Param('id') id: string,
+    @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
     @Query('scope') scope?: string,
     @Query('family') family?: string,
@@ -122,7 +123,7 @@ export class MetricsController {
   @Get('series')
   @Scopes('read')
   async series(
-    @Param('id') id: string,
+    @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
     @Query('scope') scope = 'run',
     @Query('name') name = '',
@@ -144,7 +145,10 @@ export class MetricsController {
 
   @Get('errors')
   @Scopes('read')
-  async errors(@Param('id') id: string, @Req() req: Request): Promise<ErrorsResponse> {
+  async errors(
+    @Param('id', uuidParam('id')) id: string,
+    @Req() req: Request,
+  ): Promise<ErrorsResponse> {
     const run = await this.#run(req, id);
     const errors = await this.reader.errors(
       { orgId: run.orgId, projectId: run.projectId },
