@@ -1,12 +1,12 @@
 # Gatling 3.15.1.2 parity reference fixture
 
-The pinned reference for [Appendix A](../../PerfPortal_Enterprise_PRD.md#appendix-a--gatling-oss-report-parity-matrix) of the PRD. Every row in the parity matrix was verified against the report in `reference-report/`, and the parity test suite (`PT-*`) asserts against it.
+The pinned reference for the Gatling parity matrix (tracked in the project's internal spec). Every row in that matrix was verified against the report in `reference-report/`, and the parity test suite (`PT-*`) asserts against it.
 
 **Generated 2026-08-07 · Gatling 3.15.1.2 · Java 21 · gradle plugin `io.gatling.gradle` 3.15.1.2**
 
 ## Why this fixture exists
 
-The matrix was originally written from expectation. Validating it against a real report found **five errors**, one of them critical — see §A.9 of the PRD. This fixture is what makes the parity claim checkable rather than assertable, and it is why the same validation must be repeated for every newly supported Gatling major.
+The matrix was originally written from expectation. Validating it against a real report found **five errors**, one of them critical: `simulation.log` is binary in this version, with no text option. This fixture is what makes the parity claim checkable rather than assertable, and it is why the same validation must be repeated for every newly supported Gatling major.
 
 ## What it deliberately exercises
 
@@ -47,7 +47,7 @@ This is the single most consequential finding. The file is **not** TSV. It opens
           00 00 00 02  "Browse" "Checkout"  <- scenario count + names
 ```
 
-Decoding this is the Gatling plugin's **primary ingest path**, not an error branch. There is no text option. See PRD §A.9 F-1 for why this reversed an earlier design decision.
+Decoding this is the Gatling plugin's **primary ingest path**, not an error branch. There is no text option. See `spikes/gatling-binary-log/README.md` for how the format was recovered and why this reversed an earlier design decision.
 
 ## Regenerating
 

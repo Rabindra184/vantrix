@@ -10,7 +10,7 @@ Exits `0` when every exact statistic is reproduced from raw bytes.
 
 ## Why this existed
 
-Validating the parity matrix (PRD §A.9 F-1) found that `simulation.log` is **binary** in Gatling 3.15.1.2 — there is no text option. That made the format the single largest technical risk in the project: it gates M1 → M2 → M3, and if it were not reliably decodable there would be no product. This spike answered that before any production code was written.
+Validating the parity matrix found that `simulation.log` is **binary** in Gatling 3.15.1.2 — there is no text option. That made the format the single largest technical risk in the project: it gates M1 → M2 → M3, and if it were not reliably decodable there would be no product. This spike answered that before any production code was written.
 
 ## Result
 
@@ -23,7 +23,7 @@ Validating the parity matrix (PRD §A.9 F-1) found that `simulation.log` is **bi
 | Error messages | Both reproduced with exact counts (15× 500, 9× 503) |
 | Group hierarchy | Nested `Catalog / Recommendations` recovered correctly |
 
-Verdict: **decoding is tractable and cheap.** The decoder is ~120 lines with no dependencies. The ongoing cost is not difficulty — it is version compatibility, since the format carries no compatibility guarantee (PRD §28 R-3).
+Verdict: **decoding is tractable and cheap.** The decoder is ~120 lines with no dependencies. The ongoing cost is not difficulty — it is version compatibility, since the format carries no compatibility guarantee.
 
 ## How the format was recovered
 
@@ -40,7 +40,7 @@ io.gatling.charts.stats.LogFileParser                  the authoritative read si
 
 ## Format
 
-See PRD **Appendix A.10** for the full specification. Two details cause silent corruption if guessed:
+The full specification is below. Two details cause silent corruption if guessed:
 
 - **Record types are `Run=0, Request=1, User=2, Group=3, Error=4`.** Request and User are *not* in declaration order.
 - **`cachedString` uses the sign as its discriminator:** a non-negative int means a new string follows inline; a negative int is a back-reference to `cache[-i]`. Index 0 can never be back-referenced, since `-0 === 0`.
@@ -58,7 +58,7 @@ p95   true  654   gatling  654    0.0%   in data
 p99   true 2501   gatling 2369   +5.6%   not in data
 ```
 
-This invalidated AC-PARITY-2, which had required percentiles to match Gatling within 1%. Matching would mean reproducing another tool's estimator error. The criterion now compares **exact quantities to Gatling** and **percentiles to ground truth** (PRD §A.9 F-6).
+This invalidated AC-PARITY-2, which had required percentiles to match Gatling within 1%. Matching would mean reproducing another tool's estimator error. The criterion now compares **exact quantities to Gatling** and **percentiles to ground truth**.
 
 It also yields a defensible product claim: DDSketch guarantees 1% relative error at every quantile, where the static report being replaced is 5.6% off at p99 on a sample this size.
 
