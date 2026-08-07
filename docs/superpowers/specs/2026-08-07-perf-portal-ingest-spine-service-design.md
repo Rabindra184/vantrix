@@ -74,17 +74,44 @@ There is no separate `scheduler` deployable in this slice. Its one responsibilit
 
 ---
 
-## 3. Pre-flight verification
+## 3. Pre-flight verification — **executed, passed**
 
-Before the implementation plan is written, one spike, for the same reason the binary-log and DDSketch spikes existed: this project's expensive mistakes have all been assumptions that were never checked.
+The risk: this workspace is strict ESM with `moduleResolution: bundler`; NestJS is decorator-based with CJS-first tooling, and Prisma and `reflect-metadata` sit between them. If NestJS 11 could not boot cleanly under ESM here, §2's layout would be wrong and the fix structural. Same reason the binary-log and DDSketch spikes existed: this project's expensive mistakes have all been unchecked assumptions.
 
-**The risk:** this workspace is strict ESM on Node 22 with `moduleResolution: bundler`. NestJS is decorator-based with CJS-first tooling; Prisma and `reflect-metadata` sit between them. If NestJS 11 cannot boot cleanly under ESM here, §2's layout is wrong and the fix is structural.
+**Run on 2026-08-07** — NestJS 11.1.6, Prisma 6.19.3, Node 22.19.0. A Nest application with a decorator-injected `PrismaService extends PrismaClient`, a cross-workspace import of `@perfportal/statistics`, `tsc` compilation, and a real boot.
 
-**The spike must show:** a NestJS 11 application booting under Node 22 ESM, resolving a decorator-injected Prisma client, and importing `@perfportal/statistics` across the workspace boundary — with `tsc -b` and `vitest` both passing on it.
+**Result: passes.** No CJS fallback is needed. The apps compile with `module`/`moduleResolution: NodeNext`, `experimentalDecorators: true`, `emitDecoratorMetadata: true`, and run as native ESM. DDSketch answered p95 of 1..1000 as 944.05 against a nearest-rank truth of 950 — 0.63%, inside the 1% guarantee, across the package boundary.
 
-**If it fails**, the fallback is compiling the two apps to CJS while the packages stay ESM, relying on Node 22's `require(esm)` support — which is why the packages must remain free of top-level `await`. That constraint is recorded here so it is not violated by accident.
+Four findings the plan must carry:
 
-The spike is throwaway; if it succeeds its output is deleted and its findings recorded, as with `spikes/gatling-binary-log`.
+**F-1 — the shipped packages cannot be imported at runtime, and this is a blocker.** All three declare `"exports": { ".": "./src/index.ts" }` — raw TypeScript. Node 22.19 strips the types off `index.ts` and then fails on its relative `./sketch.js` import, which does not exist unless the package is built:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/packages/statistics/src/sketch.js'
+    imported from …/packages/statistics/src/index.ts
+```
+
+This has been invisible because nothing has ever imported these packages from a running process — only vitest and `tsc -b`, both of which read source. The fix, verified working in the spike, is a conditional exports map per package:
+
+```json
+"exports": {
+  ".": {
+    "perfportal-source": "./src/index.ts",
+    "types": "./dist/src/index.d.ts",
+    "default": "./dist/src/index.js"
+  }
+}
+```
+
+with `resolve.conditions: ['perfportal-source']` in `vitest.config.ts`, so tests keep reading source and need no build, while runtime resolves to `dist`. Consequence: **`tsc -b` must run before either app starts**, in dev and in CI.
+
+**F-2 — a tsconfig mistake fails silently, not loudly.** With `emitDecoratorMetadata: false`, Nest still reports a *successful boot* and injects `undefined`; the failure surfaces only at first use, arbitrarily far away. The plan therefore includes a boot-time assertion that every injected dependency is present, rather than trusting a clean startup log.
+
+**F-3 — never assert injection with `instanceof`.** `new PrismaClient() instanceof PrismaClient` is `false` under Prisma 6 — the client is a Proxy — with no Nest involved. The spike's first assertion was wrong for this reason and reported a failure that did not exist. Injection is asserted by presence and API shape (`typeof prisma.$connect === 'function'`).
+
+**F-4 — the local Node default is below the repo's own floor.** `package.json` declares `engines.node >= 22` and CI pins 22, but the machine's default `node` is v20.20.2; the spike ran on 22.19.0 via nvm. Nothing enforces this locally. The plan adds an `.nvmrc` and a preinstall engine check, since the two runtimes differ in exactly the ESM behavior this design depends on.
+
+The spike was falsified before being trusted — breaking `emitDecoratorMetadata` made it fail — then deleted. The tree is unchanged: lint, `tsc -b`, and 48/48 tests pass on a `--frozen-lockfile` install.
 
 ---
 
@@ -354,7 +381,8 @@ The `IngestError` type the packages already produce maps to this one-to-one, whi
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| NestJS 11 will not boot cleanly under strict ESM on Node 22 | Structural — §2's layout is wrong | The §3 spike, before the plan is written; documented CJS fallback |
+| ~~NestJS 11 will not boot cleanly under strict ESM on Node 22~~ | — | **Retired.** The §3 spike ran and passed; no CJS fallback needed |
+| Apps run against a stale `dist` because packages must now be built before they start (§3 F-1) | Silent use of outdated code | `tsc -b` wired into the dev and CI entry points; the app's start script depends on the build |
 | The 150–250 MB memory extrapolation (§5.1) is wrong for a real 5M-event run | Worker OOM under load | Hard bundle-size cap; the existing throughput benchmark measures it before the budget is claimed met |
 | Prisma + hand-edited partition SQL diverges from the Prisma schema | Migration drift, silent failures | A migration test that applies every migration to an empty database and diffs against the expected schema |
 | Verdict wait ties up an API worker for up to 25 s | Reduced API concurrency | The wait is event-driven on Redis pub/sub, not polling; the window is project-configurable and can be set to 0 |
