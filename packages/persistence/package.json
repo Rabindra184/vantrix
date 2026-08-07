@@ -1,0 +1,27 @@
+{
+  "name": "@perfportal/persistence",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "perfportal-source": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@perfportal/core": "workspace:*",
+    "@perfportal/statistics": "workspace:*",
+    "@prisma/client": "^6.19.3",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "prisma": "^6.19.3"
+  }
+}
