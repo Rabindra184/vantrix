@@ -3798,6 +3798,37 @@ Expected: FAIL — `Cannot find module '../src/auth/tokens.js'`.
 
 `@node-rs/argon2` ships prebuilt binaries, so no native toolchain is needed on a developer machine or in CI.
 
+**Vitest cannot run NestJS dependency injection without an SWC transform.** Verified before this plan was executed: `tsc` emits `__metadata(...)` for a decorated class with constructor parameters; **esbuild — which is vitest's transformer — does not**, because emitting `design:paramtypes` needs full type information that esbuild deliberately does not compute. Without it, every `Test.createTestingModule` boot fails with "Nest can't resolve dependencies". The pre-flight spike did not catch this because it ran `tsc`-built output, not vitest.
+
+Add the transform to **both** vitest configs. Install first:
+
+```bash
+pnpm add -Dw unplugin-swc @swc/core
+```
+
+`vitest.config.ts` and `vitest.integration.config.ts` each gain:
+
+```ts
+import swc from 'unplugin-swc';
+
+export default defineConfig({
+  plugins: [
+    swc.vite({
+      // Only apps use decorators; packages stay on the faster esbuild path.
+      include: /apps\/.*\.ts$/,
+      jsc: {
+        target: 'es2022',
+        parser: { syntax: 'typescript', decorators: true },
+        transform: { legacyDecorator: true, decoratorMetadata: true },
+      },
+    }),
+  ],
+  // ...existing resolve and test blocks unchanged
+});
+```
+
+`decoratorMetadata: true` is the setting that matters. `legacyDecorator: true` matches `experimentalDecorators` in the app tsconfigs — the two must agree, or the same class compiles to different shapes under test and at runtime.
+
 - [ ] **Step 4: Write the token module**
 
 `apps/api/src/auth/tokens.ts`:
@@ -4379,17 +4410,26 @@ Expected: PASS, 6 tests.
 
 - [ ] **Step 10: Falsify the boot assertion — the F-2 finding**
 
+Under vitest the binding setting is the **SWC plugin's** `decoratorMetadata`, not the app tsconfig's `emitDecoratorMetadata` — vitest never reads the app tsconfig for this. Flip the plugin setting in `vitest.integration.config.ts`:
+
 ```bash
-sed -i.bak 's/"emitDecoratorMetadata": true/"emitDecoratorMetadata": false/' apps/api/tsconfig.json
-pnpm build
+sed -i.bak 's/decoratorMetadata: true/decoratorMetadata: false/' vitest.integration.config.ts
 pnpm vitest run --config vitest.integration.config.ts apps/api/test/auth.integration.test.ts
 ```
 
-Expected: FAIL on "injects every dependency". Then restore:
+Expected: FAIL on "injects every dependency", or a Nest "can't resolve dependencies" error at boot. Either proves the assertion is live. Then restore:
 
 ```bash
-mv apps/api/tsconfig.json.bak apps/api/tsconfig.json && pnpm build
+mv vitest.integration.config.ts.bak vitest.integration.config.ts
 ```
+
+Both settings must stay true: the tsconfig one governs the built output that actually runs in production, the plugin one governs what the tests exercise. Verify the tsconfig side separately:
+
+```bash
+pnpm build && grep -c "__metadata" apps/api/dist/auth/auth.guard.js
+```
+
+Expected: a non-zero count. If it is zero, the shipped app cannot inject anything, however green the tests are.
 
 - [ ] **Step 11: Commit**
 
