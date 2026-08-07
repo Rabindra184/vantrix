@@ -1,4 +1,4 @@
-import { ingestError, type CanonicalEvent } from '@perfportal/core';
+import { ingestError, type CanonicalEvent, type MetricFamily, type MetricScope } from '@perfportal/core';
 import { BucketSeries, type Bucket } from './buckets.js';
 import { ErrorRollup } from './errors-rollup.js';
 import { IndicatorCounter, isWarmup, type IndicatorBands } from './indicators.js';
@@ -34,7 +34,12 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   let firstMs = Number.POSITIVE_INFINITY;
   let lastMs = 0;
 
-  const rollups = new Map<string, { scope: 'run' | 'request'; name: string; family: 'response_time'; builder: RollupBuilder }>();
+  // Keyed by (scope, name, family) so the same group name can hold a group_cumulated
+  // AND a group_duration entry at once. The key is an opaque lookup token only — scope,
+  // name and family are always read back from the stored fields, never recovered by
+  // parsing the key, so a name containing the delimiter can never be truncated or
+  // collide with another entry (see the "map delimiter" regression test).
+  const rollups = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; builder: RollupBuilder }>();
   const series = new Map<string, BucketSeries>();
   const indicators = new IndicatorCounter({ lowerMs: opts.lowerMs ?? 800, higherMs: opts.higherMs ?? 1200 });
   const errors = new ErrorRollup();
@@ -45,16 +50,34 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     if (!s) { s = new BucketSeries({ startMs: runStartMs, maxBuckets: max }); series.set(key, s); }
     return s;
   };
-  const rollupFor = (scope: 'run' | 'request', name: string): RollupBuilder => {
-    const key = scopeKey(scope, name);
+  // Space-joined lookup token. A group/request name may itself contain spaces, but
+  // that can never fold two distinct (scope, name, family) triples onto one key:
+  // scope and family are always drawn from a few fixed literals, and no MetricFamily
+  // literal is a suffix of another, so the trailing " <family>" segment is always
+  // unambiguous. finish() reads scope/name/family back from the stored entry fields
+  // below, never by parsing this key.
+  const rollupKey = (scope: MetricScope, name: string, family: MetricFamily): string =>
+    `${scope} ${name} ${family}`;
+  const rollupFor = (scope: MetricScope, name: string, family: MetricFamily): RollupBuilder => {
+    const key = rollupKey(scope, name, family);
     let entry = rollups.get(key);
-    if (!entry) { entry = { scope, name, family: 'response_time', builder: new RollupBuilder() }; rollups.set(key, entry); }
+    if (!entry) { entry = { scope, name, family, builder: new RollupBuilder() }; rollups.set(key, entry); }
     return entry.builder;
   };
 
   for (const e of events) {
     if (e.type === 'meta') { runStartMs = e.startedAtMs; continue; }
-    if (e.type !== 'request') continue;                     // group/user scopes: Task 11
+    if (e.type === 'group') {
+      // Group name is the hierarchy joined with '/' (e.g. 'Catalog/Recommendations').
+      // cumulatedResponseTimeMs and (endMs - startMs) are deliberately tracked as two
+      // separate families — they diverge whenever requests inside the group overlap,
+      // so one must never be derived from the other.
+      const name = e.groups.join('/');
+      rollupFor('group', name, 'group_cumulated').add(e.cumulatedResponseTimeMs, e.ok);
+      rollupFor('group', name, 'group_duration').add(e.endMs - e.startMs, e.ok);
+      continue;
+    }
+    if (e.type !== 'request') continue;                     // user scopes: out of scope for Task 11
 
     endpoints.add(e.name);
     if (endpoints.size > maxEndpoints) {
@@ -79,8 +102,8 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
 
     // Summary stats exclude warm-up.
     if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
-    rollupFor('run', '').add(duration, e.ok);
-    rollupFor('request', e.name).add(duration, e.ok);
+    rollupFor('run', '', 'response_time').add(duration, e.ok);
+    rollupFor('request', e.name, 'response_time').add(duration, e.ok);
     indicators.add(duration, e.ok);
     if (!e.ok && e.message) errors.add(e.message);
   }
