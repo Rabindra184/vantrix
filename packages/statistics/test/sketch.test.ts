@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Sketch } from '../src/sketch.js';
+import { RELATIVE_ACCURACY, Sketch } from '../src/sketch.js';
 
 /** Deterministic three-segment mixture: 90% uniform [20,200], 9% uniform [300,800], 1% uniform [1500,3000] — no Math.random, so failures reproduce. */
 function latencies(n: number): number[] {
@@ -123,6 +123,48 @@ describe('Sketch quantile fuzz (regression for the float round-trip rank bug)', 
       }
     }
     expect(violations).toEqual([]);
+  });
+});
+
+describe('Sketch sum (persist -> reload)', () => {
+  it('reconstructs sum from the bucket store within the relative-accuracy bound, instead of silently returning 0', () => {
+    const vals = latencies(200_000);
+    const trueSum = vals.reduce((a, b) => a + b, 0);
+    const s = new Sketch();
+    for (const v of vals) s.accept(v);
+
+    // Before any serialization, sum is exact (accumulated directly by DDSketch#accept).
+    expect(s.sum).toBeCloseTo(trueSum, 6);
+
+    const reloaded = Sketch.deserialize(s.serialize());
+    // The bug this regresses: `fromProto` never restores `sum`, so an unpatched
+    // deserialize silently returns 0 here instead of throwing or reconstructing.
+    expect(reloaded.sum).not.toBe(0);
+    const relErr = Math.abs(reloaded.sum - trueSum) / trueSum;
+    // <= not <: same convention as every other accuracy assertion in this file.
+    expect(relErr).toBeLessThanOrEqual(RELATIVE_ACCURACY);
+  });
+
+  it('reconstructed sum survives merge after a reload, same as count and quantiles', () => {
+    const a = new Sketch();
+    const b = new Sketch();
+    for (let i = 1; i <= 5000; i++) a.accept(i);
+    for (let i = 5001; i <= 10000; i++) b.accept(i);
+    const trueSum = ((10000 * 10001) / 2);
+
+    const ra = Sketch.deserialize(a.serialize());
+    const rb = Sketch.deserialize(b.serialize());
+    ra.merge(rb);
+
+    const relErr = Math.abs(ra.sum - trueSum) / trueSum;
+    expect(relErr).toBeLessThanOrEqual(RELATIVE_ACCURACY);
+  });
+
+  it('an empty sketch reloads with sum 0, exactly — no bucket to reconstruct from', () => {
+    const s = new Sketch();
+    const reloaded = Sketch.deserialize(s.serialize());
+    expect(reloaded.count).toBe(0);
+    expect(reloaded.sum).toBe(0);
   });
 });
 

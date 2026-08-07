@@ -36,6 +36,25 @@ export interface StatKey {
   family: string;
 }
 
+/**
+ * The series query, shared verbatim between `MetricReader.series` and the
+ * "prunes partitions" integration test (see metrics.integration.test.ts). That
+ * sharing is load-bearing: `run_started_on = $1` is the partition-key predicate
+ * that lets Postgres prune `run_series_bucket`'s range partitions down to one.
+ * A query that filters on run_id alone cannot prune and silently scans every
+ * partition instead — the exact failure this design exists to prevent. Editing
+ * this constant is what the "prunes partitions" test actually exercises; a
+ * hand-copied EXPLAIN query in the test file would drift from this one and
+ * stop catching that regression.
+ */
+export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, ok_count, ko_count,
+              min_ms, max_ms, mean_ms, percentiles
+         FROM run_series_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+          AND scope = $5 AND name = $6
+        ORDER BY start_offset_ms`;
+
 export class MetricReader {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -83,7 +102,8 @@ export class MetricReader {
   /**
    * runStartedOn is REQUIRED, not optional. It is the partition key: a query
    * filtering on run_id alone cannot prune and scans every partition. The
-   * signature is what enforces that, and a test asserts the plan.
+   * signature is what enforces that, and the "prunes partitions" integration
+   * test asserts the plan of this exact query via the shared `SERIES_SQL`.
    */
   async series(
     scope: TenantScope,
@@ -92,13 +112,7 @@ export class MetricReader {
     sel: { scope: string; name: string },
   ): Promise<StoredBucket[]> {
     const { rows } = await this.pool.query(
-      `SELECT start_offset_ms, started_count, ended_count, ok_count, ko_count,
-              min_ms, max_ms, mean_ms, percentiles
-         FROM run_series_bucket
-        WHERE run_started_on = $1 AND run_id = $2
-          AND org_id = $3 AND project_id = $4
-          AND scope = $5 AND name = $6
-        ORDER BY start_offset_ms`,
+      SERIES_SQL,
       [runStartedOn, runId, scope.orgId, scope.projectId, sel.scope, sel.name],
     );
     return rows.map((r) => ({
