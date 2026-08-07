@@ -319,7 +319,7 @@ Requirements are identified `FR-<MODULE>-<n>`.
 |---|---|:-:|
 | FR-STAT-1 | **Canonical event model.** Every plugin converts native output into a common request-event stream. All downstream logic is tool-agnostic. | P0 |
 | FR-STAT-2 | **Full statistics per scope.** For the run globally, per group, per request, and per scenario: total count, OK count, KO count, KO %, count/second, min, max, mean, standard deviation, and configurable percentiles (default 50th, 75th, 95th, 99th). | P0 |
-| FR-STAT-3 | **Response time and latency are tracked separately.** Response time is the full request duration; latency is time to first byte. Both carry the complete statistic set and their own distributions and percentile series, where the source tool provides the distinction. | P0 |
+| FR-STAT-3 | **Response time and latency are tracked separately** where the source tool provides the distinction — response time is the full request duration, latency is time to first byte. Both carry the complete statistic set with their own distributions and percentile series. **Beyond parity, not parity:** Gatling 3.15.1.2 reports no latency at all (§A.9 F-2), so this is capability-gated per §21.3 and hidden for tools that cannot express it. | P1 |
 | FR-STAT-4 | **Mergeable percentile sketches.** Percentiles are stored as DDSketch sketches per scope and per time bucket with 1% guaranteed relative accuracy. **Averaging percentiles anywhere in the system is a defect.** Re-aggregation always merges sketches. | P0 |
 | FR-STAT-5 | **Pre-bucketed time series.** Every time-series chart reads pre-aggregated buckets. The browser never receives raw per-request events. | P0 |
 | FR-STAT-6 | **Adaptive bucketing.** Bucket width is chosen so bucket count stays within a cap, by starting fine and coalescing adjacent buckets. Because sketches merge exactly, coalescing is lossless. | P0 |
@@ -1052,7 +1052,8 @@ Ordered to mirror the Gatling report so a migrating user finds everything where 
 | 4 | **Request counts** | Donut: OK vs KO with totals and percentage | ✓ Number of requests |
 | 5 | **Statistics table** | Hierarchical (groups expandable to requests), virtualized, sortable on every column, filterable by name (substring + regex). Columns — **Requests:** Total, OK, KO, %KO, Cnt/s · **Response Time (ms):** Min, 50th, 75th, 95th, 99th, Max, Mean, Std Dev. Percentile columns configurable per project | ✓ Statistics table |
 | 6 | **Errors table** | Distinct error message, count, percentage of total errors, affected endpoint count; expandable to per-endpoint breakdown | ✓ Errors |
-| 7 | **Active Users over Time** | Line per scenario plus total. Source badge: `sessions` or `in-flight proxy` | ✓ Active Users |
+| 7 | **Concurrent Users over Time** | Line per scenario plus total. Source badge: `sessions` or `in-flight proxy` | ✓ Number of concurrent users |
+| 7ᵇ | **Users Started per Second** | User *arrival rate*, line per scenario. Distinct from concurrency: a constant arrival rate produces a rising concurrency curve when the service slows, and that divergence is the signal | ✓ Number of users started per second |
 | 8 | **Response Time Distribution** | Histogram, log-spaced bins, OK and KO as distinct series | ✓ Response Time Distribution |
 | 9 | **Response Time Percentiles over Time** | Stacked percentile bands (min, 25th, 50th, 75th, 80th, 85th, 90th, 95th, 98th, 99th, 99.9th, max), **log-scaled Y** so all bands stay legible; band selection toggleable | ✓ Response Time Percentiles over Time |
 | 10 | **Requests per Second over Time** | All / OK / KO series. Active users is **not** overlaid on a second axis — it is the time-linked chart directly above, sharing one crosshair (§22.4) | ✓ Requests per Second |
@@ -1068,17 +1069,15 @@ Everything in §13.2 scoped to one request, plus the response-time/latency disti
 
 | # | Element | Notes | Gatling parity |
 |---|---|---|---|
-| 1 | Statistics row | Full statistic set for this request, response time **and** latency | ✓ |
+| 1 | Statistics row | Full statistic set for this request | ✓ |
 | 2 | Indicators | Bands for this request | ✓ |
 | 3 | Response Time Distribution | OK / KO series | ✓ |
-| 4 | **Latency Distribution** | OK / KO series — hidden if the plugin lacks the capability | ✓ |
 | 5 | Response Time Percentiles over Time | Full band set | ✓ |
-| 6 | **Latency Percentiles over Time** | Full band set | ✓ |
 | 7 | Requests per Second over Time | This request | ✓ |
 | 8 | Responses per Second over Time | This request | ✓ |
 | 9 | **Response Time against Global RPS** | Scatter/density, X = global RPS, Y = response time. Exposes the saturation knee | ✓ |
-| 10 | **Latency against Global RPS** | Scatter/density | ✓ |
 | 11 | Errors for this request | Message, count, share | ✓ |
+| 4·6·10 | *Latency distribution, latency percentiles, latency vs. global RPS* | **Beyond parity** — Gatling 3.15.1.2 reports no latency (§A.9 F-2). Rendered only when the plugin declares the `latency` capability; hidden entirely otherwise | — |
 | 12 | *Trend strip* | **Beyond parity** — this endpoint's p95 across recent comparable runs, inline | — |
 
 ---
@@ -1095,7 +1094,9 @@ Everything in §13.2 scoped to one request, plus the response-time/latency disti
 
 ---
 
-### 13.5 Scenario Detail page
+### 13.5 Scenario Detail page — *beyond parity*
+
+> Gatling 3.15.1.2 has **no scenario detail page** (§A.9 F-3); scenario identity appears only as a series in the global concurrent-users and user-start-rate charts. This page is a platform addition, not a parity obligation, and no parity test asserts it. It is retained because per-scenario analysis is genuinely useful and the canonical model already carries `scenario` on every request event.
 
 | Element | Notes |
 |---|---|
@@ -2067,7 +2068,11 @@ Plugins are npm packages named `@perfportal/plugin-<tool>`, following semantic v
 | **Locust** | V2 | CSV history and stats output |
 | **Artillery** | V2 | JSON report output |
 
-**Known risk for all of them:** some tool versions emit binary or aggregate-only output that makes event-level parsing impossible. The platform detects this and fails with an actionable error rather than silently falling back to a weaker metrics path — a fallback would produce runs that look identical to full-fidelity runs while carrying no sketches and no time series, breaking the §18.1 DB-2 guarantee for some rows and not others (§28, R-4).
+> **Binary log formats are the norm, not the exception — verified.** Gatling 3.15.1.2 writes `simulation.log` as a length-prefixed **binary** format; there is no text option. **Decoding it is therefore the Gatling plugin's primary ingest path and core M1 scope**, not an error branch (§A.9 F-1). Expect the same of other modern tools and validate each before estimating its plugin.
+>
+> Because these formats carry no compatibility guarantee, every plugin reads the embedded version first and selects its record layout from it, and each supported major is pinned to a checked-in reference fixture.
+>
+> **Where decoding genuinely fails** — an unrecognised layout from a future version — the platform fails with an actionable error naming the detected version, and does **not** fall back to the tool's own aggregates. That fallback would produce runs indistinguishable from full-fidelity ones while carrying no sketches and no time series, breaking the §18.1 DB-2 guarantee for some rows and not others (§28, R-4). Verification also showed the fallback is weaker than assumed: `stats.json` and `global_stats.json` no longer exist, so it would mean scraping generated HTML.
 
 ---
 
@@ -2351,8 +2356,8 @@ Priorities in §6 mark **V1 program** membership. This section is the authoritat
 |---|---|---|:-:|---|---|
 | **R-1** | **Parity is larger than estimated** — the Gatling report has more surface than a walkthrough suggests | High | High | Appendix A enumerates it exhaustively before estimation; parity tests written before the UI; M3 explicitly scoped to nothing but parity | Appendix A rows incomplete at M2 exit |
 | **R-2** | **Node.js throughput insufficient** for the ingest budget | High | Medium | Streaming parse with bounded memory; parsing isolated in workers; throughput benchmark as a CI test from M1, not a late discovery; worked memory model in §20.2 | Benchmark misses budget by > 25% at M2 |
-| **R-3** | **Tool log formats change between versions** | Medium | High | Version read first and driving the record schema; parsing anchored on stable tokens, never column positions; raw bundles retained for reprocessing; loud, actionable failures | Any silent misparse reaching production |
-| **R-4** | **Binary or aggregate-only tool output** makes event-level parsing impossible | Medium | Medium | Detect and fail with an actionable error. **Explicitly no silent fallback** to tool aggregates — it would create runs lacking sketches and time series while appearing identical to full-fidelity runs, breaking DB-2 for some rows only | A major tool version ships binary-only output |
+| **R-3** | **Tool log formats change between versions**, and binary formats carry no compatibility guarantee | High | High | Version read first and driving the record layout; each supported major pinned to a checked-in reference fixture; raw bundles retained for reprocessing; loud, actionable failures. **Re-rated upward after verification** — the format is binary and unversioned in practice, so this is now the primary ongoing maintenance burden of the Gatling plugin | Any silent misparse reaching production; any new tool major |
+| **R-4** | ~~Binary output makes event-level parsing impossible~~ → **Binary decoding is core scope, and a future layout change breaks ingest** | High | Medium | **Reclassified, not mitigated.** Verification showed binary is Gatling's default and only format, so decoding it is required M1 work, not an error path (§A.9 F-1). Residual risk is a future major changing the layout: mitigated by version-gated decoders, pinned fixtures, retained raw bundles enabling reprocess-after-fix, and failing loudly rather than falling back to aggregates | A tool major ships a layout the installed plugin cannot decode |
 | **R-5** | **Noisy environments produce false regressions**, teams mute alerts | High | High | MAD-based detection against each endpoint's own variability (§24.3); comparability fingerprint; acknowledgement workflow; digest mode | Acknowledgement rate for `environmental` > 30% |
 | **R-6** | **Users compare across tools** and draw wrong conclusions | High | Medium | Hard refusal to overlay tools (§6.4.6); tool in the fingerprint; explanatory message instead of a chart | Any UI path found that permits it |
 | **R-7** | **Prisma used on the metrics read path**, degrading query performance | High | Medium | §16.8 constraint stated as architecture, not preference; lint rule confining metric-table access to M6's raw-SQL repositories; performance tests at 500k runs | Any metric query issued through Prisma |
@@ -2425,14 +2430,19 @@ Weekly active users by persona; runs ingested per week; comparison views per reg
 
 **This appendix is the V1 gate.** AC-PARITY-1 through AC-PARITY-4 are asserted against it, and CI fails if any row regresses. It exists so "100% parity" is a checklist an engineer can complete rather than a claim a reviewer must trust.
 
-### A.0 Version anchoring and method
+### A.0 Version anchoring and verification record
 
-The structure of Gatling's HTML report has changed across major versions — chart sets, the group model, and the log format itself have all moved. Therefore:
+> **VERIFIED — 2026-08-07 against Gatling 3.15.1.2.**
+> This matrix is no longer written from expectation. It was validated element by element against a real generated report, and **five rows were wrong**. Those corrections are recorded in §A.9. The fixture that produced the reference report is in [`fixtures/gatling-3.15.1.2/`](fixtures/gatling-3.15.1.2/).
 
-1. The matrix is **pinned to a reference Gatling major version**, recorded in the test fixture repository alongside a checked-in reference bundle and its generated HTML report.
-2. Parity is **re-validated for each newly supported major**, and differences are recorded as new matrix rows rather than silently absorbed.
-3. Verification is **element-by-element against the generated report**, not against documentation or memory. Where the reference report and this matrix disagree, the report wins and the matrix is corrected.
-4. Any element found in the reference report that is absent from this matrix is a **defect in this appendix**, and the matrix is amended before implementation proceeds.
+The structure of Gatling's HTML report has changed materially across major versions — chart sets, the group model, the latency charts, and the log format itself have all moved or disappeared. Therefore:
+
+1. The matrix is **pinned to Gatling 3.15.1.2**, with the fixture and generated report checked in.
+2. Parity is **re-validated for each newly supported major**, and differences are recorded as new rows rather than silently absorbed.
+3. Verification is **element-by-element against a generated report**, never against documentation or recollection. Where the report and this matrix disagree, **the report wins**.
+4. Any element found in the reference report but absent here is a **defect in this appendix**, fixed before implementation proceeds.
+
+**Reference fixture.** A two-scenario simulation (`Browse`, `Checkout`) with a nested group hierarchy, six endpoints of deliberately different latency shapes, two distinct failure modes, a ramp-then-steady injection profile, and three assertions — two passing, one failing. It targets a local seeded server, so the run is reproducible and no external service receives load. It exists specifically to make every row below observable in one report.
 
 **Tolerances** (AC-PARITY-2): counts, OK/KO counts, and percentages **exact**; min, max, mean **exact**; standard deviation within **0.1%**; percentiles within **1% relative** (the DDSketch guarantee); distribution bin counts **exact** when bin boundaries are aligned.
 
@@ -2465,24 +2475,26 @@ The structure of Gatling's HTML report has changed across major versions — cha
 | G-23 | Requests per Second over Time — All / OK / KO | FR-STAT-7 | §13.2 ⑩ | PT-G-35 | Exact per bucket |
 | G-24 | Responses per Second over Time — All / OK / KO | FR-STAT-7 | §13.2 ⑪ | PT-G-36 | Exact per bucket |
 | G-25 | Active users shown alongside the per-second charts | FR-STAT-9 | §13.2 ⑦ + §22.4 | PT-G-37 | Information parity — see §A.7 |
+| **G-26** | **Number of users started per second** — user *arrival rate*, distinct from concurrent users | FR-STAT-9 | §13.2 ⑦ᵇ | PT-G-38 | Exact per bucket |
+
+> **G-26 was missing from this matrix until verification.** Gatling renders `UserStartRateContainerId` on the global page as a separate chart from `MaxConcurrentUsersContainerId`. Arrival rate and concurrency are different quantities — a constant arrival rate produces a *rising* concurrency curve when the service slows, and that divergence is exactly the signal an engineer looks for. Omitting it would have been a real parity gap.
 
 ### A.2 Request detail page
 
 | # | Gatling element | Platform requirement | Location | Test | Tolerance |
 |:-:|---|---|---|---|---|
-| R-01 | Statistics for the request — full column set | FR-STAT-2 | §13.3 ① | PT-R-01 | Per §A.5 |
-| R-02 | Ranges / indicators for the request | FR-STAT-11 | §13.3 ② | PT-R-02 | Exact |
-| R-03 | Response Time Distribution — OK and KO | FR-STAT-10 | §13.3 ③ | PT-R-03 | Bin counts exact |
-| R-04 | **Latency Distribution** — OK and KO | FR-STAT-3, FR-STAT-10 | §13.3 ④ | PT-R-04 | Bin counts exact |
-| R-05 | Response Time Percentiles over Time | FR-STAT-4 | §13.3 ⑤ | PT-R-05 | 1% relative |
-| R-06 | **Latency Percentiles over Time** | FR-STAT-3, FR-STAT-4 | §13.3 ⑥ | PT-R-06 | 1% relative |
-| R-07 | Requests per Second over Time | FR-STAT-7 | §13.3 ⑦ | PT-R-07 | Exact per bucket |
-| R-08 | Responses per Second over Time | FR-STAT-7 | §13.3 ⑧ | PT-R-08 | Exact per bucket |
-| R-09 | **Response Time against Global RPS** | FR-STAT-14 | §13.3 ⑨ | PT-R-09 | 1% relative |
-| R-10 | **Latency against Global RPS** | FR-STAT-3, FR-STAT-14 | §13.3 ⑩ | PT-R-10 | 1% relative |
-| R-11 | Errors for this request | FR-STAT-12 | §13.3 ⑪ | PT-R-11 | Exact |
+| RQ-01 | Statistics for the request — full column set | FR-STAT-2 | §13.3 ① | PT-RQ-01 | Per §A.5 |
+| RQ-02 | Ranges / indicators for the request | FR-STAT-11 | §13.3 ② | PT-RQ-02 | Exact |
+| RQ-03 | Response Time Distribution — OK and KO | FR-STAT-10 | §13.3 ③ | PT-RQ-03 | Bin counts exact |
+| RQ-05 | Response Time Percentiles over Time | FR-STAT-4 | §13.3 ⑤ | PT-RQ-05 | 1% relative |
+| RQ-07 | Requests per Second over Time | FR-STAT-7 | §13.3 ⑦ | PT-RQ-07 | Exact per bucket |
+| RQ-08 | Responses per Second over Time | FR-STAT-7 | §13.3 ⑧ | PT-RQ-08 | Exact per bucket |
+| RQ-09 | **Response Time against Global RPS** (`responseTimeScatterContainerId`) | FR-STAT-14 | §13.3 ⑨ | PT-RQ-09 | 1% relative |
+| RQ-11 | Errors for this request | FR-STAT-12 | §13.3 ⑪ | PT-RQ-11 | Exact |
 
-> **Rows R-04, R-06, R-09, and R-10 are the ones most often missed** by teams claiming Gatling parity. The response-time/latency distinction and the two saturation-correlation charts are genuine report content, not extras. A platform without them is not at parity, whatever else it has.
+> **RQ-04, RQ-06, and RQ-10 were removed — they do not exist.** This matrix originally claimed a Latency Distribution, Latency Percentiles over Time, and Latency against Global RPS on the request page. A case-insensitive search of the entire generated report returns **zero occurrences of "latency"**: Gatling 3.15.1.2 reports response time only. Those charts existed in older Gatling versions and have since been removed.
+>
+> **Consequence:** latency as a separate metric family (FR-STAT-3) is **beyond parity**, not parity. It stays in the product for tools that do report it, gated by the `latency` plugin capability (§21.3), and is listed under §A.8 rather than counted toward the GA gate. Row RQ-09 survives — the response-time scatter is real.
 
 ### A.3 Group detail page
 
@@ -2494,20 +2506,23 @@ The structure of Gatling's HTML report has changed across major versions — cha
 | GR-04 | Cumulated response time — percentiles over time | FR-STAT-4, FR-STAT-13 | §13.4 | PT-GR-04 | 1% relative |
 | GR-05 | Duration — distribution | FR-STAT-13 | §13.4 | PT-GR-05 | Bin counts exact |
 | GR-06 | Duration — percentiles over time | FR-STAT-13 | §13.4 | PT-GR-06 | 1% relative |
-| GR-07 | Requests / responses per second for the group | FR-STAT-7 | §13.4 | PT-GR-07 | Exact per bucket |
 | GR-08 | Nested groups rendered hierarchically | FR-STAT-13 | §13.4 | PT-GR-08 | Structure exact |
-| GR-09 | Group indicators / ranges | FR-STAT-11 | §13.4 | PT-GR-09 | Exact |
+| GR-09 | Group indicators / ranges (`RangesContainerId`) | FR-STAT-11 | §13.4 | PT-GR-09 | Exact |
 
-**Cumulated response time and duration are different quantities** — the first sums the durations of the requests inside the group, the second measures the group's wall-clock span. Collapsing them into one metric is the most common group-parity error, and `metric_family` (§18.2) exists to keep them distinct end to end.
+> **GR-07 was removed — it does not exist.** The group page in 3.15.1.2 carries exactly five containers: ranges, cumulated-response-time distribution and over-time, and duration distribution and over-time. There are no requests/responses-per-second charts at group scope. Verified against the nested `Catalog` → `Recommendations` group in the fixture.
 
-### A.4 Scenario scope
+**Cumulated response time and duration are different quantities** — the first sums the durations of the requests inside the group, the second measures the group's wall-clock span. Collapsing them into one metric is the most common group-parity error, and `metric_family` (§18.2) exists to keep them distinct end to end. Both were confirmed present as separate distribution and over-time chart pairs.
+
+### A.4 Scenario scope — **not a parity surface**
+
+> **Rows S-01 through S-04 were removed. Gatling 3.15.1.2 has no scenario detail page.** The report contains `index.html`, seven `req_*.html` pages, and three `group_*.html` pages — and nothing else. Scenario identity appears only as a series in the global concurrent-users and user-start-rate charts.
+>
+> The Scenario Detail page specified in §13.5 is therefore a **beyond-parity feature** (§A.8). It remains in the product — per-scenario analysis is genuinely useful and the canonical model already carries `scenario` on every event — but it does not count toward the GA parity gate, and no parity test asserts it.
 
 | # | Gatling element | Platform requirement | Location | Test |
 |:-:|---|---|---|---|
-| S-01 | Per-scenario statistics | FR-STAT-2 | §13.5 | PT-S-01 |
-| S-02 | Per-scenario active users | FR-STAT-9 | §13.5 | PT-S-02 |
-| S-03 | Per-scenario request composition | FR-STAT-2 | §13.5 | PT-S-03 |
-| S-04 | Scenario chart set | FR-DASH-3 | §13.5 | PT-S-04 |
+| S-01 | Scenario identity as a series in the concurrent-users chart | FR-STAT-9 | §13.2 ⑦ | PT-S-01 |
+| S-02 | Scenario identity as a series in the user-start-rate chart | FR-STAT-9 | §13.2 ⑦ᵇ | PT-S-02 |
 
 ### A.5 Statistics table columns — exhaustive
 
@@ -2547,13 +2562,43 @@ Two, both recorded here so they are visible rather than discovered.
 | # | Deviation | Rationale | Parity status |
 |:-:|---|---|---|
 | D-01 | **Active users is a separate time-linked chart rather than a secondary-axis overlay** on the per-second charts | A dual-axis chart lets two unrelated scales be positioned so lines appear to track; the correlation becomes an artifact of axis choice. Every value remains present and readable at the same instant via the shared crosshair (§22.4) | **Information parity, corrected encoding.** Not a gap |
-| D-02 | **No fallback to tool-generated aggregates** when event-level parsing is impossible | Aggregates yield no sketches and no time series. Such runs would look identical to full-fidelity runs while silently lacking re-aggregation, zoom, and merge guarantees — breaking DB-2 for some rows only. The platform fails loudly instead (§21.8, R-4) | **Intentional scope exclusion**, not a parity gap |
+| D-02 | **No fallback to tool-generated aggregates** when the binary log cannot be parsed for a given tool version | Aggregates yield no sketches and no time series; such runs would look identical to full-fidelity runs while lacking re-aggregation, zoom, and merge guarantees, breaking DB-2 for some rows only. **Materially revised after verification** — this is now a narrow last-resort rule, not the primary handling of binary logs. See §A.9 F-1 | **Intentional scope exclusion**, not a parity gap |
 
 ### A.8 Beyond parity
 
-Present in the platform, absent from the Gatling report — listed to keep the parity claim and the improvement claim separate.
+Present in the platform, absent from the Gatling 3.15.1.2 report — listed to keep the parity claim and the improvement claim separate.
 
-Filtering, sorting, regex search, and drill-down on every table · cross-build history and trends · run comparison with deltas · endpoint × build heatmap · baselines and regression detection · SLA gating · live monitoring · annotations · commit attribution · saturation analysis across runs · export in multiple formats · a public API for everything visible.
+**Promoted here by verification** (previously miscounted as parity): **latency as a separate metric family** with its own distribution, percentile-over-time, and RPS-correlation charts (FR-STAT-3, capability-gated per §21.3) · **Scenario Detail page** (§13.5).
+
+**Original beyond-parity set:** filtering, sorting, regex search, and drill-down on every table · cross-build history and trends · run comparison with deltas · endpoint × build heatmap · baselines and regression detection · SLA gating · live monitoring · annotations · commit attribution · saturation analysis across runs · export in multiple formats · a public API for everything visible.
+
+### A.9 Verification findings — 2026-08-07, Gatling 3.15.1.2
+
+Five corrections. Recorded rather than quietly patched, because the size of the parity claim is what the GA gate rests on and it moved in both directions.
+
+| # | Finding | Severity | Resolution |
+|:-:|---|---|---|
+| **F-1** | **`simulation.log` is a binary format.** Not TSV. The file begins with a length-prefixed version string (`3.15.1`), the simulation class name, and the scenario name table, followed by binary records | **Critical — invalidates a prior design decision** | See below |
+| **F-2** | **No latency charts exist.** A case-insensitive search of the entire report yields zero matches for "latency". Rows RQ-04, RQ-06, RQ-10 deleted | High — parity scope over-claimed | FR-STAT-3 moved to §A.8 |
+| **F-3** | **No scenario detail page exists.** The report is `index.html` + 7 `req_*.html` + 3 `group_*.html`. Rows S-01…S-04 replaced with two chart-series rows | High — parity scope over-claimed | §13.5 moved to §A.8 |
+| **F-4** | **Group pages have no per-second charts.** Exactly five containers: ranges, cumulated-RT distribution and over-time, duration distribution and over-time. Row GR-07 deleted | Medium | Removed |
+| **F-5** | **"Number of users started per second" chart was missing** from this matrix (`UserStartRateContainerId`) | Medium — parity scope under-claimed | Added as G-26 |
+| — | Statistics table columns, indicator bands, error table, assertions table, ranges on request and group pages, and the response-time scatter **all verified present and exactly as specified** | — | No change |
+
+#### F-1 in detail — why this reverses a decision
+
+The earlier position (D-02, §21.8, R-4) was: *detect a binary log, fail loudly with an actionable error, and never fall back to tool aggregates.* That was reasoned on the assumption that binary logs are an **edge case** affecting some tool versions.
+
+**They are not an edge case. Binary is Gatling's current default and only log format.** Applying the original rule to Gatling 3.15.1.2 produces a platform that cannot ingest Gatling **at all** — which would make the entire V1 parity commitment unachievable.
+
+**Corrected position:**
+
+1. **Parsing the binary `simulation.log` is the Gatling plugin's primary and required ingest path**, not an error branch. It is core M1 scope, and the plugin is version-aware because the format is unversioned in practice and may change between majors.
+2. **`LOG_BINARY_FORMAT` is no longer an ingest error for Gatling.** It is retained in the error taxonomy for a genuinely unrecognised binary layout — a *future* format the installed plugin version does not understand.
+3. **The no-aggregate-fallback rule survives, but narrowed.** It now applies only when the binary format cannot be decoded for a given version. It is a last resort, not the standard path. Verification also showed the fallback is *less* viable than assumed: `stats.json` and `global_stats.json` no longer exist, statistics are embedded directly in `index.html`, and chart series are inlined as JavaScript arrays — so a fallback would mean scraping generated HTML, which is far more brittle than the binary format it would be replacing.
+4. **R-3 and R-4 in §28 are re-rated.** Binary-format handling moves from a *mitigated risk* to a *core implementation requirement with a version-compatibility risk attached*.
+
+**This is the finding that justified validating the matrix before writing code rather than after.** Building M1 on the original assumption would have produced a Gatling plugin that rejects every real Gatling run, and the error would not have surfaced until first contact with an actual bundle.
 
 ---
 
