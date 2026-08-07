@@ -6,7 +6,7 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { isIngestError, problem, problemFromIngestError } from './problem.js';
+import { internalProblem, isIngestError, logInternalError, problem, problemFromIngestError } from './problem.js';
 
 /** Every error leaves as application/problem+json. Stack traces never do. */
 @Catch()
@@ -38,15 +38,8 @@ export class ProblemFilter implements ExceptionFilter {
       return;
     }
 
-    console.error('unhandled', traceId, exception);
-    const body = problem(
-      'INTERNAL',
-      500,
-      'The request could not be completed.',
-      `Retry the request. If it keeps failing, report trace ${traceId}.`,
-      traceId,
-    );
-    res.status(500).type('application/problem+json').send(body);
+    logInternalError(exception, traceId);
+    res.status(500).type('application/problem+json').send(internalProblem(traceId));
   }
 }
 

@@ -59,3 +59,26 @@ export function problem(
 export function isIngestError(e: unknown): e is IngestError {
   return e instanceof IngestError || (e instanceof Error && e.name === 'IngestError');
 }
+
+/**
+ * The generic, non-revealing body for any failure that isn't a deliberate,
+ * recognized rejection (an IngestError or an HttpException thrown on
+ * purpose). Shared by ProblemFilter's catch-all and AuthMiddleware's catch
+ * so the two paths can't drift apart again — the fields it returns are
+ * fixed and never derived from the triggering exception, so an internal
+ * detail (a database host, an ORM stack frame) can never leak through it.
+ */
+export function internalProblem(traceId: string): ProblemDetails {
+  return problem(
+    'INTERNAL',
+    500,
+    'The request could not be completed.',
+    `Retry the request. If it keeps failing, report trace ${traceId}.`,
+    traceId,
+  );
+}
+
+/** Server-side record of an unrecognized failure, keyed by the trace id returned to the caller. */
+export function logInternalError(exception: unknown, traceId: string): void {
+  console.error('unhandled', traceId, exception);
+}

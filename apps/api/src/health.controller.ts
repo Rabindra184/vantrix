@@ -1,5 +1,6 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import pg from 'pg';
+import { Public } from './auth/scopes.decorator.js';
 
 @Controller()
 export class HealthController {
@@ -14,12 +15,14 @@ export class HealthController {
   // @Inject sidesteps the reflection gap entirely.
   constructor(@Inject(pg.Pool) private readonly pool: pg.Pool) {}
 
+  @Public()
   @Get('/healthz')
   health(): { status: string } {
     return { status: 'ok' };
   }
 
   /** Readiness means dependencies answer, not merely that the process is up. */
+  @Public()
   @Get('/readyz')
   async ready(): Promise<{ status: string }> {
     await this.pool.query('SELECT 1');

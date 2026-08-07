@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { PrismaClient } from '@prisma/client';
 import {
   createPool,
@@ -27,6 +28,11 @@ export const CONFIG = Symbol('CONFIG');
     { provide: RuleRepository, useFactory: (p: PrismaClient) => new RuleRepository(p), inject: [PrismaClient] },
     AuthGuard,
     AuthMiddleware,
+    // Global so @Scopes() is enforced everywhere by default — a handler
+    // that forgets @UseGuards(AuthGuard) no longer skips scope checking.
+    // useExisting (not useClass) so this is the same instance as the
+    // AuthGuard provider above, not a second one.
+    { provide: APP_GUARD, useExisting: AuthGuard },
   ],
   exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, ProjectRepository, RunRepository, RuleRepository, AuthGuard, AuthMiddleware],
 })
