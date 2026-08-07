@@ -34,7 +34,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   let firstMs = Number.POSITIVE_INFINITY;
   let lastMs = 0;
 
-  const rollups = new Map<string, RollupBuilder>();
+  const rollups = new Map<string, { scope: 'run' | 'request'; name: string; family: 'response_time'; builder: RollupBuilder }>();
   const series = new Map<string, BucketSeries>();
   const indicators = new IndicatorCounter({ lowerMs: opts.lowerMs ?? 800, higherMs: opts.higherMs ?? 1200 });
   const errors = new ErrorRollup();
@@ -45,10 +45,11 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     if (!s) { s = new BucketSeries({ startMs: runStartMs, maxBuckets: max }); series.set(key, s); }
     return s;
   };
-  const rollupFor = (key: string): RollupBuilder => {
-    let b = rollups.get(key);
-    if (!b) { b = new RollupBuilder(); rollups.set(key, b); }
-    return b;
+  const rollupFor = (scope: 'run' | 'request', name: string): RollupBuilder => {
+    const key = scopeKey(scope, name);
+    let entry = rollups.get(key);
+    if (!entry) { entry = { scope, name, family: 'response_time', builder: new RollupBuilder() }; rollups.set(key, entry); }
+    return entry.builder;
   };
 
   for (const e of events) {
@@ -78,17 +79,16 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
 
     // Summary stats exclude warm-up.
     if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
-    rollupFor(scopeKey('run', '')).add(duration, e.ok);
-    rollupFor(scopeKey('request', e.name)).add(duration, e.ok);
+    rollupFor('run', '').add(duration, e.ok);
+    rollupFor('request', e.name).add(duration, e.ok);
     indicators.add(duration, e.ok);
     if (!e.ok && e.message) errors.add(e.message);
   }
 
   const windowMs = Math.max(0, lastMs - Math.max(firstMs, runStartMs + warmupMs));
   const stats: StatRollup[] = [];
-  for (const [key, b] of rollups) {
-    const [scope, name] = key.split(':') as ['run' | 'request', string];
-    stats.push(b.finish({ scope, name, family: 'response_time', windowMs, percentiles }));
+  for (const { scope, name, family, builder } of rollups.values()) {
+    stats.push(builder.finish({ scope, name, family, windowMs, percentiles }));
   }
 
   return {
