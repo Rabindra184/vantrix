@@ -52,4 +52,23 @@ describe('BucketSeries coalescing (AC-STAT-2)', () => {
     expect(b.endedCount).toBe(2);
     expect(b.koCount).toBe(1);
   });
+
+  it('enforces maxBuckets cap even with start-only edges', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 4 });
+    // Feed many start edges spread over a wide time range
+    for (let i = 0; i < 1000; i++) {
+      s.add(i * 1000, 100, true, 'start');  // one event per second, over 1000 seconds
+    }
+    // The cap must hold
+    expect(s.buckets().length).toBeLessThanOrEqual(4);
+
+    // Verify start-only edges don't pollute sketch or end counts
+    for (const b of s.buckets()) {
+      expect(b.startedCount).toBeGreaterThan(0);
+      expect(b.endedCount).toBe(0);
+      expect(b.okCount).toBe(0);
+      expect(b.koCount).toBe(0);
+      expect(b.sketch.count).toBe(0);
+    }
+  });
 });
