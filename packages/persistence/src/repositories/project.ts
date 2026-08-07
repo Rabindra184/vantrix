@@ -20,6 +20,8 @@ export interface ProjectSettings {
   maxBucketsEndpoint?: number;
   waitMs?: number;
   maxBundleBytes?: number;
+  /** Decompressed-bytes budget for openTarGzBundle. See @perfportal/storage. */
+  maxDecompressedBundleBytes?: number;
 }
 
 export class ProjectRepository {

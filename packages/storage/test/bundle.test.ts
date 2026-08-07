@@ -87,4 +87,34 @@ describe('openTarGzBundle', () => {
       code: 'BUNDLE_NOT_ARCHIVE',
     });
   });
+
+  it('rejects a highly-compressible archive whose decompressed size exceeds the budget, without expanding it fully', async () => {
+    // A run of zeros compresses to almost nothing (a decompression-bomb
+    // shape), so the compressed size on the wire tells you nothing about the
+    // memory cost of decompressing it. 5 MiB of zeros compresses to a few
+    // hundred bytes but must still be rejected once a small decompressed
+    // budget is configured, rather than being fully buffered in memory.
+    const zeros = Buffer.alloc(5 * 1024 * 1024, 0);
+    const archive = makeArchive({ 'simulation.log': zeros });
+    expect(archive.length).toBeLessThan(64 * 1024);
+
+    await expect(
+      openTarGzBundle(archive, { maxTotalBytes: 1024 * 1024 }),
+    ).rejects.toMatchObject({
+      code: 'BUNDLE_TOO_LARGE',
+      remediation: expect.stringMatching(/.+/),
+    });
+  });
+
+  it('rejects a single entry that exceeds a per-entry cap even when the total budget is larger', async () => {
+    const zeros = Buffer.alloc(2 * 1024 * 1024, 0);
+    const archive = makeArchive({ 'simulation.log': zeros });
+
+    await expect(
+      openTarGzBundle(archive, { maxTotalBytes: 8 * 1024 * 1024, maxEntryBytes: 1024 * 1024 }),
+    ).rejects.toMatchObject({
+      code: 'BUNDLE_TOO_LARGE',
+      remediation: expect.stringMatching(/.+/),
+    });
+  });
 });

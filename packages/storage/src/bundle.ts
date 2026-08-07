@@ -21,14 +21,50 @@ function safePath(name: string): string {
   return normalized;
 }
 
+/** Decompressed-bytes budget enforced by {@link openTarGzBundle}. */
+export interface BundleSizeLimits {
+  /** Running total across every entry's decompressed bytes. */
+  maxTotalBytes: number;
+  /** Cap on any single entry's decompressed bytes. Defaults to `maxTotalBytes`. */
+  maxEntryBytes?: number;
+}
+
+/**
+ * Default decompressed-bytes budget when no caller-supplied limit is given.
+ * Chosen well above the default *compressed* upload cap (512 MiB, see
+ * apps/api/src/config.ts's `maxBundleBytes`) so ordinary legitimate bundles
+ * are never affected, while still bounding worst-case worker RSS to a
+ * multiple of that, not to whatever a decompression bomb decides.
+ */
+export const DEFAULT_MAX_DECOMPRESSED_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+
+function tooLarge(limitBytes: number) {
+  return ingestError('BUNDLE_TOO_LARGE', {
+    message: `The archive's decompressed contents exceed the ${limitBytes}-byte limit.`,
+    remediation:
+      'Archive only the Gatling results directory, without extraneous or oversized files, or raise the decompressed-size limit in project settings.',
+    detail: { maxBytes: limitBytes },
+  });
+}
+
 /**
  * Reads a gzipped tar into memory and presents it as a BundleSource.
  *
- * In memory by design (spec §5.1): the size cap in BlobStore.putStream bounds
- * this, and the worker is the only caller.
+ * In memory by design (spec §5.1). The compressed-bytes cap in
+ * BlobStore.putStream does NOT bound this: gzip lets a small file on the
+ * wire expand enormously once decompressed (a few hundred KiB of zeros can
+ * decompress to hundreds of MiB), so this function enforces its own
+ * decompressed-bytes budget — a running total across all entries, and a
+ * per-entry cap — independent of whatever the compressed upload cap allowed.
  */
-export async function openTarGzBundle(archive: Buffer): Promise<BundleSource> {
+export async function openTarGzBundle(
+  archive: Buffer,
+  limits: BundleSizeLimits = { maxTotalBytes: DEFAULT_MAX_DECOMPRESSED_BUNDLE_BYTES },
+): Promise<BundleSource> {
+  const maxTotalBytes = limits.maxTotalBytes;
+  const maxEntryBytes = limits.maxEntryBytes ?? maxTotalBytes;
   const files = new Map<string, Buffer>();
+  let totalBytes = 0;
 
   await new Promise<void>((resolve, reject) => {
     const ex = extract();
@@ -47,8 +83,22 @@ export async function openTarGzBundle(archive: Buffer): Promise<BundleSource> {
         return;
       }
       const chunks: Buffer[] = [];
-      stream.on('data', (c: Buffer) => chunks.push(c));
+      let entryBytes = 0;
+      let overLimit = false;
+      stream.on('data', (c: Buffer) => {
+        if (overLimit) return;
+        entryBytes += c.length;
+        totalBytes += c.length;
+        if (entryBytes > maxEntryBytes || totalBytes > maxTotalBytes) {
+          overLimit = true;
+          reject(tooLarge(entryBytes > maxEntryBytes ? maxEntryBytes : maxTotalBytes));
+          stream.destroy();
+          return;
+        }
+        chunks.push(c);
+      });
       stream.on('end', () => {
+        if (overLimit) return;
         files.set(path, Buffer.concat(chunks));
         next();
       });

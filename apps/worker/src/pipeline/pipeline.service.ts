@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { IngestError } from '@perfportal/core';
 import {
   MetricWriter,
+  ProjectRepository,
   RunRepository,
   RuleRepository,
   type RunRecord,
@@ -64,7 +65,10 @@ export class PipelineService {
 
   async #ingest(run: RunRecord): Promise<void> {
     const archive = await this.blobs.get(run.bundleKey);
-    const source = await openTarGzBundle(archive);
+    const project = await new ProjectRepository(this.prisma).byId(run.projectId);
+    const maxTotalBytes =
+      project?.settings.maxDecompressedBundleBytes ?? this.config.maxDecompressedBundleBytes;
+    const source = await openTarGzBundle(archive, { maxTotalBytes });
     const { plugin, toolVersion } = await selectPlugin(source.index);
 
     const result = await runEngineAsync(plugin.parse(source), run.engineOptions as EngineOptions);
