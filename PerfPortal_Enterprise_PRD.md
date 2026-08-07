@@ -7,7 +7,7 @@
 | **Document version** | 2.0 |
 | **Status** | For review |
 | **Date** | 2026-08-07 |
-| **Supersedes** | `PerfPortal_PRD.md` v1.0 (reporting-only, single-tenant scope) |
+| **Supersedes** | Perf Portal PRD v1.0 — reporting-only, single-tenant scope. Removed from the tree; recoverable via `git show 9f7a571:PerfPortal_PRD.md` |
 | **Product type** | Enterprise, cloud-native, self-hostable multi-tenant platform |
 | **V1 commitment** | 100% feature parity with the Gatling OSS HTML report, plus centralized history, comparison, and live monitoring |
 | **Owners** | Product · Architecture · Performance Engineering · Design |

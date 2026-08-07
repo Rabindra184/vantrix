@@ -1,6 +1,6 @@
 > ## ⚠️ SUPERSEDED IN PART — 2026-08-07
 >
-> This spec was written against `PerfPortal_PRD.md` v1.0, which has since been superseded by [`PerfPortal_Enterprise_PRD.md`](../../../PerfPortal_Enterprise_PRD.md) v2.0. **The technology choices below no longer apply. The design reasoning does.**
+> This spec was written against Perf Portal PRD v1.0, which has been superseded by [`PerfPortal_Enterprise_PRD.md`](../../../PerfPortal_Enterprise_PRD.md) v2.0 and removed from the working tree (recoverable via `git show 9f7a571:PerfPortal_PRD.md`). **The technology choices below no longer apply. The design reasoning does — this file is retained precisely because it is the only place that reasoning is argued rather than asserted.**
 >
 > **Superseded — do not implement:**
 >
@@ -37,7 +37,7 @@
 |---|---|
 | **Status** | **Superseded in part** — see header · originally approved for planning |
 | **Date** | 2026-08-07 |
-| **Scope** | Milestone M0 of [PerfPortal_PRD.md](../../../PerfPortal_PRD.md) |
+| **Scope** | Milestone M0 of the original Perf Portal PRD v1.0 (removed — see `git show 9f7a571:PerfPortal_PRD.md`). Current milestones: [`PerfPortal_Enterprise_PRD.md`](../../../PerfPortal_Enterprise_PRD.md) §26 |
 | **Exit criterion (from PRD)** | One CI pipeline posts runs; nothing is lost |
 
 ---
