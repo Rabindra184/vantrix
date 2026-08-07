@@ -39,6 +39,18 @@ export class ProjectRepository {
     };
   }
 
+  async byId(projectId: string): Promise<ProjectRecord | null> {
+    const row = await this.prisma.project.findUnique({ where: { id: projectId } });
+    if (!row) return null;
+    return {
+      id: row.id,
+      orgId: row.orgId,
+      slug: row.slug,
+      name: row.name,
+      settings: (row.settings ?? {}) as ProjectSettings,
+    };
+  }
+
   async settings(scope: TenantScope): Promise<ProjectSettings> {
     const row = await this.prisma.project.findFirst({
       where: { id: scope.projectId, orgId: scope.orgId },

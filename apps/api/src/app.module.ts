@@ -3,10 +3,11 @@ import { AuthMiddleware } from './auth/auth.middleware.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health.controller.js';
 import { IngestModule } from './ingest/ingest.module.js';
+import { MetricsModule } from './metrics/metrics.module.js';
 import { RunsModule } from './runs/runs.module.js';
 
 @Module({
-  imports: [AuthModule, RunsModule, IngestModule],
+  imports: [AuthModule, RunsModule, IngestModule, MetricsModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

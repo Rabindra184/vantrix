@@ -1,8 +1,9 @@
-import { Controller, Get, NotFoundException, Param, Req, Res } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
-import type { RunRecord } from '@perfportal/persistence';
+import type { RunListResponse } from '@perfportal/contracts';
+import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { RunsService } from './runs.service.js';
 
@@ -69,4 +70,47 @@ export async function respondWithRun(
   }
 
   res.status(status).json(await runs.toResponse(run));
+}
+
+// AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
+// every route authenticates by default — @UseGuards(AuthGuard) here would be
+// redundant. @Scopes('read') is still required per-route.
+@Controller('/v1/projects/:slug/runs')
+export class ProjectRunsController {
+  constructor(
+    private readonly runs: RunsService,
+    private readonly projects: ProjectRepository,
+  ) {}
+
+  @Get()
+  @Scopes('read')
+  async list(
+    @Param('slug') slug: string,
+    @Req() req: Request,
+    @Query('limit') limit = '25',
+    @Query('cursor') cursor?: string,
+  ): Promise<RunListResponse> {
+    const tenant = req.tenant!;
+    const project = await this.projects.byId(tenant.projectId);
+    // The token names the project; the slug must agree with it. A token cannot
+    // read a project it does not belong to by naming a different slug.
+    if (!project || project.slug !== slug) {
+      throw new NotFoundException(`No project "${slug}" available to this token.`);
+    }
+
+    const page = await this.runs.runs().list(
+      { orgId: tenant.orgId, projectId: tenant.projectId },
+      { limit: Math.min(Number(limit) || 25, 100), ...(cursor ? { cursor } : {}) },
+    );
+    return {
+      items: page.items.map((r) => ({
+        id: r.id,
+        status: r.status as RunListResponse['items'][number]['status'],
+        verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
+        tool: r.tool,
+        startedAt: r.startedAt.toISOString(),
+      })),
+      nextCursor: page.nextCursor,
+    };
+  }
 }

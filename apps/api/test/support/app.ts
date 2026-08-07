@@ -14,6 +14,7 @@ import { PrismaClient } from '@prisma/client';
 import pg from 'pg';
 import { AppModule } from '../../src/app.module.js';
 import { ProblemFilter } from '../../src/common/problem.filter.js';
+import { mountOpenApi } from '../../src/openapi.js';
 import { hashToken, mintToken } from '../../src/auth/tokens.js';
 
 export interface TestContext {
@@ -28,7 +29,7 @@ export interface TestContext {
 }
 
 const TABLES = [
-  'run_assertion', 'run_error', 'run_series_bucket', 'run_stat',
+  'run_assertion', 'run_error', 'run_indicator', 'run_series_bucket', 'run_stat',
   'run', 'sla_rule', 'api_token', 'project', 'org',
 ];
 
@@ -38,6 +39,7 @@ export async function createTestApp(
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication();
   app.useGlobalFilters(new ProblemFilter());
+  mountOpenApi(app);
   await app.init();
 
   const prisma = app.get(PrismaClient);
