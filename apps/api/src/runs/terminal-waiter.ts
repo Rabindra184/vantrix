@@ -16,6 +16,16 @@ export class TerminalWaiter implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly databaseUrl: string) {}
 
+  /**
+   * Test-only: the number of distinct run ids #waiters currently holds an
+   * entry for. Exposed as a count (never the Map or its Sets themselves) so
+   * tests can assert the structure doesn't grow without bound without being
+   * able to read or mutate listener internals.
+   */
+  get waitingRunCount(): number {
+    return this.#waiters.size;
+  }
+
   async onModuleInit(): Promise<void> {
     this.#client = new pg.Client({ connectionString: this.databaseUrl });
     await this.#client.connect();
@@ -38,7 +48,14 @@ export class TerminalWaiter implements OnModuleInit, OnModuleDestroy {
         if (done) return;
         done = true;
         clearTimeout(timer);
-        this.#waiters.get(runId)?.delete(onNotify);
+        const set = this.#waiters.get(runId);
+        if (set) {
+          set.delete(onNotify);
+          // An empty Set left behind in the Map is itself the leak: every
+          // distinct runId ever waited on would otherwise keep a permanent
+          // entry for the lifetime of the process.
+          if (set.size === 0) this.#waiters.delete(runId);
+        }
         resolve(woken);
       };
       const onNotify = () => finish(true);

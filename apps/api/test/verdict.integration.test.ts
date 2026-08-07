@@ -7,8 +7,10 @@ import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { RunResponseSchema } from '@perfportal/contracts';
+import type { RunRecord } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
+import { RunsService } from '../src/runs/runs.service.js';
 
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
@@ -174,6 +176,62 @@ describe('the adaptive verdict', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('BUNDLE_NOT_ARCHIVE');
     expect(res.body.remediation).toBeTruthy();
+  });
+
+  it('answers 413 — not a flat 400 — when the failed run\'s own ingest error carries a different status', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+
+    // Seeded directly via Prisma: producing a real BUNDLE_TOO_LARGE requires
+    // an actual oversized upload, but the point of this test is only that a
+    // 'failed' run's status code tracks its own ingest error's code
+    // (413 for BUNDLE_TOO_LARGE) rather than a hardcoded 400.
+    const run = await ctx.prisma.run.create({
+      data: {
+        orgId: ctx.orgId, projectId: ctx.projectId, status: 'failed', tool: 'gatling',
+        bundleKey: 'runs/oversized.tgz', bundleSha256: 'z'.repeat(64), bundleBytes: BigInt(1),
+        startedAt: new Date('2026-08-07T10:00:00Z'),
+        startedOn: new Date('2026-08-07T00:00:00Z'),
+        engineOptions: {},
+        ingestedAt: new Date('2026-08-07T10:00:01Z'),
+        error: {
+          code: 'BUNDLE_TOO_LARGE',
+          message: 'The bundle exceeds the configured size limit.',
+          remediation: 'Reduce the bundle size or raise the configured limit.',
+        },
+      },
+    });
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${run.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status).toBe(413);
+    expect(res.body.code).toBe('BUNDLE_TOO_LARGE');
+    expect(res.body.remediation).toBeTruthy();
+  });
+
+  it('statusFor() itself — not just the response respondWithRun happens to build — maps a failed run through its own ingest error status', async () => {
+    // respondWithRun currently gets the wire status right for the 413 case
+    // above by recomputing it independently via problemFromIngestError and
+    // discarding statusFor()'s answer, so the end-to-end test alone does not
+    // exercise the bug: statusFor() is documented ("400+ bundle rejected —
+    // the ingest error's own status") but returns a hardcoded 400 for every
+    // failed run regardless of its error code. This calls statusFor()
+    // directly so a regression here fails even if some future caller trusts
+    // its return value instead of recomputing.
+    ctx = await createTestApp();
+    const runsService = ctx.app.get(RunsService);
+
+    const run: RunRecord = {
+      id: 'unseeded', orgId: ctx.orgId, projectId: ctx.projectId, status: 'failed',
+      verdict: null, tool: 'gatling', toolVersion: null, bundleKey: 'k',
+      bundleSha256: 'x'.repeat(64), bundleBytes: 1, idempotencyKey: null,
+      startedAt: new Date(), startedOn: new Date(), ingestedAt: new Date(), engineOptions: {},
+      error: { code: 'BUNDLE_TOO_LARGE', message: 'too big', remediation: 'shrink it' },
+    };
+
+    expect(runsService.statusFor(run)).toBe(413);
   });
 
   it('returns 404 for a run belonging to another project', async () => {

@@ -58,7 +58,13 @@ export async function respondWithRun(
         remediation: err.remediation,
       }),
     );
-    res.status(body.status).type('application/problem+json').json(body);
+    // `status` came from runs.statusFor(run) above, which now maps a failed
+    // run through the same statusForCode(...) helper problemFromIngestError
+    // uses internally to set body.status — so the two are guaranteed to
+    // agree by construction. Using `status` here (rather than recomputing
+    // via body.status) is what makes statusFor() authoritative rather than
+    // decorative.
+    res.status(status).type('application/problem+json').json(body);
     return;
   }
 
