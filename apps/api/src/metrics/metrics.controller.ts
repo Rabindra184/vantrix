@@ -9,7 +9,7 @@ import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/pers
 import { bandsFrom } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { uuidParam } from '../common/validation.js';
+import { badRequest, uuidParam } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -47,10 +47,28 @@ export class MetricsController {
     @Query('family') family?: string,
   ): Promise<StatsResponse> {
     const run = await this.#run(req, id);
-    const settings = parseProjectSettings(await this.projects.settings({
-      orgId: run.orgId,
-      projectId: run.projectId,
-    }));
+
+    // parseProjectSettings throws (a ZodError) on stored settings that are
+    // structurally invalid, most notably inverted indicator bounds. There is
+    // no write-side validation yet (Task 12 is the first real reader of this
+    // column), so a misconfigured project is reachable in practice, not just
+    // in theory. That is a project-configuration problem, not a server bug —
+    // it must come back as an actionable 4xx naming the setting to fix, not
+    // an internal-error 500.
+    let settings;
+    try {
+      settings = parseProjectSettings(await this.projects.settings({
+        orgId: run.orgId,
+        projectId: run.projectId,
+      }));
+    } catch (err) {
+      throw badRequest(
+        'PROJECT_SETTINGS_INVALID',
+        `This project's settings are invalid, so indicator bands cannot be computed: ${message(err)}`,
+        'Ask a project admin to fix the "indicators" setting (lowerMs must be below higherMs) and retry.',
+      );
+    }
+
     const all = await this.reader.stats({ orgId: run.orgId, projectId: run.projectId }, run.id);
     const rows = all
       .filter((s) => (scope ? s.scope === scope : true))
@@ -62,24 +80,39 @@ export class MetricsController {
     // frozen numbers that look live.
     const configurable = rows.every((s) => s.histogramOk !== null);
 
-    const stats = rows.map((s) => ({
-      scope: s.scope as StatsResponse['stats'][number]['scope'],
-      name: s.name,
-      family: s.family as StatsResponse['stats'][number]['family'],
-      count: s.count,
-      okCount: s.okCount,
-      koCount: s.koCount,
-      errorRate: s.errorRate,
-      minMs: s.minMs,
-      maxMs: s.maxMs,
-      meanMs: s.meanMs,
-      stddevMs: s.stddevMs,
-      throughputRps: s.throughputRps,
-      percentiles: s.percentiles,
-      indicators: s.histogramOk
-        ? bandsFrom(s.histogramOk, s.koCount, settings.indicators)
-        : { under: 0, between: 0, over: 0, failed: s.koCount },
-    }));
+    // bandsFrom throws when higherMs sits above the histogram's 120s overflow
+    // cap while overflow observations exist — the exact count is genuinely
+    // unrecoverable there. Bounds are already validated non-inverted by
+    // parseProjectSettings above, so the only throw reachable from here is
+    // that overflow-cap case. It is still a project-configuration problem
+    // (an unreasonably high "indicators.higherMs"), not a server bug.
+    let stats: StatsResponse['stats'];
+    try {
+      stats = rows.map((s) => ({
+        scope: s.scope as StatsResponse['stats'][number]['scope'],
+        name: s.name,
+        family: s.family as StatsResponse['stats'][number]['family'],
+        count: s.count,
+        okCount: s.okCount,
+        koCount: s.koCount,
+        errorRate: s.errorRate,
+        minMs: s.minMs,
+        maxMs: s.maxMs,
+        meanMs: s.meanMs,
+        stddevMs: s.stddevMs,
+        throughputRps: s.throughputRps,
+        percentiles: s.percentiles,
+        indicators: s.histogramOk
+          ? bandsFrom(s.histogramOk, s.koCount, settings.indicators)
+          : { under: 0, between: 0, over: 0, failed: s.koCount },
+      }));
+    } catch (err) {
+      throw badRequest(
+        'PROJECT_SETTINGS_INVALID',
+        `The project's "indicators.higherMs" (${settings.indicators.higherMs}) cannot be applied to this run: ${message(err)}`,
+        'Lower the project\'s "indicators.higherMs" setting to at most 120000 (the histogram overflow cap) and retry.',
+      );
+    }
 
     const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
     return {
@@ -134,4 +167,9 @@ export class MetricsController {
     );
     return { runId: run.id, errors };
   }
+}
+
+/** Best-effort human-readable detail for an unexpected caught error. */
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
