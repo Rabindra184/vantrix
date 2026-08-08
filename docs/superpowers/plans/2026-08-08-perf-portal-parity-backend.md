@@ -2931,7 +2931,12 @@ Append to `apps/api/test/parity.e2e.test.ts`, inside the existing describe that 
   describe('Appendix A.1 — global report page', () => {
     it('PT-G-01/02 header carries the simulation name and description', async () => {
       const r = await get(`/v1/runs/${runId}`);
-      expect(r.body.simulation).toBe('ParitySimulation');
+      // The canonical value is the FULLY-QUALIFIED class name the binary log
+      // header records. Gatling's HTML renders only the last segment, so parity
+      // is that the displayed name is derivable - not that we store the short
+      // form and throw the package away.
+      expect(r.body.simulation).toBe('example.ParitySimulation');
+      expect(r.body.simulation.split('.').pop()).toBe('ParitySimulation');
       expect(typeof r.body.description).toBe('string');
     });
 
@@ -3148,6 +3153,10 @@ Append three findings to §A.9, dated 2026-08-08, in the same style as the exist
 
 - §A.0 tolerance paragraph: replace "Distribution bin counts **exact** when bin boundaries align" with the F-8 rule.
 - §A.1 row G-04: tolerance `Exact ms` → `Exact to the displayed second`.
+- §A.1 row G-01: note that the platform stores the **fully-qualified** simulation
+  class name (`example.ParitySimulation`) while the report renders only the last
+  segment (`ParitySimulation`). Tolerance becomes "last dot-segment exact" — the
+  platform deliberately keeps more information than the report displays.
 - §A.1 rows G-20/G-21: tolerance `Bin counts exact` → `Bin labels exact; percent of combined OK+KO exact to 2dp`.
 - §A.2 row RQ-09: description → "one point per second; x = global requests/s, y = truncated p95"; tolerance stays `1% relative`, against ground truth.
 - §A.6: add a note that K-03 governs the statistics-table columns only, and that the over-time band set is fixed — buckets store numbers, not sketches.
