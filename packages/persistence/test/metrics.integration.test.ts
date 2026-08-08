@@ -1,4 +1,4 @@
-import { runEngine } from '@perfportal/statistics';
+import { bandsFrom, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL } from '../src/index.js';
@@ -17,16 +17,22 @@ function events(): CanonicalEvent[] {
     { type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: base },
   ];
   for (let i = 0; i < 400; i++) {
+    const startMs = base + i * 25;
+    const endMs = startMs + (i % 13) * 40 + 5;
     out.push({
       type: 'request',
       name: i % 2 === 0 ? 'GET /a' : 'GET /b',
       groups: [],
       userId: String(i),
-      startMs: base + i * 25,
-      endMs: base + i * 25 + (i % 13) * 40 + 5,
+      startMs,
+      endMs,
       ok: i % 17 !== 0,
       message: i % 17 === 0 ? 'status 500' : undefined,
     });
+    // A user session bracketing each request, so the run also exercises
+    // per-scenario arrival/concurrency buckets (run_user_bucket).
+    out.push({ type: 'user', scenario: 'S', userId: String(i), kind: 'start', tsMs: startMs });
+    out.push({ type: 'user', scenario: 'S', userId: String(i), kind: 'end', tsMs: endMs });
   }
   return out;
 }
@@ -177,5 +183,43 @@ describe('MetricWriter / MetricReader', () => {
     // a single pruned partition and mask a real pruning failure the same way.
     const scanned = new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size;
     expect(scanned).toBe(1);
+  });
+
+  it('persists histograms that round-trip out of the database', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query<{ histogram_ok: Buffer; histogram_kind: string }>(
+      `SELECT histogram_ok, histogram_kind FROM run_stat
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [ctx.runId],
+    );
+    expect(rows[0]?.histogram_kind).toBe(HISTOGRAM_KIND);
+    const h = Histogram.deserialize(new Uint8Array(rows[0]!.histogram_ok));
+    expect(h.total).toBeGreaterThan(0);
+    expect(bandsFrom(h, 0, { lowerMs: 800, higherMs: 1200 }).under).toBeGreaterThan(0);
+  });
+
+  it('persists per-scenario user buckets', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query(
+      `SELECT scenario, started, max_concurrent FROM run_user_bucket
+        WHERE run_started_on = $1 AND run_id = $2 ORDER BY scenario, start_offset_ms`,
+      [STARTED_ON, ctx.runId],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it('persists errors with a scope and name', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query(
+      `SELECT scope, name FROM run_error WHERE run_id = $1 ORDER BY scope`,
+      [ctx.runId],
+    );
+    expect(rows.map((r) => r.scope)).toContain('request');
   });
 });
