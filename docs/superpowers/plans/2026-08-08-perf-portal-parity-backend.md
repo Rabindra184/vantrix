@@ -2371,6 +2371,12 @@ Append to `apps/api/test/metrics.integration.test.ts`:
       b.stats.find((s) => s.scope === 'run')!.indicators.under;
     expect(pick(after.body)).not.toBe(pick(before.body));
     expect(after.body.bounds).toEqual({ lowerMs: 100, higherMs: 200 });
+    // Restore: settings are shared state for the rest of this file, and the
+    // case above asserts the 800/1200 defaults.
+    await pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ lowerMs: 800, higherMs: 1200 }), projectId],
+    );
   });
 ```
 
