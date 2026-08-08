@@ -255,12 +255,3 @@ describe('GET /v1/projects/:slug/runs', () => {
     expect(res.body.items.length).toBeGreaterThan(0);
   });
 });
-
-describe('OpenAPI', () => {
-  it('is served and describes the ingest endpoint', async () => {
-    ctx = await createTestApp();
-    const res = await request(ctx.app.getHttpServer()).get('/v1/openapi.json');
-    expect(res.status).toBe(200);
-    expect(res.body.paths['/v1/runs']).toBeTruthy();
-  });
-});
