@@ -1,4 +1,5 @@
 export * from './sketch.js';
+export * from './histogram.js';
 export * from './buckets.js';
 export * from './rollup.js';
 export * from './indicators.js';
