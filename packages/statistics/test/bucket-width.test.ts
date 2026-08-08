@@ -12,4 +12,10 @@ describe('inferBucketWidthMs', () => {
     expect(inferBucketWidthMs([])).toBe(1000);
     expect(inferBucketWidthMs([0])).toBe(1000);
   });
+  it('is not fooled when the first gap is larger than the smallest', () => {
+    // A leading absent bucket makes offsets[1] - offsets[0] twice the real
+    // width. Returning the first gap - the most natural wrong implementation -
+    // passes every other case in this file, so this one is what catches it.
+    expect(inferBucketWidthMs([0, 3000, 4000, 5000])).toBe(1000);
+  });
 });
