@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -112,53 +111,42 @@ describe('GET /v1/runs/:id/stats', () => {
     expect(res.body.indicators).toEqual({ under: 848, between: 0, over: 23, failed: 24 });
   });
 
-  it('reports indicators.failed from run_indicator, not recomputed from run_stat.ko_count', async () => {
-    // The two sources normally agree because the engine writes both from the
-    // same loop. Seed them to DISAGREE so the assertion below can only pass
-    // if the API actually reads run_indicator.failed rather than
-    // re-deriving it from run_stat.ko_count — a same-value fixture (as in
-    // "reports the indicator bands...") cannot tell the two code paths apart.
+  it('returns indicator bands per row, folded at the project bounds', async () => {
     ctx = await createTestApp();
+    const id = await ingested();
 
-    const run = await ctx.prisma.run.create({
-      data: {
-        orgId: ctx.orgId,
-        projectId: ctx.projectId,
-        status: 'complete',
-        verdict: 'passed',
-        tool: 'gatling',
-        bundleKey: 'k',
-        bundleSha256: 'a'.repeat(64),
-        bundleBytes: BigInt(1),
-        startedAt: new Date('2026-08-07T10:00:00Z'),
-        startedOn: new Date('2026-08-07T00:00:00Z'),
-        ingestedAt: new Date('2026-08-07T10:00:05Z'),
-        engineOptions: {},
-      },
-    });
-
-    // run_stat.ko_count says 24 KOs...
-    await ctx.pool.query(
-      `INSERT INTO run_stat
-         (id, run_id, org_id, project_id, scope, name, family,
-          count, ok_count, ko_count, error_rate, min_ms, max_ms, mean_ms,
-          stddev_ms, throughput_rps, percentiles, sketch, sketch_kind)
-       VALUES ($1, $2, $3, $4, 'run', '', 'response_time',
-               100, 76, 24, 0.24, 1, 200, 50, 10, 5,
-               $5::jsonb, $6, 'ddsketch')`,
-      [randomUUID(), run.id, ctx.orgId, ctx.projectId, JSON.stringify({ p50: 0, p95: 0, p99: 0 }), Buffer.from([0])],
-    );
-
-    // ...but run_indicator.failed — the engine's own precise count — says 99.
-    await ctx.pool.query(
-      `INSERT INTO run_indicator (id, run_id, org_id, project_id, under, between_, over, failed)
-       VALUES ($1, $2, $3, $4, 10, 0, 5, 99)`,
-      [randomUUID(), run.id, ctx.orgId, ctx.projectId],
-    );
-
-    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${run.id}/stats`).set(auth());
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${id}/stats`).set(auth());
     expect(res.status).toBe(200);
-    expect(res.body.indicators.failed).toBe(99);
+    expect(res.body.configurable).toBe(true);
+    expect(res.body.bounds).toEqual({ lowerMs: 800, higherMs: 1200 });
+    const run = res.body.stats.find((s: { scope: string }) => s.scope === 'run');
+    expect(run.indicators.under + run.indicators.between + run.indicators.over).toBe(run.okCount);
+    expect(run.indicators.failed).toBe(run.koCount);
+  });
+
+  // The claim of AC-PARITY-4, end to end: same stored bytes, different settings.
+  it('restates history when the project changes its bounds, with no re-ingest', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const before = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${id}/stats`).set(auth()).expect(200);
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ lowerMs: 100, higherMs: 200 }), ctx.projectId],
+    );
+    const after = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${id}/stats`).set(auth()).expect(200);
+    const pick = (b: { stats: { scope: string; indicators: { under: number } }[] }) =>
+      b.stats.find((s) => s.scope === 'run')!.indicators.under;
+    expect(pick(after.body)).not.toBe(pick(before.body));
+    expect(after.body.bounds).toEqual({ lowerMs: 100, higherMs: 200 });
+    // Restore: settings are shared state for the rest of this file, and the
+    // case above asserts the 800/1200 defaults.
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ lowerMs: 800, higherMs: 1200 }), ctx.projectId],
+    );
   });
 
   it('filters by scope', async () => {
