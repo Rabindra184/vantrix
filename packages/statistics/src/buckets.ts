@@ -48,11 +48,21 @@ export class BucketSeries {
     }
     if (edge === 'start') {
       b.startedCount++;
+      // Sketches are fed on the START edge, not the end, to match Gatling.
+      // Gatling's RequestPercentilesBuffers.updateRequestPercentilesBuffers
+      // (gatling-charts, buffers/RequestPercentilesBuffers.scala) files every
+      // percentile/scatter observation under `startBucket` — the bucket
+      // derived from the request's START time. A request starting at 10.9s
+      // and finishing at 11.2s therefore belongs to Gatling's bucket 10, not
+      // 11. Feeding the sketch on 'end' instead shifts every
+      // percentiles-over-time and scatter point that straddles a bucket
+      // boundary. The caller (engine.ts) always passes the same value/ok on
+      // both edges, so this only changes WHICH bucket the sketch lands in.
+      b.sketch.accept(value);
+      if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
     } else {
       b.endedCount++;
       if (ok) b.okCount++; else b.koCount++;
-      b.sketch.accept(value);
-      if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
     }
     if (this.#buckets.size > this.#maxBuckets) this.#coalesce();
   }
