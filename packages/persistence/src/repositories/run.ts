@@ -161,18 +161,4 @@ export class RunRepository {
     const next = rows.length > opts.limit ? (page[page.length - 1]?.id ?? null) : null;
     return { items: page.map(toRecord), nextCursor: next };
   }
-
-  /**
-   * Orphan recovery: a run committed but whose queue enqueue never landed.
-   * Ages off created_at, not startedAt — a CI job can post a three-hour-old run.
-   */
-  async claimStale(olderThanMs: number): Promise<string[]> {
-    const cutoff = new Date(Date.now() - olderThanMs);
-    const rows = await this.prisma.run.findMany({
-      where: { status: 'pending', createdAt: { lt: cutoff } },
-      select: { id: true },
-      take: 100,
-    });
-    return rows.map((r) => r.id);
-  }
 }
