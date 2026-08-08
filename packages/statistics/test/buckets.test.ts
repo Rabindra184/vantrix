@@ -5,8 +5,44 @@ import { Sketch } from '../src/sketch.js';
 const sample = (i: number) => 20 + ((i * 37) % 500);
 
 describe('BucketSeries coalescing (AC-STAT-2)', () => {
-  it('coalesces losslessly — each 4s bucket equals a sketch built from that window directly', () => {
-    const coalesced = new BucketSeries({ startMs: 0, maxBuckets: 4 });   // forces 1s -> 2s -> 4s
+  // Replays BucketSeries's own bucketing/coalescing arithmetic (nearest-round
+  // at the live width, then floor(idx/2) folding on coalesce) against a raw
+  // sample stream, tracking which raw sample indices truly end up in each
+  // final bucket. This is a parallel derivation, not a call into
+  // BucketSeries — it exists because, unlike floor, nearest-bucket rounding
+  // is not scale-consistent (round(round(t/w)/2) != round(t/(2w)) in
+  // general — e.g. t=1499, w=1000: folding an already-assigned bucket 1
+  // gives 0, but computing fresh at width 2000 gives 1). Because
+  // BucketSeries coalesces incrementally — folding buckets built at the OLD
+  // width rather than recomputing every raw sample at the new one — final
+  // membership depends on insertion history, not on `tsMs` alone, so a
+  // bucket's members can no longer be read off as [startOffsetMs,
+  // startOffsetMs + widthMs).
+  function replayTrueMembership(maxBuckets: number, n: number): Map<number, number[]> {
+    let width = 1000;
+    let live = new Map<number, number[]>(); // idx at current width -> raw sample indices
+    for (let i = 0; i < n; i++) {
+      const idx = Math.floor(i / width + 0.5);
+      const arr = live.get(idx);
+      if (arr) arr.push(i); else live.set(idx, [i]);
+      while (live.size > maxBuckets) {
+        const next = new Map<number, number[]>();
+        for (const [idx2, members] of live) {
+          const ni = Math.floor(idx2 / 2);
+          const arr2 = next.get(ni);
+          if (arr2) arr2.push(...members); else next.set(ni, [...members]);
+        }
+        live = next;
+        width *= 2;
+      }
+    }
+    const byOffset = new Map<number, number[]>();
+    for (const [idx, members] of live) byOffset.set(idx * width, members);
+    return byOffset;
+  }
+
+  it('coalesces losslessly — each bucket equals a sketch built from its true members directly', () => {
+    const coalesced = new BucketSeries({ startMs: 0, maxBuckets: 4 });   // forces 1s -> 2s -> 4s -> 8s
     const values: number[] = [];
     for (let i = 0; i < 16_000; i++) {
       const v = sample(i);
@@ -17,20 +53,27 @@ describe('BucketSeries coalescing (AC-STAT-2)', () => {
       coalesced.add(i, v, true, 'start');
       coalesced.add(i, v, true, 'end');   // 1 event per ms over 16 s
     }
-    expect(coalesced.widthMs).toBe(4000);
+    // With floor-based bucketing this run coalesced 1s -> 2s -> 4s (two
+    // doublings). Nearest-bucket rounding covers a narrower span in its first
+    // (edge-clipped) bucket at every width, so the same 16s/maxBuckets=4 run
+    // now needs a third doubling.
+    expect(coalesced.widthMs).toBe(8000);
 
     const merged = coalesced.buckets();
-    expect(merged.length).toBe(4);
+    expect(merged.length).toBe(3);
 
     // THE INVARIANT: a coalesced bucket must be indistinguishable from one built
-    // directly from exactly the values that fall in its window. If this fails,
-    // percentiles are being degraded by re-aggregation and the product is lying.
+    // directly from exactly the values that fall in it. If this fails, percentiles
+    // are being degraded by re-aggregation and the product is lying. "Exactly the
+    // values that fall in it" is now the replayed true membership above, not a
+    // [startOffsetMs, startOffsetMs + widthMs) window — see the comment there.
+    const trueMembership = replayTrueMembership(4, 16_000);
+    expect(trueMembership.size).toBe(3);
     for (const b of merged) {
+      const members = trueMembership.get(b.startOffsetMs);
+      expect(members).toBeDefined();
       const direct = new Sketch();
-      for (let ms = b.startOffsetMs; ms < b.startOffsetMs + coalesced.widthMs; ms++) {
-        const v = values[ms];
-        if (v !== undefined) direct.accept(v);
-      }
+      for (const i of members!) direct.accept(values[i]!);
       expect(b.sketch.count).toBe(direct.count);
       for (const q of [0.5, 0.95, 0.99]) {
         expect(b.sketch.quantile(q)).toBe(direct.quantile(q));
@@ -139,19 +182,21 @@ describe('BucketSeries buckets by request START, not end (parity with Gatling)',
   // Gatling's RequestPercentilesBuffers.updateRequestPercentilesBuffers (from
   // gatling-charts, buffers/RequestPercentilesBuffers.scala) files every
   // percentile/scatter observation under `startBucket`, derived from the
-  // request's START time — never an end-derived bucket. A request that starts
-  // at 900ms and ends at 1300ms therefore belongs to Gatling's [0, 1000)
-  // bucket, not [1000, 2000). If our sketches were still fed on the `end`
-  // edge, this same request would land one bucket later than Gatling's,
-  // shifting every percentiles-over-time and scatter point that straddles a
-  // boundary — which is exactly the parity defect this test pins.
+  // request's START time — never an end-derived bucket. Bucketing is by
+  // NEAREST index (see buckets.ts), so bucket 0 covers [-500, 500) and bucket
+  // 1 covers [500, 1500) — a request that starts at 300ms and ends at 700ms
+  // therefore belongs to Gatling's bucket 0, not bucket 1. If our sketches
+  // were still fed on the `end` edge, this same request would land one
+  // bucket later than Gatling's, shifting every percentiles-over-time and
+  // scatter point that straddles a boundary — which is exactly the parity
+  // defect this test pins.
   it('puts the response time in the bucket containing the start timestamp, not the end timestamp', () => {
     const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
-    // A single request: starts at 900ms (bucket 0, [0,1000)), ends at 1300ms
-    // (bucket 1, [1000,2000)). Mirrors engine.ts: add() called once per edge
+    // A single request: starts at 300ms (bucket 0, [-500,500)), ends at 700ms
+    // (bucket 1, [500,1500)). Mirrors engine.ts: add() called once per edge
     // with the same value/ok, once with 'start' and once with 'end'.
-    s.add(900, 400, true, 'start');
-    s.add(1300, 400, true, 'end');
+    s.add(300, 400, true, 'start');
+    s.add(700, 400, true, 'end');
 
     const buckets = s.buckets();
     const b0 = buckets.find((b) => b.startOffsetMs === 0);
