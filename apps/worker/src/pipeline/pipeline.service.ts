@@ -156,9 +156,14 @@ export class PipelineService {
         );
       }
 
+      // The status guard mirrors RunRepository.fail's: a concurrently-processed
+      // duplicate of this job (stalled-job redelivery, BullMQ concurrency > 1)
+      // must not resurrect an already-committed 'failed' run back to
+      // 'complete' out from under it. Doesn't affect the single-worker happy
+      // path — status is 'parsing' here, never already terminal.
       await client.query(
         `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now()
-          WHERE id = $1`,
+          WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
         [run.id, verdict, toolVersion],
       );
 
