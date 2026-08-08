@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
 import { runEngine } from '../src/engine.js';
+import { bandsFrom } from '../src/indicators.js';
 
 const FIXTURE = 'fixtures/gatling-3.15.1.2/reference-report/simulation.log';
 const events = [...parseSimulationLog(readFileSync(FIXTURE))];
@@ -17,7 +18,11 @@ describe('PT-G: global page exact quantities', () => {
   });
 
   it('PT-G-06..09 indicator bands', () => {
-    expect(result.indicators).toEqual({ under: 848, between: 0, over: 23, failed: 24 });
+    // Bands are now folded from the run's OK histogram at read time rather
+    // than counted by the engine during ingest (see indicators.ts).
+    expect(bandsFrom(run.histogramOk, run.koCount, { lowerMs: 800, higherMs: 1200 })).toEqual({
+      under: 848, between: 0, over: 23, failed: 24,
+    });
   });
 
   it('PT-G-12 max, mean, stddev match Gatling exactly', () => {
@@ -27,9 +32,10 @@ describe('PT-G: global page exact quantities', () => {
   });
 
   it('PT-G-29 error table', () => {
-    expect(result.errors).toEqual([
-      { message: 'status.find.is(200), found 500', count: 15 },
-      { message: 'status.find.is(200), found 503', count: 9 },
+    // Errors are now scoped per (scope, name); the global page's table is the run scope.
+    expect(result.errors.filter((e) => e.scope === 'run')).toEqual([
+      { scope: 'run', name: '', message: 'status.find.is(200), found 500', count: 15 },
+      { scope: 'run', name: '', message: 'status.find.is(200), found 503', count: 9 },
     ]);
   });
 
