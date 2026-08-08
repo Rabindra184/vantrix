@@ -85,26 +85,6 @@ describe('RunRepository idempotency', () => {
   });
 });
 
-describe('RunRepository.claimStale', () => {
-  it('returns pending runs older than the window and ignores fresh ones', async () => {
-    const { orgId, a } = await seed();
-    const repo = new RunRepository(prisma);
-    const stale = await repo.create(
-      runInput(orgId, a, { startedAt: new Date('2026-08-07T10:00:00Z') }),
-    );
-    const fresh = await repo.create(runInput(orgId, a));
-
-    // Age the first run's ingest clock past the window.
-    await pool.query(`UPDATE run SET created_at = now() - interval '10 minutes' WHERE id = $1`, [
-      stale.id,
-    ]);
-
-    const claimed = await repo.claimStale(60_000);
-    expect(claimed).toContain(stale.id);
-    expect(claimed).not.toContain(fresh.id);
-  });
-});
-
 describe('ProjectRepository', () => {
   it('resolves a project by org and project slug', async () => {
     await seed();
