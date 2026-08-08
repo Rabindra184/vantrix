@@ -15,6 +15,8 @@ export function mountOpenApi(app: INestApplication): void {
           '  200 ingested, verdict passed or not_evaluated',
           '  422 ingested, verdict failed',
           '  400 bundle rejected (problem+json with a remediation field)',
+          '  413 bundle rejected for exceeding the decompressed-size cap',
+          '      (problem+json, code BUNDLE_TOO_LARGE, with a remediation field)',
           '  202 still processing — a TIMING OUTCOME, NEVER AN ERROR. Poll statusUrl.',
           '',
           'A client that treats 202 as failure is misusing this API.',
