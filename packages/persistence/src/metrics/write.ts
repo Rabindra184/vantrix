@@ -138,9 +138,17 @@ export class MetricWriter {
  * configurable set would freeze whatever the project happened to be configured
  * as on ingest day. Reading the keys off result.stats[0] - the previous
  * behaviour - did exactly that.
+ *
+ * An empty sketch returns {}, not a band of zeros. A p95 of 0 is a fabricated
+ * observation for a bucket that made none - and it is exactly what let the
+ * scatter gate on a response count instead of on whether the status-filtered
+ * digest exists, matching Gatling's own gate
+ * (LogFileData.timeAgainstGlobalNumberOfRequestsPerSec: presence of a digest,
+ * not a response count).
  */
 function percentilesOf(sketch: { count: number; quantile(q: number): number }): Record<string, number> {
+  if (sketch.count === 0) return {};
   const out: Record<string, number> = {};
-  for (const p of BUCKET_PERCENTILES) out[`p${p}`] = sketch.count === 0 ? 0 : sketch.quantile(p / 100);
+  for (const p of BUCKET_PERCENTILES) out[`p${p}`] = sketch.quantile(p / 100);
   return out;
 }
