@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { MetricReader } from '@perfportal/persistence';
 import pg from 'pg';
 import { MetricsController } from './metrics.controller.js';
+import { ParityController } from './parity.controller.js';
 
 @Module({
-  controllers: [MetricsController],
+  controllers: [MetricsController, ParityController],
   providers: [
     // useFactory + explicit `inject` reads the token directly rather than via
     // design:paramtypes reflection, so this is unaffected by the pg.Pool
