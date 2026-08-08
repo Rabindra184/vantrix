@@ -1883,11 +1883,35 @@ Append to `packages/persistence/test/metrics.integration.test.ts`:
     expect(JSON.stringify(rows)).not.toMatch(/run_user_bucket_2026_(0[1-7]|09|1[0-2])/);
   });
 
+  it('defaults to run scope so a caller cannot double-count', async () => {
+    const reader = new MetricReader(pool);
+    const defaulted = await reader.errors({ orgId, projectId }, runId);
+    const explicit = await reader.errors({ orgId, projectId }, runId, { scope: 'run', name: '' });
+    expect(defaulted).toEqual(explicit);
+    // The same failure also has a request-scope row; totals must not be summed
+    // across scopes. Run-scope total must equal the run's KO count, not twice it.
+    const { rows } = await pool.query<{ ko: string }>(
+      `SELECT ko_count::text AS ko FROM run_stat
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [runId],
+    );
+    const runKo = Number(rows[0]?.ko ?? 0);
+    expect(defaulted.reduce((n, e) => n + e.count, 0)).toBe(runKo);
+  });
+
   it('filters errors by scope and name', async () => {
     const reader = new MetricReader(pool);
-    const all = await reader.errors({ orgId, projectId }, runId);
-    const scoped = await reader.errors({ orgId, projectId }, runId, { scope: 'run', name: '' });
-    expect(scoped.length).toBeLessThanOrEqual(all.length);
+    const runScoped = await reader.errors({ orgId, projectId }, runId, { scope: 'run', name: '' });
+    const { rows } = await pool.query<{ name: string }>(
+      `SELECT DISTINCT name FROM run_error WHERE run_id = $1 AND scope = 'request' LIMIT 1`,
+      [runId],
+    );
+    const reqName = rows[0]?.name;
+    expect(reqName).toBeDefined();
+    const reqScoped = await reader.errors({ orgId, projectId }, runId, { scope: 'request', name: reqName as string });
+    expect(reqScoped.length).toBeGreaterThan(0);
+    expect(reqScoped.reduce((n, e) => n + e.count, 0))
+      .toBeLessThan(runScoped.reduce((n, e) => n + e.count, 0));
   });
 ```
 
@@ -1983,17 +2007,22 @@ Add the three new methods to the class:
 Replace `errors()`:
 
 ```ts
+  /**
+   * `sel` defaults to RUN scope, never "no filter".
+   *
+   * The engine now emits one row per (scope, name) per message, so a single
+   * failure produces both a run-scope row and a request-scope row. An unfiltered
+   * query would return both and a caller summing counts would double every
+   * error. Defaulting to run scope keeps the existing run-level endpoint's
+   * numbers identical to what it returned before scoping existed.
+   */
   async errors(
     scope: TenantScope,
     runId: string,
-    sel?: { scope: string; name: string },
+    sel: { scope: string; name: string } = { scope: 'run', name: '' },
   ): Promise<{ message: string; count: number }[]> {
-    const params: unknown[] = [runId, scope.orgId, scope.projectId];
-    let filter = '';
-    if (sel) {
-      params.push(sel.scope, sel.name);
-      filter = ' AND scope = $4 AND name = $5';
-    }
+    const params: unknown[] = [runId, scope.orgId, scope.projectId, sel.scope, sel.name];
+    const filter = ' AND scope = $4 AND name = $5';
     const { rows } = await this.pool.query(
       `SELECT message, count FROM run_error
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3${filter}
@@ -2473,7 +2502,10 @@ Add the imports `import { bandsFrom } from '@perfportal/statistics';` and `impor
     @Query('name') name?: string,
   ): Promise<ErrorsResponse> {
     const run = await this.#run(req, id);
-    const sel = scope === undefined ? undefined : { scope, name: name ?? '' };
+    // Omitting ?scope means run scope, NOT "every scope": the engine writes a
+    // row per (scope, name), so an unscoped read would return each failure
+    // twice and double every count.
+    const sel = { scope: scope ?? 'run', name: scope === undefined ? '' : (name ?? '') };
     const errors = await this.reader.errors(
       { orgId: run.orgId, projectId: run.projectId }, run.id, sel,
     );
