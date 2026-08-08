@@ -1446,9 +1446,24 @@ Replace the return block:
   };
 ```
 
-- [ ] **Step 5: Mirror the changes in `engine-async.ts`**
+- [ ] **Step 5: Confirm `engine-async.ts` needs no change**
 
-Run: `sed -n '1,60p' packages/statistics/src/engine-async.ts` and apply the identical edits to its event loop and result assembly. It exists so a slow parse yields to the event loop; its aggregation logic must stay byte-for-byte equivalent to `engine.ts` or the async and sync paths diverge silently.
+Read `packages/statistics/src/engine-async.ts`. It is 20 lines: it drains the
+`AsyncIterable` into an array and calls `runEngine`. It holds **no aggregation
+logic of its own**, so there is nothing to mirror — it inherits every change
+made in Step 4 for free, and duplicating logic into it would create exactly the
+sync/async divergence the single delegation exists to prevent.
+
+Verify this is still true rather than assuming it:
+
+```bash
+grep -n "runEngine\|for await\|EngineResult" packages/statistics/src/engine-async.ts
+```
+Expected: the file references `runEngine` and re-exports its `EngineResult` type;
+no rollup, bucket, histogram, or indicator logic appears.
+
+If that expectation does not hold, STOP and report it — the plan assumed a
+delegating wrapper and the assumption would be wrong.
 
 - [ ] **Step 6: Run the statistics suite**
 
