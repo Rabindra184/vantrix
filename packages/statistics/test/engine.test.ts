@@ -54,4 +54,18 @@ describe('engine — parity additions', () => {
     }
     expect(() => runEngine(many, { maxEndpoints: 10 })).toThrow(/cardinality/i);
   });
+
+  it('reports user bucket offsets relative to the run start, not the epoch', () => {
+    // The meta event arrives first and sets the run start to 1_000. A UserSeries
+    // built before that sees runStartMs = 0 and emits absolute offsets, putting
+    // the user charts on a different x-axis from every request series.
+    const r = runEngine(events());
+    const browse = r.users.find((u) => u.scenario === 'Browse');
+    expect(browse?.buckets[0]?.startOffsetMs).toBe(0);
+    for (const u of r.users) {
+      for (const b of u.buckets) {
+        expect(b.startOffsetMs).toBeLessThan(60_000);
+      }
+    }
+  });
 });
