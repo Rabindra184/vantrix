@@ -412,7 +412,7 @@ Create `packages/statistics/test/distribution.test.ts`:
 import { describe, expect, it } from 'vitest';
 import { Histogram } from '../src/histogram.js';
 import {
-  GATLING_MAX_PLOTS, distribution, gatlingBucketFor, gatlingLabels, gatlingStep,
+  GATLING_MAX_PLOTS, bucketIndexFor, distribution, gatlingBucketFor, gatlingLabels, gatlingStep,
 } from '../src/distribution.js';
 
 // Verified against fixtures/gatling-3.15.1.2/reference-report/index.html:
@@ -479,6 +479,28 @@ describe('gatling distribution binning', () => {
     expect(d.labels).toEqual([]);
     expect(d.okPercent).toEqual([]);
   });
+
+  it('places every observation on the fixture range exactly where Gatling does', () => {
+    const step = gatlingStep(FIXTURE_MIN, FIXTURE_MAX, GATLING_MAX_PLOTS);
+    const labels = gatlingLabels(FIXTURE_MIN, FIXTURE_MAX, step);
+    for (let v = FIXTURE_MIN; v <= FIXTURE_MAX; v++) {
+      const i = bucketIndexFor(v, FIXTURE_MIN, FIXTURE_MAX, step, labels.length);
+      expect(labels[i]).toBe(gatlingBucketFor(v, FIXTURE_MIN, FIXTURE_MAX, step));
+    }
+  });
+
+  // Gatling drops observations whose computed label is absent from its own
+  // label set; arithmetic indexing cannot. Conservation is the invariant every
+  // percentage assertion rests on.
+  it('never loses an observation, on ranges where Gatling would', () => {
+    for (const [min, max] of [[14, 818], [0, 101], [7, 3999], [16, 2503]] as const) {
+      const ok = new Histogram();
+      for (let v = min; v <= max; v++) ok.accept(v);
+      const d = distribution(ok, new Histogram());
+      expect(d.okCount.reduce((a, b) => a + b, 0)).toBe(max - min + 1);
+      expect(d.okPercent.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 6);
+    }
+  });
 });
 ```
 
@@ -532,10 +554,38 @@ export function gatlingLabels(min: number, max: number, step: number): number[] 
   return Array.from({ length }, (_, i) => scalaRound(min + step * i + halfStep));
 }
 
-/** LogFileData.distribution's bucketFunction — note the clamp to max - 1. */
+/**
+ * LogFileData.distribution's bucketFunction, transcribed exactly — note the
+ * clamp to max - 1. Exported and tested because it documents the source rule,
+ * but NOT used to place observations; see bucketIndexFor.
+ */
 export function gatlingBucketFor(t: number, min: number, max: number, step: number): number {
   const value = Math.min(t, max - 1);
   return scalaRound(value - ((value - min) % step) + step / 2);
+}
+
+/**
+ * The bin index an observation belongs to.
+ *
+ * Gatling groups by the LABEL VALUE that bucketFunction computes, then looks
+ * that value up among the labels StatsHelper.buckets produced. Those two
+ * roundings do not always agree: probing 4240 (min, max) ranges found 26 where
+ * some observation's computed label is absent from the label set, so Gatling
+ * silently drops it — up to 8 observations in the worst case, and some ranges
+ * yield 101 labels rather than 100 because `ceil(range/step)` is a
+ * floating-point round trip.
+ *
+ * DELIBERATE DEVIATION: we index arithmetically instead, which is the same
+ * quantity without the second rounding. It never drops an observation, so the
+ * percentages always sum to 100. Verified across the same 4240 ranges: zero
+ * out-of-range indices, and identical placement to bucketFunction across the
+ * ENTIRE fixture range (min 16, max 2503), which is what parity is asserted on.
+ */
+export function bucketIndexFor(
+  t: number, min: number, max: number, step: number, binCount: number,
+): number {
+  const value = Math.min(t, max - 1);
+  return Math.min(Math.max(Math.floor((value - min) / step), 0), binCount - 1);
 }
 
 export function distribution(
@@ -576,15 +626,13 @@ export function distribution(
 
   const step = gatlingStep(min, max, maxPlots);
   const labels = gatlingLabels(min, max, step);
-  const index = new Map<number, number>();
-  labels.forEach((label, i) => index.set(label, i));
 
   const okCount = new Array<number>(labels.length).fill(0);
   const koCount = new Array<number>(labels.length).fill(0);
   const fold = (h: Histogram, into: number[]): void => {
     for (const [v, c] of h.entries()) {
-      const i = index.get(gatlingBucketFor(v, min, max, step));
-      if (i !== undefined) into[i] = (into[i] as number) + c;
+      const i = bucketIndexFor(v, min, max, step, labels.length);
+      into[i] = (into[i] as number) + c;
     }
   };
   fold(ok, okCount);
@@ -2693,8 +2741,17 @@ Expected: PASS.
 
 - [ ] **Step 9: Falsification checkpoint — prove the rate divisor matters**
 
-In `scatter`, replace `Math.round((b.startedCount / widthMs) * 1000)` with `b.startedCount` and re-run the parity suite added in Task 15.
-Expected: the scatter row fails on any run whose buckets coalesced. Restore.
+The reference fixture's run has 63 buckets, well under the 300 cap, so it never
+coalesces — no test in this task or Task 15 exercises a wrong divisor. Rather
+than claim coverage that does not exist, falsify the piece that IS covered:
+
+Change `inferBucketWidthMs` to return the FIRST gap instead of the smallest and
+re-run `pnpm vitest run packages/statistics/test/bucket-width.test.ts`.
+Expected: "is the smallest positive gap" FAILS. Restore.
+
+Then record in the report that the controller's *use* of the inferred width is
+unverified: no fixture coalesces. The final review should decide whether that
+warrants a synthetic >300-bucket integration fixture.
 
 - [ ] **Step 10: Commit**
 
