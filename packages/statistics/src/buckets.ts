@@ -69,3 +69,23 @@ export class BucketSeries {
     return [...this.#buckets.values()].sort((a, b) => a.startOffsetMs - b.startOffsetMs);
   }
 }
+
+/**
+ * The bucket width of a persisted series.
+ *
+ * run_series_bucket stores start_offset_ms but not the width, and the width is
+ * not always 1000: BucketSeries halves resolution in place once a run exceeds
+ * its bucket cap. The scatter's x-axis is a RATE, so dividing by the wrong
+ * width silently scales every point.
+ *
+ * The smallest positive gap, not the first gap: a bucket with no observations
+ * is absent from the table, so consecutive offsets can be two widths apart.
+ */
+export function inferBucketWidthMs(offsets: number[]): number {
+  let width = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < offsets.length; i++) {
+    const gap = (offsets[i] as number) - (offsets[i - 1] as number);
+    if (gap > 0 && gap < width) width = gap;
+  }
+  return Number.isFinite(width) ? width : 1000;
+}
