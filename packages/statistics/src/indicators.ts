@@ -20,6 +20,11 @@ export function bandsFrom(
   koCount: number,
   bounds: { lowerMs: number; higherMs: number },
 ): IndicatorBands {
+  if (bounds.lowerMs > bounds.higherMs) {
+    throw new Error(
+      `Indicator bounds are inverted: lowerMs (${bounds.lowerMs}) must not exceed higherMs (${bounds.higherMs}).`,
+    );
+  }
   const under = ok.countBelow(bounds.lowerMs);
   const belowHigher = ok.countBelow(bounds.higherMs);
   return {
