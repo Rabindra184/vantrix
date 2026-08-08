@@ -72,3 +72,51 @@ describe('BucketSeries coalescing (AC-STAT-2)', () => {
     }
   });
 });
+
+describe('BucketSeries per-status sketches', () => {
+  it('routes observations to the OK or KO sketch by status', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    s.add(0, 100, true, 'end');
+    s.add(0, 100, true, 'end');
+    s.add(0, 900, false, 'end');
+    const b = s.buckets()[0];
+    expect(b?.sketchOk.count).toBe(2);
+    expect(b?.sketchKo.count).toBe(1);
+    expect(b?.sketch.count).toBe(3);          // combined still spans both
+  });
+
+  // Gatling's over-time chart is OK-only and its scatter is two independent
+  // series; a combined-status percentile is a different number whenever a
+  // bucket mixes statuses, which is exactly when it matters.
+  it('gives a different OK percentile than the combined one for a mixed bucket', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    for (let i = 0; i < 10; i++) s.add(0, 100, true, 'end');
+    for (let i = 0; i < 10; i++) s.add(0, 5000, false, 'end');
+    const b = s.buckets()[0];
+    expect(b!.sketchOk.quantile(0.95)).toBeLessThan(200);
+    expect(b!.sketch.quantile(0.95)).toBeGreaterThan(1000);
+  });
+
+  it('coalesces all three sketches together', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 2 });
+    s.add(0, 10, true, 'end');
+    s.add(1000, 20, false, 'end');
+    s.add(2000, 30, true, 'end');
+    s.add(3000, 40, true, 'end');
+    const total = s.buckets().reduce((n, b) => n + b.sketch.count, 0);
+    const ok = s.buckets().reduce((n, b) => n + b.sketchOk.count, 0);
+    const ko = s.buckets().reduce((n, b) => n + b.sketchKo.count, 0);
+    expect(total).toBe(4);
+    expect(ok).toBe(3);
+    expect(ko).toBe(1);
+  });
+
+  it('leaves both status sketches empty for a start edge', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    s.add(0, 100, true, 'start');
+    const b = s.buckets()[0];
+    expect(b?.startedCount).toBe(1);
+    expect(b?.sketchOk.count).toBe(0);
+    expect(b?.sketchKo.count).toBe(0);
+  });
+});

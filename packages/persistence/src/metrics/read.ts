@@ -39,6 +39,9 @@ export interface StoredBucket {
   maxMs: number;
   meanMs: number;
   percentiles: Record<string, number>;
+  /** Status-filtered. `{}` for rows written before the per-status migration. */
+  percentilesOk: Record<string, number>;
+  percentilesKo: Record<string, number>;
 }
 
 export interface StatKey {
@@ -59,7 +62,7 @@ export interface StatKey {
  * stop catching that regression.
  */
 export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, ok_count, ko_count,
-              min_ms, max_ms, mean_ms, percentiles
+              min_ms, max_ms, mean_ms, percentiles, percentiles_ok, percentiles_ko
          FROM run_series_bucket
         WHERE run_started_on = $1 AND run_id = $2
           AND org_id = $3 AND project_id = $4
@@ -162,6 +165,8 @@ export class MetricReader {
       maxMs: r.max_ms,
       meanMs: r.mean_ms,
       percentiles: r.percentiles as Record<string, number>,
+      percentilesOk: (r.percentiles_ok ?? {}) as Record<string, number>,
+      percentilesKo: (r.percentiles_ko ?? {}) as Record<string, number>,
     }));
   }
 

@@ -115,13 +115,19 @@ export class ParityController {
     }
 
     // y is quantile(0.95).toInt - TRUNCATED, not rounded.
+    // Gatling emits a point per status-filtered digest that exists in a bucket,
+    // so a bucket with both successes and failures yields TWO points - one on
+    // each series. Routing a mixed bucket to a single series drops the KO point
+    // entirely and contaminates the OK one.
     const ok: [number, number][] = [];
     const ko: [number, number][] = [];
     for (const b of own) {
       const x = rateAt.get(b.startOffsetMs);
-      const p95 = b.percentiles.p95;
-      if (x === undefined || p95 === undefined) continue;
-      (b.okCount > 0 ? ok : ko).push([x, Math.trunc(p95)]);
+      if (x === undefined) continue;
+      const pOk = b.percentilesOk.p95;
+      const pKo = b.percentilesKo.p95;
+      if (b.okCount > 0 && pOk !== undefined) ok.push([x, Math.trunc(pOk)]);
+      if (b.koCount > 0 && pKo !== undefined) ko.push([x, Math.trunc(pKo)]);
     }
     ok.sort((a, b) => a[0] - b[0]);
     ko.sort((a, b) => a[0] - b[0]);

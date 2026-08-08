@@ -98,6 +98,35 @@ describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
     }
   });
 
+  it('emits an OK and a KO scatter point for a bucket containing both', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const stats = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}/stats?scope=request`).set('Authorization', `Bearer ${ctx.readToken}`).expect(200);
+    const failing = stats.body.stats.find((s: { koCount: number }) => s.koCount > 0);
+    expect(failing).toBeDefined();
+    const r = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent(failing.name)}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`).expect(200);
+    expect(r.body.ko.length).toBeGreaterThan(0);
+    expect(r.body.ok.length).toBeGreaterThan(0);
+
+    // Strengthens the two checks above into a real regression guard: Gatling
+    // emits one KO point per bucket that has any failures at all (see
+    // parity.controller.ts's scatter loop), so the count must match exactly,
+    // not merely be non-zero. A single-series routing bug (a bucket with both
+    // statuses landing entirely on one series) still leaves `ko.length > 0`
+    // here — this fixture's failing endpoint has bucket-level failures spread
+    // across multiple 1s buckets, some of which are all-KO — so the weaker
+    // assertion above does not, by itself, catch that regression.
+    const series = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}/series?scope=request&name=${encodeURIComponent(failing.name)}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`).expect(200);
+    const koBucketCount = series.body.buckets.filter((b: { koCount: number }) => b.koCount > 0).length;
+    expect(r.body.ko.length).toBe(koBucketCount);
+  });
+
   it('404s for a run in another project', async () => {
     ctx = await createTestApp();
 

@@ -84,6 +84,8 @@ export class MetricWriter {
           // Only the configured percentiles are stored per bucket; per spec §9.1
           // bucket sketches are deliberately not persisted.
           JSON.stringify(percentilesOf(b.sketch)),
+          JSON.stringify(percentilesOf(b.sketchOk)),
+          JSON.stringify(percentilesOf(b.sketchKo)),
         ]);
       }
     }
@@ -94,7 +96,7 @@ export class MetricWriter {
         'run_started_on', 'run_id', 'org_id', 'project_id',
         'scope', 'name', 'start_offset_ms',
         'started_count', 'ended_count', 'ok_count', 'ko_count',
-        'min_ms', 'max_ms', 'mean_ms', 'percentiles',
+        'min_ms', 'max_ms', 'mean_ms', 'percentiles', 'percentiles_ok', 'percentiles_ko',
       ],
       bucketRows,
     );
