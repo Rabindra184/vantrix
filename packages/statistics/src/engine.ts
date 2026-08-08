@@ -20,6 +20,13 @@ export interface EngineResult {
   indicators: IndicatorBands;
   errors: { message: string; count: number }[];
   endpointCount: number;
+  /**
+   * The load test's own start, from the 'meta' event's startedAtMs — the
+   * tool's run header, not when the bundle was uploaded. Null when no meta
+   * event was seen, rather than defaulting to epoch 0, so a caller can tell
+   * "genuinely unknown" apart from "started at the Unix epoch".
+   */
+  runStartedAtMs: number | null;
 }
 
 export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions = {}): EngineResult {
@@ -30,6 +37,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   const maxBucketsEndpoint = opts.maxBucketsEndpoint ?? 300;
 
   let runStartMs = 0;
+  let sawMeta = false;
   let firstMs = Number.POSITIVE_INFINITY;
   let lastMs = 0;
 
@@ -70,7 +78,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   };
 
   for (const e of events) {
-    if (e.type === 'meta') { runStartMs = e.startedAtMs; continue; }
+    if (e.type === 'meta') { runStartMs = e.startedAtMs; sawMeta = true; continue; }
     if (e.type === 'group') {
       // Group name is the hierarchy joined with '/' (e.g. 'Catalog/Recommendations').
       // cumulatedResponseTimeMs and (endMs - startMs) are deliberately tracked as two
@@ -129,5 +137,6 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     indicators: indicators.bands(),
     errors: errors.top(200),
     endpointCount: endpoints.size,
+    runStartedAtMs: sawMeta ? runStartMs : null,
   };
 }

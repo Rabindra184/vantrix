@@ -108,6 +108,26 @@ describe('PipelineService', () => {
     expect(Math.round(runStat!.stddevMs)).toBe(370);
   });
 
+  it('sets tool_started_at from the bundle\'s own run header, distinct from ingest time', async () => {
+    // seedRun fixes startedAt (ingest/upload time) to a constant unrelated to
+    // when the fixture log itself claims the load test started. The two
+    // genuinely differ in the fixture, so this proves the worker reads the
+    // parsed value rather than copying startedAt or leaving the column null.
+    const ctx = await seedRun(bundle);
+    await pipeline().process(ctx.runId);
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('complete');
+    expect(run?.toolStartedAt).not.toBeNull();
+    expect(run!.toolStartedAt!.getTime()).not.toBe(run!.startedAt.getTime());
+
+    // Plausible, not hardcoded: a real epoch millisecond timestamp somewhere
+    // in the recent past, and — per this fixture, captured when the tool
+    // itself ran — earlier than the fixed upload time seedRun records.
+    expect(run!.toolStartedAt!.getTime()).toBeGreaterThan(new Date('2020-01-01T00:00:00Z').getTime());
+    expect(run!.toolStartedAt!.getTime()).toBeLessThan(run!.startedAt.getTime());
+  });
+
   it('persists the error table with the fixture counts', async () => {
     const ctx = await seedRun(bundle);
     await pipeline().process(ctx.runId);

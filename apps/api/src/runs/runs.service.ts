@@ -38,6 +38,7 @@ export class RunsService {
       tool: run.tool,
       toolVersion: run.toolVersion,
       startedAt: run.startedAt.toISOString(),
+      toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
       ingestedAt: run.ingestedAt ? run.ingestedAt.toISOString() : null,
       error: run.error,
       assertions: assertions.map((a) => {

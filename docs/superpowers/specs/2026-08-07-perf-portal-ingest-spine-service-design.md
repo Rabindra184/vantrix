@@ -303,7 +303,7 @@ Nine tables. Every one carries `org_id` and `project_id`, and every repository m
 | `org` | id, slug, name, created_at |
 | `project` | org_id, slug, name, **settings** jsonb, created_at |
 | `api_token` | project_id, name, prefix, token_hash, scopes[], created_at, last_used_at, revoked_at |
-| `run` | org_id, project_id, status, verdict, tool, tool_version, bundle_key, bundle_sha256, bundle_bytes, idempotency_key, started_at, ingested_at, **engine_options** jsonb, error jsonb |
+| `run` | org_id, project_id, status, verdict, tool, tool_version, bundle_key, bundle_sha256, bundle_bytes, idempotency_key, **started_at** (ingest time), **tool_started_at** (the load test's own start, nullable), ingested_at, **engine_options** jsonb, error jsonb |
 | `run_stat` | run_id, scope, name, family, count, ok_count, ko_count, error_rate, min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles jsonb, **sketch bytea**, sketch_kind |
 | `run_series_bucket` | **run_started_on** date, run_id, scope, name, start_offset_ms, started_count, ended_count, ok_count, ko_count, min_ms, max_ms, mean_ms, percentiles jsonb |
 | `run_error` | run_id, message, count |
@@ -314,7 +314,7 @@ Nine tables. Every one carries `org_id` and `project_id`, and every repository m
 
 Unique keys: `(org_id, slug)` on project · `(project_id, idempotency_key)` on run · `(run_id, scope, name, family)` on `run_stat` · `(run_started_on, run_id, scope, name, start_offset_ms)` on `run_series_bucket` — a unique key on a partitioned table must contain the partition key, which is why `run_started_on` leads it.
 
-Indexes: `run(project_id, started_at DESC)` for the list · `run(status, ingested_at)` for the sweeper · `run_stat(run_id)` and `run_series_bucket(run_id, scope, name)` for reads.
+Indexes: `run(project_id, started_at DESC)` — originally sized for the run list, which now orders by `coalesce(tool_started_at, started_at) DESC` (see below); a plain btree on `started_at` alone cannot serve an `ORDER BY` over that expression, so this index no longer covers the list's sort and is a known follow-up, not addressed by the column-only migration that added `tool_started_at` · `run(status, ingested_at)` for the sweeper · `run_stat(run_id)` and `run_series_bucket(run_id, scope, name)` for reads.
 
 ### 9.1 Only summary sketches are persisted
 
@@ -332,11 +332,23 @@ Statistics are meaningful only relative to the warm-up window and percentile set
 
 ### 9.3 `run_series_bucket` is partitioned from the first migration
 
-Declared `PARTITION BY RANGE (run_started_on)` with monthly partitions, several months pre-created; automatic rollover is deferred to the scheduler in a later milestone. Converting a large table to partitioned afterwards is a migration planned around an outage — the same reasoning that puts tenancy columns in now. Partitioning by run start date is what makes retention a partition drop rather than a delete storm (NFR-SC-7).
+Declared `PARTITION BY RANGE (run_started_on)` with monthly partitions, several months pre-created; automatic rollover is deferred to the scheduler in a later milestone. Converting a large table to partitioned afterwards is a migration planned around an outage — the same reasoning that puts tenancy columns in now.
+
+**Partitioning is by ingest date, not by when the load test itself ran.** `run.started_on` — the value carried onto every `run_series_bucket` row as `run_started_on` — is derived from `run.started_at`, which is set at accept time (`new Date()` when the bundle lands), not from the tool's own run header. That header value is only known after parsing, inside the worker, long after this row and its partition have already been chosen; retroactively moving already-written bucket rows to a "corrected" partition once the real start becomes known is not a rewrite this design takes on. Partitioning by ingest date is also simply the right choice for what partitioning exists for here: retention. `DROP PARTITION` needs to reason about "how long have we been storing this," which is exactly what ingest date answers — a CI job's upload timestamp and a human's backfill timestamp are equally valid answers to "when did this arrive," and either way the row ages out of the retention window at the same, predictable pace. Retention is a partition drop rather than a delete storm (NFR-SC-7) precisely because the partition key tracks storage age, not test history.
+
+The load test's own start is still recorded — as `run.tool_started_at`, nullable, populated by the worker once parsing completes (§6.2) — and is what the run list and any "when did this actually run" display should read. It is never the partition key and never backdates a `run_series_bucket` row already written under the ingest-date partition.
 
 `run_started_on` is denormalized onto the table because a partition key must live in the partitioned table itself. It carries a consequence the read path must honor: **a query filtering only on `run_id` cannot prune partitions and will scan every one.** Every series read therefore resolves the run first and passes `run_started_on` alongside `run_id`. This is a correctness-of-performance requirement, not an optimization, and it is asserted by a test that fails if the predicate is dropped.
 
 Prisma cannot express partitioning, so this migration's generated SQL is hand-edited. That is a supported Prisma workflow, stated here so it is not rediscovered as a surprise.
+
+### 9.3a `started_at` is ingest time; `tool_started_at` is the load test's own start
+
+Three timestamps live on `run`, and they answer three different questions:
+
+- **`started_at`** — when the platform received the bundle (`now()` at accept time, in `IngestService.accept`). This is what `started_on` (the partition key, §9.3) is derived from. It is honestly an ingest-time fact, not a proxy for when the load test ran — a CI job posting immediately after its run makes the two nearly identical, but a delayed or backfilled upload can diverge from the real run arbitrarily.
+- **`tool_started_at`** — the load test's own start, read from the tool's run header (e.g. Gatling's `simulation.log` run record) once the worker finishes parsing. Null until then, and null forever for a run that never reaches `complete`. This is what a human means by "when did the run happen," and it is what the run list orders by: `ORDER BY coalesce(tool_started_at, started_at) DESC, id DESC` — falling back to ingest time only for a run still in flight, with `id` as the tiebreaker so cursor pagination stays stable.
+- **`created_at`** — this row's own creation time, read only by the sweeper (`apps/worker/src/sweeper.ts`) to detect a run stuck at `pending` or `parsing` past its staleness window. It coincides with `started_at` today, because both are `now()` at the same insert, but the two serve genuinely different purposes: `started_at` is a fact about the run that the API exposes and the list can fall back to; `created_at` is internal bookkeeping for this row's own lifecycle. They are kept separate rather than merged into one column, so that a future change to either — for instance, `started_at` one day reflecting a backfill-adjusted accept time distinct from actual insert time — cannot silently perturb the sweeper's unrelated staleness query.
 
 ### 9.4 Prisma owns CRUD; metrics use raw SQL
 
