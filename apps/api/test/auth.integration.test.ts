@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Controller, Get } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
-import { hashToken, mintToken } from '@perfportal/core';
+import { hashToken, mintToken, splitToken } from '@perfportal/core';
 import { TokenRepository } from '@perfportal/persistence';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +62,45 @@ describe('AuthGuard', () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer()).get('/v1/runs/not-a-uuid');
     expect(JSON.stringify(res.body)).not.toContain('at Object.');
+  });
+});
+
+describe('api_token.last_used_at bookkeeping', () => {
+  // Before this test existed, TokenRepository.touch had no caller at all —
+  // last_used_at was defined in the schema (spec §9) but never written by
+  // anything. Failing this test against that state is what proves the wire-up,
+  // not just that the column exists.
+  it('is written after a successful authentication', async () => {
+    ctx = await createTestApp();
+    const { prefix } = splitToken(ctx.readToken)!;
+    const before = await ctx.prisma.apiToken.findUnique({ where: { prefix } });
+    expect(before?.lastUsedAt).toBeNull();
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+    expect(res.status).toBe(404); // authenticated; the run just doesn't exist
+
+    const after = await ctx.prisma.apiToken.findUnique({ where: { prefix } });
+    expect(after?.lastUsedAt).not.toBeNull();
+  });
+
+  it('does not write again on a second request inside the touch interval', async () => {
+    const spy = vi.spyOn(TokenRepository.prototype, 'touch');
+    ctx = await createTestApp();
+    spy.mockClear(); // drop anything createTestApp's own fixture setup triggered
+
+    await request(ctx.app.getHttpServer())
+      .get('/v1/runs/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+    await request(ctx.app.getHttpServer())
+      .get('/v1/runs/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    // Two authenticated requests, milliseconds apart, well inside the
+    // 60s touch interval: only the first should have written the timestamp.
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });
 
