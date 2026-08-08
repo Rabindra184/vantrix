@@ -1,12 +1,13 @@
-import { Controller, Get, Inject, NotFoundException, Param, Query, Req } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type {
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
 } from '@perfportal/contracts';
-import { MetricReader, RunRepository } from '@perfportal/persistence';
+import { parseProjectSettings } from '@perfportal/contracts';
+import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
+import { bandsFrom } from '@perfportal/statistics';
 import type { Request } from 'express';
-import pg from 'pg';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { uuidParam } from '../common/validation.js';
 
@@ -18,12 +19,7 @@ export class MetricsController {
   constructor(
     private readonly runs: RunRepository,
     private readonly reader: MetricReader,
-    // `pg.Pool` is a property-access type (a namespace member off a default
-    // import), not a plain class reference. tsc's emitDecoratorMetadata can't
-    // express that as a runtime value and silently degrades design:paramtypes
-    // to Object here — see health.controller.ts for the full explanation. An
-    // explicit @Inject sidesteps the reflection gap entirely.
-    @Inject(pg.Pool) private readonly pool: pg.Pool,
+    private readonly projects: ProjectRepository,
   ) {}
 
   /**
@@ -47,76 +43,51 @@ export class MetricsController {
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
     @Query('scope') scope?: string,
+    @Query('name') name?: string,
     @Query('family') family?: string,
   ): Promise<StatsResponse> {
     const run = await this.#run(req, id);
-    const all = await this.reader.stats(
-      { orgId: run.orgId, projectId: run.projectId },
-      run.id,
-    );
-    const stats = all
+    const settings = parseProjectSettings(await this.projects.settings({
+      orgId: run.orgId,
+      projectId: run.projectId,
+    }));
+    const all = await this.reader.stats({ orgId: run.orgId, projectId: run.projectId }, run.id);
+    const rows = all
       .filter((s) => (scope ? s.scope === scope : true))
+      .filter((s) => (name !== undefined ? s.name === name : true))
       .filter((s) => (family ? s.family === family : true));
 
+    // A run ingested before the parity migration has no histogram. Its bands
+    // cannot respond to a bounds change, and saying so is better than serving
+    // frozen numbers that look live.
+    const configurable = rows.every((s) => s.histogramOk !== null);
+
+    const stats = rows.map((s) => ({
+      scope: s.scope as StatsResponse['stats'][number]['scope'],
+      name: s.name,
+      family: s.family as StatsResponse['stats'][number]['family'],
+      count: s.count,
+      okCount: s.okCount,
+      koCount: s.koCount,
+      errorRate: s.errorRate,
+      minMs: s.minMs,
+      maxMs: s.maxMs,
+      meanMs: s.meanMs,
+      stddevMs: s.stddevMs,
+      throughputRps: s.throughputRps,
+      percentiles: s.percentiles,
+      indicators: s.histogramOk
+        ? bandsFrom(s.histogramOk, s.koCount, settings.indicators)
+        : { under: 0, between: 0, over: 0, failed: s.koCount },
+    }));
+
+    const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
     return {
       runId: run.id,
-      stats: stats.map((s) => ({
-        scope: s.scope as StatsResponse['stats'][number]['scope'],
-        name: s.name,
-        family: s.family as StatsResponse['stats'][number]['family'],
-        count: s.count,
-        okCount: s.okCount,
-        koCount: s.koCount,
-        errorRate: s.errorRate,
-        minMs: s.minMs,
-        maxMs: s.maxMs,
-        meanMs: s.meanMs,
-        stddevMs: s.stddevMs,
-        throughputRps: s.throughputRps,
-        percentiles: s.percentiles,
-      })),
-      indicators: await this.#indicators(run.id, run.orgId, run.projectId),
-    };
-  }
-
-  /**
-   * Indicator bands are persisted from the engine's exact counts (see
-   * MetricWriter.persist) rather than recomputed from scalar buckets here, so
-   * the global page's numbers can never disagree with the series it sits
-   * above — recomputing from the response-time histogram would only be an
-   * estimate of what the engine already counted precisely. `failed` used to
-   * be threaded in from the caller (`run_stat.ko_count`) instead of read from
-   * this table; the two happen to agree today only because the engine writes
-   * both from the same loop over the same filtered events. All four bands now
-   * come from this one query so that stops being a coincidence this endpoint
-   * depends on.
-   */
-  async #indicators(
-    runId: string,
-    orgId: string,
-    projectId: string,
-  ): Promise<StatsResponse['indicators']> {
-    const { rows } = await this.pool.query<{
-      under: string;
-      between_: string;
-      over: string;
-      failed: string;
-    }>(
-      `SELECT
-         coalesce(sum(under), 0)::text    AS under,
-         coalesce(sum(between_), 0)::text AS between_,
-         coalesce(sum(over), 0)::text     AS over,
-         coalesce(sum(failed), 0)::text   AS failed
-       FROM run_indicator
-       WHERE run_id = $1 AND org_id = $2 AND project_id = $3`,
-      [runId, orgId, projectId],
-    );
-    const r = rows[0];
-    return {
-      under: Number(r?.under ?? 0),
-      between: Number(r?.between_ ?? 0),
-      over: Number(r?.over ?? 0),
-      failed: Number(r?.failed ?? 0),
+      stats,
+      indicators: runRow?.indicators ?? { under: 0, between: 0, over: 0, failed: 0 },
+      configurable,
+      bounds: settings.indicators,
     };
   }
 
@@ -148,11 +119,18 @@ export class MetricsController {
   async errors(
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
+    @Query('scope') scope?: string,
+    @Query('name') name?: string,
   ): Promise<ErrorsResponse> {
     const run = await this.#run(req, id);
+    // Omitting ?scope means run scope, NOT "every scope": the engine writes a
+    // row per (scope, name), so an unscoped read would return each failure
+    // twice and double every count.
+    const sel = { scope: scope ?? 'run', name: scope === undefined ? '' : (name ?? '') };
     const errors = await this.reader.errors(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
+      sel,
     );
     return { runId: run.id, errors };
   }
