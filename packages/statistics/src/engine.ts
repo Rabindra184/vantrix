@@ -78,15 +78,11 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   // read from the stored entry fields, so a request name containing a space or colon can
   // never be truncated or collide with another entry.
   const series = new Map<string, { scope: MetricScope; name: string; series: BucketSeries }>();
-  // Constructed lazily, exactly like seriesFor's BucketSeries: runStartMs is 0
-  // until the meta event is handled below, and a UserSeries built against 0
-  // would report absolute epoch offsets while every request bucket is
-  // run-relative.
-  let users: UserSeries | null = null;
-  const usersFor = (): UserSeries => {
-    users ??= new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
-    return users;
-  };
+  // Buffered, then built after the loop: runStartMs is 0 until the meta event
+  // is handled below, and a UserSeries constructed against 0 reports absolute
+  // epoch offsets while every request bucket is run-relative. UserSeries
+  // computes nothing until scenarios(), so deferring costs only this array.
+  const userEvents: { scenario: string; kind: 'start' | 'end'; tsMs: number }[] = [];
   // One rollup per (scope, name), keyed the same opaque way as `rollups`: the
   // key is never parsed back, so a request name containing a space is safe.
   const errorsByKey = new Map<string, { scope: MetricScope; name: string; rollup: ErrorRollup }>();
@@ -143,7 +139,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     }
     if (e.type === 'user') {
       // Always recorded, warm-up included: the user charts show the ramp.
-      usersFor().add(e.scenario, e.kind, e.tsMs);
+      userEvents.push({ scenario: e.scenario, kind: e.kind, tsMs: e.tsMs });
       continue;
     }
     if (e.type !== 'request') continue;
@@ -194,10 +190,13 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     for (const e of rollup.top(200)) errors.push({ scope, name, message: e.message, count: e.count });
   }
 
+  const users = new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
+  for (const u of userEvents) users.add(u.scenario, u.kind, u.tsMs);
+
   return {
     stats,
     series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, buckets: v.series.buckets() }])),
-    users: users?.scenarios() ?? [],
+    users: users.scenarios(),
     errors,
     endpointCount: endpoints.size,
     runStartedAtMs: sawMeta ? runStartMs : null,
