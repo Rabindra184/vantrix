@@ -25,6 +25,14 @@ declare module 'express' {
 }
 
 /**
+ * Minimum age of api_token.last_used_at before authenticateRequest writes it
+ * again. The record backing an authentication check is already loaded, so
+ * the staleness check itself is free; this bounds the write to at most once
+ * per interval per token instead of once per request on a hot token.
+ */
+export const TOKEN_TOUCH_INTERVAL_MS = 60_000;
+
+/**
  * The bearer-token check shared by AuthGuard (route-level, scope-aware) and
  * AuthMiddleware (perimeter-level, applied to the whole /v1 prefix — see
  * that file for why routing alone cannot do this). Throws UnauthorizedException
@@ -41,6 +49,18 @@ export async function authenticateRequest(req: Request, tokens: TokenRepository)
   if (record.revokedAt) throw new UnauthorizedException('This API token has been revoked.');
   if (!(await verifyToken(record.tokenHash, parts.secret))) {
     throw new UnauthorizedException('Invalid API token.');
+  }
+
+  const isStale =
+    !record.lastUsedAt || Date.now() - record.lastUsedAt.getTime() >= TOKEN_TOUCH_INTERVAL_MS;
+  if (isStale) {
+    // Bookkeeping only — a failure here must never fail an otherwise-valid
+    // authentication.
+    try {
+      await tokens.touch(record.id);
+    } catch (err) {
+      console.warn(`failed to update last_used_at for token ${record.id}`, err);
+    }
   }
 
   return {
