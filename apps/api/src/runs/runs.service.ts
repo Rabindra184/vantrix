@@ -15,7 +15,8 @@ export class RunsService {
    *
    *   200  ingested, verdict passed or not_evaluated
    *   422  ingested, verdict failed
-   *   400+ bundle rejected (the ingest error's own status)
+   *   400+ bundle rejected (the ingest error's own status — usually 400,
+   *        but 413 for BUNDLE_TOO_LARGE; see apps/api/src/common/problem.ts)
    *   202  still processing
    */
   statusFor(run: RunRecord): number {

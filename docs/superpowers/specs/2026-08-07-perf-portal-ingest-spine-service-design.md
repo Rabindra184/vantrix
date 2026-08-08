@@ -189,7 +189,7 @@ PRD §20.2 is amended by this design from *"never materializing the log"* to: **
 1. Authenticate the token → `(org_id, project_id, scopes)`; require the `ingest` scope.
 2. Validate `metadata` against its Zod schema.
 3. If `metadata.idempotency_key` matches an existing run in this project, return that run's current state and stop.
-4. Stream the bundle body to object storage, computing SHA-256 inline. **Never buffered in the API process.** Exceeding the size cap aborts with `400 BUNDLE_TOO_LARGE`.
+4. Stream the bundle body to object storage, computing SHA-256 inline. **Never buffered in the API process.** Exceeding the size cap aborts with `413 BUNDLE_TOO_LARGE` — Payload Too Large is the accurate code for this specific rejection; see §12.
 5. `INSERT run(status='pending', bundle_key, bundle_sha256, bundle_bytes, engine_options)`.
 6. Enqueue the BullMQ job.
 7. `SUBSCRIBE run:{id}`; wait for a terminal state, bounded (default 25 s, project-configurable).
@@ -235,7 +235,10 @@ Four status codes. `GET /v1/runs/{id}` returns **the same code for the same stat
 | `200` | Ingested; verdict `passed` or `not_evaluated` | Run header, verdict, assertions |
 | `422` | Ingested; verdict `failed` | Run header, verdict, assertions, with failures listed first |
 | `400` | Bundle rejected | `IngestError` with required `remediation` |
+| `413` | Bundle rejected for exceeding the decompressed-size cap (`BUNDLE_TOO_LARGE`) | `IngestError` with required `remediation` |
 | `202` | Still processing | `status_url`, `Retry-After` |
+
+`400` is the general "bundle rejected" bucket — every deterministic ingest failure that is not the size cap (`BUNDLE_NOT_ARCHIVE`, `BUNDLE_EMPTY`, `UNSUPPORTED_BUNDLE`, `ENDPOINT_CARDINALITY_EXCEEDED`, and so on) uses it. `413` is carved out of that bucket specifically for `BUNDLE_TOO_LARGE`, per §12.
 
 That the two paths return identical codes is the contract, not an implementation detail: it is what lets a CI script handle the fast and slow paths with one branch instead of two.
 
@@ -398,6 +401,7 @@ The `IngestError` type the packages already produce maps to this one-to-one, whi
 | §16.3 separate `scheduler` deployable | Sweeper runs in the worker via `FOR UPDATE SKIP LOCKED` | Its only responsibility in this slice is orphan recovery, which needs no leader election |
 | §26 M0 before M1 | Vertical slice cutting through both | §1.1 — hard-to-reverse contracts before routine deployment work |
 | §18 full identity model | Orgs, projects, and tokens only; no users, roles, or RBAC | Tenancy columns are cheap now and expensive to retrofit; roles are not |
+| §6.1 step 4 "aborts with 400 BUNDLE_TOO_LARGE" | Aborts with **413** `BUNDLE_TOO_LARGE` | 413 Payload Too Large is the accurate code for this specific rejection; folding it into the general 400 "bundle rejected" bucket would lose a distinction a client can usefully act on |
 
 Each is a scoping or evidence-based departure, not a disagreement with the PRD's eventual target state. §20.2 is the only one that changes a stated requirement, and it should be amended in the PRD when this design is implemented.
 
