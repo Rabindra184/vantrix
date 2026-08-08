@@ -7,3 +7,4 @@ export * from './indicators.js';
 export * from './errors-rollup.js';
 export * from './engine.js';
 export * from './engine-async.js';
+export * from './users.js';
