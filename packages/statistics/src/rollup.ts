@@ -1,4 +1,5 @@
 import type { MetricFamily, MetricScope } from '@perfportal/core';
+import { Histogram } from './histogram.js';
 import { Sketch } from './sketch.js';
 
 export interface StatRollup {
@@ -17,10 +18,19 @@ export interface StatRollup {
   percentiles: Record<string, number>;
   throughputRps: number;
   sketch: Sketch;
+  /**
+   * Exact 1ms histograms, split by status because Gatling renders OK and KO as
+   * separate distribution series. `All` is their merge, which is exact.
+   * The sketch above spans BOTH statuses; do not conflate the two.
+   */
+  histogramOk: Histogram;
+  histogramKo: Histogram;
 }
 
 export class RollupBuilder {
   #sketch = new Sketch();
+  #histOk = new Histogram();
+  #histKo = new Histogram();
   #count = 0;
   #ok = 0;
   #min = Number.POSITIVE_INFINITY;
@@ -37,6 +47,7 @@ export class RollupBuilder {
     this.#mean += delta / this.#count;
     this.#m2 += delta * (durationMs - this.#mean);
     this.#sketch.accept(durationMs);
+    if (ok) this.#histOk.accept(durationMs); else this.#histKo.accept(durationMs);
   }
 
   finish(opts: {
@@ -60,6 +71,8 @@ export class RollupBuilder {
       percentiles,
       throughputRps: opts.windowMs === 0 ? 0 : (this.#count / opts.windowMs) * 1000,
       sketch: this.#sketch,
+      histogramOk: this.#histOk,
+      histogramKo: this.#histKo,
     };
   }
 }
