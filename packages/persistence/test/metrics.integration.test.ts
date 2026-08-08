@@ -1,7 +1,7 @@
 import { bandsFrom, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL } from '../src/index.js';
+import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL, USER_SERIES_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -148,9 +148,13 @@ describe('MetricWriter / MetricReader', () => {
       expected.reduce((a, b) => a + b.startedCount, 0),
     );
 
+    // errors() now defaults to run scope (see the "defaults to run scope" test
+    // below) — result.errors carries a run-scope AND a request-scope row per
+    // failure (engine.ts), so the round-trip comparison must be against the
+    // run-scope subset, not the full (double-counted) list.
     const errors = await reader.errors(tenant, ctx.runId);
     expect(errors.reduce((a, e) => a + e.count, 0)).toBe(
-      result.errors.reduce((a, e) => a + e.count, 0),
+      result.errors.filter((e) => e.scope === 'run').reduce((a, e) => a + e.count, 0),
     );
   });
 
@@ -221,5 +225,65 @@ describe('MetricWriter / MetricReader', () => {
       [ctx.runId],
     );
     expect(rows.map((r) => r.scope)).toContain('request');
+  });
+
+  it('reads histograms back and folds bands at two different bounds', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const h = await reader.histograms({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId,
+      { scope: 'run', name: '', family: 'response_time' });
+    expect(h).not.toBeNull();
+    const a = bandsFrom(h!.ok, 0, { lowerMs: 800, higherMs: 1200 });
+    const b = bandsFrom(h!.ok, 0, { lowerMs: 50, higherMs: 100 });
+    expect(a).not.toEqual(b);              // same bytes, different settings
+    expect(a.under + a.between + a.over).toBe(b.under + b.between + b.over);
+  });
+
+  it('prunes partitions when reading user buckets', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const { rows } = await pool.query(
+      `EXPLAIN (FORMAT JSON) ${USER_SERIES_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId],
+    );
+    expect(JSON.stringify(rows)).not.toMatch(/run_user_bucket_2026_(0[1-7]|09|1[0-2])/);
+  });
+
+  it('defaults to run scope so a caller cannot double-count', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const defaulted = await reader.errors(tenant, ctx.runId);
+    const explicit = await reader.errors(tenant, ctx.runId, { scope: 'run', name: '' });
+    expect(defaulted).toEqual(explicit);
+    // The same failure also has a request-scope row; totals must not be summed
+    // across scopes. Run-scope total must equal the run's KO count, not twice it.
+    const { rows } = await pool.query<{ ko: string }>(
+      `SELECT ko_count::text AS ko FROM run_stat
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [ctx.runId],
+    );
+    const runKo = Number(rows[0]?.ko ?? 0);
+    expect(defaulted.reduce((n, e) => n + e.count, 0)).toBe(runKo);
+  });
+
+  it('filters errors by scope and name', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const runScoped = await reader.errors(tenant, ctx.runId, { scope: 'run', name: '' });
+    const { rows } = await pool.query<{ name: string }>(
+      `SELECT DISTINCT name FROM run_error WHERE run_id = $1 AND scope = 'request' LIMIT 1`,
+      [ctx.runId],
+    );
+    const reqName = rows[0]?.name;
+    expect(reqName).toBeDefined();
+    const reqScoped = await reader.errors(tenant, ctx.runId, { scope: 'request', name: reqName as string });
+    expect(reqScoped.length).toBeGreaterThan(0);
+    expect(reqScoped.reduce((n, e) => n + e.count, 0))
+      .toBeLessThan(runScoped.reduce((n, e) => n + e.count, 0));
   });
 });
