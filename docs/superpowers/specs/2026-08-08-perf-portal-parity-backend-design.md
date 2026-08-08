@@ -225,16 +225,25 @@ their merge — histograms are additive, so `All` is exact and free.
 **Encoding `sparse-ms-v1`** — a sparse, delta-encoded varint blob:
 
 ```
-u8    version           = 1
-uvarint  minMs          -- first populated bin
+u8       version = 1
+uvarint  capMs              -- restored, not assumed: a blob written under a
+                            -- different cap must not be reinterpreted
 uvarint  nEntries
 repeat nEntries:
-  uvarint keyDelta      -- ms above the previous key (0 for the first)
+  uvarint keyDelta          -- ms above the previous key; the first is absolute
   uvarint count
-uvarint  overflowCount  -- observations above histogramCapMs
-uvarint  overflowSum    -- their summed ms, so mean stays exact
-uvarint  overflowMax
+uvarint  total              -- includes overflow observations, which have no bin
+uvarint  sum
+uvarint  overflowCount
+uvarint  min
+uvarint  max
 ```
+
+`total`, `sum`, `min` and `max` are written and restored **explicitly, never
+re-derived from the bins** — observations above the cap contribute to all four
+but appear in no bin, so re-deriving would understate every one of them. This is
+the precise shape of the `Sketch.deserialize` defect the ingest spine shipped, so
+it is designed out rather than tested for afterwards.
 
 Size is bounded by **distinct observed values**, not by range. The fixture's
 895-request run is a few kilobytes.
