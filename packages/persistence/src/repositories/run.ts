@@ -9,6 +9,12 @@ export interface RunRecord {
   verdict: string | null;
   tool: string;
   toolVersion: string | null;
+  /** The tool's own simulation identity and run description, from the run
+   *  header. Null until the worker parses, and forever for a failed run. */
+  simulation: string | null;
+  description: string | null;
+  /** The load test's own span in ms. Null until the worker parses. */
+  durationMs: number | null;
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: number;
@@ -45,6 +51,9 @@ interface RunRow {
   verdict: string | null;
   tool: string;
   toolVersion: string | null;
+  simulation: string | null;
+  description: string | null;
+  durationMs: number | null;
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: bigint;
@@ -66,6 +75,9 @@ function toRecord(row: RunRow): RunRecord {
     verdict: row.verdict,
     tool: row.tool,
     toolVersion: row.toolVersion,
+    simulation: row.simulation,
+    description: row.description,
+    durationMs: row.durationMs,
     bundleKey: row.bundleKey,
     bundleSha256: row.bundleSha256,
     bundleBytes: Number(row.bundleBytes),
@@ -190,7 +202,8 @@ export class RunRepository {
     const rows = await this.prisma.$queryRaw<RunRow[]>`
       SELECT
         id, org_id AS "orgId", project_id AS "projectId", status, verdict, tool,
-        tool_version AS "toolVersion", bundle_key AS "bundleKey",
+        tool_version AS "toolVersion", simulation, description,
+        duration_ms AS "durationMs", bundle_key AS "bundleKey",
         bundle_sha256 AS "bundleSha256", bundle_bytes AS "bundleBytes",
         idempotency_key AS "idempotencyKey", started_at AS "startedAt",
         started_on AS "startedOn", tool_started_at AS "toolStartedAt",
