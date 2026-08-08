@@ -64,6 +64,18 @@ describe('GET /v1/runs/:id', () => {
     // problem. Guard against regressing to that shape.
     expect(res.body.remediation.toLowerCase()).not.toContain('retry the request');
   });
+
+  it('serves the tool run header on the run endpoint', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${id}`).set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('simulation');
+    expect(res.body).toHaveProperty('durationMs');
+    expect(res.body.simulation).toBe('example.ParitySimulation');
+    expect(res.body.durationMs).toBeGreaterThan(60_000);
+  });
 });
 
 describe('GET /v1/runs/:id/stats', () => {
