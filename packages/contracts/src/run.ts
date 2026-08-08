@@ -32,6 +32,11 @@ export const RunResponseSchema = z.object({
   verdict: RunVerdictSchema.nullable(),
   tool: z.string(),
   toolVersion: z.string().nullable().optional(),
+  /** The tool's own simulation identity and run description (G-01, G-02). */
+  simulation: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  /** The load test's own span. Gatling's header renders this to whole seconds (G-04). */
+  durationMs: z.number().int().nullable().optional(),
   /** When the platform received this run's bundle — ingest time, not tool start. */
   startedAt: z.string().datetime(),
   /**
