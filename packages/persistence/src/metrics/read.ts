@@ -1,4 +1,4 @@
-import { Sketch } from '@perfportal/statistics';
+import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { TenantScope } from '../repositories/tenant.js';
 
@@ -16,6 +16,17 @@ export interface StoredStat {
   stddevMs: number;
   throughputRps: number;
   percentiles: Record<string, number>;
+  /** Null for runs ingested before the parity migration; the API reports those as non-configurable. */
+  histogramOk: Histogram | null;
+  histogramKo: Histogram | null;
+}
+
+export interface StoredUserBucket {
+  scenario: string;
+  startOffsetMs: number;
+  started: number;
+  ended: number;
+  maxConcurrent: number;
 }
 
 export interface StoredBucket {
@@ -55,13 +66,27 @@ export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, o
           AND scope = $5 AND name = $6
         ORDER BY start_offset_ms`;
 
+/**
+ * Shared verbatim with the "prunes partitions" integration test, for the same
+ * load-bearing reason as SERIES_SQL: `run_started_on = $1` is the partition-key
+ * predicate that lets Postgres prune `run_user_bucket`'s range partitions down
+ * to one. A hand-copied EXPLAIN query in the test would drift from this one and
+ * stop catching the regression it exists to catch.
+ */
+export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended, max_concurrent
+         FROM run_user_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+        ORDER BY scenario, start_offset_ms`;
+
 export class MetricReader {
   constructor(private readonly pool: pg.Pool) {}
 
   async stats(scope: TenantScope, runId: string): Promise<StoredStat[]> {
     const { rows } = await this.pool.query(
       `SELECT scope, name, family, count, ok_count, ko_count, error_rate,
-              min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles
+              min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
+              histogram_ok, histogram_ko
          FROM run_stat
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
         ORDER BY scope, name, family`,
@@ -81,6 +106,8 @@ export class MetricReader {
       stddevMs: r.stddev_ms,
       throughputRps: r.throughput_rps,
       percentiles: r.percentiles as Record<string, number>,
+      histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
+      histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
     }));
   }
 
@@ -138,12 +165,61 @@ export class MetricReader {
     }));
   }
 
-  async errors(scope: TenantScope, runId: string): Promise<{ message: string; count: number }[]> {
+  /** Both status histograms for one (scope, name, family). Null when the row has none. */
+  async histograms(
+    scope: TenantScope,
+    runId: string,
+    key: StatKey,
+  ): Promise<{ ok: Histogram; ko: Histogram } | null> {
+    const { rows } = await this.pool.query<{ histogram_ok: Buffer | null; histogram_ko: Buffer | null }>(
+      `SELECT histogram_ok, histogram_ko FROM run_stat
+        WHERE run_id = $1 AND org_id = $2 AND project_id = $3
+          AND scope = $4 AND name = $5 AND family = $6`,
+      [runId, scope.orgId, scope.projectId, key.scope, key.name, key.family],
+    );
+    const row = rows[0];
+    if (!row?.histogram_ok || !row.histogram_ko) return null;
+    return {
+      ok: Histogram.deserialize(new Uint8Array(row.histogram_ok)),
+      ko: Histogram.deserialize(new Uint8Array(row.histogram_ko)),
+    };
+  }
+
+  /** runStartedOn is REQUIRED for the same partition-pruning reason as series(). */
+  async users(scope: TenantScope, runId: string, runStartedOn: Date): Promise<StoredUserBucket[]> {
+    const { rows } = await this.pool.query(
+      USER_SERIES_SQL,
+      [runStartedOn, runId, scope.orgId, scope.projectId],
+    );
+    return rows.map((r) => ({
+      scenario: r.scenario,
+      startOffsetMs: r.start_offset_ms,
+      started: r.started,
+      ended: r.ended,
+      maxConcurrent: r.max_concurrent,
+    }));
+  }
+
+  /**
+   * `sel` defaults to RUN scope, never "no filter".
+   *
+   * The engine now emits one row per (scope, name) per message, so a single
+   * failure produces both a run-scope row and a request-scope row. An unfiltered
+   * query would return both and a caller summing counts would double every
+   * error. Defaulting to run scope keeps the existing run-level endpoint's
+   * numbers identical to what it returned before scoping existed.
+   */
+  async errors(
+    scope: TenantScope,
+    runId: string,
+    sel: { scope: string; name: string } = { scope: 'run', name: '' },
+  ): Promise<{ message: string; count: number }[]> {
     const { rows } = await this.pool.query(
       `SELECT message, count FROM run_error
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
+          AND scope = $4 AND name = $5
         ORDER BY count DESC, message ASC`,
-      [runId, scope.orgId, scope.projectId],
+      [runId, scope.orgId, scope.projectId, sel.scope, sel.name],
     );
     return rows.map((r) => ({ message: r.message, count: r.count }));
   }
