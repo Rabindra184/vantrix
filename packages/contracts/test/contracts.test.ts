@@ -30,6 +30,33 @@ describe('RunResponseSchema', () => {
     expect(ok.verdict).toBe('passed');
   });
 
+  it('accepts a null toolStartedAt (not yet parsed) additively — every existing field still validates', () => {
+    const ok = RunResponseSchema.parse({
+      id: '018f0000-0000-7000-8000-000000000000',
+      status: 'complete',
+      verdict: 'passed',
+      tool: 'gatling',
+      startedAt: '2026-08-07T00:00:00.000Z',
+      toolStartedAt: null,
+      assertions: [],
+    });
+    expect(ok.toolStartedAt).toBeNull();
+  });
+
+  it('accepts a distinct, non-null toolStartedAt alongside startedAt', () => {
+    const ok = RunResponseSchema.parse({
+      id: '018f0000-0000-7000-8000-000000000000',
+      status: 'complete',
+      verdict: 'passed',
+      tool: 'gatling',
+      startedAt: '2026-08-07T10:00:00.000Z',
+      toolStartedAt: '2026-08-07T05:30:02.171Z',
+      assertions: [],
+    });
+    expect(ok.toolStartedAt).toBe('2026-08-07T05:30:02.171Z');
+    expect(ok.toolStartedAt).not.toBe(ok.startedAt);
+  });
+
   it('rejects a verdict outside the enum', () => {
     expect(() =>
       RunResponseSchema.parse({

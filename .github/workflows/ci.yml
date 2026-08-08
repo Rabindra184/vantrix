@@ -36,7 +36,17 @@ jobs:
         # resolves. Existing free-tier tags moved to `bitnamilegacy/minio`,
         # verified locally to pull, boot without a command, and pass this
         # same health check.
-        image: bitnamilegacy/minio:latest
+        #
+        # Pinned by digest, not `:latest`: `bitnamilegacy` is itself a
+        # deprecated/archival namespace (the whole reason it exists is that
+        # `bitnami/minio:latest` vanished out from under CI once already), so
+        # a second floating tag from the same namespace would repeat the
+        # exact exposure this comment is here to explain. Resolved with
+        # `docker pull bitnamilegacy/minio:latest && docker inspect
+        # --format='{{index .RepoDigests 0}}' bitnamilegacy/minio:latest`
+        # on 2026-08-08; bump this digest deliberately, not automatically,
+        # the next time the image needs to change.
+        image: bitnamilegacy/minio@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
         env:
           MINIO_ROOT_USER: perfportal
           MINIO_ROOT_PASSWORD: perfportal123

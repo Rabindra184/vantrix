@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",
-    "@nestjs/core": "^11.1.6",
     "@perfportal/contracts": "workspace:*",
     "@perfportal/core": "workspace:*",
     "@perfportal/persistence": "workspace:*",
@@ -20,8 +19,7 @@
     "bullmq": "^5.34.0",
     "ioredis": "^5.4.1",
     "pg": "^8.13.0",
-    "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
     "@prisma/client": "^6.19.3",

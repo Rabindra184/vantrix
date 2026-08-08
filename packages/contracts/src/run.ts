@@ -32,7 +32,14 @@ export const RunResponseSchema = z.object({
   verdict: RunVerdictSchema.nullable(),
   tool: z.string(),
   toolVersion: z.string().nullable().optional(),
+  /** When the platform received this run's bundle — ingest time, not tool start. */
   startedAt: z.string().datetime(),
+  /**
+   * The load test's own start, read from the tool's run header. Null until
+   * the worker finishes parsing (and forever for a run that never
+   * completes) — distinct from startedAt, which is always ingest time.
+   */
+  toolStartedAt: z.string().datetime().nullable().optional(),
   ingestedAt: z.string().datetime().nullable().optional(),
   assertions: z.array(AssertionSchema),
   error: z
@@ -42,9 +49,30 @@ export const RunResponseSchema = z.object({
 });
 export type RunResponse = z.infer<typeof RunResponseSchema>;
 
+/**
+ * The 202 body: the run is not yet terminal. Mirrors exactly what
+ * respondWithRun() sends (apps/api/src/runs/runs.controller.ts) — `failed`
+ * is excluded because a failed run is handled by that function's own
+ * `run.status === 'failed'` branch before this shape would ever apply, and
+ * `complete` never reaches 202 at all (it resolves to 200 or 422 instead).
+ */
+export const RunProcessingSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(['pending', 'parsing']),
+  statusUrl: z.string(),
+});
+export type RunProcessing = z.infer<typeof RunProcessingSchema>;
+
 export const RunListResponseSchema = z.object({
   items: z.array(
-    RunResponseSchema.pick({ id: true, status: true, verdict: true, tool: true, startedAt: true }),
+    RunResponseSchema.pick({
+      id: true,
+      status: true,
+      verdict: true,
+      tool: true,
+      startedAt: true,
+      toolStartedAt: true,
+    }),
   ),
   nextCursor: z.string().nullable(),
 });

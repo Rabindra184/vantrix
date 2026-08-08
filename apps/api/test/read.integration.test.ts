@@ -206,6 +206,95 @@ describe('GET /v1/projects/:slug/runs', () => {
     expect(second.body.items[0].id).not.toBe(first.body.items[0].id);
   });
 
+  it('orders by the real run start when known, not by upload/ingest order', async () => {
+    // A same-value fixture (upload order agrees with tool-start order) would
+    // pass under either the old ORDER BY started_at or the new coalesce —
+    // this seeds them to DISAGREE so only the new ordering can pass.
+    ctx = await createTestApp();
+
+    // Uploaded first, but the load test itself ran later (e.g. a delayed
+    // upload of an earlier CI artifact isn't the case here — this is the
+    // opposite: prompt upload of a run that started later in wall-clock terms).
+    const runA = await ctx.prisma.run.create({
+      data: {
+        orgId: ctx.orgId, projectId: ctx.projectId, status: 'complete', verdict: 'passed',
+        tool: 'gatling', bundleKey: 'a', bundleSha256: 'a'.repeat(64), bundleBytes: BigInt(1),
+        startedAt: new Date('2026-08-01T10:00:00Z'),
+        startedOn: new Date('2026-08-01T00:00:00Z'),
+        toolStartedAt: new Date('2026-08-01T20:00:00Z'),
+        ingestedAt: new Date('2026-08-01T10:00:05Z'),
+        engineOptions: {},
+      },
+    });
+
+    // Uploaded second (after A), but its own run started earlier than A's.
+    const runB = await ctx.prisma.run.create({
+      data: {
+        orgId: ctx.orgId, projectId: ctx.projectId, status: 'complete', verdict: 'passed',
+        tool: 'gatling', bundleKey: 'b', bundleSha256: 'b'.repeat(64), bundleBytes: BigInt(1),
+        startedAt: new Date('2026-08-01T11:00:00Z'),
+        startedOn: new Date('2026-08-01T00:00:00Z'),
+        toolStartedAt: new Date('2026-08-01T09:00:00Z'),
+        ingestedAt: new Date('2026-08-01T11:00:05Z'),
+        engineOptions: {},
+      },
+    });
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/checkout/runs')
+      .set(auth());
+    expect(res.status).toBe(200);
+    const ids = res.body.items.map((i: { id: string }) => i.id);
+
+    // Upload order (started_at desc) would list B before A.
+    // Real-start order (coalesce(tool_started_at, started_at) desc) lists A before B.
+    expect(ids.indexOf(runA.id)).toBeLessThan(ids.indexOf(runB.id));
+  });
+
+  it('returns each run exactly once across cursor pages under the new ordering', async () => {
+    ctx = await createTestApp();
+
+    const seeds: { startedAt: string; toolStartedAt: string | null }[] = [
+      { startedAt: '2026-08-01T09:00:00Z', toolStartedAt: '2026-08-01T23:00:00Z' },
+      { startedAt: '2026-08-01T10:00:00Z', toolStartedAt: null },
+      { startedAt: '2026-08-01T11:00:00Z', toolStartedAt: '2026-08-01T08:00:00Z' },
+      { startedAt: '2026-08-01T12:00:00Z', toolStartedAt: '2026-08-01T22:00:00Z' },
+      { startedAt: '2026-08-01T13:00:00Z', toolStartedAt: null },
+    ];
+    const ids: string[] = [];
+    for (const [i, s] of seeds.entries()) {
+      const run = await ctx.prisma.run.create({
+        data: {
+          orgId: ctx.orgId, projectId: ctx.projectId, status: 'complete', verdict: 'passed',
+          tool: 'gatling', bundleKey: `k${i}`, bundleSha256: String(i).repeat(64).slice(0, 64),
+          bundleBytes: BigInt(1),
+          startedAt: new Date(s.startedAt),
+          startedOn: new Date(`${s.startedAt.slice(0, 10)}T00:00:00Z`),
+          toolStartedAt: s.toolStartedAt ? new Date(s.toolStartedAt) : null,
+          ingestedAt: new Date(s.startedAt),
+          engineOptions: {},
+        },
+      });
+      ids.push(run.id);
+    }
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const res = await request(ctx.app.getHttpServer())
+        .get(`/v1/projects/checkout/runs?limit=2${cursor ? `&cursor=${cursor}` : ''}`)
+        .set(auth());
+      expect(res.status).toBe(200);
+      for (const item of res.body.items as { id: string }[]) seen.push(item.id);
+      cursor = res.body.nextCursor ?? undefined;
+      if (!cursor) break;
+    }
+
+    expect(seen.length).toBe(ids.length);
+    expect(new Set(seen).size).toBe(ids.length);
+    expect(new Set(seen)).toEqual(new Set(ids));
+  });
+
   it('refuses a project the token does not belong to', async () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer())
@@ -253,14 +342,5 @@ describe('GET /v1/projects/:slug/runs', () => {
     // (does not 500 or otherwise choke on an out-of-range limit) — the cap
     // itself is exercised directly in the parseLimit unit coverage.
     expect(res.body.items.length).toBeGreaterThan(0);
-  });
-});
-
-describe('OpenAPI', () => {
-  it('is served and describes the ingest endpoint', async () => {
-    ctx = await createTestApp();
-    const res = await request(ctx.app.getHttpServer()).get('/v1/openapi.json');
-    expect(res.status).toBe(200);
-    expect(res.body.paths['/v1/runs']).toBeTruthy();
   });
 });

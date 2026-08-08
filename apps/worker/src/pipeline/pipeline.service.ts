@@ -92,6 +92,21 @@ export class PipelineService {
     const { plugin, toolVersion } = await selectPlugin(source.index);
 
     const result = await runEngineAsync(plugin.parse(source), run.engineOptions as EngineOptions);
+    // The tool's own run header, not the upload/ingest time already frozen
+    // onto run.startedAt at accept time (see schema.prisma). Null only when
+    // the parsed bundle carried no meta event at all — not expected for a
+    // successfully-parsed run, but the engine makes that case explicit
+    // rather than defaulting to the Unix epoch, so this stays null too.
+    //
+    // Bound below as an ISO string, not a bare Date: this transaction goes
+    // through node-postgres directly (not Prisma), and node-postgres
+    // serializes a JS Date parameter using the process's LOCAL timezone
+    // (pg/lib/utils.js dateToString) — which a `timestamp(3)` (no tz)
+    // column then stores verbatim, silently shifting the value by the
+    // host's UTC offset. `toISOString()` always renders the UTC instant, so
+    // the column ends up holding what run.startedAt/ingested_at already do.
+    const toolStartedAt =
+      result.runStartedAtMs !== null ? new Date(result.runStartedAtMs).toISOString() : null;
 
     const rules = await new RuleRepository(this.prisma).listEnabled({
       orgId: run.orgId,
@@ -156,10 +171,16 @@ export class PipelineService {
         );
       }
 
+      // The status guard mirrors RunRepository.fail's: a concurrently-processed
+      // duplicate of this job (stalled-job redelivery, BullMQ concurrency > 1)
+      // must not resurrect an already-committed 'failed' run back to
+      // 'complete' out from under it. Doesn't affect the single-worker happy
+      // path — status is 'parsing' here, never already terminal.
       await client.query(
-        `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now()
-          WHERE id = $1`,
-        [run.id, verdict, toolVersion],
+        `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now(),
+                tool_started_at = $4
+          WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
+        [run.id, verdict, toolVersion, toolStartedAt],
       );
 
       await client.query('COMMIT');

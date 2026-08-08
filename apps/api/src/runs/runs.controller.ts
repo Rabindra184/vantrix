@@ -115,6 +115,7 @@ export class ProjectRunsController {
         verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
         tool: r.tool,
         startedAt: r.startedAt.toISOString(),
+        toolStartedAt: r.toolStartedAt ? r.toolStartedAt.toISOString() : null,
       })),
       nextCursor: page.nextCursor,
     };

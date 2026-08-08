@@ -227,7 +227,8 @@ describe('the adaptive verdict', () => {
       id: 'unseeded', orgId: ctx.orgId, projectId: ctx.projectId, status: 'failed',
       verdict: null, tool: 'gatling', toolVersion: null, bundleKey: 'k',
       bundleSha256: 'x'.repeat(64), bundleBytes: 1, idempotencyKey: null,
-      startedAt: new Date(), startedOn: new Date(), ingestedAt: new Date(), engineOptions: {},
+      startedAt: new Date(), startedOn: new Date(), toolStartedAt: null,
+      ingestedAt: new Date(), engineOptions: {},
       error: { code: 'BUNDLE_TOO_LARGE', message: 'too big', remediation: 'shrink it' },
     };
 
