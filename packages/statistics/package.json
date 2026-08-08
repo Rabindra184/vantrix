@@ -2,10 +2,14 @@
   "name": "@perfportal/statistics",
   "version": "0.0.0",
   "type": "module",
-  "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "perfportal-source": "./src/index.ts",
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
   },
+  "files": ["dist"],
   "dependencies": {
     "@perfportal/core": "workspace:*",
     "@datadog/sketches-js": "^2.1.1",

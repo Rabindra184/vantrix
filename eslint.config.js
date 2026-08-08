@@ -11,7 +11,7 @@ export default tseslint.config(
   { ignores: ['**/dist/**', '**/node_modules/**', 'spikes/**', 'fixtures/**'] },
   ...tseslint.configs.recommended,
   {
-    files: ['packages/{core,plugin-gatling,statistics}/src/**/*.ts'],
+    files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],
     rules: {
       'no-restricted-imports': ['error', { patterns: FORBIDDEN_IN_PURE }],
     },

@@ -1,0 +1,198 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Tenancy columns (org_id, project_id) begin at the tables below the tenant
+// root, not here. Org is the tenant root, so it carries no org_id of its
+// own; Project's own id is its project identity, so it carries org_id but
+// not project_id. Every table beneath these two is scoped by both.
+model Org {
+  id        String    @id @default(uuid()) @db.Uuid
+  slug      String    @unique
+  name      String
+  createdAt DateTime  @default(now()) @map("created_at")
+  projects  Project[]
+
+  @@map("org")
+}
+
+model Project {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  slug      String
+  name      String
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tokens    ApiToken[]
+  runs      Run[]
+  slaRules  SlaRule[]
+
+  @@unique([orgId, slug])
+  @@map("project")
+}
+
+model ApiToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  projectId  String    @map("project_id") @db.Uuid
+  name       String
+  /// Indexed lookup key, so verification is one row read plus one hash.
+  prefix     String    @unique
+  tokenHash  String    @map("token_hash")
+  scopes     String[]
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("api_token")
+}
+
+model Run {
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  status         String
+  verdict        String?
+  tool           String
+  toolVersion    String?   @map("tool_version")
+  bundleKey      String    @map("bundle_key")
+  bundleSha256   String    @map("bundle_sha256")
+  bundleBytes    BigInt    @map("bundle_bytes")
+  idempotencyKey String?   @map("idempotency_key")
+  startedAt      DateTime  @map("started_at")
+  startedOn      DateTime  @map("started_on") @db.Date
+  ingestedAt     DateTime? @map("ingested_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  /// Frozen at accept time. Statistics are meaningless without the options
+  /// that produced them, and a project changing its warm-up must not
+  /// silently reinterpret its own history.
+  engineOptions  Json      @map("engine_options")
+  error          Json?
+
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assertions RunAssertion[]
+
+  @@unique([projectId, idempotencyKey])
+  @@index([projectId, startedAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("run")
+}
+
+model RunStat {
+  id           String  @id @default(uuid()) @db.Uuid
+  runId        String  @map("run_id") @db.Uuid
+  orgId        String  @map("org_id") @db.Uuid
+  projectId    String  @map("project_id") @db.Uuid
+  scope        String
+  name         String
+  family       String
+  count        Int
+  okCount      Int     @map("ok_count")
+  koCount      Int     @map("ko_count")
+  errorRate    Float   @map("error_rate")
+  minMs        Float   @map("min_ms")
+  maxMs        Float   @map("max_ms")
+  meanMs       Float   @map("mean_ms")
+  stddevMs     Float   @map("stddev_ms")
+  throughputRps Float  @map("throughput_rps")
+  percentiles  Json
+  sketch       Bytes
+  sketchKind   String  @map("sketch_kind")
+
+  @@unique([runId, scope, name, family])
+  @@index([runId])
+  @@map("run_stat")
+}
+
+/// Partitioned by range on run_started_on — see migration 0001, hand-edited.
+model RunSeriesBucket {
+  runStartedOn  DateTime @map("run_started_on") @db.Date
+  runId         String   @map("run_id") @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  projectId     String   @map("project_id") @db.Uuid
+  scope         String
+  name          String
+  startOffsetMs Int      @map("start_offset_ms")
+  startedCount  Int      @map("started_count")
+  endedCount    Int      @map("ended_count")
+  okCount       Int      @map("ok_count")
+  koCount       Int      @map("ko_count")
+  minMs         Float    @map("min_ms")
+  maxMs         Float    @map("max_ms")
+  meanMs        Float    @map("mean_ms")
+  percentiles   Json
+
+  @@id([runStartedOn, runId, scope, name, startOffsetMs])
+  @@map("run_series_bucket")
+}
+
+model RunError {
+  id        String @id @default(uuid()) @db.Uuid
+  runId     String @map("run_id") @db.Uuid
+  orgId     String @map("org_id") @db.Uuid
+  projectId String @map("project_id") @db.Uuid
+  message   String
+  count     Int
+
+  @@index([runId])
+  @@map("run_error")
+}
+
+model SlaRule {
+  id         String  @id @default(uuid()) @db.Uuid
+  orgId      String  @map("org_id") @db.Uuid
+  projectId  String  @map("project_id") @db.Uuid
+  scope      String
+  targetName String? @map("target_name")
+  family     String
+  metric     String
+  comparator String
+  threshold  Float
+  enabled    Boolean @default(true)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, enabled])
+  @@map("sla_rule")
+}
+
+model RunIndicator {
+  id        String @id @default(uuid()) @db.Uuid
+  runId     String @unique @map("run_id") @db.Uuid
+  orgId     String @map("org_id") @db.Uuid
+  projectId String @map("project_id") @db.Uuid
+  under     Int
+  between   Int    @map("between_")
+  over      Int
+  failed    Int
+
+  @@map("run_indicator")
+}
+
+model RunAssertion {
+  id           String  @id @default(uuid()) @db.Uuid
+  runId        String  @map("run_id") @db.Uuid
+  orgId        String  @map("org_id") @db.Uuid
+  projectId    String  @map("project_id") @db.Uuid
+  ruleId       String  @map("rule_id") @db.Uuid
+  /// The rule as it read at evaluation time. Editing a threshold must never
+  /// rewrite the history of what passed.
+  ruleSnapshot Json    @map("rule_snapshot")
+  outcome      String
+  actualValue  Float?  @map("actual_value")
+  message      String
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("run_assertion")
+}

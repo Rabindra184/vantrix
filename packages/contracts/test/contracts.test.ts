@@ -1,0 +1,59 @@
+import { describe, expect, it } from 'vitest';
+import { IngestMetadataSchema, ProblemDetailsSchema, RunResponseSchema } from '../src/index.js';
+
+describe('IngestMetadataSchema', () => {
+  it('accepts a minimal payload', () => {
+    const parsed = IngestMetadataSchema.parse({ tool: 'gatling' });
+    expect(parsed.tool).toBe('gatling');
+    expect(parsed.idempotencyKey).toBeUndefined();
+  });
+
+  it('rejects an unknown tool', () => {
+    expect(() => IngestMetadataSchema.parse({ tool: 'notatool' })).toThrow();
+  });
+
+  it('rejects an idempotency key that is too long to index safely', () => {
+    expect(() => IngestMetadataSchema.parse({ tool: 'gatling', idempotencyKey: 'x'.repeat(256) })).toThrow();
+  });
+});
+
+describe('RunResponseSchema', () => {
+  it('requires a verdict on a complete run', () => {
+    const ok = RunResponseSchema.parse({
+      id: '018f0000-0000-7000-8000-000000000000',
+      status: 'complete',
+      verdict: 'passed',
+      tool: 'gatling',
+      startedAt: '2026-08-07T00:00:00.000Z',
+      assertions: [],
+    });
+    expect(ok.verdict).toBe('passed');
+  });
+
+  it('rejects a verdict outside the enum', () => {
+    expect(() =>
+      RunResponseSchema.parse({
+        id: '018f0000-0000-7000-8000-000000000000',
+        status: 'complete',
+        verdict: 'maybe',
+        tool: 'gatling',
+        startedAt: '2026-08-07T00:00:00.000Z',
+        assertions: [],
+      }),
+    ).toThrow();
+  });
+});
+
+describe('ProblemDetailsSchema', () => {
+  it('requires remediation — an error that cannot state a fix is not a valid response', () => {
+    expect(() =>
+      ProblemDetailsSchema.parse({
+        type: 'https://perfportal.dev/errors/BUNDLE_TOO_LARGE',
+        title: 'Bundle too large',
+        status: 400,
+        code: 'BUNDLE_TOO_LARGE',
+        detail: 'exceeded',
+      }),
+    ).toThrow();
+  });
+});
