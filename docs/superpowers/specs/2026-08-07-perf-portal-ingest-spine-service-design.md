@@ -43,7 +43,7 @@ Two deployables from one pnpm workspace, matching PRD §16.3 with only the compo
 ```
 apps/
   api/                NestJS HTTP. Token auth · POST bundle · read endpoints · bounded verdict wait
-  worker/             NestJS standalone. BullMQ consumer · plugin runtime · engine · SLA · persistence · sweeper
+  worker/             Plain Node entry point (not a NestJS application — see §12). BullMQ consumer · plugin runtime · engine · SLA · persistence · sweeper
 packages/
   core/               SHIPPED — canonical model; gains the plugin contract types (§4)
   statistics/         SHIPPED — unchanged
@@ -202,7 +202,7 @@ PRD §20.2 is amended by this design from *"never materializing the log"* to: **
 ### 6.2 Worker side
 
 1. Claim the job.
-2. Fetch the bundle from object storage; verify SHA-256; expand to a temp directory; build a `BundleSource`.
+2. Fetch the bundle from object storage; verify SHA-256; read the gzipped tar into memory and present it as a `BundleSource` (§5.1 — no temp directory; see §12).
 3. `plugin.detect` over the registry → select a plugin, or reject with `UNSUPPORTED_BUNDLE`.
 4. `plugin.parse` → `AsyncIterable<CanonicalEvent>`.
 5. `runEngineAsync(events, run.engine_options)`.
@@ -210,7 +210,7 @@ PRD §20.2 is amended by this design from *"never materializing the log"* to: **
 7. Evaluate SLA rules → `run_assertion` rows → run verdict (§8).
 8. `UPDATE run(status='complete', verdict)` in the same transaction as 6–7.
 9. `PUBLISH run:{id}`.
-10. Delete the temp directory. The bundle in object storage is retained.
+10. The in-memory bundle buffer is released with the job (nothing to delete — there was never a temp directory). The bundle in object storage is retained.
 
 Steps 6–8 commit together. A run is never observable with statistics but no verdict, or a verdict but no statistics.
 
@@ -272,7 +272,9 @@ Each enabled rule is matched against the `run_stat` row for its `(scope, target_
 - **Match found** → compare and record `passed` or `failed`.
 - **No match** → record `not_applicable`. Never a silent pass. The distinction between "we checked and it was fine" and "we did not check" is the difference between a gate and a decoration.
 
-Percentile metrics are evaluated **from the persisted summary sketch**, not from the frozen `percentiles` JSONB. A rule may therefore ask for `p99.9` even when the project's stored percentile set is `[50, 75, 95, 99]`. This is the storage decision of §9.1 earning its place on day one rather than in a later milestone.
+Percentile metrics are evaluated **from a summary sketch**, not from the frozen `percentiles` JSONB. A rule may therefore ask for `p99.9` even when the project's stored percentile set is `[50, 75, 95, 99]`. This is the storage decision of §9.1 earning its place on day one rather than in a later milestone.
+
+In this slice, evaluation reads the sketch still held in memory from `runEngineAsync` (§6.2 step 5), not a row re-read from `run_stat` — evaluation happens inside the same transaction that persists it (§12), so the two are the same values by construction. The sketch is persisted regardless, and that persisted copy is what later re-evaluation reads: a rule added or edited after ingestion, or a project asking for `p99.9` a year from now, is evaluated by reloading the stored `bytea` and deserializing it (`MetricReader.sketch`), not by re-parsing the bundle.
 
 Every `run_assertion` stores a **snapshot of the rule as it read at evaluation time**. Editing a threshold must never rewrite the history of what passed.
 
@@ -358,7 +360,7 @@ GET  /healthz · /readyz · /v1/openapi.json
 
 Authentication is a bearer `api_token`. `POST /v1/runs` requires the `ingest` scope; every `GET` requires `read`. Splitting the scopes is not RBAC and does not pretend to be — it is the smallest mechanism that stops a CI credential from also being a read credential.
 
-Pagination is cursor-based (PRD §17). OpenAPI 3.1 is generated from the NestJS decorators and the `contracts` Zod schemas, and is served by the API.
+Pagination is cursor-based (PRD §17). OpenAPI is served by the API at `/v1/openapi.json`. As shipped this is OpenAPI 3.0, produced by `@nestjs/swagger`'s `DocumentBuilder`/`SwaggerModule`, and is not generated from the `contracts` Zod schemas — see §12. Fixing the document itself (3.1, Zod-derived) is a separate, later task.
 
 ### 10.1 Errors
 
@@ -402,8 +404,12 @@ The `IngestError` type the packages already produce maps to this one-to-one, whi
 | §26 M0 before M1 | Vertical slice cutting through both | §1.1 — hard-to-reverse contracts before routine deployment work |
 | §18 full identity model | Orgs, projects, and tokens only; no users, roles, or RBAC | Tenancy columns are cheap now and expensive to retrofit; roles are not |
 | §6.1 step 4 "aborts with 400 BUNDLE_TOO_LARGE" | Aborts with **413** `BUNDLE_TOO_LARGE` | 413 Payload Too Large is the accurate code for this specific rejection; folding it into the general 400 "bundle rejected" bucket would lose a distinction a client can usefully act on |
+| §2 worker is "NestJS standalone" | The worker is a plain Node entry point (`apps/worker/src/main.ts`) that constructs `PipelineService` by hand; nothing in it ever boots a Nest application. `@Injectable()` on `PipelineService` is decorative — kept only because `@nestjs/common`'s decorator implementation needs `reflect-metadata` loaded to not throw at import time | `@nestjs/core` and `rxjs` were declared in `apps/worker/package.json` but never imported by the app, so they were removed; `@nestjs/common` and `reflect-metadata` stay, since the decorator that is still on the class actually requires them to load without crashing |
+| §6.2 steps 2 and 10 "expand to a temp directory" / "delete the temp directory" | The bundle is read into memory and never touches disk (`openTarGzBundle`) | Consistent with the §5.1 in-memory decision; §6.2's own text just hadn't been updated to match it |
+| §10 "OpenAPI 3.1 ... generated from ... the `contracts` Zod schemas" | OpenAPI 3.0, produced by `@nestjs/swagger`'s `DocumentBuilder`, not derived from the Zod schemas in `@perfportal/contracts` | Known gap, not a decision — fixing the document (3.1, Zod-derived) is separate follow-up work |
+| §8.2 "evaluated from the persisted summary sketch" | Evaluated from the sketch still held in memory from `runEngineAsync`, inside the same transaction that persists it | The values are identical either way, so no behaviour differs; the persisted `bytea` copy exists for *later* re-evaluation (a rule added after ingestion, or a `p99.9` ask a year on), not for evaluation at ingest time — `MetricReader.sketch` is what that later path reads |
 
-Each is a scoping or evidence-based departure, not a disagreement with the PRD's eventual target state. §20.2 is the only one that changes a stated requirement, and it should be amended in the PRD when this design is implemented.
+Each is a scoping or evidence-based departure, not a disagreement with the PRD's eventual target state. §20.2 is the only one that changes a stated requirement, and it should be amended in the PRD when this design is implemented. The five rows below the identity-model row are departures of this design's own text from what shipped, not from the PRD — recorded here rather than invented a second table, since the shape (stated intent vs. shipped behavior vs. why) is the same.
 
 ---
 
