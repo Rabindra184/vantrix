@@ -125,14 +125,6 @@ export class RunRepository {
     await this.prisma.run.update({ where: { id }, data: { status: 'parsing' } });
   }
 
-  /** Unscoped by design: the worker, acting on a job it has already dequeued. */
-  async complete(id: string, verdict: string, toolVersion: string | null): Promise<void> {
-    await this.prisma.run.update({
-      where: { id },
-      data: { status: 'complete', verdict, toolVersion, ingestedAt: new Date() },
-    });
-  }
-
   /**
    * Unscoped by design: the worker, acting on a job it has already dequeued.
    *
