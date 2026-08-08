@@ -168,6 +168,8 @@ model RunSeriesBucket {
   maxMs         Float    @map("max_ms")
   meanMs        Float    @map("mean_ms")
   percentiles   Json
+  percentilesOk Json? @map("percentiles_ok")
+  percentilesKo Json? @map("percentiles_ko")
 
   @@id([runStartedOn, runId, scope, name, startOffsetMs])
   @@map("run_series_bucket")

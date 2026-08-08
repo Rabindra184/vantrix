@@ -7,6 +7,15 @@ export interface Bucket {
   okCount: number;
   koCount: number;
   sketch: Sketch;
+  /**
+   * Status-filtered sketches. Gatling's percentiles-over-time chart is OK-only
+   * (its title is literally "Response Time Percentiles over Time (OK)") and its
+   * response-time-vs-throughput scatter is two independent series, each from its
+   * own status-filtered digest. `sketch` above spans BOTH and is retained for
+   * the combined view; it is not a substitute for these.
+   */
+  sketchOk: Sketch;
+  sketchKo: Sketch;
 }
 
 /**
@@ -30,7 +39,11 @@ export class BucketSeries {
     const idx = Math.floor((tsMs - this.#startMs) / this.#widthMs);
     let b = this.#buckets.get(idx);
     if (!b) {
-      b = { startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0, okCount: 0, koCount: 0, sketch: new Sketch() };
+      b = {
+        startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0,
+        okCount: 0, koCount: 0,
+        sketch: new Sketch(), sketchOk: new Sketch(), sketchKo: new Sketch(),
+      };
       this.#buckets.set(idx, b);
     }
     if (edge === 'start') {
@@ -39,6 +52,7 @@ export class BucketSeries {
       b.endedCount++;
       if (ok) b.okCount++; else b.koCount++;
       b.sketch.accept(value);
+      if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
     }
     if (this.#buckets.size > this.#maxBuckets) this.#coalesce();
   }
@@ -58,6 +72,8 @@ export class BucketSeries {
           target.okCount += b.okCount;
           target.koCount += b.koCount;
           target.sketch.merge(b.sketch);      // exact — this is why coalescing is lossless
+          target.sketchOk.merge(b.sketchOk);
+          target.sketchKo.merge(b.sketchKo);
         }
       }
       this.#buckets = next;

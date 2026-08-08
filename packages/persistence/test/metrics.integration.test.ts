@@ -158,6 +158,42 @@ describe('MetricWriter / MetricReader', () => {
     );
   });
 
+  // Task 17: buckets.ts now tracks OK-only and KO-only sketches alongside the
+  // combined one, because Gatling's percentiles-over-time chart is OK-only and
+  // its scatter is two independent status-filtered series. This proves the
+  // write/read round trip actually carries the status-filtered figures, not
+  // just the combined one relabeled — comparing against the in-memory
+  // engine's own sketchOk/sketchKo, not just checking the columns are present.
+  it('round-trips per-status bucket percentiles, distinct from the combined figure for a mixed bucket', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    const stored = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '' });
+    const engineBuckets = result.series.get('run ')?.buckets ?? [];
+
+    const mixed = engineBuckets.find((b) => b.okCount > 0 && b.koCount > 0);
+    expect(mixed).toBeDefined();
+    const storedB = stored.find((b) => b.startOffsetMs === mixed!.startOffsetMs);
+    expect(storedB).toBeDefined();
+
+    // Round-trips against the engine's OWN sketchOk/sketchKo (all eight
+    // configured bands), not just spot-checking one figure.
+    for (const key of Object.keys(storedB!.percentilesOk)) {
+      const p = Number(key.slice(1)) / 100;
+      expect(storedB!.percentilesOk[key]).toBeCloseTo(mixed!.sketchOk.quantile(p), 6);
+      expect(storedB!.percentilesKo[key]).toBeCloseTo(mixed!.sketchKo.quantile(p), 6);
+    }
+
+    // And the whole point: the OK-only figures must be their OWN thing, not
+    // the combined sketch relabeled. If a bucket's OK subset and combined
+    // set agreed on all eight configured bands this would be a false pass,
+    // but that is not plausible here — koCount > 0 in this bucket, so the
+    // combined sketch strictly contains points the OK-only one does not.
+    expect(storedB!.percentilesOk).not.toEqual(storedB!.percentiles);
+  });
+
   it('will not read another project\'s metrics', async () => {
     const ctx = await seedRun();
     await persist(ctx);

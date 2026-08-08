@@ -65,6 +65,10 @@ export const SeriesBucketSchema = z.object({
   maxMs: z.number(),
   meanMs: z.number(),
   percentiles: z.record(z.number()),
+  /** OK-only. Gatling's percentiles-over-time chart uses this, not the combined set. */
+  percentilesOk: z.record(z.number()),
+  /** KO-only. Empty for a bucket with no failures. */
+  percentilesKo: z.record(z.number()),
 });
 
 export const SeriesResponseSchema = z.object({
