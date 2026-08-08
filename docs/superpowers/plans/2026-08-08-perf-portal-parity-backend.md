@@ -3204,3 +3204,281 @@ pnpm test:integration
 **Definition of done:** every row in Appendix A §A.1, §A.2, §A.3, §A.5 and §A.6 that carries data has a named `PT-*` case asserting it against `fixtures/gatling-3.15.1.2/`, and each of those cases has been shown to fail against a deliberately broken implementation (Task 15 Step 3).
 
 **Out of scope, and must not appear in any diff:** React or any frontend code; latency as a metric family; the Scenario Detail page; backfilling histograms onto runs ingested before this change; live monitoring.
+
+---
+
+### Task 17: Per-status bucket percentiles
+
+Added mid-execution. Spec §3 F-1 asserted the scatter's y "is already stored"; it is
+not, not in the form Gatling uses. Per-bucket percentiles are computed over BOTH
+statuses (`buckets.ts` keeps one sketch per bucket), but Gatling's are status-filtered:
+
+- `responseTimePercentilesOverTime(OK, …)` — the over-time chart is **OK-only**, and
+  its rendered title is literally `Response Time Percentiles over Time (OK)`.
+- `responseTimeAgainstGlobalNumberOfRequestsPerSec(OK|KO, …)` — the scatter is **two
+  independent series**, each from its own status-filtered digest.
+
+Fixture proof: `cart / add-to-cart` has **15** KO scatter points and `place-order` has
+**9**. The current implementation emits **zero** of them, and contaminates the OK
+points in any bucket that mixes statuses. Affects Appendix A rows **G-22, RQ-05,
+GR-04, GR-06, RQ-09**.
+
+The combined `percentiles` field is RETAINED, so `SeriesResponse` stays additive and
+nothing already published breaks.
+
+**Files:**
+- Modify: `packages/statistics/src/buckets.ts`, `packages/statistics/test/buckets.test.ts`
+- Create: `packages/persistence/prisma/migrations/20260808200000_bucket_status_percentiles/migration.sql`
+- Modify: `packages/persistence/prisma/schema.prisma`, `packages/persistence/src/metrics/write.ts`, `packages/persistence/src/metrics/read.ts`
+- Modify: `packages/contracts/src/metrics.ts`
+- Modify: `apps/api/src/metrics/parity.controller.ts`, `apps/api/src/metrics/metrics.controller.ts`
+- Modify: `apps/api/test/parity-endpoints.integration.test.ts`, `packages/persistence/test/metrics.integration.test.ts`
+
+**Interfaces:**
+- Produces: `Bucket` gains `sketchOk: Sketch` and `sketchKo: Sketch` (the existing
+  `sketch` stays, spanning both). `StoredBucket` gains `percentilesOk` and
+  `percentilesKo`, each `Record<string, number>` (`{}` when the row predates this
+  migration). `SeriesBucketSchema` gains the same two fields.
+
+- [ ] **Step 1: Write the failing bucket test**
+
+Append to `packages/statistics/test/buckets.test.ts`:
+
+```ts
+describe('BucketSeries per-status sketches', () => {
+  it('routes observations to the OK or KO sketch by status', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    s.add(0, 100, true, 'end');
+    s.add(0, 100, true, 'end');
+    s.add(0, 900, false, 'end');
+    const b = s.buckets()[0];
+    expect(b?.sketchOk.count).toBe(2);
+    expect(b?.sketchKo.count).toBe(1);
+    expect(b?.sketch.count).toBe(3);          // combined still spans both
+  });
+
+  // Gatling's over-time chart is OK-only and its scatter is two independent
+  // series; a combined-status percentile is a different number whenever a
+  // bucket mixes statuses, which is exactly when it matters.
+  it('gives a different OK percentile than the combined one for a mixed bucket', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    for (let i = 0; i < 10; i++) s.add(0, 100, true, 'end');
+    for (let i = 0; i < 10; i++) s.add(0, 5000, false, 'end');
+    const b = s.buckets()[0];
+    expect(b!.sketchOk.quantile(0.95)).toBeLessThan(200);
+    expect(b!.sketch.quantile(0.95)).toBeGreaterThan(1000);
+  });
+
+  it('coalesces all three sketches together', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 2 });
+    s.add(0, 10, true, 'end');
+    s.add(1000, 20, false, 'end');
+    s.add(2000, 30, true, 'end');
+    s.add(3000, 40, true, 'end');
+    const total = s.buckets().reduce((n, b) => n + b.sketch.count, 0);
+    const ok = s.buckets().reduce((n, b) => n + b.sketchOk.count, 0);
+    const ko = s.buckets().reduce((n, b) => n + b.sketchKo.count, 0);
+    expect(total).toBe(4);
+    expect(ok).toBe(3);
+    expect(ko).toBe(1);
+  });
+
+  it('leaves both status sketches empty for a start edge', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    s.add(0, 100, true, 'start');
+    const b = s.buckets()[0];
+    expect(b?.startedCount).toBe(1);
+    expect(b?.sketchOk.count).toBe(0);
+    expect(b?.sketchKo.count).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `pnpm vitest run packages/statistics/test/buckets.test.ts`
+Expected: FAIL — `sketchOk` does not exist on `Bucket`.
+
+- [ ] **Step 3: Add the status sketches**
+
+In `packages/statistics/src/buckets.ts`, add to the `Bucket` interface after `sketch: Sketch;`:
+
+```ts
+  /**
+   * Status-filtered sketches. Gatling's percentiles-over-time chart is OK-only
+   * (its title is literally "Response Time Percentiles over Time (OK)") and its
+   * response-time-vs-throughput scatter is two independent series, each from its
+   * own status-filtered digest. `sketch` above spans BOTH and is retained for
+   * the combined view; it is not a substitute for these.
+   */
+  sketchOk: Sketch;
+  sketchKo: Sketch;
+```
+
+In `add()`, extend the bucket construction:
+
+```ts
+      b = {
+        startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0,
+        okCount: 0, koCount: 0,
+        sketch: new Sketch(), sketchOk: new Sketch(), sketchKo: new Sketch(),
+      };
+```
+
+and in the `end` branch, after `b.sketch.accept(value);`:
+
+```ts
+      if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
+```
+
+In `#coalesce`, after `target.sketch.merge(b.sketch);`:
+
+```ts
+          target.sketchOk.merge(b.sketchOk);
+          target.sketchKo.merge(b.sketchKo);
+```
+
+- [ ] **Step 4: Run the statistics suite**
+
+Run: `pnpm vitest run packages/statistics`
+Expected: PASS.
+
+- [ ] **Step 5: Write the migration**
+
+Create `packages/persistence/prisma/migrations/20260808200000_bucket_status_percentiles/migration.sql`:
+
+```sql
+-- Gatling's percentiles-over-time chart is OK-only and its response-time-vs-
+-- throughput scatter is two independent status-filtered series. The existing
+-- `percentiles` column spans both statuses, so it cannot serve either without
+-- being wrong whenever a bucket mixes them.
+--
+-- Nullable: rows written before this migration have no per-status figures, and
+-- the reader reports {} for them rather than inventing numbers.
+ALTER TABLE "run_series_bucket" ADD COLUMN "percentiles_ok" JSONB;
+ALTER TABLE "run_series_bucket" ADD COLUMN "percentiles_ko" JSONB;
+```
+
+Add to `model RunSeriesBucket` in `packages/persistence/prisma/schema.prisma`, after `percentiles`:
+
+```prisma
+  percentilesOk Json? @map("percentiles_ok")
+  percentilesKo Json? @map("percentiles_ko")
+```
+
+Apply with `pnpm --filter @perfportal/persistence run migrate:deploy` (it chains `prisma generate`; `migrate deploy` alone does not).
+
+- [ ] **Step 6: Write both sets**
+
+In `packages/persistence/src/metrics/write.ts`, add `'percentiles_ok', 'percentiles_ko'` to the `run_series_bucket` column list, and to each row after the existing `JSON.stringify(percentilesOf(b.sketch))`:
+
+```ts
+          JSON.stringify(percentilesOf(b.sketchOk)),
+          JSON.stringify(percentilesOf(b.sketchKo)),
+```
+
+- [ ] **Step 7: Read both sets**
+
+In `packages/persistence/src/metrics/read.ts`, add to `StoredBucket`:
+
+```ts
+  /** Status-filtered. `{}` for rows written before the per-status migration. */
+  percentilesOk: Record<string, number>;
+  percentilesKo: Record<string, number>;
+```
+
+Add `percentiles_ok, percentiles_ko` to `SERIES_SQL`'s select list, and to the mapper:
+
+```ts
+      percentilesOk: (r.percentiles_ok ?? {}) as Record<string, number>,
+      percentilesKo: (r.percentiles_ko ?? {}) as Record<string, number>,
+```
+
+`SERIES_SQL` stays a single exported constant shared with the partition-pruning test — do not fork a second copy.
+
+- [ ] **Step 8: Extend the contract**
+
+In `packages/contracts/src/metrics.ts`, add to `SeriesBucketSchema` after `percentiles`:
+
+```ts
+  /** OK-only. Gatling's percentiles-over-time chart uses this, not the combined set. */
+  percentilesOk: z.record(z.number()),
+  /** KO-only. Empty for a bucket with no failures. */
+  percentilesKo: z.record(z.number()),
+```
+
+- [ ] **Step 9: Emit both scatter series**
+
+In `apps/api/src/metrics/parity.controller.ts`, replace the scatter's point loop:
+
+```ts
+    // Gatling emits a point per status-filtered digest that exists in a bucket,
+    // so a bucket with both successes and failures yields TWO points - one on
+    // each series. Routing a mixed bucket to a single series drops the KO point
+    // entirely and contaminates the OK one.
+    const ok: [number, number][] = [];
+    const ko: [number, number][] = [];
+    for (const b of own) {
+      const x = rateAt.get(b.startOffsetMs);
+      if (x === undefined) continue;
+      const pOk = b.percentilesOk.p95;
+      const pKo = b.percentilesKo.p95;
+      if (b.okCount > 0 && pOk !== undefined) ok.push([x, Math.trunc(pOk)]);
+      if (b.koCount > 0 && pKo !== undefined) ko.push([x, Math.trunc(pKo)]);
+    }
+```
+
+In `apps/api/src/metrics/metrics.controller.ts`'s `series` handler, pass the two new
+fields straight through — the reader already supplies them and the schema now requires them.
+
+- [ ] **Step 10: Prove a mixed bucket yields both points**
+
+Add to `apps/api/test/parity-endpoints.integration.test.ts`:
+
+```ts
+  it('emits an OK and a KO scatter point for a bucket containing both', async () => {
+    const stats = await request(app.getHttpServer())
+      .get(`/v1/runs/${runId}/stats?scope=request`).set('Authorization', `Bearer ${token}`).expect(200);
+    const failing = stats.body.stats.find((s: { koCount: number }) => s.koCount > 0);
+    expect(failing).toBeDefined();
+    const r = await request(app.getHttpServer())
+      .get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent(failing.name)}`)
+      .set('Authorization', `Bearer ${token}`).expect(200);
+    expect(r.body.ko.length).toBeGreaterThan(0);
+    expect(r.body.ok.length).toBeGreaterThan(0);
+  });
+```
+
+- [ ] **Step 11: Falsification checkpoint**
+
+Revert Step 9's loop to the single-series form (`(b.okCount > 0 ? ok : ko).push(...)`)
+and re-run the test above.
+Expected: FAIL — `r.body.ko.length` is 0. Restore and confirm PASS.
+
+Then, separately, change Step 6 to write `percentilesOf(b.sketch)` into `percentiles_ok`
+and re-run `pnpm vitest run packages/statistics/test/buckets.test.ts`.
+Expected: the mixed-bucket test FAILS. Restore.
+
+- [ ] **Step 12: Full verification and commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration
+```
+
+```bash
+git add -A
+git commit -m "fix(parity): per-status bucket percentiles
+
+Gatling's percentiles-over-time chart is OK-only - its rendered title is
+literally 'Response Time Percentiles over Time (OK)' - and its
+response-time-vs-throughput scatter is two independent status-filtered
+series. Our buckets stored ONE combined sketch, so both were wrong whenever
+a bucket mixed statuses.
+
+The fixture proves it: cart/add-to-cart has 15 KO scatter points and
+place-order has 9, and we emitted zero of them while contaminating the OK
+points beside them. Affects Appendix A G-22, RQ-05, GR-04, GR-06 and RQ-09.
+
+The combined `percentiles` column is retained, so SeriesResponse stays
+additive."
+```
