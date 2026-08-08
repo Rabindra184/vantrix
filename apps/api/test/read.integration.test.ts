@@ -149,6 +149,29 @@ describe('GET /v1/runs/:id/stats', () => {
     );
   });
 
+  it('returns an actionable 400, not a 500, when the project has inverted indicator bounds', async () => {
+    // No settings-write endpoint validates this yet (Task 12 is the first
+    // real reader of the column), so an inverted project misconfiguration is
+    // reachable in practice, not just in theory - exercise it directly via SQL.
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ lowerMs: 1200, higherMs: 800 }), ctx.projectId],
+    );
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${id}/stats`).set(auth());
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PROJECT_SETTINGS_INVALID');
+    expect(res.body.remediation).toMatch(/indicators/i);
+    expect(res.body).not.toHaveProperty('stack');
+
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ lowerMs: 800, higherMs: 1200 }), ctx.projectId],
+    );
+  });
+
   it('filters by scope', async () => {
     ctx = await createTestApp();
     const id = await ingested();
