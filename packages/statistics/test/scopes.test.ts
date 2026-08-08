@@ -130,7 +130,7 @@ describe('group scopes', () => {
 });
 
 describe('runEngine error accounting', () => {
-  it('reconciles indicators.failed with sum(errors[].count) even when some failures carry no message', () => {
+  it('reconciles the run scope KO count with sum(errors[].count) even when some failures carry no message', () => {
     const events: CanonicalEvent[] = [
       { type: 'meta', simulation: 'S', toolVersion: 'v', startedAtMs: base },
       req('A', [], 0, 10, true),
@@ -140,10 +140,12 @@ describe('runEngine error accounting', () => {
       req('E', [], 40, 10, false, ''),             // failed, empty-string message
     ];
     const r = runEngine(events);
-    const errorTotal = r.errors.reduce((n, e) => n + e.count, 0);
-    expect(r.indicators.failed).toBe(4);
-    expect(errorTotal).toBe(r.indicators.failed);      // totals must reconcile, not just both be positive
-    const noMessageRow = r.errors.find((e) => e.message === '(no message)');
+    const run = r.stats.find((s) => s.scope === 'run')!;
+    const runErrors = r.errors.filter((e) => e.scope === 'run');
+    const errorTotal = runErrors.reduce((n, e) => n + e.count, 0);
+    expect(run.koCount).toBe(4);
+    expect(errorTotal).toBe(run.koCount);      // totals must reconcile, not just both be positive
+    const noMessageRow = runErrors.find((e) => e.message === '(no message)');
     expect(noMessageRow?.count).toBe(2);                // the unset-message and empty-message failures
   });
 });

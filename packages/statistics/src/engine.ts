@@ -1,24 +1,45 @@
 import { ingestError, type CanonicalEvent, type MetricFamily, type MetricScope } from '@perfportal/core';
 import { BucketSeries, type Bucket } from './buckets.js';
 import { ErrorRollup } from './errors-rollup.js';
-import { IndicatorCounter, isWarmup, type IndicatorBands } from './indicators.js';
+import { isWarmup } from './indicators.js';
 import { RollupBuilder, type StatRollup } from './rollup.js';
+import { UserSeries, type UserBucket } from './users.js';
+
+/**
+ * The per-bucket percentile bands, FIXED rather than configurable.
+ *
+ * A bucket persists percentiles as plain numbers - the ingest spine stores
+ * summary sketches only - so a bucket's percentiles can never be recomputed at
+ * read time. A configurable per-bucket set would therefore mean "whatever the
+ * project happened to be configured as on ingest day". This is exactly the set
+ * Gatling's own percentiles-over-time chart renders, so K-04's band selector is
+ * a choice among stored series rather than a recomputation.
+ *
+ * p95 is load-bearing beyond the chart: Gatling's response-time-vs-throughput
+ * scatter hardcodes quantile(0.95), so removing it would break RQ-09.
+ */
+export const BUCKET_PERCENTILES = [25, 50, 75, 80, 85, 90, 95, 99] as const;
 
 export interface EngineOptions {
   warmupMs?: number;
-  lowerMs?: number;
-  higherMs?: number;
+  /**
+   * The statistics-table percentile columns (K-03). Read from project settings
+   * at REQUEST time in production; this option exists so tests and the SLA path
+   * can ask for a set directly. Indicator bounds are deliberately absent - the
+   * engine no longer counts bands.
+   */
   percentiles?: number[];
   maxEndpoints?: number;
   maxBucketsRun?: number;
   maxBucketsEndpoint?: number;
+  maxBucketsUsers?: number;
 }
 
 export interface EngineResult {
   stats: StatRollup[];
   series: Map<string, { scope: MetricScope; name: string; buckets: Bucket[] }>;
-  indicators: IndicatorBands;
-  errors: { message: string; count: number }[];
+  users: { scenario: string; buckets: UserBucket[] }[];
+  errors: { scope: MetricScope; name: string; message: string; count: number }[];
   endpointCount: number;
   /**
    * The load test's own start, from the 'meta' event's startedAtMs — the
@@ -27,6 +48,11 @@ export interface EngineResult {
    * "genuinely unknown" apart from "started at the Unix epoch".
    */
   runStartedAtMs: number | null;
+  /** From the meta event. Null when the tool reported none. */
+  simulation: string | null;
+  description: string | null;
+  /** Run start to last response. Gatling's header renders this to whole seconds. */
+  durationMs: number;
 }
 
 export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions = {}): EngineResult {
@@ -52,8 +78,18 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   // read from the stored entry fields, so a request name containing a space or colon can
   // never be truncated or collide with another entry.
   const series = new Map<string, { scope: MetricScope; name: string; series: BucketSeries }>();
-  const indicators = new IndicatorCounter({ lowerMs: opts.lowerMs ?? 800, higherMs: opts.higherMs ?? 1200 });
-  const errors = new ErrorRollup();
+  const users = new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
+  // One rollup per (scope, name), keyed the same opaque way as `rollups`: the
+  // key is never parsed back, so a request name containing a space is safe.
+  const errorsByKey = new Map<string, { scope: MetricScope; name: string; rollup: ErrorRollup }>();
+  const errorsFor = (scope: MetricScope, name: string): ErrorRollup => {
+    const key = `${scope} ${name}`;
+    let entry = errorsByKey.get(key);
+    if (!entry) { entry = { scope, name, rollup: new ErrorRollup() }; errorsByKey.set(key, entry); }
+    return entry.rollup;
+  };
+  let simulation: string | null = null;
+  let description: string | null = null;
   const endpoints = new Set<string>();
 
   const seriesFor = (scope: MetricScope, name: string, max: number): BucketSeries => {
@@ -78,7 +114,13 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   };
 
   for (const e of events) {
-    if (e.type === 'meta') { runStartMs = e.startedAtMs; sawMeta = true; continue; }
+    if (e.type === 'meta') {
+      runStartMs = e.startedAtMs;
+      sawMeta = true;
+      simulation = e.simulation;
+      description = e.description ?? null;
+      continue;
+    }
     if (e.type === 'group') {
       // Group name is the hierarchy joined with '/' (e.g. 'Catalog/Recommendations').
       // cumulatedResponseTimeMs and (endMs - startMs) are deliberately tracked as two
@@ -91,7 +133,12 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       rollupFor('group', name, 'group_duration').add(e.endMs - e.startMs, e.ok);
       continue;
     }
-    if (e.type !== 'request') continue;                     // user scopes: out of scope for Task 11
+    if (e.type === 'user') {
+      // Always recorded, warm-up included: the user charts show the ramp.
+      users.add(e.scenario, e.kind, e.tsMs);
+      continue;
+    }
+    if (e.type !== 'request') continue;
 
     endpoints.add(e.name);
     if (endpoints.size > maxEndpoints) {
@@ -118,11 +165,14 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
     rollupFor('run', '', 'response_time').add(duration, e.ok);
     rollupFor('request', e.name, 'response_time').add(duration, e.ok);
-    indicators.add(duration, e.ok);
-    // A message-less failure still contributes to indicators.failed above; route it into
-    // an explicit bucket so `sum(errors[].count)` always reconciles with `failed` instead
-    // of silently undercounting.
-    if (!e.ok) errors.add(e.message && e.message.length > 0 ? e.message : '(no message)');
+    // A message-less failure still contributes to the KO count; route it into an
+    // explicit bucket so sum(errors[].count) always reconciles instead of
+    // silently undercounting.
+    if (!e.ok) {
+      const message = e.message && e.message.length > 0 ? e.message : '(no message)';
+      errorsFor('run', '').add(message);
+      errorsFor('request', e.name).add(message);
+    }
   }
 
   const windowMs = Math.max(0, lastMs - Math.max(firstMs, runStartMs + warmupMs));
@@ -131,12 +181,20 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     stats.push(builder.finish({ scope, name, family, windowMs, percentiles }));
   }
 
+  const errors: EngineResult['errors'] = [];
+  for (const { scope, name, rollup } of errorsByKey.values()) {
+    for (const e of rollup.top(200)) errors.push({ scope, name, message: e.message, count: e.count });
+  }
+
   return {
     stats,
     series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, buckets: v.series.buckets() }])),
-    indicators: indicators.bands(),
-    errors: errors.top(200),
+    users: users.scenarios(),
+    errors,
     endpointCount: endpoints.size,
     runStartedAtMs: sawMeta ? runStartMs : null,
+    simulation,
+    description,
+    durationMs: lastMs === 0 ? 0 : Math.max(0, lastMs - runStartMs),
   };
 }

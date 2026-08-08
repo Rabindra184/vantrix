@@ -40,8 +40,8 @@ describe('runEngineAsync', () => {
         .sort((a, b) => `${a.scope}${a.name}${a.family}`.localeCompare(`${b.scope}${b.name}${b.family}`));
 
     expect(strip(async_)).toEqual(strip(sync));
-    expect(async_.indicators).toEqual(sync.indicators);
     expect(async_.errors).toEqual(sync.errors);
+    expect(async_.users).toEqual(sync.users);
     expect(async_.endpointCount).toEqual(sync.endpointCount);
     expect([...async_.series.keys()].sort()).toEqual([...sync.series.keys()].sort());
   });
