@@ -48,6 +48,18 @@ describe('bandsFrom', () => {
       under: 848, between: 0, over: 23, failed: 24,
     });
   });
+
+  it('rejects inverted bounds rather than returning a negative count', () => {
+    const ok = histOf(100, 1000, 2000);
+    expect(() => bandsFrom(ok, 0, { lowerMs: 1200, higherMs: 800 })).toThrow(/inverted/i);
+  });
+
+  it('accepts equal bounds, which collapse the middle band', () => {
+    const ok = histOf(100, 1000, 2000);
+    expect(bandsFrom(ok, 0, { lowerMs: 1000, higherMs: 1000 })).toEqual({
+      under: 1, between: 0, over: 2, failed: 0,
+    });
+  });
 });
 
 describe('isWarmup', () => {
