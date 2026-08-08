@@ -119,6 +119,15 @@ export class ParityController {
     // so a bucket with both successes and failures yields TWO points - one on
     // each series. Routing a mixed bucket to a single series drops the KO point
     // entirely and contaminates the OK one.
+    //
+    // The gate is presence of the status-filtered digest (percentiles.p95 !==
+    // undefined), not okCount/koCount. Those counters are fed on the request's
+    // END edge (buckets.ts), while the sketches - and this p95 - are fed on the
+    // START edge, so they can disagree about which bucket a straddling request
+    // belongs to. Gatling's own gate
+    // (LogFileData.timeAgainstGlobalNumberOfRequestsPerSec) is "does a digest
+    // exist for this bucket", not a response count - matching that means
+    // reading it off the same start-edge sketch the value comes from.
     const ok: [number, number][] = [];
     const ko: [number, number][] = [];
     for (const b of own) {
@@ -126,8 +135,8 @@ export class ParityController {
       if (x === undefined) continue;
       const pOk = b.percentilesOk.p95;
       const pKo = b.percentilesKo.p95;
-      if (b.okCount > 0 && pOk !== undefined) ok.push([x, Math.trunc(pOk)]);
-      if (b.koCount > 0 && pKo !== undefined) ko.push([x, Math.trunc(pKo)]);
+      if (pOk !== undefined) ok.push([x, Math.trunc(pOk)]);
+      if (pKo !== undefined) ko.push([x, Math.trunc(pKo)]);
     }
     ok.sort((a, b) => a[0] - b[0]);
     ko.sort((a, b) => a[0] - b[0]);
