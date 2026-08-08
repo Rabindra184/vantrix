@@ -78,7 +78,15 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   // read from the stored entry fields, so a request name containing a space or colon can
   // never be truncated or collide with another entry.
   const series = new Map<string, { scope: MetricScope; name: string; series: BucketSeries }>();
-  const users = new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
+  // Constructed lazily, exactly like seriesFor's BucketSeries: runStartMs is 0
+  // until the meta event is handled below, and a UserSeries built against 0
+  // would report absolute epoch offsets while every request bucket is
+  // run-relative.
+  let users: UserSeries | null = null;
+  const usersFor = (): UserSeries => {
+    users ??= new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
+    return users;
+  };
   // One rollup per (scope, name), keyed the same opaque way as `rollups`: the
   // key is never parsed back, so a request name containing a space is safe.
   const errorsByKey = new Map<string, { scope: MetricScope; name: string; rollup: ErrorRollup }>();
@@ -135,7 +143,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     }
     if (e.type === 'user') {
       // Always recorded, warm-up included: the user charts show the ramp.
-      users.add(e.scenario, e.kind, e.tsMs);
+      usersFor().add(e.scenario, e.kind, e.tsMs);
       continue;
     }
     if (e.type !== 'request') continue;
@@ -189,7 +197,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   return {
     stats,
     series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, buckets: v.series.buckets() }])),
-    users: users.scenarios(),
+    users: users?.scenarios() ?? [],
     errors,
     endpointCount: endpoints.size,
     runStartedAtMs: sawMeta ? runStartMs : null,
