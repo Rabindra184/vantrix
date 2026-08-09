@@ -102,37 +102,29 @@ describe('MetricWriter / MetricReader', () => {
     expect(storedRun?.percentiles['p95']).toBeCloseTo(engineRun?.percentiles['p95'] ?? -1, 6);
   });
 
-  it('round-trips the sketch through bytea so percentiles are answerable after reload', async () => {
+  it('answers a percentile that was never stored in the JSONB — the point of keeping the sketch', async () => {
+    // Reads the sketch the same way production does now: through stats(),
+    // whose `sketch` field is what MetricsController.stats() (K-03) recomputes
+    // percentiles from. There is no longer a standalone MetricReader.sketch()
+    // — it had no production caller (PipelineService evaluates SLA rules
+    // against the in-memory sketch from the same runEngineAsync call that
+    // writes this column, not by reading it back) — so this test now exercises
+    // the sketch column through its one real reader instead.
     const ctx = await seedRun();
     const result = await persist(ctx);
-
-    const reloaded = await new MetricReader(pool).sketch(
-      { orgId: ctx.orgId, projectId: ctx.projectId },
-      ctx.runId,
-      { scope: 'run', name: '', family: 'response_time' },
-    );
-    const original = result.stats.find((s) => s.scope === 'run')?.sketch;
-
-    expect(reloaded).not.toBeNull();
-    expect(reloaded!.count).toBe(original!.count);
-    for (const q of [0.5, 0.95, 0.99]) {
-      expect(reloaded!.quantile(q)).toBeCloseTo(original!.quantile(q), 6);
-    }
-  });
-
-  it('answers a percentile that was never stored in the JSONB — the point of keeping the sketch', async () => {
-    const ctx = await seedRun();
-    await persist(ctx);
 
     const stored = await new MetricReader(pool).stats({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId);
     expect(Object.keys(stored[0]!.percentiles)).not.toContain('p99.9');
 
-    const sketch = await new MetricReader(pool).sketch(
-      { orgId: ctx.orgId, projectId: ctx.projectId },
-      ctx.runId,
-      { scope: 'run', name: '', family: 'response_time' },
-    );
-    expect(Number.isFinite(sketch!.quantile(0.999))).toBe(true);
+    const storedRun = stored.find((s) => s.scope === 'run');
+    const original = result.stats.find((s) => s.scope === 'run')?.sketch;
+
+    expect(storedRun?.sketch).not.toBeNull();
+    expect(storedRun!.sketch!.count).toBe(original!.count);
+    for (const q of [0.5, 0.95, 0.99]) {
+      expect(storedRun!.sketch!.quantile(q)).toBeCloseTo(original!.quantile(q), 6);
+    }
+    expect(Number.isFinite(storedRun!.sketch!.quantile(0.999))).toBe(true);
   });
 
   it('round-trips series buckets and error rows', async () => {
