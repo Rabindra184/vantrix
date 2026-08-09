@@ -416,6 +416,15 @@ it('401s with no credential at all', async () => {
   await request(app.getHttpServer()).get(`/v1/runs/${runId}`).expect(401);
 });
 
+it('401s a stale cookie after logout', async () => {
+  const cookie = await signUpAndLogin(app, 'd@example.test');
+  await request(app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
+  await request(app.getHttpServer()).post('/auth/sign-out').set('Cookie', cookie).expect(200);
+  // The same cookie string, now revoked server-side. A session store that only
+  // expires by time would still accept this.
+  await request(app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(401);
+});
+
 it('401s a user with no org membership', async () => {
   const cookie = await signUpAndLogin(app, 'orphan@example.test');   // no org_member row
   await request(app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(401);
