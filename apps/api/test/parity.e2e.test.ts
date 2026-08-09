@@ -20,6 +20,32 @@ const REPORT_DIR = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report', import.meta.url),
 );
 
+/**
+ * Independent reimplementation of parity.controller.ts's scatter x
+ * computation — deliberately NOT importing/calling the controller's own
+ * helper, so a bug in that helper can't also be "correct" here. Own and
+ * global series each coalesce on their own occupied-bucket count and so can
+ * end up at different widths, so x for one own bucket is the rate over the
+ * WINDOW [ownOffsetMs, ownOffsetMs + ownWidthMs), not a same-offset lookup.
+ */
+function inferWidthMs(offsets: number[]): number {
+  let width = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < offsets.length; i++) {
+    const gap = (offsets[i] as number) - (offsets[i - 1] as number);
+    if (gap > 0 && gap < width) width = gap;
+  }
+  return Number.isFinite(width) ? width : 1000;
+}
+function expectedRate(
+  ownOffsetMs: number, ownWidthMs: number, globalBuckets: { startOffsetMs: number; startedCount: number }[],
+): number {
+  let sum = 0;
+  for (const g of globalBuckets) {
+    if (g.startOffsetMs >= ownOffsetMs && g.startOffsetMs < ownOffsetMs + ownWidthMs) sum += g.startedCount;
+  }
+  return Math.round((sum / ownWidthMs) * 1000);
+}
+
 let bundle: Buffer;
 let ctx: TestContext;
 
@@ -386,8 +412,9 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // point-per-bucket count 1:1, which is what this case is actually named
       // for; "Add To Cart" is covered separately by PT-RQ-09b below.
       const name = 'Product Detail';
-      const [series, scatter] = await Promise.all([
+      const [series, globalSeries, scatter] = await Promise.all([
         get(`/v1/runs/${runId}/series?scope=request&name=${encodeURIComponent(name)}`),
+        get(`/v1/runs/${runId}/series?scope=run&name=`),
         get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent(name)}`),
       ]);
       const okBuckets = series.body.buckets.filter(
@@ -396,6 +423,16 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       expect(okBuckets.length).toBeGreaterThan(0);
       expect(scatter.body.ok.length).toBe(okBuckets.length);
       expect(scatter.body.ko.length).toBe(0); // no KO events for this request at all
+
+      // RQ-09's central claim is "x = global requests per second" — pin one
+      // real point rather than merely checking its type. Expectation derived
+      // independently from the /series responses, not by calling the
+      // controller's own rate helper: computing x via the SAME function under
+      // test would stay green even if that function's formula were wrong.
+      const ownWidthMs = inferWidthMs(series.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
+      const pinnedBucket = okBuckets[0] as { startOffsetMs: number; percentilesOk: Record<string, number> };
+      const expectedX = expectedRate(pinnedBucket.startOffsetMs, ownWidthMs, globalSeries.body.buckets);
+      expect(scatter.body.ok).toContainEqual([expectedX, Math.trunc(pinnedBucket.percentilesOk.p95)]);
 
       // y matches Math.trunc of the bucket's own OK p95 exactly - not merely
       // "is an integer". This shared run's per-request, per-second buckets
@@ -425,15 +462,21 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // time (apps/api/src/ingest/ingest.service.ts's ENGINE_KEYS), not
       // read live - via a sibling project, not a second app (see
       // createSiblingProject's comment for why).
-      // Both the request-scope series (own p95) AND the run-scope series
-      // (the scatter's x-axis rate, keyed by matching startOffsetMs - see
-      // parity.controller.ts's scatter()) must coalesce to the same single
-      // bucket boundary, or the x lookup misses and every point is dropped.
+      // The request-scope series (own p95) and the run-scope series (the
+      // scatter's x-axis rate) each coalesce independently on THEIR OWN
+      // occupied-bucket count (parity.controller.ts's scatter() sums the
+      // global series' startedCount over each own bucket's own window, rather
+      // than assuming the two share one width) — forcing both caps to 1
+      // collapses both down to a single bucket each, which this also uses to
+      // pin a real x instead of accepting any number.
       const sibling = await createSiblingProject({ maxBucketsEndpoint: 1, maxBucketsRun: 1 });
       const coalescedRunId = await ingestIntoSibling(sibling, 'parity-rq09-coalesced');
 
       const cSeries = await request(ctx.app.getHttpServer())
         .get(`/v1/runs/${coalescedRunId}/series?scope=request&name=${encodeURIComponent(name)}`)
+        .set('Authorization', `Bearer ${sibling.readToken}`);
+      const cGlobalSeries = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${coalescedRunId}/series?scope=run&name=`)
         .set('Authorization', `Bearer ${sibling.readToken}`);
       const cScatter = await request(ctx.app.getHttpServer())
         .get(`/v1/runs/${coalescedRunId}/scatter?name=${encodeURIComponent(name)}`)
@@ -448,8 +491,11 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // fractional value here and this case needs a different bucket - not
       // a reason to weaken the assertion below.
       expect(Math.trunc(rawP95)).not.toBe(Math.round(rawP95));
-      expect(cScatter.body.ok).toContainEqual([expect.any(Number), Math.trunc(rawP95)]);
-      expect(cScatter.body.ok).not.toContainEqual([expect.any(Number), Math.round(rawP95)]);
+
+      const cOwnWidthMs = inferWidthMs(cSeries.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
+      const cExpectedX = expectedRate(bigBucket.startOffsetMs, cOwnWidthMs, cGlobalSeries.body.buckets);
+      expect(cScatter.body.ok).toContainEqual([cExpectedX, Math.trunc(rawP95)]);
+      expect(cScatter.body.ok).not.toContainEqual([cExpectedX, Math.round(rawP95)]);
     });
 
     it('PT-RQ-09b scatter point counts pin the accepted ±1 OK-series delta', async () => {
