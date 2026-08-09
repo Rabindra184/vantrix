@@ -53,7 +53,7 @@ afterAll(async () => {
 });
 
 const TABLES = [
-  'run_assertion', 'run_error', 'run_indicator', 'run_series_bucket', 'run_stat',
+  'run_assertion', 'run_error', 'run_series_bucket', 'run_user_bucket', 'run_stat',
   'run', 'sla_rule', 'api_token', 'project', 'org',
 ];
 
@@ -220,6 +220,22 @@ describe('PipelineService', () => {
       ctx.runId,
     ]);
     expect(rows[0]?.n).toBe(0);
+  });
+
+  it('records the tool run header alongside the statistics', async () => {
+    const ctx = await seedRun(bundle);
+    await pipeline().process(ctx.runId);
+
+    const { rows } = await pool.query(
+      `SELECT simulation, description, duration_ms FROM run WHERE id = $1`,
+      [ctx.runId],
+    );
+    // The fixture's run header names the fully package-qualified simulation
+    // class (see packages/plugin-gatling/test/records.test.ts), so the
+    // stored value carries the "example." prefix rather than a bare class name.
+    expect(rows[0]?.simulation).toBe('example.ParitySimulation');
+    expect(rows[0]?.duration_ms).toBeGreaterThan(60_000);
+    expect(rows[0]?.duration_ms).toBeLessThan(64_000);
   });
 
   it('does not let a losing concurrent worker clobber the winner\'s committed result', async () => {

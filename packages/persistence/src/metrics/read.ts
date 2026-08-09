@@ -1,4 +1,4 @@
-import { Sketch } from '@perfportal/statistics';
+import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { TenantScope } from '../repositories/tenant.js';
 
@@ -16,6 +16,24 @@ export interface StoredStat {
   stddevMs: number;
   throughputRps: number;
   percentiles: Record<string, number>;
+  /** Null for runs ingested before the parity migration; the API reports those as non-configurable. */
+  histogramOk: Histogram | null;
+  histogramKo: Histogram | null;
+  /**
+   * The persisted summary sketch, for recomputing `percentiles` at the
+   * project's currently configured set (spec §9.1, K-03). Null for rows
+   * written before the sketch was persisted, in which case callers fall
+   * back to the frozen `percentiles` column.
+   */
+  sketch: Sketch | null;
+}
+
+export interface StoredUserBucket {
+  scenario: string;
+  startOffsetMs: number;
+  started: number;
+  ended: number;
+  maxConcurrent: number;
 }
 
 export interface StoredBucket {
@@ -28,6 +46,9 @@ export interface StoredBucket {
   maxMs: number;
   meanMs: number;
   percentiles: Record<string, number>;
+  /** Status-filtered. `{}` for rows written before the per-status migration. */
+  percentilesOk: Record<string, number>;
+  percentilesKo: Record<string, number>;
 }
 
 export interface StatKey {
@@ -48,12 +69,25 @@ export interface StatKey {
  * stop catching that regression.
  */
 export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, ok_count, ko_count,
-              min_ms, max_ms, mean_ms, percentiles
+              min_ms, max_ms, mean_ms, percentiles, percentiles_ok, percentiles_ko
          FROM run_series_bucket
         WHERE run_started_on = $1 AND run_id = $2
           AND org_id = $3 AND project_id = $4
           AND scope = $5 AND name = $6
         ORDER BY start_offset_ms`;
+
+/**
+ * Shared verbatim with the "prunes partitions" integration test, for the same
+ * load-bearing reason as SERIES_SQL: `run_started_on = $1` is the partition-key
+ * predicate that lets Postgres prune `run_user_bucket`'s range partitions down
+ * to one. A hand-copied EXPLAIN query in the test would drift from this one and
+ * stop catching the regression it exists to catch.
+ */
+export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended, max_concurrent
+         FROM run_user_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+        ORDER BY scenario, start_offset_ms`;
 
 export class MetricReader {
   constructor(private readonly pool: pg.Pool) {}
@@ -61,7 +95,8 @@ export class MetricReader {
   async stats(scope: TenantScope, runId: string): Promise<StoredStat[]> {
     const { rows } = await this.pool.query(
       `SELECT scope, name, family, count, ok_count, ko_count, error_rate,
-              min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles
+              min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
+              histogram_ok, histogram_ko, sketch
          FROM run_stat
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
         ORDER BY scope, name, family`,
@@ -81,32 +116,10 @@ export class MetricReader {
       stddevMs: r.stddev_ms,
       throughputRps: r.throughput_rps,
       percentiles: r.percentiles as Record<string, number>,
+      histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
+      histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
+      sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
     }));
-  }
-
-  /**
-   * Reads a persisted summary sketch back out of `run_stat.sketch`, for
-   * evaluating an SLA metric that was not asked about at ingest time — a
-   * rule added or edited after the run completed, or a request for p99.9
-   * next year even though the project's stored percentile set is only
-   * [50, 75, 95, 99] (spec §8.2). That later-evaluation case is the entire
-   * reason sketches, not just fixed percentiles, are persisted (§9.1).
-   *
-   * Deliberately not on the ingest path: PipelineService evaluates SLA
-   * rules against the sketch `runEngineAsync` still holds in memory, in the
-   * same transaction that writes this column, so there is currently no
-   * production caller of this method at ingest time. It exists for the
-   * re-evaluation case above.
-   */
-  async sketch(scope: TenantScope, runId: string, key: StatKey): Promise<Sketch | null> {
-    const { rows } = await this.pool.query<{ sketch: Buffer }>(
-      `SELECT sketch FROM run_stat
-        WHERE run_id = $1 AND org_id = $2 AND project_id = $3
-          AND scope = $4 AND name = $5 AND family = $6`,
-      [runId, scope.orgId, scope.projectId, key.scope, key.name, key.family],
-    );
-    const buf = rows[0]?.sketch;
-    return buf ? Sketch.deserialize(new Uint8Array(buf)) : null;
   }
 
   /**
@@ -135,15 +148,66 @@ export class MetricReader {
       maxMs: r.max_ms,
       meanMs: r.mean_ms,
       percentiles: r.percentiles as Record<string, number>,
+      percentilesOk: (r.percentiles_ok ?? {}) as Record<string, number>,
+      percentilesKo: (r.percentiles_ko ?? {}) as Record<string, number>,
     }));
   }
 
-  async errors(scope: TenantScope, runId: string): Promise<{ message: string; count: number }[]> {
+  /** Both status histograms for one (scope, name, family). Null when the row has none. */
+  async histograms(
+    scope: TenantScope,
+    runId: string,
+    key: StatKey,
+  ): Promise<{ ok: Histogram; ko: Histogram } | null> {
+    const { rows } = await this.pool.query<{ histogram_ok: Buffer | null; histogram_ko: Buffer | null }>(
+      `SELECT histogram_ok, histogram_ko FROM run_stat
+        WHERE run_id = $1 AND org_id = $2 AND project_id = $3
+          AND scope = $4 AND name = $5 AND family = $6`,
+      [runId, scope.orgId, scope.projectId, key.scope, key.name, key.family],
+    );
+    const row = rows[0];
+    if (!row?.histogram_ok || !row.histogram_ko) return null;
+    return {
+      ok: Histogram.deserialize(new Uint8Array(row.histogram_ok)),
+      ko: Histogram.deserialize(new Uint8Array(row.histogram_ko)),
+    };
+  }
+
+  /** runStartedOn is REQUIRED for the same partition-pruning reason as series(). */
+  async users(scope: TenantScope, runId: string, runStartedOn: Date): Promise<StoredUserBucket[]> {
+    const { rows } = await this.pool.query(
+      USER_SERIES_SQL,
+      [runStartedOn, runId, scope.orgId, scope.projectId],
+    );
+    return rows.map((r) => ({
+      scenario: r.scenario,
+      startOffsetMs: r.start_offset_ms,
+      started: r.started,
+      ended: r.ended,
+      maxConcurrent: r.max_concurrent,
+    }));
+  }
+
+  /**
+   * `sel` defaults to RUN scope, never "no filter".
+   *
+   * The engine now emits one row per (scope, name) per message, so a single
+   * failure produces both a run-scope row and a request-scope row. An unfiltered
+   * query would return both and a caller summing counts would double every
+   * error. Defaulting to run scope keeps the existing run-level endpoint's
+   * numbers identical to what it returned before scoping existed.
+   */
+  async errors(
+    scope: TenantScope,
+    runId: string,
+    sel: { scope: string; name: string } = { scope: 'run', name: '' },
+  ): Promise<{ message: string; count: number }[]> {
     const { rows } = await this.pool.query(
       `SELECT message, count FROM run_error
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
+          AND scope = $4 AND name = $5
         ORDER BY count DESC, message ASC`,
-      [runId, scope.orgId, scope.projectId],
+      [runId, scope.orgId, scope.projectId, sel.scope, sel.name],
     );
     return rows.map((r) => ({ message: r.message, count: r.count }));
   }

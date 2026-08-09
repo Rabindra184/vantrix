@@ -10,7 +10,11 @@ HTTP.
 - **`apps/api`** — NestJS on Express (`@nestjs/platform-express`; multipart
   bodies are parsed by `busboy` piped straight from `req`): token auth,
   `POST /v1/runs` (bundle ingest), run/status/verdict reads, stats/series/errors
-  reads, OpenAPI.
+  reads, and three endpoints backing the Appendix A charts —
+  `GET /v1/runs/{id}/distribution` (response-time histogram bins),
+  `GET /v1/runs/{id}/users` (concurrent-users and start-rate series), and
+  `GET /v1/runs/{id}/scatter` (response time against global RPS, split into
+  OK/KO series) — plus OpenAPI.
 - **`apps/worker`** — claims queued ingest jobs, decompresses the whole bundle
   into memory (a deliberate design choice, not a streaming parse — see
   `packages/storage/src/bundle.ts`'s `openTarGzBundle`, spec §5.1), runs the
@@ -90,3 +94,11 @@ asserts the exact statistics the fixture is known to produce (895 requests,
 848/0/23/24, and the 500/503 error counts) — figures verified independently
 of this stack, so if ingest, persistence, or serialization corrupts
 anything, the numbers move.
+
+The parity suite now asserts every data row in `PerfPortal_Enterprise_PRD.md`
+Appendix A by name (`PT-G-*`, `PT-RQ-*`, `PT-GR-*` test names map directly to
+matrix rows), including the distribution, users, and scatter endpoints above.
+One number is easy to misread there: the fixture's true global minimum
+response time is **16ms**, not the **28** the response-time distribution
+chart's first bin appears to show — that `28` is the midpoint label of the
+first of 100 bins (§A.9 F-8), not the minimum.

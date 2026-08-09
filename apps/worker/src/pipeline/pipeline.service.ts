@@ -87,7 +87,8 @@ export class PipelineService {
 
     const project = await new ProjectRepository(this.prisma).byId(run.projectId);
     const maxTotalBytes =
-      project?.settings.maxDecompressedBundleBytes ?? this.config.maxDecompressedBundleBytes;
+      (project?.settings.maxDecompressedBundleBytes as number | undefined) ??
+      this.config.maxDecompressedBundleBytes;
     const source = await openTarGzBundle(archive, { maxTotalBytes });
     const { plugin, toolVersion } = await selectPlugin(source.index);
 
@@ -178,9 +179,12 @@ export class PipelineService {
       // path — status is 'parsing' here, never already terminal.
       await client.query(
         `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now(),
-                tool_started_at = $4
+                tool_started_at = $4, simulation = $5, description = $6, duration_ms = $7
           WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
-        [run.id, verdict, toolVersion, toolStartedAt],
+        [
+          run.id, verdict, toolVersion, toolStartedAt,
+          result.simulation, result.description, result.durationMs,
+        ],
       );
 
       await client.query('COMMIT');

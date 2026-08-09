@@ -22,8 +22,8 @@ export const SCHEMA_TABLES = [
   'run',
   'run_stat',
   'run_series_bucket',
+  'run_user_bucket',
   'run_error',
-  'run_indicator',
   'sla_rule',
   'run_assertion',
 ] as const;

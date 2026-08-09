@@ -1,5 +1,5 @@
 import type { EngineResult } from '@perfportal/statistics';
-import { SKETCH_KIND } from '@perfportal/statistics';
+import { BUCKET_PERCENTILES, HISTOGRAM_KIND, SKETCH_KIND } from '@perfportal/statistics';
 import type pg from 'pg';
 
 export interface MetricContext {
@@ -54,6 +54,7 @@ export class MetricWriter {
         'count', 'ok_count', 'ko_count', 'error_rate',
         'min_ms', 'max_ms', 'mean_ms', 'stddev_ms', 'throughput_rps',
         'percentiles', 'sketch', 'sketch_kind',
+        'histogram_ok', 'histogram_ko', 'histogram_kind',
       ],
       result.stats.map((s) => [
         crypto.randomUUID(),
@@ -64,6 +65,9 @@ export class MetricWriter {
         JSON.stringify(s.percentiles),
         Buffer.from(s.sketch.serialize()),
         SKETCH_KIND,
+        Buffer.from(s.histogramOk.serialize()),
+        Buffer.from(s.histogramKo.serialize()),
+        HISTOGRAM_KIND,
       ]),
     );
 
@@ -79,7 +83,9 @@ export class MetricWriter {
           b.sketch.count === 0 ? 0 : b.sketch.sum / b.sketch.count,
           // Only the configured percentiles are stored per bucket; per spec §9.1
           // bucket sketches are deliberately not persisted.
-          JSON.stringify(percentilesOf(b.sketch, result)),
+          JSON.stringify(percentilesOf(b.sketch)),
+          JSON.stringify(percentilesOf(b.sketchOk)),
+          JSON.stringify(percentilesOf(b.sketchKo)),
         ]);
       }
     }
@@ -90,47 +96,59 @@ export class MetricWriter {
         'run_started_on', 'run_id', 'org_id', 'project_id',
         'scope', 'name', 'start_offset_ms',
         'started_count', 'ended_count', 'ok_count', 'ko_count',
-        'min_ms', 'max_ms', 'mean_ms', 'percentiles',
+        'min_ms', 'max_ms', 'mean_ms', 'percentiles', 'percentiles_ok', 'percentiles_ko',
       ],
       bucketRows,
+    );
+
+    const userRows: unknown[][] = [];
+    for (const entry of result.users) {
+      for (const b of entry.buckets) {
+        userRows.push([
+          ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
+          entry.scenario, b.startOffsetMs, b.started, b.ended, b.maxConcurrent,
+        ]);
+      }
+    }
+    await insertBatched(
+      client,
+      'run_user_bucket',
+      [
+        'run_started_on', 'run_id', 'org_id', 'project_id',
+        'scenario', 'start_offset_ms', 'started', 'ended', 'max_concurrent',
+      ],
+      userRows,
     );
 
     await insertBatched(
       client,
       'run_error',
-      ['id', 'run_id', 'org_id', 'project_id', 'message', 'count'],
+      ['id', 'run_id', 'org_id', 'project_id', 'scope', 'name', 'message', 'count'],
       result.errors.map((e) => [
-        crypto.randomUUID(), ctx.runId, ctx.orgId, ctx.projectId, e.message, e.count,
-      ]),
-    );
-
-    await insertBatched(
-      client,
-      'run_indicator',
-      ['id', 'run_id', 'org_id', 'project_id', 'under', 'between_', 'over', 'failed'],
-      [[
         crypto.randomUUID(), ctx.runId, ctx.orgId, ctx.projectId,
-        result.indicators.under, result.indicators.between,
-        result.indicators.over, result.indicators.failed,
-      ]],
+        e.scope, e.name, e.message, e.count,
+      ]),
     );
   }
 }
 
-/** Percentile set is taken from any run-scope rollup, which carries the configured keys. */
-function percentilesOf(
-  sketch: { count: number; quantile(q: number): number },
-  result: EngineResult,
-): Record<string, number> {
-  const keys = Object.keys(result.stats[0]?.percentiles ?? { p50: 0, p95: 0, p99: 0 });
+/**
+ * The per-bucket percentile bands are a FIXED set (BUCKET_PERCENTILES), not the
+ * project's configured columns. A bucket stores numbers and no sketch, so a
+ * configurable set would freeze whatever the project happened to be configured
+ * as on ingest day. Reading the keys off result.stats[0] - the previous
+ * behaviour - did exactly that.
+ *
+ * An empty sketch returns {}, not a band of zeros. A p95 of 0 is a fabricated
+ * observation for a bucket that made none - and it is exactly what let the
+ * scatter gate on a response count instead of on whether the status-filtered
+ * digest exists, matching Gatling's own gate
+ * (LogFileData.timeAgainstGlobalNumberOfRequestsPerSec: presence of a digest,
+ * not a response count).
+ */
+function percentilesOf(sketch: { count: number; quantile(q: number): number }): Record<string, number> {
+  if (sketch.count === 0) return {};
   const out: Record<string, number> = {};
-  if (sketch.count === 0) {
-    for (const k of keys) out[k] = 0;
-    return out;
-  }
-  for (const k of keys) {
-    const p = Number(k.slice(1));
-    out[k] = sketch.quantile(p / 100);
-  }
+  for (const p of BUCKET_PERCENTILES) out[`p${p}`] = sketch.quantile(p / 100);
   return out;
 }

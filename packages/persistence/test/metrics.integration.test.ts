@@ -1,7 +1,7 @@
-import { runEngine } from '@perfportal/statistics';
+import { bandsFrom, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL } from '../src/index.js';
+import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL, USER_SERIES_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -17,16 +17,22 @@ function events(): CanonicalEvent[] {
     { type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: base },
   ];
   for (let i = 0; i < 400; i++) {
+    const startMs = base + i * 25;
+    const endMs = startMs + (i % 13) * 40 + 5;
     out.push({
       type: 'request',
       name: i % 2 === 0 ? 'GET /a' : 'GET /b',
       groups: [],
       userId: String(i),
-      startMs: base + i * 25,
-      endMs: base + i * 25 + (i % 13) * 40 + 5,
+      startMs,
+      endMs,
       ok: i % 17 !== 0,
       message: i % 17 === 0 ? 'status 500' : undefined,
     });
+    // A user session bracketing each request, so the run also exercises
+    // per-scenario arrival/concurrency buckets (run_user_bucket).
+    out.push({ type: 'user', scenario: 'S', userId: String(i), kind: 'start', tsMs: startMs });
+    out.push({ type: 'user', scenario: 'S', userId: String(i), kind: 'end', tsMs: endMs });
   }
   return out;
 }
@@ -96,37 +102,29 @@ describe('MetricWriter / MetricReader', () => {
     expect(storedRun?.percentiles['p95']).toBeCloseTo(engineRun?.percentiles['p95'] ?? -1, 6);
   });
 
-  it('round-trips the sketch through bytea so percentiles are answerable after reload', async () => {
+  it('answers a percentile that was never stored in the JSONB — the point of keeping the sketch', async () => {
+    // Reads the sketch the same way production does now: through stats(),
+    // whose `sketch` field is what MetricsController.stats() (K-03) recomputes
+    // percentiles from. There is no longer a standalone MetricReader.sketch()
+    // — it had no production caller (PipelineService evaluates SLA rules
+    // against the in-memory sketch from the same runEngineAsync call that
+    // writes this column, not by reading it back) — so this test now exercises
+    // the sketch column through its one real reader instead.
     const ctx = await seedRun();
     const result = await persist(ctx);
-
-    const reloaded = await new MetricReader(pool).sketch(
-      { orgId: ctx.orgId, projectId: ctx.projectId },
-      ctx.runId,
-      { scope: 'run', name: '', family: 'response_time' },
-    );
-    const original = result.stats.find((s) => s.scope === 'run')?.sketch;
-
-    expect(reloaded).not.toBeNull();
-    expect(reloaded!.count).toBe(original!.count);
-    for (const q of [0.5, 0.95, 0.99]) {
-      expect(reloaded!.quantile(q)).toBeCloseTo(original!.quantile(q), 6);
-    }
-  });
-
-  it('answers a percentile that was never stored in the JSONB — the point of keeping the sketch', async () => {
-    const ctx = await seedRun();
-    await persist(ctx);
 
     const stored = await new MetricReader(pool).stats({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId);
     expect(Object.keys(stored[0]!.percentiles)).not.toContain('p99.9');
 
-    const sketch = await new MetricReader(pool).sketch(
-      { orgId: ctx.orgId, projectId: ctx.projectId },
-      ctx.runId,
-      { scope: 'run', name: '', family: 'response_time' },
-    );
-    expect(Number.isFinite(sketch!.quantile(0.999))).toBe(true);
+    const storedRun = stored.find((s) => s.scope === 'run');
+    const original = result.stats.find((s) => s.scope === 'run')?.sketch;
+
+    expect(storedRun?.sketch).not.toBeNull();
+    expect(storedRun!.sketch!.count).toBe(original!.count);
+    for (const q of [0.5, 0.95, 0.99]) {
+      expect(storedRun!.sketch!.quantile(q)).toBeCloseTo(original!.quantile(q), 6);
+    }
+    expect(Number.isFinite(storedRun!.sketch!.quantile(0.999))).toBe(true);
   });
 
   it('round-trips series buckets and error rows', async () => {
@@ -142,10 +140,50 @@ describe('MetricWriter / MetricReader', () => {
       expected.reduce((a, b) => a + b.startedCount, 0),
     );
 
+    // errors() now defaults to run scope (see the "defaults to run scope" test
+    // below) — result.errors carries a run-scope AND a request-scope row per
+    // failure (engine.ts), so the round-trip comparison must be against the
+    // run-scope subset, not the full (double-counted) list.
     const errors = await reader.errors(tenant, ctx.runId);
     expect(errors.reduce((a, e) => a + e.count, 0)).toBe(
-      result.errors.reduce((a, e) => a + e.count, 0),
+      result.errors.filter((e) => e.scope === 'run').reduce((a, e) => a + e.count, 0),
     );
+  });
+
+  // Task 17: buckets.ts now tracks OK-only and KO-only sketches alongside the
+  // combined one, because Gatling's percentiles-over-time chart is OK-only and
+  // its scatter is two independent status-filtered series. This proves the
+  // write/read round trip actually carries the status-filtered figures, not
+  // just the combined one relabeled — comparing against the in-memory
+  // engine's own sketchOk/sketchKo, not just checking the columns are present.
+  it('round-trips per-status bucket percentiles, distinct from the combined figure for a mixed bucket', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    const stored = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '' });
+    const engineBuckets = result.series.get('run ')?.buckets ?? [];
+
+    const mixed = engineBuckets.find((b) => b.okCount > 0 && b.koCount > 0);
+    expect(mixed).toBeDefined();
+    const storedB = stored.find((b) => b.startOffsetMs === mixed!.startOffsetMs);
+    expect(storedB).toBeDefined();
+
+    // Round-trips against the engine's OWN sketchOk/sketchKo (all eight
+    // configured bands), not just spot-checking one figure.
+    for (const key of Object.keys(storedB!.percentilesOk)) {
+      const p = Number(key.slice(1)) / 100;
+      expect(storedB!.percentilesOk[key]).toBeCloseTo(mixed!.sketchOk.quantile(p), 6);
+      expect(storedB!.percentilesKo[key]).toBeCloseTo(mixed!.sketchKo.quantile(p), 6);
+    }
+
+    // And the whole point: the OK-only figures must be their OWN thing, not
+    // the combined sketch relabeled. If a bucket's OK subset and combined
+    // set agreed on all eight configured bands this would be a false pass,
+    // but that is not plausible here — koCount > 0 in this bucket, so the
+    // combined sketch strictly contains points the OK-only one does not.
+    expect(storedB!.percentilesOk).not.toEqual(storedB!.percentiles);
   });
 
   it('will not read another project\'s metrics', async () => {
@@ -177,5 +215,103 @@ describe('MetricWriter / MetricReader', () => {
     // a single pruned partition and mask a real pruning failure the same way.
     const scanned = new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size;
     expect(scanned).toBe(1);
+  });
+
+  it('persists histograms that round-trip out of the database', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query<{ histogram_ok: Buffer; histogram_kind: string }>(
+      `SELECT histogram_ok, histogram_kind FROM run_stat
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [ctx.runId],
+    );
+    expect(rows[0]?.histogram_kind).toBe(HISTOGRAM_KIND);
+    const h = Histogram.deserialize(new Uint8Array(rows[0]!.histogram_ok));
+    expect(h.total).toBeGreaterThan(0);
+    expect(bandsFrom(h, 0, { lowerMs: 800, higherMs: 1200 }).under).toBeGreaterThan(0);
+  });
+
+  it('persists per-scenario user buckets', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query(
+      `SELECT scenario, started, max_concurrent FROM run_user_bucket
+        WHERE run_started_on = $1 AND run_id = $2 ORDER BY scenario, start_offset_ms`,
+      [STARTED_ON, ctx.runId],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it('persists errors with a scope and name', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+
+    const { rows } = await pool.query(
+      `SELECT scope, name FROM run_error WHERE run_id = $1 ORDER BY scope`,
+      [ctx.runId],
+    );
+    expect(rows.map((r) => r.scope)).toContain('request');
+  });
+
+  it('reads histograms back and folds bands at two different bounds', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const h = await reader.histograms({ orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId,
+      { scope: 'run', name: '', family: 'response_time' });
+    expect(h).not.toBeNull();
+    const a = bandsFrom(h!.ok, 0, { lowerMs: 800, higherMs: 1200 });
+    const b = bandsFrom(h!.ok, 0, { lowerMs: 50, higherMs: 100 });
+    expect(a).not.toEqual(b);              // same bytes, different settings
+    expect(a.under + a.between + a.over).toBe(b.under + b.between + b.over);
+  });
+
+  it('prunes partitions when reading user buckets', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const { rows } = await pool.query(
+      `EXPLAIN (FORMAT JSON) ${USER_SERIES_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId],
+    );
+    expect(JSON.stringify(rows)).not.toMatch(/run_user_bucket_2026_(0[1-7]|09|1[0-2])/);
+  });
+
+  it('defaults to run scope so a caller cannot double-count', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const defaulted = await reader.errors(tenant, ctx.runId);
+    const explicit = await reader.errors(tenant, ctx.runId, { scope: 'run', name: '' });
+    expect(defaulted).toEqual(explicit);
+    // The same failure also has a request-scope row; totals must not be summed
+    // across scopes. Run-scope total must equal the run's KO count, not twice it.
+    const { rows } = await pool.query<{ ko: string }>(
+      `SELECT ko_count::text AS ko FROM run_stat
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [ctx.runId],
+    );
+    const runKo = Number(rows[0]?.ko ?? 0);
+    expect(defaulted.reduce((n, e) => n + e.count, 0)).toBe(runKo);
+  });
+
+  it('filters errors by scope and name', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const runScoped = await reader.errors(tenant, ctx.runId, { scope: 'run', name: '' });
+    const { rows } = await pool.query<{ name: string }>(
+      `SELECT DISTINCT name FROM run_error WHERE run_id = $1 AND scope = 'request' LIMIT 1`,
+      [ctx.runId],
+    );
+    const reqName = rows[0]?.name;
+    expect(reqName).toBeDefined();
+    const reqScoped = await reader.errors(tenant, ctx.runId, { scope: 'request', name: reqName as string });
+    expect(reqScoped.length).toBeGreaterThan(0);
+    expect(reqScoped.reduce((n, e) => n + e.count, 0))
+      .toBeLessThan(runScoped.reduce((n, e) => n + e.count, 0));
   });
 });

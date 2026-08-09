@@ -1,14 +1,19 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodTypeAny } from 'zod';
 import {
+  DistributionResponseSchema,
   ErrorsResponseSchema,
+  IndicatorBandsSchema,
   IngestMetadataSchema,
   ProblemDetailsSchema,
   RunListResponseSchema,
   RunProcessingSchema,
   RunResponseSchema,
+  ScatterResponseSchema,
   SeriesResponseSchema,
+  StatRowSchema,
   StatsResponseSchema,
+  UsersResponseSchema,
 } from '@perfportal/contracts';
 
 /**
@@ -36,8 +41,13 @@ const SOURCE: Record<string, ZodTypeAny> = {
   RunProcessing: RunProcessingSchema,
   RunListResponse: RunListResponseSchema,
   StatsResponse: StatsResponseSchema,
+  StatRow: StatRowSchema,
   SeriesResponse: SeriesResponseSchema,
   ErrorsResponse: ErrorsResponseSchema,
+  DistributionResponse: DistributionResponseSchema,
+  UsersResponse: UsersResponseSchema,
+  ScatterResponse: ScatterResponseSchema,
+  IndicatorBands: IndicatorBandsSchema,
 };
 
 /**

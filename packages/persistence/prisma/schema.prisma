@@ -64,6 +64,13 @@ model Run {
   verdict        String?
   tool           String
   toolVersion    String?   @map("tool_version")
+  /// The tool's own simulation identity and run description, from the run
+  /// header. Null until the worker parses, and forever for a failed run.
+  simulation  String?
+  description String?
+  /// The load test's own span in ms. Unrelated to ingest timing; Gatling's
+  /// report header renders this to whole seconds.
+  durationMs  Int?     @map("duration_ms")
   bundleKey      String    @map("bundle_key")
   bundleSha256   String    @map("bundle_sha256")
   bundleBytes    BigInt    @map("bundle_bytes")
@@ -135,6 +142,9 @@ model RunStat {
   percentiles  Json
   sketch       Bytes
   sketchKind   String  @map("sketch_kind")
+  histogramOk   Bytes?  @map("histogram_ok")
+  histogramKo   Bytes?  @map("histogram_ko")
+  histogramKind String? @map("histogram_kind")
 
   @@unique([runId, scope, name, family])
   @@index([runId])
@@ -158,6 +168,8 @@ model RunSeriesBucket {
   maxMs         Float    @map("max_ms")
   meanMs        Float    @map("mean_ms")
   percentiles   Json
+  percentilesOk Json? @map("percentiles_ok")
+  percentilesKo Json? @map("percentiles_ko")
 
   @@id([runStartedOn, runId, scope, name, startOffsetMs])
   @@map("run_series_bucket")
@@ -168,9 +180,12 @@ model RunError {
   runId     String @map("run_id") @db.Uuid
   orgId     String @map("org_id") @db.Uuid
   projectId String @map("project_id") @db.Uuid
+  scope     String
+  name      String
   message   String
   count     Int
 
+  @@unique([runId, scope, name, message])
   @@index([runId])
   @@map("run_error")
 }
@@ -193,17 +208,19 @@ model SlaRule {
   @@map("sla_rule")
 }
 
-model RunIndicator {
-  id        String @id @default(uuid()) @db.Uuid
-  runId     String @unique @map("run_id") @db.Uuid
-  orgId     String @map("org_id") @db.Uuid
-  projectId String @map("project_id") @db.Uuid
-  under     Int
-  between   Int    @map("between_")
-  over      Int
-  failed    Int
+model RunUserBucket {
+  runStartedOn  DateTime @map("run_started_on") @db.Date
+  runId         String   @map("run_id") @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  projectId     String   @map("project_id") @db.Uuid
+  scenario      String
+  startOffsetMs Int      @map("start_offset_ms")
+  started       Int
+  ended         Int
+  maxConcurrent Int      @map("max_concurrent")
 
-  @@map("run_indicator")
+  @@id([runStartedOn, runId, scenario, startOffsetMs])
+  @@map("run_user_bucket")
 }
 
 model RunAssertion {

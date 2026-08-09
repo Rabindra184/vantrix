@@ -7,6 +7,15 @@ export interface Bucket {
   okCount: number;
   koCount: number;
   sketch: Sketch;
+  /**
+   * Status-filtered sketches. Gatling's percentiles-over-time chart is OK-only
+   * (its title is literally "Response Time Percentiles over Time (OK)") and its
+   * response-time-vs-throughput scatter is two independent series, each from its
+   * own status-filtered digest. `sketch` above spans BOTH and is retained for
+   * the combined view; it is not a substitute for these.
+   */
+  sketchOk: Sketch;
+  sketchKo: Sketch;
 }
 
 /**
@@ -30,15 +39,30 @@ export class BucketSeries {
     const idx = Math.floor((tsMs - this.#startMs) / this.#widthMs);
     let b = this.#buckets.get(idx);
     if (!b) {
-      b = { startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0, okCount: 0, koCount: 0, sketch: new Sketch() };
+      b = {
+        startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0,
+        okCount: 0, koCount: 0,
+        sketch: new Sketch(), sketchOk: new Sketch(), sketchKo: new Sketch(),
+      };
       this.#buckets.set(idx, b);
     }
     if (edge === 'start') {
       b.startedCount++;
+      // Sketches are fed on the START edge, not the end, to match Gatling.
+      // Gatling's RequestPercentilesBuffers.updateRequestPercentilesBuffers
+      // (gatling-charts, buffers/RequestPercentilesBuffers.scala) files every
+      // percentile/scatter observation under `startBucket` — the bucket
+      // derived from the request's START time. A request starting at 10.9s
+      // and finishing at 11.2s therefore belongs to Gatling's bucket 10, not
+      // 11. Feeding the sketch on 'end' instead shifts every
+      // percentiles-over-time and scatter point that straddles a bucket
+      // boundary. The caller (engine.ts) always passes the same value/ok on
+      // both edges, so this only changes WHICH bucket the sketch lands in.
+      b.sketch.accept(value);
+      if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
     } else {
       b.endedCount++;
       if (ok) b.okCount++; else b.koCount++;
-      b.sketch.accept(value);
     }
     if (this.#buckets.size > this.#maxBuckets) this.#coalesce();
   }
@@ -58,6 +82,8 @@ export class BucketSeries {
           target.okCount += b.okCount;
           target.koCount += b.koCount;
           target.sketch.merge(b.sketch);      // exact — this is why coalescing is lossless
+          target.sketchOk.merge(b.sketchOk);
+          target.sketchKo.merge(b.sketchKo);
         }
       }
       this.#buckets = next;
@@ -68,4 +94,24 @@ export class BucketSeries {
   buckets(): Bucket[] {
     return [...this.#buckets.values()].sort((a, b) => a.startOffsetMs - b.startOffsetMs);
   }
+}
+
+/**
+ * The bucket width of a persisted series.
+ *
+ * run_series_bucket stores start_offset_ms but not the width, and the width is
+ * not always 1000: BucketSeries halves resolution in place once a run exceeds
+ * its bucket cap. The scatter's x-axis is a RATE, so dividing by the wrong
+ * width silently scales every point.
+ *
+ * The smallest positive gap, not the first gap: a bucket with no observations
+ * is absent from the table, so consecutive offsets can be two widths apart.
+ */
+export function inferBucketWidthMs(offsets: number[]): number {
+  let width = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < offsets.length; i++) {
+    const gap = (offsets[i] as number) - (offsets[i - 1] as number);
+    if (gap > 0 && gap < width) width = gap;
+  }
+  return Number.isFinite(width) ? width : 1000;
 }
