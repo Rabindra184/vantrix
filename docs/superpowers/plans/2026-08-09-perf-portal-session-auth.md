@@ -165,7 +165,9 @@ Add every new table (`user`, `session`, `account`, `verification`, `org_member` 
 ```bash
 pnpm typecheck && pnpm lint && pnpm test:integration
 ```
-Expected: all green, counts unchanged from the 176 unit / 311 integration baseline.
+Expected: all green, counts unchanged from the 176 unit / 310 integration baseline.
+(310, not 311: the Task 1 implementer A/B-tested the untouched pre-task tree with
+`git stash push -u` and got 310/310 there too. The 311 figure was stale.)
 
 ```bash
 git add -A && git commit -m "feat(auth): Better Auth instance, schema and migration
