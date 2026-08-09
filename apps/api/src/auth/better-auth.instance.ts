@@ -1,8 +1,9 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { PrismaClient } from '@prisma/client';
+import { createPrisma } from '@perfportal/persistence';
+import { loadConfig } from '../config.js';
 
-const prisma = new PrismaClient();
+const prisma = createPrisma(loadConfig().databaseUrl);
 
 /**
  * basePath is '/auth', NOT Better Auth's default '/api/auth'. With the default
