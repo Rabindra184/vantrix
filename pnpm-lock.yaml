@@ -178,6 +178,9 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@perfportal/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@perfportal/core':
         specifier: workspace:*
         version: link:../core

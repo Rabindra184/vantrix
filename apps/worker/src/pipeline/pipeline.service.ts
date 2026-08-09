@@ -87,7 +87,8 @@ export class PipelineService {
 
     const project = await new ProjectRepository(this.prisma).byId(run.projectId);
     const maxTotalBytes =
-      project?.settings.maxDecompressedBundleBytes ?? this.config.maxDecompressedBundleBytes;
+      (project?.settings.maxDecompressedBundleBytes as number | undefined) ??
+      this.config.maxDecompressedBundleBytes;
     const source = await openTarGzBundle(archive, { maxTotalBytes });
     const { plugin, toolVersion } = await selectPlugin(source.index);
 

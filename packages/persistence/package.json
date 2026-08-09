@@ -16,6 +16,7 @@
     "bootstrap": "node dist/scripts/bootstrap.js"
   },
   "dependencies": {
+    "@perfportal/contracts": "workspace:*",
     "@perfportal/core": "workspace:*",
     "@perfportal/statistics": "workspace:*",
     "@prisma/client": "^6.19.3",
