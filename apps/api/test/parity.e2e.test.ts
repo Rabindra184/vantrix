@@ -1,13 +1,20 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Queue } from 'bullmq';
 import request from 'supertest';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { hashToken, mintToken, type RequestEvent } from '@perfportal/core';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
+// Relative cross-package import, matching the pattern already used by
+// ./support/pipeline.ts for worker/src: reads plugin-gatling's TypeScript
+// source directly rather than adding a package.json dependency for a single
+// test-only decode of the reference bundle's binary log.
+import { parseSimulationLog } from '../../../packages/plugin-gatling/src/records.js';
 
 const REPORT_DIR = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report', import.meta.url),
@@ -141,5 +148,441 @@ describe('end-to-end parity with the Gatling reference report', () => {
 
     expect(b.body.id).toBe(a.body.id);
     expect(await ctx.prisma.run.count()).toBe(1);
+  });
+});
+
+/**
+ * Appendix A row cases (PT-*): one named case per row of the reference
+ * report, so a regression names the row it broke instead of surfacing as an
+ * anonymous assertion. The bundle is posted and the pipeline run exactly
+ * once, in beforeAll, and every row below asserts against that one run - a
+ * second bootstrap or repost here would double an already slow suite.
+ */
+describe('Appendix A — Gatling report parity rows (PT-*)', () => {
+  let ctx: TestContext;
+  let runId: string;
+  let simulationLogEvents: RequestEvent[];
+
+  beforeAll(async () => {
+    const q = new Queue('ingest', { connection: { url: process.env.REDIS_URL ?? 'redis://localhost:6380' } });
+    await q.obliterate({ force: true });
+    await q.close();
+
+    ctx = await createTestApp();
+
+    const accepted = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, idempotencyKey: 'parity-appendix-a' }))
+      .attach('bundle', bundle, 'bundle.tgz');
+    expect(accepted.status).toBe(202);
+    runId = accepted.body.id;
+
+    await runPipelineFor(ctx, runId);
+
+    // Decoded straight from the fixture's binary log, independent of the
+    // ingest pipeline under test, so it is a genuine ground truth rather
+    // than a second read of the same derived numbers.
+    const log = readFileSync(join(REPORT_DIR, 'simulation.log'));
+    simulationLogEvents = [...parseSimulationLog(log)].filter(
+      (e): e is RequestEvent => e.type === 'request',
+    );
+  });
+
+  afterAll(async () => {
+    await ctx?.close();
+  });
+
+  const get = (path: string) =>
+    request(ctx.app.getHttpServer()).get(path).set('Authorization', `Bearer ${ctx.readToken}`);
+
+  const setProjectIndicators = async (indicators: { lowerMs: number; higherMs: number }) => {
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify(indicators), ctx.projectId],
+    );
+  };
+  const setProjectPercentiles = async (percentiles: number[]) => {
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{percentiles}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify(percentiles), ctx.projectId],
+    );
+  };
+
+  /**
+   * A couple of rows (PT-RQ-09's coalescing check, PT-K-03) need settings
+   * baked into engineOptions BEFORE ingest, which means a fresh post - but
+   * NOT a fresh app: createTestApp() TRUNCATEs every one of these tables
+   * (see ./support/app.ts's TABLES list) with no org/project scoping, so
+   * calling it again inside an `it` in THIS describe would silently wipe the
+   * shared Appendix-A run out from under every later case (discovered the
+   * hard way: doing so broke nine unrelated, later-running cases at once).
+   * A sibling project in the SAME org, on the SAME already-running app, gets
+   * the same "settings active at ingest" behavior via a plain Prisma insert -
+   * no truncate, no second bootstrap.
+   */
+  const createSiblingProject = async (settings: Record<string, unknown>) => {
+    const project = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: `parity-sibling-${randomUUID().slice(0, 8)}`, name: 'Parity Sibling', settings },
+    });
+    const ing = mintToken();
+    await ctx.prisma.apiToken.create({
+      data: {
+        orgId: ctx.orgId, projectId: project.id, name: 'ci',
+        prefix: ing.prefix, tokenHash: await hashToken(ing.token.split('_')[2] ?? ''),
+        scopes: ['ingest', 'read'],
+      },
+    });
+    const rd = mintToken();
+    await ctx.prisma.apiToken.create({
+      data: {
+        orgId: ctx.orgId, projectId: project.id, name: 'reader',
+        prefix: rd.prefix, tokenHash: await hashToken(rd.token.split('_')[2] ?? ''),
+        scopes: ['read'],
+      },
+    });
+    return { projectId: project.id, ingestToken: ing.token, readToken: rd.token };
+  };
+
+  /** Posts the shared reference bundle to a sibling project and runs it to completion. */
+  const ingestIntoSibling = async (sibling: { ingestToken: string }, idempotencyKey: string): Promise<string> => {
+    const posted = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${sibling.ingestToken}`)
+      .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, idempotencyKey }))
+      .attach('bundle', bundle, 'bundle.tgz');
+    expect(posted.status).toBe(202);
+    await runPipelineFor(ctx, posted.body.id);
+    return posted.body.id;
+  };
+
+  // Ground truth for percentiles is the sorted decoded event set, NEVER the
+  // figure Gatling prints. Gatling reports p99 = 2369 for this fixture and 2369
+  // does not occur anywhere in the data - the sorted tail jumps 2287 -> 2501.
+  // Matching Gatling would mean reproducing its estimator's error (AC-PARITY-2).
+  const truePercentile = (sorted: number[], p: number): number => {
+    const rank = Math.ceil((p / 100) * sorted.length) - 1;
+    return sorted[Math.min(Math.max(rank, 0), sorted.length - 1)] as number;
+  };
+  const withinOnePercent = (actual: number, truth: number): boolean =>
+    truth === 0 ? actual === 0 : Math.abs(actual - truth) / truth <= 0.01; // <=, never <
+
+  /** Sorted OK response times (endMs - startMs) for one named request, decoded
+   *  straight from the fixture - the same "response_time" definition the
+   *  engine uses (packages/statistics/src/engine.ts: `e.endMs - e.startMs`). */
+  const groundTruthOkDurations = (name: string): number[] =>
+    simulationLogEvents
+      .filter((e) => e.name === name && e.ok)
+      .map((e) => e.endMs - e.startMs)
+      .sort((a, b) => a - b);
+
+  describe('Appendix A.1 — global report page', () => {
+    it('PT-G-01/02 header carries the simulation name and description', async () => {
+      const r = await get(`/v1/runs/${runId}`);
+      // The canonical value is the FULLY-QUALIFIED class name the binary log
+      // header records. Gatling's HTML renders only the last segment, so parity
+      // is that the displayed name is derivable - not that we store the short
+      // form and throw the package away.
+      expect(r.body.simulation).toBe('example.ParitySimulation');
+      expect(r.body.simulation.split('.').pop()).toBe('ParitySimulation');
+      // The fixture's header carries an empty description, which the reader
+      // normalizes to undefined (packages/plugin-gatling/src/records.ts) and
+      // storage records as null. Asserted by VALUE, not merely by type: a
+      // regression that silently starts persisting '' instead of null must
+      // fail here.
+      expect(r.body.description).toBeNull();
+    });
+
+    it('PT-G-04 header duration matches the report’s whole-second rendering', async () => {
+      const r = await get(`/v1/runs/${runId}`);
+      // Ground truth from the fixture header: runStartEpochMs 1786080602171,
+      // last event at 1786080665332 -> 63161ms -> floor 63s ("1m 3s"). The
+      // brief's snippet said 62; verified against the real fixture and
+      // corrected here.
+      expect(Math.floor(r.body.durationMs / 1000)).toBe(63); // report shows "1m 3s"
+    });
+
+    it('PT-G-06..09 indicator bands are 848 / 0 / 23 / 24', async () => {
+      const r = await get(`/v1/runs/${runId}/stats`);
+      expect(r.body.indicators).toEqual({ under: 848, between: 0, over: 23, failed: 24 });
+    });
+
+    it('PT-G-06..09 "under" is boundary-EXCLUSIVE (< lowerMs, not <=)', async () => {
+      // The default bounds (800/1200ms) don't land on any observed value in
+      // this fixture (nearest are ...ms away), so a "under" count computed
+      // with <= instead of < is indistinguishable from the correct one at the
+      // default bounds - verified by actually mutating countBelow's `<` to
+      // `<=` (packages/statistics/src/histogram.ts) and re-running: the case
+      // above stayed GREEN. This one sets lowerMs to a duration that DOES
+      // occur, so the two operators provably disagree, and pins the correct
+      // (exclusive) count from the decoded ground truth.
+      const okDurations = simulationLogEvents.filter((e) => e.ok).map((e) => e.endMs - e.startMs);
+      const boundary = okDurations[0] as number; // guaranteed to occur - it's drawn from the data itself
+      const countStrictlyBelow = okDurations.filter((d) => d < boundary).length;
+      const countAtOrBelow = okDurations.filter((d) => d <= boundary).length;
+      expect(countAtOrBelow).toBeGreaterThan(countStrictlyBelow); // sanity: the boundary must actually recur
+
+      await setProjectIndicators({ lowerMs: boundary, higherMs: boundary + 1000 });
+      const r = await get(`/v1/runs/${runId}/stats`);
+      expect(r.body.indicators.under).toBe(countStrictlyBelow);
+      await setProjectIndicators({ lowerMs: 800, higherMs: 1200 }); // restore
+    });
+
+    it('PT-G-20/21 distribution has 100 midpoint bins from 28 to 2491', async () => {
+      const r = await get(`/v1/runs/${runId}/distribution?scope=run&name=&family=response_time`);
+      expect(r.body.labels).toHaveLength(100);
+      expect(r.body.labels[0]).toBe(28);
+      expect(r.body.labels[99]).toBe(2491);
+      // Percent of the COMBINED count: the two series together sum to 100.
+      const total = [...r.body.okPercent, ...r.body.koPercent].reduce((a: number, b: number) => a + b, 0);
+      expect(total).toBeCloseTo(100, 6);
+      expect(r.body.okCount.reduce((a: number, b: number) => a + b, 0)).toBe(871);
+      expect(r.body.koCount.reduce((a: number, b: number) => a + b, 0)).toBe(24);
+    });
+
+    it('PT-G-18/19 active users total equals the per-scenario sum', async () => {
+      const r = await get(`/v1/runs/${runId}/users`);
+      expect(r.body.scenarios.map((s: { scenario: string }) => s.scenario)).toEqual(['Browse', 'Checkout']);
+      for (const t of r.body.total) {
+        const sum = r.body.scenarios
+          .map((s: { buckets: { startOffsetMs: number; maxConcurrent: number }[] }) =>
+            s.buckets.find((b) => b.startOffsetMs === t.startOffsetMs)?.maxConcurrent ?? 0)
+          .reduce((a: number, b: number) => a + b, 0);
+        expect(t.maxConcurrent).toBe(sum);
+      }
+    });
+
+    it('PT-G-26 user start rate is present and non-zero', async () => {
+      const r = await get(`/v1/runs/${runId}/users`);
+      expect(r.body.total.reduce((n: number, b: { started: number }) => n + b.started, 0)).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Appendix A.2 — request detail page', () => {
+    it('PT-RQ-02 per-request indicator bands reconcile with the row counts', async () => {
+      const r = await get(`/v1/runs/${runId}/stats?scope=request`);
+      // A vacuous pass over zero rows would prove nothing: fail loudly if the
+      // request scope ever comes back empty instead of silently no-op-ing.
+      expect(r.body.stats.length).toBeGreaterThan(0);
+      for (const row of r.body.stats) {
+        expect(row.indicators.under + row.indicators.between + row.indicators.over).toBe(row.okCount);
+        expect(row.indicators.failed).toBe(row.koCount);
+      }
+    });
+
+    it('PT-RQ-05 request-scope p95 matches ground truth from the decoded event set', async () => {
+      const stats = await get(`/v1/runs/${runId}/stats?scope=request`);
+      const row = stats.body.stats.find((s: { name: string }) => s.name === 'Add To Cart');
+      const truth = truePercentile(groundTruthOkDurations('Add To Cart'), 95);
+      expect(withinOnePercent(row.percentiles.p95, truth)).toBe(true);
+    });
+
+    it('PT-RQ-09 scatter is one point per OK bucket, x a rate and y the truncated p95', async () => {
+      // "Add To Cart" (stats.stats[0] under scope=request, sorted alphabetically)
+      // has KO events, and parity.controller.ts's scatter handler deliberately
+      // emits TWO points for a bucket that has both an OK and a KO digest - one
+      // per status-filtered series (see its "Gate is presence of the
+      // status-filtered digest" comment). A KO-free request keeps the
+      // point-per-bucket count 1:1, which is what this case is actually named
+      // for; "Add To Cart" is covered separately by PT-RQ-09b below.
+      const name = 'Product Detail';
+      const [series, scatter] = await Promise.all([
+        get(`/v1/runs/${runId}/series?scope=request&name=${encodeURIComponent(name)}`),
+        get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent(name)}`),
+      ]);
+      const okBuckets = series.body.buckets.filter(
+        (b: { percentilesOk: Record<string, number> }) => b.percentilesOk.p95 !== undefined,
+      );
+      expect(okBuckets.length).toBeGreaterThan(0);
+      expect(scatter.body.ok.length).toBe(okBuckets.length);
+      expect(scatter.body.ko.length).toBe(0); // no KO events for this request at all
+
+      // y matches Math.trunc of the bucket's own OK p95 exactly - not merely
+      // "is an integer". This shared run's per-request, per-second buckets
+      // CANNOT exercise the trunc/round DISAGREEING case on their own:
+      // response times are integer ms, and Sketch#quantile
+      // (packages/statistics/src/sketch.ts) short-circuits to the exact max
+      // whenever ceil(0.95*n) === n, i.e. whenever a bucket has fewer than 20
+      // samples - true of every per-request, per-second bucket in this
+      // ~1-3 req/s fixture. Mutating Math.trunc to Math.round and re-running
+      // leaves this loop (and the pre-existing sibling check in
+      // parity-endpoints.integration.test.ts) GREEN - proven by actually
+      // doing it. The block below is what actually catches that mutation.
+      for (const b of okBuckets as { percentilesOk: Record<string, number> }[]) {
+        expect(scatter.body.ok.some(([, y]: [number, number]) => y === Math.trunc(b.percentilesOk.p95))).toBe(true);
+      }
+
+      // The real distinguishing case: force heavy bucket coalescing (a real,
+      // user-configurable knob - packages/statistics/src/buckets.ts's
+      // BucketSeries halves resolution once bucket count exceeds
+      // maxBucketsEndpoint) on a FRESH ingest of the SAME reference bundle, so
+      // each request's ~63 one-second buckets collapse into one bucket with
+      // ~70-160 samples. At that sample count Sketch#quantile leaves its
+      // exact-boundary short-circuit and returns a genuinely interpolated,
+      // frequently fractional value - which is what actually distinguishes
+      // Math.trunc from Math.round. Needs its own ingest (like PT-K-03):
+      // maxBucketsEndpoint is captured into engineOptions at POST /v1/runs
+      // time (apps/api/src/ingest/ingest.service.ts's ENGINE_KEYS), not
+      // read live - via a sibling project, not a second app (see
+      // createSiblingProject's comment for why).
+      // Both the request-scope series (own p95) AND the run-scope series
+      // (the scatter's x-axis rate, keyed by matching startOffsetMs - see
+      // parity.controller.ts's scatter()) must coalesce to the same single
+      // bucket boundary, or the x lookup misses and every point is dropped.
+      const sibling = await createSiblingProject({ maxBucketsEndpoint: 1, maxBucketsRun: 1 });
+      const coalescedRunId = await ingestIntoSibling(sibling, 'parity-rq09-coalesced');
+
+      const cSeries = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${coalescedRunId}/series?scope=request&name=${encodeURIComponent(name)}`)
+        .set('Authorization', `Bearer ${sibling.readToken}`);
+      const cScatter = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${coalescedRunId}/scatter?name=${encodeURIComponent(name)}`)
+        .set('Authorization', `Bearer ${sibling.readToken}`);
+
+      const bigBucket = cSeries.body.buckets.find(
+        (b: { percentilesOk: Record<string, number> }) => b.percentilesOk.p95 !== undefined,
+      );
+      expect(bigBucket).toBeDefined();
+      const rawP95 = bigBucket.percentilesOk.p95;
+      // If this fires, the fixture/coalescing no longer produces a
+      // fractional value here and this case needs a different bucket - not
+      // a reason to weaken the assertion below.
+      expect(Math.trunc(rawP95)).not.toBe(Math.round(rawP95));
+      expect(cScatter.body.ok).toContainEqual([expect.any(Number), Math.trunc(rawP95)]);
+      expect(cScatter.body.ok).not.toContainEqual([expect.any(Number), Math.round(rawP95)]);
+    });
+
+    it('PT-RQ-09b scatter point counts pin the accepted ±1 OK-series delta', async () => {
+      // Against the reference report, Gatling renders 47 OK / 15 KO points for
+      // "Add To Cart" and 54 OK / 9 KO for "Place Order"; we produce 48/15 and
+      // 53/9. KO is exact in both. The OK difference is a known, accepted
+      // rounding artifact: Gatling assigns an observation to the NEAREST
+      // bucket (StatsHelper.timeToBucketNumber uses .round), while we floor.
+      // Floor was kept deliberately - nearest-rounding would break
+      // AC-STAT-2's lossless-coalescing invariant - so this pins the actual
+      // number rather than loosely asserting "close to Gatling's count".
+      // A future change to this figure should be visible here, not silent.
+      const [cart, order] = await Promise.all([
+        get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent('Add To Cart')}`),
+        get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent('Place Order')}`),
+      ]);
+      expect(cart.body.ok).toHaveLength(48);
+      expect(cart.body.ko).toHaveLength(15);
+      expect(order.body.ok).toHaveLength(53);
+      expect(order.body.ko).toHaveLength(9);
+    });
+
+    it('PT-RQ-11 a request page shows only its own errors', async () => {
+      const all = await get(`/v1/runs/${runId}/errors`);
+      const stats = await get(`/v1/runs/${runId}/stats?scope=request`);
+      const failing = stats.body.stats.find((s: { koCount: number }) => s.koCount > 0);
+      const own = await get(`/v1/runs/${runId}/errors?scope=request&name=${encodeURIComponent(failing.name)}`);
+      expect(own.body.errors.length).toBeGreaterThan(0);
+      expect(own.body.errors.reduce((n: number, e: { count: number }) => n + e.count, 0))
+        .toBeLessThan(all.body.errors.reduce((n: number, e: { count: number }) => n + e.count, 0));
+    });
+  });
+
+  describe('Appendix A.3 — group detail page', () => {
+    it('PT-GR-01/02 cumulated response time and duration stay distinct', async () => {
+      const r = await get(`/v1/runs/${runId}/stats?scope=group`);
+      const families = new Set(r.body.stats.map((s: { family: string }) => s.family));
+      expect(families.has('group_cumulated')).toBe(true);
+      expect(families.has('group_duration')).toBe(true);
+      const nested = r.body.stats.filter((s: { name: string }) => s.name === 'Catalog/Recommendations');
+      expect(nested).toHaveLength(2);
+      // Collapsing these two into one metric is the most common group-parity error.
+      expect(nested[0].meanMs).not.toBe(nested[1].meanMs);
+    });
+
+    it('PT-GR-03/05 both group families have their own distribution', async () => {
+      for (const family of ['group_cumulated', 'group_duration']) {
+        const r = await get(
+          `/v1/runs/${runId}/distribution?scope=group&name=${encodeURIComponent('Catalog/Recommendations')}&family=${family}`,
+        );
+        expect(r.body.labels.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('PT-GR-09 group indicator bands are present', async () => {
+      const r = await get(`/v1/runs/${runId}/stats?scope=group`);
+      // As with PT-RQ-02: a non-empty row set is the whole point, not an
+      // incidental property. An empty group scope must fail loudly here.
+      expect(r.body.stats.length).toBeGreaterThan(0);
+      for (const row of r.body.stats) {
+        expect(row.indicators.under + row.indicators.between + row.indicators.over).toBe(row.okCount);
+      }
+    });
+  });
+
+  describe('Appendix A.5/A.6 — columns and configurability', () => {
+    it('PT-G-12 every §A.5 column is present at every scope', async () => {
+      const r = await get(`/v1/runs/${runId}/stats`);
+      for (const row of r.body.stats) {
+        for (const k of ['count', 'okCount', 'koCount', 'errorRate', 'throughputRps',
+                         'minMs', 'maxMs', 'meanMs', 'stddevMs']) {
+          expect(typeof row[k]).toBe('number');
+        }
+        for (const p of ['p50', 'p75', 'p95', 'p99']) {
+          expect(typeof row.percentiles[p]).toBe('number');
+        }
+      }
+    });
+
+    it('PT-K-01/02 non-default bounds restate history without a re-ingest (AC-PARITY-4)', async () => {
+      const before = await get(`/v1/runs/${runId}/stats`);
+      await setProjectIndicators({ lowerMs: 100, higherMs: 300 });
+      const after = await get(`/v1/runs/${runId}/stats`);
+      expect(after.body.bounds).toEqual({ lowerMs: 100, higherMs: 300 });
+      expect(after.body.indicators.under).not.toBe(before.body.indicators.under);
+      expect(after.body.indicators.under + after.body.indicators.between + after.body.indicators.over)
+        .toBe(before.body.indicators.under + before.body.indicators.between + before.body.indicators.over);
+      await setProjectIndicators({ lowerMs: 800, higherMs: 1200 });
+    });
+
+    it('PT-K-03 stats-table percentile columns follow the project setting active at ingest', async () => {
+      // CONCERN, not just documentation: packages/contracts/src/settings.ts's
+      // own docstring on ProjectSettingsSchema claims percentiles are "read at
+      // REQUEST time, not frozen at ingest" - the same guarantee as
+      // indicators, "with an exact histogram and a stored sketch, both are
+      // display thresholds applied to complete data, and recomputing them per
+      // request yields exactly what a re-ingest would." That is NOT what
+      // MetricsController.stats() does: it returns run_stat.percentiles as
+      // stored at ingest and never calls MetricReader.sketch() (which exists
+      // and DOES retain the full sketch for exactly this "later evaluation"
+      // case per its own doc comment) to recompute against live settings.
+      // Proven below against the already-shared Appendix-A run: changing the
+      // setting post-ingest moves nothing. This looks like an unfinished
+      // implementation of a documented guarantee, not a deliberate design
+      // choice - flagged in task-15-report.md as a concern; fixing
+      // MetricsController is out of Task 15's scope (test-only). This test
+      // asserts the ACTUAL, current behavior (percentiles fixed at ingest, via
+      // project settings applied to a fresh post), not the promised one.
+      const before = await get(`/v1/runs/${runId}/stats`);
+      await setProjectPercentiles([90, 99]);
+      const after = await get(`/v1/runs/${runId}/stats`);
+      expect(Object.keys(after.body.stats[0].percentiles).sort())
+        .toEqual(Object.keys(before.body.stats[0].percentiles).sort());
+      await setProjectPercentiles([50, 75, 95, 99]); // restore
+
+      const sibling = await createSiblingProject({ percentiles: [90, 99] });
+      const siblingRunId = await ingestIntoSibling(sibling, 'parity-k03');
+
+      const r = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${siblingRunId}/stats`)
+        .set('Authorization', `Bearer ${sibling.readToken}`);
+      expect(Object.keys(r.body.stats[0].percentiles).sort()).toEqual(['p90', 'p99']);
+
+      // p95 survives in the BUCKETS regardless, or the scatter breaks:
+      // BUCKET_PERCENTILES (packages/statistics/src/engine.ts) is a fixed
+      // band independent of the stats-table percentile setting. The
+      // percentiles-over-time chart is OK-only (Gatling titles it "Response
+      // Time Percentiles over Time (OK)"), so this reads percentilesOk, not
+      // the combined percentiles field.
+      const s = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${siblingRunId}/series?scope=run&name=`)
+        .set('Authorization', `Bearer ${sibling.readToken}`);
+      expect(s.body.buckets[0].percentilesOk.p95).toBeDefined();
+    });
   });
 });
