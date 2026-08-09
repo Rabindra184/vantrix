@@ -65,6 +65,40 @@ describe('RunRepository tenancy', () => {
   });
 });
 
+describe('RunRepository tenancy — optional projectId (session vs token scope)', () => {
+  async function seedTwoProjectsPlusOtherOrg() {
+    const { orgId, a: projectA, b: projectB } = await seed();
+    const repo = new RunRepository(prisma);
+    const runInA = (await repo.create(runInput(orgId, projectA))).id;
+    const runInB = (await repo.create(runInput(orgId, projectB))).id;
+    const otherOrg = await prisma.org.create({ data: { slug: 'other', name: 'Other Org' } });
+    return { orgId, projectA, projectB, runInA, runInB, otherOrgId: otherOrg.id };
+  }
+
+  it('scoped to a project, finds only that project\'s run', async () => {
+    const { orgId, projectA, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    expect(await repo.findById({ orgId, projectId: projectA }, runInA)).not.toBeNull();
+    expect(await repo.findById({ orgId, projectId: projectA }, runInB)).toBeNull();
+  });
+
+  // A session is org-scoped: it may read any run in its org.
+  it('scoped to an org only, finds runs in every project of that org', async () => {
+    const { orgId, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    expect(await repo.findById({ orgId }, runInA)).not.toBeNull();
+    expect(await repo.findById({ orgId }, runInB)).not.toBeNull();
+  });
+
+  // The assertion whose failure is a security bug.
+  it('never crosses an org boundary, with or without a project', async () => {
+    const { projectA, runInA, otherOrgId } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    expect(await repo.findById({ orgId: otherOrgId }, runInA)).toBeNull();
+    expect(await repo.findById({ orgId: otherOrgId, projectId: projectA }, runInA)).toBeNull();
+  });
+});
+
 describe('RunRepository idempotency', () => {
   it('returns the original run for a repeated key instead of creating a second', async () => {
     const { orgId, a } = await seed();
