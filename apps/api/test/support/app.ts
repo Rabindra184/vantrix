@@ -11,7 +11,9 @@ import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
+import { toNodeHandler } from 'better-auth/node';
 import pg from 'pg';
+import { auth } from '../../src/auth/better-auth.instance.js';
 import { AppModule } from '../../src/app.module.js';
 import { ProblemFilter } from '../../src/common/problem.filter.js';
 import { mountOpenApi } from '../../src/openapi.js';
@@ -39,6 +41,13 @@ export async function createTestApp(
 ): Promise<TestContext> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication();
+
+  // Mounted on the raw Express instance, outside /v1, and BEFORE app.init()
+  // registers Nest's body parser: Better Auth needs the raw, unparsed body
+  // for sign-up and sign-in. '/auth/*splat' is Express 5's named-wildcard
+  // syntax; '/auth/*' does not match.
+  app.getHttpAdapter().getInstance().all('/auth/*splat', toNodeHandler(auth));
+
   app.useGlobalFilters(new ProblemFilter());
   mountOpenApi(app);
   await app.init();
