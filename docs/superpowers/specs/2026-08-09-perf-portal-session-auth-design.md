@@ -107,6 +107,32 @@ ingest contract is what two prior sub-projects were built to guarantee.
 A session grants every scope within its org. RBAC is M6; inventing a finer model
 now would be a guess to unpick later.
 
+### 4.1 A session is org-scoped; a token is project-scoped
+
+Found by the §9 spike, which proved the mechanism works and then exposed this
+hole: `req.tenant` carries a `projectId` and every controller filters on it, but a
+Better Auth session identifies an org, not a project. Nothing defined which
+project a logged-in human meant, and the spike papered over it with `findFirst` —
+a guess wearing a function call.
+
+`TenantScope` becomes `{ orgId: string; projectId?: string }`:
+
+- **Bearer token** — carries `projectId` and stays restricted to exactly that
+  project, byte-for-byte as today.
+- **Session** — carries `orgId` only, and may read any run in that org. Each query
+  filters on `org_id`, and the run's own `project_id` is checked as within the
+  org rather than against a fixed value.
+
+This matches how humans actually work (you look across your team's projects) and
+needs no URL change, so the verdict contract that `POST /v1/runs` and
+`GET /v1/runs/{id}` pin — unchanged across two sub-projects — is untouched.
+
+**This is the highest-risk change in the sub-project.** It alters tenancy
+predicates on the read path, where a mistake is a security bug rather than a wrong
+number. Every endpoint whose predicate changes requires a test proving a session
+in org A cannot read org B's data, and the plan must enumerate those endpoints
+rather than leaving "all of them" as an instruction.
+
 Better Auth's own handler mounts at `/auth/*`, **outside** `/v1`, so the perimeter
 never guards its own login route. NestJS guards run only for already-matched
 routes, which is why the perimeter is middleware and not a guard — a guard cannot
