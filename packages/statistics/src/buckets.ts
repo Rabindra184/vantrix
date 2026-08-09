@@ -36,15 +36,7 @@ export class BucketSeries {
   get widthMs(): number { return this.#widthMs; }
 
   add(tsMs: number, value: number, ok: boolean, edge: 'start' | 'end'): void {
-    // Gatling buckets by NEAREST index, not floor. From gatling-charts'
-    // StatsHelper.timeToBucketNumber (gatling-charts/src/main/scala/io/gatling/
-    // charts/stats/StatsHelper.scala, tag v3.15.1):
-    //   time => math.min(((time - start) / step).round.toInt, maxPlots - 1)
-    // Scala's Double.round is floor(x + 0.5), not floor(x) — do not "simplify"
-    // this back to Math.floor, that reintroduces the parity defect this fixes.
-    // (The maxPlots-1 clamp is intentionally not ported: this class coalesces
-    // by doubling widthMs instead of clamping into a final bucket.)
-    const idx = Math.floor((tsMs - this.#startMs) / this.#widthMs + 0.5);
+    const idx = Math.floor((tsMs - this.#startMs) / this.#widthMs);
     let b = this.#buckets.get(idx);
     if (!b) {
       b = {
