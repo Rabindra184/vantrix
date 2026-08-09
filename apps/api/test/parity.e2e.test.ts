@@ -540,29 +540,24 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       await setProjectIndicators({ lowerMs: 800, higherMs: 1200 });
     });
 
-    it('PT-K-03 stats-table percentile columns follow the project setting active at ingest', async () => {
-      // CONCERN, not just documentation: packages/contracts/src/settings.ts's
-      // own docstring on ProjectSettingsSchema claims percentiles are "read at
-      // REQUEST time, not frozen at ingest" - the same guarantee as
-      // indicators, "with an exact histogram and a stored sketch, both are
-      // display thresholds applied to complete data, and recomputing them per
-      // request yields exactly what a re-ingest would." That is NOT what
-      // MetricsController.stats() does: it returns run_stat.percentiles as
-      // stored at ingest and never calls MetricReader.sketch() (which exists
-      // and DOES retain the full sketch for exactly this "later evaluation"
-      // case per its own doc comment) to recompute against live settings.
-      // Proven below against the already-shared Appendix-A run: changing the
-      // setting post-ingest moves nothing. This looks like an unfinished
-      // implementation of a documented guarantee, not a deliberate design
-      // choice - flagged in task-15-report.md as a concern; fixing
-      // MetricsController is out of Task 15's scope (test-only). This test
-      // asserts the ACTUAL, current behavior (percentiles fixed at ingest, via
-      // project settings applied to a fresh post), not the promised one.
+    it('PT-K-03 stats-table percentile columns follow the project setting active at REQUEST time (AC-PARITY-4)', async () => {
+      // packages/contracts/src/settings.ts's docstring on ProjectSettingsSchema
+      // promises percentiles are "read at REQUEST time, not frozen at ingest" -
+      // the same guarantee PT-K-01/02 exercises for indicators, because "with
+      // an exact histogram and a stored sketch, both are display thresholds
+      // applied to complete data, and recomputing them per request yields
+      // exactly what a re-ingest would." Task 21 fixed MetricsController.stats()
+      // to honor that: it now recomputes percentile columns from the sketch
+      // persisted in run_stat.sketch at the project's currently configured
+      // percentile set, rather than returning the frozen run_stat.percentiles
+      // JSON captured at ingest. Proven below against the already-shared
+      // Appendix-A run: changing the setting post-ingest DOES move the
+      // returned percentile keys, with no re-ingest.
       const before = await get(`/v1/runs/${runId}/stats`);
+      expect(Object.keys(before.body.stats[0].percentiles).sort()).toEqual(['p50', 'p75', 'p95', 'p99']);
       await setProjectPercentiles([90, 99]);
       const after = await get(`/v1/runs/${runId}/stats`);
-      expect(Object.keys(after.body.stats[0].percentiles).sort())
-        .toEqual(Object.keys(before.body.stats[0].percentiles).sort());
+      expect(Object.keys(after.body.stats[0].percentiles).sort()).toEqual(['p90', 'p99']);
       await setProjectPercentiles([50, 75, 95, 99]); // restore
 
       const sibling = await createSiblingProject({ percentiles: [90, 99] });

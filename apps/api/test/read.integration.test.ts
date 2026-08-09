@@ -149,6 +149,37 @@ describe('GET /v1/runs/:id/stats', () => {
     );
   });
 
+  // The claim of AC-PARITY-4 / K-03 for percentiles specifically: the sketch
+  // is persisted precisely so the percentile columns can be recomputed at any
+  // configured set with no re-ingest, exactly like indicators above.
+  it('recomputes percentile columns when the project changes its percentile set, with no re-ingest', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const pick = (b: { stats: { scope: string; family: string; percentiles: Record<string, number> }[] }) =>
+      b.stats.find((s) => s.scope === 'run' && s.family === 'response_time')!.percentiles;
+
+    const before = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${id}/stats`).set(auth()).expect(200);
+    expect(Object.keys(pick(before.body)).sort()).toEqual(['p50', 'p75', 'p95', 'p99']);
+
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify([90, 99.9]), ctx.projectId],
+    );
+    const after = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${id}/stats`).set(auth()).expect(200);
+    const afterPercentiles = pick(after.body);
+    expect(Object.keys(afterPercentiles).sort()).toEqual(['p90', 'p99.9']);
+    expect(afterPercentiles['p99.9']).toBeGreaterThanOrEqual(afterPercentiles['p90']);
+
+    // Restore: settings are shared state for the rest of this file.
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify([50, 75, 95, 99]), ctx.projectId],
+    );
+  });
+
   it('returns an actionable 400, not a 500, when the project has inverted indicator bounds', async () => {
     // No settings-write endpoint validates this yet (Task 12 is the first
     // real reader of the column), so an inverted project misconfiguration is

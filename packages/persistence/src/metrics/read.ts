@@ -19,6 +19,13 @@ export interface StoredStat {
   /** Null for runs ingested before the parity migration; the API reports those as non-configurable. */
   histogramOk: Histogram | null;
   histogramKo: Histogram | null;
+  /**
+   * The persisted summary sketch, for recomputing `percentiles` at the
+   * project's currently configured set (spec §9.1, K-03). Null for rows
+   * written before the sketch was persisted, in which case callers fall
+   * back to the frozen `percentiles` column.
+   */
+  sketch: Sketch | null;
 }
 
 export interface StoredUserBucket {
@@ -89,7 +96,7 @@ export class MetricReader {
     const { rows } = await this.pool.query(
       `SELECT scope, name, family, count, ok_count, ko_count, error_rate,
               min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
-              histogram_ok, histogram_ko
+              histogram_ok, histogram_ko, sketch
          FROM run_stat
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
         ORDER BY scope, name, family`,
@@ -111,6 +118,7 @@ export class MetricReader {
       percentiles: r.percentiles as Record<string, number>,
       histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
       histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
+      sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
     }));
   }
 
