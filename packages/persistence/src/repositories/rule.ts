@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { TenantScope } from './tenant.js';
+import type { ProjectScope } from './tenant.js';
 
 export interface SlaRuleRecord {
   id: string;
@@ -14,7 +14,7 @@ export interface SlaRuleRecord {
 export class RuleRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async listEnabled(scope: TenantScope): Promise<SlaRuleRecord[]> {
+  async listEnabled(scope: ProjectScope): Promise<SlaRuleRecord[]> {
     const rows = await this.prisma.slaRule.findMany({
       where: { orgId: scope.orgId, projectId: scope.projectId, enabled: true },
       orderBy: { id: 'asc' },

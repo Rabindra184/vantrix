@@ -1,6 +1,6 @@
 import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
-import type { TenantScope } from '../repositories/tenant.js';
+import type { ProjectScope } from '../repositories/tenant.js';
 
 export interface StoredStat {
   scope: string;
@@ -92,7 +92,7 @@ export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended
 export class MetricReader {
   constructor(private readonly pool: pg.Pool) {}
 
-  async stats(scope: TenantScope, runId: string): Promise<StoredStat[]> {
+  async stats(scope: ProjectScope, runId: string): Promise<StoredStat[]> {
     const { rows } = await this.pool.query(
       `SELECT scope, name, family, count, ok_count, ko_count, error_rate,
               min_ms, max_ms, mean_ms, stddev_ms, throughput_rps, percentiles,
@@ -129,7 +129,7 @@ export class MetricReader {
    * test asserts the plan of this exact query via the shared `SERIES_SQL`.
    */
   async series(
-    scope: TenantScope,
+    scope: ProjectScope,
     runId: string,
     runStartedOn: Date,
     sel: { scope: string; name: string },
@@ -155,7 +155,7 @@ export class MetricReader {
 
   /** Both status histograms for one (scope, name, family). Null when the row has none. */
   async histograms(
-    scope: TenantScope,
+    scope: ProjectScope,
     runId: string,
     key: StatKey,
   ): Promise<{ ok: Histogram; ko: Histogram } | null> {
@@ -174,7 +174,7 @@ export class MetricReader {
   }
 
   /** runStartedOn is REQUIRED for the same partition-pruning reason as series(). */
-  async users(scope: TenantScope, runId: string, runStartedOn: Date): Promise<StoredUserBucket[]> {
+  async users(scope: ProjectScope, runId: string, runStartedOn: Date): Promise<StoredUserBucket[]> {
     const { rows } = await this.pool.query(
       USER_SERIES_SQL,
       [runStartedOn, runId, scope.orgId, scope.projectId],
@@ -198,7 +198,7 @@ export class MetricReader {
    * numbers identical to what it returned before scoping existed.
    */
   async errors(
-    scope: TenantScope,
+    scope: ProjectScope,
     runId: string,
     sel: { scope: string; name: string } = { scope: 'run', name: '' },
   ): Promise<{ message: string; count: number }[]> {
