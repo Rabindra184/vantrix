@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { TenantScope } from './tenant.js';
+import type { ProjectScope } from './tenant.js';
 
 /**
  * Re-exported, not redeclared: this package used to define its own FLAT
@@ -59,7 +59,7 @@ export class ProjectRepository {
     };
   }
 
-  async settings(scope: TenantScope): Promise<Record<string, unknown>> {
+  async settings(scope: ProjectScope): Promise<Record<string, unknown>> {
     const row = await this.prisma.project.findFirst({
       where: { id: scope.projectId, orgId: scope.orgId },
     });

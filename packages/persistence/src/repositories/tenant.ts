@@ -11,3 +11,12 @@ export interface TenantScope {
    */
   readonly projectId?: string;
 }
+
+/**
+ * A TenantScope known to carry a project. Every caller today builds its scope
+ * from a run row or a bearer token, both of which always have one — so this
+ * costs no call site anything, and keeps the compiler enforcing "this query
+ * genuinely needs a project" for methods that are not findById/list (the two
+ * that must accept a project-less session scope).
+ */
+export type ProjectScope = TenantScope & { projectId: string };

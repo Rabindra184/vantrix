@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type { TenantScope } from './tenant.js';
+import type { ProjectScope, TenantScope } from './tenant.js';
 
 export interface RunRecord {
   id: string;
@@ -138,7 +138,7 @@ export class RunRepository {
     return row ? toRecord(row) : null;
   }
 
-  async findByIdempotencyKey(scope: TenantScope, key: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(scope: ProjectScope, key: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: { orgId: scope.orgId, projectId: scope.projectId, idempotencyKey: key },
     });
