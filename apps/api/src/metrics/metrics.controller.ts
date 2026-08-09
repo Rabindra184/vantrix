@@ -101,7 +101,18 @@ export class MetricsController {
         meanMs: s.meanMs,
         stddevMs: s.stddevMs,
         throughputRps: s.throughputRps,
-        percentiles: s.percentiles,
+        // Recomputed from the persisted sketch at the project's currently
+        // configured percentile set (spec §9.1, K-03) — the whole reason the
+        // sketch is stored is so this needs no re-ingest, exactly like
+        // indicators below. Falls back to the frozen `percentiles` column
+        // for rows written before the sketch was persisted, or for an
+        // empty stat where the sketch has nothing to quantile.
+        percentiles:
+          s.sketch && s.count > 0
+            ? Object.fromEntries(
+                settings.percentiles.map((p) => [`p${p}`, s.sketch!.quantile(p / 100)]),
+              )
+            : s.percentiles,
         indicators: s.histogramOk
           ? bandsFrom(s.histogramOk, s.koCount, settings.indicators)
           : { under: 0, between: 0, over: 0, failed: s.koCount },
