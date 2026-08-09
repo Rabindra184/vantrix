@@ -26,4 +26,9 @@ export const SCHEMA_TABLES = [
   'run_error',
   'sla_rule',
   'run_assertion',
+  'user',
+  'session',
+  'account',
+  'verification',
+  'org_member',
 ] as const;
