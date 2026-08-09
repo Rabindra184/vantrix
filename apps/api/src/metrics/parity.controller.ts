@@ -1,6 +1,6 @@
 import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type { DistributionResponse, ScatterResponse, UsersResponse } from '@perfportal/contracts';
-import { MetricReader, RunRepository } from '@perfportal/persistence';
+import { MetricReader, RunRepository, type StoredBucket } from '@perfportal/persistence';
 import { distribution, inferBucketWidthMs } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
@@ -108,11 +108,41 @@ export class ParityController {
     // x is a RATE over the global REQUESTS series (started_count, both
     // statuses), matching Gatling's getRequestsPerSecBuffer(None, None).
     // Not responses - that is a different chart.
-    const widthMs = inferBucketWidthMs(global.map((b) => b.startOffsetMs));
-    const rateAt = new Map<number, number>();
-    for (const b of global) {
-      rateAt.set(b.startOffsetMs, Math.round((b.startedCount / widthMs) * 1000));
-    }
+    //
+    // The global (run-scope) and own (request-scope) series each coalesce
+    // INDEPENDENTLY: BucketSeries (packages/statistics/src/buckets.ts) halves
+    // its own resolution once ITS OWN occupied-bucket count exceeds ITS OWN
+    // cap - maxBucketsRun defaults to 1200, maxBucketsEndpoint to 300
+    // (packages/statistics/src/engine.ts) - so for any run long enough to make
+    // either series coalesce, their widths can diverge. Inferring one width
+    // and using it to look up the OTHER series by offset - as this used to -
+    // is wrong twice over: it silently misreads the rate's window size, and
+    // whenever an own offset does not land exactly on a global bucket
+    // boundary the lookup finds nothing, silently dropping that point (e.g.
+    // half the points on a long run with a short-lived endpoint). So: infer
+    // width from the OWN series being iterated below, and for each own bucket
+    // sum the global series' startedCount over the window
+    // [ownOffset, ownOffset + ownWidthMs) before converting to a rate -
+    // rather than a point lookup keyed by a shared-width assumption.
+    const ownWidthMs = inferBucketWidthMs(own.map((b) => b.startOffsetMs));
+    // global is already ORDER BY start_offset_ms (SERIES_SQL), so a single
+    // forward-advancing pointer suffices: own buckets are visited in
+    // increasing-offset order too, and their windows never overlap or go
+    // backwards, so no global bucket needs revisiting once passed.
+    let gIdx = 0;
+    const rateForOwnBucket = (ownOffsetMs: number): number | undefined => {
+      if (global.length === 0) return undefined; // degenerate: no global series at all
+      while (gIdx < global.length && (global[gIdx] as StoredBucket).startOffsetMs < ownOffsetMs) gIdx++;
+      let sum = 0;
+      let i = gIdx;
+      while (i < global.length) {
+        const gb = global[i] as StoredBucket;
+        if (gb.startOffsetMs >= ownOffsetMs + ownWidthMs) break;
+        sum += gb.startedCount;
+        i++;
+      }
+      return Math.round((sum / ownWidthMs) * 1000);
+    };
 
     // y is quantile(0.95).toInt - TRUNCATED, not rounded.
     // Gatling emits a point per status-filtered digest that exists in a bucket,
@@ -131,7 +161,7 @@ export class ParityController {
     const ok: [number, number][] = [];
     const ko: [number, number][] = [];
     for (const b of own) {
-      const x = rateAt.get(b.startOffsetMs);
+      const x = rateForOwnBucket(b.startOffsetMs);
       if (x === undefined) continue;
       const pOk = b.percentilesOk.p95;
       const pKo = b.percentilesKo.p95;
