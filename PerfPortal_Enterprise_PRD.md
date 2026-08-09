@@ -688,10 +688,10 @@ Written in Given/When/Then. Each maps to one or more user stories. These are the
 > **When** the platform's Run Detail, Request Detail, Group Detail, and Scenario Detail pages are compared element by element against the Gatling-generated HTML report,
 > **Then** every chart, table, statistic, and assertion listed in Appendix A is present, **and** every numeric value matches the Gatling report within the tolerances in AC-PARITY-2.
 
-> **AC-PARITY-2** *(revised after verification — see §A.9 F-6)*
+> **AC-PARITY-2** *(revised after verification — see §A.9 F-6, F-8)*
 > **Given** the same source data, statistics fall into two classes with different obligations.
 >
-> **Exact quantities — must match Gatling's displayed value exactly:** total count, OK count, KO count, % KO, count/second, min, max, mean, standard deviation, indicator band counts, error message counts, and distribution bin counts where bin boundaries align.
+> **Exact quantities — must match Gatling's displayed value exactly:** total count, OK count, KO count, % KO, count/second, min, max, mean, standard deviation, indicator band counts, error message counts, and distribution bin labels (the midpoint-labelled bins of §A.9 F-8; the platform additionally holds the exact underlying counts, but what Gatling *displays* per bin is a percentage of the combined OK+KO count to 2dp, compared exact to 2dp — not a count).
 >
 > **Estimated quantities — percentiles — are compared against ground truth, NOT against Gatling's displayed value.** The platform's percentile must fall within **1% relative error of the true percentile computed from the fully sorted decoded event set**. Divergence from the number Gatling prints is expected and correct.
 
@@ -2441,8 +2441,8 @@ Weekly active users by persona; runs ingested per week; comparison views per reg
 
 ### A.0 Version anchoring and verification record
 
-> **VERIFIED — 2026-08-07 against Gatling 3.15.1.2.**
-> This matrix is no longer written from expectation. It was validated element by element against a real generated report, and **five rows were wrong**. Those corrections are recorded in §A.9. The fixture that produced the reference report is in [`fixtures/gatling-3.15.1.2/`](fixtures/gatling-3.15.1.2/).
+> **VERIFIED — 2026-08-07 against Gatling 3.15.1.2, re-verified 2026-08-08 against the shipped implementation.**
+> This matrix is no longer written from expectation. It was validated element by element against a real generated report, and **five rows were wrong**. Those corrections are recorded in §A.9. A second pass, run once the platform's own report-parity suite existed, found **six more** — recorded as F-7 through F-12. The fixture that produced the reference report is in [`fixtures/gatling-3.15.1.2/`](fixtures/gatling-3.15.1.2/).
 
 The structure of Gatling's HTML report has changed materially across major versions — chart sets, the group model, the latency charts, and the log format itself have all moved or disappeared. Therefore:
 
@@ -2453,16 +2453,16 @@ The structure of Gatling's HTML report has changed materially across major versi
 
 **Reference fixture.** A two-scenario simulation (`Browse`, `Checkout`) with a nested group hierarchy, six endpoints of deliberately different latency shapes, two distinct failure modes, a ramp-then-steady injection profile, and three assertions — two passing, one failing. It targets a local seeded server, so the run is reproducible and no external service receives load. It exists specifically to make every row below observable in one report.
 
-**Tolerances** (AC-PARITY-2, revised — see §A.9 F-6): counts, OK/KO counts, percentages, min, max, mean, standard deviation, indicator bands, and error counts are **exact against Gatling's displayed value** — all verified exact against the fixture. **Percentiles are the exception:** Gatling's are histogram estimates, so they are compared against the **true percentile from the decoded event set** within 1% relative, never against Gatling's printed figure. Distribution bin counts **exact** when bin boundaries align.
+**Tolerances** (AC-PARITY-2, revised — see §A.9 F-6): counts, OK/KO counts, percentages, min, max, mean, standard deviation, indicator bands, and error counts are **exact against Gatling's displayed value** — all verified exact against the fixture. **Percentiles are the exception:** Gatling's are histogram estimates, so they are compared against the **true percentile from the decoded event set** within 1% relative, never against Gatling's printed figure. **Distribution bins are not counts** (§A.9 F-8): Gatling renders **percentages of the combined OK+KO count**, to 2 dp, over 100 **midpoint-labelled** bins — `floor(min + step·i + step/2 + 0.5)` with `step = (max−min)/100` — so the tolerance is bin labels exact, percentages exact to 2dp, never raw counts.
 
 ### A.1 Global report page
 
 | # | Gatling element | Platform requirement | Location | Test | Tolerance |
 |:-:|---|---|---|---|---|
-| G-01 | Report header — simulation name | FR-META-1 | §13.2 ① | PT-G-01 | Exact string |
+| G-01 | Report header — simulation name | FR-META-1 | §13.2 ① | PT-G-01 | Last dot-segment exact — see §A.9 F-10 |
 | G-02 | Report header — run description | FR-META-1 | §13.2 ① | PT-G-02 | Exact string |
 | G-03 | Report header — run start date/time | FR-META-1 | §13.2 ① | PT-G-03 | Exact instant |
-| G-04 | Report header — run duration | FR-META-1 | §13.2 ① | PT-G-04 | Exact ms |
+| G-04 | Report header — run duration | FR-META-1 | §13.2 ① | PT-G-04 | Exact to the displayed second — see §A.9 F-9 |
 | G-05 | Assertions table — expression, expected, actual, status | FR-SLA-1 | §13.2 ② | PT-G-05 | Exact |
 | G-06 | Ranges / indicators — band `t < lowerBound` count and % | FR-STAT-11 | §13.2 ③ | PT-G-06 | Exact |
 | G-07 | Ranges / indicators — band `lowerBound ≤ t < higherBound` | FR-STAT-11 | §13.2 ③ | PT-G-07 | Exact |
@@ -2478,9 +2478,9 @@ The structure of Gatling's HTML report has changed materially across major versi
 | G-17 | Errors table — distinct message, count, % of errors | FR-STAT-12 | §13.2 ⑥ | PT-G-29 | Exact |
 | G-18 | Active Users over Time — per scenario | FR-STAT-9, FR-DASH-1 | §13.2 ⑦ | PT-G-30 | Exact per bucket |
 | G-19 | Active Users over Time — total series | FR-STAT-9 | §13.2 ⑦ | PT-G-31 | Exact per bucket |
-| G-20 | Response Time Distribution — OK series | FR-STAT-10 | §13.2 ⑧ | PT-G-32 | Bin counts exact |
-| G-21 | Response Time Distribution — KO series | FR-STAT-10 | §13.2 ⑧ | PT-G-33 | Bin counts exact |
-| G-22 | Response Time Percentiles over Time — all bands | FR-STAT-4, FR-DASH-5 | §13.2 ⑨ | PT-G-34 | 1% relative |
+| G-20 | Response Time Distribution — OK series | FR-STAT-10 | §13.2 ⑧ | PT-G-32 | Bin labels exact; percent of combined OK+KO exact to 2dp — see §A.9 F-8 |
+| G-21 | Response Time Distribution — KO series | FR-STAT-10 | §13.2 ⑧ | PT-G-33 | Bin labels exact; percent of combined OK+KO exact to 2dp — see §A.9 F-8 |
+| G-22 | Response Time Percentiles over Time — OK series only | FR-STAT-4, FR-DASH-5 | §13.2 ⑨ | PT-G-34 | 1% relative — OK-only, see §A.9 F-11 |
 | G-23 | Requests per Second over Time — All / OK / KO | FR-STAT-7 | §13.2 ⑩ | PT-G-35 | Exact per bucket |
 | G-24 | Responses per Second over Time — All / OK / KO | FR-STAT-7 | §13.2 ⑪ | PT-G-36 | Exact per bucket |
 | G-25 | Active users shown alongside the per-second charts | FR-STAT-9 | §13.2 ⑦ + §22.4 | PT-G-37 | Information parity — see §A.7 |
@@ -2494,11 +2494,11 @@ The structure of Gatling's HTML report has changed materially across major versi
 |:-:|---|---|---|---|---|
 | RQ-01 | Statistics for the request — full column set | FR-STAT-2 | §13.3 ① | PT-RQ-01 | Per §A.5 |
 | RQ-02 | Ranges / indicators for the request | FR-STAT-11 | §13.3 ② | PT-RQ-02 | Exact |
-| RQ-03 | Response Time Distribution — OK and KO | FR-STAT-10 | §13.3 ③ | PT-RQ-03 | Bin counts exact |
-| RQ-05 | Response Time Percentiles over Time | FR-STAT-4 | §13.3 ⑤ | PT-RQ-05 | 1% relative |
+| RQ-03 | Response Time Distribution — OK and KO | FR-STAT-10 | §13.3 ③ | PT-RQ-03 | Bin labels exact; percent of combined OK+KO exact to 2dp — same renderer as G-20/G-21, see §A.9 F-8 |
+| RQ-05 | Response Time Percentiles over Time — OK series only | FR-STAT-4 | §13.3 ⑤ | PT-RQ-05 | 1% relative — OK-only, see §A.9 F-11 |
 | RQ-07 | Requests per Second over Time | FR-STAT-7 | §13.3 ⑦ | PT-RQ-07 | Exact per bucket |
 | RQ-08 | Responses per Second over Time | FR-STAT-7 | §13.3 ⑧ | PT-RQ-08 | Exact per bucket |
-| RQ-09 | **Response Time against Global RPS** (`responseTimeScatterContainerId`) | FR-STAT-14 | §13.3 ⑨ | PT-RQ-09 | 1% relative |
+| RQ-09 | **Response Time against Global RPS** (`responseTimeScatterContainerId`) — one point per second; x = global requests/s, y = truncated p95, OK series floors observations into buckets (§A.9 F-12) | FR-STAT-14 | §13.3 ⑨ | PT-RQ-09 | 1% relative, against ground truth — see §A.9 F-7 and §A.7 D-03 |
 | RQ-11 | Errors for this request | FR-STAT-12 | §13.3 ⑪ | PT-RQ-11 | Exact |
 
 > **RQ-04, RQ-06, and RQ-10 were removed — they do not exist.** This matrix originally claimed a Latency Distribution, Latency Percentiles over Time, and Latency against Global RPS on the request page. A case-insensitive search of the entire generated report returns **zero occurrences of "latency"**: Gatling 3.15.1.2 reports response time only. Those charts existed in older Gatling versions and have since been removed.
@@ -2511,10 +2511,10 @@ The structure of Gatling's HTML report has changed materially across major versi
 |:-:|---|---|---|---|---|
 | GR-01 | **Cumulated Response Time** — full statistic set | FR-STAT-13 | §13.4 | PT-GR-01 | Per §A.5 |
 | GR-02 | **Group Duration** — full statistic set | FR-STAT-13 | §13.4 | PT-GR-02 | Per §A.5 |
-| GR-03 | Cumulated response time — distribution | FR-STAT-10, FR-STAT-13 | §13.4 | PT-GR-03 | Bin counts exact |
-| GR-04 | Cumulated response time — percentiles over time | FR-STAT-4, FR-STAT-13 | §13.4 | PT-GR-04 | 1% relative |
-| GR-05 | Duration — distribution | FR-STAT-13 | §13.4 | PT-GR-05 | Bin counts exact |
-| GR-06 | Duration — percentiles over time | FR-STAT-13 | §13.4 | PT-GR-06 | 1% relative |
+| GR-03 | Cumulated response time — distribution | FR-STAT-10, FR-STAT-13 | §13.4 | PT-GR-03 | Bin labels exact; percent of combined OK+KO exact to 2dp — same renderer as G-20/G-21, see §A.9 F-8 |
+| GR-04 | Cumulated response time — percentiles over time, OK series only | FR-STAT-4, FR-STAT-13 | §13.4 | PT-GR-04 | 1% relative — OK-only, see §A.9 F-11 |
+| GR-05 | Duration — distribution | FR-STAT-13 | §13.4 | PT-GR-05 | Bin labels exact; percent of combined OK+KO exact to 2dp — same renderer as G-20/G-21, see §A.9 F-8 |
+| GR-06 | Duration — percentiles over time, OK series only | FR-STAT-13 | §13.4 | PT-GR-06 | 1% relative — OK-only, see §A.9 F-11 |
 | GR-08 | Nested groups rendered hierarchically | FR-STAT-13 | §13.4 | PT-GR-08 | Structure exact |
 | GR-09 | Group indicators / ranges (`RangesContainerId`) | FR-STAT-11 | §13.4 | PT-GR-09 | Exact |
 
@@ -2564,14 +2564,17 @@ Every column is available at every scope — global, scenario, group, and reques
 
 AC-PARITY-4 asserts a project configured with non-default bounds and non-default percentiles renders accordingly — parity includes Gatling's *configurability*, not just its defaults.
 
+**K-03 governs the statistics-table columns only.** The four configurable percentiles apply to the C-07…C-10 columns of §A.5. The over-time band set (G-22, RQ-05, GR-04, GR-06) is **fixed**, not configurable through K-03: the buckets that back those charts store plain numbers (`percentilesOk`/`percentilesKo` per bucket, §A.9 F-11), not a re-queryable sketch, so the bands rendered are whatever was written at aggregation time. K-04's band selector controls which of those fixed bands are *displayed*, not which are *computed*.
+
 ### A.7 Deliberate deviations
 
-Two, both recorded here so they are visible rather than discovered.
+Three, all recorded here so they are visible rather than discovered.
 
 | # | Deviation | Rationale | Parity status |
 |:-:|---|---|---|
 | D-01 | **Active users is a separate time-linked chart rather than a secondary-axis overlay** on the per-second charts | A dual-axis chart lets two unrelated scales be positioned so lines appear to track; the correlation becomes an artifact of axis choice. Every value remains present and readable at the same instant via the shared crosshair (§22.4) | **Information parity, corrected encoding.** Not a gap |
 | D-02 | **No fallback to tool-generated aggregates** when the binary log cannot be parsed for a given tool version | Aggregates yield no sketches and no time series; such runs would look identical to full-fidelity runs while lacking re-aggregation, zoom, and merge guarantees, breaking DB-2 for some rows only. **Materially revised after verification** — this is now a narrow last-resort rule, not the primary handling of binary logs. See §A.9 F-1 | **Intentional scope exclusion**, not a parity gap |
+| D-03 | **Per-second bucketing floors the observation into its bucket; Gatling rounds to the nearest bucket** (`StatsHelper.timeToBucketNumber` uses `.round`) | Floor is scale-consistent — `floor(floor(t/w)/2) == floor(t/2w)` — so a coalesced 4s series equals one built directly at 4s (AC-STAT-2's lossless-coalescing invariant). Nearest-rounding was implemented, measured, and reverted because it makes coalescing history-dependent. **Measured cost against the fixture:** the RQ-09 scatter's OK series differs by one point on two of seven request pages — `Add To Cart` 48 vs Gatling's 47, `Place Order` 53 vs 54; KO counts are exact (15 and 9) on both. See §A.9 F-12 | **Accepted deviation**, traded for a foundational engine invariant — not a defect |
 
 ### A.8 Beyond parity
 
@@ -2581,9 +2584,9 @@ Present in the platform, absent from the Gatling 3.15.1.2 report — listed to k
 
 **Original beyond-parity set:** filtering, sorting, regex search, and drill-down on every table · cross-build history and trends · run comparison with deltas · endpoint × build heatmap · baselines and regression detection · SLA gating · live monitoring · annotations · commit attribution · saturation analysis across runs · export in multiple formats · a public API for everything visible.
 
-### A.9 Verification findings — 2026-08-07, Gatling 3.15.1.2
+### A.9 Verification findings — 2026-08-07 and 2026-08-08, Gatling 3.15.1.2
 
-Five corrections. Recorded rather than quietly patched, because the size of the parity claim is what the GA gate rests on and it moved in both directions.
+Twelve corrections across two verification passes. Recorded rather than quietly patched, because the size of the parity claim is what the GA gate rests on and it moved in both directions. The first pass (2026-08-07) validated the matrix against a generated report by eye; the second (2026-08-08) validated it against the shipped implementation and Gatling's own source, once the platform's report-parity suite existed to run the comparison mechanically.
 
 | # | Finding | Severity | Resolution |
 |:-:|---|---|---|
@@ -2593,8 +2596,13 @@ Five corrections. Recorded rather than quietly patched, because the size of the 
 | **F-4** | **Group pages have no per-second charts.** Exactly five containers: ranges, cumulated-RT distribution and over-time, duration distribution and over-time. Row GR-07 deleted | Medium | Removed |
 | **F-5** | **"Number of users started per second" chart was missing** from this matrix (`UserStartRateContainerId`) | Medium — parity scope under-claimed | Added as G-26 |
 | **F-6** | **Gatling's reported percentiles are histogram estimates, not observations.** Reported p99 = 2369 ms, a value that **does not occur in the data** (the sorted tail jumps 2287 → 2501). True p99 is 2501 — Gatling is 5.3% low | High — invalidates an acceptance criterion | AC-PARITY-2 split into exact vs. estimated quantities |
-| **F-7** | **The binary format was fully decoded and validated** (§A.10). Every exact statistic reproduced from raw bytes; clean EOF; nested group hierarchy recovered | — | Confirms F-1 is tractable |
-| — | Statistics table columns, indicator bands, error table, assertions table, ranges on request and group pages, and the response-time scatter **all verified present and exactly as specified** | — | No change |
+| **F-7** | **RQ-09 is not a per-request scatter — it's one point per second.** x = global requests/s (`getRequestsPerSecBuffer(None, None).counts`, `count.total`, both statuses combined); y = `digest.quantile(0.95).toInt` — truncated, not rounded (`LogFileData.scala:213`, tag `v3.15.1`). The fixture alone could not decide the truncation: p75 through max coincide on all seven request pages at ~3 requests/second | High — misdescribed the chart's unit of observation | RQ-09 description and tolerance corrected; compared against ground truth |
+| **F-8** | **G-20/G-21 render percentages of the combined OK+KO count, not counts, over 100 midpoint-labelled bins.** Labels are `floor(min + step·i + step/2 + 0.5)`, `step = (max−min)/100`, reproduced exactly at min = 16, max = 2503. The `28` on the chart's first bin is a midpoint, not the fixture's minimum. `maxPlots` is the hardcoded literal `100` (`GlobalReportGenerator.scala:80`), not configuration | High — tolerance and units both wrong | §A.0 tolerance and G-20/G-21 rows corrected |
+| **F-9** | **G-04's duration is whole seconds, not exact ms.** The header renders `Duration: 1m 2s`. "Exact ms" was unassertable from the report | Medium | Tolerance downgraded to "exact to the displayed second" |
+| **F-10** | **G-01 renders only the last dot-segment of the simulation class name.** The platform stores the fully-qualified name (`example.ParitySimulation`); the report shows `ParitySimulation`. The platform deliberately keeps more information than the report displays | Low | Tolerance changed to "last dot-segment exact" |
+| **F-11** | **G-22/RQ-05/GR-04/GR-06 are OK-only, not combined.** Gatling's percentiles-over-time chart is built from `responseTimePercentilesOverTime(OK, …)` and its rendered title is literally "Response Time Percentiles over Time (OK)"; its scatter is two independent status-filtered series. The platform now stores `percentilesOk`/`percentilesKo` per bucket alongside the combined set | High — a combined-series implementation would silently include KO responses Gatling excludes | Rows corrected to OK-only; consumers of the bucket rows must read the OK set |
+| **F-12** | **RQ-09's bucketing floors an observation into its bucket; Gatling rounds to the nearest bucket** (`StatsHelper.timeToBucketNumber` uses `.round`). Nearest rounding was implemented, measured, and deliberately reverted — it breaks AC-STAT-2's lossless-coalescing invariant, since floor is scale-consistent (`floor(floor(t/w)/2) == floor(t/2w)`) and nearest is not | Medium — accepted, not fixed | Recorded as deliberate deviation D-03 (§A.7); measured cost below |
+| — | Statistics table columns, indicator bands, error table, assertions table, ranges on request and group pages, and the response-time scatter **all verified present**; the binary format was **fully decoded and validated** (§A.10), confirming F-1 is tractable — every exact statistic reproduced from raw bytes, clean EOF, nested group hierarchy recovered | — | No change |
 
 #### F-6 in detail — why parity tests must not chase Gatling's percentiles
 
@@ -2612,6 +2620,18 @@ The original AC-PARITY-2 required percentiles to match Gatling within 1% relativ
 Requiring the platform to match it would mean **deliberately reproducing another tool's estimator error**, which contradicts FR-STAT-4 and the accuracy claim the whole product rests on. The rule is therefore: **exact quantities are compared to Gatling; percentiles are compared to ground truth.** The platform is permitted — and required — to be more accurate than the report it replaces.
 
 This also gives the product a defensible, quantified claim: DDSketch guarantees 1% relative error at every quantile, where the static report it replaces is 5% off at p99 on a sample of this size.
+
+#### F-12 in detail — the one-point cost of floor over nearest bucketing
+
+Nearest-bucket rounding matches Gatling exactly on the RQ-09 scatter, but breaks the lossless-coalescing invariant AC-STAT-2 depends on: a series coalesced from finer buckets must equal a series built directly at the coarser width, and floor is the only rounding rule for which that holds in general. The measured, accepted cost of keeping floor is one scatter point on two of the fixture's seven request pages:
+
+| Request page | Platform OK points | Gatling OK points | Platform KO points | Gatling KO points |
+|---|---|---|---|---|
+| Add To Cart | 48 | 47 | 15 | 15 |
+| Place Order | 53 | 54 | 9 | 9 |
+| All other request pages | exact | exact | exact | exact |
+
+KO counts are exact on both affected pages — the divergence is confined to the OK series, where higher volume means more observations sit near a bucket boundary. This is a deliberate trade of one scatter point per affected page for a foundational engine invariant, not an unnoticed defect; it is why RQ-09's tolerance in §A.2 is compared against ground truth rather than Gatling's own bucketing.
 
 ### A.10 Binary format specification — verified by decoder
 
