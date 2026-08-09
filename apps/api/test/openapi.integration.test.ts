@@ -125,4 +125,36 @@ describe('OpenAPI document', () => {
     const post = doc.paths?.['/v1/runs']?.['post'];
     expect(post?.security === undefined || (post.security as unknown[]).length > 0).toBe(true);
   });
+
+  it('documents every parity endpoint', async () => {
+    const doc = await fetchDoc();
+    for (const path of [
+      '/v1/runs/{id}/distribution', '/v1/runs/{id}/users', '/v1/runs/{id}/scatter',
+    ]) {
+      expect(doc.paths?.[path]?.get).toBeDefined();
+    }
+  });
+
+  it('documents the new component schemas', async () => {
+    const doc = await fetchDoc();
+    for (const name of ['DistributionResponse', 'UsersResponse', 'ScatterResponse', 'IndicatorBands']) {
+      expect(doc.components?.schemas?.[name]).toBeDefined();
+    }
+  });
+
+  it('declares the query parameters the parity endpoints actually read', async () => {
+    const doc = await fetchDoc();
+    const names = (
+      (doc.paths?.['/v1/runs/{id}/distribution']?.get as { parameters?: { name: string }[] } | undefined)
+        ?.parameters ?? []
+    ).map((p) => p.name);
+    expect(names).toEqual(expect.arrayContaining(['id', 'scope', 'name', 'family']));
+  });
+
+  it('reports indicator bands on the stats response', async () => {
+    const doc = await fetchDoc();
+    const schemas = doc.components?.schemas ?? {};
+    expect((schemas['StatsResponse'] as { properties?: Record<string, unknown> } | undefined)?.properties?.['configurable']).toBeDefined();
+    expect((schemas['StatRow'] as { properties?: Record<string, unknown> } | undefined)?.properties?.['indicators']).toBeDefined();
+  });
 });
