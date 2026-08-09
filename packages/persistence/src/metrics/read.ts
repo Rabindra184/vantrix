@@ -123,31 +123,6 @@ export class MetricReader {
   }
 
   /**
-   * Reads a persisted summary sketch back out of `run_stat.sketch`, for
-   * evaluating an SLA metric that was not asked about at ingest time — a
-   * rule added or edited after the run completed, or a request for p99.9
-   * next year even though the project's stored percentile set is only
-   * [50, 75, 95, 99] (spec §8.2). That later-evaluation case is the entire
-   * reason sketches, not just fixed percentiles, are persisted (§9.1).
-   *
-   * Deliberately not on the ingest path: PipelineService evaluates SLA
-   * rules against the sketch `runEngineAsync` still holds in memory, in the
-   * same transaction that writes this column, so there is currently no
-   * production caller of this method at ingest time. It exists for the
-   * re-evaluation case above.
-   */
-  async sketch(scope: TenantScope, runId: string, key: StatKey): Promise<Sketch | null> {
-    const { rows } = await this.pool.query<{ sketch: Buffer }>(
-      `SELECT sketch FROM run_stat
-        WHERE run_id = $1 AND org_id = $2 AND project_id = $3
-          AND scope = $4 AND name = $5 AND family = $6`,
-      [runId, scope.orgId, scope.projectId, key.scope, key.name, key.family],
-    );
-    const buf = rows[0]?.sketch;
-    return buf ? Sketch.deserialize(new Uint8Array(buf)) : null;
-  }
-
-  /**
    * runStartedOn is REQUIRED, not optional. It is the partition key: a query
    * filtering on run_id alone cannot prune and scans every partition. The
    * signature is what enforces that, and the "prunes partitions" integration
