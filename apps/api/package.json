@@ -19,6 +19,7 @@
     "@perfportal/statistics": "workspace:*",
     "@perfportal/storage": "workspace:*",
     "@prisma/client": "^6.19.3",
+    "better-auth": "1.6.26",
     "bullmq": "^5.34.0",
     "busboy": "^1.6.0",
     "ioredis": "^5.4.1",
