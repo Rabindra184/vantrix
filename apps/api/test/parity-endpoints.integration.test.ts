@@ -46,6 +46,32 @@ async function ingested(): Promise<string> {
 
 const auth = () => ({ Authorization: `Bearer ${ctx.readToken}` });
 
+/**
+ * Independent reimplementation of parity.controller.ts's scatter x
+ * computation — deliberately NOT importing/calling the controller's own
+ * helper, so a bug in that helper can't also be "correct" here. Own and
+ * global widths can diverge (each series' BucketSeries coalesces on its own
+ * occupied-bucket count), so x for one own bucket is the rate over the
+ * WINDOW [ownOffsetMs, ownOffsetMs + ownWidthMs), not a same-offset lookup.
+ */
+function inferWidthMs(offsets: number[]): number {
+  let width = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < offsets.length; i++) {
+    const gap = (offsets[i] as number) - (offsets[i - 1] as number);
+    if (gap > 0 && gap < width) width = gap;
+  }
+  return Number.isFinite(width) ? width : 1000;
+}
+function expectedRate(
+  ownOffsetMs: number, ownWidthMs: number, globalBuckets: { startOffsetMs: number; startedCount: number }[],
+): number {
+  let sum = 0;
+  for (const g of globalBuckets) {
+    if (g.startOffsetMs >= ownOffsetMs && g.startOffsetMs < ownOffsetMs + ownWidthMs) sum += g.startedCount;
+  }
+  return Math.round((sum / ownWidthMs) * 1000);
+}
+
 describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
   it('serves a Gatling-shaped distribution', async () => {
     ctx = await createTestApp();
@@ -86,16 +112,32 @@ describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
   it('serves the scatter as one point per bucket with a truncated p95', async () => {
     ctx = await createTestApp();
     const runId = await ingested();
+    const name = 'List Products';
 
-    const res = await request(ctx.app.getHttpServer())
-      .get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent('List Products')}`)
-      .set(auth())
-      .expect(200);
+    const [ownSeries, globalSeries, res] = await Promise.all([
+      request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}/series?scope=request&name=${encodeURIComponent(name)}`).set(auth()).expect(200),
+      request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}/series?scope=run&name=`).set(auth()).expect(200),
+      request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent(name)}`).set(auth()).expect(200),
+    ]);
     expect(res.body.ok.length).toBeGreaterThan(0);
     for (const [x, y] of res.body.ok) {
       expect(Number.isInteger(x)).toBe(true);
       expect(Number.isInteger(y)).toBe(true);
     }
+
+    // x pinned to a real value, independently derived from the two series the
+    // scatter is built from — not merely "is an integer", which stays green
+    // even if the rate computation is replaced with a constant.
+    const ownBucket = ownSeries.body.buckets.find(
+      (b: { percentilesOk: Record<string, number> }) => b.percentilesOk.p95 !== undefined,
+    );
+    expect(ownBucket).toBeDefined();
+    const ownWidthMs = inferWidthMs(ownSeries.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
+    const expectedX = expectedRate(ownBucket.startOffsetMs, ownWidthMs, globalSeries.body.buckets);
+    expect(res.body.ok).toContainEqual([expectedX, Math.trunc(ownBucket.percentilesOk.p95)]);
   });
 
   it('emits an OK and a KO scatter point for a bucket containing both', async () => {
