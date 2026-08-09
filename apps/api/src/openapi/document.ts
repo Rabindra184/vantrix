@@ -120,6 +120,72 @@ const parameters: Record<string, ParameterObject> = {
       enum: ['response_time', 'latency', 'group_cumulated', 'group_duration'],
     },
   },
+  StatsName: {
+    name: 'name',
+    in: 'query',
+    description:
+      'Restrict to one exact row name (e.g. one request name). Not validated against known ' +
+      'names, for the same reason as "scope": an unmatched name simply returns an empty ' +
+      '"stats" array instead of erroring.',
+    schema: { type: 'string' },
+  },
+  ErrorsScope: {
+    name: 'scope',
+    in: 'query',
+    description:
+      'Restrict to one metric scope. Omitting this returns only run-scoped errors, NOT every ' +
+      'scope: the errors table stores one row per (scope, name), so an unscoped read would ' +
+      'double-count each failure across levels. When this is omitted, "name" below is ignored ' +
+      'entirely — even if supplied, it is treated as "" (run-level).',
+    schema: { type: 'string', enum: ['run', 'scenario', 'group', 'request'] },
+  },
+  ErrorsName: {
+    name: 'name',
+    in: 'query',
+    description:
+      'The target name within "scope" (e.g. a request name). Only applied when "scope" is ' +
+      'also given — see that parameter\'s description for what happens when it is omitted.',
+    schema: { type: 'string' },
+  },
+  DistributionScope: {
+    name: 'scope',
+    in: 'query',
+    description:
+      'The metric scope of the target histogram. Unlike "scope" on /series, an unmatched ' +
+      'scope/name/family combination does not come back as an empty result — it 404s, because ' +
+      'a histogram (unlike a series) either exists for a given key or does not.',
+    schema: { type: 'string', enum: ['run', 'scenario', 'group', 'request'], default: 'run' },
+  },
+  DistributionName: {
+    name: 'name',
+    in: 'query',
+    description:
+      'The target name within "scope" (e.g. a request name). Empty string selects the ' +
+      'run-level histogram, which has no name of its own.',
+    schema: { type: 'string', default: '' },
+  },
+  DistributionFamily: {
+    name: 'family',
+    in: 'query',
+    description:
+      'The metric family of the target histogram — see "scope" above for what an unmatched ' +
+      'combination does.',
+    schema: {
+      type: 'string',
+      enum: ['response_time', 'latency', 'group_cumulated', 'group_duration'],
+      default: 'response_time',
+    },
+  },
+  ScatterName: {
+    name: 'name',
+    in: 'query',
+    description:
+      'The request name to plot (scope is always "request" — there is no "scope" parameter on ' +
+      'this endpoint). Its status-filtered p95 is plotted against the run-level requests/sec ' +
+      'rate at each bucket. Empty string (the default) matches no request, so "ok" and "ko" ' +
+      'both come back empty rather than erroring.',
+    schema: { type: 'string', default: '' },
+  },
   SeriesScope: {
     name: 'scope',
     in: 'query',
@@ -202,6 +268,16 @@ const responses: Record<string, ResponseObject> = {
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID). ' +
       'application/problem+json with a required "remediation" that says what a valid value ' +
       'looks like.',
+    content: problem(),
+  },
+  StatsBadRequest: {
+    description:
+      'Either "id" was malformed, or (code PROJECT_SETTINGS_INVALID) the project\'s stored ' +
+      '"indicators" setting cannot be used to compute indicator bands for this run — either ' +
+      'the setting itself is structurally invalid (e.g. lowerMs >= higherMs), or its ' +
+      '"higherMs" sits above the histogram\'s overflow cap while this run has overflow ' +
+      'observations. application/problem+json with a required "remediation" naming the setting ' +
+      'to fix.',
     content: problem(),
   },
   BundleTooLarge: {
@@ -320,11 +396,19 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'getRunStats',
       summary: 'Per-scope statistics table for a run',
       tags: ['metrics'],
-      description: 'Requires the "read" scope.',
-      parameters: [parameters['RunId']!, parameters['StatsScope']!, parameters['StatsFamily']!],
+      description:
+        'Requires the "read" scope. Indicator bands ("indicators" on each row, and the ' +
+        'top-level "indicators") are folded from the run\'s stored histogram at the project\'s ' +
+        'current "indicators" bounds — see "configurable" and "bounds" on the response.',
+      parameters: [
+        parameters['RunId']!,
+        parameters['StatsScope']!,
+        parameters['StatsName']!,
+        parameters['StatsFamily']!,
+      ],
       responses: {
         '200': { description: 'Statistics for this run, optionally filtered.', content: json(schemaRef('StatsResponse')) },
-        '400': ref('BadRequest'),
+        '400': ref('StatsBadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
       },
@@ -352,10 +436,74 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'getRunErrors',
       summary: 'Aggregated error table for a run',
       tags: ['metrics'],
-      description: 'Requires the "read" scope.',
-      parameters: [parameters['RunId']!],
+      description: 'Requires the "read" scope. See "scope" below for the default-scope behavior.',
+      parameters: [parameters['RunId']!, parameters['ErrorsScope']!, parameters['ErrorsName']!],
       responses: {
         '200': { description: 'Distinct error messages and counts, most frequent first.', content: json(schemaRef('ErrorsResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/distribution': {
+    get: {
+      operationId: 'getRunDistribution',
+      summary: 'Response-time histogram (Gatling-style bucketed distribution) for a run',
+      tags: ['metrics'],
+      description:
+        'Requires the "read" scope. Folds the run\'s stored histogram for the given ' +
+        'scope/name/family into Gatling-parity buckets. Unlike /series, an unmatched ' +
+        'scope/name/family combination 404s rather than returning an empty result — see ' +
+        '"scope" below.',
+      parameters: [
+        parameters['RunId']!,
+        parameters['DistributionScope']!,
+        parameters['DistributionName']!,
+        parameters['DistributionFamily']!,
+      ],
+      responses: {
+        '200': { description: 'Bucketed OK/KO distribution.', content: json(schemaRef('DistributionResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/users': {
+    get: {
+      operationId: 'getRunUsers',
+      summary: 'Active-users-over-time series, per scenario and summed across scenarios',
+      tags: ['metrics'],
+      description:
+        'Requires the "read" scope. No query parameters: always returns every scenario in the ' +
+        'run. "total" is the per-scenario SUM at each offset (not a true max-of-sums) — this ' +
+        'is what Gatling\'s own "All users" series is, verified against its fixture output.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': { description: 'Per-scenario and total user-concurrency buckets.', content: json(schemaRef('UsersResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/scatter': {
+    get: {
+      operationId: 'getRunScatter',
+      summary: 'Response-time-vs-throughput scatter plot for one request',
+      tags: ['metrics'],
+      description:
+        'Requires the "read" scope. For each bucket where a status-filtered p95 digest exists ' +
+        'for the named request, plots that (truncated, not rounded) p95 against the run-level ' +
+        'requests/sec rate in the same bucket — one point per status per bucket, so a bucket ' +
+        'with both successes and failures contributes to both "ok" and "ko".',
+      parameters: [parameters['RunId']!, parameters['ScatterName']!],
+      responses: {
+        '200': { description: 'OK and KO (x=throughput, y=p95) point series.', content: json(schemaRef('ScatterResponse')) },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
