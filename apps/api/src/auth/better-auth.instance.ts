@@ -1,23 +1,15 @@
-import { betterAuth } from 'better-auth';
-import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { createPrisma } from '@perfportal/persistence';
+import { createAuth } from '@perfportal/persistence';
 import { loadConfig } from '../config.js';
 
-const prisma = createPrisma(loadConfig().databaseUrl);
-
 /**
- * basePath is '/auth', NOT Better Auth's default '/api/auth'. With the default
- * left in place while the handler is mounted at /auth/*, every request 404s
- * with an EMPTY BODY and no error - a silent failure that costs an afternoon.
- *
- * The organization plugin is deliberately absent: `org` and `project` are the
- * tenancy source of truth (spec §3). Two org models would give two answers to
- * "what may this caller see?", and that disagreement is a tenancy leak.
+ * The factory (basePath, the deliberate absence of the organization plugin,
+ * cookie/session settings) lives in @perfportal/persistence's createAuth —
+ * see its docstring — because `packages/persistence/scripts/bootstrap.ts`
+ * needs the identical config and cannot import an app. This file only
+ * supplies the two values that differ per-process and constructs the
+ * module-scope `const` Task 4 mounts on the raw Express instance before
+ * Nest's body parser; that ordering is spike-proven, so only construction
+ * moved here — the shape did not.
  */
-export const auth = betterAuth({
-  basePath: '/auth',
-  database: prismaAdapter(prisma, { provider: 'postgresql' }),
-  emailAndPassword: { enabled: true },
-  session: { expiresIn: 60 * 60 * 24 * 14, updateAge: 60 * 60 * 24 },
-  advanced: { defaultCookieAttributes: { httpOnly: true, sameSite: 'strict', secure: true } },
-});
+const config = loadConfig();
+export const auth = createAuth({ databaseUrl: config.databaseUrl, baseUrl: config.betterAuthUrl });

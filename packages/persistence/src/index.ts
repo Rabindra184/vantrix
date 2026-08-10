@@ -1,4 +1,5 @@
 export * from './client.js';
+export * from './auth.js';
 export * from './repositories/tenant.js';
 export * from './repositories/project.js';
 export * from './repositories/token.js';

@@ -258,9 +258,13 @@ const responses: Record<string, ResponseObject> = {
   BundleRejected: {
     description:
       'The bundle was rejected (malformed archive, empty archive, unrecognized tool, an SLA ' +
-      'rule targeting no known metric family, and so on), or a path parameter was malformed. ' +
-      'Always application/problem+json with a required "remediation". The same 400 that ' +
-      'GET /v1/runs/{id} returns once a rejected upload\'s failure is persisted on the run.',
+      'rule targeting no known metric family, and so on), or a path parameter was malformed — ' +
+      'the same 400 that GET /v1/runs/{id} returns once that rejection is persisted on the ' +
+      'run. The one exception is code PROJECT_REQUIRED: returned only here, when the caller ' +
+      'authenticated with a session (which names no project) rather than a project-scoped ' +
+      'token. It fires before any run row exists, so GET /v1/runs/{id} can never return it — ' +
+      'there is no run to have persisted the failure on. Always application/problem+json with ' +
+      'a required "remediation".',
     content: problem(),
   },
   BadRequest: {
@@ -268,6 +272,15 @@ const responses: Record<string, ResponseObject> = {
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID). ' +
       'application/problem+json with a required "remediation" that says what a valid value ' +
       'looks like.',
+    content: problem(),
+  },
+  ProjectRunsBadRequest: {
+    description:
+      'Either a query parameter was malformed (e.g. "cursor" is not a valid cursor), or (code ' +
+      'PROJECT_REQUIRED) the caller authenticated with a session, which names no project — ' +
+      'only a project-scoped token can list a project\'s runs by slug. The remediation names ' +
+      'GET /v1/runs as the session-reachable equivalent. application/problem+json with a ' +
+      'required "remediation".',
     content: problem(),
   },
   StatsBadRequest: {
@@ -522,7 +535,7 @@ const paths: Record<string, PathItemObject> = {
       parameters: [parameters['ProjectSlug']!, parameters['Limit']!, parameters['Cursor']!],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
-        '400': ref('BadRequest'),
+        '400': ref('ProjectRunsBadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
       },
