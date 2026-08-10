@@ -12,11 +12,12 @@ import { RunsService } from './runs.service.js';
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
 // redundant. @Scopes('read') is still required per-route.
 //
-// @Get() must be declared BEFORE @Get(':id'): Nest matches routes on the
-// same controller in declaration order, and a request to /v1/runs reaching
-// the :id matcher instead would 400 on uuidParam('id') rejecting "" — a
-// visible failure, but only if a test looks (see session-auth.integration
-// .test.ts's assertion on this ordering).
+// @Get() is declared before @Get(':id') for readability, not because it must
+// be: Express 5's named parameter (:id) matches exactly one NON-EMPTY path
+// segment, so GET /v1/runs and GET /v1/runs/:id never overlap in the first
+// place — declaration order between them is behaviourally irrelevant. Proved
+// by reordering them and re-running session-auth.integration.test.ts (still
+// 14/14); see the Task 9 report for that run.
 @Controller('/v1/runs')
 export class RunsController {
   constructor(private readonly runs: RunsService) {}
