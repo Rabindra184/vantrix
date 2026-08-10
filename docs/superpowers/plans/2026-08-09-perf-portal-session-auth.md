@@ -590,11 +590,44 @@ pnpm bootstrap --admin-email you@example.test
 ```
 Then log in with the printed password via `POST /auth/sign-in/email` and use the cookie on `GET /v1/runs`. Paste the real output.
 
-- [ ] **Step 3: Update the README**
+- [ ] **Step 3: Set the Better Auth base URL**
 
-Document `/auth/*`, the two credential types and which is for what (tokens for CI, sessions for humans), and that ingest requires a token. Note the D-1 deviation: `/auth/*` returns Better Auth's error shapes, `/v1` returns RFC 9457.
+*Added during execution, after Task 4 surfaced a `[better-auth] Base URL is not set` warning on every test run and every server start. Human-ruled: optional config with a default, folded into this task rather than made a task of its own.*
 
-- [ ] **Step 4: Full verification and commit**
+Better Auth derives `trustedOrigins` — its CSRF origin check — from `baseURL`. Unset, it infers one from request headers. Exposure today is low because the session cookie is `sameSite: 'strict'` (a cross-site request carries no cookie at all) and no social/OIDC callbacks exist yet, but it becomes load-bearing at M6's SSO.
+
+In `apps/api/src/config.ts`, add to `AppConfig` and `loadConfig`:
+
+```ts
+  betterAuthUrl: string;
+```
+```ts
+    betterAuthUrl: env.BETTER_AUTH_URL ?? `http://localhost:${Number(env.PORT ?? 3000)}`,
+```
+
+**Optional with a default, never `required()`.** M0's exit criterion is that a stranger deploys a running instance and authenticates; a new mandatory environment variable breaks that.
+
+In `apps/api/src/auth/better-auth.instance.ts`:
+
+```ts
+const config = loadConfig();
+export const auth = betterAuth({
+  baseURL: config.betterAuthUrl,
+  trustedOrigins: [config.betterAuthUrl],
+  basePath: '/auth',
+  // ...unchanged
+});
+```
+
+Note `loadConfig()` is already called at import time in this file — reuse the one call rather than adding a second.
+
+Verify the warning is gone: run `npx vitest run --config vitest.integration.config.ts apps/api/test/session-auth.integration.test.ts` and confirm `Base URL is not set` appears nowhere in the output. Paste the real output.
+
+- [ ] **Step 4: Update the README**
+
+Document `/auth/*`, the two credential types and which is for what (tokens for CI, sessions for humans), and that ingest requires a token. Note the D-1 deviation: `/auth/*` returns Better Auth's error shapes, `/v1` returns RFC 9457. Document `BETTER_AUTH_URL` alongside the other environment variables, including that it defaults to `http://localhost:<PORT>` and should be set to the public origin in any real deployment.
+
+- [ ] **Step 5: Full verification and commit**
 
 ```bash
 pnpm typecheck && pnpm lint && pnpm test && pnpm test:integration
