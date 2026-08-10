@@ -150,3 +150,44 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
     expect(res.body.detail).toContain('no organization');
   });
 });
+
+// A session is org-scoped and names no project, but a run must belong to
+// one, and this list route's only tenancy check is "the token names the
+// project" — meaningless for a session. Both routes must refuse rather than
+// guess or (worse, for the list route) silently widen to every run in the org.
+describe('project-scoped routes require a project, which a session does not have', () => {
+  it('refuses to ingest with a session, naming the fix', async () => {
+    ctx = await createTestApp();
+    const cookie = await signUpAsOrgMember(ctx, 'ingest-session@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Cookie', cookie)
+      .field('metadata', JSON.stringify({ tool: 'gatling' }))
+      .attach('bundle', Buffer.from('irrelevant — the guard fires before the body is read'), 'bundle.tgz')
+      .expect(400);
+    expect(res.body.code).toBe('PROJECT_REQUIRED');
+    expect(res.body.remediation).toMatch(/token/i);
+  });
+
+  it('refuses GET /v1/projects/:slug/runs with a session', async () => {
+    ctx = await createTestApp();
+    const cookie = await signUpAsOrgMember(ctx, 'list-session@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/checkout/runs')
+      .set('Cookie', cookie)
+      .expect(400);
+    expect(res.body.code).toBe('PROJECT_REQUIRED');
+  });
+
+  // The regression guard that matters most: this route's behaviour for a
+  // bearer token — what CI's read tooling depends on — must not move.
+  it('still lists runs for a bearer token, unchanged', async () => {
+    ctx = await createTestApp();
+    await seedCompleteRun(ctx);
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/checkout/runs')
+      .set('Authorization', `Bearer ${ctx.readToken}`)
+      .expect(200);
+    expect(res.body.items).toHaveLength(1);
+  });
+});
