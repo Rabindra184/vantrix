@@ -40,7 +40,23 @@ function parseArgs(argv: string[]): { positional: string[]; adminEmail?: string 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--admin-email') {
-      adminEmail = argv[i + 1];
+      const value = argv[i + 1];
+      // Un-validated, `argv[i + 1]` for a trailing `--admin-email` is
+      // `undefined` — that used to become `adminEmail = undefined`, which
+      // reads exactly like "flag not passed": no admin is created and the
+      // script still reports success (M5). A value that itself starts with
+      // `--` is almost certainly the NEXT flag, silently swallowed as this
+      // one's argument instead of validated — reject both loudly rather
+      // than mint nothing and say nothing.
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(
+          '--admin-email requires a value, e.g. --admin-email you@example.test' +
+            (value === undefined
+              ? ' (none was given — it was the last argument).'
+              : ` (got "${value}", which looks like another flag, not an email).`),
+        );
+      }
+      adminEmail = value;
       i++;
     } else if (arg !== undefined) {
       positional.push(arg);
@@ -98,29 +114,20 @@ async function main(): Promise<void> {
       create: { orgId: org.id, slug: projectSlug, name: titleCase(projectSlug), settings: {} },
     });
 
-    // Reuse the API's own token format and hashing path (@perfportal/core) —
-    // a second implementation of "pp_<prefix>_<secret>" plus Argon2id would
-    // be exactly the kind of drift this branch has already been bitten by.
-    const { token, prefix } = mintToken();
-    const parts = splitToken(token)!;
-    const tokenHash = await hashToken(parts.secret);
-
-    const apiToken = await prisma.apiToken.create({
-      data: {
-        orgId: org.id,
-        projectId: project.id,
-        name: `bootstrap-${new Date().toISOString()}`,
-        prefix,
-        tokenHash,
-        scopes: ['ingest', 'read'],
-      },
-    });
-
     // Only created when --admin-email is passed. Goes through Better Auth's
     // own server API (never raw SQL) so the password hash this writes is one
     // Better Auth's own login path can verify — createAuth is the single
     // shared definition apps/api's instance also builds on, so there is no
     // second hashing scheme to desync. See createAuth's docstring.
+    //
+    // Deliberately BEFORE the token mint below (M4): signUpEmail throws on a
+    // duplicate email, and used to run AFTER the token had already been
+    // `prisma.apiToken.create`d — so that throw left a token row committed
+    // with its plaintext already gone (stdout, the only place it's ever
+    // printed, is reached further down, after both of these succeed) and no
+    // way to recover it. Every retry against the same taken email minted
+    // another orphaned token. Sign-up first means a duplicate-email failure
+    // here happens before any token exists to orphan.
     let admin: { email: string; password: string } | undefined;
     if (adminEmail) {
       const auth = createAuth({
@@ -138,6 +145,24 @@ async function main(): Promise<void> {
       await new OrgMemberRepository(prisma).add(signUp.user.id, org.id, 'admin');
       admin = { email: adminEmail, password };
     }
+
+    // Reuse the API's own token format and hashing path (@perfportal/core) —
+    // a second implementation of "pp_<prefix>_<secret>" plus Argon2id would
+    // be exactly the kind of drift this branch has already been bitten by.
+    const { token, prefix } = mintToken();
+    const parts = splitToken(token)!;
+    const tokenHash = await hashToken(parts.secret);
+
+    const apiToken = await prisma.apiToken.create({
+      data: {
+        orgId: org.id,
+        projectId: project.id,
+        name: `bootstrap-${new Date().toISOString()}`,
+        prefix,
+        tokenHash,
+        scopes: ['ingest', 'read'],
+      },
+    });
 
     // The ONLY place the plaintext token (and, if minted, the plaintext admin
     // password) is ever written: stdout, once. Neither is ever logged, never
