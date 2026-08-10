@@ -390,9 +390,10 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
 // ProjectRunsController's PROJECT_REQUIRED remediation above. Scoped by
 // credential, not by URL: a session sees its whole org; a bearer token stays
 // restricted to its own project exactly as /v1/projects/:slug/runs already
-// is. Each test below also asserts, as a side effect of expecting 200 rather
-// than 400, that @Get() is not being swallowed by @Get(':id') — a
-// route-ordering regression would 400 here on uuidParam('id') rejecting "".
+// is. These tests do NOT assert anything about route declaration order
+// against @Get(':id') — Express 5's named parameter matches exactly one
+// non-empty path segment, so /v1/runs and /v1/runs/:id never overlap and
+// there is nothing here for ordering to affect either way.
 describe('GET /v1/runs — org-scoped by credential', () => {
   it('lists runs across every project in the session org', async () => {
     ctx = await createTestApp();
@@ -429,7 +430,7 @@ describe('GET /v1/runs — org-scoped by credential', () => {
       data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
     });
     const otherToken = await mintIngestTokenFor(ctx, otherOrg.id, otherProject.id);
-    const otherOrgRunId = await ingestFullRun(ctx, otherToken);
+    await ingestFullRun(ctx, otherToken);
 
     const cookie = await signUpAsOrgMember(ctx, 'lister2@example.test');
     const res = await request(ctx.app.getHttpServer())
@@ -437,9 +438,13 @@ describe('GET /v1/runs — org-scoped by credential', () => {
       .set('Cookie', cookie)
       .expect(200);
 
+    // toEqual, not toContain/not.toContain: the database is truncated per
+    // test (see support/app.ts) and exactly these two runs exist across
+    // both orgs, so the exact-list assertion is equally deterministic and
+    // additionally catches any unexpected extra item, not only the one id
+    // named here.
     const ids = res.body.items.map((r: { id: string }) => r.id);
-    expect(ids).toContain(ownRunId);
-    expect(ids).not.toContain(otherOrgRunId);
+    expect(ids).toEqual([ownRunId]);
   });
 
   // The bearer path must stay project-scoped, byte for byte: a second
@@ -460,5 +465,73 @@ describe('GET /v1/runs — org-scoped by credential', () => {
       .set('Authorization', `Bearer ${ctx.readToken}`)
       .expect(200);
     expect(res.body.items.map((r: { id: string }) => r.id)).toEqual([ownRunId]);
+  });
+
+  // HTTP-level cursor coverage for this route specifically. The org-only
+  // cursor path is already covered at the repository level (RunRepository
+  // .list's own tests), and the controller's parseCursor/parseLimit wiring
+  // is already covered on GET /v1/projects/:slug/runs — but neither exercises
+  // this controller's own limit/cursor query-param plumbing end to end. Two
+  // runs in two DIFFERENT projects of the session's org (not the same
+  // project) so this also re-confirms pagination is happening across the
+  // whole org, not within one project's rows.
+  it('paginates by cursor across the whole org', async () => {
+    ctx = await createTestApp();
+    const second = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'cursor-second', name: 'Second' },
+    });
+    // Distinct startedAt values, not seedCompleteRun's fixed constant, so
+    // RunRepository.list's ORDER BY has an unambiguous newest-first answer
+    // to assert on rather than relying on the id DESC tiebreaker.
+    const older = await ctx.prisma.run.create({
+      data: {
+        orgId: ctx.orgId,
+        projectId: ctx.projectId,
+        status: 'complete',
+        verdict: 'passed',
+        tool: 'gatling',
+        bundleKey: 'cursor-fixture-older',
+        bundleSha256: 'a'.repeat(64),
+        bundleBytes: BigInt(1),
+        startedAt: new Date('2026-08-01T09:00:00Z'),
+        startedOn: new Date('2026-08-01T00:00:00Z'),
+        engineOptions: {},
+      },
+    });
+    const newer = await ctx.prisma.run.create({
+      data: {
+        orgId: ctx.orgId,
+        projectId: second.id,
+        status: 'complete',
+        verdict: 'passed',
+        tool: 'gatling',
+        bundleKey: 'cursor-fixture-newer',
+        bundleSha256: 'b'.repeat(64),
+        bundleBytes: BigInt(1),
+        startedAt: new Date('2026-08-01T10:00:00Z'),
+        startedOn: new Date('2026-08-01T00:00:00Z'),
+        engineOptions: {},
+      },
+    });
+
+    const cookie = await signUpAsOrgMember(ctx, 'pager@example.test');
+
+    const firstPage = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?limit=1')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(firstPage.body.items).toHaveLength(1);
+    expect(firstPage.body.items[0].id).toBe(newer.id);
+    expect(firstPage.body.nextCursor).toBeTruthy();
+
+    const secondPage = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs?limit=1&cursor=${firstPage.body.nextCursor}`)
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(secondPage.body.items).toHaveLength(1);
+    expect(secondPage.body.items[0].id).toBe(older.id);
+
+    const allIds = [firstPage.body.items[0].id, secondPage.body.items[0].id].sort();
+    expect(allIds).toEqual([newer.id, older.id].sort());
   });
 });
