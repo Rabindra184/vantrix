@@ -46,6 +46,7 @@ describe('SPA mount', () => {
   // HTML tells an orchestrator the process is healthy while its database is
   // unreachable - the probe stops meaning anything.
   it.each(['/healthz', '/readyz'])('leaves %s to the API, not the SPA', async (path) => {
+    ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer()).get(path);
     expect(res.headers['content-type']).toContain('application/json');
     expect(res.text).not.toContain('<div id="root">');

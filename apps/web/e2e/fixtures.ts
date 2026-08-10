@@ -24,6 +24,12 @@ import { BlobStore } from '@perfportal/storage';
 import { PipelineService } from '../../worker/dist/pipeline/pipeline.service.js';
 import { loadWorkerConfig } from '../../worker/dist/config.js';
 
+// DATABASE_URL points at the SAME Postgres apps/api/test/support/app.ts's
+// createTestApp() uses. That helper TRUNCATEs all 15 tables on every single
+// call (see app.ts:58) — so running `pnpm test:integration` concurrently
+// with `pnpm test:e2e` against this database destroys every org/project/run
+// this file just seeded, mid-assertion, for a completely unrelated suite.
+// Never run them at the same time against the same DATABASE_URL.
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
   throw new Error(
@@ -66,9 +72,17 @@ async function createOrgAndProject(): Promise<{ orgId: string; projectId: string
 
 /** The project a seedAdmin()/seedAdminForEmptyOrg() org already has — every
  *  seed below that takes an orgId (rather than minting its own) ingests into
- *  this rather than guessing a project slug. */
+ *  this rather than guessing a project slug.
+ *
+ *  `orderBy: createdAt asc` is load-bearing, not decorative: seedAdmin() and
+ *  seedAdminForEmptyOrg() create exactly one project per org (via
+ *  createOrgAndProject) at org-creation time, but seedRunWithNaAssertion
+ *  below mints a SECOND, dedicated project in the same org, strictly later.
+ *  Without a deterministic order, `findFirst` picks whichever project
+ *  Postgres feels like returning, and every orgId-taking seed becomes
+ *  order-dependent on which one ran first. */
 async function projectFor(orgId: string): Promise<string> {
-  const project = await prisma.project.findFirst({ where: { orgId } });
+  const project = await prisma.project.findFirst({ where: { orgId }, orderBy: { createdAt: 'asc' } });
   if (!project) {
     throw new Error(`no project found for org ${orgId} — seed the org via seedAdmin() first`);
   }
@@ -142,6 +156,21 @@ async function ingestAndProcess(token: string): Promise<string> {
 
   const pipeline = new PipelineService(workerConfig, prisma, pool, blobs);
   await pipeline.process(body.id);
+
+  // process() throws on a real ingest failure (PipelineService's #ingest
+  // rethrows after recording it — see the comment above), so a caller who
+  // reaches this point already knows nothing THREW. This is a belt-and-
+  // suspenders check on top of that: a seed that returned a run id without
+  // confirming the row itself says 'complete' could hand later tasks a
+  // 'failed' or still-'pending' run dressed as real data, and every one of
+  // the seven seeds ultimately calls through here.
+  const finished = await prisma.run.findUnique({ where: { id: body.id } });
+  if (finished?.status !== 'complete') {
+    throw new Error(
+      `ingestAndProcess: run ${body.id} did not reach 'complete' after the pipeline ran ` +
+        `(status: ${finished?.status ?? 'MISSING ROW'}).`,
+    );
+  }
   return body.id;
 }
 
@@ -183,17 +212,31 @@ export async function seedRunWithData(orgId: string): Promise<string> {
   return ingestAndProcess(token);
 }
 
-/** A real ingested run with one SLA rule that CANNOT be evaluated against
- *  it — Task 7. Mirrors apps/api/test/verdict.integration.test.ts:140-158:
- *  a rule scoped to a request name the reference bundle never produces
- *  evaluates to not_applicable, never a pass, because there is nothing for
- *  it to compare against. */
+/**
+ * A real ingested run with one SLA rule that CANNOT be evaluated against
+ * it — Task 7. Mirrors apps/api/test/verdict.integration.test.ts:140-158: a
+ * rule scoped to a request name the reference bundle never produces
+ * evaluates to not_applicable, never a pass, because there is nothing for it
+ * to compare against.
+ *
+ * Order-independent by construction: this mints its OWN dedicated project
+ * inside orgId, rather than ingesting into the org's shared 'checkout'
+ * project (via projectFor). `sla_rule` is scoped per-project, and
+ * PipelineService applies every enabled rule in a project to every run
+ * subsequently ingested into it — reusing the shared project would silently
+ * attach this not_applicable rule to every later seedRunWithData(orgId) (or
+ * seedPendingRun(orgId)) call against the same org, contaminating a run that
+ * is supposed to have no rules at all. Callers may seed this before or
+ * after any other orgId-taking seed, in either order, safely.
+ */
 export async function seedRunWithNaAssertion(orgId: string): Promise<string> {
-  const projectId = await projectFor(orgId);
+  const project = await prisma.project.create({
+    data: { orgId, slug: unique('na-assertion'), name: 'NA Assertion', settings: {} },
+  });
   await prisma.slaRule.create({
     data: {
       orgId,
-      projectId,
+      projectId: project.id,
       scope: 'request',
       targetName: 'GET /nonexistent',
       family: 'response_time',
@@ -202,8 +245,22 @@ export async function seedRunWithNaAssertion(orgId: string): Promise<string> {
       threshold: 10,
     },
   });
-  const token = await mintIngestToken(orgId, projectId);
-  return ingestAndProcess(token);
+  const token = await mintIngestToken(orgId, project.id);
+  const runId = await ingestAndProcess(token);
+
+  // Post-condition: the whole point of this seed is a not_applicable
+  // assertion, not merely a completed run — confirm the row exists rather
+  // than trusting the rule shape silently kept producing one.
+  const naAssertion = await prisma.runAssertion.findFirst({
+    where: { runId, outcome: 'not_applicable' },
+  });
+  if (!naAssertion) {
+    throw new Error(
+      `seedRunWithNaAssertion: run ${runId} completed but has no not_applicable assertion — ` +
+        'the SLA rule shape may no longer produce one (see verdict.integration.test.ts:140-158).',
+    );
+  }
+  return runId;
 }
 
 /** A run row that stays 'pending' — created directly via Prisma, never
