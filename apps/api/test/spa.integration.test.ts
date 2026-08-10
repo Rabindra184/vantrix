@@ -40,4 +40,14 @@ describe('SPA mount', () => {
     const res = await request(ctx.app.getHttpServer()).get('/runs/abc').expect(200);
     expect(res.text).toContain('<div id="root">');
   });
+
+  // Regression: the first version of mountSpa excluded only /v1 and /auth, so
+  // it swallowed the health endpoints. A readiness probe answering 200 with
+  // HTML tells an orchestrator the process is healthy while its database is
+  // unreachable - the probe stops meaning anything.
+  it.each(['/healthz', '/readyz'])('leaves %s to the API, not the SPA', async (path) => {
+    const res = await request(ctx.app.getHttpServer()).get(path);
+    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.text).not.toContain('<div id="root">');
+  });
 });
