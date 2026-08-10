@@ -19,7 +19,24 @@ export async function signIn(page: Page, who: { email: string; password: string 
   await page.getByLabel('Email').fill(who.email);
   await page.getByLabel('Password').fill(who.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith('/login'));
+  try {
+    await page.waitForURL((url) => !url.pathname.startsWith('/login'));
+  } catch (err) {
+    // A plain timeout here reports nothing but "60s elapsed" — indistinguishable
+    // from a slow network, a wrong password, or a login page that renders its
+    // error in place rather than redirecting. Capture what's actually on
+    // screen so the failure names its own likely cause instead of costing the
+    // next implementer an hour of re-deriving it.
+    const bodyText = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '(could not read page body)');
+    throw new Error(
+      `signIn: still on /login for ${who.email} after clicking "Sign in" — the app never ` +
+        `navigated away. Visible page text at the time of failure:\n${bodyText}`,
+      { cause: err },
+    );
+  }
 }
 
 /**
