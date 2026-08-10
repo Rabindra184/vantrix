@@ -13,7 +13,14 @@ import { IS_PUBLIC_KEY, SCOPES_KEY, type TokenScope } from './scopes.decorator.j
 
 export interface Tenant {
   orgId: string;
-  projectId: string;
+  /**
+   * Present for a bearer token, which is minted against one project. ABSENT
+   * for a user session (AuthMiddleware's authenticateSession, auth.middleware.ts),
+   * which is org-scoped: a human may read any run in their org. Mirrors
+   * TenantScope.projectId in @perfportal/persistence, which this Tenant is
+   * always converted into at a repository boundary.
+   */
+  projectId?: string;
   tokenId: string;
   scopes: string[];
 }
