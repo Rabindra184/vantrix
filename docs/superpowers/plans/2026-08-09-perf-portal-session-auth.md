@@ -660,6 +660,37 @@ expect(res.body.remediation).toMatch(/\/v1\/runs/);
 
 Add `--admin-email <email>`. Create the user through **Better Auth's server API** (`auth.api.signUpEmail`), never raw SQL, so the password hashing matches what login verifies. Then `OrgMemberRepository.add(userId, orgId, 'admin')`.
 
+**The instance moves first.** `pnpm bootstrap` runs from `packages/persistence`, which cannot import `apps/api/src/auth/better-auth.instance.ts` — packages do not depend on apps. Human-ruled: extract a shared factory rather than duplicating the config.
+
+Create `packages/persistence/src/auth.ts`:
+
+```ts
+export function createAuth(opts: { databaseUrl: string; baseUrl: string }) {
+  return betterAuth({
+    basePath: '/auth',
+    baseURL: opts.baseUrl,
+    trustedOrigins: [opts.baseUrl],
+    database: prismaAdapter(createPrisma(opts.databaseUrl), { provider: 'postgresql' }),
+    emailAndPassword: { enabled: true },
+    session: { expiresIn: 60 * 60 * 24 * 14, updateAge: 60 * 60 * 24 },
+    advanced: { defaultCookieAttributes: { httpOnly: true, sameSite: 'strict', secure: true } },
+  });
+}
+```
+
+Add `better-auth` at exactly `1.6.26` to `packages/persistence`'s dependencies — the same pin, not a caret.
+
+`apps/api/src/auth/better-auth.instance.ts` becomes a one-liner over it:
+
+```ts
+const config = loadConfig();
+export const auth = createAuth({ databaseUrl: config.databaseUrl, baseUrl: config.betterAuthUrl });
+```
+
+**`auth` stays a module-scope `const`.** Task 4 mounts it on the raw Express instance before Nest's body parser, and that ordering is spike-proven. The factory lives in the package; the app still exports a constant.
+
+One definition means a future custom `password.hash` cannot silently desync the two — which would present as a correct password being rejected, the least debuggable failure this script could produce.
+
 Generate a random password and print it **to stdout only — never to a file, never to a log.** The existing token mint carries the same constraint; match its wording.
 
 - [ ] **Step 2: Verify by hand**
