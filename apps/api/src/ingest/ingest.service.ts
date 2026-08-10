@@ -69,7 +69,11 @@ export class IngestService {
    * job — which the sweeper recovers. The reverse order yields a job pointing
    * at a nonexistent run, which is not recoverable.
    */
-  async accept(tenant: Tenant, metadata: IngestMetadata, bundle: Readable): Promise<RunRecord> {
+  async accept(
+    tenant: Tenant & { projectId: string },
+    metadata: IngestMetadata,
+    bundle: Readable,
+  ): Promise<RunRecord> {
     const scope = { orgId: tenant.orgId, projectId: tenant.projectId };
 
     if (metadata.idempotencyKey) {

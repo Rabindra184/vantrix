@@ -1,7 +1,7 @@
 import { Controller, Get, NotFoundException, Param, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
-import { parseCursor, parseLimit, uuidParam } from '../common/validation.js';
+import { badRequest, parseCursor, parseLimit, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
 import type { RunListResponse } from '@perfportal/contracts';
 import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
@@ -96,7 +96,23 @@ export class ProjectRunsController {
     @Query('cursor') cursor?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
-    const project = await this.projects.byId(tenant.projectId);
+    // A session names no project, but this route names one in its URL and
+    // has no other tenancy check: RunRepository.list (below) drops the
+    // project filter entirely when projectId is absent, so skipping this
+    // guard would list every run in the org under a single-project URL.
+    // Resolving the project by slug within the org instead was considered
+    // and rejected (human-ruled) — a session-holder uses GET /v1/runs,
+    // which already lists across the whole org.
+    const projectId = tenant.projectId;
+    if (!projectId) {
+      throw badRequest(
+        'PROJECT_REQUIRED',
+        'This endpoint requires a project-scoped credential.',
+        'Use GET /v1/runs with a session, or a project API token here.',
+      );
+    }
+
+    const project = await this.projects.byId(projectId);
     // The token names the project; the slug must agree with it. A token cannot
     // read a project it does not belong to by naming a different slug.
     if (!project || project.slug !== slug) {
@@ -105,7 +121,7 @@ export class ProjectRunsController {
 
     const parsedCursor = parseCursor(cursor);
     const page = await this.runs.runs().list(
-      { orgId: tenant.orgId, projectId: tenant.projectId },
+      { orgId: tenant.orgId, projectId },
       { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
     );
     return {
