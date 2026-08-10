@@ -135,6 +135,39 @@ describe('OpenAPI document', () => {
     }
   });
 
+  it('declares both bearerAuth and cookieAuth as document-level "either credential" security', async () => {
+    const doc = await fetchDoc();
+
+    const schemes = doc.components?.securitySchemes as
+      | Record<string, { type?: string; in?: string; name?: string }>
+      | undefined;
+    expect(schemes?.['bearerAuth']).toBeTruthy();
+    expect(schemes?.['cookieAuth']).toBeTruthy();
+    expect(schemes?.['cookieAuth']?.type).toBe('apiKey');
+    expect(schemes?.['cookieAuth']?.in).toBe('cookie');
+    expect(schemes?.['cookieAuth']?.name).toBe('better-auth.session_token');
+
+    // An array of single-scheme entries is OR, not AND: either credential
+    // alone satisfies a route with no per-operation override.
+    const globalSecurity = (doc.security ?? []) as Record<string, unknown>[];
+    expect(globalSecurity.some((req) => 'bearerAuth' in req)).toBe(true);
+    expect(globalSecurity.some((req) => 'cookieAuth' in req)).toBe(true);
+  });
+
+  it('keeps POST /v1/runs and GET /v1/projects/{slug}/runs bearer-only — a session cannot name a project', async () => {
+    const doc = await fetchDoc();
+
+    for (const [path, method] of [
+      ['/v1/runs', 'post'],
+      ['/v1/projects/{slug}/runs', 'get'],
+    ] as const) {
+      const op = doc.paths?.[path]?.[method] as { security?: Record<string, unknown>[] } | undefined;
+      expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
+      expect(op?.security, `${method.toUpperCase()} ${path} must override security`).toBeTruthy();
+      expect(op?.security).toEqual([{ bearerAuth: [] }]);
+    }
+  });
+
   it('documents the new component schemas', async () => {
     const doc = await fetchDoc();
     for (const name of ['DistributionResponse', 'UsersResponse', 'ScatterResponse', 'IndicatorBands']) {
