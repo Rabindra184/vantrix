@@ -518,7 +518,55 @@ At the top of the ingest handler:
 
 Match the exact `badRequest` helper signature already used in `apps/api/src/metrics/metrics.controller.ts` for `PROJECT_SETTINGS_INVALID`.
 
-- [ ] **Step 4: Verify and commit** — test passes, suite green. Commit as `feat(api): refuse session-authenticated ingest with an actionable 400`.
+- [ ] **Step 4: Narrow the type so the build goes green**
+
+*Added during execution. The guard above is a runtime check; it does not by itself fix the typecheck errors Task 5 deliberately left, because `Tenant.projectId` is still `string | undefined` where the service reads it.*
+
+A property check does not narrow the whole object, so passing `tenant` onward still fails. Extract the value and rebuild the object:
+
+```ts
+const tenant = req.tenant!;
+const projectId = tenant.projectId;
+if (!projectId) {
+  throw badRequest('PROJECT_REQUIRED', { /* as above */ });
+}
+await this.ingest.accept({ ...tenant, projectId }, /* … */);
+```
+
+and give the service the narrowed parameter type:
+
+```ts
+// apps/api/src/ingest/ingest.service.ts
+async accept(tenant: Tenant & { projectId: string }, /* … */)
+```
+
+The anticipated error sites are `ingest.service.ts:73` and `ingest.service.ts:92-93`. **`ingest.controller.ts:42` does NOT error** — Task 5's implementer verified it already used an optional-projectId type; the earlier note naming it was wrong.
+
+- [ ] **Step 5: Guard `ProjectRunsController.list` too**
+
+*Added during execution. Task 5's implementer found this site, which the original analysis missed.*
+
+`apps/api/src/runs/runs.controller.ts:99` (`GET /v1/projects/:slug/runs`) calls `projects.byId(tenant.projectId)`. Its rule is "the token names the project; the slug must agree" — meaningless for a session, which names no project.
+
+**Human-ruled: return the same `PROJECT_REQUIRED` 400 as ingest**, rather than resolving the project by slug within the org. A session-holder uses `GET /v1/runs`, which already lists across the whole org; the per-project view waits until the UI needs it.
+
+```ts
+const tenant = req.tenant!;
+const projectId = tenant.projectId;
+if (!projectId) {
+  throw badRequest('PROJECT_REQUIRED', {
+    message: 'This endpoint requires a project-scoped credential.',
+    remediation: 'Use GET /v1/runs with a session, or a project API token here.',
+  });
+}
+const project = await this.projects.byId(projectId);
+```
+
+Add a test asserting a session gets 400 with `code === 'PROJECT_REQUIRED'` here, and that a **bearer token still gets its runs unchanged** — the second is the regression guard that matters.
+
+- [ ] **Step 6: Verify and commit**
+
+`pnpm typecheck` must be **GREEN** at the end of this task — it is the task that closes the deliberate red left by Task 5. Then the full suite. Commit as `feat(api): refuse session-authenticated ingest with an actionable 400`.
 
 ---
 
