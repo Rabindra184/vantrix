@@ -75,12 +75,15 @@ credential types are accepted on `/v1`, for different callers:
 
 Because a session names no project, **ingest requires a token**:
 `POST /v1/runs` and `GET /v1/projects/{slug}/runs` both reject a session with
-a `400 PROJECT_REQUIRED`, naming a project token as the fix. (Their
-remediation text also points ingest-with-a-session at `GET /v1/runs` as the
-org-wide, session-reachable equivalent for listing — that route is not yet
-implemented; use a run id you already have, e.g. `GET /v1/runs/{id}`, until
-it exists.) Every other `/v1` route that takes a run id accepts either
-credential and scopes results to that credential's own org.
+a `400 PROJECT_REQUIRED`, naming a project token as the fix. Their
+remediation text points ingest-with-a-session at `GET /v1/runs` as the
+org-wide, session-reachable equivalent for listing. `GET /v1/runs` is
+scoped by *credential*, not by URL: a project-scoped bearer token sees only
+that project's runs (the same restriction `GET /v1/projects/{slug}/runs`
+enforces), while a session sees every run across its whole org. Both forms
+support `limit` and `cursor` for cursor pagination. Every other `/v1` route
+that takes a run id accepts either credential and scopes results to that
+credential's own org.
 
 **Deviation from decision D-1:** `/v1` always returns RFC 9457
 `application/problem+json` with a required `remediation` field. `/auth/*` is
@@ -92,6 +95,14 @@ has no `remediation` field to expect.
 base URL Better Auth derives `trustedOrigins` from — its CSRF origin check.
 The default is fine locally; **set it to the service's public origin in any
 real deployment.**
+
+**The session cookie requires TLS.** `packages/persistence/src/auth.ts` mints
+it with `secure: true` unconditionally, so on a non-TLS deployment reachable
+by hostname (not `localhost`), a browser never stores it — every session
+attempt then looks identical to "no credential" and lands on `/v1`'s generic
+401. If session sign-in behaves as though it silently does nothing on a real
+deployment, check that the deployment is served over HTTPS before suspecting
+the auth code.
 
 ## The verdict contract
 
