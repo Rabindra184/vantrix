@@ -32,12 +32,25 @@ describe('boot integrity', () => {
 });
 
 describe('AuthGuard', () => {
-  it('rejects a request with no token', async () => {
+  // AuthMiddleware dispatches on the Authorization header: only a genuine
+  // `Bearer ` prefix takes the bearer path (auth.guard.ts's
+  // authenticateRequest); a request with no credential at all falls through
+  // to the session branch (authenticateSession in auth.middleware.ts), which
+  // rejects a missing cookie exactly like an unrecognised bearer token. So
+  // despite the name this exercised, this test has always run through the
+  // session code path, not AuthGuard's own bearer rejection — renamed to say
+  // so, and strengthened to pin the actual code/remediation rather than just
+  // truthiness, which would not fail if either drifted.
+  it('rejects a request with no credential at all, via the session branch', async () => {
     ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer()).get('/v1/runs/00000000-0000-0000-0000-000000000000');
     expect(res.status).toBe(401);
     expect(res.headers['content-type']).toContain('application/problem+json');
-    expect(res.body.remediation).toBeTruthy();
+    expect(res.body.code).toBe('UNAUTHENTICATED');
+    expect(res.body.remediation).toBe(
+      'Provide a bearer API token in the Authorization header (for CI/machine callers), or ' +
+        'sign in at POST /auth/sign-in/email to obtain a session cookie (for a browser).',
+    );
   });
 
   it('rejects an unknown token', async () => {
