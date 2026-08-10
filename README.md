@@ -62,6 +62,37 @@ pnpm test              # unit
 pnpm test:integration   # needs the services above
 ```
 
+## Authentication
+
+`apps/api` mounts Better Auth at `/auth/*` (built from `@perfportal/persistence`'s
+`createAuth`, see `packages/persistence/src/auth.ts`) beside `/v1`. Two
+credential types are accepted on `/v1`, for different callers:
+
+| Credential          | For           | Names           | Obtained via |
+|----------------------|----------------|------------------|--------------|
+| API token (bearer)  | CI / machines  | An org *and* a project | `pnpm bootstrap` — see `infra/README.md` |
+| Session cookie       | Humans         | An org only, no project | `POST /auth/sign-up/email` / `/auth/sign-in/email`, or `pnpm bootstrap --admin-email <email>` |
+
+Because a session names no project, **ingest requires a token**:
+`POST /v1/runs` and `GET /v1/projects/{slug}/runs` both reject a session with
+a `400 PROJECT_REQUIRED`, naming a project token as the fix. (Their
+remediation text also points ingest-with-a-session at `GET /v1/runs` as the
+org-wide, session-reachable equivalent for listing — that route is not yet
+implemented; use a run id you already have, e.g. `GET /v1/runs/{id}`, until
+it exists.) Every other `/v1` route that takes a run id accepts either
+credential and scopes results to that credential's own org.
+
+**Deviation from decision D-1:** `/v1` always returns RFC 9457
+`application/problem+json` with a required `remediation` field. `/auth/*` is
+Better Auth's own surface and keeps Better Auth's native error shapes — this
+is a deliberate, scoped exception, not an oversight; an `/auth/*` error body
+has no `remediation` field to expect.
+
+`BETTER_AUTH_URL` (optional, defaults to `http://localhost:<PORT>`) sets the
+base URL Better Auth derives `trustedOrigins` from — its CSRF origin check.
+The default is fine locally; **set it to the service's public origin in any
+real deployment.**
+
 ## The verdict contract
 
 `POST /v1/runs` and `GET /v1/runs/{id}` return the same status code
