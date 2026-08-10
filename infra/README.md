@@ -73,14 +73,23 @@ to stdout exactly once, the same way the API token is; copy it immediately.
 
 Log in with it against `/auth/*` (Better Auth's own error/response shapes,
 not this API's RFC 9457 `problem+json` — see the root `README.md`'s
-Authentication section), and use the returned session cookie on `/v1` —
-against a run id you already have (there is no org-wide "list my runs"
-route yet, see the root `README.md`'s Authentication section):
+Authentication section), and use the returned session cookie on `/v1`.
+A session names no project, so it can't ingest, but it can list every run
+across the whole org via `GET /v1/runs` (see the root `README.md`'s
+Authentication section) — no run id needed up front:
 
     curl -sS -c /tmp/cookies.txt -X POST http://localhost:3000/auth/sign-in/email \
       -H 'Content-Type: application/json' \
       -d '{"email":"you@example.test","password":"<printed password>"}'
-    curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs/<run-id>
+    curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs
+
+The session cookie is minted `secure: true` (see the root `README.md`'s
+Authentication section), so this recipe working over plain `http://localhost`
+is specific to `curl`, which — unlike a browser — replays a `Secure` cookie
+over plain HTTP regardless of host. A real, non-TLS deployment reachable by
+hostname gets no session at all from a browser: sign-in appears to succeed,
+but no cookie is ever stored, and every subsequent `/v1` request 401s as if
+uncredentialed.
 
 ## Running the slice
 
