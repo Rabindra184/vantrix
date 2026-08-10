@@ -141,7 +141,13 @@ async function ingestFullRun(ctx: TestContext, token = ctx.ingestToken): Promise
     .post('/v1/runs')
     .set('Authorization', `Bearer ${token}`)
     .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
-    .attach('bundle', bundle, 'bundle.tgz');
+    .attach('bundle', bundle, 'bundle.tgz')
+    // Not currently a hole — a rejected token would leave res.body.id
+    // undefined and every downstream URL would be /v1/runs/undefined,
+    // which still fails loudly via a 400 INVALID_ID — but that failure
+    // would name the wrong cause several lines later. Fail here instead,
+    // at the actual cause.
+    .expect(202);
   await runPipelineFor(ctx, res.body.id);
   return res.body.id;
 }
@@ -274,9 +280,11 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
   // A real request name the reference fixture actually produces (see
   // packages/plugin-gatling/test/records.test.ts, and the identical comment
   // in parity-endpoints.integration.test.ts) — the brief's placeholder
-  // 'Catalog / List' does not exist here, and a name that doesn't exist
-  // would fail the scatter positive control for a fixture reason, not a
-  // tenancy one.
+  // 'Catalog / List' does not exist here. ParityController.scatter never
+  // 404s on an unknown name — it returns 200 with empty ok/ko arrays — so a
+  // wrong name would not fail loudly; it would just make the positive
+  // control silently vacuous (a 200 with nothing in it, indistinguishable
+  // from "the route works but this run has no matching data").
   const SCATTER_NAME = 'List Products';
 
   // The one builder both the negative and positive case call — so the URL
@@ -323,13 +331,18 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
 
     // The negative case: every one of the seven URLs, for a run outside
     // org A, with org A's session cookie. Not 200, and not 500 — 404.
+    // Collected into pairs and asserted in one toEqual, rather than
+    // asserting inside the loop, so a single run reports every failing
+    // endpoint at once instead of stopping at the first — the whole point
+    // of the list is catching a FUTURE endpoint added without a tenancy
+    // filter, and that is exactly the case where you want to see all seven
+    // results, not just whichever one happens to come first.
+    const otherOrgResults: [string, number][] = [];
     for (const url of endpoints(otherRunId)) {
       const res = await request(ctx.app.getHttpServer()).get(url).set('Cookie', cookie);
-      expect(
-        res.status,
-        `expected 404 across orgs for ${url}, got ${res.status}: ${JSON.stringify(res.body)}`,
-      ).toBe(404);
+      otherOrgResults.push([url, res.status]);
     }
+    expect(otherOrgResults).toEqual(endpoints(otherRunId).map((url) => [url, 404]));
 
     // The positive control: the identical URL shape, same session, a run
     // that IS in this org. This is what keeps the loop above meaningful —
@@ -345,12 +358,17 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
   });
 
   // Two credential systems that disagree about the same run is the drift
-  // this catches. seedCompleteRun's bare row is enough here — the point is
-  // that session and token compute the identical body for the identical
-  // run, not that the run has rich data.
+  // this catches. seedCompleteRun's bare row is NOT enough here: with no
+  // stats rows, the response body is entirely constant/derived (stats: [],
+  // indicators: zeros, configurable: [].every(...) vacuously true, bounds
+  // from project settings) — nothing either credential path could compute
+  // differently, so toEqual could never fail on the drift it exists to
+  // catch. ingestFullRun gives both paths real, non-empty stats to agree
+  // (or fail to agree) on, and the length assertion below is what makes
+  // that non-emptiness a real precondition rather than an assumption.
   it('a session and a project token see identical data for the same run', async () => {
     ctx = await createTestApp();
-    const runId = await seedCompleteRun(ctx);
+    const runId = await ingestFullRun(ctx);
     const cookie = await signUpAsOrgMember(ctx, 'session-token-parity@example.test');
 
     const viaToken = await request(ctx.app.getHttpServer())
@@ -361,6 +379,9 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
       .get(`/v1/runs/${runId}/stats`)
       .set('Cookie', cookie)
       .expect(200);
+    // Without this, an empty stats array on both sides would make the
+    // toEqual below pass vacuously — same emptiness, not same content.
+    expect(viaToken.body.stats.length).toBeGreaterThan(0);
     expect(viaSession.body).toEqual(viaToken.body);
   });
 });
