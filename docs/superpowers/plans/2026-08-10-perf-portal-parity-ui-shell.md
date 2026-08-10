@@ -146,8 +146,20 @@ Expected: a `dist/` containing `index.html` and hashed assets. Commit as `feat(w
 
 **Files:**
 - Create: `apps/api/src/spa.ts`
-- Modify: `apps/api/src/main.ts`
-- Create: `apps/api/test/spa.integration.test.ts`
+- Modify: `apps/api/src/main.ts`, `apps/api/test/support/app.ts`
+- Create: `apps/api/test/spa.integration.test.ts`, `apps/api/test/fixtures/web-dist/index.html`
+
+**The integration suite must not depend on a web build.** The root `build` script compiles `api` and `worker` only — `apps/web` is never built by `pnpm test:integration`, so `mountSpa` pointed at `apps/web/dist` would find nothing, no-op, and the tests would fail for a reason unrelated to the code under test.
+
+So `mountSpa` takes its directory as a parameter, and the tests pass a committed fixture:
+
+`apps/api/test/fixtures/web-dist/index.html`
+```html
+<!doctype html><html><head><title>PerfPortal</title></head>
+<body><div id="root"></div></body></html>
+```
+
+`createTestApp()` mounts that fixture directory. Production passes the real `apps/web/dist`. This keeps the suite fast and deterministic, and the real build is covered by Playwright from Task 3 onward.
 
 **Interfaces:**
 - Produces: `mountSpa(instance: express.Express, distDir: string): void`
