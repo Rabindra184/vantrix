@@ -385,3 +385,80 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     expect(viaSession.body).toEqual(viaToken.body);
   });
 });
+
+// GET /v1/runs — the session-reachable list route named by
+// ProjectRunsController's PROJECT_REQUIRED remediation above. Scoped by
+// credential, not by URL: a session sees its whole org; a bearer token stays
+// restricted to its own project exactly as /v1/projects/:slug/runs already
+// is. Each test below also asserts, as a side effect of expecting 200 rather
+// than 400, that @Get() is not being swallowed by @Get(':id') — a
+// route-ordering regression would 400 here on uuidParam('id') rejecting "".
+describe('GET /v1/runs — org-scoped by credential', () => {
+  it('lists runs across every project in the session org', async () => {
+    ctx = await createTestApp();
+    const ownRunId = await ingestFullRun(ctx);
+    const second = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'second', name: 'Second' },
+    });
+    const secondToken = await mintIngestTokenFor(ctx, ctx.orgId, second.id);
+    const secondRunId = await ingestFullRun(ctx, secondToken);
+
+    const cookie = await signUpAsOrgMember(ctx, 'lister@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs')
+      .set('Cookie', cookie)
+      .expect(200);
+
+    const ids = res.body.items.map((r: { id: string }) => r.id).sort();
+    expect(ids).toEqual([ownRunId, secondRunId].sort());
+  });
+
+  // The tenancy assertion. A session must not see another org's runs, built
+  // the same way the cross-org isolation describe block above does: a real
+  // second org/project/token, and a genuinely ingested run on it — not a
+  // bare stub row, so a scope bug that dropped the org filter would surface
+  // as a real extra item in the list rather than passing vacuously.
+  it('never lists a run from another org', async () => {
+    ctx = await createTestApp();
+    const ownRunId = await ingestFullRun(ctx);
+
+    const otherOrg = await ctx.prisma.org.create({
+      data: { slug: 'other-org-runs-list', name: 'Other' },
+    });
+    const otherProject = await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
+    });
+    const otherToken = await mintIngestTokenFor(ctx, otherOrg.id, otherProject.id);
+    const otherOrgRunId = await ingestFullRun(ctx, otherToken);
+
+    const cookie = await signUpAsOrgMember(ctx, 'lister2@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs')
+      .set('Cookie', cookie)
+      .expect(200);
+
+    const ids = res.body.items.map((r: { id: string }) => r.id);
+    expect(ids).toContain(ownRunId);
+    expect(ids).not.toContain(otherOrgRunId);
+  });
+
+  // The bearer path must stay project-scoped, byte for byte: a second
+  // project in the SAME org proves the restriction is "this token's
+  // project", not merely "this token's org" (which the org-only branch
+  // would also satisfy, incorrectly).
+  it('lists only the token project runs for a bearer token', async () => {
+    ctx = await createTestApp();
+    const ownRunId = await ingestFullRun(ctx);
+    const second = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'second-bearer', name: 'Second' },
+    });
+    const secondToken = await mintIngestTokenFor(ctx, ctx.orgId, second.id);
+    await ingestFullRun(ctx, secondToken);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.readToken}`)
+      .expect(200);
+    expect(res.body.items.map((r: { id: string }) => r.id)).toEqual([ownRunId]);
+  });
+});

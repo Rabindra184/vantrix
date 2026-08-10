@@ -11,9 +11,37 @@ import { RunsService } from './runs.service.js';
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
 // redundant. @Scopes('read') is still required per-route.
+//
+// @Get() must be declared BEFORE @Get(':id'): Nest matches routes on the
+// same controller in declaration order, and a request to /v1/runs reaching
+// the :id matcher instead would 400 on uuidParam('id') rejecting "" — a
+// visible failure, but only if a test looks (see session-auth.integration
+// .test.ts's assertion on this ordering).
 @Controller('/v1/runs')
 export class RunsController {
   constructor(private readonly runs: RunsService) {}
+
+  /**
+   * Org-scoped by credential, not by URL. A bearer token carries a projectId
+   * and stays restricted to it, exactly as before. A session carries none and
+   * sees every run in its org — the spread below is what expresses that, and
+   * it is the only production caller of RunRepository.list's org-only branch.
+   */
+  @Get()
+  @Scopes('read')
+  async list(
+    @Req() req: Request,
+    @Query('limit') limit = '25',
+    @Query('cursor') cursor?: string,
+  ): Promise<RunListResponse> {
+    const tenant = req.tenant!;
+    const parsedCursor = parseCursor(cursor);
+    const page = await this.runs.runs().list(
+      { orgId: tenant.orgId, ...(tenant.projectId ? { projectId: tenant.projectId } : {}) },
+      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+    );
+    return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
+  }
 
   @Get(':id')
   @Scopes('read')
@@ -30,6 +58,22 @@ export class RunsController {
 
     await respondWithRun(this.runs, run, res);
   }
+}
+
+/**
+ * Shared by RunsController.list and ProjectRunsController.list so the two
+ * response shapes cannot drift — the same "same code for the same state"
+ * guarantee respondWithRun makes for a single run's status mapping.
+ */
+function toListItem(r: RunRecord): RunListResponse['items'][number] {
+  return {
+    id: r.id,
+    status: r.status as RunListResponse['items'][number]['status'],
+    verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
+    tool: r.tool,
+    startedAt: r.startedAt.toISOString(),
+    toolStartedAt: r.toolStartedAt ? r.toolStartedAt.toISOString() : null,
+  };
 }
 
 /**
@@ -124,16 +168,6 @@ export class ProjectRunsController {
       { orgId: tenant.orgId, projectId },
       { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
     );
-    return {
-      items: page.items.map((r) => ({
-        id: r.id,
-        status: r.status as RunListResponse['items'][number]['status'],
-        verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
-        tool: r.tool,
-        startedAt: r.startedAt.toISOString(),
-        toolStartedAt: r.toolStartedAt ? r.toolStartedAt.toISOString() : null,
-      })),
-      nextCursor: page.nextCursor,
-    };
+    return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
 }

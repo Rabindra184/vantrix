@@ -340,6 +340,23 @@ const authFailureResponses = { '401': ref('Unauthorized'), '403': ref('Forbidden
 
 const paths: Record<string, PathItemObject> = {
   '/v1/runs': {
+    get: {
+      operationId: 'listRuns',
+      summary: 'Cursor-paginated list of runs, scoped by credential',
+      tags: ['runs'],
+      description:
+        'Requires the "read" scope. Scoped by the credential, not by the URL: a project-scoped ' +
+        'token sees only that project\'s runs, exactly like GET /v1/projects/{slug}/runs; a ' +
+        'session names no project and sees every run across its whole org instead. This is the ' +
+        'session-reachable list route named by GET /v1/projects/{slug}/runs\'s ' +
+        'PROJECT_REQUIRED remediation.',
+      parameters: [parameters['Limit']!, parameters['Cursor']!],
+      responses: {
+        '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
+        '400': ref('BadRequest'),
+        ...authFailureResponses,
+      },
+    },
     post: {
       operationId: 'ingestRun',
       summary: 'Ingest a Gatling results bundle',
