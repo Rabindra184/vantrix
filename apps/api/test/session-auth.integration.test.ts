@@ -1,3 +1,5 @@
+import type { INestApplication } from '@nestjs/common';
+import { OrgMemberRepository } from '@perfportal/persistence';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
@@ -25,5 +27,126 @@ describe('/auth/*', () => {
     // (Better Auth 404s with an empty body when basePath doesn't match) —
     // a different failure from Nest's 404, useful to know when debugging.
     expect(res.headers['set-cookie']).toBeTruthy();
+  });
+});
+
+/**
+ * Signs up a brand-new user and returns the session cookie Better Auth
+ * issues on sign-up (emailAndPassword defaults to auto-sign-in — see the
+ * '/auth/*' test above, which already proves sign-up alone sets a cookie).
+ * The user this creates has NO org_member row: use this directly only for
+ * the no-membership case. Every other test needs signUpAsOrgMember below.
+ */
+async function signUpAndLogin(app: INestApplication, email: string): Promise<string> {
+  const { cookie } = await signUp(app, email);
+  return cookie;
+}
+
+async function signUp(app: INestApplication, email: string): Promise<{ cookie: string; userId: string }> {
+  const res = await request(app.getHttpServer())
+    .post('/auth/sign-up/email')
+    .send({ email, password: 'correct-horse-battery', name: email });
+
+  const setCookie = res.headers['set-cookie'] as unknown;
+  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  if (typeof raw !== 'string') {
+    throw new Error(
+      `sign-up for ${email} did not set a session cookie (status ${res.status}): ${JSON.stringify(res.body)}`,
+    );
+  }
+  const userId = (res.body as { user?: { id?: string } }).user?.id;
+  if (!userId) {
+    throw new Error(`sign-up for ${email} did not return a user id: ${JSON.stringify(res.body)}`);
+  }
+
+  return { cookie: raw.split(';')[0] ?? raw, userId };
+}
+
+/**
+ * signUpAndLogin, plus the org_member row a real member has and a fresh
+ * sign-up never gets. createTestApp()'s ctx.orgId is the org every other
+ * fixture (tokens, projects) in this test file already belongs to, so
+ * joining it is what makes the session's tenant match the bearer token's.
+ */
+async function signUpAsOrgMember(ctx: TestContext, email: string, role = 'member'): Promise<string> {
+  const { cookie, userId } = await signUp(ctx.app, email);
+  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId, role);
+  return cookie;
+}
+
+/** A 'complete', passing run in ctx's org — statusFor() only returns 200 for this. */
+async function seedCompleteRun(ctx: TestContext): Promise<string> {
+  const run = await ctx.prisma.run.create({
+    data: {
+      orgId: ctx.orgId,
+      projectId: ctx.projectId,
+      status: 'complete',
+      verdict: 'passed',
+      tool: 'gatling',
+      bundleKey: 'session-auth-fixture',
+      bundleSha256: 'a'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt: new Date('2026-08-01T10:00:00Z'),
+      startedOn: new Date('2026-08-01T00:00:00Z'),
+      engineOptions: {},
+    },
+  });
+  return run.id;
+}
+
+describe('AuthMiddleware — session cookie branch on /v1', () => {
+  it('accepts a session cookie on /v1', async () => {
+    ctx = await createTestApp();
+    const runId = await seedCompleteRun(ctx);
+    const cookie = await signUpAsOrgMember(ctx, 'b@example.test');
+    await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
+  });
+
+  // The regression that would break CI ingest.
+  it('still accepts a bearer token, unchanged', async () => {
+    ctx = await createTestApp();
+    const runId = await seedCompleteRun(ctx);
+    await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`)
+      .expect(200);
+  });
+
+  // Regression guard only: nothing under AuthMiddleware exists yet to grant
+  // a credential-less request anything, so this was already 401 before the
+  // session branch — see the report for the RED evidence that DOES exercise
+  // the new code (the cookie test above and the logout test below).
+  it('401s with no credential at all', async () => {
+    ctx = await createTestApp();
+    const runId = await seedCompleteRun(ctx);
+    await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).expect(401);
+  });
+
+  it('401s a stale cookie after logout', async () => {
+    ctx = await createTestApp();
+    const runId = await seedCompleteRun(ctx);
+    const cookie = await signUpAsOrgMember(ctx, 'd@example.test');
+    await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(200);
+    await request(ctx.app.getHttpServer()).post('/auth/sign-out').set('Cookie', cookie).expect(200);
+    // The same cookie string, now revoked server-side. A session store that only
+    // expires by time would still accept this.
+    await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(401);
+  });
+
+  // Regression guard for the blanket rejection, PLUS the one assertion here
+  // that is discriminating: 403, not 401. A valid session with no org is an
+  // authorization failure (spec §7), distinct from having no credential at
+  // all — and the problem body's message is what proves the middleware told
+  // the two apart, not just the status code.
+  it('403s a user with no org membership', async () => {
+    ctx = await createTestApp();
+    const runId = await seedCompleteRun(ctx);
+    const cookie = await signUpAndLogin(ctx.app, 'orphan@example.test'); // no org_member row
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}`)
+      .set('Cookie', cookie)
+      .expect(403);
+    expect(res.headers['content-type']).toContain('application/problem+json');
+    expect(res.body.detail).toContain('no organization');
   });
 });
