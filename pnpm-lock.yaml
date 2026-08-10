@@ -80,6 +80,9 @@ importers:
       busboy:
         specifier: ^1.6.0
         version: 1.6.0
+      express:
+        specifier: 5.2.1
+        version: 5.2.1
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1

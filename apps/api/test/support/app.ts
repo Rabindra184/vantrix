@@ -8,6 +8,7 @@
 // for the production entry point.
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
@@ -16,7 +17,10 @@ import { mountBetterAuth } from '../../src/auth/mount-better-auth.js';
 import { AppModule } from '../../src/app.module.js';
 import { ProblemFilter } from '../../src/common/problem.filter.js';
 import { mountOpenApi } from '../../src/openapi.js';
+import { mountSpa } from '../../src/spa.js';
 import { hashToken, mintToken } from '@perfportal/core';
+
+const FIXTURE_WEB_DIST = resolve(import.meta.dirname, '../fixtures/web-dist');
 
 export interface TestContext {
   app: INestApplication;
@@ -42,6 +46,7 @@ export async function createTestApp(
   const app = moduleRef.createNestApplication();
 
   mountBetterAuth(app);
+  mountSpa(app.getHttpAdapter().getInstance(), FIXTURE_WEB_DIST);
 
   app.useGlobalFilters(new ProblemFilter());
   mountOpenApi(app);
