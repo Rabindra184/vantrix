@@ -631,7 +631,23 @@ Two credential systems that disagree about the same run is the drift this catche
 Remove `orgId: scope.orgId` from `RunRepository.findById` and re-run.
 Expected: every cross-org case FAILS. Restore.
 
-- [ ] **Step 4: Commit** as `test(api): cross-org isolation on every session-reachable endpoint`.
+- [ ] **Step 4: Pin the problem-document shape on Task 6's two tests**
+
+*Added during execution, from Task 6's review. Same file, so it belongs here rather than in a commit of its own.*
+
+The two `PROJECT_REQUIRED` tests assert `res.body.code` but not the media type, while their neighbours in the file do. And the list-route test never asserts its remediation, leaving the actionable half of the ruling — "use `GET /v1/runs`" — unpinned.
+
+```ts
+expect(res.headers['content-type']).toContain('application/problem+json');
+```
+
+on both, and on the list-route test:
+
+```ts
+expect(res.body.remediation).toMatch(/\/v1\/runs/);
+```
+
+- [ ] **Step 5: Commit** as `test(api): cross-org isolation on every session-reachable endpoint`.
 
 ---
 
@@ -690,7 +706,16 @@ Verify the warning is gone: run `npx vitest run --config vitest.integration.conf
 
 Document `/auth/*`, the two credential types and which is for what (tokens for CI, sessions for humans), and that ingest requires a token. Note the D-1 deviation: `/auth/*` returns Better Auth's error shapes, `/v1` returns RFC 9457. Document `BETTER_AUTH_URL` alongside the other environment variables, including that it defaults to `http://localhost:<PORT>` and should be set to the public origin in any real deployment.
 
-- [ ] **Step 5: Full verification and commit**
+- [ ] **Step 5: Correct the OpenAPI 400 descriptions**
+
+*Added during execution, from Task 6's review. Task 6 introduced a new 400 on two routes and left their documented descriptions stale — one of them now actively wrong.*
+
+- `POST /v1/runs`'s 400 is `BundleRejected` (`apps/api/src/openapi/document.ts:316`), whose text at `:258-263` asserts it is "the same 400 that `GET /v1/runs/{id}` returns once a rejected upload's failure is persisted on the run." `PROJECT_REQUIRED` is a 400 that `GET /v1/runs/{id}` can **never** return, because no run row is created. That stated equivalence is now false and must be corrected, not merely extended.
+- `/v1/projects/{slug}/runs`'s 400 is described as "A path or query parameter was malformed" (`document.ts:266-270`, referenced at `:525`), which does not cover a credential-shape failure.
+
+`StatsBadRequest` (`document.ts:273-281`) is the in-repo precedent for naming a code in the description — follow its shape.
+
+- [ ] **Step 6: Full verification and commit**
 
 ```bash
 pnpm typecheck && pnpm lint && pnpm test && pnpm test:integration
