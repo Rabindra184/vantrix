@@ -761,3 +761,110 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm test:integration
 **Out of scope, and must not appear in any diff:** RBAC enforcement, OIDC, SAML, invitations, password reset, email verification, 2FA, passkeys, rate limiting (spec §8), and any frontend code.
 
 **Known write-only column:** `org_member.role` is written and read by nothing until M6. This is recorded in spec §3 and is expected — a reviewer should not file it as a finding.
+
+---
+
+### Task 9: `GET /v1/runs` — the org-scoped run list
+
+*Added during execution, after Task 8's implementer discovered the endpoint does not exist.*
+
+**Why this is here.** Task 6's `PROJECT_REQUIRED` remediation tells callers to "use `GET /v1/runs` with a session" — a route that 404s. Worse, the human ruled on Task 6 partly because I asserted that endpoint already existed. It does not: the only list route is `/v1/projects/:slug/runs`, which now 400s for a session. So a logged-in human can fetch a run by id but has no way to discover one.
+
+There is a second signal pointing the same way. Task 3 gave `RunRepository.list` an org-only branch and Task 3's review made us cover it with tests — but its only production caller is `ProjectRunsController.list`, which now guarantees a `projectId` above it. **That branch is currently dead in production, reachable only from tests.** This task is what makes it live.
+
+**Files:**
+- Modify: `apps/api/src/runs/runs.controller.ts`
+- Modify: `apps/api/src/openapi/document.ts`
+- Modify: `apps/api/test/session-auth.integration.test.ts`
+
+**Interfaces:**
+- Consumes: `RunRepository.list(scope: TenantScope, opts)` (Task 3), `RunListResponse` from `@perfportal/contracts`, `parseCursor` / `parseLimit` from `../common/validation.js`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `apps/api/test/session-auth.integration.test.ts`, reusing `ingestFullRun`, `mintIngestTokenFor` and `signUpAsOrgMember`:
+
+```ts
+it('lists runs across every project in the session org', async () => {
+  ctx = await createTestApp();
+  const ownRunId = await ingestFullRun(ctx);
+  const second = await prisma.project.create({
+    data: { orgId: ctx.orgId, slug: 'second', name: 'Second' },
+  });
+  const secondToken = await mintIngestTokenFor(ctx, ctx.orgId, second.id);
+  const secondRunId = await ingestFullRun(ctx, secondToken);
+
+  const cookie = await signUpAsOrgMember(ctx, 'lister@example.test');
+  const res = await request(ctx.app.getHttpServer())
+    .get('/v1/runs').set('Cookie', cookie).expect(200);
+
+  const ids = res.body.items.map((r: { id: string }) => r.id).sort();
+  expect(ids).toEqual([ownRunId, secondRunId].sort());
+});
+
+// The tenancy assertion. A session must not see another org's runs.
+it('never lists a run from another org', async () => {
+  // build the other-org run exactly as the cross-org suite does
+  const cookie = await signUpAsOrgMember(ctx, 'lister2@example.test');
+  const res = await request(ctx.app.getHttpServer())
+    .get('/v1/runs').set('Cookie', cookie).expect(200);
+  expect(res.body.items.map((r: { id: string }) => r.id)).not.toContain(otherOrgRunId);
+});
+
+// The bearer path must stay project-scoped, byte for byte.
+it('lists only the token project runs for a bearer token', async () => {
+  const res = await request(ctx.app.getHttpServer())
+    .get('/v1/runs').set('Authorization', `Bearer ${ctx.readToken}`).expect(200);
+  expect(res.body.items.map((r: { id: string }) => r.id)).toEqual([ownRunId]);
+});
+```
+
+- [ ] **Step 2: Run and confirm they fail** — 404, because the route does not exist.
+
+- [ ] **Step 3: Add the route**
+
+In `apps/api/src/runs/runs.controller.ts`, on the existing `@Controller('/v1/runs')` class:
+
+```ts
+  /**
+   * Org-scoped by credential, not by URL. A bearer token carries a projectId
+   * and stays restricted to it, exactly as before. A session carries none and
+   * sees every run in its org - the spread is what expresses that, and it is
+   * the only production caller of RunRepository.list's org-only branch.
+   */
+  @Get()
+  @Scopes('read')
+  async list(
+    @Req() req: Request,
+    @Query('limit') limit = '25',
+    @Query('cursor') cursor?: string,
+  ): Promise<RunListResponse> {
+    const tenant = req.tenant!;
+    const parsedCursor = parseCursor(cursor);
+    const page = await this.runs.runs().list(
+      { orgId: tenant.orgId, ...(tenant.projectId ? { projectId: tenant.projectId } : {}) },
+      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+    );
+    return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
+  }
+```
+
+**Do not duplicate the item mapping.** `ProjectRunsController.list` already contains it inline; extract it to a module-level `toListItem(r: RunRecord)` and use it from both. Two verbatim copies of a response shape is exactly the drift this project has been removing.
+
+**Route ordering matters.** `@Get()` and `@Get(':id')` live on the same controller; `/v1/runs` must not be swallowed by the `:id` matcher. Nest matches in declaration order, so declare `@Get()` **before** `@Get(':id')` and assert it with the test rather than trusting it — a request to `/v1/runs` reaching `findById` would 400 on `uuidParam`, which is a visible failure, but only if a test looks.
+
+- [ ] **Step 4: Document it in OpenAPI**
+
+Add the route to `apps/api/src/openapi/document.ts` beside the project-scoped list, reusing the same `RunListResponse` schema and cursor/limit parameters. State in the description that the result is scoped by the credential: a token to its project, a session to its whole org.
+
+- [ ] **Step 5: Falsification**
+
+Delete `orgId: tenant.orgId` from the new handler's scope and re-run. Expected: "never lists a run from another org" FAILS. Restore and confirm green.
+
+Then delete the `...(tenant.projectId ? ... : {})` spread, leaving the scope org-only for everyone. Expected: "lists only the token project runs for a bearer token" FAILS — proving the bearer path is genuinely still project-scoped and not merely assumed to be.
+
+Paste both failing outputs and the restored pass.
+
+- [ ] **Step 6: Verify and commit**
+
+`pnpm typecheck && pnpm lint`, then the session-auth file. Commit as `feat(api): org-scoped GET /v1/runs for session credentials`.
