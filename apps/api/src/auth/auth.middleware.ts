@@ -103,7 +103,9 @@ export class AuthMiddleware implements NestMiddleware {
                 'UNAUTHENTICATED',
                 status,
                 err.message,
-                'Provide a valid bearer API token in the Authorization header.',
+                'Provide a bearer API token in the Authorization header (for CI/machine ' +
+                  'callers), or sign in at POST /auth/sign-in/email to obtain a session ' +
+                  'cookie (for a browser).',
               );
         res.status(status).type('application/problem+json').send(body);
         return;

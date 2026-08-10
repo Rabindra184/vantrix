@@ -205,7 +205,21 @@ describe('AuthMiddleware — session cookie branch on /v1', () => {
     await request(ctx.app.getHttpServer()).post('/auth/sign-out').set('Cookie', cookie).expect(200);
     // The same cookie string, now revoked server-side. A session store that only
     // expires by time would still accept this.
-    await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set('Cookie', cookie).expect(401);
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}`)
+      .set('Cookie', cookie)
+      .expect(401);
+    // Pinned, not just the status: a stale cookie is one of the population
+    // this credential-agnostic 401 remediation exists for (see
+    // auth.middleware.ts) — asserting only the status would not fail if the
+    // body regressed to a bearer-only-shaped problem response, or dropped
+    // the required "remediation" field entirely.
+    expect(res.headers['content-type']).toContain('application/problem+json');
+    expect(res.body.code).toBe('UNAUTHENTICATED');
+    expect(res.body.remediation).toBe(
+      'Provide a bearer API token in the Authorization header (for CI/machine callers), or ' +
+        'sign in at POST /auth/sign-in/email to obtain a session cookie (for a browser).',
+    );
   });
 
   // Regression guard for the blanket rejection, PLUS the one assertion here
@@ -531,7 +545,10 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     expect(secondPage.body.items).toHaveLength(1);
     expect(secondPage.body.items[0].id).toBe(older.id);
 
-    const allIds = [firstPage.body.items[0].id, secondPage.body.items[0].id].sort();
-    expect(allIds).toEqual([newer.id, older.id].sort());
+    // The second page must be the end of the list: nothing left to cursor
+    // into once both known runs have been seen. Without this, a bug that
+    // silently repeated forever (or dropped the terminal null) would pass —
+    // the assertions above already pin the two items' identities and order.
+    expect(secondPage.body.nextCursor).toBeNull();
   });
 });
