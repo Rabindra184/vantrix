@@ -542,6 +542,17 @@ async accept(tenant: Tenant & { projectId: string }, /* … */)
 
 The anticipated error sites are `ingest.service.ts:73` and `ingest.service.ts:92-93`. **`ingest.controller.ts:42` does NOT error** — Task 5's implementer verified it already used an optional-projectId type; the earlier note naming it was wrong.
 
+**One site the red typecheck will NOT point at** — found by Task 5's reviewer, and the reason this step cannot be driven by `tsc` alone:
+
+```ts
+// apps/api/src/ingest/ingest.service.ts:86
+const key = `runs/${tenant.projectId}/${randomUUID()}.tgz`;
+```
+
+A template literal accepts `undefined` silently. This site compiles clean before and after, and a session-driven ingest would write blobs to `runs/undefined/…`. Narrowing the parameter type fixes it, but **verify it explicitly** rather than assuming the compiler covered it.
+
+**Why the narrowing must not be faked.** `findByIdempotencyKey` puts `projectId` straight into a Prisma `where`, and Prisma *drops* `undefined` filters — so the idempotency lookup would silently widen from (org, project, key) to (org, key), a cross-project match rather than an error. The compile error is the only thing preventing that today. A `!` assertion or a widened type re-opens it.
+
 - [ ] **Step 5: Guard `ProjectRunsController.list` too**
 
 *Added during execution. Task 5's implementer found this site, which the original analysis missed.*
@@ -561,6 +572,10 @@ if (!projectId) {
 }
 const project = await this.projects.byId(projectId);
 ```
+
+**Today this route 500s for a session** — `ProjectRepository.byId` calls `findUnique({ where: { id: undefined } })`, which is a Prisma validation throw, not a null. That is newly reachable rather than newly broken: no session could reach any `/v1` route before Task 5.
+
+**The trap to avoid.** Line 108 passes the tenant scope to `RunRepository.list`, which drops the project filter when `projectId` is absent. So "fix" this by merely skipping the project check when a session has no project, and the endpoint lists **every run in the org** under a URL that names one project's slug. The guard is the only tenancy check on this route — put it before both the `byId` call and the `list` call.
 
 Add a test asserting a session gets 400 with `code === 'PROJECT_REQUIRED'` here, and that a **bearer token still gets its runs unchanged** — the second is the regression guard that matters.
 
