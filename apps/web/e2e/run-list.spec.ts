@@ -25,6 +25,14 @@ import { firstRowId, signIn } from './helpers.js';
  */
 const PAGE_SIZE = 25;
 
+/**
+ * An ISO-8601 UTC instant, the shape `Date.toISOString()` emits and the shape
+ * `z.string().datetime()` pins in the contract. Asserting the FORMAT, not
+ * merely that a string came back, is what stops the ordering test below
+ * passing against a degenerate constant attribute.
+ */
+const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
 test('lists the org runs in a real table', async ({ page }) => {
   const admin = await seedAdmin();
   // Fewer than one page, so every seeded run is on the first page and the
@@ -79,13 +87,17 @@ test('orders by the same value it displays', async ({ page }) => {
     .locator('time')
     .evaluateAll((els) => els.map((el) => el.getAttribute('datetime')));
 
-  // Two guards, not one. The length check alone is not enough: a <time> that
-  // lost its datetime attribute yields [null, null, null], which satisfies
-  // length > 1 AND is trivially equal to its own sort().reverse() — so the
-  // ordering assertion below would pass against a list whose order this test
-  // cannot actually observe.
+  // Three guards, not one, because the ordering assertion below is trivially
+  // satisfied by any array equal to its own sort().reverse() — and several
+  // broken renders produce exactly that:
+  //   - a <time> that lost its datetime attribute yields [null, null, null];
+  //   - a constant or malformed attribute yields ['', '', ''] or ['x', 'x', 'x'].
+  // Each has length > 1 and each equals its own reverse-sort, so without
+  // these the test would report success for a list whose order it cannot
+  // observe at all.
   expect(shown.length).toBeGreaterThan(1);
-  expect(shown.every((v) => typeof v === 'string')).toBe(true);
+  expect(shown.every((v) => typeof v === 'string' && ISO_8601_UTC.test(v))).toBe(true);
+  expect(new Set(shown).size).toBe(shown.length);
 
   expect(shown).toEqual([...shown].sort().reverse());
 });
