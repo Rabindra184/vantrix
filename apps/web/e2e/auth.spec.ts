@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { seedAdmin, seedRunWithData, seedUserWithoutOrg } from './fixtures.js';
+import { seedAdmin, seedRunWithData, seedRunsAt, seedUserWithoutOrg } from './fixtures.js';
 import { signIn } from './helpers.js';
 
 /**
@@ -30,12 +30,19 @@ test('signing in lands on the run list', async ({ page }) => {
 
 // The cookie round trip - the reason this sub-project exists.
 test('the session survives a full page reload', async ({ page }) => {
+  // One run, seeded HERE rather than in beforeAll because this is the only
+  // test in this file that needs the org to be non-empty: without a run the
+  // list renders its empty state and there is no table to assert on. A
+  // single direct-Prisma row (no HTTP, no pipeline) costs one insert.
+  await seedRunsAt(admin.orgId, [{ startedAt: new Date('2026-06-01T09:00:00Z') }]);
+
   await signIn(page, admin);
   await page.reload();
   await expect(page).toHaveURL(/\/runs$/);
-  // The authenticated marker Task 5 owns. Task 6 adds the table assertion
-  // here when the run list lands.
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  // The session survived far enough to fetch org-scoped data and render it,
+  // not merely far enough to keep a Sign out button on screen.
+  await expect(page.getByRole('table')).toBeVisible();
 });
 
 test('an unauthenticated deep link redirects to login and comes back', async ({ page }) => {

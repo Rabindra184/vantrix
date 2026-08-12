@@ -39,8 +39,14 @@ export default function AuthGate() {
 
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
   const runs = useQuery({
-    queryKey: runsQueryKey,
-    queryFn: fetchRuns,
+    // `runsQueryKey()` with no cursor is the run list's FIRST page, by
+    // construction (`['runs', null]`) — so this probe's result is what
+    // RunList renders on first paint rather than a second loading state.
+    // Wrapped in an arrow, not passed as `queryFn: fetchRuns`: TanStack
+    // hands the query function a QueryFunctionContext, which `fetchRuns`
+    // would now read as its `cursor`.
+    queryKey: runsQueryKey(),
+    queryFn: () => fetchRuns(),
     // Never probe without a session: an unauthenticated probe would answer
     // 401 and land in the same place, having paid a request to learn what
     // step 1 already knew.
