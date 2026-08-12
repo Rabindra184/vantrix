@@ -5,7 +5,10 @@ import type { RunListResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
 import { fetchRuns, runsQueryKey } from '../api/runs';
 // Status and verdict render identically here and on the run detail page, so
-// the vocabulary lives in one module rather than in two that can drift.
+// the vocabulary lives in one module rather than in two that can drift. Same
+// for the start-time formatter: the two screens must agree about when a run
+// started, and one definition is the only way that is guaranteed.
+import { formatStarted } from './format';
 import { Marked, STATUS, VERDICT } from './marks';
 
 type RunListItem = RunListResponse['items'][number];
@@ -235,19 +238,4 @@ function RunRow({ run }: { run: RunListItem }) {
       </td>
     </tr>
   );
-}
-
-/**
- * Formatted in the reader's own locale and time zone — a performance run's
- * start is read against the reader's day, not the server's. Nothing sorts or
- * compares this string; the `datetime` attribute beside it is the value that
- * carries meaning to machines.
- */
-const STARTED_FORMAT = new Intl.DateTimeFormat(undefined, {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
-
-function formatStarted(iso: string): string {
-  return STARTED_FORMAT.format(new Date(iso));
 }
