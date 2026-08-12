@@ -79,9 +79,14 @@ test('orders by the same value it displays', async ({ page }) => {
     .locator('time')
     .evaluateAll((els) => els.map((el) => el.getAttribute('datetime')));
 
-  // Without this, an empty list would satisfy the ordering assertion
-  // trivially — the exact failure this test exists to prevent.
+  // Two guards, not one. The length check alone is not enough: a <time> that
+  // lost its datetime attribute yields [null, null, null], which satisfies
+  // length > 1 AND is trivially equal to its own sort().reverse() — so the
+  // ordering assertion below would pass against a list whose order this test
+  // cannot actually observe.
   expect(shown.length).toBeGreaterThan(1);
+  expect(shown.every((v) => typeof v === 'string')).toBe(true);
+
   expect(shown).toEqual([...shown].sort().reverse());
 });
 
@@ -113,4 +118,9 @@ test('an empty org says so instead of showing an empty table', async ({ page }) 
   // A table with a header row and nothing under it looks like a list that
   // failed to load, which is the confusion the empty state exists to remove.
   await expect(page.getByRole('table')).toHaveCount(0);
+  // Nor any page controls: an org with no runs was being told "You have
+  // reached the end of the list" beneath "No runs yet" — the end of a list it
+  // had never walked. There is nothing to page through, so there is nothing
+  // to page with.
+  await expect(page.getByRole('button', { name: 'Next' })).toHaveCount(0);
 });

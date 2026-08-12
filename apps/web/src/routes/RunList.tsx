@@ -104,44 +104,54 @@ export default function RunList() {
         </table>
       )}
 
-      <nav aria-label="Run list pages" className="flex items-center gap-3">
-        {/* No offset paging exists (RunRepository.list is keyset), so there
-            is no page number to go back to — but a list you can only walk
-            forward is a trap. Returning to the first page needs no cursor at
-            all, which is the one backwards move keyset pagination gives for
-            free. */}
-        {cursor !== null && (
+      {/* Page controls exist only when there is a page to control. Rendering
+          them unconditionally told a brand-new org "You have reached the end
+          of the list" beneath "No runs yet" — the end of a list it had never
+          walked, next to a disabled Next and a First page button pointing at
+          the page it was already on. An empty result also means the ONE route
+          back out of a stale cursor is EmptyPage's own button, rather than
+          three pieces of chrome competing for one dead end. */}
+      {items.length > 0 && (
+        <nav aria-label="Run list pages" className="flex items-center gap-3">
+          {/* No offset paging exists (RunRepository.list is keyset), so there
+              is no page number to go back to — but a list you can only walk
+              forward is a trap. Returning to the first page needs no cursor at
+              all, which is the one backwards move keyset pagination gives for
+              free. */}
+          {cursor !== null && (
+            <button
+              type="button"
+              onClick={() => setCursor(null)}
+              className="rounded border border-[var(--color-border)] px-3 py-2"
+            >
+              First page
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setCursor(null)}
-            className="rounded border border-[var(--color-border)] px-3 py-2"
+            // `runs.isPlaceholderData` is true while the NEXT page is in
+            // flight: without it a second click would advance from a cursor
+            // belonging to a page the user is no longer looking at.
+            disabled={nextCursor === null || runs.isPlaceholderData}
+            aria-describedby={nextCursor === null ? 'no-more-runs' : undefined}
+            onClick={() => setCursor(nextCursor)}
+            className="rounded border border-[var(--color-border)] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            First page
+            Next
           </button>
-        )}
-        <button
-          type="button"
-          // `runs.isPlaceholderData` is true while the NEXT page is in
-          // flight: without it a second click would advance from a cursor
-          // belonging to a page the user is no longer looking at.
-          disabled={nextCursor === null || runs.isPlaceholderData}
-          aria-describedby={nextCursor === null ? 'no-more-runs' : undefined}
-          onClick={() => setCursor(nextCursor)}
-          className="rounded border border-[var(--color-border)] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Next
-        </button>
-        {/* Disabled rather than hidden: a control that vanishes at the end of
-            the list leaves the reader wondering whether it was ever there.
-            `disabled` alone is silent for a sighted user, so the reason is
-            spelled out — and tied to the button by aria-describedby so a
-            screen reader hears it with the control, not adrift after it. */}
-        {nextCursor === null && (
-          <p id="no-more-runs" className="text-sm text-[var(--color-text-muted)]">
-            You have reached the end of the list.
-          </p>
-        )}
-      </nav>
+          {/* Disabled rather than hidden: a control that vanishes at the end
+              of the list leaves the reader wondering whether it was ever
+              there. `disabled` alone is silent for a sighted user, so the
+              reason is spelled out — and tied to the button by
+              aria-describedby so a screen reader hears it with the control,
+              not adrift after it. */}
+          {nextCursor === null && (
+            <p id="no-more-runs" className="text-sm text-[var(--color-text-muted)]">
+              You have reached the end of the list.
+            </p>
+          )}
+        </nav>
+      )}
     </div>
   );
 }
