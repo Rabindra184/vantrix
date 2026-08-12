@@ -29,18 +29,21 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    // `pnpm build` (root) compiles every workspace package plus apps/api
-    // and apps/worker — but NOT apps/web (see progress.md's Task 2
-    // pre-flight note: the root `build` script never touches it). Building
-    // apps/web explicitly is what puts a real index.html + assets under
-    // apps/web/dist for mountSpa to find; skip it and GET / 404s instead of
-    // exercising the production same-origin path this harness exists to
-    // prove. apps/worker is still built here even though nothing starts a
-    // worker PROCESS: apps/web/e2e/fixtures.ts imports
+    // `pnpm build` (root) compiles every workspace package plus apps/api,
+    // apps/worker AND apps/web — the last via the root `build:web` script,
+    // which is what puts a real index.html + assets under apps/web/dist for
+    // mountSpa to find. That was NOT always true: this command used to build
+    // apps/web itself because the root build never touched it, which meant
+    // the documented `pnpm build` produced an API that answered GET / with
+    // Nest's 404. It is one script now, so an operator following README.md
+    // and this harness build the same thing.
+    //
+    // apps/worker is built even though nothing starts a worker PROCESS:
+    // apps/web/e2e/fixtures.ts imports
     // apps/worker/dist/pipeline/pipeline.service.js directly to run the
     // ingest pipeline synchronously against the same database, with no live
     // worker — see fixtures.ts's own comment for why.
-    command: 'pnpm build && pnpm --filter @perfportal/web build && pnpm --filter @perfportal/api start',
+    command: 'pnpm build && pnpm --filter @perfportal/api start',
     url: 'http://localhost:3000',
     // A full workspace build (tsc -b across every package, plus the api,
     // worker and web builds) comfortably exceeds Playwright's 60s default

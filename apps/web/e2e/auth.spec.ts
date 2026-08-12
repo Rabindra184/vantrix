@@ -47,11 +47,17 @@ test('the session survives a full page reload', async ({ page }) => {
 
 test('an unauthenticated deep link redirects to login and comes back', async ({ page }) => {
   // seedRunWithData posts the real reference bundle and runs the ingest
-  // pipeline synchronously (~51s, design R-3). It is seeded HERE rather than
-  // in beforeAll because this is the only test that needs a run id, and
-  // beforeAll runs once per worker — hoisting it would pay that cost in
-  // every worker instead of once.
-  test.setTimeout(180_000);
+  // pipeline synchronously. MEASURED on 2026-08-12 against the reference
+  // bundle: ~0.34s on the first call in a process, ~0.13s thereafter — not
+  // the ~51s design R-3 and fixtures.ts once claimed, which was never
+  // measured. Seeded HERE rather than in beforeAll because this is the only
+  // test in this file that needs a run id.
+  //
+  // The `test.setTimeout(180_000)` this comment used to justify is gone with
+  // the figure that justified it: at a third of a second the seed cannot
+  // approach the 60s default, every other test in this suite ingests the
+  // same bundle without an extended timeout, and a three-minute budget only
+  // means a genuine hang takes three minutes to report itself.
   const runId = await seedRunWithData(admin.orgId);
 
   await page.goto(`/runs/${runId}`);

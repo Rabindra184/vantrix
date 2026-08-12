@@ -107,10 +107,15 @@ async function mintIngestToken(orgId: string, projectId: string): Promise<string
 
 // Built once, lazily, and reused by every seed that ingests real data —
 // mirrors apps/api/test/session-auth.integration.test.ts's module-scope
-// `bundle`. Building the tarball is cheap; it is the ingest pipeline
-// (parsing + the statistics engine) that costs the ~51s the brief warns
-// about, so this only saves redundant tar-ing, not that cost — see
-// ingestAndProcess below and its callers' own beforeAll-only usage.
+// `bundle`.
+//
+// It is worth being exact about the cost, because it has been wrong here
+// before. This comment, auth.spec.ts and design R-3 all used to cite ~51s for
+// an ingest, a figure nobody had measured; on 2026-08-12 a full
+// seedRunWithData (POST + parse + statistics + SLA evaluation) was MEASURED at
+// ~0.34s on the first call in a process and ~0.13s on each one after. So this
+// cache saves redundant tar-ing and nothing dramatic, and no caller needs to
+// arrange its tests around the price of an ingest.
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
 );

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { Assertion, RunResponse } from '@perfportal/contracts';
+import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
 import { formatStarted } from './format';
@@ -30,6 +30,21 @@ export default function RunDetail() {
   // rather than at the next unrelated render.
   const [capReached, setCapReached] = useState(false);
   useEffect(() => {
+    // Reset the FLAG as well as the timer. `[runId]` already says this
+    // component instance can outlive the run it was showing (two /runs/:runId
+    // locations in a row, no unmount); without this line, a second run opened
+    // after the first hit the cap renders "stopped checking automatically" on
+    // its first paint and never polls once.
+    //
+    // NOTHING CATCHES THIS. No suite exercises this effect at all: the e2e
+    // polling test below asserts that requests keep arriving, which is the
+    // uncapped branch, and the cap's UI is covered only by rendering
+    // `Processing` directly with `capReached` as a prop. Reaching the real
+    // cap through `RunDetail` costs two real minutes of wall clock, and the
+    // honest ways to shorten that are a DOM test environment (a new
+    // dependency) or a `?pollCapMs=` knob shipped to production so a test can
+    // reach a branch. Both were declined; this hole is tracked, not closed.
+    setCapReached(false);
     const timer = setTimeout(() => setCapReached(true), POLL_CAP_MS);
     return () => clearTimeout(timer);
   }, [runId]);
@@ -121,7 +136,10 @@ export function Processing({
   capReached,
   onRetry,
 }: {
-  status: string;
+  // `RunProcessing['status']` — 'pending' | 'parsing' — not `string`. The
+  // contract's own union is what makes a future third processing status a
+  // compile error here rather than a silent render of the 'pending' mark.
+  status: RunProcessing['status'];
   capReached: boolean;
   onRetry: () => void;
 }) {
@@ -130,7 +148,7 @@ export function Processing({
       <h1 className="text-2xl font-semibold">Run in progress</h1>
       <p role="status">This run is still processing.</p>
       <p className="text-[var(--color-text-muted)]">
-        <Marked mark={STATUS[status === 'parsing' ? 'parsing' : 'pending']} />
+        <Marked mark={STATUS[status]} />
       </p>
       {capReached ? (
         // The cap has been reached: the page has stopped asking on its own.

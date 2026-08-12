@@ -66,8 +66,17 @@ export const POLL_CAP_MS = 120_000;
  * elapsed state in directly.
  *
  * `detail === undefined` — the query has no data, i.e. it is still loading or
- * it FAILED — returns false rather than an interval. That is the branch that
- * stops a 404 or a 500 from being re-requested every five seconds forever.
+ * it failed BEFORE ever succeeding — returns false rather than an interval.
+ * That is what stops a run that 404s or 500s on first load from being
+ * re-requested every five seconds forever.
+ *
+ * It is NOT a general guard against polling a failing endpoint, and this
+ * docstring used to claim otherwise. TanStack Query retains `state.data`
+ * across a later error, so a run that fetched once as `processing` and then
+ * started failing still arrives here with a defined `detail` whose state is
+ * `processing`, and keeps being re-asked. The CAP is what ends that — which
+ * is the second reason POLL_CAP_MS exists, alongside the never-settling run
+ * its own comment describes.
  */
 export function pollIntervalFor(detail: RunDetail | undefined, capReached: boolean): number | false {
   if (capReached) return false;
