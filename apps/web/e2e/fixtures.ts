@@ -285,6 +285,51 @@ export async function seedPendingRun(orgId: string): Promise<string> {
   return run.id;
 }
 
+/**
+ * Run rows with caller-chosen timestamps, created directly via Prisma —
+ * never posted through HTTP and never handed to PipelineService, so there is
+ * nothing to wait on, exactly like seedPendingRun above.
+ *
+ * Task 6 needs ORDERING, not parsed metrics: the list is sorted by
+ * COALESCE(tool_started_at, started_at) DESC (RunRepository.list), and the
+ * only thing an ordering test can assert is that the rendered sequence agrees
+ * with that expression. A real ingest per row would buy nothing here while
+ * widening the failure surface of an ordering test to the whole pipeline —
+ * parser, statistics engine and blob store included — so a red test would no
+ * longer name its own cause.
+ *
+ * `toolStartedAt` is deliberately controllable and deliberately optional: a
+ * row omitting it is a run the worker has not parsed yet, which is the case
+ * the list's ingest-time fallback exists for. `startedOn` mirrors
+ * `startedAt`'s date because it is that column's ingest-date partition key
+ * (see schema.prisma) — never the tool's own date.
+ *
+ * ONE `prisma.run.createMany` for the whole batch, not one insert per row:
+ * the pagination test seeds a full page plus one, and paying a round trip per
+ * row would make a test about a button click cost twenty-six of them.
+ */
+export async function seedRunsAt(
+  orgId: string,
+  rows: ReadonlyArray<{ startedAt: Date; toolStartedAt?: Date | null }>,
+): Promise<void> {
+  const projectId = await projectFor(orgId);
+  await prisma.run.createMany({
+    data: rows.map((row) => ({
+      orgId,
+      projectId,
+      status: 'pending',
+      tool: 'gatling',
+      bundleKey: `e2e-fixture/${randomUUID()}`,
+      bundleSha256: '0'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt: row.startedAt,
+      startedOn: row.startedAt,
+      toolStartedAt: row.toolStartedAt ?? null,
+      engineOptions: {},
+    })),
+  });
+}
+
 /** A real, fully-ingested run in a BRAND NEW org the caller has no
  *  membership in — Task 7's cross-org case. */
 export async function seedRunInOtherOrg(): Promise<string> {
