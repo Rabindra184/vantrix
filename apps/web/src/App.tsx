@@ -3,6 +3,7 @@ import AppShell from './AppShell';
 import AuthGate from './AuthGate';
 import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
+import RunDetail from './routes/RunDetail';
 import RunList from './routes/RunList';
 import { DEFAULT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
 
@@ -19,12 +20,7 @@ export default function App() {
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>
           <Route path="/runs" element={<RunList />} />
-          {/* Still element-less deliberately. A route with no element renders
-              its <Outlet/>, i.e. nothing — so the URL, the gate and the shell
-              are all real while the page's content is Task 7's (the run
-              detail) to write. A placeholder here would be a competing
-              implementation it had to delete. */}
-          <Route path="/runs/:runId" />
+          <Route path="/runs/:runId" element={<RunDetail />} />
         </Route>
       </Route>
 

@@ -263,6 +263,77 @@ export async function seedRunWithNaAssertion(orgId: string): Promise<string> {
   return runId;
 }
 
+/**
+ * A real ingested run with one SLA rule it DEMONSTRABLY fails — Task 7's
+ * 422 case, and the one the run detail page is most likely to regress on.
+ *
+ * `GET /v1/runs/:id` answers **422** for a complete run whose verdict is
+ * 'failed' (RunsService.statusFor), and the body is a normal
+ * `RunResponseSchema` run — NOT problem+json. A client that treats every
+ * non-2xx as an error tells the reader their most important run is
+ * unreadable. This seed is what makes that regression visible.
+ *
+ * The rule is scoped to the run itself with a 1ms p95 threshold. Run-scope
+ * `response_time` statistics DO exist for the reference bundle (see
+ * verdict.integration.test.ts's own run-scope p95 rule, which passes at
+ * 100_000), so the rule is always applicable — never not_applicable — and
+ * the bundle's p95 is orders of magnitude above one millisecond, so the
+ * only outcome it can produce is 'failed'.
+ *
+ * Order-independent by construction, in exactly the way and for exactly the
+ * reason seedRunWithNaAssertion above is: its OWN dedicated project inside
+ * orgId, never the org's shared 'checkout' project. `sla_rule` is scoped
+ * per-project and PipelineService applies every enabled rule in a project to
+ * every run subsequently ingested into it, so sharing the project would
+ * silently attach this always-failing rule to every later
+ * seedRunWithData(orgId) call and turn a run that is supposed to have no
+ * rules at all into a verdict-failed one.
+ */
+export async function seedRunWithFailedAssertion(orgId: string): Promise<string> {
+  const project = await prisma.project.create({
+    data: { orgId, slug: unique('failed-assertion'), name: 'Failed Assertion', settings: {} },
+  });
+  await prisma.slaRule.create({
+    data: {
+      orgId,
+      projectId: project.id,
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: 'p95',
+      comparator: 'lte',
+      threshold: 1,
+    },
+  });
+  const token = await mintIngestToken(orgId, project.id);
+  const runId = await ingestAndProcess(token);
+
+  // Post-condition in TWO parts, because the two facts can come apart and
+  // each is load-bearing for a different half of the test. Without them a
+  // rule shape that quietly stopped producing a failure would seed a
+  // perfectly ordinary 200 run, and the 422 test would go green having never
+  // exercised 422 at all — the exact silent-pass this fixture exists to
+  // prevent (same reasoning as seedRunWithNaAssertion's own post-condition).
+  const failedAssertion = await prisma.runAssertion.findFirst({
+    where: { runId, outcome: 'failed' },
+  });
+  if (!failedAssertion) {
+    throw new Error(
+      `seedRunWithFailedAssertion: run ${runId} completed but has no failed assertion — ` +
+        'the SLA rule shape may no longer produce one (see verdict.integration.test.ts).',
+    );
+  }
+  const run = await prisma.run.findUnique({ where: { id: runId } });
+  if (run?.verdict !== 'failed') {
+    throw new Error(
+      `seedRunWithFailedAssertion: run ${runId} has a failed assertion but verdict ` +
+        `'${run?.verdict ?? 'MISSING ROW'}' — GET /v1/runs/${runId} will not answer 422, ` +
+        'so this fixture no longer exercises the case it exists for.',
+    );
+  }
+  return runId;
+}
+
 /** A run row that stays 'pending' — created directly via Prisma, never
  *  posted through HTTP and never handed to PipelineService.process(), so
  *  there is nothing to wait or sleep on: no worker will ever pick it up. */
