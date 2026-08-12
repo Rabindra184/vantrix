@@ -28,14 +28,21 @@ import { Processing } from '../src/routes/RunDetail.js';
  * stated plainly, because a reader deserves to know the shape of the hole
  * rather than to infer coverage from a green tick:
  *
- *   **`RunDetail`'s timer wiring — the `useEffect` that flips `capReached`
- *   from false to true, and the `refetchInterval` call site that consumes
- *   it — has no test that can fail.** Deleting that `useEffect`, or passing a
- *   literal `false` for `capReached`, leaves this file and every other suite
- *   green while the page polls a stuck run until the tab is closed.
+ *   **`RunDetail`'s CAP wiring — the `useEffect` that flips `capReached` from
+ *   false to true — has no test that can fail.** Delete that `useEffect` and
+ *   this file and every other suite stay green while the page polls a stuck
+ *   run until the tab is closed.
  *
- * That is a real, known gap, not a solved one. Closing it needs a DOM
- * environment in `apps/web/test`, which needs a dependency.
+ * Narrowed since this was first written: the `refetchInterval` CALL SITE is
+ * now covered, by `apps/web/e2e/run-detail.spec.ts`'s "a pending run is asked
+ * about again", which counts the requests actually leaving a real browser
+ * against a run no worker will ever settle. Falsified by deleting the
+ * `refetchInterval` line and confirming that test alone went red. What
+ * remains uncovered is only the two-minute cap itself — reaching it means two
+ * real minutes of wall clock, and shortening that needs either a DOM
+ * environment here (a dependency) or a `?pollCapMs=` knob in production code
+ * that exists only for a test. Both were declined, so this is a real, known
+ * gap rather than a solved one.
  */
 describe('Processing — the polling cap UI', () => {
   // Wrapped in a router because the component renders a "Back to all runs"

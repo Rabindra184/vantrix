@@ -115,5 +115,5 @@ All charts and detail pages (the next sub-project). i18n mechanics, personalizat
 |---|---|---|
 | R-1 | The SPA fallback swallows unknown `/v1` paths, returning HTML where clients expect `problem+json` | Mount order fixed in §3; a test asserts `GET /v1/nonsense` still returns a problem document |
 | R-2 | The `Secure` cookie fails on a non-TLS deployment, presenting as a login that works then 401s | §5.2; documented in the README, and the 401 remediation names both credentials |
-| R-3 | Playwright's real-stack fixtures make the suite slow enough to be skipped | Reuse the existing ingest fixture rather than a per-test ingest; the ingest path already costs ~51s per call and must not be in a hot loop |
+| R-3 | Playwright's real-stack fixtures make the suite slow enough to be skipped | Reuse the existing ingest fixture rather than a per-test ingest. The ~51s per ingest this row originally assumed was never measured: on 2026-08-12 a full `seedRunWithData` (POST + parse + statistics + SLA evaluation) MEASURED at ~0.34s cold, ~0.13s warm, so the risk is far smaller than stated — the reuse is still worth keeping, but no test should be shaped around the price of an ingest |
 | R-4 | Two error adapters drift, and the login form starts inventing `remediation` | §5 makes the boundary explicit: only the login form parses Better Auth's shape |

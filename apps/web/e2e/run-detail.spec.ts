@@ -204,6 +204,58 @@ test('a pending run says so rather than showing zeros', async ({ page }) => {
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
+/**
+ * The page ASKS AGAIN on its own.
+ *
+ * The test above proves what a pending run says; it says exactly the same
+ * thing whether the page polls or renders once and goes silent forever.
+ * Delete `refetchInterval` from RunDetail.tsx and it — and every other suite
+ * in this repo — stays green, while the mechanism by which a person watches
+ * their run finish is gone. So polling is asserted here, directly, as
+ * requests actually leaving the browser.
+ *
+ * Cheap and stable because of what `seedPendingRun` is: a run row written
+ * straight through Prisma, never posted over HTTP and never handed to
+ * PipelineService, so no worker exists that could ever settle it. The page
+ * therefore polls at the fixed POLL_INTERVAL_MS (5s, api/run.ts) for as long
+ * as it is open, with nothing racing it — two requests take about six
+ * seconds, well inside this file's 60s timeout.
+ *
+ * `> 1`, not `>= 1`: the first request is the initial load, which happens
+ * whether or not anything polls. The SECOND is the evidence.
+ *
+ * NOT covered here, deliberately: the two-minute cap (POLL_CAP_MS). Reaching
+ * it means two real minutes of wall clock in a browser — there is nothing to
+ * wait ON, only elapsed time — and the two ways to shorten that are a DOM
+ * test environment (a new dependency) or a `?pollCapMs=` query knob shipped
+ * in production code purely so a test can reach a branch. Both were declined;
+ * see apps/web/test/run-detail.test.ts, which covers the cap's UI by
+ * rendering `Processing` directly, and RunDetail.tsx's effect for what that
+ * leaves open.
+ */
+test('a pending run is asked about again', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedPendingRun(admin.orgId);
+
+  await signIn(page, admin);
+
+  // Attached BEFORE the navigation that triggers the first fetch: a listener
+  // registered after `goto` would race the initial request, and the count
+  // this test turns on would depend on which won.
+  let polls = 0;
+  page.on('request', (request) => {
+    if (request.url().includes(`/v1/runs/${runId}`)) polls += 1;
+  });
+
+  await page.goto(`/runs/${runId}`);
+  // The page is on screen and in its processing state before anything is
+  // counted, so a failure below reads as "did not poll" rather than "never
+  // loaded".
+  await expect(page.getByText(/still processing/i)).toBeVisible();
+
+  await expect.poll(() => polls, { timeout: 20_000 }).toBeGreaterThan(1);
+});
+
 test('another org run is not readable', async ({ page }) => {
   const admin = await seedAdmin();
   const otherOrgRunId = await seedRunInOtherOrg();

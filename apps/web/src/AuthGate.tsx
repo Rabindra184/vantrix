@@ -101,12 +101,26 @@ function Bootstrapping() {
   );
 }
 
+/**
+ * The outage page.
+ *
+ * `role="alert"` sits on the message, NOT on the `<main>`. An explicit role
+ * overrides an element's implicit one outright, so `<main role="alert">` is a
+ * page with no main landmark at all — and it makes the heading part of an
+ * assertive live region, which is announced as an interruption rather than
+ * read as the title of a page. The rule, generally: an assertive live region
+ * must never wrap a heading or a landmark. It wraps the thing that changed.
+ */
 function Unavailable({ detail, remediation }: { detail: string; remediation?: string }) {
   return (
-    <main role="alert" className="mx-auto flex max-w-xl flex-col gap-4 p-6">
+    <main className="mx-auto flex max-w-xl flex-col gap-4 p-6">
       <h1 className="text-2xl font-semibold">PerfPortal is not answering</h1>
-      <p>{detail}</p>
-      {remediation !== undefined && <p className="text-[var(--color-text-muted)]">{remediation}</p>}
+      <div role="alert" className="flex flex-col gap-4">
+        <p>{detail}</p>
+        {remediation !== undefined && (
+          <p className="text-[var(--color-text-muted)]">{remediation}</p>
+        )}
+      </div>
     </main>
   );
 }

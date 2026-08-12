@@ -84,3 +84,9 @@ jobs:
       - run: pnpm build
       - run: pnpm test:unit
       - run: pnpm test:integration
+
+      # Chromium only — playwright.config.ts declares one project.
+      - run: pnpm exec playwright install --with-deps chromium
+      # AFTER test:integration, never beside it: createTestApp() TRUNCATEs
+      # every table, and these two suites share one database.
+      - run: pnpm test:e2e
