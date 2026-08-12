@@ -4,6 +4,9 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
 import { fetchRuns, runsQueryKey } from '../api/runs';
+// Status and verdict render identically here and on the run detail page, so
+// the vocabulary lives in one module rather than in two that can drift.
+import { Marked, STATUS, VERDICT } from './marks';
 
 type RunListItem = RunListResponse['items'][number];
 
@@ -233,52 +236,6 @@ function RunRow({ run }: { run: RunListItem }) {
     </tr>
   );
 }
-
-/** A shape, a word, and a colour — in that order of importance. */
-type Mark = { glyph: string; label: string; colour: string };
-
-/**
- * Text plus SHAPE, never colour alone (brief; WCAG 2.2 AA 1.4.1). Colour is
- * present and useful, but it is the third signal, not the only one: a
- * colour-blind reader, a monochrome print-out, or a user with a forced-colour
- * theme still tells ✓ passed from ✕ failed, because the glyph and the word
- * both say so.
- *
- * The glyph is `aria-hidden` — the word beside it already carries the
- * meaning, and a screen reader announcing "white heavy check mark passed"
- * says it twice, once badly.
- */
-function Marked({ mark }: { mark: Mark }) {
-  return (
-    <span style={{ color: mark.colour }}>
-      <span aria-hidden="true">{mark.glyph}</span> {mark.label}
-    </span>
-  );
-}
-
-const STATUS: Record<RunListItem['status'], Mark> = {
-  pending: { glyph: '○', label: 'pending', colour: 'var(--color-status-pending)' },
-  parsing: { glyph: '◐', label: 'parsing', colour: 'var(--color-status-pending)' },
-  complete: { glyph: '●', label: 'complete', colour: 'var(--color-status-passed)' },
-  failed: { glyph: '✕', label: 'failed', colour: 'var(--color-status-failed)' },
-};
-
-/**
- * `none` is a NULL verdict, which is not the same thing as `not_evaluated`:
- * null means the run never got far enough to be judged, while
- * `not_evaluated` means it finished and no SLA rule applied to it. Flattening
- * the two would tell a user their still-pending run had been assessed.
- */
-const VERDICT: Record<NonNullable<RunListItem['verdict']> | 'none', Mark> = {
-  passed: { glyph: '✓', label: 'passed', colour: 'var(--color-status-passed)' },
-  failed: { glyph: '✕', label: 'failed', colour: 'var(--color-status-failed)' },
-  not_evaluated: {
-    glyph: '○',
-    label: 'not evaluated',
-    colour: 'var(--color-status-not-applicable)',
-  },
-  none: { glyph: '–', label: 'no verdict yet', colour: 'var(--color-status-not-applicable)' },
-};
 
 /**
  * Formatted in the reader's own locale and time zone — a performance run's

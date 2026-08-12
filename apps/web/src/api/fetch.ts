@@ -56,8 +56,17 @@ export class ProblemError extends Error {
  * `code: 'CLIENT_UNREADABLE_ERROR'` is prefixed `CLIENT_` deliberately: it
  * is synthesized here in the browser and must never be mistaken for a code
  * the API itself emitted.
+ *
+ * EXPORTED, and no longer only `apiFetch`'s. Its second caller is
+ * `fetchRun` (`./run.ts`), which cannot go through `apiFetch` at all:
+ * `GET /v1/runs/:id` answers 422 and 202 with ordinary run bodies rather
+ * than problem documents, so it must branch on the status itself. What it
+ * still needs is the ONE error path — a 404 or a 502 from that endpoint has
+ * to become the same `ProblemError`, read the same way, as every other `/v1`
+ * failure. Exporting this is what keeps that a single implementation rather
+ * than a second, subtly different reader of problem+json.
  */
-async function problemFrom(res: Response): Promise<ProblemError> {
+export async function problemFrom(res: Response): Promise<ProblemError> {
   let text: string;
   try {
     text = await res.text();
