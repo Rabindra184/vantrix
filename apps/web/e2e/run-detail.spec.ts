@@ -5,6 +5,7 @@ import {
   seedRunInOtherOrg,
   seedRunWithData,
   seedRunWithFailedAssertion,
+  seedRunWithNaAndPassedAssertions,
   seedRunWithNaAssertion,
 } from './fixtures.js';
 import { signIn } from './helpers.js';
@@ -79,6 +80,23 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
   await page.goto(`/runs/${runId}`);
 
   const row = page.getByRole('row', { name: /not applicable/i });
+  // Every `not.*` in this file is paired with a POSITIVE assertion on the
+  // same locator. Two reasons, and the SECOND is the load-bearing one:
+  //
+  // 1. Not all negated matchers need the pairing. Measured against Playwright
+  //    1.62.1 rather than assumed: the CONTENT matchers used here —
+  //    `toBeEmpty`, `toContainText`, `toHaveText` — fail on an absent element
+  //    in BOTH polarities, because they have to resolve the element to read
+  //    its text ("Error: element(s) not found"). It is the STATE matchers
+  //    that quietly pass: `not.toBeVisible()` on a deleted element succeeds,
+  //    since "not attached" is a way of being "not visible". So a bare
+  //    `not.toBeVisible()` is the one to be suspicious of; this file uses
+  //    none.
+  // 2. A negation is a weaker claim than the requirement it stands in for.
+  //    "Is not a pass" is satisfied by a hundred wrong values; "is not
+  //    evaluated" is satisfied by one right one. The positive assertion is
+  //    what pins the requirement, and the negation documents the specific
+  //    wrong answer this screen must never give.
   await expect(row).toBeVisible();
   await expect(row).not.toContainText(/passed/i);
 
@@ -97,7 +115,75 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
   // The run-level consequence of the same decision: every rule was
   // inapplicable, so nothing was checked, so the run was NOT assessed as
   // passing. `not_evaluated` is the verdict, and it is not a pass.
+  //
+  // Asserted POSITIVELY first, because `not.toContainText(/passed/i)` alone
+  // says only that the verdict is not one particular wrong value. The run's
+  // verdict here is a known, specific fact — `not_evaluated`, the verdict a
+  // run made entirely of inapplicable rules produces — and pinning it is a
+  // far stronger claim than excluding "passed". (It also fails if the verdict
+  // is deleted outright, though as measured above the negation would too.)
+  await expect(page.getByTestId('run-verdict')).toHaveText(/not evaluated/i);
   await expect(page.getByTestId('run-verdict')).not.toContainText(/passed/i);
+});
+
+/**
+ * The same requirement as the test above, asserted WITHOUT a mirror.
+ *
+ * The test above compares the rendered not_applicable cell to
+ * `PASSED_MARK`/`NOT_APPLICABLE_MARK` — constants copied into this file. That
+ * catches a change to `not_applicable`'s treatment, but not a change to
+ * `passed`'s: set `ASSERTION_OUTCOME.passed.glyph` to '○' and the two
+ * treatments become shape-identical while the copy here still says '✓', so
+ * `not.toContainText(PASSED_MARK.glyph)` keeps passing. "Text plus shape"
+ * would silently degrade to text only, and every mirrored assertion in this
+ * file would report success.
+ *
+ * This test has nothing to go stale. One run carries both outcomes, both
+ * cells are read off the page, and they are compared to EACH OTHER.
+ */
+test('a not_applicable outcome and a passed outcome render differently on the page', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithNaAndPassedAssertions(admin.orgId);
+
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  const outcomes = page.getByTestId('assertion-outcome');
+  await expect(outcomes).toHaveCount(2);
+
+  // The glyph is read from its own element rather than sliced off the cell
+  // text, so "the shapes differ" is a claim about the shape and not about
+  // whatever the label happens to make the string look like.
+  const cells = await outcomes.evaluateAll((els) =>
+    els.map((el) => ({
+      text: (el.textContent ?? '').trim(),
+      glyph: (el.querySelector('[aria-hidden="true"]')?.textContent ?? '').trim(),
+    })),
+  );
+
+  // Guards before the comparison, in the spirit of the run list's ordering
+  // test: "these two differ" is trivially satisfied by two empty strings, or
+  // by a cell that renders no glyph element at all. Establish that both sides
+  // are well-formed BEFORE asserting they are distinct.
+  expect(cells).toHaveLength(2);
+  for (const cell of cells) {
+    expect(cell.text.length).toBeGreaterThan(0);
+    expect(cell.glyph.length).toBeGreaterThan(0);
+  }
+
+  // The fixture guarantees one not_applicable and one passed row exist; this
+  // pins which cell is which, so the comparison below is between the two
+  // outcomes it claims to be about and not between two arbitrary rows.
+  const na = cells.find((c) => /not applicable/i.test(c.text));
+  const passed = cells.find((c) => /^\W*passed$/i.test(c.text));
+  expect(na, 'no cell rendered a not_applicable outcome').toBeDefined();
+  expect(passed, 'no cell rendered a passed outcome').toBeDefined();
+
+  // Text differs, and SHAPE differs. Neither is asserted against a constant.
+  expect(na!.text).not.toBe(passed!.text);
+  expect(na!.glyph).not.toBe(passed!.glyph);
 });
 
 test('a pending run says so rather than showing zeros', async ({ page }) => {
@@ -136,6 +222,15 @@ test('another org run is not readable', async ({ page }) => {
   // presence is the requirement; its wording belongs to the API, so this
   // asserts the element is rendered and non-empty rather than pinning copy
   // this repo would then have to keep in two places.
+  //
+  // `toHaveCount(1)` FIRST — existence stated as its own requirement rather
+  // than left as a side effect of a negation. A2 required the remediation to
+  // be RENDERED, and that is a claim about the element being there, which is
+  // not what `not.toBeEmpty()` is about even though this version of
+  // Playwright happens to fail when it is missing (measured; see the note in
+  // the not_applicable test). Asserting the requirement directly does not
+  // depend on that behaviour staying the same.
+  await expect(page.getByTestId('problem-remediation')).toHaveCount(1);
   await expect(page.getByTestId('problem-remediation')).not.toBeEmpty();
   // And none of the run itself leaks through the error.
   await expect(page.getByTestId('run-duration')).toHaveCount(0);

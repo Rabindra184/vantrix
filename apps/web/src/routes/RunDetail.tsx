@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Assertion, RunResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
+import { formatStarted } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 
@@ -107,8 +108,15 @@ function BackToRuns() {
  * Deliberately renders NO header shell: there is no duration, no verdict and
  * no assertion to show, and a table of dashes reads as a run that was
  * measured and found empty rather than one nobody has looked at yet.
+ *
+ * EXPORTED for `apps/web/test/run-detail.test.ts`, which renders it directly
+ * to static markup with both values of `capReached`. That test exists because
+ * the cap UI below is otherwise unreachable from any suite: the only way to
+ * reach it through `RunDetail` is to let two real minutes elapse in a browser.
+ * Taking `capReached` as a prop rather than reading the timer itself is what
+ * makes this component renderable without one.
  */
-function Processing({
+export function Processing({
   status,
   capReached,
   onRetry,
@@ -323,16 +331,3 @@ function formatDuration(durationMs: number | null | undefined): string {
   return `${Math.round(durationMs / 1000)}s`;
 }
 
-/**
- * Formatted in the reader's own locale and time zone, exactly as the run list
- * formats the same value. Nothing sorts or compares this string; the
- * `datetime` attribute beside it is what carries meaning to machines.
- */
-const STARTED_FORMAT = new Intl.DateTimeFormat(undefined, {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
-
-function formatStarted(iso: string): string {
-  return STARTED_FORMAT.format(new Date(iso));
-}

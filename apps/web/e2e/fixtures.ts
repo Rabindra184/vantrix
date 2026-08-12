@@ -334,6 +334,88 @@ export async function seedRunWithFailedAssertion(orgId: string): Promise<string>
   return runId;
 }
 
+/**
+ * A real ingested run carrying BOTH a not_applicable assertion and a passed
+ * one — so a test can compare the two treatments as they are actually
+ * RENDERED, against each other, rather than against constants mirrored into
+ * the spec file.
+ *
+ * That distinction is the whole reason this fixture exists. A spec that
+ * asserts "the not_applicable glyph is not '✓'" is only as good as its copy
+ * of what `passed` renders: change `ASSERTION_OUTCOME.passed.glyph` to '○'
+ * and the two treatments become shape-identical while the spec's mirror goes
+ * stale and keeps passing. One run with both outcomes on one page has no
+ * mirror to go stale — the page supplies both sides of the comparison.
+ *
+ * The two rules are chosen so that neither can drift into the other's
+ * outcome:
+ *   - not_applicable: scope `request`, target 'GET /nonexistent', a request
+ *     name the reference bundle never produces, so there is nothing to
+ *     compare against (same shape as seedRunWithNaAssertion).
+ *   - passed: scope `run`, p95 ≤ 100_000 ms, which
+ *     apps/api/test/verdict.integration.test.ts:120-138 pins as PASSING
+ *     against this same reference bundle.
+ *
+ * Order-independent by construction — its own dedicated project inside orgId,
+ * for the reason seedRunWithNaAssertion's docstring gives at length.
+ */
+export async function seedRunWithNaAndPassedAssertions(orgId: string): Promise<string> {
+  const project = await prisma.project.create({
+    data: { orgId, slug: unique('mixed-assertions'), name: 'Mixed Assertions', settings: {} },
+  });
+  await prisma.slaRule.createMany({
+    data: [
+      {
+        orgId,
+        projectId: project.id,
+        scope: 'request',
+        targetName: 'GET /nonexistent',
+        family: 'response_time',
+        metric: 'p95',
+        comparator: 'lte',
+        threshold: 10,
+      },
+      {
+        orgId,
+        projectId: project.id,
+        scope: 'run',
+        targetName: null,
+        family: 'response_time',
+        metric: 'p95',
+        comparator: 'lte',
+        threshold: 100_000,
+      },
+    ],
+  });
+  const token = await mintIngestToken(orgId, project.id);
+  const runId = await ingestAndProcess(token);
+
+  // Post-condition in two parts, one per rule. A test that compared two
+  // outcome cells would still "pass" if BOTH rows came out not_applicable —
+  // it would just be comparing a thing to itself — so the fixture, not the
+  // test, is where each outcome's existence has to be established.
+  const naAssertion = await prisma.runAssertion.findFirst({
+    where: { runId, outcome: 'not_applicable' },
+  });
+  if (!naAssertion) {
+    throw new Error(
+      `seedRunWithNaAndPassedAssertions: run ${runId} has no not_applicable assertion — ` +
+        'the request-scoped rule shape may no longer produce one.',
+    );
+  }
+  const passedAssertion = await prisma.runAssertion.findFirst({
+    where: { runId, outcome: 'passed' },
+  });
+  if (!passedAssertion) {
+    throw new Error(
+      `seedRunWithNaAndPassedAssertions: run ${runId} has no passed assertion — the run-scoped ` +
+        'p95 ≤ 100000 rule no longer passes against the reference bundle ' +
+        '(see verdict.integration.test.ts:120-138).',
+    );
+  }
+  return runId;
+}
+
 /** A run row that stays 'pending' — created directly via Prisma, never
  *  posted through HTTP and never handed to PipelineService.process(), so
  *  there is nothing to wait or sleep on: no worker will ever pick it up. */
