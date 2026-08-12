@@ -38,16 +38,16 @@ export default function Login() {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
+    // ONLY the sign-in call is guarded, and the boundary is exactly here on
+    // purpose. Everything after it runs with the session cookie already set,
+    // so a throw from it is not a failure to sign in — and reporting one as
+    // "could not reach the server" would tell a user who IS now signed in
+    // the opposite of what happened. (That miscategorisation is not
+    // hypothetical: react-router's replaceState path throws a SecurityError
+    // for a cross-origin destination, and a wider `try` swallowed it into
+    // this form's network-error branch.)
     try {
       await signIn(email, password);
-      // Drop every cached query BEFORE navigating. Two reasons, both
-      // load-bearing: AuthGate's own `['session']` result from the visit that
-      // redirected here is cached as `null`, and re-rendering the gate
-      // against it would bounce straight back to /login — a loop caused
-      // purely by stale cache. And on a shared machine the cache may still
-      // hold the PREVIOUS user's runs (design §5.1).
-      queryClient.clear();
-      navigate(safeNext(params.get('next')), { replace: true });
     } catch (err) {
       // Better Auth's message, verbatim, never a rewrite: it distinguishes
       // cases (unknown account vs wrong password vs unverified email) that
@@ -60,7 +60,17 @@ export default function Login() {
           : 'Could not reach the server to sign in. Check your connection and try again.',
       );
       setSubmitting(false);
+      return;
     }
+
+    // Drop every cached query BEFORE navigating. Two reasons, both
+    // load-bearing: AuthGate's own session result from the visit that
+    // redirected here is cached as `null`, and re-rendering the gate against
+    // it would bounce straight back to /login — a loop caused purely by
+    // stale cache. And on a shared machine the cache may still hold the
+    // PREVIOUS user's runs (design §5.1).
+    queryClient.clear();
+    navigate(safeNext(params.get('next')), { replace: true });
   }
 
   return (
