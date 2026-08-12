@@ -65,6 +65,30 @@ test('signing out clears the session', async ({ page }) => {
   await expect(page).toHaveURL(/\/login/);
 });
 
+/**
+ * The rejection path of `session.ts` — Better Auth's own `{ code, message }`
+ * shape (deviation D-1), which nothing else in the suite reaches. Its message
+ * is surfaced verbatim precisely because it draws distinctions this form must
+ * not flatten, so "the error is shown at all" is the assertion that keeps
+ * that code honest.
+ *
+ * NOT `signIn()` from helpers.ts: that waits for navigation away from
+ * /login, which is exactly what must not happen here — it would hang for the
+ * full timeout rather than fail.
+ */
+test('a wrong password is rejected in place, without leaving the login page', async ({ page }) => {
+  // Its own account, not the worker's shared `admin`: this is the one test
+  // that deliberately fails an authentication, and an account it owns cannot
+  // be affected by — or affect — anything another test does to that one.
+  const account = await seedAdmin();
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(account.email);
+  await page.getByLabel('Password').fill('not-the-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page).toHaveURL(/\/login/);
+});
+
 // A valid session with no org must NOT bounce to login - that loops forever.
 test('a user with no organisation sees an explanation, not a login loop', async ({ page }) => {
   const orphan = await seedUserWithoutOrg();

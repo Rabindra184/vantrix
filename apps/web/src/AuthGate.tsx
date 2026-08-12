@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ProblemError } from './api/fetch';
 import { fetchRuns, runsQueryKey } from './api/runs';
-import { getSession } from './api/session';
+import { getSession, sessionQueryKey } from './api/session';
 import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
 
 /**
@@ -31,9 +31,13 @@ import { NO_ORG_ROUTE, loginPathFor } from './routes/paths';
  */
 export default function AuthGate() {
   const location = useLocation();
-  const intended = `${location.pathname}${location.search}`;
+  // pathname + search + hash, not just the first two: a fragment is part of
+  // the destination the user asked for, and the day a chart deep-link uses
+  // one, dropping it here would silently return them to the wrong place with
+  // nothing to show that anything was lost.
+  const intended = `${location.pathname}${location.search}${location.hash}`;
 
-  const session = useQuery({ queryKey: ['session'], queryFn: getSession });
+  const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
   const runs = useQuery({
     queryKey: runsQueryKey,
     queryFn: fetchRuns,

@@ -59,6 +59,15 @@ async function authError(res: Response): Promise<AuthError> {
 }
 
 /**
+ * ONE query key for the session bootstrap, exported here beside its fetcher
+ * exactly as `runsQueryKey` is exported beside `fetchRuns` — so a consumer
+ * that needs to read, invalidate or seed the session cache names the same
+ * array this module does, rather than re-spelling a string literal that
+ * nothing would catch drifting.
+ */
+export const sessionQueryKey = ['session'] as const;
+
+/**
  * Asked once on load; the answer decides `/login` versus the shell (design
  * §4) — Task 5's job, not this module's. Returns null when Better Auth
  * reports no session: a 200 with a JSON `null` body is its own signal for
