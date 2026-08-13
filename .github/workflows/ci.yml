@@ -80,8 +80,17 @@ jobs:
       - run: pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
 
       - run: pnpm lint
-      - run: pnpm typecheck
+      # BEFORE typecheck, not after. apps/web/e2e/fixtures.ts imports the
+      # worker's COMPILED output (../../worker/dist/...) — deliberately, so
+      # Playwright's TS loader never has to re-transpile a Nest-decorated
+      # class; see the comment at the top of that file. So `apps/web/e2e`
+      # cannot be type-checked until apps/worker has been built.
+      #
+      # This never fails on a developer's machine, because dist/ is already
+      # there from the last build. It fails only on a clean checkout, which
+      # is exactly what CI is.
       - run: pnpm build
+      - run: pnpm typecheck
       - run: pnpm test:unit
       - run: pnpm test:integration
 
