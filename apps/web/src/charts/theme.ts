@@ -69,6 +69,66 @@ export function paletteFor(mode: ChartMode): readonly string[] {
   return mode === 'dark' ? CATEGORICAL_DARK : CATEGORICAL;
 }
 
+/* -------------------------------------------------------------------- *
+ * STATUS colours — a second, smaller palette, for marks that are STATES
+ * -------------------------------------------------------------------- */
+
+/**
+ * The role a mark plays, when the mark is a state rather than an identity.
+ *
+ * WHY THIS EXISTS ALONGSIDE `CATEGORICAL`. The categorical palette answers
+ * "which series is this?" — its hues are interchangeable, and Okabe–Ito's whole
+ * point is that they carry no meaning beyond "not the other one". The indicator
+ * bands ③ and the OK/KO donut ④ ask a different question: a request that failed
+ * is not merely a different series from one that succeeded, it is WORSE, and
+ * the reader has already learned elsewhere on this same page (`routes/marks.tsx`)
+ * that failure is `--color-status-failed`. Drawing it in categorical blue
+ * because it happened to be the first series would throw that away.
+ *
+ * The four roles map one-to-one onto the four `--color-status-*` tokens the
+ * design system defines. `neutral` is `--color-status-not-applicable`.
+ */
+export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
+
+const STATUS_TOKEN: Readonly<Record<StatusRole, string>> = {
+  passed: '--color-status-passed',
+  pending: '--color-status-pending',
+  neutral: '--color-status-not-applicable',
+  failed: '--color-status-failed',
+};
+
+/**
+ * The compiled values of those four tokens, per mode.
+ *
+ * Mirrors `tokens.css` exactly, and `palette.test.ts` fails if the two ever
+ * disagree — the same arrangement, and the same guard, the `--chart-*` palette
+ * has. These are the FALLBACKS: `statusColor` reads the live document first, so
+ * a theme switch is picked up without a rebuild, and these cover the two cases
+ * where reading fails honestly (no document at all, and jsdom, which parses no
+ * stylesheet).
+ */
+export const STATUS_COLORS: Readonly<Record<ChartMode, Readonly<Record<StatusRole, string>>>> = {
+  light: { passed: '#1a7f37', pending: '#9a6700', neutral: '#6e7781', failed: '#cf222e' },
+  dark: { passed: '#3fb950', pending: '#d29922', neutral: '#8b949e', failed: '#f85149' },
+};
+
+export function statusColor(role: StatusRole, mode: ChartMode): string {
+  return token(STATUS_TOKEN[role], STATUS_COLORS[mode][role]);
+}
+
+/**
+ * Every status colour, read off the live document — the shape `chartTheme`
+ * carries and `Chart` indexes with a chart's declared roles.
+ */
+export function liveStatusColors(mode: ChartMode): Readonly<Record<StatusRole, string>> {
+  return {
+    passed: statusColor('passed', mode),
+    pending: statusColor('pending', mode),
+    neutral: statusColor('neutral', mode),
+    failed: statusColor('failed', mode),
+  };
+}
+
 /** How many categorical series can be drawn at once. There is no seventh. */
 export const MAX_CATEGORICAL_SERIES = CATEGORICAL.length;
 
@@ -189,6 +249,8 @@ export function resolveChartMode(): ChartMode {
 
 export interface ChartTheme {
   readonly palette: readonly string[];
+  /** The status palette, for charts whose marks are states — see `StatusRole`. */
+  readonly status: Readonly<Record<StatusRole, string>>;
   readonly ink: string;
   readonly inkMuted: string;
   readonly gridline: string;
@@ -211,11 +273,16 @@ export interface ChartTheme {
  * `assignPalette` into the series colours, and `surface` is the tooltip's
  * background — without it the tooltip renders ECharts' default near-white
  * panel over a dark page.
+ *
+ * `status` is consumed only by the charts that declare `statusRoles` — the
+ * indicator bands ③ and the request-count donut ④. Every other chart draws
+ * identities, not states, and takes `palette`.
  */
 export function chartTheme(mode: ChartMode): ChartTheme {
   const dark = mode === 'dark';
   return {
     palette: livePalette(mode),
+    status: liveStatusColors(mode),
     ink: token('--color-text-primary', dark ? '#f4f5f7' : '#14171a'),
     inkMuted: token('--color-text-muted', dark ? '#9aa4b2' : '#5b6470'),
     gridline: token('--chart-gridline', GRIDLINE[mode]),

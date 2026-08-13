@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DataTable from './DataTable';
 import { echarts } from './echarts';
-import { assignPalette, chartTheme, resolveChartMode, type ChartMode } from './theme';
+import {
+  assignPalette,
+  chartTheme,
+  resolveChartMode,
+  type ChartMode,
+  type StatusRole,
+} from './theme';
 import type { ChartData } from './types';
 
 export interface ChartYAxis {
@@ -24,6 +30,33 @@ export interface ChartProps {
   readonly kind?: 'line' | 'bar' | 'pie';
   /** Stacked bars, for the indicator bands. Ignored by lines and pies. */
   readonly stacked?: boolean;
+  /**
+   * Swaps the category and value axes, so bars run left-to-right. Ignored by
+   * pies. The indicator bands are one stacked bar of four segments, and drawn
+   * vertically that is a single column filling most of the plot; horizontally
+   * it reads as what it is — a proportion bar. Ignored by lines, which have a
+   * time axis that is not negotiable.
+   */
+  readonly horizontal?: boolean;
+  /**
+   * Draw the marks in STATUS colours instead of the categorical palette, in
+   * this order.
+   *
+   * For the charts whose marks are states rather than identities — the
+   * indicator bands ③ and the OK/KO donut ④. See `StatusRole` in `theme.ts` for
+   * why those two must not spend categorical hues.
+   *
+   * WHAT THE ORDER LINES UP WITH is ECharts' own top-level `color` semantics
+   * and therefore differs by `kind`: a bar or line chart consumes it PER
+   * SERIES, a single-series pie consumes it PER SLICE. So the bands pass one
+   * role per series (`BAND_ROLES`, four series of one value each) and the donut
+   * passes one role per slice (`OUTCOME_ROLES`, aligned with `axisLabels`).
+   * Both transforms document their side of that.
+   *
+   * Pass a module-level constant, not a fresh array: this is in the option
+   * effect's dependency list.
+   */
+  readonly statusRoles?: readonly StatusRole[];
   /**
    * ECharts `connect` group. Charts sharing one string share one crosshair, so
    * hovering requests/s moves the pointer on concurrent users too. That linkage
@@ -55,8 +88,10 @@ export default function Chart({
   data,
   kind = 'line',
   stacked = false,
+  horizontal = false,
   group,
   yAxis,
+  statusRoles,
 }: ChartProps) {
   const container = useRef<HTMLDivElement | null>(null);
   // Held across renders so the option can be updated without the instance
@@ -156,13 +191,41 @@ export default function Chart({
     const drawn = assignment.drawn;
     const axisText = { color: theme.inkMuted };
 
+    // The category axis and the value axis, built once and then placed on
+    // whichever of x/y `horizontal` says. Splitting them out is what keeps the
+    // orientation a single swap rather than two near-identical axis blocks.
+    const categoryAxis = {
+      type: 'category',
+      data: [...data.axisLabels],
+      axisLabel: axisText,
+      // No chart border (design §11): the axis line stays, the enclosing box
+      // does not.
+      axisLine: { lineStyle: { color: theme.gridline } },
+      splitLine: { show: false },
+    };
+    const valueAxis = {
+      type: yAxisType,
+      name: yAxisName,
+      nameTextStyle: axisText,
+      axisLabel: axisText,
+      axisLine: { show: false },
+      // Hairline gridlines in the gridline token, so they sit behind the data
+      // rather than competing with it.
+      splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
+    };
+
     instance.setOption(
       {
         // Series colour comes from the palette, which `assignPalette` reads off
-        // the `--chart-*` tokens. Text NEVER does (design §11): the palette is
-        // tuned for marks on a surface, and 12px type in a series colour is
+        // the `--chart-*` tokens — unless the chart declared `statusRoles`, in
+        // which case its marks are states and wear the `--color-status-*`
+        // tokens instead. Text NEVER wears either (design §11): the palettes
+        // are tuned for marks on a surface, and 12px type in a series colour is
         // the commonest way a chart quietly fails contrast.
-        color: drawn.map((series) => series.color),
+        color:
+          statusRoles === undefined
+            ? drawn.map((series) => series.color)
+            : statusRoles.map((role) => theme.status[role]),
         textStyle: { color: theme.ink },
         backgroundColor: 'transparent',
         // A legend only from two series up. One series is named by the title,
@@ -185,26 +248,17 @@ export default function Chart({
         ...(kind === 'pie'
           ? {}
           : {
-              grid: { top: drawn.length >= 2 ? 36 : 12, left: 56, right: 16, bottom: 32 },
-              xAxis: {
-                type: 'category',
-                data: [...data.axisLabels],
-                axisLabel: axisText,
-                // No chart border (design §11): the axis line stays, the
-                // enclosing box does not.
-                axisLine: { lineStyle: { color: theme.gridline } },
-                splitLine: { show: false },
+              grid: {
+                top: drawn.length >= 2 ? 36 : 12,
+                // A horizontal chart's category labels sit in the left gutter
+                // and are words, not axis ticks, so they need the room.
+                left: horizontal ? 104 : 56,
+                right: 16,
+                bottom: 32,
               },
-              yAxis: {
-                type: yAxisType,
-                name: yAxisName,
-                nameTextStyle: axisText,
-                axisLabel: axisText,
-                axisLine: { show: false },
-                // Hairline gridlines in the gridline token, so they sit behind
-                // the data rather than competing with it.
-                splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
-              },
+              ...(horizontal
+                ? { xAxis: valueAxis, yAxis: categoryAxis }
+                : { xAxis: categoryAxis, yAxis: valueAxis }),
             }),
         series: drawn.map(({ name }, i) => {
           const source = data.series[i]!;
@@ -243,7 +297,7 @@ export default function Chart({
     // than listed here as an object: it is compared by identity, and the
     // documented call site `<Chart yAxis={{ type: 'log' }} …/>` builds a new
     // one every render.
-  }, [data, kind, stacked, yAxisType, yAxisName, mode, assignment]);
+  }, [data, kind, stacked, horizontal, statusRoles, yAxisType, yAxisName, mode, assignment]);
 
   return (
     <figure data-testid={`chart-${id}`} className="flex flex-col gap-2 m-0">
