@@ -136,15 +136,25 @@ export const errorsQueryKey = (id: string, scope = 'run', name = '') =>
   ['run', id, 'errors', scope, name] as const;
 
 /**
- * `?scope=run&name=` IS NOT OPTIONAL, and the empty `name` is not noise.
+ * The trap on this endpoint is NOT the one an earlier version of this comment
+ * described. Measured against `MetricsController.errors`:
  *
- * `MetricsController.errors` reads the run-scope row only when `scope` is
- * PRESENT: omitting it defaults `scope` to `'run'` but `name` to `undefined`,
- * and the reader then selects every (scope, name) pair the engine wrote —
- * which counts each failure once per group it sits inside and silently
- * multiplies every count. So the default arguments here produce the same three
- * characters of query string the run detail page needs, rather than leaving
- * them off and hoping the server guesses.
+ *     const sel = { scope: scope ?? 'run', name: scope === undefined ? '' : (name ?? '') };
+ *
+ * Omitting `scope` sets `name` to `''`, not `undefined`, and the reader's SQL
+ * is unconditionally `AND scope = $4 AND name = $5` with its own
+ * `{ scope: 'run', name: '' }` default. So `/errors` and `/errors?scope=run&name=`
+ * return byte-identical results — the unscoped form is safe.
+ *
+ * THE REAL TRAP IS THE INVERSE: `?name=Search` WITHOUT `scope` is silently
+ * ignored. That ternary forces `name` to `''`, so the request comes back with
+ * the RUN's totals while looking like it asked for one endpoint's. A caller
+ * scoping a read must send BOTH parameters or neither. This matters next for
+ * §13.3 RQ-11, "Errors for this request".
+ *
+ * These three characters are sent anyway, for a different and still-real
+ * reason: the captured fixture was taken with exactly this string, so keeping
+ * them identical is what makes the fixture what the browser receives.
  *
  * ═══ THE URL IS DUPLICATED, CHARACTER FOR CHARACTER, IN A SECOND PLACE ═══
  *

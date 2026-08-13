@@ -124,6 +124,49 @@ of every row assertion — bought, today, for a table that fits on a screen.
 table exceeds 500 rows**, or a measured scroll jank complaint. Recorded here so
 the decision is found rather than re-litigated.
 
+## 6a. Deviation D-10: requests do not nest under their groups, and the data exists
+
+Gatling's global statistics table is a full tree: every row carries a
+`data-parent`, and **5 of the 7 requests nest under a group** (`Related Items`
+under `Catalog/Recommendations`; `List Products` and `Product Detail` under
+`Catalog`; `Add To Cart` and `View Cart` under `Cart`; only `Search` and
+`Place Order` sit at root). Ours are flat.
+
+**Not because the data was never there.** The group stack is read at
+`packages/plugin-gatling/src/records.ts`, carried as `RequestEvent.groups` in
+`packages/core/src/events.ts`, and used for groups at
+`packages/statistics/src/engine.ts:133` — `e.groups.join('/')`. Eleven lines
+later, `:171` rolls requests up under the bare `e.name` and the path is
+discarded. Task 2 ran our own parser over the reference `simulation.log` and
+reproduced Gatling's tree exactly, so nothing is missing upstream of the
+engine.
+
+**Deferred to piece 3, deliberately.** Fixing it changes request *metric
+identity* across three rollups — series, stats and errors — plus the API's
+`?name=` parameters and every test pinning a bare request name. That is not a
+rendering concern. Piece 3 owns request identity because it builds
+`/runs/:id/requests/:name` for real; this piece's links are placeholders, so
+no compatibility surface exists yet.
+
+`buildTree` already splits **any** row's name on `/`, so the day the engine
+emits the joined name, requests nest with no change here — and there is a test
+for that, driven by a renamed request.
+
+## 6b. Deviation D-11: our Cnt/s disagrees with Gatling's
+
+Measured while building the table: our run row reports **14.40** requests/s
+where Gatling's reference report writes **14.21**. The *format* matches (two
+decimals, as Gatling writes both `% KO` and `Cnt/s`); the *value* does not.
+
+It is a duration-edge difference upstream — which end of the run's span the
+rate divides by — and it was invisible until the number reached a screen. It
+belongs to a backend pass, not to a rendering sub-project, and the table ships
+showing our own figure rather than bending it toward Gatling's.
+
+Recorded because D-8, D-9 and D-10 all have a written home and this one had
+only a ledger entry, which a reader comparing the two reports would never
+find.
+
 ## 7. Architecture
 
 ```

@@ -92,11 +92,16 @@ const OUT = fileURLToPath(
  * `errors` is the exception, and knowingly so: `metrics.ts` has no errors
  * query yet — the errors table adds one — so this URL is the shape that
  * builder must take rather than a copy of one that exists. It carries
- * `?scope=run&name=` for the same reason `series` does, and the empty `name`
- * is not noise: the controller reads the RUN-scope row only
- * when `scope` is present (`apps/api/src/metrics/metrics.controller.ts`), and
- * an unscoped read would return one row per (scope, name) — every failure
- * counted once per group it sits inside, and every count silently multiplied.
+ * `?scope=run&name=` for the same reason `series` does: the app's builder must
+ * emit this exact string, and a capture taken with a different one would stop
+ * being what the browser receives.
+ *
+ * NOT because omitting it is unsafe — measured, it is not.
+ * `MetricsController.errors` sets `name` to `''` when `scope` is absent and
+ * the reader's SQL is unconditionally scoped, so `/errors` and
+ * `/errors?scope=run&name=` return identical rows. The real trap is the
+ * inverse: `?name=X` WITHOUT `scope` is silently ignored and answers with the
+ * run's totals.
  */
 const ENDPOINTS = [
   { key: 'stats', path: (id) => `/v1/runs/${id}/stats` },
