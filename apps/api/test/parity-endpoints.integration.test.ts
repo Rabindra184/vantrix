@@ -228,6 +228,31 @@ describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
     expect(buckets.filter((b) => b.startedKoCount > 0).length).toBeGreaterThan(0);
   });
 
+  it('reports a pre-migration run as unavailable, reading NULL through as null', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    // The only way to reach this state: every run the current engine ingests
+    // carries the split, so the null path is unreachable through the API.
+    // Blank the columns the way a row written before the migration would be.
+    await ctx.pool.query(
+      'UPDATE run_series_bucket SET started_ok_count = NULL, started_ko_count = NULL WHERE run_id = $1',
+      [runId],
+    );
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}/series?scope=run&name=`)
+      .set('Authorization', `Bearer ${ctx.readToken}`)
+      .expect(200);
+
+    // This is the one assertion standing between a pre-migration run and two
+    // flat zero lines that would read as "no failures" rather than "not
+    // recorded". Adding `?? 0` anywhere on the read path turns it red.
+    expect(res.body.startedSplitAvailable).toBe(false);
+    expect(res.body.buckets[0].startedOkCount).toBeNull();
+    expect(res.body.buckets[0].startedKoCount).toBeNull();
+  });
+
   it('404s for a run in another project', async () => {
     ctx = await createTestApp();
 
