@@ -1901,6 +1901,223 @@ git commit -m "feat(web): RQ-09, the saturation scatter"
 
 ---
 
+## Task 8b: the request page degrades like the run page
+
+**Files:**
+- Create: `apps/web/src/routes/payload.tsx`
+- Modify: `apps/web/src/routes/RunDetail.tsx` (move four helpers out, import them back)
+- Modify: `apps/web/src/routes/RequestDetail.tsx`
+- Create: `apps/web/test/payload.test.tsx`
+
+**Interfaces:**
+- Produces, from `apps/web/src/routes/payload.tsx`:
+  `export interface Slot { readonly id: string; readonly title: string }`,
+  `export function Payload<T>({ query, slots, children })`,
+  `export function TableSection<T>({ title, query, children })`.
+  `Undrawn` and `explain` move with them and stay module-private.
+
+**Why this task exists and is not in the original plan:** review of Tasks 5–7
+found it. Every data-dependent block on the request page is
+`x.data !== undefined ? <Component /> : null`, so a 500 from any of the five
+endpoints renders **nothing** for that section — indistinguishable from still
+loading, and from a request that genuinely recorded no errors.
+
+The run detail page deliberately does not do this, and `RunDetail.tsx`'s own
+comments say why: "A CHART WHOSE FETCH FAILED MUST NOT SIMPLY VANISH.
+Rendering nothing leaves a gap in a numbered sequence the reader cannot see is
+incomplete… It also removes that chart's data table, which is the parity
+surface — so a page whose distribution 404'd would quietly stop being
+assertable." Every word of that applies to §13.3 as much as to §13.2. The
+request page was built with the weaker pattern only because this plan specified
+it that way, task by task, without ever comparing the result to the page it
+sits beside.
+
+**Extract rather than duplicate.** `Payload`, `TableSection`, `Undrawn`,
+`explain` and `Slot` are module-private in `RunDetail.tsx` today. A second copy
+on the request page would be two answers to "what does this product show when a
+fetch fails", which is exactly the divergence that produced this task.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `apps/web/test/payload.test.tsx`:
+
+```tsx
+import '@testing-library/jest-dom/vitest';
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { Payload, TableSection, type Slot } from '../src/routes/payload';
+
+const SLOTS: readonly Slot[] = [{ id: 'scatter', title: 'A chart' }];
+
+const pending = { data: undefined, isPending: true, error: null } as never;
+const failed = { data: undefined, isPending: false, error: new Error('nope') } as never;
+
+describe('Payload', () => {
+  it('renders the chart when the payload arrived', () => {
+    render(<Payload query={{ data: 1, isPending: false, error: null } as never} slots={SLOTS}>
+      {(n) => <p>drew {n}</p>}
+    </Payload>);
+    expect(screen.getByText('drew 1')).toBeInTheDocument();
+  });
+
+  it('renders the figure and says why, rather than vanishing, when the fetch failed', () => {
+    render(<Payload query={failed} slots={SLOTS}>{() => <p>drew</p>}</Payload>);
+    // The FIGURE is still there. A page that silently omits a chart looks
+    // exactly like a run that recorded nothing for it.
+    expect(screen.queryByText('drew')).not.toBeInTheDocument();
+    expect(screen.getByText('A chart')).toBeInTheDocument();
+  });
+
+  it('distinguishes loading from failed', () => {
+    const { unmount } = render(<Payload query={pending} slots={SLOTS}>{() => <p>drew</p>}</Payload>);
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    unmount();
+    render(<Payload query={failed} slots={SLOTS}>{() => <p>drew</p>}</Payload>);
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('TableSection', () => {
+  it('keeps its heading when the fetch failed', () => {
+    render(<TableSection title="Errors" query={failed}>{() => <p>rows</p>}</TableSection>);
+    expect(screen.getByRole('heading', { name: 'Errors' })).toBeInTheDocument();
+    expect(screen.queryByText('rows')).not.toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+```bash
+pnpm vitest run apps/web/test/payload.test.tsx
+```
+
+Expected: FAIL — cannot resolve `../src/routes/payload`.
+
+- [ ] **Step 3: Move the four helpers into the new module**
+
+Create `apps/web/src/routes/payload.tsx` and move `Slot`, `Undrawn`, `explain`,
+`Payload` and `TableSection` into it **verbatim** — including every doc comment,
+which is where the reasoning for this behaviour is written down. Export `Slot`,
+`Payload` and `TableSection`; keep `Undrawn` and `explain` module-private.
+
+This is a move, not a rewrite. If you find yourself changing a line of their
+logic, stop and report — the run page must render identically afterwards.
+
+In `RunDetail.tsx`, delete the moved declarations and import them back. Its
+`Slot` constants (`INDICATORS`, `DISTRIBUTION`, …) stay where they are: they are
+that page's §13.2 sequence, not shared vocabulary.
+
+- [ ] **Step 4: Run the run page's suites**
+
+```bash
+pnpm vitest run apps/web/test/RunDetail.polling.test.tsx apps/web/test/payload.test.tsx
+```
+
+Expected: PASS. The run page's behaviour is unchanged by a move.
+
+- [ ] **Step 5: Give the request page its slots and wrap its blocks**
+
+In `RequestDetail.tsx`, declare the §13.3 sequence — **ids must match what each
+chart component passes to `Chart`**, or the placeholder and the real chart would
+be different figures:
+
+```tsx
+/** §13.3's elements, in order. Ids match each chart's own `Chart` id. */
+const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
+const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
+const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
+// Gatling's own request-page titles — see RatesChart's `title` prop.
+const REQUESTS: Slot = { id: 'requests-per-second', title: 'Number of requests' };
+const RESPONSES: Slot = { id: 'responses-per-second', title: 'Number of responses' };
+const SCATTER: Slot = {
+  id: 'scatter',
+  title: 'Response time against global requests per second',
+};
+```
+
+Then replace each `x.data !== undefined ? … : null` with the wrapper, grouping
+by the payload that feeds it — one `Payload` per query, listing the slots that
+query supplies:
+
+```tsx
+      <Payload query={stats} slots={[INDICATORS]}>
+        {(data) => <IndicatorsChart stats={data} path={name} />}
+      </Payload>
+
+      <Payload query={distribution} slots={[DISTRIBUTION]}>
+        {(data) => <DistributionChart distribution={data} />}
+      </Payload>
+
+      <Payload query={series} slots={[PERCENTILES, REQUESTS, RESPONSES]}>
+        {(data) => (
+          <>
+            <PercentilesChart series={data} />
+            <RequestRateChart series={data} title={REQUESTS.title} />
+            <ResponseRateChart series={data} title={RESPONSES.title} />
+          </>
+        )}
+      </Payload>
+
+      <Payload query={scatter} slots={[SCATTER]}>
+        {(data) => <ScatterChart scatter={data} />}
+      </Payload>
+
+      <TableSection title="Errors" query={errors}>
+        {(data) => <ErrorsTable errors={data} />}
+      </TableSection>
+```
+
+The statistics row keeps its own branch: `requestRow` returning `undefined` is
+not a failed fetch, and "this run recorded no request named X" is a different
+sentence from "we could not find out". Wrap only the fetch in `TableSection`:
+
+```tsx
+      <TableSection title="Statistics" query={stats}>
+        {(data) => {
+          const row = requestRow(data, name);
+          return row === undefined ? (
+            <p role="status">This run recorded no request named {name}.</p>
+          ) : (
+            <RequestStatistics row={row} rows={data.stats} />
+          );
+        }}
+      </TableSection>
+```
+
+- [ ] **Step 6: Add the integration test the earlier review found missing**
+
+A review of Task 4 noted that nothing covers `RequestDetail` wiring
+`requestRow`'s result into either branch — it was checked once with a throwaway.
+Add to `apps/web/test/RequestDetail.test.tsx`, using the fixture as the mocked
+stats payload:
+
+```tsx
+  it('renders the row it found, and says so when there is none', async () => {
+    // Both branches, because a swapped prop or a mistyped scope check would
+    // leave one of them rendering plausible nonsense.
+    // …mock fetch to answer /stats with the fixture, render at a name that
+    // exists, assert a table cell carries the row's own count; then render at
+    // a name that does not and assert the status sentence names it.
+  });
+```
+
+Write it out fully against the fixture — the comment above is the intent, not
+the test.
+
+- [ ] **Step 7: Verify and commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test:unit
+```
+
+```bash
+git add apps/web/src/routes/payload.tsx apps/web/src/routes/RunDetail.tsx apps/web/src/routes/RequestDetail.tsx apps/web/test/payload.test.tsx apps/web/test/RequestDetail.test.tsx
+git commit -m "fix(web): the request page says why an element is missing, as the run page does"
+```
+
+---
+
 ## Task 9: e2e — the page mounts, and an encoded URL survives a hard load
 
 **Files:**
