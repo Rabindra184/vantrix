@@ -1,11 +1,12 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { distributionQuery, seriesQuery, statsQuery } from '../api/metrics';
+import { distributionQuery, errorsQuery, seriesQuery, statsQuery } from '../api/metrics';
 import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
+import ErrorsTable from '../tables/ErrorsTable';
 import RequestStatistics from '../tables/RequestStatistics';
 
 /**
@@ -41,6 +42,10 @@ export default function RequestDetail() {
   });
   const distribution = useQuery({
     ...distributionQuery(runId ?? '', 'request', name ?? '', 'response_time'),
+    enabled: runId !== undefined && name !== undefined,
+  });
+  const errors = useQuery({
+    ...errorsQuery(runId ?? '', 'request', name ?? ''),
     enabled: runId !== undefined && name !== undefined,
   });
 
@@ -88,6 +93,7 @@ export default function RequestDetail() {
           );
         })()
       ) : null}
+      {errors.data !== undefined ? <ErrorsTable errors={errors.data} /> : null}
     </div>
   );
 }
