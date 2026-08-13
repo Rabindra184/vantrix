@@ -203,6 +203,16 @@ fixed. The outcome vocabulary is fixed in the contract
 `not_applicable` — with a message naming the candidates, which is a different
 sentence from "there were no statistics".
 
+**The run-scope guard is real but its first stated reason was wrong.** An early
+draft of this section claimed an empty target would make the leaf test match
+every path in the run. It would not — `endsWith('/')` matches nothing
+(`'Catalog/View'.endsWith('/')` is false). What it does match is a name ending
+in the separator: a group whose request leaf is empty joins to `Cart/`, and
+`'Cart/'.endsWith('/')` is true. That degenerate row, reachable from a
+malformed simulation log, is what the guard keeps a run-scope rule away from.
+Recorded because the rationale was committed before it was checked, and a
+plausible-sounding false reason is harder to dislodge later than no reason.
+
 Deferred, deliberately: whether rule authoring should offer the joined path.
 That is a question about the rule-editing surface, not about this change.
 

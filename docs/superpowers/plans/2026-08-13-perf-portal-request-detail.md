@@ -562,10 +562,33 @@ In `packages/sla/test/evaluate.test.ts`:
     expect(assertions[0]?.message).toContain('Catalog/View');
   });
 
-  it('leaves a run-scope rule alone', () => {
-    // targetName is null for run scope, which becomes ''. The fallback must
-    // not fire — `endsWith('/')` would match every path there is.
+  it('evaluates a run-scope rule against the run row', () => {
+    // A plain regression guard on run-scope evaluation. It does NOT pin the
+    // `target !== ''` guard: the exact match finds `name: ''` first, so this
+    // test passes with the guard deleted. The test below is the one that
+    // pins it.
     const stats = [
+      { scope: 'run', name: '', family: 'response_time', p95: 10 },
+    ] as unknown as EvaluableStat[];
+    const rules = [
+      { id: 'r1', scope: 'run', targetName: null, family: 'response_time',
+        metric: 'p95', comparator: 'lte', threshold: 100 },
+    ] as EvaluableRule[];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
+
+  it('does not let a run-scope rule bind to a name ending in the separator', () => {
+    // THIS is what the `target !== ''` guard is for. `endsWith('/')` matches
+    // nothing in general — but it DOES match `Cart/`, the join of a group with
+    // an empty request leaf, which a malformed simulation log can produce.
+    // Without the guard, a run rule could bind to that row instead of the run.
+    //
+    // The run row is listed SECOND on purpose: with the guard removed, a
+    // fallback that ran before the exact match would take `Cart/` and report
+    // failed (900 > 100).
+    const stats = [
+      { scope: 'run', name: 'Cart/', family: 'response_time', p95: 900 },
       { scope: 'run', name: '', family: 'response_time', p95: 10 },
     ] as unknown as EvaluableStat[];
     const rules = [
@@ -615,8 +638,15 @@ Replace the lookup at `evaluate.ts:41-47`:
      * every scope: a reader debugging a rule should not have to know which
      * scope changed identity when.
      *
-     * Never for run scope: `targetName` is null there, and an empty `target`
-     * would make the `endsWith` below match every path in the run.
+     * Never for run scope: `targetName` is null there, so `target` is `''`.
+     * The guard is NOT because `endsWith('/')` would match everything — it
+     * matches nothing (`'Catalog/View'.endsWith('/')` is false). It is because
+     * it matches a name ending in the separator: a group whose request leaf is
+     * empty joins to `Cart/`, and `'Cart/'.endsWith('/')` IS true. Without the
+     * guard a run-scope rule could bind to that degenerate row instead of to
+     * the run. The exact match at `:63` finds the run stat first in practice,
+     * so this is belt and braces — but it is cheap and the degenerate row is
+     * reachable from a malformed simulation log.
      */
     let stat = candidates.find((s) => s.name === target);
     let ambiguous: readonly EvaluableStat[] = [];
