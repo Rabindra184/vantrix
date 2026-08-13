@@ -128,12 +128,43 @@ describe('toPercentiles — the data table', () => {
   });
 
   it('shows the same values it plots, band by band', () => {
-    const d = toPercentiles(series, ['p50', 'p95']);
-    const row = d.rows[0]!;
-    expect(row.values).toEqual([
-      series.buckets[0]!.percentilesOk.p50,
-      series.buckets[0]!.percentilesOk.p95,
+    const d = toPercentiles(series);
+    const bucket = series.buckets[0]!;
+    expect(d.rows[0]!.values).toEqual([
+      bucket.minMs,
+      bucket.percentilesOk.p25,
+      bucket.percentilesOk.p50,
+      bucket.percentilesOk.p75,
+      bucket.percentilesOk.p80,
+      bucket.percentilesOk.p85,
+      bucket.percentilesOk.p90,
+      bucket.percentilesOk.p95,
+      bucket.percentilesOk.p99,
+      bucket.maxMs,
     ]);
+  });
+
+  /**
+   * THE TABLE DOES NOT SHRINK WITH THE SELECTION, and this is the assertion
+   * that says so.
+   *
+   * `rows`/`columns` used to follow `bands`, so the default six-band selection
+   * left the parity surface carrying six of the ten D-7 requires — and a
+   * screen-reader user, who did not narrow anything, lost four bands to a
+   * decision made about how many lines fit legibly on one axis.
+   */
+  it('carries all ten bands however few are drawn', () => {
+    const d = toPercentiles(series, ['p50']);
+
+    expect(d.series.map((s) => s.name)).toEqual(['50%']);
+    expect(d.columns).toEqual(['Elapsed (s)', ...BANDS.map((b) => LABEL[b])]);
+    for (const row of d.rows) {
+      expect(row.values).toHaveLength(BANDS.length);
+    }
+
+    // And the numbers are the same numbers, not merely the right count of
+    // columns: narrowing the drawing must not shift which band a column holds.
+    expect(d.rows.map((r) => r.values)).toEqual(toPercentiles(series).rows.map((r) => r.values));
   });
 });
 
@@ -142,5 +173,38 @@ describe('toPercentiles — nothing to draw', () => {
     const d = toPercentiles({ ...series, buckets: [] });
     expect(d.series).toHaveLength(0);
     expect(d.empty).toMatch(/no response times/i);
+  });
+
+  /**
+   * Design §11 forbids drawing empty axes, and `empty` used to be set only
+   * from `series.buckets.length` — a fact about the PAYLOAD. Deselecting every
+   * band therefore returned a full axis, a full table and zero series, and the
+   * chart drew a labelled grid with no marks: the picture that says "this was
+   * measured and there was nothing here", for data that is entirely intact.
+   */
+  it('says the selection is empty rather than drawing a grid with no marks', () => {
+    const d = toPercentiles(series, []);
+
+    expect(d.series).toHaveLength(0);
+    expect(d.empty).toBeDefined();
+    // Names the remedy: unlike every other empty state here, the reader is one
+    // click from fixing it.
+    expect(d.empty).toMatch(/no percentile bands are selected/i);
+    expect(d.empty).toMatch(/choose at least one band/i);
+  });
+
+  it('keeps the whole table while the drawing is switched off', () => {
+    // The selection governs the DRAWING. Turning it off must not also take
+    // away the parity surface and the screen-reader route to the data.
+    const d = toPercentiles(series, []);
+    expect(d.rows).toHaveLength(series.buckets.length);
+    expect(d.columns).toHaveLength(BANDS.length + 1);
+  });
+
+  it('is not empty while any band is selected', () => {
+    // The other side of the guard: it must key on the SELECTION being empty,
+    // not merely on it being smaller than BANDS.
+    expect(toPercentiles(series, ['min']).empty).toBeUndefined();
+    expect(toPercentiles(series).empty).toBeUndefined();
   });
 });

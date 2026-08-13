@@ -505,3 +505,226 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * ⑨ the percentile chart's two controls — §13.2 ⑨ and §12.4
+ *
+ * These had NO test at any layer. `grep` across the unit and e2e suites found
+ * no reference to `scale-toggle`, `band-*` or `PercentilesChart`, so changing
+ * the default scale from log to linear left every suite green while shipping
+ * the axis §11 says squashes every band below the 95th into a few pixels.
+ * §9's falsification checkpoints are all numeric, and a control is not a
+ * number — which is exactly how this got through.
+ * ------------------------------------------------------------------ */
+
+/** The legend's own labels: the series ECharts is actually drawing, in drawn
+ *  order. Legend text is the only `text-anchor="start"` text these charts
+ *  emit — value-axis ticks are `end`, category ticks and axis names `middle`. */
+async function legendLabels(chart: Locator): Promise<string[]> {
+  return chart.locator('svg text[text-anchor="start"]').allTextContents();
+}
+
+/** The value axis' tick labels — what a change of SCALE changes. */
+async function valueAxisTicks(chart: Locator): Promise<string[]> {
+  return chart.locator('svg text[text-anchor="end"]').allTextContents();
+}
+
+/**
+ * All eight charts drawn, which proves all four payloads resolved.
+ *
+ * Required before touching a chart's own controls: a chart swaps from
+ * `RunDetail`'s loading figure to its real component when its query resolves,
+ * and React remounts across that swap — taking `PercentilesChart`'s `scale` and
+ * `bands` state with it. A click landing before then is silently undone.
+ */
+async function settled(page: Page): Promise<void> {
+  await expect(figures(page).locator('svg')).toHaveCount(CHART_IDS.length);
+}
+
+test('the percentile chart draws on a log axis by default, and the toggle really switches it', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  const chart = page.getByTestId('chart-percentiles');
+  const toggle = page.getByTestId('scale-toggle');
+
+  // LOG IS THE DEFAULT. §11: ten bands from min to max on a linear axis push
+  // every band below the 95th into a strip a few pixels tall, and the chart
+  // becomes a picture of its own outliers.
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(toggle).toHaveText('Log scale');
+  const logTicks = await valueAxisTicks(chart);
+  expect(logTicks.length).toBeGreaterThan(1);
+
+  // …and it is the AXIS that is log, not merely the label on a button. Asserted
+  // as a rendered difference rather than against ECharts' tick algorithm, which
+  // is not this app's to pin: the tick labels must change when the scale does.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(toggle).toHaveText('Linear scale');
+  await expect
+    .poll(async () => (await valueAxisTicks(chart)).join('|') !== logTicks.join('|'))
+    .toBe(true);
+
+  // And back — a control that only goes one way is not a toggle, and the round
+  // trip is what shows the first tick set was the log one rather than whatever
+  // the axis happened to hold at first paint.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => valueAxisTicks(chart)).toEqual(logTicks);
+});
+
+test('the tooltip reads at the same precision the data table does', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  // THE TOOLTIP IS THE SURFACE A SIGHTED READER ACTUALLY USES — the table is
+  // collapsed until asked for — and it was rendering ECharts' raw values:
+  // `122.74516052680153` for a percentile whose parity tolerance is two
+  // decimals. `Chart` now hands ECharts the same `formatCell` the table uses.
+  const chart = page.getByTestId('chart-percentiles');
+  await chart.locator('svg').hover({ position: { x: 300, y: 120 } });
+
+  const tooltip = chart.locator('[_echarts_instance_] > div').nth(1);
+  await expect(tooltip).toBeVisible();
+
+  // PER ELEMENT, not over the tooltip's concatenated text. Six of these band
+  // names are themselves numbers ("50%", "75%"), so a value and the next row's
+  // name run together into `127.7575%` and any regex over the whole string
+  // finds a false eight-digit number. ECharts renders each value in its own
+  // element; reading them individually is the only honest way to ask how
+  // precise they are.
+  const values = (await tooltip.locator('span, div').allTextContents())
+    .map((text) => text.trim())
+    .filter((text) => /^-?\d+(\.\d+)?$/.test(text));
+
+  // The premise: if the tooltip's structure ever changes so that no element
+  // holds a bare number, this says so rather than passing over an empty list.
+  expect(values.length, 'no numeric element found in the tooltip').toBeGreaterThan(0);
+
+  for (const value of values) {
+    const decimals = value.includes('.') ? value.split('.')[1]!.length : 0;
+    expect(decimals, `tooltip renders ${value} at more than 2 decimals`).toBeLessThanOrEqual(2);
+  }
+});
+
+test('the band selector adds and removes exactly the band it names', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  const chart = page.getByTestId('chart-percentiles');
+
+  // The default six — a readable subset, and no more than the six hues the
+  // categorical palette has.
+  expect(await legendLabels(chart)).toEqual(['min', '50%', '75%', '95%', '99%', 'max']);
+
+  await page.getByTestId('band-p50').click();
+  await expect(page.getByTestId('band-p50')).toHaveAttribute('aria-pressed', 'false');
+  // EXACTLY that one leaves, and the other five stay. A selector that redrew
+  // the default set, or dropped the last band instead of the named one, passes
+  // an assertion that only counted series.
+  await expect.poll(() => legendLabels(chart)).toEqual(['min', '75%', '95%', '99%', 'max']);
+
+  // Turning one on puts it in BANDS order, NOT in the order it was clicked —
+  // 25% belongs between min and 75%, not at the end. `toPercentiles` promises
+  // this and nothing in a browser had checked it.
+  await page.getByTestId('band-p25').click();
+  await expect(page.getByTestId('band-p25')).toHaveAttribute('aria-pressed', 'true');
+  await expect
+    .poll(() => legendLabels(chart))
+    .toEqual(['min', '25%', '75%', '95%', '99%', 'max']);
+});
+
+test('the percentile table carries all ten bands while six are drawn', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  const chart = page.getByTestId('chart-percentiles');
+
+  // Six DRAWN, because ten lines on one axis is more than a sighted reader can
+  // follow and more than the palette has hues for.
+  expect(await legendLabels(chart)).toHaveLength(6);
+
+  // TEN CARRIED. The table is the parity surface (§7) and the screen-reader
+  // route to the same data, and D-7 requires ten — so it must not shrink
+  // because a sighted reader narrowed the drawing. The table used to follow the
+  // selection, which left the parity surface holding six of ten and no spec
+  // reading it.
+  const headers = await page
+    .getByTestId('chart-data-percentiles')
+    .locator('th[scope="col"]')
+    .allTextContents();
+  expect(headers).toEqual([
+    'Elapsed (s)', 'min', '25%', '50%', '75%', '80%', '85%', '90%', '95%', '99%', 'max',
+  ]);
+
+  // Ten columns of real numbers, not ten headings over four empty columns.
+  const rows = await readTable(page, 'percentiles');
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    expect(row.cells).toHaveLength(10);
+  }
+  const p80 = rows.map((row) => row.cells[4]!.text).filter((text) => text !== '—');
+  expect(p80.length).toBeGreaterThan(50);
+});
+
+test('deselecting every band explains itself rather than drawing an empty grid', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  const chart = page.getByTestId('chart-percentiles');
+
+  for (const band of ['min', 'p25', 'p50', 'p75', 'p80', 'p85', 'p90', 'p95', 'p99', 'max']) {
+    const button = page.getByTestId(`band-${band}`);
+    if ((await button.getAttribute('aria-pressed')) === 'true') await button.click();
+  }
+
+  // NOT a labelled grid with no marks. `empty` was set only from the payload's
+  // bucket count, so an empty SELECTION drew 62 axis labels and zero series —
+  // the picture that says "we measured this and there was nothing here", for
+  // data that is entirely intact.
+  await expect(chart.locator('svg')).toHaveCount(0);
+  await expect(chart.locator('[role="status"]')).toHaveCount(1);
+  await expect(chart).toContainText(/no percentile bands are selected/i);
+  // Names the remedy: unlike every other empty state on this page, the reader
+  // is one click from fixing it.
+  await expect(chart).toContainText(/choose at least one band/i);
+
+  // The parity surface survives the drawing being switched off, whole.
+  const headers = await page
+    .getByTestId('chart-data-percentiles')
+    .locator('th[scope="col"]')
+    .allTextContents();
+  expect(headers).toHaveLength(11);
+  expect(await readTable(page, 'percentiles')).not.toHaveLength(0);
+
+  // One click back and it draws again.
+  await page.getByTestId('band-p95').click();
+  await expect(chart.locator('svg')).toHaveCount(1);
+
+  // A second band, and the legend appears with exactly those two — which also
+  // pins the "a legend only from two series up" rule from the other side: with
+  // p95 alone above, the chart draws and names itself in its title, and there
+  // is no one-entry legend pretending to be a control.
+  await page.getByTestId('band-p99').click();
+  await expect.poll(() => legendLabels(chart)).toEqual(['95%', '99%']);
+});

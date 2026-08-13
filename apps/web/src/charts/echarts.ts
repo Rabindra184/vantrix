@@ -31,9 +31,13 @@ echarts.use([
   GridComponent,
   LegendComponent,
   TooltipComponent,
-  // Required for `echarts.connect`: the shared crosshair across the four
-  // time-axis charts is an axis pointer, and without this component the
-  // charts connect but nothing is drawn to link them.
+  // Required for `echarts.connect`: the shared crosshair across the FIVE
+  // time-axis charts — concurrent users, users started per second, the
+  // percentile bands, requests/s and responses/s — is an axis pointer, and
+  // without this component the charts connect but nothing is drawn to link
+  // them. (Five, not four: `user-start-rate` is on the same elapsed-seconds
+  // axis as the rest, takes the same `group`, and `run-charts.spec.ts` pins
+  // all five.)
   AxisPointerComponent,
 
   // SVG, NOT canvas. Marks become real DOM nodes, which is what lets a
