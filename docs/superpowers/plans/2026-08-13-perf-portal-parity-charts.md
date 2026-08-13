@@ -71,14 +71,14 @@ Every transform returns `ChartData`. `rows` and `columns` are what `DataTable` r
 **Files:**
 - Modify: `packages/contracts/src/metrics.ts`
 - Modify: `apps/api/src/metrics/metrics.controller.ts:145-160`
-- Test: `apps/api/test/metrics.integration.test.ts`
+- Test: `apps/api/test/parity-endpoints.integration.test.ts`
 
 **Interfaces:**
 - Produces: `SeriesResponse.bucketWidthMs: number`
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `apps/api/test/metrics.integration.test.ts` (follow the file's existing setup for ingesting a run and getting a read token):
+Add to `apps/api/test/parity-endpoints.integration.test.ts` (follow the file's existing setup for ingesting a run and getting a read token):
 
 ```ts
 it('reports the bucket width, so a client never assumes 1000ms', async () => {
@@ -142,7 +142,7 @@ Expected: PASS, and no other test broken — the field is additive.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/contracts/src/metrics.ts apps/api/src/metrics/metrics.controller.ts apps/api/test/metrics.integration.test.ts
+git add packages/contracts/src/metrics.ts apps/api/src/metrics/metrics.controller.ts apps/api/test/parity-endpoints.integration.test.ts
 git commit -m "feat(api): report the series bucket width so clients never assume 1000ms"
 ```
 
@@ -156,7 +156,7 @@ git commit -m "feat(api): report the series bucket width so clients never assume
 - Create: `packages/persistence/prisma/migrations/20260813120000_started_status_counts/migration.sql`
 - Modify: `packages/persistence/src/metrics/write.ts`, `packages/persistence/src/metrics/read.ts`
 - Modify: `packages/contracts/src/metrics.ts`, `apps/api/src/metrics/metrics.controller.ts`
-- Test: `packages/statistics/test/buckets.test.ts`, `apps/api/test/metrics.integration.test.ts`
+- Test: `packages/statistics/test/buckets.test.ts`, `apps/api/test/parity-endpoints.integration.test.ts`
 
 **Interfaces:**
 - Consumes: `SeriesResponse.bucketWidthMs` (Task 1)
@@ -170,24 +170,26 @@ Add to `packages/statistics/test/buckets.test.ts`:
 
 ```ts
 it('splits started requests by outcome on the START edge, not the end', () => {
-  const s = new BucketSeries(0);
+  const s = new BucketSeries({ startMs: 0, maxBuckets: 64 });
   // Starts in bucket 0, ends in bucket 1 — Gatling files it under bucket 0.
-  s.record('start', 900, 120, false);
-  s.record('end', 1100, 120, false);
-  s.record('start', 100, 50, true);
-  s.record('end', 150, 50, true);
+  s.add(900, 120, false, 'start');
+  s.add(1100, 120, false, 'end');
+  s.add(100, 50, true, 'start');
+  s.add(150, 50, true, 'end');
 
-  const b0 = s.toArray()[0]!;
-  expect(b0.startedCount).toBe(2);
-  expect(b0.startedOkCount).toBe(1);
-  expect(b0.startedKoCount).toBe(1);
+  const b = s.buckets();
+  expect(b[0]!.startedCount).toBe(2);
+  expect(b[0]!.startedOkCount).toBe(1);
+  expect(b[0]!.startedKoCount).toBe(1);
   // The KO ENDED in bucket 1, so the end-edge split must not have moved.
-  expect(b0.koCount).toBe(0);
-  expect(s.toArray()[1]!.koCount).toBe(1);
+  expect(b[0]!.koCount).toBe(0);
+  expect(b[1]!.koCount).toBe(1);
 });
 ```
 
-Match the real `record(...)` signature in `buckets.ts` — read it before writing this; the arguments above are `(edge, tsMs, value, ok)`.
+The API is `add(tsMs, value, ok, edge)` on a `BucketSeries({ startMs, maxBuckets })`,
+and `buckets()` returns the array — see `packages/statistics/test/buckets.test.ts`
+for the established calling pattern (one `add()` per edge, same value/ok on both).
 
 - [ ] **Step 2: Run it and confirm it fails**
 
