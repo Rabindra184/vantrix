@@ -453,7 +453,11 @@ test('a completed run shows every request and group in one table', async ({ page
 
   await expect(page.getByRole('table', { name: /statistics/i })).toBeVisible();
   for (const name of ['List Products', 'Search', 'Place Order']) {
-    await expect(page.getByRole('cell', { name })).toBeVisible();
+    // rowheader, NOT cell: a row's name is a <th scope="row">, which
+    // Playwright's roleUtils maps to `rowheader` before any other rule, and
+    // `cell` does not match it. Measured — the brief's original `cell`
+    // assertion cannot pass against a correct implementation.
+    await expect(page.getByRole('rowheader', { name })).toBeVisible();
   }
 });
 
