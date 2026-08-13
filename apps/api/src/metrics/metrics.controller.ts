@@ -6,7 +6,7 @@ import type {
 } from '@perfportal/contracts';
 import { parseProjectSettings } from '@perfportal/contracts';
 import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
-import { bandsFrom } from '@perfportal/statistics';
+import { bandsFrom, inferBucketWidthMs } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, uuidParam } from '../common/validation.js';
@@ -154,6 +154,7 @@ export class MetricsController {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
+      bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
       buckets,
     };
   }
