@@ -881,6 +881,17 @@ git commit -m "feat(web): the request detail page shell, routed and named"
 **Interfaces:**
 - Consumes: `requestRow` (Task 3).
 - Produces: from `StatisticsTable.tsx`, `export type { Column }` and
+
+**First, correct Task 3's leftover.** Task 3 was specified to call `statsQuery`
+one task before anything consumed it, so its committed code has a bare
+`useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined })` whose
+result is discarded — a fetch on mount that nothing reads, which lint could
+only be satisfied by not binding. That was a sequencing error in this plan, not
+the implementer's. Bind it here, where the row is actually used:
+
+```tsx
+  const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+```
   `export function columnsFor(rows: readonly StatRow[]): { executions: readonly Column[]; responseTime: readonly Column[] }`;
   and `RequestStatistics`, taking `{ row: StatRow; rows: readonly StatRow[] }`.
 
