@@ -171,7 +171,15 @@ test('a completed run shows every request and group in one table', async ({ page
    * and unit-tested — it is what makes "2503" mean something when a screen
    * reader announces it out of the row's context — so the ASSERTION moves.
    */
-  for (const name of ['List Products', 'Search', 'Place Order']) {
+  // `Cart` and `Catalog` are deliberately not in this list: D-10 gives both a
+  // toggle button, and a `<button aria-label>` inside a `<th>` contributes to
+  // the th's OWN accessible name in the name-from-content computation, so
+  // `getByRole('rowheader', { name: 'Cart', exact: true })` would look for
+  // "expand Cart Cart" and never find plain "Cart". `Search` and
+  // `Place Order` are the two rows D-10 leaves genuinely leafy — no toggle,
+  // no contamination — and the discriminating check below covers every row,
+  // groups included, by `data-path` rather than by accessible name.
+  for (const name of ['Search', 'Place Order']) {
     await expect(page.getByRole('rowheader', { name, exact: true })).toBeVisible();
   }
 
@@ -281,8 +289,15 @@ test('filtering keeps the match in its group', async ({ page }) => {
    * that a non-match went away — both of which a filter that dropped the match
    * and kept its parent would also satisfy. The rendered set, whole, is what
    * says the filter answered the question that was asked: `Catalog` kept for
-   * context, at depth 0, with `Catalog/Recommendations` open underneath it. */
-  expect(await renderedRows(page)).toEqual(['Catalog@0', 'Catalog/Recommendations@1']);
+   * context, at depth 0, with `Catalog/Recommendations` open underneath it —
+   * and, while filtering runs, `Recommendations`' own child (`Related Items`,
+   * nested one level further down post-D-10) is open too, since a matching
+   * row's whole subtree is visible along with it. */
+  expect(await renderedRows(page)).toEqual([
+    'Catalog@0',
+    'Catalog/Recommendations@1',
+    'Catalog/Recommendations/Related Items@2',
+  ]);
   await expect(rowAt(page, 'Catalog/Recommendations')).toBeVisible();
 
   /* A filter that matches nothing says so, rather than going silently empty. */
@@ -304,12 +319,15 @@ test('filtering keeps the match in its group', async ({ page }) => {
 test('a row links to its detail page', async ({ page }) => {
   const runId = await openRun(page);
 
+  // `List Products` is `Catalog/List Products` post-D-10, nested under a
+  // group that starts collapsed.
+  await page.getByRole('button', { name: /expand Catalog/i }).click();
   await page.getByRole('link', { name: /List Products/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/requests/List%20Products$`));
+  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/requests/Catalog%2FList%20Products$`));
   // Piece 3 builds this page; today it must say so rather than 404.
   await expect(page.getByText(/not built yet|coming/i)).toBeVisible();
   // The row it came from, so the reader knows the placeholder is theirs.
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('List Products');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Catalog/List Products');
 
   /* ---- and a GROUP row, which goes somewhere ELSE, by its FULL path ----
    *

@@ -1,6 +1,7 @@
 import {
   DistributionResponseSchema,
   ErrorsResponseSchema,
+  ScatterResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
   UsersResponseSchema,
@@ -76,6 +77,19 @@ describe('the captured reference-run payloads', () => {
     const total = parsed.errors.reduce((n, e) => n + e.count, 0);
     const run = stats.stats.find((r) => r.scope === 'run')!;
     expect(total).toBe(run.koCount);
+  });
+
+  it('carries a scatter payload with points to draw', () => {
+    const scatter = ScatterResponseSchema.parse(fixture.scatter);
+    expect(scatter.name).toBe('Catalog/List Products');
+    // Both axes are counts/milliseconds, never null: a transform that has to
+    // defend against a null here is defending against a shape the API cannot
+    // produce.
+    expect(scatter.ok.length).toBeGreaterThan(0);
+    for (const [x, y] of scatter.ok) {
+      expect(Number.isInteger(x)).toBe(true);
+      expect(Number.isInteger(y)).toBe(true);
+    }
   });
 });
 
