@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import RequestDetail, { requestRow } from '../src/routes/RequestDetail';
 import fixture from './fixtures/reference-run.json';
 
@@ -38,5 +38,33 @@ describe('RequestDetail', () => {
       </QueryClientProvider>,
     );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Catalog/List Products');
+  });
+
+  it('asks for series and distribution at REQUEST scope, with the name', () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      urls.push(String(input));
+      return Promise.resolve(new Response('{}', { status: 500 }));
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/runs/r1/requests/Catalog%2FList%20Products']}>
+          <Routes>
+            <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // BOTH parameters on every scoped call. `?name=X` without `scope` is
+    // silently ignored and answers with the RUN's totals — a 200 carrying the
+    // wrong subject, which no status check would catch.
+    const scoped = urls.filter((u) => u.includes('/series') || u.includes('/distribution'));
+    expect(scoped.length).toBeGreaterThan(0);
+    for (const url of scoped) {
+      expect(url).toContain('scope=request');
+      expect(url).toContain(`name=${encodeURIComponent('Catalog/List Products')}`);
+    }
   });
 });

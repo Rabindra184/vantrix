@@ -1,8 +1,11 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { statsQuery } from '../api/metrics';
+import { distributionQuery, seriesQuery, statsQuery } from '../api/metrics';
+import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
+import PercentilesChart from '../charts/PercentilesChart';
+import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import RequestStatistics from '../tables/RequestStatistics';
 
 /**
@@ -32,6 +35,14 @@ export default function RequestDetail() {
   // render finds a warm cache entry rather than issuing a second request for
   // a payload the run page already fetched.
   const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+  const series = useQuery({
+    ...seriesQuery(runId ?? '', 'request', name ?? ''),
+    enabled: runId !== undefined && name !== undefined,
+  });
+  const distribution = useQuery({
+    ...distributionQuery(runId ?? '', 'request', name ?? '', 'response_time'),
+    enabled: runId !== undefined && name !== undefined,
+  });
 
   // Not reachable through the router — the route cannot match without both.
   if (runId === undefined || name === undefined) {
@@ -53,6 +64,17 @@ export default function RequestDetail() {
         Back to this run
       </Link>
       {stats.data !== undefined ? <IndicatorsChart stats={stats.data} path={name} /> : null}
+      {distribution.data !== undefined ? (
+        <DistributionChart distribution={distribution.data} />
+      ) : null}
+      {series.data !== undefined ? (
+        <>
+          <PercentilesChart series={series.data} />
+          {/* Gatling's own titles for these two on a request page. */}
+          <RequestRateChart series={series.data} title="Number of requests" />
+          <ResponseRateChart series={series.data} title="Number of responses" />
+        </>
+      ) : null}
       {stats.data !== undefined ? (
         (() => {
           const row = requestRow(stats.data, name);

@@ -55,28 +55,33 @@ function RateChart({ id, title, yName, data }: {
   );
 }
 
+/**
+ * `title` is a prop because the REQUEST detail page titles this chart
+ * differently — Gatling's own request pages head it "Number of requests" where
+ * the global page says "Requests per second over time" (§13.3 ⑦). The data,
+ * the transform and the axis are identical; only the heading differs, so this
+ * is one component with two names rather than two components.
+ */
 /** ⑩ — requests per second over time, bucketed by START time (G-23). */
-export function RequestRateChart({ series }: { readonly series: SeriesResponse }) {
+export function RequestRateChart({
+  series,
+  title = 'Requests per second over time',
+}: {
+  readonly series: SeriesResponse;
+  readonly title?: string;
+}) {
   const data = useMemo(() => toRequestRate(series), [series]);
-  return (
-    <RateChart
-      id="requests-per-second"
-      title="Requests per second over time"
-      yName="Requests per second"
-      data={data}
-    />
-  );
+  return <RateChart id="requests-per-second" title={title} yName="Requests per second" data={data} />;
 }
 
 /** ⑪ — responses per second over time, bucketed by END time (G-24). */
-export function ResponseRateChart({ series }: { readonly series: SeriesResponse }) {
+export function ResponseRateChart({
+  series,
+  title = 'Responses per second over time',
+}: {
+  readonly series: SeriesResponse;
+  readonly title?: string;
+}) {
   const data = useMemo(() => toResponseRate(series), [series]);
-  return (
-    <RateChart
-      id="responses-per-second"
-      title="Responses per second over time"
-      yName="Responses per second"
-      data={data}
-    />
-  );
+  return <RateChart id="responses-per-second" title={title} yName="Responses per second" data={data} />;
 }
