@@ -11,6 +11,19 @@
  * Status colours (passed / failed / not_applicable / pending) are tokens
  * only. Colour is never the only signal for status - consuming components
  * must always pair it with text and/or shape.
+ *
+ * --chart-1 .. --chart-6 are the CATEGORICAL SERIES palette, in fixed
+ * assignment order. They are NOT free-form decoration: their values are
+ * mirrored from CATEGORICAL / CATEGORICAL_DARK in apps/web/src/charts/theme.ts,
+ * which is where the reasoning lives, and apps/web/test/palette.test.ts fails
+ * if this file and that module ever disagree. Edit the hexes there, not here.
+ *
+ * There are exactly six, and a seventh series never wraps back to --chart-1 -
+ * see theme.ts's assignPalette.
+ *
+ * --chart-gridline is the hairline gridline colour (design section 11). It is
+ * deliberately lighter than --color-border: a gridline that reads as strongly
+ * as a container edge competes with the data.
  */
 
 @import 'tailwindcss';
@@ -26,6 +39,14 @@
   --color-status-failed: #cf222e;
   --color-status-not-applicable: #6e7781;
   --color-status-pending: #9a6700;
+
+  --chart-1: #0072B2;
+  --chart-2: #E69F00;
+  --chart-3: #009E73;
+  --chart-4: #CC79A7;
+  --chart-5: #56B4E9;
+  --chart-6: #D55E00;
+  --chart-gridline: #e9ecf0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -40,6 +61,14 @@
     --color-status-failed: #f85149;
     --color-status-not-applicable: #8b949e;
     --color-status-pending: #d29922;
+
+    --chart-1: #0072B2;
+    --chart-2: #C08400;
+    --chart-3: #009E73;
+    --chart-4: #C573A0;
+    --chart-5: #3B9CD0;
+    --chart-6: #D55E00;
+    --chart-gridline: #262c33;
   }
 }
 
@@ -56,6 +85,14 @@
   --color-status-failed: #cf222e;
   --color-status-not-applicable: #6e7781;
   --color-status-pending: #9a6700;
+
+  --chart-1: #0072B2;
+  --chart-2: #E69F00;
+  --chart-3: #009E73;
+  --chart-4: #CC79A7;
+  --chart-5: #56B4E9;
+  --chart-6: #D55E00;
+  --chart-gridline: #e9ecf0;
 }
 
 [data-theme='dark'] {
@@ -69,4 +106,12 @@
   --color-status-failed: #f85149;
   --color-status-not-applicable: #8b949e;
   --color-status-pending: #d29922;
+
+  --chart-1: #0072B2;
+  --chart-2: #C08400;
+  --chart-3: #009E73;
+  --chart-4: #C573A0;
+  --chart-5: #3B9CD0;
+  --chart-6: #D55E00;
+  --chart-gridline: #262c33;
 }
