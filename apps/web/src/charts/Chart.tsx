@@ -59,7 +59,14 @@ export default function Chart({
   yAxis,
 }: ChartProps) {
   const container = useRef<HTMLDivElement | null>(null);
+  // Held across renders so the option can be updated without the instance
+  // being rebuilt — see the two effects below.
+  const instanceRef = useRef<ReturnType<typeof echarts.init> | null>(null);
   const [mode, setMode] = useState<ChartMode>(() => resolveChartMode());
+
+  // The y-axis, as primitives. See the option effect's closing comment.
+  const yAxisType = yAxis?.type ?? 'value';
+  const yAxisName = yAxis?.name;
 
   // Follow the OS colour scheme while the page is open, so a chart drawn in
   // light mode is not left with light-mode hues on a dark surface.
@@ -89,14 +96,27 @@ export default function Chart({
     [data.series, mode],
   );
 
+  // THE INSTANCE'S LIFETIME, and nothing else: create, join the crosshair
+  // group, follow the container's size, dispose.
+  //
+  // Split from the option-setting effect below deliberately. When the two were
+  // one effect, every value the option depends on was also a reason to
+  // `dispose()` and `init()` — and two of those values (`data`, `yAxis`) are
+  // objects compared by identity, which a documented call site like
+  // `<Chart yAxis={{ type: 'log' }} …/>` makes fresh on every render. A
+  // React Query background refetch would then tear down and rebuild all eight
+  // charts inside one commit: a visible flash, and any hover, tooltip or axis
+  // pointer the reader was mid-interaction with thrown away. Now a change of
+  // data costs a `setOption`, and only a genuine change of identity
+  // (`group`) or of existence (`isEmpty`) costs an instance.
   useEffect(() => {
     const element = container.current;
-    // Nothing to draw: the empty branch renders prose instead of a canvas, so
+    // Nothing to draw: the empty branch renders prose instead of a chart, so
     // there is no element and no instance to make.
     if (element === null || isEmpty) return;
 
-    const theme = chartTheme(mode);
     const instance = echarts.init(element, undefined, { renderer: 'svg' });
+    instanceRef.current = instance;
 
     // `group` must be set on the instance BEFORE connect; `connect` links
     // every live instance carrying the same group string. Calling it once per
@@ -108,88 +128,12 @@ export default function Chart({
       echarts.connect(group);
     }
 
-    const drawn = assignment.drawn;
-    const axisText = { color: theme.inkMuted };
-
-    instance.setOption({
-      // Series colour comes from the palette. Text NEVER does (design §11):
-      // the palette is tuned for marks on a surface, and 12px type in a
-      // series colour is the commonest way a chart quietly fails contrast.
-      color: drawn.map((series) => series.color),
-      textStyle: { color: theme.ink },
-      backgroundColor: 'transparent',
-      // A legend only from two series up. One series is named by the title,
-      // and a one-entry legend is a label pretending to be a control.
-      legend:
-        drawn.length >= 2
-          ? { top: 0, textStyle: { color: theme.ink }, icon: 'roundRect' }
-          : { show: false },
-      tooltip: {
-        trigger: kind === 'pie' ? 'item' : 'axis',
-        // The crosshair `connect` propagates between grouped charts.
-        axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
-      },
-      ...(kind === 'pie'
-        ? {}
-        : {
-            grid: { top: drawn.length >= 2 ? 36 : 12, left: 56, right: 16, bottom: 32 },
-            xAxis: {
-              type: 'category',
-              data: [...data.axisLabels],
-              axisLabel: axisText,
-              // No chart border (design §11): the axis line stays, the
-              // enclosing box does not.
-              axisLine: { lineStyle: { color: theme.gridline } },
-              splitLine: { show: false },
-            },
-            yAxis: {
-              type: yAxis?.type ?? 'value',
-              name: yAxis?.name,
-              nameTextStyle: axisText,
-              axisLabel: axisText,
-              axisLine: { show: false },
-              // Hairline gridlines in the gridline token, so they sit behind
-              // the data rather than competing with it.
-              splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
-            },
-          }),
-      series: drawn.map(({ name }, i) => {
-        const source = data.series[i]!;
-        if (kind === 'pie') {
-          return {
-            type: 'pie',
-            name,
-            radius: ['52%', '76%'],
-            label: { color: theme.ink },
-            data: (source.data as readonly (number | null)[]).map((value, j) => ({
-              name: String(data.axisLabels[j] ?? ''),
-              value,
-            })),
-          };
-        }
-        return {
-          type: kind,
-          name,
-          stack: stacked ? 'total' : undefined,
-          data: [...source.data],
-          // 2px lines and 8px markers (design §11). Symbols stay off on the
-          // line itself — a marker per bucket on a 600-bucket series is
-          // noise — and the size applies to the emphasised/hovered point.
-          lineStyle: { width: 2 },
-          symbolSize: 8,
-          showSymbol: false,
-        };
-      }),
-    });
-
     // ResizeObserver, not a window `resize` listener: the chart's width is set
     // by its column, which changes when the page's layout does without the
     // window changing size at all. Guarded because jsdom has no
     // ResizeObserver and a chart mounted there must not throw.
     const observer =
-      typeof ResizeObserver === 'function'
-        ? new ResizeObserver(() => instance.resize())
-        : null;
+      typeof ResizeObserver === 'function' ? new ResizeObserver(() => instance.resize()) : null;
     observer?.observe(element);
 
     return () => {
@@ -198,8 +142,108 @@ export default function Chart({
       // its SVG root alive, and a page of eight charts remounted on every run
       // navigation leaks all eight.
       instance.dispose();
+      instanceRef.current = null;
     };
-  }, [data, isEmpty, kind, stacked, group, yAxis, mode, assignment]);
+  }, [isEmpty, group]);
+
+  // WHAT IS DRAWN. Runs after the effect above on mount (effects fire in
+  // declaration order), and on its own whenever the data or the theme moves.
+  useEffect(() => {
+    const instance = instanceRef.current;
+    if (instance === null) return;
+
+    const theme = chartTheme(mode);
+    const drawn = assignment.drawn;
+    const axisText = { color: theme.inkMuted };
+
+    instance.setOption(
+      {
+        // Series colour comes from the palette, which `assignPalette` reads off
+        // the `--chart-*` tokens. Text NEVER does (design §11): the palette is
+        // tuned for marks on a surface, and 12px type in a series colour is
+        // the commonest way a chart quietly fails contrast.
+        color: drawn.map((series) => series.color),
+        textStyle: { color: theme.ink },
+        backgroundColor: 'transparent',
+        // A legend only from two series up. One series is named by the title,
+        // and a one-entry legend is a label pretending to be a control.
+        legend:
+          drawn.length >= 2
+            ? { top: 0, textStyle: { color: theme.ink }, icon: 'roundRect' }
+            : { show: false },
+        tooltip: {
+          trigger: kind === 'pie' ? 'item' : 'axis',
+          // Surface and ink tokens, not ECharts' defaults: the default tooltip
+          // is a near-white panel with dark text, which on a dark page is a
+          // flashlight over the data.
+          backgroundColor: theme.surface,
+          borderColor: theme.gridline,
+          textStyle: { color: theme.ink },
+          // The crosshair `connect` propagates between grouped charts.
+          axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
+        },
+        ...(kind === 'pie'
+          ? {}
+          : {
+              grid: { top: drawn.length >= 2 ? 36 : 12, left: 56, right: 16, bottom: 32 },
+              xAxis: {
+                type: 'category',
+                data: [...data.axisLabels],
+                axisLabel: axisText,
+                // No chart border (design §11): the axis line stays, the
+                // enclosing box does not.
+                axisLine: { lineStyle: { color: theme.gridline } },
+                splitLine: { show: false },
+              },
+              yAxis: {
+                type: yAxisType,
+                name: yAxisName,
+                nameTextStyle: axisText,
+                axisLabel: axisText,
+                axisLine: { show: false },
+                // Hairline gridlines in the gridline token, so they sit behind
+                // the data rather than competing with it.
+                splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
+              },
+            }),
+        series: drawn.map(({ name }, i) => {
+          const source = data.series[i]!;
+          if (kind === 'pie') {
+            return {
+              type: 'pie',
+              name,
+              radius: ['52%', '76%'],
+              label: { color: theme.ink },
+              data: (source.data as readonly (number | null)[]).map((value, j) => ({
+                name: String(data.axisLabels[j] ?? ''),
+                value,
+              })),
+            };
+          }
+          return {
+            type: kind,
+            name,
+            stack: stacked ? 'total' : undefined,
+            data: [...source.data],
+            // 2px lines and 8px markers (design §11). Symbols stay off on the
+            // line itself — a marker per bucket on a 600-bucket series is
+            // noise — and the size applies to the emphasised/hovered point.
+            lineStyle: { width: 2 },
+            symbolSize: 8,
+            showSymbol: false,
+          };
+        }),
+      },
+      // notMerge. Task 8's band selector removes series, and a merging
+      // setOption keeps the ones it was not told about — so deselecting p99
+      // would leave p99 on the chart.
+      true,
+    );
+    // `yAxis` is spread into PRIMITIVES above (`yAxisType`, `yAxisName`) rather
+    // than listed here as an object: it is compared by identity, and the
+    // documented call site `<Chart yAxis={{ type: 'log' }} …/>` builds a new
+    // one every render.
+  }, [data, kind, stacked, yAxisType, yAxisName, mode, assignment]);
 
   return (
     <figure data-testid={`chart-${id}`} className="flex flex-col gap-2 m-0">

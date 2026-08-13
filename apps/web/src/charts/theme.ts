@@ -105,7 +105,12 @@ export interface PaletteAssignment {
  * wholly-wrong curve on the charts where summing does not apply.
  */
 export function assignPalette(names: readonly string[], mode: ChartMode): PaletteAssignment {
-  const palette = paletteFor(mode);
+  // `livePalette`, NOT `paletteFor`: the assigned colours are what `Chart`
+  // hands to ECharts, so this is the one path a `--chart-*` token has to
+  // travel to reach a rendered mark. Reading the compiled constants here
+  // instead would leave the tokens decorative — which is exactly what they
+  // were until this call changed.
+  const palette = livePalette(mode);
   const drawn = names
     .slice(0, MAX_CATEGORICAL_SERIES)
     .map((name, i) => ({ name, color: palette[i]! }));
@@ -139,6 +144,34 @@ function token(name: string, fallback: string): string {
 }
 
 /**
+ * The hairline gridline colour, per mode.
+ *
+ * Exported so `palette.test.ts` can pin it against all four blocks of
+ * `tokens.css` rather than only against the two `[data-theme]` ones. A typo in
+ * the `prefers-color-scheme` block would otherwise ship a gridline that
+ * competes with the data on every dark-mode machine, be read live by
+ * `chartTheme`, rendered faithfully, and go unnoticed.
+ */
+export const GRIDLINE: Readonly<Record<ChartMode, string>> = {
+  light: '#e9ecf0',
+  dark: '#262c33',
+};
+
+/**
+ * The categorical palette as the DOCUMENT currently defines it.
+ *
+ * `paletteFor` is the compiled constant and the source of truth for the
+ * checks; this is what actually gets drawn. The two agree unless someone edits
+ * `tokens.css` alone, which `palette.test.ts` fails on.
+ *
+ * Falls back per-index rather than wholesale, so a stylesheet defining only
+ * some of the six still yields six colours.
+ */
+export function livePalette(mode: ChartMode): readonly string[] {
+  return paletteFor(mode).map((fallback, i) => token(`--chart-${i + 1}`, fallback));
+}
+
+/**
  * Which theme the document is currently in.
  *
  * `[data-theme]` first and `prefers-color-scheme` second, mirroring the
@@ -163,24 +196,29 @@ export interface ChartTheme {
 }
 
 /**
- * The non-series colours: text, gridlines, surface.
+ * Every colour a chart uses, read off the live document.
  *
- * Series colour comes from the palette; EVERYTHING ELSE comes from the ink
+ * Series colour comes from `palette`; EVERYTHING ELSE comes from the ink
  * tokens. Design §11 is explicit that values, labels and legend text wear ink
  * tokens and never the series colour — a legend label painted in its series'
  * colour is the most common way a chart quietly fails contrast, because the
  * palette is tuned for marks on a surface, not for 12px text.
+ *
+ * Every field here is CONSUMED by `Chart.tsx`. That is worth stating because
+ * it was briefly untrue: `palette` and `surface` were computed and then
+ * ignored, so `--chart-1…--chart-6` reached no rendered mark while this
+ * docstring claimed a theme switch was picked up. `palette` now flows through
+ * `assignPalette` into the series colours, and `surface` is the tooltip's
+ * background — without it the tooltip renders ECharts' default near-white
+ * panel over a dark page.
  */
 export function chartTheme(mode: ChartMode): ChartTheme {
-  const palette = paletteFor(mode);
   const dark = mode === 'dark';
   return {
-    // Read per-index off tokens.css so a theme switch is picked up, with the
-    // compiled palette as the fallback. palette.test.ts pins the two in sync.
-    palette: palette.map((fallback, i) => token(`--chart-${i + 1}`, fallback)),
+    palette: livePalette(mode),
     ink: token('--color-text-primary', dark ? '#f4f5f7' : '#14171a'),
     inkMuted: token('--color-text-muted', dark ? '#9aa4b2' : '#5b6470'),
-    gridline: token('--chart-gridline', dark ? '#262c33' : '#e9ecf0'),
+    gridline: token('--chart-gridline', GRIDLINE[mode]),
     surface: token('--color-surface', dark ? '#14171a' : '#ffffff'),
   };
 }
