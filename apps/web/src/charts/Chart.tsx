@@ -21,6 +21,27 @@ export interface ChartYAxis {
   readonly name?: string;
 }
 
+/**
+ * Names the CATEGORY axis — `axisLabels` — which is what `xAxis` has always
+ * meant here in the same way `yAxis` has always meant the value axis: a
+ * `horizontal` chart swaps which of x/y each one is placed on, and
+ * `IndicatorsChart` already passes `yAxis={{ name: 'Requests' }}` for an axis
+ * that ends up drawn along the bottom.
+ *
+ * No `type`: a category axis has no scale to choose.
+ *
+ * Unused by the six time-axis charts, whose labels are elapsed seconds and say
+ * so in the title. It exists for the distribution ⑧, the first chart whose
+ * category labels are ambiguous on their own — a bare `28` under a bar is
+ * either the midpoint of a 25 ms bin or a response time some request actually
+ * took, depending on `exactValues`, and the reader has no other way to tell.
+ * `DistributionChart` passes `data.columns[0]`, so the drawn axis and the data
+ * table's label column are one string and cannot drift.
+ */
+export interface ChartXAxis {
+  readonly name?: string;
+}
+
 export interface ChartProps {
   /** Stable per chart. Names the data table (`chart-data-<id>`) and the figure. */
   readonly id: string;
@@ -68,6 +89,7 @@ export interface ChartProps {
    */
   readonly group?: string;
   readonly yAxis?: ChartYAxis;
+  readonly xAxis?: ChartXAxis;
 }
 
 /**
@@ -93,6 +115,7 @@ export default function Chart({
   horizontal = false,
   group,
   yAxis,
+  xAxis,
   roles,
 }: ChartProps) {
   const container = useRef<HTMLDivElement | null>(null);
@@ -101,9 +124,10 @@ export default function Chart({
   const instanceRef = useRef<ReturnType<typeof echarts.init> | null>(null);
   const [mode, setMode] = useState<ChartMode>(() => resolveChartMode());
 
-  // The y-axis, as primitives. See the option effect's closing comment.
+  // The axes, as primitives. See the option effect's closing comment.
   const yAxisType = yAxis?.type ?? 'value';
   const yAxisName = yAxis?.name;
+  const xAxisName = xAxis?.name;
 
   // Follow the OS colour scheme while the page is open, so a chart drawn in
   // light mode is not left with light-mode hues on a dark surface.
@@ -204,6 +228,15 @@ export default function Chart({
     const categoryAxis = {
       type: 'category',
       data: [...data.axisLabels],
+      name: xAxisName,
+      // Centred under the axis rather than at its end, which is ECharts'
+      // default: the one caller's name is a phrase ("Response time (ms, bin
+      // midpoint)"), and at `end` it is drawn past the last tick and clipped
+      // by the container. `nameGap` clears the tick labels; the grid below
+      // makes the room for it.
+      nameLocation: 'middle',
+      nameGap: 28,
+      nameTextStyle: axisText,
       axisLabel: axisText,
       // No chart border (design §11): the axis line stays, the enclosing box
       // does not.
@@ -262,7 +295,8 @@ export default function Chart({
                 // and are words, not axis ticks, so they need the room.
                 left: horizontal ? 104 : 56,
                 right: 16,
-                bottom: 32,
+                // A named category axis needs the room its name is drawn in.
+                bottom: xAxisName === undefined ? 32 : 56,
               },
               ...(horizontal
                 ? { xAxis: valueAxis, yAxis: categoryAxis }
@@ -305,11 +339,11 @@ export default function Chart({
       // would leave p99 on the chart.
       true,
     );
-    // `yAxis` is spread into PRIMITIVES above (`yAxisType`, `yAxisName`) rather
-    // than listed here as an object: it is compared by identity, and the
-    // documented call site `<Chart yAxis={{ type: 'log' }} …/>` builds a new
-    // one every render.
-  }, [data, kind, stacked, horizontal, roles, yAxisType, yAxisName, mode, assignment]);
+    // `yAxis` and `xAxis` are spread into PRIMITIVES above (`yAxisType`,
+    // `yAxisName`, `xAxisName`) rather than listed here as objects: they are
+    // compared by identity, and the documented call site
+    // `<Chart yAxis={{ type: 'log' }} …/>` builds a new one every render.
+  }, [data, kind, stacked, horizontal, roles, yAxisType, yAxisName, xAxisName, mode, assignment]);
 
   return (
     <figure data-testid={`chart-${id}`} className="flex flex-col gap-2 m-0">
