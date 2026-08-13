@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  BAND_COLORS,
+  BAND_RAMP,
   CATEGORICAL,
   CATEGORICAL_DARK,
   GRIDLINE,
@@ -185,10 +187,31 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
     return css.slice(open, css.indexOf('}', open));
   }
 
-  function tokenIn(block: string, name: string, where: string): string {
-    const found = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`).exec(block);
+  /**
+   * One token's value, resolving ONE level of `var()` indirection within the
+   * same block.
+   *
+   * Three of the four `--chart-band-*` tokens are declared as
+   * `var(--color-status-…)` rather than as hexes, deliberately: "the fastest
+   * band is the passed colour" then stays true by construction instead of by
+   * two hexes that happen to match today. Resolving the alias here is what
+   * lets the drift check compare them against `theme.ts`'s compiled values —
+   * and it proves something a literal hex would not, namely that the target is
+   * declared in the SAME block. A block aliasing a token it does not define
+   * yields an invalid value at runtime and a bare `var()` regex would have
+   * called that a pass.
+   */
+  function tokenIn(block: string, name: string, where: string, depth = 0): string {
+    const found = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6}|var\\(\\s*(--[\\w-]+)\\s*\\))`).exec(
+      block,
+    );
     expect(found?.[1], `${name} missing from ${where}`).toBeDefined();
-    return found![1]!.toUpperCase();
+    const alias = found![2];
+    if (alias === undefined) return found![1]!.toUpperCase();
+    // One level only. A chain deeper than this is a design-token smell, and an
+    // unbounded recursion here would hang on a cycle rather than report one.
+    expect(depth, `${name} in ${where} aliases more than one level deep`).toBe(0);
+    return tokenIn(block, alias, `${where} (via ${name})`, depth + 1);
   }
 
   const mediaDark = css.indexOf('@media (prefers-color-scheme: dark)');
@@ -236,6 +259,134 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
     expect(found).toEqual(
       STATUS_TOKENS.map(({ role }) => STATUS_COLORS[mode][role].toUpperCase()),
     );
+  });
+
+  /**
+   * And the band ramp, in the same four blocks. Task 4's fix round established
+   * that all four must carry the chart tokens: the two `[data-theme]` blocks
+   * are inert today, and the two that are actually in force were the ones
+   * nobody was checking.
+   */
+  it.each(BLOCKS)('$where carries the band ramp theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = BAND_RAMP.map((role) => tokenIn(body, `--chart-band-${role.slice(5)}`, where));
+    expect(found).toEqual(BAND_RAMP.map((role) => BAND_COLORS[mode][role].toUpperCase()));
+  });
+});
+
+/**
+ * THE INDICATOR BAND RAMP (③, G-06…G-09) — and the one gate it does not meet.
+ *
+ * The bands are an ORDERED four-step severity scale, which is a different kind
+ * of object from the categorical palette above. The categorical floor —
+ * adjacent pairs at ΔE >= 15 — exists because categorical hues carry no
+ * ordering, so a reader must be able to say "that is series 3, not series 4"
+ * from colour alone. A ramp is the opposite: neighbouring steps are SUPPOSED to
+ * resemble each other, and the resemblance is what makes it read as a scale
+ * rather than as four unrelated warm colours.
+ *
+ * MEASURED, and reported rather than papered over. Adjacent ΔE on the shipped
+ * ramp:
+ *
+ *   light  under→between 15.69   between→over  8.36   over→failed 7.81
+ *   dark   under→between 17.92   between→over 10.57   over→failed 8.21
+ *
+ * Two pairs per mode fall below 15. That is not a defect in the hues chosen,
+ * and re-picking cannot fix it: the ramp's endpoints are ΔE 30.69 apart
+ * (light), so three adjacent gaps of >= 15 would need a path 47% longer than
+ * the straight line between them — achievable only by swinging lightness
+ * hard, which would make LIGHTNESS the dominant variable and stop the thing
+ * reading as a hue ramp at all. Gatling's own four-step ramp fails the same
+ * floor (`#FFDD00` → `#FFA900` is ΔE 12.65), which is the corroboration that
+ * the floor, not the palette, is the wrong tool here.
+ *
+ * So what is asserted instead is what a ramp actually has to guarantee, and
+ * these are the real gates:
+ *
+ *   1. All four pairwise distinct, in both modes.
+ *   2. Every pair at ramp-distance >= 2 clears the SAME ΔE 15 floor the
+ *      categorical palette is held to. Adjacent steps may resemble each other;
+ *      steps two apart may not.
+ *   3. Hue angle decreases monotonically green → red, so the ramp is ordered in
+ *      the variable it claims to be ordered in. This is what the first cut
+ *      failed: a neutral grey on `t >= higherMs` broke the ordering while
+ *      leaving all four distinct.
+ *
+ * And colour is the SECOND signal regardless — every band carries its own
+ * label, count and percentage in the data table.
+ */
+describe('the indicator band ramp', () => {
+  const RAMP_MODES = ['light', 'dark'] as const;
+
+  it.each(RAMP_MODES)('is four distinct colours in %s mode', (mode) => {
+    const ramp = BAND_RAMP.map((role) => BAND_COLORS[mode][role]);
+    expect(ramp).toHaveLength(4);
+    expect(new Set(ramp).size).toBe(4);
+  });
+
+  it.each(RAMP_MODES)('separates every pair two or more steps apart by ΔE 15 (%s)', (mode) => {
+    const lab = BAND_RAMP.map((role) => hexToOkLab(BAND_COLORS[mode][role]));
+    const tooClose: { pair: string; dE: number }[] = [];
+    for (let i = 0; i < lab.length; i++) {
+      for (let j = i + 2; j < lab.length; j++) {
+        const dE = Number(deltaE(lab[i]!, lab[j]!).toFixed(2));
+        if (dE < SEPARATION_FLOOR) {
+          tooClose.push({ pair: `${BAND_RAMP[i]} → ${BAND_RAMP[j]}`, dE });
+        }
+      }
+    }
+    expect(tooClose).toEqual([]);
+  });
+
+  /**
+   * A regression guard on the adjacent steps, at the floor they actually meet
+   * — NOT a claim that adjacent bands are independently distinguishable. The
+   * number is the measured minimum rounded down; its job is to fail if someone
+   * later nudges a step onto its neighbour, which `2.` above would not catch
+   * for an adjacent pair.
+   */
+  const RAMP_STEP_FLOOR = 7.5;
+
+  it.each(RAMP_MODES)('keeps every adjacent step at least ΔE 7.5 apart (%s)', (mode) => {
+    const lab = BAND_RAMP.map((role) => hexToOkLab(BAND_COLORS[mode][role]));
+    const tooClose = lab
+      .slice(1)
+      .map((next, i) => ({
+        pair: `${BAND_RAMP[i]} → ${BAND_RAMP[i + 1]}`,
+        dE: Number(deltaE(lab[i]!, next).toFixed(2)),
+      }))
+      .filter(({ dE }) => dE < RAMP_STEP_FLOOR);
+    expect(tooClose).toEqual([]);
+  });
+
+  /**
+   * The ordering, which is the whole point and the thing the status-token
+   * version got wrong. Green (~148°) → amber (~75°) → orange (~45°) → red
+   * (~25°): strictly decreasing hue angle, no wrap.
+   */
+  it.each(RAMP_MODES)('runs monotonically from green to red by hue angle (%s)', (mode) => {
+    const hues = BAND_RAMP.map((role) => {
+      const { a, b } = hexToOkLab(BAND_COLORS[mode][role]);
+      const degrees = (Math.atan2(b, a) * 180) / Math.PI;
+      return Number((degrees < 0 ? degrees + 360 : degrees).toFixed(1));
+    });
+    // Reported as the list, so a failure prints the angles rather than `false`.
+    expect(hues).toEqual([...hues].sort((x, y) => y - x));
+    // And it really spans the ramp, rather than being four neighbouring hues
+    // that happen to be ordered.
+    expect(hues[0]! - hues[3]!).toBeGreaterThan(90);
+  });
+
+  /**
+   * The ramp's endpoints ARE the status colours — `--chart-band-under` and
+   * `--chart-band-failed` are declared as `var()` aliases precisely so this
+   * cannot drift. Asserted because it is what keeps red meaning "did not
+   * succeed" in the bands, in `routes/marks.tsx`, and in the donut ④ that
+   * paints the very same failed requests a few inches away.
+   */
+  it.each(RAMP_MODES)('shares its endpoints with the status palette (%s)', (mode) => {
+    expect(BAND_COLORS[mode]['band-under']).toBe(STATUS_COLORS[mode].passed);
+    expect(BAND_COLORS[mode]['band-failed']).toBe(STATUS_COLORS[mode].failed);
   });
 });
 

@@ -31,8 +31,9 @@ export default function IndicatorsChart({ stats }: { stats: StatsResponse }) {
       kind="bar"
       stacked
       horizontal
-      // States, not identities — see `StatusRole` in theme.ts.
-      statusRoles={BAND_ROLES}
+      // The four-step severity ramp, not the categorical palette and not the
+      // app-wide status colours — see `BandRole` in theme.ts.
+      roles={BAND_ROLES}
       yAxis={{ name: 'Requests' }}
     />
   );

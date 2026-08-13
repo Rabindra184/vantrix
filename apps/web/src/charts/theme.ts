@@ -70,63 +70,131 @@ export function paletteFor(mode: ChartMode): readonly string[] {
 }
 
 /* -------------------------------------------------------------------- *
- * STATUS colours — a second, smaller palette, for marks that are STATES
+ * SEMANTIC colours — for marks that MEAN something, rather than marks that
+ * merely differ from each other
  * -------------------------------------------------------------------- */
 
 /**
- * The role a mark plays, when the mark is a state rather than an identity.
+ * WHY ANY OF THIS EXISTS ALONGSIDE `CATEGORICAL`. The categorical palette
+ * answers "which series is this?" — its hues are interchangeable, and
+ * Okabe–Ito's whole point is that they carry no meaning beyond "not the other
+ * one". The indicator bands ③ and the OK/KO donut ④ ask a different question: a
+ * request that failed is not merely a different series from one that
+ * succeeded, it is WORSE, and the reader has already learned elsewhere on this
+ * same page (`routes/marks.tsx`) that failure is `--color-status-failed`.
+ * Drawing it in categorical blue because it happened to be the first series
+ * would throw that away.
  *
- * WHY THIS EXISTS ALONGSIDE `CATEGORICAL`. The categorical palette answers
- * "which series is this?" — its hues are interchangeable, and Okabe–Ito's whole
- * point is that they carry no meaning beyond "not the other one". The indicator
- * bands ③ and the OK/KO donut ④ ask a different question: a request that failed
- * is not merely a different series from one that succeeded, it is WORSE, and
- * the reader has already learned elsewhere on this same page (`routes/marks.tsx`)
- * that failure is `--color-status-failed`. Drawing it in categorical blue
- * because it happened to be the first series would throw that away.
- *
- * The four roles map one-to-one onto the four `--color-status-*` tokens the
- * design system defines. `neutral` is `--color-status-not-applicable`.
+ * There are TWO semantic palettes, and they are not the same kind of thing.
+ */
+
+/**
+ * App-wide STATES: what the rest of the UI already spends on a status, a
+ * verdict or an SLA outcome (`routes/marks.tsx`). Maps one-to-one onto the four
+ * `--color-status-*` tokens; `neutral` is `--color-status-not-applicable`.
  */
 export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
 
-const STATUS_TOKEN: Readonly<Record<StatusRole, string>> = {
+/**
+ * The indicator bands' SEVERITY RAMP — one chart's ordered four-step scale,
+ * deliberately NOT the status palette.
+ *
+ * The first cut of this overloaded the status tokens, which put
+ * `--color-status-pending` behind "800–1200 ms" (a stretch: the band is not
+ * pending anything) and, with only four status tokens of which just three form
+ * a ramp, left the neutral grey on `t >= higherMs` — inverting the ordering,
+ * because grey reads as *less* severe than the amber directly beneath it when
+ * it is the worst non-failure state.
+ *
+ * Gatling's own report (`fixtures/gatling-3.15.1.2/reference-report/index.html`)
+ * uses a genuine four-step ramp — `#68b65c` green, `#FFDD00` yellow, `#FFA900`
+ * orange, `#f15b4f` red — and the monotonic ordering is the information.
+ * `--chart-band-*` is that, in this design system's own hues: three of the four
+ * are var() aliases of the status tokens so the endpoints keep agreeing with
+ * the rest of the app, and only the orange step is new.
+ *
+ * The ramp's measured properties, and the one gate it does NOT meet, are in
+ * `palette.test.ts`.
+ */
+export type BandRole = 'band-under' | 'band-between' | 'band-over' | 'band-failed';
+
+/** Either semantic palette. What `Chart`'s `roles` prop accepts. */
+export type MarkRole = StatusRole | BandRole;
+
+const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
   passed: '--color-status-passed',
   pending: '--color-status-pending',
   neutral: '--color-status-not-applicable',
   failed: '--color-status-failed',
+  'band-under': '--chart-band-under',
+  'band-between': '--chart-band-between',
+  'band-over': '--chart-band-over',
+  'band-failed': '--chart-band-failed',
 };
 
 /**
- * The compiled values of those four tokens, per mode.
+ * The compiled values of those tokens, per mode.
  *
  * Mirrors `tokens.css` exactly, and `palette.test.ts` fails if the two ever
- * disagree — the same arrangement, and the same guard, the `--chart-*` palette
- * has. These are the FALLBACKS: `statusColor` reads the live document first, so
- * a theme switch is picked up without a rebuild, and these cover the two cases
- * where reading fails honestly (no document at all, and jsdom, which parses no
- * stylesheet).
+ * disagree in ANY of the four blocks — the same arrangement, and the same
+ * guard, the `--chart-*` palette has. These are the FALLBACKS: `markColor`
+ * reads the live document first, so a theme switch is picked up without a
+ * rebuild, and these cover the two cases where reading fails honestly (no
+ * document at all, and jsdom, which parses no stylesheet).
+ *
+ * The three aliased band values are written out as the hexes they resolve TO,
+ * because a fallback is what is used when no stylesheet exists and there is
+ * nothing for a `var()` to resolve against. `palette.test.ts` resolves the
+ * indirection when it compares, so the alias cannot drift from its target.
  */
 export const STATUS_COLORS: Readonly<Record<ChartMode, Readonly<Record<StatusRole, string>>>> = {
   light: { passed: '#1a7f37', pending: '#9a6700', neutral: '#6e7781', failed: '#cf222e' },
   dark: { passed: '#3fb950', pending: '#d29922', neutral: '#8b949e', failed: '#f85149' },
 };
 
-export function statusColor(role: StatusRole, mode: ChartMode): string {
-  return token(STATUS_TOKEN[role], STATUS_COLORS[mode][role]);
+/** In SEVERITY ORDER. Do not reorder: `palette.test.ts` reads the ramp off it. */
+export const BAND_COLORS: Readonly<Record<ChartMode, Readonly<Record<BandRole, string>>>> = {
+  light: {
+    'band-under': '#1a7f37',
+    'band-between': '#9a6700',
+    'band-over': '#bc4c00',
+    'band-failed': '#cf222e',
+  },
+  dark: {
+    'band-under': '#3fb950',
+    'band-between': '#d29922',
+    'band-over': '#db6d28',
+    'band-failed': '#f85149',
+  },
+};
+
+/** The severity ramp, in order, as a list — `under → between → over → failed`. */
+export const BAND_RAMP: readonly BandRole[] = [
+  'band-under',
+  'band-between',
+  'band-over',
+  'band-failed',
+];
+
+function fallbackFor(role: MarkRole, mode: ChartMode): string {
+  return role.startsWith('band-')
+    ? BAND_COLORS[mode][role as BandRole]
+    : STATUS_COLORS[mode][role as StatusRole];
+}
+
+export function markColor(role: MarkRole, mode: ChartMode): string {
+  return token(ROLE_TOKEN[role], fallbackFor(role, mode));
 }
 
 /**
- * Every status colour, read off the live document — the shape `chartTheme`
+ * Every semantic colour, read off the live document — the shape `chartTheme`
  * carries and `Chart` indexes with a chart's declared roles.
  */
-export function liveStatusColors(mode: ChartMode): Readonly<Record<StatusRole, string>> {
-  return {
-    passed: statusColor('passed', mode),
-    pending: statusColor('pending', mode),
-    neutral: statusColor('neutral', mode),
-    failed: statusColor('failed', mode),
-  };
+export function liveMarkColors(mode: ChartMode): Readonly<Record<MarkRole, string>> {
+  const entries = (Object.keys(ROLE_TOKEN) as MarkRole[]).map(
+    (role) => [role, markColor(role, mode)] as const,
+  );
+  return Object.fromEntries(entries) as Record<MarkRole, string>;
 }
 
 /** How many categorical series can be drawn at once. There is no seventh. */
@@ -248,9 +316,11 @@ export function resolveChartMode(): ChartMode {
 }
 
 export interface ChartTheme {
-  readonly palette: readonly string[];
-  /** The status palette, for charts whose marks are states — see `StatusRole`. */
-  readonly status: Readonly<Record<StatusRole, string>>;
+  /**
+   * The two SEMANTIC palettes, by role — for the charts whose marks mean
+   * something. See `MarkRole`.
+   */
+  readonly roles: Readonly<Record<MarkRole, string>>;
   readonly ink: string;
   readonly inkMuted: string;
   readonly gridline: string;
@@ -258,31 +328,37 @@ export interface ChartTheme {
 }
 
 /**
- * Every colour a chart uses, read off the live document.
+ * Every colour a chart uses that is NOT a categorical series colour, read off
+ * the live document.
  *
- * Series colour comes from `palette`; EVERYTHING ELSE comes from the ink
- * tokens. Design §11 is explicit that values, labels and legend text wear ink
- * tokens and never the series colour — a legend label painted in its series'
- * colour is the most common way a chart quietly fails contrast, because the
- * palette is tuned for marks on a surface, not for 12px text.
+ * WHERE SERIES COLOUR ACTUALLY COMES FROM, because this docstring got it wrong
+ * once and a comment that misdescribes the mechanism is worse than none: it
+ * does NOT come from here. `Chart` calls `assignPalette`, which calls
+ * `livePalette` itself, and hands the result straight to ECharts. That is a
+ * parallel path which bypasses `chartTheme` entirely — deliberately, because
+ * assignment has to decide what to do with a seventh series and a plain list of
+ * six hues cannot. `chartTheme` used to also return a `palette` field
+ * mirroring it; nothing ever read that field, so it is gone. Editing
+ * `--chart-4` and looking for it here is looking down the wrong path.
  *
- * Every field here is CONSUMED by `Chart.tsx`. That is worth stating because
- * it was briefly untrue: `palette` and `surface` were computed and then
- * ignored, so `--chart-1…--chart-6` reached no rendered mark while this
- * docstring claimed a theme switch was picked up. `palette` now flows through
- * `assignPalette` into the series colours, and `surface` is the tooltip's
- * background — without it the tooltip renders ECharts' default near-white
- * panel over a dark page.
+ * What IS here, and every field is read by `Chart.tsx`:
  *
- * `status` is consumed only by the charts that declare `statusRoles` — the
- * indicator bands ③ and the request-count donut ④. Every other chart draws
- * identities, not states, and takes `palette`.
+ *   - `roles` — the status and band palettes, consumed only by the charts that
+ *     declare `roles` on `<Chart/>`: the indicator bands ③ and the
+ *     request-count donut ④.
+ *   - `ink` / `inkMuted` — all text. Design §11 is explicit that values, labels
+ *     and legend text wear ink tokens and NEVER a mark colour; a legend label
+ *     painted in its series' colour is the most common way a chart quietly
+ *     fails contrast, because the palettes are tuned for marks on a surface,
+ *     not for 12px type.
+ *   - `gridline` — the hairline splitLines.
+ *   - `surface` — the tooltip's background. Without it the tooltip renders
+ *     ECharts' default near-white panel over a dark page.
  */
 export function chartTheme(mode: ChartMode): ChartTheme {
   const dark = mode === 'dark';
   return {
-    palette: livePalette(mode),
-    status: liveStatusColors(mode),
+    roles: liveMarkColors(mode),
     ink: token('--color-text-primary', dark ? '#f4f5f7' : '#14171a'),
     inkMuted: token('--color-text-muted', dark ? '#9aa4b2' : '#5b6470'),
     gridline: token('--chart-gridline', GRIDLINE[mode]),

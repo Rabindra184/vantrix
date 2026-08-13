@@ -1,5 +1,5 @@
 import type { StatsResponse } from '@perfportal/contracts';
-import type { StatusRole } from '../theme';
+import type { BandRole, StatusRole } from '../theme';
 import type { ChartData, ChartTableRow } from '../types';
 
 /**
@@ -16,51 +16,50 @@ import type { ChartData, ChartTableRow } from '../types';
  * ------------------------------------------------------------------ */
 
 /**
- * A band's colour ROLE, and why the bands do not use the categorical palette.
+ * A band's colour ROLE, and why the bands take neither the categorical palette
+ * nor the status palette.
  *
- * The four bands are states, not identities: `t < lowerMs` is *better* than
- * `t >= higherMs`, and `failed` is not merely a fifth kind of thing. Okabe–Ito's
- * six hues are deliberately meaningless — that is their virtue for series — so
- * spending them here would say "these are four different bands" when what the
- * reader needs is "these are four bands, and they get worse left to right".
- * Design §11 and the plan both say status tokens; this is that, typed.
+ * NOT CATEGORICAL, because the four bands are ordered: `t < lowerMs` is
+ * *better* than `t >= higherMs`, and `failed` is not merely a fifth kind of
+ * thing. Okabe–Ito's six hues are deliberately meaningless — that is their
+ * virtue for series — so spending them here would say "these are four different
+ * bands" when what the reader needs is "these are four bands and they get worse
+ * left to right".
  *
- * THE MAPPING IS NOT THE OBVIOUS ONE, AND THE REASON MATTERS. There are four
- * bands and exactly four `--color-status-*` tokens, but only three of them form
- * a severity ramp (passed → pending → failed); the fourth,
- * `--color-status-not-applicable`, is a neutral grey. Something has to take it.
+ * NOT THE STATUS PALETTE EITHER, which is where the first cut of this went
+ * wrong. There are four `--color-status-*` tokens but only three form a ramp;
+ * the fourth is a neutral grey, and putting it on `t >= higherMs` *inverted*
+ * the ordering — grey reads as less severe than the amber directly beneath it,
+ * when it is the worst non-failure state. Overloading `--color-status-pending`
+ * to mean "800–1200 ms" was a stretch in the same direction: the band is not
+ * pending anything.
  *
- *   - `failed` takes `failed`. Red means "this request did not succeed"
- *     everywhere else in this app (`routes/marks.tsx`: the run status, the run
- *     verdict, every SLA assertion outcome), and the donut ④ sitting beside
- *     this chart paints the very same 24 requests in the very same red. Giving
- *     the red to `t >= higherMs` instead would put one fact in two colours a
- *     few inches apart on one page.
- *   - So `t >= higherMs` — slow, but it *answered* — takes the neutral. It
- *     understates the band, and that is a real cost, honestly the wrong
- *     trade-off in isolation. Gatling's own report has a fourth warm colour
- *     (orange) for exactly this band and we do not; adding a fifth status token
- *     is a design-system decision, not a chart decision, and inventing an
- *     orange by eye is precisely what `palette.test.ts` exists to stop. The
- *     band's threshold is in its label, so the meaning is present; only the
- *     emphasis is missing. Recorded in the Task 5 report as the open item.
+ * So the bands get their own four-step ramp, `--chart-band-*`, matching what
+ * Gatling's own report does (green → yellow → orange → red). Its endpoints are
+ * var() aliases of the status tokens, so red still means "did not succeed" here
+ * exactly as it does in `routes/marks.tsx` and in the donut ④ beside this
+ * chart, which paints the very same requests. See `BandRole` in `theme.ts`.
  */
 interface BandSpec {
   readonly key: keyof StatsResponse['indicators'];
-  readonly role: StatusRole;
+  readonly role: BandRole;
   /** Built from the payload's bounds. NEVER from a constant — see `toIndicators`. */
   readonly label: (bounds: StatsResponse['bounds']) => string;
 }
 
 const BANDS: readonly BandSpec[] = [
-  { key: 'under', role: 'passed', label: (b) => `t < ${b.lowerMs} ms` },
-  { key: 'between', role: 'pending', label: (b) => `${b.lowerMs} ms <= t < ${b.higherMs} ms` },
-  { key: 'over', role: 'neutral', label: (b) => `t >= ${b.higherMs} ms` },
-  { key: 'failed', role: 'failed', label: () => 'failed' },
+  { key: 'under', role: 'band-under', label: (b) => `t < ${b.lowerMs} ms` },
+  {
+    key: 'between',
+    role: 'band-between',
+    label: (b) => `${b.lowerMs} ms <= t < ${b.higherMs} ms`,
+  },
+  { key: 'over', role: 'band-over', label: (b) => `t >= ${b.higherMs} ms` },
+  { key: 'failed', role: 'band-failed', label: () => 'failed' },
 ];
 
 /**
- * The band colours, in band order — handed to `<Chart statusRoles={…}/>`, which
+ * The band colours, in band order — handed to `<Chart roles={…}/>`, which
  * assigns them to series BY INDEX.
  *
  * That index alignment is the whole contract between this module and the
@@ -71,7 +70,7 @@ const BANDS: readonly BandSpec[] = [
  * in a `useEffect` dependency list, and a new array every render would re-issue
  * `setOption` on every render.
  */
-export const BAND_ROLES: readonly StatusRole[] = BANDS.map((band) => band.role);
+export const BAND_ROLES: readonly BandRole[] = BANDS.map((band) => band.role);
 
 const BAND_COLUMNS = ['Band', 'Count', 'Percent'] as const;
 
@@ -100,7 +99,7 @@ function percent(count: number, total: number): string {
  * would look broken. This is the design's falsification checkpoint #5.
  *
  * FOUR SERIES OF ONE VALUE, not one series of four. Colour is assigned per
- * series, so this is what lets each band carry its own status colour; it is
+ * series, so this is what lets each band carry its own step of the ramp; it is
  * also why `Chart` grew `stacked`.
  *
  * The percentage denominator is the sum of the four bands, not the run row's

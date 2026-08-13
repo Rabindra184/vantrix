@@ -6,7 +6,7 @@ import {
   chartTheme,
   resolveChartMode,
   type ChartMode,
-  type StatusRole,
+  type MarkRole,
 } from './theme';
 import type { ChartData } from './types';
 
@@ -39,12 +39,14 @@ export interface ChartProps {
    */
   readonly horizontal?: boolean;
   /**
-   * Draw the marks in STATUS colours instead of the categorical palette, in
+   * Draw the marks in SEMANTIC colours instead of the categorical palette, in
    * this order.
    *
-   * For the charts whose marks are states rather than identities — the
-   * indicator bands ③ and the OK/KO donut ④. See `StatusRole` in `theme.ts` for
-   * why those two must not spend categorical hues.
+   * For the charts whose marks mean something rather than merely differing —
+   * the indicator bands ③, which take the `band-*` severity ramp, and the OK/KO
+   * donut ④, which takes the app-wide status colours. See `MarkRole` in
+   * `theme.ts` for why those two must not spend categorical hues, and why they
+   * do not take the same palette as each other.
    *
    * WHAT THE ORDER LINES UP WITH is ECharts' own top-level `color` semantics
    * and therefore differs by `kind`: a bar or line chart consumes it PER
@@ -56,7 +58,7 @@ export interface ChartProps {
    * Pass a module-level constant, not a fresh array: this is in the option
    * effect's dependency list.
    */
-  readonly statusRoles?: readonly StatusRole[];
+  readonly roles?: readonly MarkRole[];
   /**
    * ECharts `connect` group. Charts sharing one string share one crosshair, so
    * hovering requests/s moves the pointer on concurrent users too. That linkage
@@ -91,7 +93,7 @@ export default function Chart({
   horizontal = false,
   group,
   yAxis,
-  statusRoles,
+  roles,
 }: ChartProps) {
   const container = useRef<HTMLDivElement | null>(null);
   // Held across renders so the option can be updated without the instance
@@ -216,16 +218,17 @@ export default function Chart({
 
     instance.setOption(
       {
-        // Series colour comes from the palette, which `assignPalette` reads off
-        // the `--chart-*` tokens — unless the chart declared `statusRoles`, in
-        // which case its marks are states and wear the `--color-status-*`
-        // tokens instead. Text NEVER wears either (design §11): the palettes
-        // are tuned for marks on a surface, and 12px type in a series colour is
-        // the commonest way a chart quietly fails contrast.
+        // Mark colour comes from the categorical palette, which `assignPalette`
+        // reads off the `--chart-*` tokens — unless the chart declared `roles`,
+        // in which case its marks mean something and wear the `--color-status-*`
+        // or `--chart-band-*` tokens instead. Text NEVER wears any of them
+        // (design §11): the palettes are tuned for marks on a surface, and 12px
+        // type in a mark colour is the commonest way a chart quietly fails
+        // contrast.
         color:
-          statusRoles === undefined
+          roles === undefined
             ? drawn.map((series) => series.color)
-            : statusRoles.map((role) => theme.status[role]),
+            : roles.map((role) => theme.roles[role]),
         textStyle: { color: theme.ink },
         backgroundColor: 'transparent',
         // A legend only from two series up. One series is named by the title,
@@ -297,7 +300,7 @@ export default function Chart({
     // than listed here as an object: it is compared by identity, and the
     // documented call site `<Chart yAxis={{ type: 'log' }} …/>` builds a new
     // one every render.
-  }, [data, kind, stacked, horizontal, statusRoles, yAxisType, yAxisName, mode, assignment]);
+  }, [data, kind, stacked, horizontal, roles, yAxisType, yAxisName, mode, assignment]);
 
   return (
     <figure data-testid={`chart-${id}`} className="flex flex-col gap-2 m-0">
