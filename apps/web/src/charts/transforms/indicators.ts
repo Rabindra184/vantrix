@@ -87,8 +87,13 @@ function percent(count: number, total: number): string {
 }
 
 /**
- * The four bands, as a stacked bar of one category plus a count and a
- * percentage per band.
+ * The bands, for whichever subject the caller names.
+ *
+ * `bands` is a row's or the response's `IndicatorBands`; `axisLabel` is the one
+ * category the stacked bar is drawn against; `empty` is what to say when there
+ * is nothing to fold. The BOUNDS and the fixed-bands caveat always come from
+ * the RESPONSE — they are a project setting and a property of the run's
+ * storage, never of a row.
  *
  * **The thresholds come from `stats.bounds`, never from a constant.** They are
  * a per-project setting the API reports alongside the folded counts precisely
@@ -108,8 +113,13 @@ function percent(count: number, total: number): string {
  * and the whole keeps this transform independent of `stats.stats` entirely, and
  * makes the four percentages sum to 100 by construction rather than by luck.
  */
-export function toIndicators(stats: StatsResponse): ChartData {
-  const counts = BANDS.map((band) => stats.indicators[band.key]);
+function bandChart(
+  bands: StatsResponse['indicators'],
+  stats: StatsResponse,
+  axisLabel: string,
+  empty: string,
+): ChartData {
+  const counts = BANDS.map((band) => bands[band.key]);
   const labels = BANDS.map((band) => band.label(stats.bounds));
   const total = counts.reduce((sum, count) => sum + count, 0);
 
@@ -135,7 +145,7 @@ export function toIndicators(stats: StatsResponse): ChartData {
       rows: [],
       // Not four zero-height segments: an empty bar reads as "we measured, and
       // it was fine". `0 / 0` would also format as `NaN%` in every cell.
-      empty: 'No requests were recorded for this run, so there are no response-time bands to show.',
+      empty,
       limitation,
     };
   }
@@ -147,11 +157,47 @@ export function toIndicators(stats: StatsResponse): ChartData {
 
   return {
     series: labels.map((name, i) => ({ name, data: [counts[i]!] })),
-    axisLabels: [ALL_REQUESTS],
+    axisLabels: [axisLabel],
     columns: [...BAND_COLUMNS],
     rows,
     limitation,
   };
+}
+
+export function toIndicators(stats: StatsResponse): ChartData {
+  return bandChart(
+    stats.indicators,
+    stats,
+    ALL_REQUESTS,
+    'No requests were recorded for this run, so there are no response-time bands to show.',
+  );
+}
+
+/**
+ * §13.3 ② — the same bands, folded for ONE request.
+ *
+ * Reads the ROW's own `indicators`, which the API computes per row
+ * (`MetricsController:116`). Reading `stats.indicators` here instead would draw
+ * the whole run's bands under a request's heading — a mistake nothing on the
+ * chart would look wrong for, which is why the unit test compares the two
+ * totals rather than merely checking the shape.
+ */
+export function toRequestIndicators(stats: StatsResponse, path: string): ChartData {
+  const row = stats.stats.find((r) => r.scope === 'request' && r.name === path);
+  if (row === undefined) {
+    return bandChart(
+      { under: 0, between: 0, over: 0, failed: 0 },
+      stats,
+      path,
+      `This run recorded no request named ${path}, so there are no response-time bands to show.`,
+    );
+  }
+  return bandChart(
+    row.indicators,
+    stats,
+    path,
+    `No requests were recorded for ${path}, so there are no response-time bands to show.`,
+  );
 }
 
 /* ------------------------------------------------------------------ *
