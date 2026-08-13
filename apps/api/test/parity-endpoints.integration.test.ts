@@ -187,6 +187,47 @@ describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
     expect(res.body.bucketWidthMs).toBe(Math.min(...gaps));
   });
 
+  it('splits started requests by outcome, and the split sums to startedCount', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const [res, stats] = await Promise.all([
+      request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}/series?scope=run&name=`)
+        .set('Authorization', `Bearer ${ctx.readToken}`),
+      request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}/stats?scope=run&name=&family=response_time`)
+        .set('Authorization', `Bearer ${ctx.readToken}`).expect(200),
+    ]);
+
+    expect(res.body.startedSplitAvailable).toBe(true);
+    const buckets = res.body.buckets as {
+      startedCount: number; endedCount: number; koCount: number;
+      startedOkCount: number; startedKoCount: number;
+    }[];
+    for (const b of buckets) {
+      expect(b.startedOkCount + b.startedKoCount).toBe(b.startedCount);
+    }
+
+    // The sum invariant above is what discriminates the START edge from the
+    // END edge on THIS fixture: 33 of its 62 run-scope buckets have
+    // startedCount != endedCount, so a split recorded on the end edge sums to
+    // the wrong total in every one of them. Asserted explicitly, because the
+    // invariant is only load-bearing while that remains true — if the fixture
+    // ever changed to one where every request starts and ends in the same
+    // bucket, the loop above would pass against an end-edge implementation and
+    // this line is what would say so.
+    expect(buckets.filter((b) => b.startedCount !== b.endedCount).length).toBeGreaterThan(0);
+
+    // The sum invariant alone cannot see a split that routes every request to
+    // startedOkCount: 0 + startedCount == startedCount holds just as well.
+    // Pin the KO magnitude against a DIFFERENT endpoint's total instead.
+    const runStat = (stats.body.stats as { koCount: number }[])[0];
+    expect(runStat!.koCount).toBeGreaterThan(0);
+    expect(buckets.reduce((n, b) => n + b.startedKoCount, 0)).toBe(runStat!.koCount);
+    expect(buckets.filter((b) => b.startedKoCount > 0).length).toBeGreaterThan(0);
+  });
+
   it('404s for a run in another project', async () => {
     ctx = await createTestApp();
 

@@ -176,4 +176,40 @@ describe('BucketSeries buckets by request START, not end (parity with Gatling)',
     expect(b1?.okCount).toBe(1);
     expect(b1?.startedCount).toBe(0);
   });
+
+  it('splits started requests by outcome on the START edge, not the end', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 64 });
+    // Starts in bucket 0, ends in bucket 1 — Gatling files it under bucket 0.
+    s.add(900, 120, false, 'start');
+    s.add(1100, 120, false, 'end');
+    s.add(100, 50, true, 'start');
+    s.add(150, 50, true, 'end');
+
+    const b = s.buckets();
+    expect(b[0]!.startedCount).toBe(2);
+    expect(b[0]!.startedOkCount).toBe(1);
+    expect(b[0]!.startedKoCount).toBe(1);
+    // The KO ENDED in bucket 1, so the end-edge split must not have moved.
+    expect(b[0]!.koCount).toBe(0);
+    expect(b[1]!.koCount).toBe(1);
+  });
+
+  // Coalescing halves resolution in place; the start-edge split must survive
+  // it exactly as okCount/koCount do, or a long run's requests/s OK/KO series
+  // silently loses every observation outside the first bucket of each pair.
+  it('coalesces the start-edge split alongside the end-edge one', () => {
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 2 });
+    for (let i = 0; i < 4; i++) {
+      const ok = i % 2 === 0;
+      s.add(i * 1000, 100, ok, 'start');
+      s.add(i * 1000, 100, ok, 'end');
+    }
+    expect(s.widthMs).toBe(2000);
+    const b = s.buckets();
+    expect(b.reduce((n, x) => n + x.startedOkCount, 0)).toBe(2);
+    expect(b.reduce((n, x) => n + x.startedKoCount, 0)).toBe(2);
+    for (const x of b) {
+      expect(x.startedOkCount + x.startedKoCount).toBe(x.startedCount);
+    }
+  });
 });
