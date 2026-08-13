@@ -37,8 +37,10 @@ function controllerWith(
         endedCount: 1,
         okCount: 1,
         koCount: 0,
+        // A bucket whose split summed to twice its startedCount would be an
+        // impossible row to leave in a fixture later flag tests will extend.
         startedOkCount: split[i] ?? null,
-        startedKoCount: split[i] ?? null,
+        startedKoCount: split[i] === null ? null : 0,
         minMs: 1,
         maxMs: 1,
         meanMs: 1,
