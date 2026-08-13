@@ -67,4 +67,30 @@ describe('RequestDetail', () => {
       expect(url).toContain(`name=${encodeURIComponent('Catalog/List Products')}`);
     }
   });
+
+  it('asks for errors at request scope, so the table is this request’s', () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      urls.push(String(input));
+      return Promise.resolve(new Response('{}', { status: 500 }));
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/runs/r1/requests/Catalog%2FList%20Products']}>
+          <Routes>
+            <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const errors = urls.filter((u) => u.includes('/errors'));
+    expect(errors).toHaveLength(1);
+    // Asserting BOTH is the point. `name` alone is the silently-ignored form:
+    // it answers 200 with the run's totals, which looks like a working page
+    // showing a request with implausibly many errors.
+    expect(errors[0]).toContain('scope=request');
+    expect(errors[0]).toContain(`name=${encodeURIComponent('Catalog/List Products')}`);
+  });
 });
