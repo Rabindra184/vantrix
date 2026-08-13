@@ -4,6 +4,7 @@ import AuthGate from './AuthGate';
 import DetailPlaceholder from './routes/DetailPlaceholder';
 import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
+import RequestDetail from './routes/RequestDetail';
 import RunDetail from './routes/RunDetail';
 import RunList from './routes/RunList';
 import { DEFAULT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
@@ -39,10 +40,7 @@ export default function App() {
               BEFORE the catch-all below, which redirects anything unmatched to
               `/runs` — without these two routes a reader who clicked a row
               would land silently on the run list. */}
-          <Route
-            path="/runs/:runId/requests/:name"
-            element={<DetailPlaceholder kind="request" />}
-          />
+          <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
           <Route path="/runs/:runId/groups/:name" element={<DetailPlaceholder kind="group" />} />
         </Route>
       </Route>
