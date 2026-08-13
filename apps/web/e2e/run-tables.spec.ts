@@ -324,9 +324,9 @@ test('a row links to its detail page', async ({ page }) => {
   await page.getByRole('button', { name: /expand Catalog/i }).click();
   await page.getByRole('link', { name: /List Products/ }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}/requests/Catalog%2FList%20Products$`));
-  // Piece 3 builds this page; today it must say so rather than 404.
-  await expect(page.getByText(/not built yet|coming/i)).toBeVisible();
-  // The row it came from, so the reader knows the placeholder is theirs.
+  // Piece 3 built this page for real (see request-detail.spec.ts, which
+  // exercises it in full); this test only needs to confirm the ROW's link
+  // actually resolves to the right request, by its full path.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Catalog/List Products');
 
   /* ---- and a GROUP row, which goes somewhere ELSE, by its FULL path ----
