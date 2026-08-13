@@ -12,6 +12,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
 import pg from 'pg';
+import { mountBetterAuth } from '../../src/auth/mount-better-auth.js';
 import { AppModule } from '../../src/app.module.js';
 import { ProblemFilter } from '../../src/common/problem.filter.js';
 import { mountOpenApi } from '../../src/openapi.js';
@@ -31,6 +32,7 @@ export interface TestContext {
 const TABLES = [
   'run_assertion', 'run_error', 'run_series_bucket', 'run_user_bucket', 'run_stat',
   'run', 'sla_rule', 'api_token', 'project', 'org',
+  'org_member', 'session', 'account', 'verification', 'user',
 ];
 
 export async function createTestApp(
@@ -38,6 +40,9 @@ export async function createTestApp(
 ): Promise<TestContext> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication();
+
+  mountBetterAuth(app);
+
   app.useGlobalFilters(new ProblemFilter());
   mountOpenApi(app);
   await app.init();

@@ -11,6 +11,7 @@ export interface AppConfig {
   };
   defaultWaitMs: number;
   maxBundleBytes: number;
+  betterAuthUrl: string;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -33,5 +34,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     defaultWaitMs: Number(env.INGEST_WAIT_MS ?? 25_000),
     maxBundleBytes: Number(env.MAX_BUNDLE_BYTES ?? 512 * 1024 * 1024),
+    // Optional with a default, never required(): a new mandatory environment
+    // variable would break M0's "a stranger deploys a running instance and
+    // authenticates". Better Auth derives trustedOrigins (its CSRF origin
+    // check) from this — see better-auth.instance.ts. Set it to the public
+    // origin in any real deployment.
+    betterAuthUrl: env.BETTER_AUTH_URL ?? `http://localhost:${Number(env.PORT ?? 3000)}`,
   };
 }

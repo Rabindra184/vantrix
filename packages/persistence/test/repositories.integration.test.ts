@@ -37,6 +37,20 @@ function runInput(orgId: string, projectId: string, over: Partial<Record<string,
   };
 }
 
+/**
+ * Two projects in one org, a run in each, plus a second org entirely — the
+ * fixture every "session scope may cross projects but never orgs" test
+ * shares below.
+ */
+async function seedTwoProjectsPlusOtherOrg() {
+  const { orgId, a: projectA, b: projectB } = await seed();
+  const repo = new RunRepository(prisma);
+  const runInA = (await repo.create(runInput(orgId, projectA))).id;
+  const runInB = (await repo.create(runInput(orgId, projectB))).id;
+  const otherOrg = await prisma.org.create({ data: { slug: 'other', name: 'Other Org' } });
+  return { orgId, projectA, projectB, runInA, runInB, otherOrgId: otherOrg.id };
+}
+
 beforeEach(async () => {
   await resetDatabase(pool);
 });
@@ -62,6 +76,66 @@ describe('RunRepository tenancy', () => {
       runInput(orgId, a, { startedAt: new Date('2026-03-14T23:59:59Z') }),
     );
     expect(run.startedOn.toISOString().slice(0, 10)).toBe('2026-03-14');
+  });
+});
+
+describe('RunRepository tenancy — optional projectId (session vs token scope)', () => {
+  it('scoped to a project, finds only that project\'s run', async () => {
+    const { orgId, projectA, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    expect(await repo.findById({ orgId, projectId: projectA }, runInA)).not.toBeNull();
+    expect(await repo.findById({ orgId, projectId: projectA }, runInB)).toBeNull();
+  });
+
+  // A session is org-scoped: it may read any run in its org.
+  it('scoped to an org only, finds runs in every project of that org', async () => {
+    const { orgId, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    expect(await repo.findById({ orgId }, runInA)).not.toBeNull();
+    expect(await repo.findById({ orgId }, runInB)).not.toBeNull();
+  });
+
+  // The assertion whose failure is a security bug.
+  it('never crosses an org boundary, with or without a project', async () => {
+    const { projectA, runInA, otherOrgId } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    expect(await repo.findById({ orgId: otherOrgId }, runInA)).toBeNull();
+    expect(await repo.findById({ orgId: otherOrgId, projectId: projectA }, runInA)).toBeNull();
+  });
+});
+
+describe('RunRepository.list — optional projectId (session vs token scope)', () => {
+  it('scoped to a project, lists only that project\'s runs', async () => {
+    const { orgId, projectA, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    const { items } = await repo.list({ orgId, projectId: projectA }, { limit: 10 });
+    expect(items.map((r) => r.id)).toEqual([runInA]);
+    expect(items.some((r) => r.id === runInB)).toBe(false);
+  });
+
+  // A session is org-scoped: listing must surface every project's runs, not
+  // silently come back empty because no project_id was supplied.
+  it('scoped to an org only, lists runs from every project in that org', async () => {
+    const { orgId, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+    const { items } = await repo.list({ orgId }, { limit: 10 });
+    expect(items.map((r) => r.id).sort()).toEqual([runInA, runInB].sort());
+  });
+
+  it('paginates by cursor under an org-only scope, across both projects', async () => {
+    const { orgId, runInA, runInB } = await seedTwoProjectsPlusOtherOrg();
+    const repo = new RunRepository(prisma);
+
+    const first = await repo.list({ orgId }, { limit: 1 });
+    expect(first.items).toHaveLength(1);
+    expect(first.nextCursor).not.toBeNull();
+
+    const second = await repo.list({ orgId }, { limit: 1, cursor: first.nextCursor ?? undefined });
+    expect(second.items).toHaveLength(1);
+    expect(second.items[0]?.id).not.toBe(first.items[0]?.id);
+
+    const seen = [first.items[0]?.id, second.items[0]?.id].sort();
+    expect(seen).toEqual([runInA, runInB].sort());
   });
 });
 

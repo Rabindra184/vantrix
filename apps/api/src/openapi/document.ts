@@ -41,6 +41,16 @@ interface ResponseObject {
   content?: Record<string, MediaTypeObject>;
 }
 
+/**
+ * A security requirement naming one scheme with no scopes — this document
+ * never uses OAuth-style scopes, so the array is always empty. Two schemes
+ * are named because the two credentials are truly interchangeable everywhere
+ * except the bearer-only overrides below: an array of single-scheme entries
+ * (rather than one entry naming both) is OpenAPI's way of expressing OR, not
+ * AND — "bearerAuth alone is sufficient; cookieAuth alone is sufficient."
+ */
+type SecurityRequirement = { bearerAuth: [] } | { cookieAuth: [] };
+
 interface OperationObject {
   operationId: string;
   summary: string;
@@ -50,7 +60,7 @@ interface OperationObject {
   requestBody?: RequestBodyObject;
   responses: Record<string, ResponseObject | Ref>;
   /** Present only to override the document-level default (empty = no auth). */
-  security?: { bearerAuth: string[] }[];
+  security?: SecurityRequirement[];
 }
 
 interface PathItemObject {
@@ -61,7 +71,7 @@ interface PathItemObject {
 export interface OpenApiDocument {
   openapi: '3.1.0';
   info: { title: string; version: string; description: string };
-  security: { bearerAuth: string[] }[];
+  security: SecurityRequirement[];
   paths: Record<string, PathItemObject>;
   components: {
     schemas: Record<string, JsonSchema>;
@@ -258,9 +268,13 @@ const responses: Record<string, ResponseObject> = {
   BundleRejected: {
     description:
       'The bundle was rejected (malformed archive, empty archive, unrecognized tool, an SLA ' +
-      'rule targeting no known metric family, and so on), or a path parameter was malformed. ' +
-      'Always application/problem+json with a required "remediation". The same 400 that ' +
-      'GET /v1/runs/{id} returns once a rejected upload\'s failure is persisted on the run.',
+      'rule targeting no known metric family, and so on), or a path parameter was malformed — ' +
+      'the same 400 that GET /v1/runs/{id} returns once that rejection is persisted on the ' +
+      'run. The one exception is code PROJECT_REQUIRED: returned only here, when the caller ' +
+      'authenticated with a session (which names no project) rather than a project-scoped ' +
+      'token. It fires before any run row exists, so GET /v1/runs/{id} can never return it — ' +
+      'there is no run to have persisted the failure on. Always application/problem+json with ' +
+      'a required "remediation".',
     content: problem(),
   },
   BadRequest: {
@@ -268,6 +282,15 @@ const responses: Record<string, ResponseObject> = {
       'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID). ' +
       'application/problem+json with a required "remediation" that says what a valid value ' +
       'looks like.',
+    content: problem(),
+  },
+  ProjectRunsBadRequest: {
+    description:
+      'Either a query parameter was malformed (e.g. "cursor" is not a valid cursor), or (code ' +
+      'PROJECT_REQUIRED) the caller authenticated with a session, which names no project — ' +
+      'only a project-scoped token can list a project\'s runs by slug. The remediation names ' +
+      'GET /v1/runs as the session-reachable equivalent. application/problem+json with a ' +
+      'required "remediation".',
     content: problem(),
   },
   StatsBadRequest: {
@@ -327,10 +350,32 @@ const authFailureResponses = { '401': ref('Unauthorized'), '403': ref('Forbidden
 
 const paths: Record<string, PathItemObject> = {
   '/v1/runs': {
+    get: {
+      operationId: 'listRuns',
+      summary: 'Cursor-paginated list of runs, scoped by credential',
+      tags: ['runs'],
+      description:
+        'Requires the "read" scope. Scoped by the credential, not by the URL: a project-scoped ' +
+        'token sees only that project\'s runs, exactly like GET /v1/projects/{slug}/runs; a ' +
+        'session names no project and sees every run across its whole org instead. This is the ' +
+        'session-reachable list route named by GET /v1/projects/{slug}/runs\'s ' +
+        'PROJECT_REQUIRED remediation.',
+      parameters: [parameters['Limit']!, parameters['Cursor']!],
+      responses: {
+        '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
+        '400': ref('BadRequest'),
+        ...authFailureResponses,
+      },
+    },
     post: {
       operationId: 'ingestRun',
       summary: 'Ingest a Gatling results bundle',
       tags: ['runs'],
+      // A session names no project (see listRuns and this operation's 400
+      // PROJECT_REQUIRED response below), so it can never satisfy this
+      // route — bearer-only, overriding the document-level "either
+      // credential" default.
+      security: [{ bearerAuth: [] }],
       description:
         'Requires the "ingest" scope. Streams the "bundle" part to object storage (never ' +
         'buffered in this process) while validating "metadata", then waits up to ' +
@@ -516,13 +561,18 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'listProjectRuns',
       summary: 'Cursor-paginated list of runs in a project',
       tags: ['projects'],
+      // A session names no project, so it can never satisfy this route's
+      // tenancy check (400 PROJECT_REQUIRED below names GET /v1/runs as the
+      // session-reachable equivalent) — bearer-only, overriding the
+      // document-level "either credential" default.
+      security: [{ bearerAuth: [] }],
       description:
         'Requires the "read" scope. 404s if "slug" does not name the project the bearer ' +
         'token belongs to — a token cannot list a project by naming a different one.',
       parameters: [parameters['ProjectSlug']!, parameters['Limit']!, parameters['Cursor']!],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
-        '400': ref('BadRequest'),
+        '400': ref('ProjectRunsBadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
       },
@@ -577,7 +627,12 @@ export function buildOpenApiDocument(): OpenApiDocument {
         'state — see each operation\'s own description for the shared table. 202 is a timing ' +
         'outcome, never an error; a client that treats it as failure is misusing this API.',
     },
-    security: [{ bearerAuth: [] }],
+    // Either credential satisfies a /v1 route by default — see
+    // SecurityRequirement's docstring above for why this is an array of
+    // single-scheme entries rather than one two-scheme entry. POST /v1/runs
+    // and GET /v1/projects/{slug}/runs override this to bearer-only, above,
+    // because a session cannot satisfy either (both require a project).
+    security: [{ bearerAuth: [] }, { cookieAuth: [] }],
     paths,
     components: {
       schemas: schemaComponents,
@@ -588,7 +643,22 @@ export function buildOpenApiDocument(): OpenApiDocument {
           description:
             'API tokens have the shape "pp_<prefix>_<secret>" — an opaque token, not a JWT. ' +
             'Send as "Authorization: Bearer pp_<prefix>_<secret>". POST /v1/runs requires a ' +
-            'token with the "ingest" scope; every GET requires "read".',
+            'token with the "ingest" scope; every GET requires "read". Scoped to an org AND a ' +
+            'project, and the only credential POST /v1/runs and GET /v1/projects/{slug}/runs ' +
+            'accept — see cookieAuth for the session alternative everywhere else.',
+        },
+        cookieAuth: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'better-auth.session_token',
+          description:
+            'A Better Auth session cookie, obtained via POST /auth/sign-up/email or ' +
+            '/auth/sign-in/email (see the root README\'s Authentication section — /auth/* is ' +
+            'Better Auth\'s own surface, not this document). Scoped to an org only, no ' +
+            'project, so it cannot satisfy POST /v1/runs or GET /v1/projects/{slug}/runs ' +
+            '(both require a project); GET /v1/runs is the org-wide equivalent a session can ' +
+            'use instead. Minted with the Secure attribute unconditionally, so it requires an ' +
+            'HTTPS origin — see the root README\'s Authentication section.',
         },
       },
       parameters,

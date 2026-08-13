@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type { TenantScope } from './tenant.js';
+import type { ProjectScope, TenantScope } from './tenant.js';
 
 export interface RunRecord {
   id: string;
@@ -123,7 +123,11 @@ export class RunRepository {
 
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
-      where: { id, orgId: scope.orgId, projectId: scope.projectId },
+      where: {
+        id,
+        orgId: scope.orgId,
+        ...(scope.projectId ? { projectId: scope.projectId } : {}),
+      },
     });
     return row ? toRecord(row) : null;
   }
@@ -134,7 +138,7 @@ export class RunRepository {
     return row ? toRecord(row) : null;
   }
 
-  async findByIdempotencyKey(scope: TenantScope, key: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(scope: ProjectScope, key: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: { orgId: scope.orgId, projectId: scope.projectId, idempotencyKey: key },
     });
@@ -188,7 +192,11 @@ export class RunRepository {
     let cursorKey: { effective: Date; id: string } | null = null;
     if (opts.cursor) {
       const cursorRun = await this.prisma.run.findFirst({
-        where: { id: opts.cursor, orgId: scope.orgId, projectId: scope.projectId },
+        where: {
+          id: opts.cursor,
+          orgId: scope.orgId,
+          ...(scope.projectId ? { projectId: scope.projectId } : {}),
+        },
         select: { id: true, startedAt: true, toolStartedAt: true },
       });
       // A cursor that no longer resolves (wrong tenant, deleted row) yields
@@ -209,7 +217,8 @@ export class RunRepository {
         started_on AS "startedOn", tool_started_at AS "toolStartedAt",
         ingested_at AS "ingestedAt", engine_options AS "engineOptions", error
       FROM run
-      WHERE org_id = ${scope.orgId}::uuid AND project_id = ${scope.projectId}::uuid
+      WHERE org_id = ${scope.orgId}::uuid
+      ${scope.projectId ? Prisma.sql`AND project_id = ${scope.projectId}::uuid` : Prisma.empty}
       ${
         cursorKey
           ? Prisma.sql`AND (COALESCE(tool_started_at, started_at), id) < (${cursorKey.effective}::timestamp(3), ${cursorKey.id}::uuid)`

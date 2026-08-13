@@ -1,7 +1,7 @@
 import { Controller, Get, NotFoundException, Param, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
-import { parseCursor, parseLimit, uuidParam } from '../common/validation.js';
+import { badRequest, parseCursor, parseLimit, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
 import type { RunListResponse } from '@perfportal/contracts';
 import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
@@ -11,9 +11,38 @@ import { RunsService } from './runs.service.js';
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
 // redundant. @Scopes('read') is still required per-route.
+//
+// @Get() is declared before @Get(':id') for readability, not because it must
+// be: Express 5's named parameter (:id) matches exactly one NON-EMPTY path
+// segment, so GET /v1/runs and GET /v1/runs/:id never overlap in the first
+// place — declaration order between them is behaviourally irrelevant. Proved
+// by reordering them and re-running session-auth.integration.test.ts (still
+// 14/14); see the Task 9 report for that run.
 @Controller('/v1/runs')
 export class RunsController {
   constructor(private readonly runs: RunsService) {}
+
+  /**
+   * Org-scoped by credential, not by URL. A bearer token carries a projectId
+   * and stays restricted to it, exactly as before. A session carries none and
+   * sees every run in its org — the spread below is what expresses that, and
+   * it is the only production caller of RunRepository.list's org-only branch.
+   */
+  @Get()
+  @Scopes('read')
+  async list(
+    @Req() req: Request,
+    @Query('limit') limit = '25',
+    @Query('cursor') cursor?: string,
+  ): Promise<RunListResponse> {
+    const tenant = req.tenant!;
+    const parsedCursor = parseCursor(cursor);
+    const page = await this.runs.runs().list(
+      { orgId: tenant.orgId, ...(tenant.projectId ? { projectId: tenant.projectId } : {}) },
+      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+    );
+    return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
+  }
 
   @Get(':id')
   @Scopes('read')
@@ -30,6 +59,22 @@ export class RunsController {
 
     await respondWithRun(this.runs, run, res);
   }
+}
+
+/**
+ * Shared by RunsController.list and ProjectRunsController.list so the two
+ * response shapes cannot drift — the same "same code for the same state"
+ * guarantee respondWithRun makes for a single run's status mapping.
+ */
+function toListItem(r: RunRecord): RunListResponse['items'][number] {
+  return {
+    id: r.id,
+    status: r.status as RunListResponse['items'][number]['status'],
+    verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
+    tool: r.tool,
+    startedAt: r.startedAt.toISOString(),
+    toolStartedAt: r.toolStartedAt ? r.toolStartedAt.toISOString() : null,
+  };
 }
 
 /**
@@ -96,7 +141,23 @@ export class ProjectRunsController {
     @Query('cursor') cursor?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
-    const project = await this.projects.byId(tenant.projectId);
+    // A session names no project, but this route names one in its URL and
+    // has no other tenancy check: RunRepository.list (below) drops the
+    // project filter entirely when projectId is absent, so skipping this
+    // guard would list every run in the org under a single-project URL.
+    // Resolving the project by slug within the org instead was considered
+    // and rejected (human-ruled) — a session-holder uses GET /v1/runs,
+    // which already lists across the whole org.
+    const projectId = tenant.projectId;
+    if (!projectId) {
+      throw badRequest(
+        'PROJECT_REQUIRED',
+        'This endpoint requires a project-scoped credential.',
+        'Use GET /v1/runs with a session, or a project API token here.',
+      );
+    }
+
+    const project = await this.projects.byId(projectId);
     // The token names the project; the slug must agree with it. A token cannot
     // read a project it does not belong to by naming a different slug.
     if (!project || project.slug !== slug) {
@@ -105,19 +166,9 @@ export class ProjectRunsController {
 
     const parsedCursor = parseCursor(cursor);
     const page = await this.runs.runs().list(
-      { orgId: tenant.orgId, projectId: tenant.projectId },
+      { orgId: tenant.orgId, projectId },
       { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
     );
-    return {
-      items: page.items.map((r) => ({
-        id: r.id,
-        status: r.status as RunListResponse['items'][number]['status'],
-        verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
-        tool: r.tool,
-        startedAt: r.startedAt.toISOString(),
-        toolStartedAt: r.toolStartedAt ? r.toolStartedAt.toISOString() : null,
-      })),
-      nextCursor: page.nextCursor,
-    };
+    return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
 }

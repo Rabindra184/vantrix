@@ -12,11 +12,12 @@ datasource db {
 // own; Project's own id is its project identity, so it carries org_id but
 // not project_id. Every table beneath these two is scoped by both.
 model Org {
-  id        String    @id @default(uuid()) @db.Uuid
-  slug      String    @unique
+  id        String      @id @default(uuid()) @db.Uuid
+  slug      String      @unique
   name      String
-  createdAt DateTime  @default(now()) @map("created_at")
+  createdAt DateTime    @default(now()) @map("created_at")
   projects  Project[]
+  members   OrgMember[]
 
   @@map("org")
 }
@@ -240,4 +241,89 @@ model RunAssertion {
 
   @@index([runId])
   @@map("run_assertion")
+}
+
+model User {
+  id            String      @id
+  name          String
+  email         String
+  emailVerified Boolean     @default(false)
+  image         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  orgMembers    OrgMember[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+// Better Auth owns identity (User/Session/Account/Verification, above); org
+// and project already exist and every query already filters on them (see
+// note atop Org). This is the one new table joining the two: Better Auth
+// answers "who is this?", org_member answers "what may they see?".
+model OrgMember {
+  userId    String   @map("user_id")
+  orgId     String   @map("org_id") @db.Uuid
+  /// Written, and deliberately unread until M6's RBAC. This project otherwise
+  /// treats a write-only column as a defect (run_indicator.failed was deleted
+  /// for exactly that). Admitted here because it is part of the tenancy key's
+  /// shape and adding it later means migrating live membership rows.
+  role      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Org  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@id([userId, orgId])
+  @@map("org_member")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
 }
