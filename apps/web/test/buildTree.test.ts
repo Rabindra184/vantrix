@@ -2,6 +2,7 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   buildTree,
+  filterTree,
   sortTree,
   type MetricFamily,
   type SortColumn,
@@ -821,5 +822,421 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
     expect(sortTree([], 'p95', 'desc')).toEqual([]);
     const one = sortTree(buildTree(without((r) => r.name !== 'Search'), 'group_cumulated'), 'count', 'desc');
     expect(paths(one)).toEqual(['Search']);
+  });
+});
+
+/* ====================================================================== *
+ * filterTree — the match keeps its ancestors (§7), §9 checkpoint 2
+ * ====================================================================== */
+
+/**
+ * WHAT THIS BLOCK IS CAREFUL ABOUT — and this time it was MEASURED, by running
+ * the brief's four example tests against nine deliberately wrong
+ * implementations of `filterTree` (results in the task 4 report):
+ *
+ * - **Two of the four cannot fail at all.** "returns nothing for a query that
+ *   matches nothing" and "is case-insensitive" passed for ALL NINE, including
+ *   `filterTree = () => []` — a filter that empties the table for every query,
+ *   the single worst thing this function can do — and `(rows) => rows`, which
+ *   never filters anything. The case test compares two filtered results TO
+ *   EACH OTHER and never to an expected value, so any filter that ignores its
+ *   query satisfies it, and so does the near miss that matters: one that
+ *   lowercases the QUERY but not the ROW, since every path in this payload is
+ *   Title Case and `'catalog'` then matches nothing either way.
+ * - The other two catch the coarse mutations — the empty filter, the half-case
+ *   comparison, and §9 checkpoint 2's promote-matches-to-root — and MISS five
+ *   real ones: keeping every child of a surviving ancestor instead of pruning
+ *   to the matching branch (`Catalog` has one child in the reference run, so
+ *   `children.length > 0` cannot tell the two apart), matching the displayed
+ *   leaf instead of the full path, not trimming the query, reading the query
+ *   as a REGEX, and mutating the caller's tree in place.
+ *
+ * All four are kept verbatim, because they pin the intended shape. Each is
+ * followed by the assertion that can fail: an EXACT surviving path set rather
+ * than a membership or a length check, a case test against a LITERAL
+ * expectation on a mixed-case payload, a matches-nothing test that first
+ * proves the same tree is non-empty for a query that does match, and — for
+ * ancestors — a multi-child parent (the D-10 shape) where keeping the branch
+ * and keeping the subtree differ.
+ */
+
+/** Request names path-qualified two levels down, for the ancestor CHAIN cases. */
+const deepPayload = (): StatsResponse =>
+  requestsAt({ 'Related Items': 'Catalog/Recommendations/Related Items' });
+
+/** The D-10 shape: `Catalog` with three children, so a branch is not a subtree. */
+const widePayload = (): StatsResponse =>
+  requestsAt({
+    'List Products': 'Catalog/List Products',
+    'Product Detail': 'Catalog/Product Detail',
+    'Related Items': 'Catalog/Recommendations/Related Items',
+  });
+
+describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
+  /* ---------------------------------------------------------------- *
+   * ancestors
+   * ---------------------------------------------------------------- */
+
+  it('keeps the ancestors of a match, so the match keeps its context', () => {
+    const filtered = filterTree(buildTree(stats, 'group_cumulated'), 'Recommendations');
+    expect(filtered.map((r) => r.path)).toEqual(['Catalog']);
+    expect(filtered[0]!.children.map((c) => c.path)).toEqual(['Catalog/Recommendations']);
+  });
+
+  /**
+   * The discriminating form. The test above pins the two rows it names; this
+   * pins that they are the ONLY two, that the kept ancestor is kept AS AN
+   * ANCESTOR (depth 0, its own children pruned to the matching branch) and not
+   * as a match in its own right, and that the match is still nested rather
+   * than promoted — which is exactly what §9 checkpoint 2 breaks.
+   */
+  it('keeps the ancestor and nothing else, with the branch pruned to the match', () => {
+    const filtered = filterTree(buildTree(widePayload(), 'group_cumulated'), 'Recommendations');
+
+    // `Catalog` has three children in this payload. Only the matching branch
+    // survives: an implementation that keeps a surviving row's whole subtree
+    // hands back `Catalog/List Products` and `Catalog/Product Detail` too.
+    expect(paths(filtered)).toEqual(['Catalog']);
+    expect(paths(find(filtered, 'Catalog').children)).toEqual(['Catalog/Recommendations']);
+    // The match's own subtree comes with it — `Related Items` is under
+    // `Catalog/Recommendations` here, and its path contains the query too.
+    expect(paths(flat(filtered))).toEqual([
+      'Catalog',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+    ]);
+    expect(paths(filtered)).not.toContain('Catalog/Recommendations');
+    expect(find(filtered, 'Catalog').depth).toBe(0);
+    expect(find(filtered, 'Catalog/Recommendations').depth).toBe(1);
+  });
+
+  /**
+   * The whole ancestor CHAIN, not just the parent. A match two levels down
+   * keeps both rows above it, in order, at their original depths — the shape
+   * a single `parentPathOf` hop would get wrong.
+   */
+  it('keeps every ancestor of a match, not only the nearest one', () => {
+    const filtered = filterTree(buildTree(deepPayload(), 'group_cumulated'), 'Related');
+
+    expect(paths(flat(filtered))).toEqual([
+      'Catalog',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+    ]);
+    expect(flat(filtered).map((r) => r.depth)).toEqual([0, 1, 2]);
+    expect(find(filtered, 'Catalog/Recommendations/Related Items').scope).toBe('request');
+  });
+
+  it('keeps a matching parent whole, with its children', () => {
+    const filtered = filterTree(buildTree(stats, 'group_cumulated'), 'Catalog');
+    const catalog = filtered.find((r) => r.path === 'Catalog')!;
+    expect(catalog.children.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The discriminating form: `Catalog` with THREE children, all of them kept,
+   * including the grandchild — a match takes its whole subtree with it.
+   * `length > 0` above cannot see the difference on the reference run, where
+   * `Catalog` has one child and any filter that keeps the parent at all keeps
+   * a non-empty list.
+   */
+  it('keeps a matching parent s whole subtree, every child and grandchild', () => {
+    const filtered = filterTree(buildTree(widePayload(), 'group_cumulated'), 'Catalog');
+
+    expect(paths(filtered)).toEqual(['Catalog']);
+    expect(paths(find(filtered, 'Catalog').children)).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ]);
+    expect(paths(flat(filtered)).sort()).toEqual([
+      'Catalog',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+    ]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * what a query matches: the PATH, and as a literal substring
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **The decision this file pins: the query is matched against `path`, the
+   * full name, not against `name`, the displayed leaf.** See the rationale in
+   * `filterTree`. Typing `Catalog/Rec` must find `Catalog/Recommendations`;
+   * against the leaf it finds nothing.
+   */
+  it('matches the full path, so a path-shaped query finds a nested row', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+
+    expect(paths(flat(filterTree(tree, 'Catalog/Rec')))).toEqual([
+      'Catalog',
+      'Catalog/Recommendations',
+    ]);
+    // A bare separator matches every row whose path HAS one — no leaf does.
+    expect(paths(flat(filterTree(tree, '/')))).toEqual(['Catalog', 'Catalog/Recommendations']);
+    // …and the leaf still matches, because a leaf is a substring of its path.
+    expect(paths(flat(filterTree(tree, 'ecommend')))).toEqual([
+      'Catalog',
+      'Catalog/Recommendations',
+    ]);
+  });
+
+  /**
+   * The match is a SUBSTRING of the path and nothing else: not the key, not
+   * the family, not the scope. `key` is `${scope}:${family}:${name}`, so a
+   * filter matching on it returns all three groups for `group_cumulated` and
+   * all seven requests for `request` — a table that answers a query about
+   * nothing the reader typed.
+   */
+  it('matches the path only — not the key, the family or the scope', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    expect(filterTree(tree, 'group_cumulated')).toEqual([]);
+    expect(filterTree(tree, 'request')).toEqual([]);
+    expect(filterTree(tree, 'response_time')).toEqual([]);
+    // The keys really do contain those strings: the assertions above are live.
+    expect(flat(tree).map((r) => r.key)).toContain('group:group_cumulated:Catalog');
+  });
+
+  /**
+   * Substring, LITERALLY — regex is out of scope for this piece (design §7),
+   * so a query full of metacharacters is a query for those characters. Read
+   * as a pattern, `.*` matches every row and `Cata.og` matches `Catalog`;
+   * read as text, neither matches anything, because no path contains a dot.
+   */
+  it('treats the query as literal text, not a pattern', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    expect(filterTree(tree, '.*')).toEqual([]);
+    expect(filterTree(tree, 'Cata.og')).toEqual([]);
+    expect(filterTree(tree, '^Cart$')).toEqual([]);
+    expect(filterTree(tree, '(')).toEqual([]);
+    // The same tree is not empty for the literal spelling.
+    expect(paths(filterTree(tree, 'Cart'))).toEqual(['Cart', 'Add To Cart', 'View Cart']);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * case
+   * ---------------------------------------------------------------- */
+
+  it('is case-insensitive', () => {
+    const lower = filterTree(buildTree(stats, 'group_cumulated'), 'catalog');
+    const upper = filterTree(buildTree(stats, 'group_cumulated'), 'CATALOG');
+    expect(lower.map((r) => r.path)).toEqual(upper.map((r) => r.path));
+  });
+
+  /**
+   * The discriminating form. The test above compares two filtered results to
+   * each other and never to an expected value, so it passes for `() => []`,
+   * for `(rows) => rows`, and — the failure a reader would actually hit — for
+   * a filter that lowercases the QUERY but compares it against the row's
+   * original case. Every path in the reference run is Title Case, so that bug
+   * is invisible until a lowercase path exists to match a lowercase query.
+   */
+  it('lowercases BOTH sides — an expected result, on a mixed-case payload', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    const expected = ['Catalog', 'Catalog/Recommendations'];
+    for (const query of ['catalog', 'CATALOG', 'Catalog', 'cAtAlOg']) {
+      expect(`${query}: ${paths(flat(filterTree(tree, query))).join()}`).toBe(
+        `${query}: ${expected.join()}`,
+      );
+    }
+
+    // A payload with lowercase paths: an UPPERCASE query must still find them.
+    const mixed = buildTree(
+      requestsAt({ Search: 'apple pie', 'View Cart': 'Banana' }),
+      'group_cumulated',
+    );
+    expect(paths(filterTree(mixed, 'APPLE'))).toEqual(['apple pie']);
+    expect(paths(filterTree(mixed, 'apple'))).toEqual(['apple pie']);
+    expect(paths(filterTree(mixed, 'BANANA'))).toEqual(['Banana']);
+    expect(paths(filterTree(mixed, 'banana'))).toEqual(['Banana']);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * the empty query, and the query that matches nothing
+   * ---------------------------------------------------------------- */
+
+  it('returns nothing for a query that matches nothing', () => {
+    expect(filterTree(buildTree(stats, 'group_cumulated'), 'zzz-no-such-row')).toEqual([]);
+  });
+
+  /**
+   * The discriminating form: the SAME tree, filtered by a query that does
+   * match, is not empty — which `filterTree = () => []` cannot satisfy — and
+   * the near-miss queries are one character away from a real path rather than
+   * a string no implementation could match.
+   */
+  it('empties the table only for a query no path contains', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    expect(flat(tree).length).toBe(10);
+
+    // `'Cart '` is deliberately NOT in this list: the query is trimmed, so a
+    // trailing space still finds `Cart` (see the trimming test below).
+    for (const miss of ['zzz-no-such-row', 'Catalogg', 'Cart/', 'Catalog//Recommendations', 'xCart']) {
+      expect(`${miss}: ${paths(flat(filterTree(tree, miss))).join()}`).toBe(`${miss}: `);
+    }
+    // …and the tree it just emptied is full for a query that hits.
+    expect(paths(flat(filterTree(tree, 'ar'))).length).toBeGreaterThan(0);
+    expect(paths(flat(filterTree(tree, 'Search')))).toEqual(['Search']);
+  });
+
+  /**
+   * THE NON-NUMERIC CHECKPOINT §8 NAMES: "a filter that matches everything".
+   * An empty box is not a query — it is the absence of one — and the table
+   * with no filter typed is the whole table. A filter that reads `''` as a
+   * query still matches every path (every string contains `''`), so this
+   * would pass by accident; the assertions below pin the tree back IDENTICALLY,
+   * shape and all, which a filter that rebuilds or reorders rows would not.
+   */
+  it('returns the whole tree, unchanged, for an empty or blank query', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    for (const blank of ['', ' ', '   ', '\t', '\n']) {
+      const filtered = filterTree(tree, blank);
+      expect(`${JSON.stringify(blank)}: ${paths(flat(filtered)).join()}`).toBe(
+        `${JSON.stringify(blank)}: ${paths(flat(tree)).join()}`,
+      );
+      expect(filtered).toEqual(tree);
+      expect(shapeOf(filtered)).toEqual(shapeOf(tree));
+    }
+    expect(paths(flat(filterTree(tree, ''))).sort()).toEqual([...ALL_PATHS].sort());
+  });
+
+  /**
+   * Surrounding whitespace is typing, not intent: a query pasted with a
+   * trailing space, or typed after one, means the word. Interior spaces are
+   * part of the query — `Add To Cart` has two of them.
+   */
+  it('trims the query at its ends and keeps the spaces inside it', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    expect(paths(filterTree(tree, '  Catalog  '))).toEqual(['Catalog']);
+    expect(paths(filterTree(tree, 'To Cart'))).toEqual(['Add To Cart']);
+    expect(paths(filterTree(tree, ' To Cart '))).toEqual(['Add To Cart']);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * exact surviving sets, and the order they survive in
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Every root that matches, in the order the tree had them — filtering is not
+   * a sort, and a filter that rebuilt the list from a map or a set would say
+   * otherwise. `Catalog` is absent from the `Cart` result: substring, not
+   * fuzzy.
+   */
+  it('keeps the surviving rows in their original sibling order', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    expect(paths(filterTree(tree, 'Cart'))).toEqual(['Cart', 'Add To Cart', 'View Cart']);
+    expect(paths(filterTree(tree, 'a'))).toEqual([
+      'Cart',
+      'Catalog',
+      'Add To Cart',
+      'Place Order',
+      'Product Detail',
+      'Related Items',
+      'Search',
+      'View Cart',
+    ]);
+    // `List Products` is the one path with no `a` in it, and it is the one row
+    // missing — so the filter dropped exactly what it should have.
+    expect(paths(filterTree(tree, 'a'))).not.toContain('List Products');
+  });
+
+  it('filters the children of a surviving parent too, not just the roots', () => {
+    const filtered = filterTree(buildTree(widePayload(), 'group_cumulated'), 'Products');
+    expect(paths(flat(filtered))).toEqual(['Catalog', 'Catalog/List Products']);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * the rows themselves come through untouched
+   * ---------------------------------------------------------------- */
+
+  /**
+   * A surviving row is the SAME row: same key, same depth, same displayed
+   * name, and the same `StatRow` by reference. `depth` in particular is the
+   * row's position in the ORIGINAL tree and is not renumbered by the filter —
+   * a kept ancestor is still depth 0, and a match kept at depth 1 does not
+   * become a root because its siblings left.
+   */
+  it('carries every surviving row through untouched — key, depth, name, row', () => {
+    const tree = buildTree(widePayload(), 'group_cumulated');
+    const byKey = new Map(flat(tree).map((r) => [r.key, r]));
+
+    for (const query of ['a', 'Catalog', 'Recommendations', 'Cart', '/']) {
+      for (const row of flat(filterTree(tree, query))) {
+        const original = byKey.get(row.key)!;
+        expect(`${query}: ${row.key}`).toBe(`${query}: ${original.key}`);
+        expect(row.depth).toBe(original.depth);
+        expect(row.name).toBe(original.name);
+        expect(row.scope).toBe(original.scope);
+        expect(row.row).toBe(original.row);
+      }
+    }
+  });
+
+  /**
+   * The orphan again (task 2's rule, task 3's mutation E): `Catalog/Recommendations`
+   * with no `Catalog` is a ROOT at depth 0 whose displayed name is its full
+   * path. The filter must not re-derive depth or name from the path's two
+   * segments — keyed on `row.depth`, never on a segment count.
+   */
+  it('leaves an orphaned match at the root, at depth 0, with its full path as its name', () => {
+    const tree = buildTree(without((r) => r.name === 'Catalog' && r.scope === 'group'), 'group_cumulated');
+    const filtered = filterTree(tree, 'Recommendations');
+
+    expect(paths(flat(filtered))).toEqual(['Catalog/Recommendations']);
+    const orphan = find(filtered, 'Catalog/Recommendations');
+    expect(orphan.depth).toBe(0);
+    expect(orphan.name).toBe('Catalog/Recommendations');
+    // There is no `Catalog` row to keep as its ancestor, and none is invented.
+    expect(paths(flat(filtered))).not.toContain('Catalog');
+  });
+
+  /* ---------------------------------------------------------------- *
+   * purity, and composition with the sort
+   * ---------------------------------------------------------------- */
+
+  it('does not touch the tree it was given, at any depth', () => {
+    const tree = buildTree(widePayload(), 'group_cumulated');
+    const pristine = buildTree(widePayload(), 'group_cumulated');
+
+    filterTree(tree, 'Recommendations');
+    filterTree(tree, 'Catalog');
+    filterTree(tree, '');
+    filterTree(tree, 'zzz');
+
+    expect(tree).toEqual(pristine);
+    expect(paths(flat(tree)).length).toBe(10);
+    expect(paths(find(tree, 'Catalog').children)).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ]);
+  });
+
+  /**
+   * Task 5 composes the two: the table sorts what it filtered. Neither order
+   * of composition may lose the ancestor or promote the match.
+   */
+  it('composes with the sort in either order, keeping the match nested', () => {
+    const tree = buildTree(widePayload(), 'group_cumulated');
+
+    const filteredThenSorted = sortTree(filterTree(tree, 'Products'), 'p95', 'desc');
+    const sortedThenFiltered = filterTree(sortTree(tree, 'p95', 'desc'), 'Products');
+
+    for (const result of [filteredThenSorted, sortedThenFiltered]) {
+      expect(paths(flat(result))).toEqual(['Catalog', 'Catalog/List Products']);
+      expect(find(result, 'Catalog/List Products').depth).toBe(1);
+    }
+  });
+
+  /* ---------------------------------------------------------------- *
+   * degenerate input
+   * ---------------------------------------------------------------- */
+
+  it('returns an empty tree for an empty tree, whatever the query', () => {
+    expect(filterTree([], 'Catalog')).toEqual([]);
+    expect(filterTree([], '')).toEqual([]);
   });
 });
