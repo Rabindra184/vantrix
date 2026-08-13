@@ -37,8 +37,8 @@ with, and §13.3's latency elements are explicitly marked beyond parity.
 
 All eight charts are served by four endpoints that are already implemented and
 parity-tested — 16 distinct `PT-*` assertions run against the real Gatling
-reference report. **No new metric computation is in scope.** This sub-project
-renders data that is already proven correct.
+reference report. This sub-project renders data that is already proven correct,
+with exactly one exception, §3b.
 
 | Endpoint | Feeds |
 |---|---|
@@ -48,6 +48,9 @@ renders data that is already proven correct.
 | `GET /v1/runs/:id/distribution` | response-time distribution ⑧ |
 
 Four fetches, eight charts.
+
+One exception to "renders data already proven correct" is §3b: requests/s
+needs a split the buckets do not currently record.
 
 ## 3. One backend change: `bucketWidthMs` on the series response
 
@@ -72,6 +75,37 @@ in the browser would be a second definition of a number that must not disagree.
 The addition is additive and breaks no existing consumer.
 
 The UI must divide by `bucketWidthMs` and must never hard-code 1000.
+
+## 3b. The requests/s OK/KO split does not exist yet
+
+Appendix A **G-23** requires requests/s to draw **All / OK / KO**, and the real
+Gatling report does exactly that — its series are `All, OK, KO`, read out of
+`fixtures/gatling-3.15.1.2/reference-report/index.html`.
+
+`BucketSeries.record` (`packages/statistics/src/buckets.ts`) increments
+`okCount`/`koCount` on the **end** edge only. Those are the split for
+**responses**/s (G-24), and the totals confirm it: `okCount + koCount` = 871 +
+24 = 895 = the `endedCount` total. Nothing records the outcome split against
+the **start** bucket, so requests/s can draw only "All".
+
+The OK/KO *sketches* are fed on the start edge, but `percentiles_ok` is
+persisted as `jsonb` of computed percentiles, so the sketch's own count is not
+recoverable. There is no cheap derivation.
+
+**Add `started_ok_count` and `started_ko_count` to `run_series_bucket`,
+incremented on the start edge**, summed by `#coalesce` alongside the existing
+counters, and exposed on the bucket. This is the only new metric computation in
+this sub-project, and it exists because parity is the V1 gate.
+
+**Runs ingested before the migration report the split as unavailable, not as
+zero.** `SeriesResponse` gains `startedSplitAvailable: boolean`, mirroring
+`StatsResponse.configurable` exactly — whose own comment says such runs are
+"reported rather than silently pretended". Where it is false the UI draws the
+All series alone and says why; it never draws two flat zero lines, which would
+read as "no failures" rather than "not recorded".
+
+Backfilling historical runs by reprocessing retained bundles is deliberately
+out of scope.
 
 ## 4. Deviation D-7: the percentile band set is Gatling's, not §13.2 ⑨'s
 
@@ -205,6 +239,8 @@ green is a finding, not a formality.
 | 3 | divide by a hard-coded `1000` instead of `bucketWidthMs` | requests/s matches the API's own rate (§3) |
 | 4 | drop the KO series from the distribution transform | distribution shows OK and KO (G-20/G-21) |
 | 5 | render indicator bands from frozen values while `configurable` is false | the bands report which bounds produced them (§10) |
+| 6 | increment `started_ok_count` on the end edge instead of the start edge | requests/s OK+KO equals startedCount per bucket (§3b) |
+| 7 | draw zeroed OK/KO series when `startedSplitAvailable` is false | a pre-migration run says the split is unavailable (§3b) |
 
 ## 10. Details that are easy to get wrong
 
