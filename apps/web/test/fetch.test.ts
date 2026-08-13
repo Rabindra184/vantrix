@@ -3,6 +3,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch, ProblemError } from '../src/api/fetch.js';
 
 /**
+ * Returns the rejection as a genuinely-typed ProblemError.
+ *
+ * `p.catch((err: ProblemError) => err)` looks equivalent but is not: the
+ * annotation is unchecked, and the expression's type is the UNION of the
+ * resolved value and the caught one, so `.remediation` below was never
+ * actually verified against anything. Narrowing here means the assertions
+ * are typechecked, and a non-ProblemError rejection fails by name instead of
+ * as an undefined-property read.
+ */
+async function rejectionOf(p: Promise<unknown>): Promise<ProblemError> {
+  const err: unknown = await p.then(() => null, (e: unknown) => e);
+  if (!(err instanceof ProblemError)) {
+    throw new Error(`expected the call to reject with a ProblemError, got: ${String(err)}`);
+  }
+  return err;
+}
+
+/**
  * Stubs the module-boundary `fetch` — the one place in this sub-project
  * mocking the network is correct (design §4/§8): there is no browser
  * involved and the subject under test is parsing, not the cookie round trip.
@@ -79,7 +97,7 @@ describe('apiFetch', () => {
     const rejection = apiFetch(RunListResponseSchema, '/v1/runs');
     await expect(rejection).rejects.toBeInstanceOf(ProblemError);
     await expect(rejection).rejects.toMatchObject({ status: 502, code: 'CLIENT_UNREADABLE_ERROR' });
-    const error = await rejection.catch((err: ProblemError) => err);
+    const error = await rejectionOf(rejection);
     expect(error.remediation).toEqual(expect.any(String));
     expect(error.remediation.length).toBeGreaterThan(0);
   });
@@ -93,7 +111,7 @@ describe('apiFetch', () => {
     const rejection = apiFetch(RunListResponseSchema, '/v1/runs');
     await expect(rejection).rejects.toBeInstanceOf(ProblemError);
     await expect(rejection).rejects.toMatchObject({ status: 503, code: 'CLIENT_UNREADABLE_ERROR' });
-    const error = await rejection.catch((err: ProblemError) => err);
+    const error = await rejectionOf(rejection);
     expect(error.remediation).toEqual(expect.any(String));
     expect(error.remediation.length).toBeGreaterThan(0);
   });
