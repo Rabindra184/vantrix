@@ -5,9 +5,11 @@ import {
   CATEGORICAL,
   CATEGORICAL_DARK,
   GRIDLINE,
+  STATUS_COLORS,
   assignPalette,
   paletteFor,
   type ChartMode,
+  type StatusRole,
 } from '../src/charts/theme.js';
 
 /**
@@ -212,6 +214,58 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
 
   it.each(BLOCKS)('$where carries the gridline theme.ts exports', ({ where, block, mode }) => {
     expect(tokenIn(block(), '--chart-gridline', where)).toBe(GRIDLINE[mode].toUpperCase());
+  });
+
+  /**
+   * The STATUS palette (Task 5), for the same reason and in the same four
+   * blocks. `chartTheme` reads these off the live document and hands them to
+   * ECharts as the indicator bands' and the donut's colours; `STATUS_COLORS` is
+   * the compiled fallback the node-environment tests assert against. Two copies
+   * of eight values that must not disagree.
+   */
+  const STATUS_TOKENS: readonly { role: StatusRole; token: string }[] = [
+    { role: 'passed', token: '--color-status-passed' },
+    { role: 'pending', token: '--color-status-pending' },
+    { role: 'neutral', token: '--color-status-not-applicable' },
+    { role: 'failed', token: '--color-status-failed' },
+  ];
+
+  it.each(BLOCKS)('$where carries the status colours theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = STATUS_TOKENS.map(({ token }) => tokenIn(body, token, where));
+    expect(found).toEqual(
+      STATUS_TOKENS.map(({ role }) => STATUS_COLORS[mode][role].toUpperCase()),
+    );
+  });
+});
+
+/**
+ * The status palette has to hold FOUR distinct colours, because the indicator
+ * bands ③ spend all four at once in one stacked bar.
+ *
+ * Asserted here rather than only in the indicators test because it is a
+ * property of the palette, not of the chart: an edit to `tokens.css` that
+ * pointed `--color-status-not-applicable` at the same grey as something else
+ * would merge two bands into one visually while every count stayed right.
+ */
+describe('the status palette', () => {
+  it.each(['light', 'dark'] as const)('holds four distinct colours in %s mode', (mode) => {
+    const colours = Object.values(STATUS_COLORS[mode]);
+    expect(colours).toHaveLength(4);
+    expect(new Set(colours).size).toBe(4);
+  });
+
+  /**
+   * And none of them is a categorical hue. The two palettes answer different
+   * questions — "which series is this?" versus "how bad is this?" — and a
+   * status colour that collided with a series colour would make a band and an
+   * unrelated line read as the same thing on one page.
+   */
+  it.each(['light', 'dark'] as const)('shares no colour with the categorical palette (%s)', (mode) => {
+    const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
+    for (const colour of Object.values(STATUS_COLORS[mode])) {
+      expect(categorical.has(colour)).toBe(false);
+    }
   });
 });
 
