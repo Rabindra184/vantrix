@@ -1,5 +1,5 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import StatisticsTable, {
@@ -50,6 +50,31 @@ import fixture from './fixtures/reference-run.json';
  * alone in `container_statistics_head`), so the table has to render it
  * explicitly. Forget to, and every test the brief wrote still passes while the
  * table silently has no totals row at all.
+ *
+ * ── TASK 6, the sort and filter CONTROLS (G-14, G-15) ───────────────────────
+ *
+ * Its three example tests were measured the same way, against eleven wrong
+ * implementations. Three of them survive assertions that name their behaviour:
+ *
+ * - **"toggles direction when the same column is clicked twice" passes for a
+ *   table that reverses its rows on EVERY click without reading the column at
+ *   all** — `desc === asc.reverse()` says nothing about WHICH column was
+ *   sorted. Measured: that mutation leaves both of the brief's sort tests
+ *   green and is caught only by asserting the ORDER ITSELF, computed from the
+ *   payload, for the column that was clicked.
+ * - **"filters as you type, keeping ancestors" passes for a filter that keeps
+ *   the ancestor and HIDES THE MATCH** — which is what a table with groups
+ *   collapsed by default does unless the filter opens what it kept, and what a
+ *   reader experiences as "the filter found nothing". Measured: green.
+ * - **A FLAT sort of the rendered rows — sorting what is on screen instead of
+ *   the tree — leaves 48 of these 49 tests green**, including both of the
+ *   brief's. Only "keeps a child with its group when sorted" separates them,
+ *   and only because `Catalog` and its child sit five rows apart on p50.
+ *
+ * All three are kept verbatim (save for the `MemoryRouter` every render here
+ * needs), each followed by the assertions that can fail. Every expectation
+ * about ORDER is computed from the payload by helpers written in this file, so
+ * none of them can drift from the fixture — and none of them is `sortTree`.
  */
 
 const stats = fixture.stats as unknown as StatsResponse;
@@ -132,6 +157,149 @@ const expandCatalog = () =>
 
 /** Every percentile key the payload carries for a row, raw. */
 const rawPercentiles = (row: StatRow): [string, number][] => Object.entries(row.percentiles);
+
+/* ======================================================================== *
+ * SORT AND FILTER — every expectation computed FROM THE PAYLOAD
+ *
+ * Nothing below names a row. The brief's "opens worst-first" test compares
+ * against `slowestPathIn(stats)` rather than against `'Catalog'` so that a
+ * re-captured fixture moves the expectation with it instead of turning this
+ * file red for a reason that is not a defect — and the ordering helpers are
+ * written HERE, independently of `sortTree`, rather than imported from the
+ * code under test.
+ * ======================================================================== */
+
+/** `p99.9` → 99.9; a key that names no percentile → null. */
+const percentileIn = (key: string): number | null =>
+  /^p\d+(?:\.\d+)?$/.test(key) ? Number(key.slice(1)) : null;
+
+/**
+ * The column the table opens sorted on: THE HIGHEST PERCENTILE THE PAYLOAD
+ * CONFIGURES — `p99` for the reference run, `p99.9` for a project that
+ * configures one. Read off the payload's own keys, exactly as the percentile
+ * COLUMNS are (§9 checkpoint 6), so neither can be hard-coded here.
+ */
+const worstColumnIn = (payload: StatsResponse): string => {
+  let worst: string | null = null;
+  for (const row of payload.stats) {
+    for (const key of Object.keys(row.percentiles)) {
+      const value = percentileIn(key);
+      if (value === null) continue;
+      if (worst === null || value > percentileIn(worst)!) worst = key;
+    }
+  }
+  if (worst === null) throw new Error('this payload configures no percentiles at all');
+  return worst;
+};
+
+/**
+ * The payload rows the tree puts at its ROOT — the rows a sort of the top
+ * level reorders.
+ *
+ * A row is a root when its name carries no `/`, which is true of every request
+ * in this payload (measured in task 2: request names carry NO group path,
+ * deviation D-10) and of the two top-level groups. `Catalog/Recommendations`
+ * is the one row it excludes, and it is excluded correctly: it is `Catalog`'s
+ * child. The row set this produces is asserted against `ROOT_PATHS` below, so
+ * a fixture that stops agreeing says so rather than quietly comparing against
+ * a row the table never puts at the top.
+ */
+const rootRowsIn = (payload: StatsResponse): StatRow[] =>
+  payload.stats.filter(
+    (r) =>
+      r.scope !== 'run' &&
+      !r.name.includes('/') &&
+      r.family === (r.scope === 'group' ? 'group_cumulated' : 'response_time'),
+  );
+
+/** A payload row's own value on a column — `undefined` when it HAS none. */
+const valueOn = (row: StatRow, column: string): number | undefined => {
+  const raw =
+    column in row.percentiles
+      ? row.percentiles[column]
+      : (row as unknown as Record<string, unknown>)[column];
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+};
+
+/**
+ * The order the root rows take on a column, computed here from the payload.
+ *
+ * Stable — ties keep PAYLOAD order, which is the order `buildTree` hands the
+ * sort — and a row with no value on the column goes last in BOTH directions,
+ * because it is absent rather than smallest.
+ */
+const rootOrderBy = (
+  column: string,
+  direction: 'asc' | 'desc',
+  payload: StatsResponse = stats,
+): string[] =>
+  rootRowsIn(payload)
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const av = valueOn(a.row, column);
+      const bv = valueOn(b.row, column);
+      if (av === undefined || bv === undefined) {
+        if (av === bv) return a.index - b.index;
+        return av === undefined ? 1 : -1;
+      }
+      if (av === bv) return a.index - b.index;
+      return direction === 'asc' ? av - bv : bv - av;
+    })
+    .map((entry) => entry.row.name);
+
+/** The row a reader opening this run should be looking at first. */
+const slowestPathIn = (payload: StatsResponse): string =>
+  rootOrderBy(worstColumnIn(payload), 'desc', payload)[0]!;
+
+/**
+ * The nine root rows IN THE ORDER THE TABLE OPENS IN.
+ *
+ * `ROOT_PATHS` is payload order, which is what the table showed until task 6
+ * wired the sort; it stays as the literal row SET every assertion below still
+ * anchors on. The ORDER is now the opening sort's, so it is computed rather
+ * than written down twice.
+ */
+const openingPaths = (): string[] => rootOrderBy(worstColumnIn(stats), 'desc');
+
+/** …and the same, with `Catalog`'s child in place beneath it. */
+const openingPathsExpanded = (): string[] =>
+  openingPaths().flatMap((path) =>
+    path === 'Catalog' ? [path, 'Catalog/Recommendations'] : [path],
+  );
+
+/** A column's sort control, by the exact accessible name it must carry. */
+const sortButton = (label: string): HTMLElement =>
+  screen.getByRole('button', { name: `Sort by ${label}` });
+
+/** Which column the table says it is sorted by, and which way. */
+const sortedColumns = (): string[] =>
+  screen
+    .getAllByRole('columnheader')
+    .filter((header) => (header.getAttribute('aria-sort') ?? 'none') !== 'none')
+    .map((header) => `${header.textContent}:${header.getAttribute('aria-sort')}`);
+
+const typeFilter = (value: string) =>
+  fireEvent.change(screen.getByLabelText(/filter/i), { target: { value } });
+
+/** The §13.2 ⑤ column set the reference payload renders, in order. */
+const REFERENCE_HEADERS = [
+  'Requests',
+  'Executions',
+  'Response Time (ms)',
+  'Total',
+  'OK',
+  'KO',
+  '% KO',
+  'Cnt/s',
+  'Min',
+  '50th',
+  '75th',
+  '95th',
+  '99th',
+  'Max',
+  'Mean',
+  'Std Dev',
+];
 
 afterEach(cleanup);
 
@@ -317,17 +485,22 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
    * So: the exact nine root rows are present while the child is not, the child
    * is the ONLY thing the click adds, and it arrives nested — at depth 1, with
    * the indent that depth produces.
+   *
+   * The row SET is still pinned to the literal `ROOT_PATHS`; the ORDER became
+   * the opening sort's when task 6 wired it, and is asserted alongside.
    */
   it('shows every root row while the child is hidden, and adds only the child', () => {
     renderTable();
 
-    expect(pathsOf(bodyRows())).toEqual(ROOT_PATHS);
+    expect([...pathsOf(bodyRows())].sort()).toEqual([...ROOT_PATHS].sort());
+    expect(pathsOf(bodyRows())).toEqual(openingPaths());
     expect(screen.getByText('Catalog')).toBeTruthy();
     expect(screen.queryByText('Recommendations')).toBeNull();
 
     expandCatalog();
 
-    expect(pathsOf(bodyRows())).toEqual(ALL_PATHS);
+    expect([...pathsOf(bodyRows())].sort()).toEqual([...ALL_PATHS].sort());
+    expect(pathsOf(bodyRows())).toEqual(openingPathsExpanded());
     const child = rowAt('Catalog/Recommendations');
     expect(child.getAttribute('data-depth')).toBe('1');
     // Indented from its DEPTH, which is the row's position in the tree — never
@@ -345,10 +518,10 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
     fireEvent.click(button);
     expect(screen.getByRole('button', { name: /collapse Catalog/i })).toBe(button);
     expect(button.getAttribute('aria-expanded')).toBe('true');
-    expect(pathsOf(bodyRows())).toEqual(ALL_PATHS);
+    expect(pathsOf(bodyRows())).toEqual(openingPathsExpanded());
 
     fireEvent.click(button);
-    expect(pathsOf(bodyRows())).toEqual(ROOT_PATHS);
+    expect(pathsOf(bodyRows())).toEqual(openingPaths());
     expect(screen.getByRole('button', { name: /expand Catalog/i })).toBe(button);
     expect(button.getAttribute('aria-expanded')).toBe('false');
   });
@@ -357,16 +530,25 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
    * A toggle on a row with nothing to toggle is a control that does nothing,
    * and a screen-reader user is told there are ten expandable groups when
    * there is one. `Catalog` is the only row in the reference run with children.
+   *
+   * SCOPED TO THE BODY ROWS (task 6). It was `screen.getAllByRole('button')`,
+   * which said "these are the only buttons in the table at all" — true until
+   * the column headings became sort controls. Scoped to the rows it still says
+   * exactly what it names: NO ROW but `Catalog` carries a button of any kind,
+   * which is the assertion that catches a toggle rendered on a leaf.
    */
   it('gives a toggle to the rows that have children, and only those', () => {
     renderTable();
-    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
-      'expand Catalog',
-    ]);
+    const rowButtons = (): (string | null)[] =>
+      bodyRows().flatMap((row) =>
+        within(row)
+          .queryAllByRole('button')
+          .map((b) => b.getAttribute('aria-label')),
+      );
+
+    expect(rowButtons()).toEqual(['expand Catalog']);
     expandCatalog();
-    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
-      'collapse Catalog',
-    ]);
+    expect(rowButtons()).toEqual(['collapse Catalog']);
   });
 
   /**
@@ -476,7 +658,7 @@ describe('StatisticsTable — the run-scope totals row', () => {
     // It is NOT a body row: it never sorts, never filters, and never doubles
     // the counts a reader adds up.
     expect(bodyRows()).not.toContain(total);
-    expect(pathsOf(bodyRows())).toEqual(ROOT_PATHS);
+    expect([...pathsOf(bodyRows())].sort()).toEqual([...ROOT_PATHS].sort());
     expect(pathsOf(bodyRows())).not.toContain('');
   });
 
@@ -485,7 +667,7 @@ describe('StatisticsTable — the run-scope totals row', () => {
     renderTable({ ...stats, stats: stats.stats.filter((r) => r.scope !== 'run') });
     expect(screen.queryByTestId('stat-row-total')).toBeNull();
     expect(screen.queryByText('All Requests')).toBeNull();
-    expect(pathsOf(bodyRows())).toEqual(ROOT_PATHS);
+    expect([...pathsOf(bodyRows())].sort()).toEqual([...ROOT_PATHS].sort());
   });
 });
 
@@ -671,6 +853,369 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
     const caption = screen.getByRole('table').querySelector('caption');
     expect(caption?.textContent).toMatch(/estimate/i);
     expect(caption?.textContent).toMatch(/within 1%/i);
+  });
+});
+
+describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => {
+  /* ------------------------------------------------------------------ *
+   * the brief's tests, verbatim — save for the MemoryRouter every render
+   * in this file needs, because the rows carry <Link>s
+   * ------------------------------------------------------------------ */
+
+  it('opens worst-first, not alphabetically', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={stats} runId={RUN_ID} />
+      </MemoryRouter>,
+    );
+    const first = screen.getAllByTestId('stat-row')[0]!;
+    // The slowest row, not the first alphabetically. A default of ascending
+    // would put the fastest at the top, which is the opposite of the question.
+    expect(first.getAttribute('data-path')).toBe(slowestPathIn(stats));
+  });
+
+  it('toggles direction when the same column is clicked twice', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={stats} runId={RUN_ID} />
+      </MemoryRouter>,
+    );
+    const header = screen.getByRole('button', { name: /sort by 95th/i });
+    fireEvent.click(header);
+    const asc = screen.getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'));
+    fireEvent.click(header);
+    const desc = screen.getAllByTestId('stat-row').map((r) => r.getAttribute('data-path'));
+    expect(desc).toEqual([...asc].reverse());
+  });
+
+  /**
+   * THE TOGGLE TEST ABOVE IS EXPOSED, AND THIS IS WHAT COVERS IT.
+   *
+   * `desc === asc.reverse()` is satisfied by a table that REVERSES ITS ROWS ON
+   * EVERY CLICK without reading the column at all, and — on a payload with
+   * fewer than two distinct values — by one that never sorts. Measured against
+   * both, plus against a table sorted only by the first column ever clicked.
+   *
+   * So: the ORDER ITSELF, computed from the payload, for the clicked column,
+   * in both directions; and the precondition that the two directions really
+   * are reverses on this column (they are not, in general — a row missing the
+   * sorted percentile sorts last in BOTH directions, task 3's rule).
+   */
+  it('sorts by the clicked column s own values, in the direction it says', () => {
+    renderTable();
+
+    const button = sortButton('95th');
+    fireEvent.click(button);
+    const first = pathsOf(bodyRows());
+    fireEvent.click(button);
+    const second = pathsOf(bodyRows());
+
+    // Every root row carries p95 in this payload, so — and only so — the two
+    // directions are exact reverses of each other.
+    expect(rootOrderBy('p95', 'desc')).toEqual([...rootOrderBy('p95', 'asc')].reverse());
+    expect(first).toEqual(rootOrderBy('p95', 'desc'));
+    expect(second).toEqual(rootOrderBy('p95', 'asc'));
+    // A fresh numeric column opens WORST FIRST, like the table itself does.
+    expect(sortedColumns()).toEqual(['95th:ascending']);
+    fireEvent.click(button);
+    expect(sortedColumns()).toEqual(['95th:descending']);
+  });
+
+  /**
+   * §9 CHECKPOINT 3, the non-numeric one: the table OPENS worst-first.
+   *
+   * The brief's test above checks the first row. This checks every row, names
+   * the column the default is taken on, and asserts the resulting order is
+   * neither the payload's nor the alphabet's — so a table that does not sort
+   * at all, and one that opens sorted by name, both fail here rather than
+   * needing a click to be caught.
+   */
+  it('opens on the highest percentile the payload configures, worst first, on every row', () => {
+    renderTable();
+
+    expect(worstColumnIn(stats)).toBe('p99');
+    expect(pathsOf(bodyRows())).toEqual(rootOrderBy('p99', 'desc'));
+    expect(sortedColumns()).toEqual(['99th:descending']);
+
+    // …and that order is neither of the two orders that would arrive for free.
+    expect(pathsOf(bodyRows())).not.toEqual(ROOT_PATHS);
+    expect(pathsOf(bodyRows())).not.toEqual([...ROOT_PATHS].sort());
+    // The helper above really is describing the rows the table puts at its top
+    // level, so `slowestPathIn` is the slowest of the right set.
+    expect(rootRowsIn(stats).map((r) => r.name).sort()).toEqual([...ROOT_PATHS].sort());
+  });
+
+  /**
+   * A payload configured with a different tail gets ITS tail sorted, for the
+   * same reason the columns are the payload's: `p99` is not a constant of the
+   * product. Here the highest configured percentile is `p99.9`.
+   */
+  it('opens on whichever percentile the payload configures, not on p99', () => {
+    const odd = withPercentiles({ p50: 1, p90: 2, 'p99.9': 3 });
+    renderTable(odd);
+    expect(worstColumnIn(odd)).toBe('p99.9');
+    expect(sortedColumns()).toEqual(['99.9th:descending']);
+  });
+
+  /**
+   * Clicking a SECOND column sorts by that column — it does not reverse what
+   * was there, and it does not keep sorting by the first column clicked.
+   */
+  it('sorts by the column that was clicked, not by reversing what was there', () => {
+    renderTable();
+
+    fireEvent.click(sortButton('Total'));
+    const byCount = pathsOf(bodyRows());
+    expect(byCount).toEqual(rootOrderBy('count', 'desc'));
+    expect(sortedColumns()).toEqual(['Total:descending']);
+
+    fireEvent.click(sortButton('50th'));
+    expect(pathsOf(bodyRows())).toEqual(rootOrderBy('p50', 'desc'));
+    expect(pathsOf(bodyRows())).not.toEqual([...byCount].reverse());
+    expect(sortedColumns()).toEqual(['50th:descending']);
+  });
+
+  /** The leftmost column sorts too, and a NAME sorts A→Z first. */
+  it('sorts by name, ascending first', () => {
+    renderTable();
+    const alphabetical = [...ROOT_PATHS].sort((a, b) =>
+      a.toLowerCase() < b.toLowerCase() ? -1 : 1,
+    );
+
+    fireEvent.click(sortButton('Requests'));
+    expect(pathsOf(bodyRows())).toEqual(alphabetical);
+    expect(sortedColumns()).toEqual(['Requests:ascending']);
+
+    fireEvent.click(sortButton('Requests'));
+    expect(pathsOf(bodyRows())).toEqual([...alphabetical].reverse());
+    expect(sortedColumns()).toEqual(['Requests:descending']);
+  });
+
+  /**
+   * SORTING A TREE IS NOT SORTING THE VISIBLE ROWS (§9 checkpoint 1, at the
+   * component's own level — task 3 proved it of `sortTree`, and this proves
+   * the component hands `sortTree` the TREE rather than sorting the flat list
+   * it renders).
+   *
+   * `Catalog` sorts second on p50 (361 ms) and its child sixth (109 ms). A
+   * flat sort of the rendered rows would put five rows between a parent and
+   * its child; the tree sort keeps it directly beneath.
+   */
+  it('keeps a child with its group when sorted', () => {
+    renderTable();
+    expandCatalog();
+    fireEvent.click(sortButton('50th'));
+
+    const paths = pathsOf(bodyRows());
+    expect(paths).toEqual(
+      rootOrderBy('p50', 'desc').flatMap((path) =>
+        path === 'Catalog' ? [path, 'Catalog/Recommendations'] : [path],
+      ),
+    );
+    expect(paths.indexOf('Catalog/Recommendations')).toBe(paths.indexOf('Catalog') + 1);
+    // The child is still the child: sorting reorders siblings, it does not
+    // promote anything to the root.
+    expect(rowAt('Catalog/Recommendations').getAttribute('data-depth')).toBe('1');
+  });
+
+  /** Row keys are stable across a sort, so a group a reader opened stays open. */
+  it('keeps an opened group open through a sort', () => {
+    renderTable();
+    expandCatalog();
+    fireEvent.click(sortButton('Max'));
+    expect(pathsOf(bodyRows())).toContain('Catalog/Recommendations');
+    expect(screen.getByRole('button', { name: /collapse Catalog/i })).toBeTruthy();
+  });
+
+  /** G-15 is "sortable columns", plural: every column, and only the columns. */
+  it('gives every column a sort control, and none to the two group headings', () => {
+    renderTable();
+
+    expect(
+      screen.getAllByRole('button', { name: /^sort by /i }).map((b) => b.getAttribute('aria-label')),
+    ).toEqual([
+      'Sort by Requests',
+      'Sort by Total',
+      'Sort by OK',
+      'Sort by KO',
+      'Sort by % KO',
+      'Sort by Cnt/s',
+      'Sort by Min',
+      'Sort by 50th',
+      'Sort by 75th',
+      'Sort by 95th',
+      'Sort by 99th',
+      'Sort by Max',
+      'Sort by Mean',
+      'Sort by Std Dev',
+    ]);
+
+    // The two headings that SPAN columns are not columns; there is nothing to
+    // sort by, and a control there would sort by whichever column it guessed.
+    for (const heading of ['Executions', 'Response Time (ms)']) {
+      const header = screen.getByRole('columnheader', { name: heading });
+      expect(header.querySelector('button')).toBeNull();
+      expect(header.getAttribute('aria-sort')).toBeNull();
+    }
+  });
+
+  /**
+   * THE TRAP TASK 5 MEASURED AND HANDED THIS TASK, kept measured.
+   *
+   * A sort control inside a `<th>` can change THE HEADER'S OWN ACCESSIBLE
+   * NAME, and the column test's negative —
+   * `queryByRole('columnheader', { name: /^95th$/ })` being null for a payload
+   * without p95 — silently stops meaning anything the moment it does: it is
+   * null for every implementation once no header is named `95th` at all.
+   *
+   * MEASURED in this stack (jsdom 30, dom-accessibility-api 0.5.16, which is
+   * what `getByRole({ name })` computes with):
+   *   - `<th><button aria-label="Sort by 95th">95th</button></th>`
+   *     → th named "95th". The descendant's `aria-label` is NOT consulted.
+   *   - `<th><button aria-labelledby="hint lbl">…</button></th>`
+   *     → th named "SORT BY 95TH". A descendant's `aria-labelledby` IS.
+   * The second is the one a careful implementer reaches for, and it is the one
+   * that breaks the negative. Browsers do not agree with jsdom on the first
+   * either, and piece 8's Playwright specs read these names in a real one — so
+   * the header states its own name explicitly and this test pins the result.
+   */
+  it('leaves the column headers own names alone — the sort control is not part of them', () => {
+    renderTable();
+
+    expect(screen.queryAllByRole('columnheader', { name: /sort by/i })).toEqual([]);
+    expect(screen.getByRole('columnheader', { name: '95th' })).toBeTruthy();
+    expect(headers()).toEqual(REFERENCE_HEADERS);
+    // The name is the label, sorted or not: it does not acquire an arrow, a
+    // direction, or the word "sorted" when it is the sorted column.
+    fireEvent.click(sortButton('95th'));
+    expect(screen.getByRole('columnheader', { name: '95th' })).toBeTruthy();
+    expect(headers()).toEqual(REFERENCE_HEADERS);
+
+    // …so §9 checkpoint 6's negative is still live with the controls wired.
+    cleanup();
+    renderTable(withPercentiles({ p50: 1, p90: 2, 'p99.9': 3 }));
+    expect(screen.queryByRole('columnheader', { name: /^95th$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /sort by 95th/i })).toBeNull();
+  });
+
+  /** The totals row is the run's own; it is not a row the sort can move. */
+  it('never moves the totals row into the sorted rows', () => {
+    renderTable();
+    fireEvent.click(sortButton('Max'));
+    expect(bodyRows()).not.toContain(totalRow());
+    expect(textIn(totalRow(), 'count')).toBe('895');
+    expect(pathsOf(bodyRows())).toEqual(rootOrderBy('maxMs', 'desc'));
+  });
+});
+
+describe('StatisticsTable — the name filter (G-14)', () => {
+  /* ------------------------------------------------------------------ *
+   * the brief's test, verbatim (plus the MemoryRouter)
+   * ------------------------------------------------------------------ */
+
+  it('filters as you type, keeping ancestors', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={stats} runId={RUN_ID} />
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText(/filter/i), { target: { value: 'Recommend' } });
+    expect(screen.getByText('Catalog')).toBeTruthy();
+    expect(screen.queryByText('List Products')).toBeNull();
+  });
+
+  /**
+   * The discriminating form. The brief's test is satisfied by a filter that
+   * keeps the ANCESTOR and hides the match — which is what a table with groups
+   * collapsed by default does unless the filter opens what it kept, and it is
+   * the exact failure a reader experiences as "the filter found nothing".
+   *
+   * So: the exact row set, the match VISIBLE, and still nested under the group
+   * that gives it its meaning.
+   */
+  it('shows the match itself, open inside the group that gives it context', () => {
+    renderTable();
+    typeFilter('Recommend');
+
+    expect(pathsOf(bodyRows())).toEqual(['Catalog', 'Catalog/Recommendations']);
+    expect(screen.getByText('Recommendations')).toBeTruthy();
+    expect(rowAt('Catalog/Recommendations').getAttribute('data-depth')).toBe('1');
+  });
+
+  /** It is the FULL PATH that matches, case-insensitively, trimmed at the ends. */
+  it('matches the full path, whatever the case, ignoring stray spaces', () => {
+    renderTable();
+    typeFilter('  catalog/rec  ');
+    expect(pathsOf(bodyRows())).toEqual(['Catalog', 'Catalog/Recommendations']);
+  });
+
+  it('keeps every match, not only the first', () => {
+    renderTable();
+    typeFilter('Cart');
+    expect(pathsOf(bodyRows())).toEqual(
+      rootOrderBy('p99', 'desc').filter((path) => path.toLowerCase().includes('cart')),
+    );
+  });
+
+  /** An empty table with headings over it reads as a run that recorded nothing. */
+  it('says so when nothing matches, and keeps the run s own totals', () => {
+    renderTable();
+    typeFilter('no row is named this');
+
+    expect(bodyRows()).toEqual([]);
+    expect(screen.getByText(/no rows match/i)).toBeTruthy();
+    // The totals row is the RUN's, not a match: it is not filtered away.
+    expect(textIn(totalRow(), 'count')).toBe('895');
+  });
+
+  /**
+   * AN EMPTY QUERY IS NOT A QUERY (task 4's contract, and this component must
+   * not implement it a second time). Clearing the box gives the whole table
+   * back — in the sort it was in, and with the reader's OWN expansion state,
+   * not the one the filter needed.
+   */
+  it('gives the whole table back when the box is cleared', () => {
+    renderTable();
+    typeFilter('Recommend');
+    typeFilter('');
+
+    expect(pathsOf(bodyRows())).toEqual(rootOrderBy('p99', 'desc'));
+    expect(screen.queryByText('Recommendations')).toBeNull();
+    expect(screen.getByRole('button', { name: /expand Catalog/i })).toBeTruthy();
+  });
+
+  it('remembers a group the reader opened, through a filter that hides it', () => {
+    renderTable();
+    expandCatalog();
+    typeFilter('Place Order');
+    expect(pathsOf(bodyRows())).toEqual(['Place Order']);
+
+    typeFilter('');
+    expect(pathsOf(bodyRows())).toContain('Catalog/Recommendations');
+  });
+
+  /** Filtering hides rows. It is not a re-sort, and not a re-shaping. */
+  it('changes neither the sort nor the column set', () => {
+    renderTable();
+    fireEvent.click(sortButton('Min'));
+    typeFilter('Product');
+
+    expect(pathsOf(bodyRows())).toEqual(
+      rootOrderBy('minMs', 'desc').filter((path) => path.toLowerCase().includes('product')),
+    );
+    expect(sortedColumns()).toEqual(['Min:descending']);
+    // The columns come from the whole payload, so a filter down to one row
+    // cannot take a percentile column away with it.
+    expect(headers()).toEqual(REFERENCE_HEADERS);
+  });
+
+  /** G-14 is a filter BOX: a real labelled control, not a placeholder. */
+  it('is a labelled text control that shows what was typed', () => {
+    renderTable();
+    const box = screen.getByLabelText(/filter/i);
+    expect(box.tagName).toBe('INPUT');
+    typeFilter('Search');
+    expect((box as HTMLInputElement).value).toBe('Search');
   });
 });
 

@@ -1,22 +1,35 @@
-import { useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
-import { buildTree, type MetricFamily, type TableRow } from './buildTree';
+import {
+  buildTree,
+  filterTree,
+  sortTree,
+  type MetricFamily,
+  type PercentileColumn,
+  type SortColumn,
+  type SortDirection,
+  type TableRow,
+} from './buildTree';
 
 /**
- * §13.2 ⑤ the statistics table — Appendix A G-11, G-12, G-13 and G-16.
+ * §13.2 ⑤ the statistics table — Appendix A G-11…G-16.
  *
  * The rendered table is the PARITY SURFACE: every number a person can read
  * about this run is in the DOM here, as text, in a real `<table>`. So this file
- * owns three things and delegates everything else — WHICH rows exist and how
- * they nest is `buildTree`'s (pure, tested against the captured payload in the
- * node environment), and WHAT the reader can do to them — sort, filter — is
- * task 6's, on top of this.
+ * owns what a table IS and delegates what a table DOES to the pure transforms:
+ * WHICH rows exist and how they nest is `buildTree`'s, and how they reorder
+ * (`sortTree`) and disappear (`filterTree`) is theirs too — all three pure,
+ * all three tested in the node environment against the captured payload.
  *
  * What this file owns:
  *   1. the column set, driven by the payload's own percentile keys;
  *   2. the run-scope totals row, which is deliberately NOT in the tree;
- *   3. how a number is written down — including the percentile clamp.
+ *   3. how a number is written down — including the percentile clamp;
+ *   4. the INTERACTIVE DEFAULTS — which column the table opens sorted on and
+ *      which way, and which groups are open — each of which is one line that
+ *      no numeric assertion can see, and each of which has a test that names
+ *      it (§9 checkpoints 3 and 4).
  */
 
 /* ======================================================================== *
@@ -85,9 +98,11 @@ export function clampPercentile(value: number, row: StatRow): number {
  * visible in a diff.
  */
 interface Column {
-  /** `data-column`, and the React key. `StatRow`'s own field name, or a
-   *  percentile key (`p99.9`) — no numeric field starts with `p`. */
-  readonly column: string;
+  /** `data-column`, the React key, AND what `sortTree` sorts on — `StatRow`'s
+   *  own field name, or a percentile key (`p99.9`); no numeric field starts
+   *  with `p`. One identity, so the column a reader clicks and the field it
+   *  orders by cannot come apart. */
+  readonly column: SortColumn;
   /** The heading a reader sees, and the column's accessible name. */
   readonly label: string;
   /** Expanded in a `title`, for a heading that is an abbreviation. */
@@ -259,7 +274,12 @@ function percentileColumnsOf(rows: readonly StatRow[]): readonly Column[] {
       return av - bv;
     })
     .map((key) => ({
-      column: key,
+      // The one place a payload string becomes a `SortColumn`. It is sound in
+      // both directions: `sortTree` reads any non-numeric column straight off
+      // `row.percentiles`, which is exactly where this key came from, and no
+      // `StatRow` numeric field starts with `p`, so a percentile key can never
+      // collide with one.
+      column: key as PercentileColumn,
       label: percentileColumnLabel(key),
       value: (row: StatRow) => {
         const raw = row.percentiles[key];
@@ -273,7 +293,64 @@ function percentileColumnsOf(rows: readonly StatRow[]): readonly Column[] {
 }
 
 /* ======================================================================== *
- * 4. THE COMPONENT
+ * 4. SORT — WHICH COLUMN, AND WHICH WAY (G-15, §9 checkpoint 3)
+ * ======================================================================== */
+
+interface SortState {
+  readonly column: SortColumn;
+  readonly direction: SortDirection;
+}
+
+/**
+ * THE COLUMN THE TABLE OPENS SORTED ON: THE HIGHEST PERCENTILE THE PAYLOAD
+ * CONFIGURES — `p99` for the reference run, `p99.9` for a project that
+ * configures one.
+ *
+ * Read off the payload's keys for the same reason the percentile COLUMNS are
+ * (§9 checkpoint 6): `p99` is a default of Gatling's, not a fact about this
+ * product, and a hard-coded default column would silently sort a project's
+ * table by a percentile it never asked for — or, when the key is absent, by
+ * nothing at all, which looks exactly like an unsorted table.
+ *
+ * WHY A PERCENTILE AND NOT THE MEAN OR THE MAX. The question a reader opens
+ * this table with is "what is slow", and the mean hides a request that is
+ * usually fine and occasionally terrible — which is the request they are
+ * looking for. The max answers it with a single outlier. The tail percentile
+ * is the column the rest of the product already treats as the answer (the
+ * percentile chart, the SLO framing in §13.2), so the table opens on the
+ * highest one configured.
+ *
+ * `meanMs` only when the payload carries no percentiles at all — every
+ * `StatRow` has a mean, so the table is always sorted by SOMETHING, and never
+ * by a column that does not exist.
+ */
+function worstFirstColumn(percentiles: readonly Column[]): SortColumn {
+  for (let i = percentiles.length - 1; i >= 0; i -= 1) {
+    const candidate = percentiles[i]!;
+    if (percentileOf(candidate.column) !== null) return candidate.column;
+  }
+  return 'meanMs';
+}
+
+/**
+ * WHICH WAY A COLUMN SORTS ON ITS FIRST CLICK.
+ *
+ * Descending for a number, because every numeric column here is a measure of
+ * cost — a count, an error rate, a duration — and the first click is a
+ * question about the worst of them. Ascending for the NAME, because the first
+ * click on a name column is a question about the alphabet, and Z→A is nobody's
+ * first guess. A second click on the same column reverses whichever it was.
+ */
+const firstDirectionFor = (column: SortColumn): SortDirection =>
+  column === 'name' ? 'asc' : 'desc';
+
+const ARIA_SORT: Record<SortDirection, 'ascending' | 'descending'> = {
+  asc: 'ascending',
+  desc: 'descending',
+};
+
+/* ======================================================================== *
+ * 5. THE COMPONENT
  * ======================================================================== */
 
 /** How far one level of nesting indents, and the root's own left padding. */
@@ -291,6 +368,9 @@ const indentFor = (depth: number): string => `${depth * INDENT_REM + GUTTER_REM}
 
 export default function StatisticsTable({ stats, runId }: { stats: StatsResponse; runId: string }) {
   const headingId = useId();
+  const filterId = useId();
+  /** Prefix for the per-column label ids the headings name themselves by. */
+  const labelIdBase = useId();
 
   const tree = useMemo(() => buildTree(stats, GLOBAL_GROUP_FAMILY), [stats]);
 
@@ -312,11 +392,20 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
    */
   const total = useMemo(() => stats.stats.find((row) => row.scope === 'run') ?? null, [stats]);
 
+  /**
+   * THE COLUMNS COME FROM THE WHOLE PAYLOAD, NOT FROM WHAT IS ON SCREEN.
+   *
+   * Every row the table CAN show — collapsed children included, and the totals
+   * row — so neither expanding a group nor typing in the filter box changes the
+   * shape of the table underneath the reader.
+   */
   const columns = useMemo(() => {
     const rendered = [...(total === null ? [] : [total]), ...flatten(tree).map((r) => r.row)];
+    const percentiles = percentileColumnsOf(rendered);
     return {
       executions: EXECUTION_COLUMNS,
-      responseTime: [MIN_COLUMN, ...percentileColumnsOf(rendered), ...TRAILING_TIME_COLUMNS],
+      responseTime: [MIN_COLUMN, ...percentiles, ...TRAILING_TIME_COLUMNS],
+      worstFirst: worstFirstColumn(percentiles),
     };
   }, [tree, total]);
 
@@ -345,7 +434,80 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
       return next;
     });
 
-  const rows = useMemo(() => visibleRows(tree, expandedKeys), [tree, expandedKeys]);
+  /**
+   * THE TABLE OPENS SORTED, WORST FIRST — §9 checkpoint 3, the second of the
+   * two NON-NUMERIC checkpoints.
+   *
+   * `null` means "nobody has clicked a heading yet", and the opening sort is
+   * derived below rather than stored, so a table handed a payload with
+   * different percentile keys opens on a column that payload actually has
+   * instead of on a remembered one it does not.
+   *
+   * Ascending here would open the table on the FASTEST row — the answer to a
+   * question nobody opens a performance report to ask. That one word is the
+   * whole decision, and the previous sub-project's only escaped defect was a
+   * one-word interactive default that flipped with 459 tests staying green.
+   */
+  const [sort, setSort] = useState<SortState | null>(null);
+  const opening: SortState = { column: columns.worstFirst, direction: 'desc' };
+  const activeSort = sort ?? opening;
+
+  const sortBy = (column: SortColumn) =>
+    setSort((was) => {
+      const current = was ?? opening;
+      // The same column reverses; a new one starts at ITS own first direction,
+      // rather than inheriting the direction the previous column happened to
+      // be in — the reader clicked a question, not an arrow.
+      return current.column === column
+        ? { column, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+        : { column, direction: firstDirectionFor(column) };
+    });
+
+  /** G-14. The RAW input, straight through — see the pipeline below. */
+  const [query, setQuery] = useState('');
+
+  /* ---- the pipeline: filter, then sort, then decide what is visible ----
+   *
+   * THE QUERY IS PASSED THROUGH UNTOUCHED. `filterTree` already owns what a
+   * query IS — trimmed at the ends, matched as a substring against the full
+   * path, and an EMPTY query is not a query at all. Re-deciding any of that
+   * here would give the product two answers to the same question, and the one
+   * the tests pin is the other one.
+   *
+   * Filtering first is not just cheaper: sorting a pruned tree and pruning a
+   * sorted one give the same rows in the same order (both transforms reorder
+   * or drop SIBLINGS and neither touches the shape), so the cheap order is the
+   * one to write down.
+   */
+  const filtered = filterTree(tree, query);
+  /**
+   * WHETHER A FILTER IS RUNNING, asked of `filterTree` rather than re-derived.
+   *
+   * Its contract is explicit: with no query "the whole tree comes back — the
+   * same array, not a copy of it". So identity is the signal, and this cannot
+   * drift from the trimming rule the way a second `query.trim() !== ''` here
+   * would the day that rule changes.
+   */
+  const filtering = filtered !== tree;
+  const sorted = sortTree(filtered, activeSort.column, activeSort.direction);
+
+  /**
+   * A FILTER OPENS WHAT IT KEPT.
+   *
+   * `filterTree` keeps a match's ancestors so the match arrives WITH its
+   * context — and with groups collapsed by default, that context would
+   * otherwise hide the very row the reader searched for: type "Recommend" and
+   * the table answers with a closed `Catalog`. Every ancestor a filter keeps is
+   * there because a match is underneath it, so while a query is running every
+   * kept group is open.
+   *
+   * The reader's own expansion state is untouched underneath — `expandedKeys`
+   * is what a click still writes to — so clearing the box hands the tree back
+   * exactly as they left it.
+   */
+  const isExpanded = (key: string): boolean => filtering || expandedKeys.has(key);
+
+  const rows = visibleRows(sorted, isExpanded);
 
   if (total === null && tree.length === 0) {
     return (
@@ -368,6 +530,25 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
         Statistics
       </h2>
 
+      {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
+          placeholder: a placeholder disappears the moment the reader types,
+          which is exactly when a screen reader is asked what the field is. */}
+      <div className="flex items-center gap-2">
+        <label htmlFor={filterId} className="text-sm text-[var(--color-text-muted)]">
+          Filter by name
+        </label>
+        <input
+          id={filterId}
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          // Off, because the values worth completing here are the row names
+          // already on screen, and the browser would offer yesterday's runs.
+          autoComplete="off"
+          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-sm"
+        />
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-left text-sm">
           {/* The caption is the table's ACCESSIBLE NAME as well as its
@@ -389,14 +570,18 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
                 so the percentile headings do not each have to repeat it. */}
             <tr className="border-b border-[var(--color-border)]">
-              <th
+              <SortableHeader
+                column="name"
+                label={NAME_COLUMN_LABEL}
+                labelId={`${labelIdBase}-name`}
+                sort={activeSort}
+                onSort={sortBy}
                 rowSpan={2}
-                scope="col"
-                className="py-2 pr-4 font-semibold"
                 style={{ paddingLeft: indentFor(0) }}
-              >
-                {NAME_COLUMN_LABEL}
-              </th>
+              />
+              {/* The two headings that SPAN columns are not columns: there is
+                  nothing to sort by, and a control here would have to guess
+                  which of the five it meant. */}
               <th colSpan={columns.executions.length} scope="colgroup" className="py-2 pr-4">
                 Executions
               </th>
@@ -405,17 +590,16 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               </th>
             </tr>
             <tr className="border-b border-[var(--color-border)]">
-              {allColumns.map((column) => (
-                <th key={column.column} scope="col" className="py-2 pr-4 font-semibold">
-                  {/* An `<abbr title>` explains an abbreviated heading without
-                      changing it: the accessible name still comes from the
-                      text, which is what the column is called. */}
-                  {column.hint === undefined ? (
-                    column.label
-                  ) : (
-                    <abbr title={column.hint}>{column.label}</abbr>
-                  )}
-                </th>
+              {allColumns.map((column, index) => (
+                <SortableHeader
+                  key={column.column}
+                  column={column.column}
+                  label={column.label}
+                  hint={column.hint}
+                  labelId={`${labelIdBase}-${index}`}
+                  sort={activeSort}
+                  onSort={sortBy}
+                />
               ))}
             </tr>
           </thead>
@@ -452,10 +636,21 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 row={row}
                 runId={runId}
                 columns={allColumns}
-                expanded={expandedKeys.has(row.key)}
+                expanded={isExpanded(row.key)}
                 onToggle={toggle}
               />
             ))}
+            {/* A table that goes silently empty when a filter matches nothing
+                reads as a broken table, not as an answer. Only while a filter
+                is RUNNING: a run that recorded nothing is a different message,
+                and it is handled above. */}
+            {filtering && rows.length === 0 && (
+              <tr>
+                <td colSpan={allColumns.length + 1} className="py-2 pl-2">
+                  No rows match this filter.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -464,7 +659,119 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
 }
 
 /* ======================================================================== *
- * 5. ROWS AND CELLS
+ * 6. THE COLUMN HEADINGS, WHICH ARE THE SORT CONTROLS
+ * ======================================================================== */
+
+/**
+ * One sortable column heading: the label a reader sees, a button that sorts by
+ * it, and `aria-sort` saying which way it currently is.
+ *
+ * ═══ THE HEADER'S ACCESSIBLE NAME IS THE COLUMN'S LABEL, AND NOTHING ELSE ═══
+ *
+ * §9 checkpoint 6's negative — `queryByRole('columnheader', { name: /^95th$/ })`
+ * returning null for a payload with no p95 — is null for EVERY implementation
+ * the moment the headers stop being named after their columns. A sort control
+ * inside the `<th>` is exactly what does that, and this was measured in this
+ * stack (jsdom 30 + dom-accessibility-api 0.5.16) rather than assumed:
+ *
+ *   `<th><button aria-labelledby="hint lbl">…</button></th>`  → th named
+ *   "Sort by 95th". A DESCENDANT'S `aria-labelledby` IS consulted when a
+ *   header takes its name from its contents — and this is the construction a
+ *   careful implementer reaches for, because it keeps the wording out of
+ *   `textContent`.
+ *
+ *   `<th><button aria-label="Sort by 95th">95th</button></th>` → th named
+ *   "95th" in jsdom, because a descendant's `aria-label` is NOT consulted
+ *   there. Browsers do not all agree, and piece 8's Playwright specs read
+ *   these names in a real one.
+ *
+ * So the header does not leave its name to be computed from whatever is
+ * inside it: `aria-labelledby` points at the SPAN THAT RENDERS THE LABEL.
+ * That is the same string the heading displays and the same string a
+ * hard-coded percentile list would fail to produce, so the checkpoint's
+ * negative stays exactly as live as it was before there were any controls.
+ *
+ * For the same reason the sort indicator is an SVG and not a glyph: the
+ * heading's `textContent` is what the parity assertions read, and `95th ▼` is
+ * not what the column is called.
+ */
+function SortableHeader({
+  column,
+  label,
+  hint,
+  labelId,
+  sort,
+  onSort,
+  rowSpan,
+  style,
+}: {
+  column: SortColumn;
+  label: string;
+  hint?: string;
+  labelId: string;
+  sort: SortState;
+  onSort: (column: SortColumn) => void;
+  rowSpan?: number;
+  style?: CSSProperties;
+}) {
+  const sorted = sort.column === column;
+
+  return (
+    <th
+      scope="col"
+      rowSpan={rowSpan}
+      style={style}
+      aria-labelledby={labelId}
+      // `none` on the others, not nothing: a column that CAN be sorted and
+      // currently is not is a different thing from one that cannot be.
+      aria-sort={sorted ? ARIA_SORT[sort.direction] : 'none'}
+      className="py-2 pr-4 font-semibold"
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        // What the click will DO. "95th" alone would be announced as a button
+        // called 95th, which is the column, not the action.
+        aria-label={`Sort by ${label}`}
+        className="inline-flex items-center gap-1"
+      >
+        {/* An `<abbr title>` explains an abbreviated heading without changing
+            it — the label itself is what the column is called. */}
+        {hint === undefined ? (
+          <span id={labelId}>{label}</span>
+        ) : (
+          <abbr id={labelId} title={hint}>
+            {label}
+          </abbr>
+        )}
+        <SortArrow direction={sorted ? sort.direction : null} />
+      </button>
+    </th>
+  );
+}
+
+/**
+ * Which way the sorted column points, for readers who are looking rather than
+ * listening — `aria-sort` above is the same fact for the ones who are not.
+ *
+ * Drawn, not written: a text arrow would land in the heading's `textContent`,
+ * which is the string this table's parity assertions compare against Gatling's
+ * own column names.
+ */
+function SortArrow({ direction }: { direction: SortDirection | null }) {
+  if (direction === null) return null;
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 8 6" className="h-2 w-2 shrink-0">
+      <path
+        d={direction === 'asc' ? 'M4 0 L8 6 L0 6 Z' : 'M0 0 L8 0 L4 6 Z'}
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+/* ======================================================================== *
+ * 7. ROWS AND CELLS
  * ======================================================================== */
 
 /** Depth-first, parents before children — every row, expanded or not. */
@@ -477,16 +784,21 @@ function flatten(rows: readonly TableRow[]): TableRow[] {
  * they have opened. A collapsed group's children are not rendered at all rather
  * than hidden with CSS — `display: none` on a hundred rows is a hundred rows a
  * screen reader still has to be told to skip.
+ *
+ * Takes a PREDICATE rather than the set of open keys, because "open" is not
+ * only what the reader clicked: a running filter opens every group it kept
+ * (see `isExpanded`), and this walk should not have to know which of the two
+ * reasons applies.
  */
 function visibleRows(
   rows: readonly TableRow[],
-  expandedKeys: ReadonlySet<string>,
+  isExpanded: (key: string) => boolean,
 ): readonly TableRow[] {
   const out: TableRow[] = [];
   const walk = (level: readonly TableRow[]) => {
     for (const row of level) {
       out.push(row);
-      if (row.children.length > 0 && expandedKeys.has(row.key)) walk(row.children);
+      if (row.children.length > 0 && isExpanded(row.key)) walk(row.children);
     }
   };
   walk(rows);
