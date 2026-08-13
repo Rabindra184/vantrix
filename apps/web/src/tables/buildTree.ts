@@ -193,3 +193,133 @@ export function buildTree(stats: StatsResponse, family: MetricFamily): readonly 
 
   return roots.map((node) => materialise(node, 0));
 }
+
+/* ======================================================================== *
+ * SORTING (design §7)
+ * ======================================================================== */
+
+export type SortDirection = 'asc' | 'desc';
+
+/**
+ * The numeric columns are `StatRow`'s own field names, so a column is the
+ * field it sorts on and cannot drift from it.
+ */
+const NUMERIC_COLUMNS = [
+  'count',
+  'okCount',
+  'koCount',
+  'errorRate',
+  'minMs',
+  'maxMs',
+  'meanMs',
+  'stddevMs',
+  'throughputRps',
+] as const;
+
+export type NumericColumn = (typeof NUMERIC_COLUMNS)[number];
+
+/**
+ * The percentile columns are NOT a fixed list. `StatRow.percentiles` is a
+ * `Record<string, number>` whose keys come from the project's configured
+ * percentiles — `p50`, `p95`, `p99.9` — so the table's percentile columns, and
+ * therefore its sortable percentile columns, are whatever the payload carries
+ * (§9 checkpoint 6). No `StatRow` numeric field begins with `p`, so the two
+ * halves of `SortColumn` cannot collide.
+ */
+export type PercentileColumn = `p${string}`;
+
+/** `name` is the leftmost column and sortable like any other. */
+export type SortColumn = 'name' | NumericColumn | PercentileColumn;
+
+const NUMERIC_COLUMN_SET: ReadonlySet<string> = new Set(NUMERIC_COLUMNS);
+
+/**
+ * A row's value on a column, or `undefined` when it HAS none.
+ *
+ * `undefined` is not zero. A row whose payload carries no `p99.9` has no p99.9
+ * — read as 0 it would sort into the fastest slot in the table and be read as
+ * the best row in it. Non-finite values (a `NaN` that survived a division)
+ * are treated the same way, because they cannot be ordered at all.
+ */
+const valueOf = (row: StatRow, column: SortColumn): number | undefined => {
+  const raw = NUMERIC_COLUMN_SET.has(column)
+    ? (row as unknown as Record<string, unknown>)[column]
+    : row.percentiles[column];
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+};
+
+/**
+ * Case-insensitive, and deliberately NOT `localeCompare`: the default locale
+ * comes from the host, and a table whose row order depends on the reader's
+ * browser is a table two people cannot discuss.
+ */
+const compareNames = (a: TableRow, b: TableRow, direction: SortDirection): number => {
+  const an = a.name.toLowerCase();
+  const bn = b.name.toLowerCase();
+  if (an === bn) return 0;
+  const ascending = an < bn ? -1 : 1;
+  return direction === 'asc' ? ascending : -ascending;
+};
+
+const compare = (
+  a: TableRow,
+  b: TableRow,
+  column: SortColumn,
+  direction: SortDirection,
+): number => {
+  if (column === 'name') return compareNames(a, b, direction);
+
+  const av = valueOf(a.row, column);
+  const bv = valueOf(b.row, column);
+
+  // A row with no value on this column sorts LAST in both directions. It is
+  // not the smallest and it is not the largest; it is absent, and the reader
+  // should find it where absent things are, not at whichever end the arrow
+  // currently points. (So `desc` is not the exact reverse of `asc` for a
+  // column some rows lack. That asymmetry is the point.)
+  if (av === undefined || bv === undefined) {
+    if (av === bv) return 0;
+    return av === undefined ? 1 : -1;
+  }
+
+  if (av === bv) return 0;
+  return direction === 'asc' ? av - bv : bv - av;
+};
+
+/**
+ * Sort the tree, keeping every child with its parent (design §7).
+ *
+ * SORTING A TREE IS NOT SORTING A LIST. Each SIBLING LIST is ordered against
+ * itself and the recursion carries on into the children; the tree's shape is
+ * never touched. A flat sort — or a flatten, sort and re-nest — reads the
+ * hierarchy back out of the row paths, and the hierarchy is not in the paths:
+ * `buildTree` decides that only a GROUP adopts children (so a request named
+ * `Catalog` is a leaf beside the group of that name) and that an orphan is a
+ * ROOT at depth 0. Re-deriving either from two path segments loses it.
+ * `depth` is carried through untouched for the same reason.
+ *
+ * PURE. The input arrays are copied before they are ordered, because a caller
+ * holding the tree across a React render must not have it reordered underneath
+ * them. Unchanged leaves are shared by reference rather than cloned; every
+ * `TableRow` is readonly, and rebuilding them would only make the sort look
+ * like it computed something.
+ *
+ * STABLE, which is `Array.prototype.sort`'s guarantee since ES2019 and is
+ * relied on here rather than re-implemented with an index decoration: the
+ * comparator returns 0 for equal values and NEVER falls back to a name or path
+ * tie-break, so ties come out in the order they arrived. That is what makes a
+ * second click on a second column refine the first rather than discard it.
+ */
+export function sortTree(
+  rows: readonly TableRow[],
+  column: SortColumn,
+  direction: SortDirection,
+): readonly TableRow[] {
+  return [...rows]
+    .sort((a, b) => compare(a, b, column, direction))
+    .map((row) =>
+      row.children.length === 0
+        ? row
+        : { ...row, children: sortTree(row.children, column, direction) },
+    );
+}

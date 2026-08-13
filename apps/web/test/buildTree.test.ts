@@ -1,6 +1,13 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { buildTree, type MetricFamily, type TableRow } from '../src/tables/buildTree.js';
+import {
+  buildTree,
+  sortTree,
+  type MetricFamily,
+  type SortColumn,
+  type SortDirection,
+  type TableRow,
+} from '../src/tables/buildTree.js';
 import fixture from './fixtures/reference-run.json';
 
 /**
@@ -362,5 +369,457 @@ describe('buildTree — the statistics row tree ⑤ (G-11…G-13)', () => {
     const hits = flat(tree).filter((r) => r.path === 'Search');
     expect(hits.length).toBe(1);
     expect(hits[0]!.row.count).toBe(dupe.count);
+  });
+});
+
+/* ====================================================================== *
+ * sortTree — §7 "sorting keeps children with their parent", §9 checkpoint 1
+ * ====================================================================== */
+
+/**
+ * WHAT THIS BLOCK IS CAREFUL ABOUT. The brief's three example tests are, on
+ * this payload, satisfied by code that does not sort at all or sorts only half
+ * the tree. Measured against stubs before the implementation existed:
+ *
+ * - "reorders siblings without moving a child away from its parent" **passes
+ *   for `sortTree = (rows) => rows`**. `Catalog` has exactly ONE child in the
+ *   reference run, so no ordering of its children can be wrong, and a sort
+ *   that never touches the tree trivially never promotes the child.
+ * - "sorts siblings by the requested column, descending" walks the ROOTS only.
+ *   A sort that orders the roots and leaves every child list in payload order
+ *   passes it — and so passes the whole brief, since the test above is the
+ *   only one that looks inside a parent.
+ * - "is stable for equal values" re-sorts an ALREADY-SORTED list. That is the
+ *   one input on which an unstable comparator, a name tie-break, and a
+ *   correct stable sort all agree. It also passes for the identity function.
+ *
+ * All three are kept verbatim. Each is followed by the assertion that
+ * discriminates: an EXACT expected order at every level of a tree with a
+ * multi-child parent, a tie-break checked from a DIFFERENT starting order than
+ * the payload's, and — for parentage — a tree whose shape is not recoverable
+ * from the paths alone, which is what §9 checkpoint 1's flatten-and-re-nest
+ * mutation actually breaks.
+ */
+
+/** The payload with request rows given path-qualified names (the D-10 shape). */
+const requestsAt = (map: Record<string, string>): StatsResponse => ({
+  ...stats,
+  stats: stats.stats.map((r) =>
+    r.scope === 'request' && map[r.name] !== undefined ? { ...r, name: map[r.name]! } : r,
+  ),
+});
+
+/** The payload with one percentile key removed from the named rows. */
+const withoutPercentile = (key: string, names: readonly string[]): StatsResponse => ({
+  ...stats,
+  stats: stats.stats.map((r) => {
+    if (!names.includes(r.name)) return r;
+    const kept = Object.fromEntries(Object.entries(r.percentiles).filter(([k]) => k !== key));
+    return { ...r, percentiles: kept };
+  }),
+});
+
+/** `key` → the sorted paths of its children: the tree's SHAPE, order removed. */
+const shapeOf = (rs: readonly TableRow[]): Map<string, string> =>
+  new Map(flat(rs).map((r) => [r.key, [...paths(r.children)].sort().join('|')]));
+
+/** Every sibling list in the tree, root first, for a sortedness sweep. */
+const siblingLists = (rs: readonly TableRow[]): (readonly TableRow[])[] => [
+  rs,
+  ...flat(rs).map((r) => r.children),
+];
+
+const p95 = (r: TableRow) => r.row.percentiles.p95 ?? 0;
+
+/** The `StatRow` fields that are numeric columns; everything else is a percentile key. */
+const NUMERIC_FIELDS = new Set([
+  'count',
+  'okCount',
+  'koCount',
+  'errorRate',
+  'minMs',
+  'maxMs',
+  'meanMs',
+  'stddevMs',
+  'throughputRps',
+]);
+
+/**
+ * The test's own reading of a column, written independently of the
+ * implementation's so the sweep below is not checking the sort against itself.
+ * Only used with columns every row carries.
+ */
+const value = (r: TableRow, column: SortColumn): number =>
+  (NUMERIC_FIELDS.has(column)
+    ? (r.row as unknown as Record<string, number>)[column]
+    : r.row.percentiles[column]) ?? 0;
+
+describe('sortTree — siblings reorder, children stay with their parent (§7)', () => {
+  /* ---------------------------------------------------------------- *
+   * parentage
+   * ---------------------------------------------------------------- */
+
+  it('reorders siblings without moving a child away from its parent', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    const sorted = sortTree(tree, 'p95', 'desc');
+    const catalog = sorted.find((r) => r.path === 'Catalog')!;
+    // The child is still under Catalog, not promoted to root by the sort.
+    expect(catalog.children.map((c) => c.path)).toContain('Catalog/Recommendations');
+    expect(sorted.map((r) => r.path)).not.toContain('Catalog/Recommendations');
+  });
+
+  /**
+   * The discriminating form, part one: the SHAPE is preserved exactly —
+   * every row keeps the same children, and the tree still holds the same ten
+   * rows carrying the same `StatRow` objects at the same depths. A sort that
+   * drops, duplicates or re-parents anything fails here rather than in task 5.
+   */
+  it('preserves the tree exactly — same rows, same parents, same depths', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    const sorted = sortTree(tree, 'p95', 'desc');
+
+    expect(shapeOf(sorted)).toEqual(shapeOf(tree));
+    expect(paths(flat(sorted)).sort()).toEqual([...ALL_PATHS].sort());
+    for (const before of flat(tree)) {
+      const after = flat(sorted).find((r) => r.key === before.key)!;
+      expect(after.depth).toBe(before.depth);
+      expect(after.name).toBe(before.name);
+      // The payload row is carried through by REFERENCE: the sort computes
+      // nothing and copies nothing.
+      expect(after.row).toBe(before.row);
+    }
+  });
+
+  /**
+   * The discriminating form, part two — and the one §9 checkpoint 1 needs.
+   *
+   * A tree whose shape is NOT recoverable from the paths alone. `buildTree`'s
+   * rule is that only GROUPS adopt children, so a request that happens to be
+   * named `Catalog` is a leaf beside the group of the same name, and `path` is
+   * no longer a unique key. Any sort that flattens and re-nests by path sees
+   * two rows at path `Catalog` and has to pick one; picking the request hands
+   * it `Catalog/Recommendations` and empties the group.
+   *
+   * **This is the test the checkpoint needed, and one direction was not
+   * enough.** Measured: the flatten-and-re-nest mutation indexes the flattened
+   * rows by path and keeps the first, so it is only wrong when the REQUEST
+   * sorts above the group — which `p95`/`desc` never does (2671.01 against
+   * 1939.53) and `p95`/`asc` always does. The invariant is independent of the
+   * column and the direction, so it is asserted over several of both.
+   */
+  it('keeps the child under the GROUP when a request shares the group name', () => {
+    // `Search` renamed to `Catalog`: a request at the same path as the group.
+    const tree = buildTree(renamed('Search', 'Catalog'), 'group_cumulated');
+    const columns = ['p95', 'p50', 'minMs', 'count', 'name'] satisfies SortColumn[];
+
+    for (const column of columns) {
+      for (const direction of ['asc', 'desc'] satisfies SortDirection[]) {
+        const sorted = sortTree(tree, column, direction);
+        const where = `${column}/${direction}`;
+        const group = sorted.find((r) => r.path === 'Catalog' && r.scope === 'group')!;
+        const request = sorted.find((r) => r.path === 'Catalog' && r.scope === 'request')!;
+
+        expect(`${where}: ${paths(group.children).join()}`).toBe(
+          `${where}: Catalog/Recommendations`,
+        );
+        expect(`${where}: ${paths(request.children).join()}`).toBe(`${where}: `);
+        // Exactly once in the whole tree, and never at the root.
+        expect(flat(sorted).filter((r) => r.path === 'Catalog/Recommendations').length).toBe(1);
+        expect(paths(sorted)).not.toContain('Catalog/Recommendations');
+      }
+    }
+  });
+
+  /**
+   * The other shape the paths cannot express: the ORPHAN. `Catalog/Recommendations`
+   * with no `Catalog` is a ROOT at depth 0 showing its full path, and sorting
+   * must not re-derive any of that from its two path segments (task 2's
+   * mutation E, and this brief's standing warning: key on `row.depth`).
+   */
+  it('leaves an orphan at the root, at depth 0, with its full path as its name', () => {
+    const tree = buildTree(without((r) => r.name === 'Catalog' && r.scope === 'group'), 'group_cumulated');
+    const sorted = sortTree(tree, 'p95', 'desc');
+
+    const orphan = find(sorted, 'Catalog/Recommendations');
+    expect(paths(sorted)).toContain('Catalog/Recommendations');
+    expect(orphan.depth).toBe(0);
+    expect(orphan.name).toBe('Catalog/Recommendations');
+    expect(flat(sorted).length).toBe(ALL_PATHS.length - 1);
+    // Sorted on its merits, not stranded at either end: with `Catalog` (p95
+    // 2671.01) gone, its 2515.46 ties `Related Items` and wins the tie on
+    // arrival order, ahead of `Search` at 1939.53.
+    expect(paths(sorted)[0]).toBe('Catalog/Recommendations');
+  });
+
+  /* ---------------------------------------------------------------- *
+   * the order itself
+   * ---------------------------------------------------------------- */
+
+  it('sorts siblings by the requested column, descending', () => {
+    const sorted = sortTree(buildTree(stats, 'group_cumulated'), 'p95', 'desc');
+    for (let i = 1; i < sorted.length; i++) {
+      expect(p95(sorted[i - 1]!)).toBeGreaterThanOrEqual(p95(sorted[i]!));
+    }
+  });
+
+  /**
+   * The discriminating form: the EXACT root order, from the captured payload's
+   * own p95 figures, and ascending as its exact reverse. The pairwise loop
+   * above passes for any tree whose roots happen to be non-increasing; this
+   * fails for anything but the one right answer.
+   */
+  it('puts the roots in exactly the order the payload s p95 figures dictate', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    // Catalog 2671.01, Related Items 2515.46, Search 1939.53, Product Detail
+    // 295.93, Cart 172.45, Add To Cart 141.19, Place Order 92.77,
+    // List Products 41.68, View Cart 40.86.
+    const worstFirst = [
+      'Catalog',
+      'Related Items',
+      'Search',
+      'Product Detail',
+      'Cart',
+      'Add To Cart',
+      'Place Order',
+      'List Products',
+      'View Cart',
+    ];
+    expect(paths(sortTree(tree, 'p95', 'desc'))).toEqual(worstFirst);
+    expect(paths(sortTree(tree, 'p95', 'asc'))).toEqual([...worstFirst].reverse());
+  });
+
+  /**
+   * The one the brief's tests cannot reach: a parent with MORE THAN ONE child.
+   * The reference run gives `Catalog` exactly one, so every child list in it
+   * is sorted by definition. This is the D-10 payload — request names
+   * path-qualified, which is what the statistics engine would emit if it
+   * stopped discarding `RequestEvent.groups` — and it is the only input here
+   * on which "sort the roots and forget to recurse" is visible.
+   */
+  it('sorts the children of a parent too, not just the roots', () => {
+    const tree = buildTree(
+      requestsAt({
+        'List Products': 'Catalog/List Products',
+        'Product Detail': 'Catalog/Product Detail',
+        'Related Items': 'Catalog/Recommendations/Related Items',
+      }),
+      'group_cumulated',
+    );
+    // Payload order under Catalog: the group row first, then the two requests.
+    const catalogBefore = find(tree, 'Catalog');
+    expect(paths(catalogBefore.children)).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ]);
+
+    const desc = sortTree(tree, 'p95', 'desc');
+    // Recommendations 2515.46, Product Detail 295.93, List Products 41.68.
+    expect(paths(find(desc, 'Catalog').children)).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/Product Detail',
+      'Catalog/List Products',
+    ]);
+    expect(paths(desc)).toEqual(['Catalog', 'Search', 'Cart', 'Add To Cart', 'Place Order', 'View Cart']);
+    // Two levels down is sorted as well, and still two levels down.
+    expect(find(desc, 'Catalog/Recommendations/Related Items').depth).toBe(2);
+
+    const asc = sortTree(tree, 'p95', 'asc');
+    expect(paths(find(asc, 'Catalog').children)).toEqual([
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+      'Catalog/Recommendations',
+    ]);
+  });
+
+  /** Every sibling list at every depth, swept generically for both directions. */
+  it('leaves every sibling list in the tree non-increasing, and asc non-decreasing', () => {
+    const tree = buildTree(
+      requestsAt({
+        'List Products': 'Catalog/List Products',
+        'Product Detail': 'Catalog/Product Detail',
+        'Related Items': 'Catalog/Recommendations/Related Items',
+      }),
+      'group_cumulated',
+    );
+    for (const column of ['count', 'meanMs', 'maxMs', 'errorRate', 'p50', 'p99'] satisfies SortColumn[]) {
+      for (const direction of ['asc', 'desc'] satisfies SortDirection[]) {
+        for (const siblings of siblingLists(sortTree(tree, column, direction))) {
+          for (let i = 1; i < siblings.length; i++) {
+            const a = value(siblings[i - 1]!, column);
+            const b = value(siblings[i]!, column);
+            if (direction === 'desc') expect(a).toBeGreaterThanOrEqual(b);
+            else expect(a).toBeLessThanOrEqual(b);
+          }
+        }
+      }
+    }
+  });
+
+  /* ---------------------------------------------------------------- *
+   * stability
+   * ---------------------------------------------------------------- */
+
+  it('is stable for equal values, so a re-sort does not shuffle', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    const once = sortTree(tree, 'count', 'desc').map((r) => r.path);
+    const twice = sortTree(sortTree(tree, 'count', 'desc'), 'count', 'desc').map((r) => r.path);
+    expect(twice).toEqual(once);
+  });
+
+  /**
+   * The discriminating form. Re-sorting an already-sorted list is the one
+   * input on which every comparator agrees, and the test above also passes for
+   * a sort that does nothing. Stability means TIES KEEP THE ORDER THEY CAME
+   * IN, so it can only be seen from an incoming order that is not the one the
+   * comparator would produce anyway.
+   *
+   * `count` has exactly two values in the reference run — 160 and 85 — so
+   * sorting by it is almost entirely ties. Sorted by p95 ascending FIRST, then
+   * by count descending, the two blocks must come out in p95-ascending order.
+   * An implementation that re-reads the payload, or tie-breaks on the name,
+   * gives the payload/alphabetical order instead.
+   */
+  it('carries ties in the order they arrived, not the payload s or the alphabet s', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+
+    // From payload order: ties fall out in payload order.
+    expect(paths(sortTree(tree, 'count', 'desc'))).toEqual([
+      'Catalog',
+      'List Products',
+      'Product Detail',
+      'Related Items',
+      'Search',
+      'Cart',
+      'Add To Cart',
+      'Place Order',
+      'View Cart',
+    ]);
+    // From p95-ascending order: the SAME two blocks, each in p95-ascending
+    // order. Nothing about the payload or the alphabet produces this.
+    const byP95 = sortTree(tree, 'p95', 'asc');
+    expect(paths(sortTree(byP95, 'count', 'desc'))).toEqual([
+      'List Products',
+      'Product Detail',
+      'Search',
+      'Related Items',
+      'Catalog',
+      'View Cart',
+      'Place Order',
+      'Add To Cart',
+      'Cart',
+    ]);
+    // Ascending is the same tie order, not its reverse: the direction applies
+    // to the VALUES, and ties are not values.
+    expect(paths(sortTree(byP95, 'count', 'asc'))).toEqual([
+      'View Cart',
+      'Place Order',
+      'Add To Cart',
+      'Cart',
+      'List Products',
+      'Product Detail',
+      'Search',
+      'Related Items',
+      'Catalog',
+    ]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * purity — the sort is a transform, not a mutation
+   * ---------------------------------------------------------------- */
+
+  /**
+   * `sortTree` takes `readonly TableRow[]`, and TypeScript stops there:
+   * `(rows as TableRow[]).sort()` type-checks nowhere but `rows.sort()` on an
+   * array the caller still holds is one keystroke away, and every test above
+   * would still pass while the caller's tree silently reordered underneath a
+   * React render.
+   */
+  it('does not touch the tree it was given, at any depth', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    const pristine = buildTree(stats, 'group_cumulated');
+
+    sortTree(tree, 'p95', 'desc');
+    sortTree(tree, 'count', 'asc');
+    sortTree(tree, 'name', 'desc');
+
+    expect(tree).toEqual(pristine);
+    expect(paths(tree)).toEqual(paths(pristine));
+    expect(paths(find(tree, 'Catalog').children)).toEqual(['Catalog/Recommendations']);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * the name column, and the columns that can be absent
+   * ---------------------------------------------------------------- */
+
+  it('sorts by the displayed name, case-insensitively, in both directions', () => {
+    const tree = buildTree(stats, 'group_cumulated');
+    const alphabetical = [
+      'Add To Cart',
+      'Cart',
+      'Catalog',
+      'List Products',
+      'Place Order',
+      'Product Detail',
+      'Related Items',
+      'Search',
+      'View Cart',
+    ];
+    expect(paths(sortTree(tree, 'name', 'asc'))).toEqual(alphabetical);
+    expect(paths(sortTree(tree, 'name', 'desc'))).toEqual([...alphabetical].reverse());
+
+    // Every name in the reference run is Title Case, so it cannot tell a
+    // case-INSENSITIVE sort from a case-sensitive one — measured: making the
+    // comparison case-sensitive changed nothing and failed no test. A payload
+    // with mixed case can: ASCII order puts every capital ahead of every
+    // lowercase letter, which is how a table ends up listing `search` after
+    // `View Cart` and reading as broken.
+    const mixed = buildTree(
+      requestsAt({ Search: 'apple', 'View Cart': 'Banana', 'Place Order': 'cherry' }),
+      'group_cumulated',
+    );
+    expect(paths(sortTree(mixed, 'name', 'asc'))).toEqual([
+      'Add To Cart',
+      'apple',
+      'Banana',
+      'Cart',
+      'Catalog',
+      'cherry',
+      'List Products',
+      'Product Detail',
+      'Related Items',
+    ]);
+  });
+
+  /**
+   * A percentile column exists only if the payload has that key, and the keys
+   * are per-row (`Record<string, number>`). A row without the sorted key has
+   * no value on that column — it is not a row whose p99 is zero — so it sorts
+   * to the END whichever way the arrow points, rather than into the "fastest"
+   * slot at 0 where a reader would read it as the best in the table.
+   */
+  it('sends rows missing the sorted percentile to the end, in both directions', () => {
+    const tree = buildTree(withoutPercentile('p99', ['Search', 'View Cart']), 'group_cumulated');
+    expect(find(tree, 'Search').row.percentiles.p99).toBeUndefined();
+
+    for (const direction of ['asc', 'desc'] satisfies SortDirection[]) {
+      const sorted = paths(sortTree(tree, 'p99', direction));
+      // Last two, and in the order they arrived — missing is not a value to
+      // sort by, so the ties among them are ties.
+      expect(sorted.slice(-2)).toEqual(['Search', 'View Cart']);
+      expect(sorted.length).toBe(9);
+    }
+    // The rows that DO have the key are ordered on it as usual.
+    expect(paths(sortTree(tree, 'p99', 'desc')).slice(0, 3)).toEqual([
+      'Catalog',
+      'Related Items',
+      'Product Detail',
+    ]);
+  });
+
+  it('returns an empty tree for an empty tree, and is a no-op on a single row', () => {
+    expect(sortTree([], 'p95', 'desc')).toEqual([]);
+    const one = sortTree(buildTree(without((r) => r.name !== 'Search'), 'group_cumulated'), 'count', 'desc');
+    expect(paths(one)).toEqual(['Search']);
   });
 });
