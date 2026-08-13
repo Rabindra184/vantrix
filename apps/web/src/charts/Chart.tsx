@@ -128,10 +128,15 @@ export default function Chart({
   // because its `limitation` is rendered as prose, not drawn, and memoised
   // because it is in that effect's dependency list: a fresh object per render
   // would tear down and re-initialise the ECharts instance on every render.
-  const assignment = useMemo(
-    () => assignPalette(data.series.map((series) => series.name), mode),
-    [data.series, mode],
-  );
+  //
+  // A series may declare itself `essential` (see `ChartSeries`), which exempts
+  // it from the cut without moving it: the concurrent-users chart's total is
+  // last in the list and must be drawn even when six scenarios precede it.
+  const assignment = useMemo(() => {
+    const names = data.series.map((series) => series.name);
+    const essential = data.series.flatMap((series, i) => (series.essential === true ? [i] : []));
+    return assignPalette(names, mode, essential);
+  }, [data.series, mode]);
 
   // THE INSTANCE'S LIFETIME, and nothing else: create, join the crosshair
   // group, follow the container's size, dispose.
@@ -263,8 +268,12 @@ export default function Chart({
                 ? { xAxis: valueAxis, yAxis: categoryAxis }
                 : { xAxis: categoryAxis, yAxis: valueAxis }),
             }),
-        series: drawn.map(({ name }, i) => {
-          const source = data.series[i]!;
+        // `index`, NOT the position in `drawn`. The two agree only while the
+        // drawn set is a prefix of the series list, and an `essential` series
+        // kept over an earlier one breaks that — pairing by position would then
+        // draw each colour against the next series' numbers.
+        series: drawn.map(({ name, index }) => {
+          const source = data.series[index]!;
           if (kind === 'pie') {
             return {
               type: 'pie',
