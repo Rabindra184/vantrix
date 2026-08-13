@@ -21,7 +21,7 @@ describe('runEngine scope fan-out', () => {
     expect(run.count).toBe(3);
     expect(run.koCount).toBe(1);
     const names = r.stats.filter((s) => s.scope === 'request').map((s) => s.name).sort();
-    expect(names).toEqual(['A', 'B', 'C']);
+    expect(names).toEqual(['C', 'G1/A', 'G1/B']);
   });
 
   it('rejects a run that exceeds the endpoint cardinality cap', () => {
@@ -36,6 +36,15 @@ describe('runEngine scope fan-out', () => {
       expect(e.code).toBe('ENDPOINT_CARDINALITY_EXCEEDED');
       expect(e.remediation.length).toBeGreaterThan(0);
     }
+  });
+
+  it('counts endpoints by path, so one name under many groups is many endpoints', () => {
+    // D-12. The cap exists to bound STORED ROLLUPS. One bare name under twelve
+    // groups is twelve rollups; a cap counting bare names would see one and
+    // let a run through that the engine then materialises twelve times over.
+    const many: CanonicalEvent[] = [{ type: 'meta', simulation: 'S', toolVersion: 'v', startedAtMs: base }];
+    for (let i = 0; i < 12; i++) many.push(req('same', [`G${i}`], i, 10));
+    expect(() => runEngine(many, { maxEndpoints: 10 })).toThrow(IngestError);
   });
 
   it('excludes warm-up from summary stats but keeps it in the series', () => {
