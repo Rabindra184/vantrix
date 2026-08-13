@@ -169,6 +169,24 @@ describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
     expect(r.body.ko.length).toBe(koBucketCount);
   });
 
+  it('reports the bucket width, so a client never assumes 1000ms', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}/series?scope=run&name=`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.bucketWidthMs).toBe(1000);
+
+    // The width must be the SMALLEST positive gap, not the first: a bucket with
+    // no observations is absent, so consecutive offsets can be two widths apart.
+    const offsets: number[] = res.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs);
+    const gaps = offsets.slice(1).map((o, i) => o - (offsets[i] as number)).filter((g) => g > 0);
+    expect(res.body.bucketWidthMs).toBe(Math.min(...gaps));
+  });
+
   it('404s for a run in another project', async () => {
     ctx = await createTestApp();
 
