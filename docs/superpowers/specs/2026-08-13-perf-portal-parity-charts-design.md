@@ -78,9 +78,21 @@ The UI must divide by `bucketWidthMs` and must never hard-code 1000.
 
 ## 3b. The requests/s OK/KO split does not exist yet
 
-Appendix A **G-23** requires requests/s to draw **All / OK / KO**, and the real
-Gatling report does exactly that — its series are `All, OK, KO`, read out of
-`fixtures/gatling-3.15.1.2/reference-report/index.html`.
+Appendix A **G-23** requires requests/s to draw **All / OK / KO**.
+
+> **Correction, 2026-08-13.** This section originally claimed the real Gatling
+> report draws requests/s as All/OK/KO, citing the reference fixture. That
+> citation was mine and it was unreliable — the extraction crossed a chart
+> boundary and picked up the neighbouring responses/s chart's series. Task 9's
+> implementer examined `RequestsContainerId` more carefully and reports a
+> single `All` series there, with the All/OK/KO triple belonging to
+> `ResponsesContainerId`.
+>
+> **The requirement is unaffected**: it rests on Appendix A G-23, which is
+> independent of my reading of the fixture, so the migration below and the
+> chart that consumes it are both still right. But a future parity diff
+> against the reference report will legitimately flag our two extra series,
+> and whoever runs it should find this note rather than re-deriving it.
 
 `BucketSeries.record` (`packages/statistics/src/buckets.ts`) increments
 `okCount`/`koCount` on the **end** edge only. Those are the split for
