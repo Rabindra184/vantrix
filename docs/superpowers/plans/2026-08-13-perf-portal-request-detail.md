@@ -465,6 +465,208 @@ git commit -m "test(web): recapture the reference fixture under D-10, and captur
 
 ---
 
+## Task 2b: D-13 — an SLA rule targeting a bare request name keeps working
+
+**Files:**
+- Modify: `packages/sla/src/evaluate.ts:41-57`
+- Modify: `packages/sla/test/evaluate.test.ts`
+
+**Interfaces:**
+- Consumes: Task 1's joined request names.
+- Produces: no signature change. `evaluateRules` gains a fallback in its
+  stat lookup.
+
+**Why this task exists and is not in the original plan:** review of Tasks 1–2
+found it. `evaluate.ts:44` matches a rule's target by exact string —
+`s.name === (rule.targetName ?? '')`. After D-10 a request-scoped rule whose
+`targetName` is `List Products` matches nothing, falls into the `!stat` branch
+at `:48`, and emits `outcome: 'not_applicable'` with the message "…so the rule
+was not checked."
+
+**That is the worst available failure mode: an SLA gate that stops enforcing
+and reads as benign.** It is made sharper by the spec's no-backfill decision —
+pre-D-10 runs keep bare names, so the rule keeps passing on old runs and
+silently stops on new ones. Nothing in the product would look broken.
+
+**The fix is lenient matching, not a data migration.** A migration would fix
+new runs and break the same rules against old ones, which keep bare names by
+design; a rule spanning the boundary would be wrong on one side either way.
+
+**One matching rule for every scope, deliberately.** Groups have always carried
+paths, so a group rule with a bare name never matched either — this fallback
+fixes that too. Making the rule differ by scope would mean a reader debugging a
+rule has to know that requests changed identity in one release and groups never
+did. One behaviour, documented once.
+
+**Ambiguity must not be resolved by picking.** Two requests can share a leaf
+name under different groups (`Cart/View`, `Catalog/View`). Silently choosing
+one would be worse than the bug being fixed. The three outcomes are fixed in
+the contract (`packages/contracts/src/run.ts:9`) and adding a fourth would
+ripple into the API, so an ambiguous target stays `not_applicable` — but with a
+message that names the ambiguity and lists the candidates, which is a different
+sentence from "there were no statistics".
+
+- [ ] **Step 1: Write the failing tests**
+
+In `packages/sla/test/evaluate.test.ts`:
+
+```ts
+  it('matches a rule authored against a bare request name (D-13)', () => {
+    // D-10 joined the group path onto a request's identity. A rule written
+    // before that names the leaf, and must keep being CHECKED — a rule that
+    // silently stops enforcing is worse than one that fails.
+    const stats = [
+      { scope: 'request', name: 'Catalog/List Products', family: 'response_time', p95: 120 },
+    ] as unknown as EvaluableStat[];
+    const rules = [
+      { id: 'r1', scope: 'request', targetName: 'List Products', family: 'response_time',
+        metric: 'p95', comparator: 'lte', threshold: 200 },
+    ] as EvaluableRule[];
+
+    const { assertions, verdict } = evaluateRules(rules, stats);
+    expect(assertions[0]?.outcome).toBe('passed');
+    expect(verdict).toBe('passed');
+  });
+
+  it('prefers an exact match over a leaf match', () => {
+    // A run holding BOTH `View` at root and `Cart/View` must not have the
+    // rule quietly repointed at the nested one.
+    const stats = [
+      { scope: 'request', name: 'Cart/View', family: 'response_time', p95: 900 },
+      { scope: 'request', name: 'View', family: 'response_time', p95: 10 },
+    ] as unknown as EvaluableStat[];
+    const rules = [
+      { id: 'r1', scope: 'request', targetName: 'View', family: 'response_time',
+        metric: 'p95', comparator: 'lte', threshold: 100 },
+    ] as EvaluableRule[];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
+
+  it('refuses to choose when a bare name is ambiguous, and says so', () => {
+    const stats = [
+      { scope: 'request', name: 'Cart/View', family: 'response_time', p95: 900 },
+      { scope: 'request', name: 'Catalog/View', family: 'response_time', p95: 10 },
+    ] as unknown as EvaluableStat[];
+    const rules = [
+      { id: 'r1', scope: 'request', targetName: 'View', family: 'response_time',
+        metric: 'p95', comparator: 'lte', threshold: 100 },
+    ] as EvaluableRule[];
+
+    const { assertions } = evaluateRules(rules, stats);
+    expect(assertions[0]?.outcome).toBe('not_applicable');
+    // The message must name the ambiguity — "no statistics" would be a lie,
+    // and is the sentence a reader would otherwise act on.
+    expect(assertions[0]?.message).toMatch(/ambiguous/i);
+    expect(assertions[0]?.message).toContain('Cart/View');
+    expect(assertions[0]?.message).toContain('Catalog/View');
+  });
+
+  it('leaves a run-scope rule alone', () => {
+    // targetName is null for run scope, which becomes ''. The fallback must
+    // not fire — `endsWith('/')` would match every path there is.
+    const stats = [
+      { scope: 'run', name: '', family: 'response_time', p95: 10 },
+    ] as unknown as EvaluableStat[];
+    const rules = [
+      { id: 'r1', scope: 'run', targetName: null, family: 'response_time',
+        metric: 'p95', comparator: 'lte', threshold: 100 },
+    ] as EvaluableRule[];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
+```
+
+Match the file's existing helpers and import style — if it already has a stat
+or rule builder, use it rather than the inline literals above.
+
+- [ ] **Step 2: Run them and watch them fail**
+
+```bash
+pnpm vitest run packages/sla
+```
+
+Expected: the first test FAILS with `expected 'not_applicable' to be 'passed'`
+— which is the bug. The ambiguity test also fails. The exact-match and
+run-scope tests should already PASS; they are the regression guard on
+behaviour that must not change.
+
+- [ ] **Step 3: Implement the fallback**
+
+Replace the lookup at `evaluate.ts:41-47`:
+
+```ts
+    const target = rule.targetName ?? '';
+    const candidates = stats.filter((s) => s.scope === rule.scope && s.family === rule.family);
+
+    /**
+     * D-13. EXACT MATCH FIRST, then the leaf.
+     *
+     * D-10 made a request's identity its full group path, so a rule authored
+     * before that names the leaf (`List Products`, not
+     * `Catalog/List Products`). Matching only exactly would drop such a rule
+     * into the `!stat` branch below and report it "not checked" — an SLA gate
+     * that stops enforcing while looking healthy. A data migration cannot fix
+     * it either way round: runs ingested before D-10 keep their bare names, so
+     * a rewritten target would break against exactly the runs it still matches.
+     *
+     * The same rule applies at group scope, where names have ALWAYS been paths
+     * and a bare target has therefore never matched. One matching behaviour for
+     * every scope: a reader debugging a rule should not have to know which
+     * scope changed identity when.
+     *
+     * Never for run scope: `targetName` is null there, and an empty `target`
+     * would make the `endsWith` below match every path in the run.
+     */
+    let stat = candidates.find((s) => s.name === target);
+    let ambiguous: readonly EvaluableStat[] = [];
+    if (stat === undefined && target !== '') {
+      const byLeaf = candidates.filter((s) => s.name.endsWith(`/${target}`));
+      // AMBIGUITY IS NOT RESOLVED BY PICKING. Two requests can share a leaf
+      // under different groups; choosing one silently would be a worse bug
+      // than the one this fallback fixes.
+      if (byLeaf.length === 1) stat = byLeaf[0];
+      else ambiguous = byLeaf;
+    }
+
+    if (ambiguous.length > 1) {
+      assertions.push({
+        ruleId: rule.id,
+        outcome: 'not_applicable',
+        actualValue: null,
+        message:
+          `"${target}" is ambiguous in this run — it matches ${ambiguous.map((s) => s.name).join(', ')} — ` +
+          `so ${describe(rule)} was not checked. Target one of those names exactly.`,
+        ruleSnapshot: snapshot,
+      });
+      continue;
+    }
+```
+
+Leave the existing `if (!stat)` branch below it unchanged — it still handles
+the genuine "this run has no such target" case.
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+pnpm vitest run packages/sla
+```
+
+Expected: PASS, all four new tests plus the pre-existing suite.
+
+- [ ] **Step 5: Verify and commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test:unit
+```
+
+```bash
+git add packages/sla/src/evaluate.ts packages/sla/test/evaluate.test.ts
+git commit -m "fix(sla): D-13, a rule targeting a bare request name still matches after D-10"
+```
+
+---
+
 ## Task 3: The page shell — routed, named, and finding its row
 
 **Files:**
@@ -1793,6 +1995,8 @@ testing what it claims.
 | 7 | render the latency elements when the capability is absent | no latency chart appears for a Gatling run |
 | 8 | drop the `title` props from the two rate charts, taking the defaults | the request page uses Gatling's request-page titles, not the global page's |
 | 9 | render RQ-01 from a hard-coded percentile column list | the columns are the ones the payload carries |
+| 10 | remove the D-13 leaf fallback from `evaluate.ts` | a rule targeting a bare request name is still checked |
+| 11 | make the D-13 fallback pick the first ambiguous match | an ambiguous target is reported, not silently resolved |
 
 Checkpoints 5, 6 and 8 are non-numeric — the spec's §8 requires at least two.
 Checkpoint 6 is the one most likely to be waved through as environmental; it is

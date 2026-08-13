@@ -170,6 +170,42 @@ orphan rule, not that precedent: both runs render correctly and truthfully,
 the old one just renders flatter. Nothing is claimed about an old run that is
 false — which is the actual bar `SPLIT_UNAVAILABLE` was written to meet.
 
+### 2e. Deviation D-13: SLA rules match a bare target leniently
+
+Found reviewing Tasks 1–2, and not anticipated by §2b's blast radius — which
+measured the engine, its tests and the web artefacts, and missed a consumer one
+package away.
+
+`packages/sla/src/evaluate.ts:44` finds a rule's stat by exact name. After D-10
+a request-scoped rule whose `targetName` is `List Products` matches nothing,
+takes the `!stat` branch, and reports `outcome: 'not_applicable'` — "so the
+rule was not checked."
+
+**An SLA gate that stops enforcing while looking healthy is the worst failure
+mode in this change.** §2d's no-backfill decision sharpens it: pre-D-10 runs
+keep bare names, so such a rule keeps passing on old runs and silently stops on
+new ones, with nothing in the product looking wrong.
+
+**Decision: lenient matching, not a migration.** Exact match first, then the
+leaf segment. A migration rewriting stored targets to joined paths would fix
+new runs and break the same rules against the old ones that keep bare names by
+design — wrong on one side of the boundary either way.
+
+Applied at every non-run scope, including groups, whose names have always been
+paths and where a bare target has therefore never matched. One matching
+behaviour: a reader debugging a rule should not have to know which scope
+changed identity when.
+
+**Ambiguity is not resolved by picking.** `Cart/View` and `Catalog/View` both
+end in `View`; choosing one silently would be a worse bug than the one being
+fixed. The outcome vocabulary is fixed in the contract
+(`packages/contracts/src/run.ts:9`), so an ambiguous target stays
+`not_applicable` — with a message naming the candidates, which is a different
+sentence from "there were no statistics".
+
+Deferred, deliberately: whether rule authoring should offer the joined path.
+That is a question about the rule-editing surface, not about this change.
+
 ---
 
 ## 3. Route identity was decided in piece 2, and stays decided
