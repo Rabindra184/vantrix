@@ -1,6 +1,7 @@
 import {
   DistributionResponseSchema,
   ErrorsResponseSchema,
+  ScatterResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
   UsersResponseSchema,
@@ -178,5 +179,27 @@ export const errorsQuery = (id: string, scope = 'run', name = '') => ({
     apiFetch(
       ErrorsResponseSchema,
       `${runPath(id)}/errors?scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`,
+    ),
+});
+
+/* -------------------------------------------------------------------- *
+ * scatter — response time against global throughput ⑨ (RQ-09)
+ * -------------------------------------------------------------------- */
+
+export const scatterQueryKey = (id: string, name: string) =>
+  ['run', id, 'scatter', name] as const;
+
+/**
+ * REQUEST-SCOPED BY CONSTRUCTION. Unlike `/errors` and `/series`, this endpoint
+ * takes `name` and no `scope` — a run-wide saturation scatter is not a thing
+ * §13.3 defines — so the `?name=` trap documented above cannot arise here:
+ * there is no scope parameter to omit.
+ */
+export const scatterQuery = (id: string, name: string) => ({
+  queryKey: scatterQueryKey(id, name),
+  queryFn: () =>
+    apiFetch(
+      ScatterResponseSchema,
+      `${runPath(id)}/scatter?name=${encodeURIComponent(name)}`,
     ),
 });
