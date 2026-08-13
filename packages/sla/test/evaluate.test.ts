@@ -146,4 +146,53 @@ describe('evaluateRules', () => {
     expect(r.assertions[0]?.actualValue).toBe(900);
     expect(r.assertions[0]?.outcome).toBe('failed');
   });
+
+  it('matches a rule authored against a bare request name (D-13)', () => {
+    // D-10 joined the group path onto a request's identity. A rule written
+    // before that names the leaf, and must keep being CHECKED — a rule that
+    // silently stops enforcing is worse than one that fails.
+    const stats = [stat({ scope: 'request', name: 'Catalog/List Products', percentiles: { p95: 120 } })];
+    const rules = [rule({ scope: 'request', targetName: 'List Products', threshold: 200 })];
+
+    const { assertions, verdict } = evaluateRules(rules, stats);
+    expect(assertions[0]?.outcome).toBe('passed');
+    expect(verdict).toBe('passed');
+  });
+
+  it('prefers an exact match over a leaf match', () => {
+    // A run holding BOTH `View` at root and `Cart/View` must not have the
+    // rule quietly repointed at the nested one.
+    const stats = [
+      stat({ scope: 'request', name: 'Cart/View', percentiles: { p95: 900 } }),
+      stat({ scope: 'request', name: 'View', percentiles: { p95: 10 } }),
+    ];
+    const rules = [rule({ scope: 'request', targetName: 'View', threshold: 100 })];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
+
+  it('refuses to choose when a bare name is ambiguous, and says so', () => {
+    const stats = [
+      stat({ scope: 'request', name: 'Cart/View', percentiles: { p95: 900 } }),
+      stat({ scope: 'request', name: 'Catalog/View', percentiles: { p95: 10 } }),
+    ];
+    const rules = [rule({ scope: 'request', targetName: 'View', threshold: 100 })];
+
+    const { assertions } = evaluateRules(rules, stats);
+    expect(assertions[0]?.outcome).toBe('not_applicable');
+    // The message must name the ambiguity — "no statistics" would be a lie,
+    // and is the sentence a reader would otherwise act on.
+    expect(assertions[0]?.message).toMatch(/ambiguous/i);
+    expect(assertions[0]?.message).toContain('Cart/View');
+    expect(assertions[0]?.message).toContain('Catalog/View');
+  });
+
+  it('leaves a run-scope rule alone', () => {
+    // targetName is null for run scope, which becomes ''. The fallback must
+    // not fire — `endsWith('/')` would match every path there is.
+    const stats = [stat({ percentiles: { p95: 10 } })];
+    const rules = [rule({ threshold: 100 })];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
 });
