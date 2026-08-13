@@ -216,9 +216,18 @@ async function main() {
   };
   for (const [what, length] of Object.entries(nonEmpty)) {
     if (length === 0) {
+      // Two distinct diagnoses share this guard. For the other five entries,
+      // empty means the run itself ingested but produced no data. `scatter.ok`
+      // is the one parameterised by a data-dependent name (see its comment
+      // above) — for it, empty more likely means that name stopped matching a
+      // stored metric than that the run produced nothing.
+      const cause =
+        what === 'scatter.ok'
+          ? 'either the run produced no data, or the request name above stopped matching a stored metric'
+          : 'the run ingested but produced no data';
       throw new Error(
-        `captured ${what} is empty — the run ingested but produced no data, so this fixture ` +
-          'would silently turn every transform test into a test of the empty case',
+        `captured ${what} is empty — ${cause}, so this fixture would silently turn every ` +
+          'transform test into a test of the empty case',
       );
     }
   }

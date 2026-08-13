@@ -57,8 +57,15 @@ export function evaluateRules(
      * every scope: a reader debugging a rule should not have to know which
      * scope changed identity when.
      *
-     * Never for run scope: `targetName` is null there, and an empty `target`
-     * would make the `endsWith` below match every path in the run.
+     * Never for run scope: `targetName` is null there, so `target` is `''`.
+     * The guard is NOT because `endsWith('/')` would match everything — it
+     * matches nothing (`'Catalog/View'.endsWith('/')` is false). It is because
+     * it matches a name ending in the separator: a group whose request leaf is
+     * empty joins to `Cart/`, and `'Cart/'.endsWith('/')` IS true. Without the
+     * guard a run-scope rule could bind to that degenerate row instead of to
+     * the run. The exact match at `:63` finds the run stat first in practice,
+     * so this is belt and braces — but it is cheap and the degenerate row is
+     * reachable from a malformed simulation log.
      */
     let stat = candidates.find((s) => s.name === target);
     let ambiguous: readonly EvaluableStat[] = [];
@@ -108,11 +115,16 @@ export function evaluateRules(
     }
 
     const passed = rule.comparator === 'lte' ? actual <= rule.threshold : actual >= rule.threshold;
+    // The fallback above can bind this rule to a stat whose name is not the
+    // one it names — a leaf match, never an exact one from here on. Say so:
+    // the ambiguity branch is loud about not choosing, so the single-match
+    // branch should not go quiet about the same class of non-literal match.
+    const matchNote = stat.name !== target ? ` (matched "${stat.name}")` : '';
     assertions.push({
       ruleId: rule.id,
       outcome: passed ? 'passed' : 'failed',
       actualValue: actual,
-      message: `${describe(rule)} — actual ${actual}`,
+      message: `${describe(rule)} — actual ${actual}${matchNote}`,
       ruleSnapshot: snapshot,
     });
   }
