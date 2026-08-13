@@ -733,10 +733,23 @@ it('draws exactly the ten bands Gatling draws (D-7)', () => {
 it('uses the OK-ONLY percentiles (G-22)', () => {
   const src = fixture.series as SeriesResponse;
   const d = toPercentiles(src);
-  const p95 = d.series.find((s) => s.name === 'p95')!.data;
-  expect(p95).toEqual(src.buckets.map((b) => b.percentilesOk.p95 ?? null));
+
+  // p50, NOT p95. MEASURED against the captured fixture: percentilesOk and
+  // percentiles are IDENTICAL in all 62 buckets at p95 and p99 — 24 KO out of
+  // 895 requests never move the 95th — so an assertion on p95 passes just as
+  // happily against the combined set, and falsification checkpoint 1 would
+  // stay green with the bug present. p50 differs in 8 of 62 buckets.
+  //   p25: 3   p50: 8   p75: 3   p80: 3   p85: 1   p90: 1   p95: 0   p99: 0
+  const p50 = d.series.find((s) => s.name === 'p50')!.data;
+  expect(p50).toEqual(src.buckets.map((b) => b.percentilesOk.p50 ?? null));
   // The combined set is a different, entirely plausible-looking curve.
-  expect(p95).not.toEqual(src.buckets.map((b) => b.percentiles.p95 ?? null));
+  expect(p50).not.toEqual(src.buckets.map((b) => b.percentiles.p50 ?? null));
+
+  // The discrimination above is only load-bearing while the fixture actually
+  // contains buckets where the two disagree. If it is ever recaptured from a
+  // run without failures, this says so instead of going quietly vacuous.
+  const disagreeing = src.buckets.filter((b) => b.percentilesOk.p50 !== b.percentiles.p50);
+  expect(disagreeing.length).toBeGreaterThan(0);
 });
 
 it('honours a band subset, for the selector', () => {
