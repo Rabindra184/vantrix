@@ -83,9 +83,12 @@ seven reference-run requests fall to the root via the orphan rule at `:174` —
 5 of them in the wrong place. This is a visible defect in shipped UI, not
 preparation.
 
-> **Expect `apps/web`'s unit suite to be RED at the end of this task.** It reads
-> a fixture captured before this change. Task 2 recaptures it. This is bounded
-> and expected; do not "fix" it by reverting the engine.
+> **`apps/web`'s unit suite stays GREEN through this task, and that is not a
+> reassurance.** No web unit test calls `runEngine`; they all read the static
+> `reference-run.json`, which this task does not touch. The coupling is to the
+> FIXTURE, not to the engine — so the web tests go red in Task 2, at the
+> recapture, and Task 2 is where they are fixed. A green web suite here means
+> only that nothing under those tests has changed yet.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -374,18 +377,67 @@ In `apps/web/test/reference-run.fixture.test.ts`, add to the existing describe:
 Add `ScatterResponseSchema` to the existing import from `@perfportal/contracts`
 at the top of the file.
 
-- [ ] **Step 5: Update the web tests that name bare requests**
+- [ ] **Step 5: Rewrite the test that asserts the pre-D-10 behaviour**
 
-In `apps/web/test/buildTree.test.ts`, the assertions at `:231`, `:354` and
-`:368` name `'Related Items'` and `'Search'`. `Search` is genuinely at root and
-needs no change; `'Related Items'` becomes `'Catalog/Recommendations/Related Items'`.
+`apps/web/test/buildTree.test.ts:148` — `it('puts every request at the root,
+because request names carry no group path')` — is **entirely** a pre-D-10
+assertion, and every line of it inverts once the fixture is recaptured:
 
-Prefer deriving the name over hard-coding it, the way `:157` already does:
+```ts
+    expect(requestNames.filter((n) => n.includes('/'))).toEqual([]);  // 5 now do
+    expect(requests.every((r) => r.depth === 0)).toBe(true);          // 5 are now nested
+    expect(paths(tree.filter((r) => r.scope === 'request')).sort()).toEqual(requestNames.sort());
+```
+
+That last line does not survive despite deriving its expectation from the
+payload: it compares the tree's ROOT-level requests against ALL request names,
+and post-D-10 only two requests are at root. Deriving an expectation protects
+against a value changing, not against the structure it describes changing.
+
+Replace the whole test, and the doc comment above it that explains why requests
+are flat:
+
+```ts
+  /**
+   * D-10, resolved: the engine joins a request's group path onto its name, so
+   * the tree nests requests under their groups exactly as Gatling's own report
+   * does. Five of the reference run's seven requests nest; `Search` and
+   * `Place Order` genuinely have no group and stay at the root.
+   */
+  it('nests a request under its group, and leaves a groupless one at the root', () => {
+    const requestNames = stats.stats.filter((r) => r.scope === 'request').map((r) => r.name);
+    expect(requestNames.length).toBe(7);
+
+    const tree = buildTree(stats, 'group_cumulated');
+    const requests = flat(tree).filter((r) => r.scope === 'request');
+    expect(requests.length).toBe(7);
+
+    // Derived from the payload, not listed: a request is at root exactly when
+    // its own name has no group prefix.
+    const rootNames = requestNames.filter((n) => !n.includes('/'));
+    expect(paths(tree.filter((r) => r.scope === 'request')).sort()).toEqual(rootNames.sort());
+    expect(requests.filter((r) => r.depth > 0).length).toBe(requestNames.length - rootNames.length);
+  });
+```
+
+- [ ] **Step 5b: Update the remaining tests that name bare requests**
+
+In the same file, `:231`, `:354` and `:368` name `'Related Items'` and
+`'Search'`. `Search` is genuinely at root and needs no change; `'Related Items'`
+becomes `'Catalog/Recommendations/Related Items'`. Derive it rather than
+hard-coding:
 
 ```ts
   const relatedItems = stats.stats.find(
     (r) => r.scope === 'request' && r.name.endsWith('/Related Items'),
   )!;
+```
+
+Then run the whole file — there may be further assertions that depend on the
+flat shape, and the run is how you find them:
+
+```bash
+pnpm vitest run apps/web/test/buildTree.test.ts
 ```
 
 - [ ] **Step 6: Run the full unit suite**
