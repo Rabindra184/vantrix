@@ -480,6 +480,68 @@ describe('assignPalette — more series than hues', () => {
 });
 
 /**
+ * The cut is by declaration order — UNLESS a series says it must survive it.
+ *
+ * `toConcurrentUsers` orders its series `[...scenarios, total]`, so on a run
+ * with six scenarios "keep the first six" keeps every scenario and drops the
+ * TOTAL: the one line that answers "how loaded was the system", lost while the
+ * six that only answer it in combination are all drawn. `essential` changes
+ * WHICH six spend the hues; it never changes that there are six.
+ */
+describe('assignPalette — a series that must survive the cut', () => {
+  const seven = ['a', 'b', 'c', 'd', 'e', 'f', 'total'];
+
+  it('keeps the essential series and drops an ordinary one instead', () => {
+    const assigned = assignPalette(seven, 'light', [6]);
+    expect(assigned.drawn.map((d) => d.name)).toEqual(['a', 'b', 'c', 'd', 'e', 'total']);
+    expect(assigned.undrawn).toEqual(['f']);
+  });
+
+  /**
+   * The index that makes the exemption safe to render. `drawn[5]` is `total`,
+   * whose data lives at `series[6]` — a `Chart` pairing colours to data by
+   * position in `drawn` would paint the total's colour over `f`'s numbers, on
+   * every chart, silently.
+   */
+  it('reports each drawn series’ position in the ORIGINAL list', () => {
+    const assigned = assignPalette(seven, 'light', [6]);
+    expect(assigned.drawn.map((d) => d.index)).toEqual([0, 1, 2, 3, 4, 6]);
+    // And the ordinary case is unchanged: index is the position.
+    expect(assignPalette(seven, 'light').drawn.map((d) => d.index)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('still spends six hues, all distinct, in declaration order', () => {
+    const assigned = assignPalette(seven, 'light', [6]);
+    expect(assigned.drawn.map((d) => d.color)).toEqual([...CATEGORICAL]);
+    expect(new Set(assigned.drawn.map((d) => d.color)).size).toBe(6);
+  });
+
+  it('cannot conjure a seventh hue by marking everything essential', () => {
+    const assigned = assignPalette(seven, 'light', [0, 1, 2, 3, 4, 5, 6]);
+    expect(assigned.drawn).toHaveLength(6);
+    expect(new Set(assigned.drawn.map((d) => d.color)).size).toBe(6);
+    expect(assigned.undrawn).toHaveLength(1);
+  });
+
+  /**
+   * "the first 6 of 7" is a claim about WHICH ones, and it is false as soon as
+   * an essential series is kept over an earlier one. Both sentences are
+   * asserted, because a limitation that misdescribes what is missing is worse
+   * than a shorter one that does not.
+   */
+  it('says which series are missing, and does not claim they were the last ones', () => {
+    expect(assignPalette(seven, 'light', [6]).limitation).toMatch(/Showing 6 of 7 series\./);
+    expect(assignPalette(seven, 'light', [6]).limitation).toMatch(/\bf\b/);
+    expect(assignPalette(seven, 'light').limitation).toMatch(/Showing the first 6 of 7 series\./);
+  });
+
+  it('changes nothing for a chart whose series all fit', () => {
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+    expect(assignPalette(six, 'light', [5])).toEqual(assignPalette(six, 'light'));
+  });
+});
+
+/**
  * The dark set keeps Okabe–Ito's HUE ANGLES.
  *
  * This is the claim `theme.ts` rests its colour-vision-deficiency inheritance

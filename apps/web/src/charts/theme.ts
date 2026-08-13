@@ -201,8 +201,21 @@ export function liveMarkColors(mode: ChartMode): Readonly<Record<MarkRole, strin
 export const MAX_CATEGORICAL_SERIES = CATEGORICAL.length;
 
 export interface PaletteAssignment {
-  /** Series that get a hue, in order, each with a colour no other series has. */
-  readonly drawn: readonly { readonly name: string; readonly color: string }[];
+  /**
+   * Series that get a hue, in the order they were handed over, each with a
+   * colour no other series has.
+   *
+   * `index` is the series' position in the INPUT list, and it is what `Chart`
+   * pairs a colour back to its data with. It is not always the position in this
+   * array: an `essential` series (see below) can be kept while an earlier one
+   * is dropped, and reading `data.series[i]` by the position here would then
+   * draw the right colour against the wrong numbers.
+   */
+  readonly drawn: readonly {
+    readonly index: number;
+    readonly name: string;
+    readonly color: string;
+  }[];
   /** Series left unplotted because the palette ran out. Usually empty. */
   readonly undrawn: readonly string[];
   /** Prose for the reader when `undrawn` is non-empty. */
@@ -231,26 +244,66 @@ export interface PaletteAssignment {
  * four time series, and summing is meaningful for counts and nonsense for
  * percentiles. A primitive that aggregated would produce a plausible,
  * wholly-wrong curve on the charts where summing does not apply.
+ *
+ * `essential` NAMES THE SERIES THAT MUST SURVIVE THE CUT — indices into
+ * `names`, and by default there are none, so the six that survive are simply
+ * the first six. That default is right when series are peers and wrong when one
+ * of them is the summary the rest decompose: `toConcurrentUsers` orders its
+ * series `[...scenarios, total]`, so a run with six scenarios would drop the
+ * TOTAL while drawing every scenario — losing the one line that answers "how
+ * loaded was the system" and keeping six that only answer it together. Marking
+ * it essential caps the scenarios instead.
+ *
+ * This changes WHO spends the six hues, never HOW MANY there are: more
+ * essential series than the palette can hold is still capped, and no series is
+ * ever drawn in a colour another already has.
  */
-export function assignPalette(names: readonly string[], mode: ChartMode): PaletteAssignment {
+export function assignPalette(
+  names: readonly string[],
+  mode: ChartMode,
+  essential: readonly number[] = [],
+): PaletteAssignment {
   // `livePalette`, NOT `paletteFor`: the assigned colours are what `Chart`
   // hands to ECharts, so this is the one path a `--chart-*` token has to
   // travel to reach a rendered mark. Reading the compiled constants here
   // instead would leave the tokens decorative — which is exactly what they
   // were until this call changed.
   const palette = livePalette(mode);
-  const drawn = names
-    .slice(0, MAX_CATEGORICAL_SERIES)
-    .map((name, i) => ({ name, color: palette[i]! }));
-  const undrawn = names.slice(MAX_CATEGORICAL_SERIES);
+
+  // The protected series first, then the rest in declaration order until the
+  // hues run out. `kept.size` is the only budget: an essential index already in
+  // the set cannot be spent twice, and the cap applies to both groups alike.
+  const kept = new Set<number>();
+  for (const index of essential) {
+    if (Number.isInteger(index) && index >= 0 && index < names.length) kept.add(index);
+    if (kept.size === MAX_CATEGORICAL_SERIES) break;
+  }
+  for (let i = 0; i < names.length && kept.size < MAX_CATEGORICAL_SERIES; i++) kept.add(i);
+
+  // Back into DECLARATION order before hues are handed out, so the legend and
+  // the drawing read in the order the transform built them, and so a chart
+  // whose series all fit is coloured exactly as it was before `essential`
+  // existed.
+  const selected = [...kept].sort((a, b) => a - b);
+  const drawn = selected.map((index, slot) => ({
+    index,
+    name: names[index]!,
+    color: palette[slot]!,
+  }));
+  const undrawn = names.filter((_, i) => !kept.has(i));
 
   if (undrawn.length === 0) return { drawn, undrawn };
+
+  // "the first N" is a claim about WHICH ones, and it stops being true the
+  // moment an essential series is kept over an earlier one. Said accurately in
+  // both cases rather than approximately in one.
+  const isPrefix = selected.every((index, slot) => index === slot);
 
   return {
     drawn,
     undrawn,
     limitation:
-      `Showing the first ${MAX_CATEGORICAL_SERIES} of ${names.length} series. ` +
+      `Showing ${isPrefix ? 'the first ' : ''}${drawn.length} of ${names.length} series. ` +
       `${undrawn.join(', ')} ${undrawn.length === 1 ? 'is' : 'are'} not drawn, because ` +
       'reusing a colour would make two series indistinguishable. Every series is in the data table.',
   };

@@ -32,6 +32,25 @@ export interface ChartTableRow {
 export interface ChartSeries {
   readonly name: string;
   readonly data: readonly (number | null)[] | readonly (readonly [number, number])[];
+  /**
+   * "Draw this one even if the palette runs out."
+   *
+   * The categorical palette has six hues and never cycles, so a seventh series
+   * is left undrawn and said so (`assignPalette`). By default the six that
+   * survive are the first six, which is the right rule when series are peers —
+   * and the wrong one when one of them is the summary the others decompose.
+   *
+   * `toConcurrentUsers` is that case: its order is `[...scenarios, total]`, so
+   * a run with six scenarios would drop the TOTAL — the one line that answers
+   * "how loaded was the system" — while drawing every scenario. Marking it
+   * essential caps the scenarios instead. The ORDER is unchanged (the total is
+   * still `series.at(-1)`); only the selection is.
+   *
+   * Essential series are exempt in declaration order, and no more than the
+   * palette can hold — this cannot conjure a seventh hue, it only decides who
+   * spends the six.
+   */
+  readonly essential?: boolean;
 }
 
 export interface ChartData {

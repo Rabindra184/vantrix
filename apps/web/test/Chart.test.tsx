@@ -154,6 +154,44 @@ describe('Chart — more series than the palette has hues (A3)', () => {
     expect((lastOption().series as unknown[]).length).toBe(6);
   });
 
+  /**
+   * A series marked `essential` survives the cut, and — the part that is easy
+   * to get wrong — is drawn against ITS OWN numbers.
+   *
+   * `assignPalette` returns the drawn series in declaration order, but with one
+   * of the earlier ones missing, so the sixth drawn entry is the seventh
+   * series. A component pairing colours to data by position in that list draws
+   * the total's line using the sixth scenario's values: right name, right
+   * colour, wrong numbers, and nothing about the chart says so. The per-series
+   * data below is what distinguishes the two.
+   */
+  it('draws an essential series in place of an earlier one, with its own data', () => {
+    const names = [...seven];
+    const data: ChartData = {
+      ...seriesData(names),
+      series: names.map((name, i) => ({
+        name,
+        data: [i, i, i],
+        essential: name === 'Logout',
+      })),
+    };
+
+    render(<Chart id="users" title="Concurrent users" data={data} />);
+
+    const drawn = lastOption().series as { name: string; data: number[] }[];
+    expect(drawn.map((s) => s.name)).toEqual([
+      'Browse',
+      'Checkout',
+      'Search',
+      'Cart',
+      'Pay',
+      'Logout',
+    ]);
+    // 6 is Logout's own index; 5 would be Confirm's data under Logout's name.
+    expect(drawn.at(-1)!.data).toEqual([6, 6, 6]);
+    expect(screen.getByText(/not drawn/i).textContent).toContain('Confirm');
+  });
+
   it('renders a transform’s own limitation too, not only the palette’s', () => {
     render(
       <Chart

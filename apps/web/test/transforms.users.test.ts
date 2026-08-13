@@ -1,5 +1,6 @@
 import type { UsersResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
+import { assignPalette } from '../src/charts/theme.js';
 import { toConcurrentUsers, toUserStartRate } from '../src/charts/transforms/users.js';
 import type { ChartData } from '../src/charts/types.js';
 import fixture from './fixtures/reference-run.json';
@@ -338,6 +339,75 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
     // 0,1,2 would put the run's 4-second mark at t=2.
     expect(toUserStartRate(wide()).axisLabels).toEqual([0, 2, 4]);
     expect(toUserStartRate(wide()).rows.map((r) => r.label)).toEqual(['0', '2', '4']);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * more scenarios than the palette has hues
+ * ------------------------------------------------------------------ */
+
+/**
+ * A run with seven scenarios is one more series than the six hues
+ * `assignPalette` will spend, and the series order is `[...scenarios, total]`.
+ *
+ * The default cut keeps the first six, which here means keeping every scenario
+ * and dropping the TOTAL — the one line that answers "how loaded was the
+ * system", while the six that answer it only in combination are all drawn. The
+ * total is marked `essential` so the cut falls on a scenario instead.
+ *
+ * Asserted through `assignPalette` itself, not against a rendered chart: it is
+ * the function `Chart` calls to decide what gets drawn, so this is the same
+ * decision the browser makes, reached without a DOM.
+ */
+describe('a run with more scenarios than the palette has hues', () => {
+  const many: UsersResponse = {
+    runId: users.runId,
+    scenarios: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].map((scenario, i) => ({
+      scenario,
+      buckets: [{ startOffsetMs: 0, started: i + 1, ended: 0, maxConcurrent: i + 1 }],
+    })),
+    total: [{ startOffsetMs: 0, started: 28, ended: 0, maxConcurrent: 28 }],
+  };
+
+  it.each([
+    ['concurrent users', toConcurrentUsers],
+    ['user start rate', toUserStartRate],
+  ] as const)('still draws the total, and still draws it last (%s)', (_label, transform) => {
+    const d = transform(many);
+    expect(d.series).toHaveLength(8);
+    expect(d.series.at(-1)!.name).toBe('All users');
+
+    const assigned = assignPalette(
+      d.series.map((s) => s.name),
+      'light',
+      d.series.flatMap((s, i) => (s.essential === true ? [i] : [])),
+    );
+    // Six hues, and the total holds one of them — a scenario was dropped
+    // instead. Last in the drawn list too, so it keeps reading as the summary
+    // of the lines above it rather than being shuffled among them.
+    expect(assigned.drawn.map((s) => s.name)).toEqual(['S1', 'S2', 'S3', 'S4', 'S5', 'All users']);
+    expect(assigned.undrawn).toEqual(['S6', 'S7']);
+    expect(new Set(assigned.drawn.map((s) => s.color)).size).toBe(6);
+  });
+
+  it('marks the total, and only the total, as essential', () => {
+    const d = toConcurrentUsers(many);
+    expect(d.series.filter((s) => s.essential === true).map((s) => s.name)).toEqual(['All users']);
+  });
+
+  /**
+   * The undrawn scenarios are still in the data table — the parity surface —
+   * so the honest trade is "you can read it, you cannot see it", never "two of
+   * these lines are the same colour".
+   */
+  it('keeps every scenario in the data table, drawn or not', () => {
+    const d = toConcurrentUsers(many);
+    expect(d.columns).toEqual([
+      'Time (s)',
+      'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7',
+      'All users',
+    ]);
+    expect(d.rows[0]!.values).toEqual([1, 2, 3, 4, 5, 6, 7, 28]);
   });
 });
 

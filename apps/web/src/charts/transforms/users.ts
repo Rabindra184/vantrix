@@ -143,10 +143,19 @@ function usersChart(u: UsersResponse, spec: Spec): ChartData {
    * client that recomputed it would be re-deriving a number the API has already
    * committed to, and a client that "corrected" the arithmetic to a true
    * max-of-sums would silently lose parity.
+   *
+   * IT IS ALSO THE ONE SERIES THAT MUST BE DRAWN. The palette has six hues and
+   * never cycles, and this list is `[...scenarios, total]` — so on a run with
+   * six or more scenarios the default "keep the first six" rule would drop the
+   * total and keep every scenario, losing the only line that answers "how
+   * loaded was the system" while keeping six that answer it only in
+   * combination. `essential` exempts it from that cut WITHOUT reordering:
+   * `series.at(-1)` is still the total. See `ChartSeries.essential`.
    */
   const totalSeries: ChartSeries = {
     name: ALL_USERS,
     data: u.total.map((bucket) => read(bucket)),
+    essential: true,
   };
 
   const series: ChartSeries[] = [...perScenario, totalSeries];
