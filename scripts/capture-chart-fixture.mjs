@@ -1,5 +1,5 @@
 /**
- * Captures the five payloads for the REFERENCE RUN, from the live API,
+ * Captures the six payloads for the REFERENCE RUN, from the live API,
  * into `apps/web/test/fixtures/reference-run.json`.
  *
  * WHY THIS EXISTS. Every chart transform in this sub-project is unit-tested
@@ -10,10 +10,10 @@
  * none of it would show up until a browser. Capturing it means the transforms
  * run against the SAME BYTES the browser receives.
  *
- * WHAT IT WRITES. Five raw response bodies, exactly as served, under the keys
- * `stats`, `series`, `users`, `distribution` and `errors`, plus a `_capture`
- * block recording where they came from. Nothing is reshaped, rounded or
- * trimmed.
+ * WHAT IT WRITES. Six raw response bodies, exactly as served, under the keys
+ * `stats`, `series`, `users`, `distribution`, `errors` and `scatter`, plus a
+ * `_capture` block recording where they came from. Nothing is reshaped,
+ * rounded or trimmed.
  *
  * ---------------------------------------------------------------------------
  * HOW TO RE-CAPTURE IT
@@ -112,6 +112,16 @@ const ENDPOINTS = [
     path: (id) => `/v1/runs/${id}/distribution?scope=run&name=&family=response_time`,
   },
   { key: 'errors', path: (id) => `/v1/runs/${id}/errors?scope=run&name=` },
+  {
+    key: 'scatter',
+    // RQ-09 is inherently request-scoped, so this endpoint takes `name` and NO
+    // `scope` — it cannot fall into the `?name=` trap the errors URL above
+    // documents, because there is no scope parameter to omit.
+    //
+    // `Catalog/List Products` is the post-D-10 identity of a request Gatling
+    // nests, so this capture also proves the joined name survives a URL.
+    path: (id) => `/v1/runs/${id}/scatter?name=${encodeURIComponent('Catalog/List Products')}`,
+  },
 ];
 
 /** Fails with the server's own words rather than a bare status code. */
