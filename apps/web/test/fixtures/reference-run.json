@@ -1,26 +1,28 @@
 {
   "_capture": {
     "script": "scripts/capture-chart-fixture.mjs",
-    "capturedAt": "2026-08-13T04:26:50.985Z",
-    "runId": "cf6dd5a5-0e15-4be8-a4b0-aba2599148f5",
+    "capturedAt": "2026-08-13T11:01:35.976Z",
+    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
     "bundle": "fixtures/gatling-3.15.1.2/reference-report/simulation.log",
     "baseUrl": "http://localhost:3000",
     "endpoints": {
-      "stats": "/v1/runs/cf6dd5a5-0e15-4be8-a4b0-aba2599148f5/stats",
-      "series": "/v1/runs/cf6dd5a5-0e15-4be8-a4b0-aba2599148f5/series?scope=run&name=",
-      "users": "/v1/runs/cf6dd5a5-0e15-4be8-a4b0-aba2599148f5/users",
-      "distribution": "/v1/runs/cf6dd5a5-0e15-4be8-a4b0-aba2599148f5/distribution?scope=run&name=&family=response_time"
+      "stats": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/stats",
+      "series": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/series?scope=run&name=",
+      "users": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/users",
+      "distribution": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/distribution?scope=run&name=&family=response_time",
+      "errors": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/errors?scope=run&name="
     },
     "counts": {
       "stats.stats": 14,
       "series.buckets": 62,
       "users.scenarios": 2,
       "users.total": 63,
-      "distribution.labels": 100
+      "distribution.labels": 100,
+      "errors.errors": 2
     }
   },
   "stats": {
-    "runId": "cf6dd5a5-0e15-4be8-a4b0-aba2599148f5",
+    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
     "stats": [
       {
         "scope": "group",
@@ -400,7 +402,7 @@
     }
   },
   "series": {
-    "runId": "cf6dd5a5-0e15-4be8-a4b0-aba2599148f5",
+    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
     "scope": "run",
     "name": "",
     "bucketWidthMs": 1000,
@@ -2626,7 +2628,7 @@
     ]
   },
   "users": {
-    "runId": "cf6dd5a5-0e15-4be8-a4b0-aba2599148f5",
+    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
     "scenarios": [
       {
         "scenario": "Browse",
@@ -3729,7 +3731,7 @@
     ]
   },
   "distribution": {
-    "runId": "cf6dd5a5-0e15-4be8-a4b0-aba2599148f5",
+    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
     "scope": "run",
     "name": "",
     "family": "response_time",
@@ -4245,5 +4247,18 @@
     ],
     "exactValues": false,
     "overflowCount": 0
+  },
+  "errors": {
+    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "errors": [
+      {
+        "message": "status.find.is(200), found 500",
+        "count": 15
+      },
+      {
+        "message": "status.find.is(200), found 503",
+        "count": 9
+      }
+    ]
   }
 }

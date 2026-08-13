@@ -1,9 +1,11 @@
 import {
   DistributionResponseSchema,
+  ErrorsResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
   UsersResponseSchema,
   type DistributionResponse,
+  type ErrorsResponse,
   type SeriesResponse,
   type StatsResponse,
   type UsersResponse,
@@ -15,7 +17,7 @@ import fixture from './fixtures/reference-run.json';
  * The captured payload fixture is FIT FOR THE PURPOSE the later tasks put it
  * to — checked here, once, rather than discovered task by task.
  *
- * `apps/web/test/fixtures/reference-run.json` holds the four raw responses for
+ * `apps/web/test/fixtures/reference-run.json` holds the five raw responses for
  * the reference run, captured from the live API by
  * `scripts/capture-chart-fixture.mjs` (its header documents re-capture). Every
  * transform test in Tasks 5–9 reads it, so it is what those tests mean by "the
@@ -42,6 +44,7 @@ const stats = fixture.stats as StatsResponse;
 const series = fixture.series as SeriesResponse;
 const users = fixture.users as UsersResponse;
 const distribution = fixture.distribution as DistributionResponse;
+const errors = fixture.errors as ErrorsResponse;
 
 describe('the captured reference-run payloads', () => {
   it('still parse against the contract schemas the app validates with', () => {
@@ -51,12 +54,28 @@ describe('the captured reference-run payloads', () => {
     expect(() => SeriesResponseSchema.parse(fixture.series)).not.toThrow();
     expect(() => UsersResponseSchema.parse(fixture.users)).not.toThrow();
     expect(() => DistributionResponseSchema.parse(fixture.distribution)).not.toThrow();
+    expect(() => ErrorsResponseSchema.parse(fixture.errors)).not.toThrow();
   });
 
-  it('came from ONE run — four payloads about four different runs would be incoherent', () => {
-    const ids = new Set([stats.runId, series.runId, users.runId, distribution.runId]);
+  it('came from ONE run — five payloads about five different runs would be incoherent', () => {
+    const ids = new Set([
+      stats.runId,
+      series.runId,
+      users.runId,
+      distribution.runId,
+      errors.runId,
+    ]);
     expect(ids.size).toBe(1);
     expect([...ids][0]).toBe(fixture._capture.runId);
+  });
+
+  it('carries a real errors payload, not a hand-written one', () => {
+    const parsed = ErrorsResponseSchema.parse(fixture.errors);
+    expect(parsed.errors.length).toBeGreaterThan(0);
+    // The reference run has 24 KO out of 895; every error must be attributable.
+    const total = parsed.errors.reduce((n, e) => n + e.count, 0);
+    const run = stats.stats.find((r) => r.scope === 'run')!;
+    expect(total).toBe(run.koCount);
   });
 });
 
