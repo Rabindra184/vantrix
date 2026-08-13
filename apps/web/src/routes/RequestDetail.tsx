@@ -2,6 +2,7 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { statsQuery } from '../api/metrics';
+import RequestStatistics from '../tables/RequestStatistics';
 
 /**
  * §13.3 — one request's own page.
@@ -26,12 +27,10 @@ export function requestRow(stats: StatsResponse, path: string): StatRow | undefi
 
 export default function RequestDetail() {
   const { runId, name } = useParams<{ runId: string; name: string }>();
-  // Fired here, unconsumed here: this is the shell. Tasks 4 and 5 read
-  // `.data` through `requestRow` for the statistics table and the indicator
-  // bands; calling the query now — under the SAME key `Tables`/`Overview` use
-  // — means their first render finds a warm cache entry rather than a second
-  // request for a payload this page already fetched.
-  useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+  // Called under the SAME key `Tables`/`Overview` use, so this page's first
+  // render finds a warm cache entry rather than issuing a second request for
+  // a payload the run page already fetched.
+  const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
 
   // Not reachable through the router — the route cannot match without both.
   if (runId === undefined || name === undefined) {
@@ -52,6 +51,19 @@ export default function RequestDetail() {
       <Link to={`/runs/${encodeURIComponent(runId)}`} className="underline">
         Back to this run
       </Link>
+      {stats.data !== undefined ? (
+        (() => {
+          const row = requestRow(stats.data, name);
+          // A name that is not in the run is a link from a stale tab or a
+          // hand-edited URL. Saying so is the whole deliverable — an empty
+          // page would read as a request that ran and recorded nothing.
+          return row === undefined ? (
+            <p role="status">This run recorded no request named {name}.</p>
+          ) : (
+            <RequestStatistics row={row} rows={stats.data.stats} />
+          );
+        })()
+      ) : null}
     </div>
   );
 }

@@ -97,7 +97,7 @@ export function clampPercentile(value: number, row: StatRow): number {
  * comes to render Mean under the Std Dev heading, and nothing about that is
  * visible in a diff.
  */
-interface Column {
+export interface Column {
   /** `data-column`, the React key, AND what `sortTree` sorts on — `StatRow`'s
    *  own field name, or a percentile key (`p99.9`); no numeric field starts
    *  with `p`. One identity, so the column a reader clicks and the field it
@@ -184,6 +184,27 @@ const TRAILING_TIME_COLUMNS: readonly Column[] = [
     format: formatMs,
   },
 ];
+
+/**
+ * §A.5's column set, with the percentile columns DERIVED FROM THE ROWS rather
+ * than declared — `percentileColumnsOf` reads the keys the payload actually
+ * carries, so a project configured with a different `K-03` set moves every
+ * table that calls this.
+ *
+ * Shared with the request detail page (RQ-01), which shows one row with these
+ * same columns. Two independent definitions of "the column set" is how a table
+ * comes to render Mean under the Std Dev heading.
+ */
+export function columnsFor(rows: readonly StatRow[]): {
+  readonly executions: readonly Column[];
+  readonly responseTime: readonly Column[];
+} {
+  const percentiles = percentileColumnsOf(rows);
+  return {
+    executions: EXECUTION_COLUMNS,
+    responseTime: [MIN_COLUMN, ...percentiles, ...TRAILING_TIME_COLUMNS],
+  };
+}
 
 /** `p50`, `p99.9` — the shape `StatRow.percentiles` documents for its keys. */
 const PERCENTILE_KEY = /^p(\d+(?:\.\d+)?)$/;
@@ -401,11 +422,11 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
    */
   const columns = useMemo(() => {
     const rendered = [...(total === null ? [] : [total]), ...flatten(tree).map((r) => r.row)];
-    const percentiles = percentileColumnsOf(rendered);
+    const { executions, responseTime } = columnsFor(rendered);
     return {
-      executions: EXECUTION_COLUMNS,
-      responseTime: [MIN_COLUMN, ...percentiles, ...TRAILING_TIME_COLUMNS],
-      worstFirst: worstFirstColumn(percentiles),
+      executions,
+      responseTime,
+      worstFirst: worstFirstColumn(percentileColumnsOf(rendered)),
     };
   }, [tree, total]);
 
