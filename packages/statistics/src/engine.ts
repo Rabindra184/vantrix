@@ -144,7 +144,18 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     }
     if (e.type !== 'request') continue;
 
-    endpoints.add(e.name);
+    // D-10. A request's identity is its FULL PATH, joined exactly as :133 joins
+    // a group's — `Catalog/Recommendations/List Products`. Without this the
+    // statistics tree cannot nest requests under their groups: `buildTree`
+    // parents by '/'-prefix, and a bare name has no prefix to parent by.
+    //
+    // COUNTED HERE TOO, not just rolled up (D-12). The cap bounds STORED
+    // ROLLUPS, and after this change one bare name under four groups is four
+    // rollups. A cap still counting bare names would stop bounding the thing
+    // it exists for.
+    const name = [...e.groups, e.name].join('/');
+
+    endpoints.add(name);
     if (endpoints.size > maxEndpoints) {
       throw ingestError('ENDPOINT_CARDINALITY_EXCEEDED', {
         message: `Run exceeds the endpoint cardinality cap: more than ${maxEndpoints} distinct request names.`,
@@ -161,21 +172,21 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     const runSeries = seriesFor('run', '', maxBucketsRun);
     runSeries.add(e.startMs, duration, e.ok, 'start');
     runSeries.add(e.endMs, duration, e.ok, 'end');
-    const epSeries = seriesFor('request', e.name, maxBucketsEndpoint);
+    const epSeries = seriesFor('request', name, maxBucketsEndpoint);
     epSeries.add(e.startMs, duration, e.ok, 'start');
     epSeries.add(e.endMs, duration, e.ok, 'end');
 
     // Summary stats exclude warm-up.
     if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
     rollupFor('run', '', 'response_time').add(duration, e.ok);
-    rollupFor('request', e.name, 'response_time').add(duration, e.ok);
+    rollupFor('request', name, 'response_time').add(duration, e.ok);
     // A message-less failure still contributes to the KO count; route it into an
     // explicit bucket so sum(errors[].count) always reconciles instead of
     // silently undercounting.
     if (!e.ok) {
       const message = e.message && e.message.length > 0 ? e.message : '(no message)';
       errorsFor('run', '').add(message);
-      errorsFor('request', e.name).add(message);
+      errorsFor('request', name).add(message);
     }
   }
 

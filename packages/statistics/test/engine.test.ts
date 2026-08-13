@@ -8,7 +8,7 @@ describe('engine — parity additions', () => {
     { type: 'user', scenario: 'Browse', userId: '1', kind: 'start', tsMs: 1_000 },
     { type: 'user', scenario: 'Checkout', userId: '2', kind: 'start', tsMs: 1_500 },
     { type: 'request', name: 'list', groups: [], scenario: 'Browse', userId: '1', startMs: 1_000, endMs: 1_100, ok: true },
-    { type: 'request', name: 'buy', groups: [], scenario: 'Checkout', userId: '2', startMs: 1_500, endMs: 2_400, ok: false, message: 'boom' },
+    { type: 'request', name: 'buy', groups: ['Checkout'], scenario: 'Checkout', userId: '2', startMs: 1_500, endMs: 2_400, ok: false, message: 'boom' },
     { type: 'user', scenario: 'Browse', userId: '1', kind: 'end', tsMs: 2_000 },
   ];
 
@@ -32,7 +32,7 @@ describe('engine — parity additions', () => {
   it('scopes errors so a request page can show its own', () => {
     const r = runEngine(events());
     expect(r.errors).toContainEqual({ scope: 'run', name: '', message: 'boom', count: 1 });
-    expect(r.errors).toContainEqual({ scope: 'request', name: 'buy', message: 'boom', count: 1 });
+    expect(r.errors).toContainEqual({ scope: 'request', name: 'Checkout/buy', message: 'boom', count: 1 });
   });
 
   it('stores a FIXED per-bucket percentile band set, not the project’s columns', () => {
