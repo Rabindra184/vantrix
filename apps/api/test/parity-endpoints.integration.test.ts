@@ -106,13 +106,18 @@ describe('GET /v1/runs/:id/distribution, /users, /scatter', () => {
     expect(first.maxConcurrent).toBe(perScenario);
   });
 
-  // 'List Products' is one of the seven real request names the reference
-  // fixture actually produces (see packages/plugin-gatling/test/records.test.ts) —
-  // not the brief's placeholder 'Catalog / List', which does not exist here.
   it('serves the scatter as one point per bucket with a truncated p95', async () => {
     ctx = await createTestApp();
     const runId = await ingested();
-    const name = 'List Products';
+
+    // Any request with OK samples proves the point; derived rather than a
+    // hard-coded name so this stays valid regardless of a request's identity
+    // being its bare name or its full group path (D-10).
+    const statsForName = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}/stats?scope=request`).set(auth()).expect(200);
+    const row = statsForName.body.stats.find((s: { okCount: number }) => s.okCount > 0);
+    expect(row).toBeDefined();
+    const name: string = row.name;
 
     const [ownSeries, globalSeries, res] = await Promise.all([
       request(ctx.app.getHttpServer())

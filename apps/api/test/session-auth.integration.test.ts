@@ -291,29 +291,19 @@ describe('project-scoped routes require a project, which a session does not have
 // outside it — across every route a session can reach, not just
 // GET /v1/runs/:id.
 describe('cross-org isolation on every session-reachable endpoint', () => {
-  // A real request name the reference fixture actually produces (see
-  // packages/plugin-gatling/test/records.test.ts, and the identical comment
-  // in parity-endpoints.integration.test.ts) — the brief's placeholder
-  // 'Catalog / List' does not exist here. ParityController.scatter never
-  // 404s on an unknown name — it returns 200 with empty ok/ko arrays — so a
-  // wrong name would not fail loudly; it would just make the positive
-  // control silently vacuous (a 200 with nothing in it, indistinguishable
-  // from "the route works but this run has no matching data").
-  const SCATTER_NAME = 'List Products';
-
   // The one builder both the negative and positive case call — so the URL
   // SHAPE can never diverge between "must 404" and "must 200"; only the id
-  // does. Do not collapse this list to one endpoint: the list is the point,
-  // and a future endpoint added here without a tenancy filter is exactly
-  // what the negative loop below is meant to catch.
-  const endpoints = (id: string): string[] => [
+  // and scatter name do. Do not collapse this list to one endpoint: the
+  // list is the point, and a future endpoint added here without a tenancy
+  // filter is exactly what the negative loop below is meant to catch.
+  const endpoints = (id: string, scatterName: string): string[] => [
     `/v1/runs/${id}`,
     `/v1/runs/${id}/stats`,
     `/v1/runs/${id}/series?scope=run&name=`,
     `/v1/runs/${id}/errors`,
     `/v1/runs/${id}/distribution?scope=run&name=&family=response_time`,
     `/v1/runs/${id}/users`,
-    `/v1/runs/${id}/scatter?name=${encodeURIComponent(SCATTER_NAME)}`,
+    `/v1/runs/${id}/scatter?name=${encodeURIComponent(scatterName)}`,
   ];
 
   it('404s every endpoint for a run in another org, and 200s the identical URL shape for a run in its own org', async () => {
@@ -326,6 +316,22 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     // positive control fail (or vacuously pass with empty bodies) for a
     // fixture reason, not a tenancy one.
     const ownRunId = await ingestFullRun(ctx);
+
+    // A real request name, derived rather than hard-coded. ParityController
+    // .scatter never 404s on an unknown name — it returns 200 with empty
+    // ok/ko arrays — so a name that matches nothing would not fail loudly;
+    // it would just make the positive control below silently vacuous (a 200
+    // with nothing in it, indistinguishable from "the route works but this
+    // run has no matching data"). Derived instead of pinned to a literal so
+    // this keeps matching real data regardless of whether a request's
+    // identity is its bare leaf name or its full group path (D-10).
+    const ownStats = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${ownRunId}/stats?scope=request`)
+      .set('Cookie', cookie)
+      .expect(200);
+    const scatterRow = ownStats.body.stats.find((s: { okCount: number }) => s.okCount > 0);
+    expect(scatterRow).toBeDefined();
+    const scatterName: string = scatterRow.name;
 
     // A run in a genuinely different org — created directly via Prisma for
     // the org/project themselves (as parity-endpoints.integration.test.ts's
@@ -352,17 +358,17 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     // filter, and that is exactly the case where you want to see all seven
     // results, not just whichever one happens to come first.
     const otherOrgResults: [string, number][] = [];
-    for (const url of endpoints(otherRunId)) {
+    for (const url of endpoints(otherRunId, scatterName)) {
       const res = await request(ctx.app.getHttpServer()).get(url).set('Cookie', cookie);
       otherOrgResults.push([url, res.status]);
     }
-    expect(otherOrgResults).toEqual(endpoints(otherRunId).map((url) => [url, 404]));
+    expect(otherOrgResults).toEqual(endpoints(otherRunId, scatterName).map((url) => [url, 404]));
 
     // The positive control: the identical URL shape, same session, a run
     // that IS in this org. This is what keeps the loop above meaningful —
     // without it, a typo'd or moved URL would 404 for "route doesn't exist"
     // and the negative loop would pass having proven nothing about tenancy.
-    for (const url of endpoints(ownRunId)) {
+    for (const url of endpoints(ownRunId, scatterName)) {
       const res = await request(ctx.app.getHttpServer()).get(url).set('Cookie', cookie);
       expect(
         res.status,
