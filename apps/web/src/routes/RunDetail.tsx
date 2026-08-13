@@ -36,14 +36,12 @@ export default function RunDetail() {
     // after the first hit the cap renders "stopped checking automatically" on
     // its first paint and never polls once.
     //
-    // NOTHING CATCHES THIS. No suite exercises this effect at all: the e2e
-    // polling test below asserts that requests keep arriving, which is the
-    // uncapped branch, and the cap's UI is covered only by rendering
-    // `Processing` directly with `capReached` as a prop. Reaching the real
-    // cap through `RunDetail` costs two real minutes of wall clock, and the
-    // honest ways to shorten that are a DOM test environment (a new
-    // dependency) or a `?pollCapMs=` knob shipped to production so a test can
-    // reach a branch. Both were declined; this hole is tracked, not closed.
+    // COVERED, finally, by `apps/web/test/RunDetail.polling.test.tsx` — both
+    // halves: the timer that sets the flag, and this line that resets it for a
+    // second run. That test mounts this component in jsdom and advances fake
+    // timers past POLL_CAP_MS, which is what makes the two real minutes the
+    // cap needs cost nothing. Until the DOM environment existed this effect
+    // had no test that could fail; deleting it left every suite green.
     setCapReached(false);
     const timer = setTimeout(() => setCapReached(true), POLL_CAP_MS);
     return () => clearTimeout(timer);
@@ -125,11 +123,13 @@ function BackToRuns() {
  * measured and found empty rather than one nobody has looked at yet.
  *
  * EXPORTED for `apps/web/test/run-detail.test.ts`, which renders it directly
- * to static markup with both values of `capReached`. That test exists because
- * the cap UI below is otherwise unreachable from any suite: the only way to
- * reach it through `RunDetail` is to let two real minutes elapse in a browser.
- * Taking `capReached` as a prop rather than reading the timer itself is what
- * makes this component renderable without one.
+ * to static markup with both values of `capReached` — a cheap, node-environment
+ * check that the two branches say different things. The cap's WIRING (the
+ * timer in `RunDetail` that sets the flag) is covered separately, and through a
+ * real mount, by `apps/web/test/RunDetail.polling.test.tsx`.
+ *
+ * Taking `capReached` as a prop rather than reading the timer itself is still
+ * the right shape: it keeps this component renderable without a clock.
  */
 export function Processing({
   status,

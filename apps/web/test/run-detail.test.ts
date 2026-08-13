@@ -5,44 +5,30 @@ import { describe, expect, it } from 'vitest';
 import { Processing } from '../src/routes/RunDetail.js';
 
 /**
- * The polling cap's UI, rendered directly.
+ * The polling cap's UI, rendered directly to static markup.
  *
- * WHY NOT A FULL COMPONENT TEST. The fix round asked for
- * `vi.useFakeTimers()` around a rendered `RunDetail`, advancing past
- * `POLL_CAP_MS` and asserting the cap copy appears. That cannot be done here
- * without adding a dependency, and the instruction was explicit that none may
- * be added:
+ * This file runs in Vitest's **node** environment — no `document`, no mount —
+ * and asserts only that the cap UI exists and is genuinely conditional on
+ * `capReached`. That is cheap and it is the whole of what a `renderToStaticMarkup`
+ * test can honestly claim: server rendering never runs effects, so `RunDetail`'s
+ * `useEffect`/`setTimeout` could not fire here at any clock setting.
  *
- *   - `apps/web/test/*` runs in Vitest's **node** environment. There is no
- *     `document`, so `react-dom/client`'s `createRoot` cannot mount anything.
- *   - `jsdom`, `happy-dom`, `@testing-library/react` and `react-test-renderer`
- *     are all absent from the lockfile — verified, not assumed.
- *   - `react-dom/server` IS present (react-dom 18.3.1 is already a pinned
- *     dependency of apps/web), and `renderToStaticMarkup` needs no DOM. But
- *     server rendering never runs effects, so `RunDetail`'s
- *     `useEffect`/`setTimeout` cannot fire under it at any clock setting —
- *     fake timers included.
+ * WHAT USED TO BE MISSING, and no longer is. For two sub-projects this file
+ * carried a notice that `RunDetail`'s cap WIRING — the `useEffect` that flips
+ * `capReached` from false to true — had no test that could fail, because
+ * reaching the cap through the real component meant either two real minutes of
+ * wall clock or a DOM environment nobody had yet paid for. That environment now
+ * exists (`environmentMatchGlobs` in vitest.config.ts routes
+ * `apps/web/test/**\/*.test.tsx` to jsdom) and the gap is closed by
+ * `apps/web/test/RunDetail.polling.test.tsx`, which mounts `RunDetail` and
+ * advances fake timers past `POLL_CAP_MS`. Falsified by deleting the
+ * `useEffect`: that file goes red and THIS one stays green, which is precisely
+ * the division of labour the two are meant to have.
  *
- * So this asserts the smallest honest thing available: that the cap UI EXISTS
- * and is genuinely conditional on `capReached`. What it does NOT cover is
- * stated plainly, because a reader deserves to know the shape of the hole
- * rather than to infer coverage from a green tick:
- *
- *   **`RunDetail`'s CAP wiring — the `useEffect` that flips `capReached` from
- *   false to true — has no test that can fail.** Delete that `useEffect` and
- *   this file and every other suite stay green while the page polls a stuck
- *   run until the tab is closed.
- *
- * Narrowed since this was first written: the `refetchInterval` CALL SITE is
- * now covered, by `apps/web/e2e/run-detail.spec.ts`'s "a pending run is asked
- * about again", which counts the requests actually leaving a real browser
- * against a run no worker will ever settle. Falsified by deleting the
- * `refetchInterval` line and confirming that test alone went red. What
- * remains uncovered is only the two-minute cap itself — reaching it means two
- * real minutes of wall clock, and shortening that needs either a DOM
- * environment here (a dependency) or a `?pollCapMs=` knob in production code
- * that exists only for a test. Both were declined, so this is a real, known
- * gap rather than a solved one.
+ * The `refetchInterval` CALL SITE is covered elsewhere again, by
+ * `apps/web/e2e/run-detail.spec.ts`'s "a pending run is asked about again",
+ * which counts requests actually leaving a real browser against a run no worker
+ * will ever settle.
  */
 describe('Processing — the polling cap UI', () => {
   // Wrapped in a router because the component renders a "Back to all runs"

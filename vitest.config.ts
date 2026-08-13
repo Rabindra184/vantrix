@@ -33,7 +33,18 @@ export default defineConfig({
     conditions: ['perfportal-source'],
   },
   test: {
-    include: ['packages/*/test/**/*.test.ts', 'apps/*/test/**/*.test.ts'],
+    include: [
+      'packages/*/test/**/*.test.ts',
+      'apps/*/test/**/*.test.ts',
+      // .tsx is a separate entry rather than a {ts,tsx} brace because the two
+      // extensions run in different environments — see environmentMatchGlobs
+      // below — and keeping them spelled apart makes that visible here.
+      'apps/*/test/**/*.test.tsx',
+    ],
+    // Node stays the DEFAULT. Only the .tsx tests — the ones that mount React
+    // into a document — get jsdom, so the existing node-environment suites are
+    // untouched by this and keep their (much cheaper) startup.
+    environmentMatchGlobs: [['apps/web/test/**/*.test.tsx', 'jsdom']],
     // Anything needing live Postgres, Redis, or MinIO is named
     // *.integration.test.ts or *.e2e.test.ts and runs only under
     // vitest.integration.config.ts, so `pnpm test` stays runnable with no Docker.
