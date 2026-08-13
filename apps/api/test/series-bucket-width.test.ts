@@ -24,16 +24,21 @@ const RUN = {
   startedOn: new Date('2026-08-13T00:00:00Z'),
 };
 
-function controllerWith(offsets: number[]): MetricsController {
+function controllerWith(
+  offsets: number[],
+  split: (number | null)[] = offsets.map(() => 1),
+): MetricsController {
   const runs = { findById: async () => RUN } as never;
   const reader = {
     series: async () =>
-      offsets.map((startOffsetMs) => ({
+      offsets.map((startOffsetMs, i) => ({
         startOffsetMs,
         startedCount: 1,
         endedCount: 1,
         okCount: 1,
         koCount: 0,
+        startedOkCount: split[i] ?? null,
+        startedKoCount: split[i] ?? null,
         minMs: 1,
         maxMs: 1,
         meanMs: 1,
@@ -59,5 +64,37 @@ describe('GET /v1/runs/:id/series — bucketWidthMs', () => {
     // can be two widths apart. Reading the first gap would report 2000 here.
     const res = await controllerWith([0, 2000, 3000, 4000]).series(RUN.id, req, 'run', '');
     expect(res.bucketWidthMs).toBe(1000);
+  });
+});
+
+/**
+ * The reference run is ingested by the current engine, so every one of its
+ * buckets carries the split — the integration test can only ever see
+ * `startedSplitAvailable === true`. The cases that matter for the flag are the
+ * ones it CANNOT produce: a run ingested before the migration (null columns),
+ * and a partially-backfilled run. Stubbed here for exactly that reason.
+ */
+describe('GET /v1/runs/:id/series — startedSplitAvailable', () => {
+  it('is true when every bucket carries the start-edge split', async () => {
+    const res = await controllerWith([0, 1000, 2000]).series(RUN.id, req, 'run', '');
+    expect(res.startedSplitAvailable).toBe(true);
+  });
+
+  it('is false for a run ingested before the migration, whose columns are null', async () => {
+    const res = await controllerWith([0, 1000, 2000], [null, null, null])
+      .series(RUN.id, req, 'run', '');
+    expect(res.startedSplitAvailable).toBe(false);
+    expect(res.buckets[0]?.startedOkCount).toBeNull();
+  });
+
+  it('is false when even one bucket is missing the split, not just when all are', async () => {
+    const res = await controllerWith([0, 1000, 2000], [1, null, 1])
+      .series(RUN.id, req, 'run', '');
+    expect(res.startedSplitAvailable).toBe(false);
+  });
+
+  it('is false for a run with no buckets — `every` over [] is vacuously true', async () => {
+    const res = await controllerWith([]).series(RUN.id, req, 'run', '');
+    expect(res.startedSplitAvailable).toBe(false);
   });
 });

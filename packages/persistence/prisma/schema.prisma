@@ -165,6 +165,11 @@ model RunSeriesBucket {
   endedCount    Int      @map("ended_count")
   okCount       Int      @map("ok_count")
   koCount       Int      @map("ko_count")
+  /// The START-edge outcome split (requests/s, G-23). Nullable: rows written
+  /// before migration 20260813120000 have no start-edge split at all, and
+  /// null must not be read as zero.
+  startedOkCount Int? @map("started_ok_count")
+  startedKoCount Int? @map("started_ko_count")
   minMs         Float    @map("min_ms")
   maxMs         Float    @map("max_ms")
   meanMs        Float    @map("mean_ms")

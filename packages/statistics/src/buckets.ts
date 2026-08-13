@@ -6,6 +6,14 @@ export interface Bucket {
   endedCount: number;
   okCount: number;
   koCount: number;
+  /**
+   * The START-edge outcome split, for requests/s (G-23). `okCount`/`koCount`
+   * above are the END-edge split and belong to responses/s; a request that
+   * starts in one bucket and fails in the next contributes its KO to
+   * `startedKoCount` here and to `koCount` one bucket later.
+   */
+  startedOkCount: number;
+  startedKoCount: number;
   sketch: Sketch;
   /**
    * Status-filtered sketches. Gatling's percentiles-over-time chart is OK-only
@@ -41,13 +49,17 @@ export class BucketSeries {
     if (!b) {
       b = {
         startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0,
-        okCount: 0, koCount: 0,
+        okCount: 0, koCount: 0, startedOkCount: 0, startedKoCount: 0,
         sketch: new Sketch(), sketchOk: new Sketch(), sketchKo: new Sketch(),
       };
       this.#buckets.set(idx, b);
     }
     if (edge === 'start') {
       b.startedCount++;
+      // The START-edge split. okCount/koCount below are the END-edge split and
+      // belong to responses/s; requests/s is bucketed by start time, exactly
+      // like the sketches immediately below (G-23).
+      if (ok) b.startedOkCount++; else b.startedKoCount++;
       // Sketches are fed on the START edge, not the end, to match Gatling.
       // Gatling's RequestPercentilesBuffers.updateRequestPercentilesBuffers
       // (gatling-charts, buffers/RequestPercentilesBuffers.scala) files every
@@ -81,6 +93,8 @@ export class BucketSeries {
           target.endedCount += b.endedCount;
           target.okCount += b.okCount;
           target.koCount += b.koCount;
+          target.startedOkCount += b.startedOkCount;
+          target.startedKoCount += b.startedKoCount;
           target.sketch.merge(b.sketch);      // exact — this is why coalescing is lossless
           target.sketchOk.merge(b.sketchOk);
           target.sketchKo.merge(b.sketchKo);

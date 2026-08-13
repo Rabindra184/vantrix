@@ -42,6 +42,14 @@ export interface StoredBucket {
   endedCount: number;
   okCount: number;
   koCount: number;
+  /**
+   * The START-edge outcome split (requests/s, G-23), as opposed to
+   * okCount/koCount, which are the END-edge split (responses/s). `null` — NOT
+   * zero — for rows written before the migration that added the columns; the
+   * caller reports absence rather than drawing two flat zero lines.
+   */
+  startedOkCount: number | null;
+  startedKoCount: number | null;
   minMs: number;
   maxMs: number;
   meanMs: number;
@@ -69,6 +77,7 @@ export interface StatKey {
  * stop catching that regression.
  */
 export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, ok_count, ko_count,
+              started_ok_count, started_ko_count,
               min_ms, max_ms, mean_ms, percentiles, percentiles_ok, percentiles_ko
          FROM run_series_bucket
         WHERE run_started_on = $1 AND run_id = $2
@@ -144,6 +153,10 @@ export class MetricReader {
       endedCount: r.ended_count,
       okCount: r.ok_count,
       koCount: r.ko_count,
+      // Deliberately NOT `?? 0`: a pre-migration row has no split, and zero
+      // would read as "no failures started here" instead of "not recorded".
+      startedOkCount: r.started_ok_count,
+      startedKoCount: r.started_ko_count,
       minMs: r.min_ms,
       maxMs: r.max_ms,
       meanMs: r.mean_ms,

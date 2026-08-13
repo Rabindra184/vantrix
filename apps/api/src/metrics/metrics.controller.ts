@@ -155,6 +155,12 @@ export class MetricsController {
       scope: scope as SeriesResponse['scope'],
       name,
       bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
+      // Derived from the rows themselves, not from a run-level flag: the
+      // columns are nullable and only rows written after the migration carry
+      // the split. `every` over an empty array is vacuously true, hence the
+      // length guard — no buckets is "nothing to draw", not "split available".
+      startedSplitAvailable:
+        buckets.length > 0 && buckets.every((b) => b.startedOkCount !== null),
       buckets,
     };
   }

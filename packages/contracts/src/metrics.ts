@@ -61,6 +61,10 @@ export const SeriesBucketSchema = z.object({
   endedCount: z.number().int(),
   okCount: z.number().int(),
   koCount: z.number().int(),
+  /** START-edge outcome split (G-23). Null for runs ingested before the
+   *  migration that added it; see startedSplitAvailable. */
+  startedOkCount: z.number().int().nullable(),
+  startedKoCount: z.number().int().nullable(),
   minMs: z.number(),
   maxMs: z.number(),
   meanMs: z.number(),
@@ -86,6 +90,13 @@ export const SeriesResponseSchema = z.object({
    * nothing looks wrong.
    */
   bucketWidthMs: z.number().int().positive(),
+  /**
+   * False for runs ingested before the start-edge split existed. Their
+   * requests/s chart draws the All series alone and says why — it never draws
+   * two zero lines, which would read as "no failures" rather than "not
+   * recorded". Mirrors StatsResponse.configurable.
+   */
+  startedSplitAvailable: z.boolean(),
   buckets: z.array(SeriesBucketSchema),
 });
 export type SeriesResponse = z.infer<typeof SeriesResponseSchema>;
