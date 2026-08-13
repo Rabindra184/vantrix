@@ -423,6 +423,33 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
     expect(textIn(rowAt('View Cart'), 'p95')).toBe('41');
   });
 
+  it('takes a key from a row that is NOT the first, which is the only thing a union does', () => {
+    // MEASURED: the test above exercises only the SUBSET direction — it removes
+    // keys from one row. Replacing the column scan with `rows.slice(0, 1)`, or
+    // sourcing columns from the totals row alone, leaves the whole suite green.
+    // A union is only a union if a LATER row can contribute a column the first
+    // row lacks, and StatRow.percentiles is a per-row Record written per
+    // (scope, name) sketch, so that is reachable, not hypothetical.
+    const extra: StatsResponse = {
+      ...stats,
+      stats: stats.stats.map((r) =>
+        r.name === 'Search'
+          ? { ...r, percentiles: { ...r.percentiles, 'p99.9': 2280 } }
+          : r,
+      ),
+    };
+    renderTable(extra);
+
+    expect(headers()).toContain('99.9th');
+    // 2280 sits inside Search's [407, 2287], so the clamp leaves it alone and
+    // this asserts the union rather than the clamp. (9000 here would render
+    // 2287 — correct behaviour, wrong test.)
+    expect(textIn(rowAt('Search'), 'p99.9')).toBe('2280');
+    // Every other row shows the gap rather than borrowing Search's number.
+    expect(textIn(rowAt('View Cart'), 'p99.9')).toBe('—');
+    expect(cellIn(rowAt('View Cart'), 'p99.9').getAttribute('data-value')).toBeNull();
+  });
+
   /** `p1` is not `1th`. The label is derived, so odd keys stay readable. */
   it('labels a percentile key with its ordinal', () => {
     expect(percentileColumnLabel('p50')).toBe('50th');
@@ -649,6 +676,12 @@ describe('StatisticsTable — the run-scope totals row', () => {
     expect(textIn(total, 'okCount')).toBe('871');
     expect(textIn(total, 'koCount')).toBe('24');
     expect(textIn(total, 'errorRate')).toBe('2.68');
+    // D-11: OURS IS 14.40, GATLING'S REFERENCE ROW SAYS 14.21. Not a
+    // formatting difference — a duration-edge difference upstream, newly
+    // visible now the number is on screen. The FORMAT matches Gatling (two
+    // decimals); the VALUE does not, and that belongs to a backend pass, not
+    // to this table. Recorded here rather than only in the ledger so a reader
+    // comparing the two reports finds the discrepancy already known.
     expect(textIn(total, 'throughputRps')).toBe('14.40');
     expect(textIn(total, 'minMs')).toBe('16');
     expect(textIn(total, 'maxMs')).toBe('2503');

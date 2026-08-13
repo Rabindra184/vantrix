@@ -507,9 +507,15 @@ test('the errors payload is fetched run-scoped, spelled exactly as the fixture c
    * duplication is real and recorded as follow-up; this at least makes the app
    * half of it observable.
    *
-   * The `?scope=run&name=` is not noise: the controller reads the run-scope row
-   * only when `scope` is present, and an unscoped read returns one row per
-   * (scope, name) — every failure counted once per group it sits inside. */
+   * The `?scope=run&name=` is asserted because the captured fixture was taken
+   * with exactly this string, so the two staying identical is what makes the
+   * fixture what the browser receives.
+   *
+   * It is NOT asserted because the unscoped form is dangerous — measured, it is
+   * not: `MetricsController.errors` sets `name` to `''` when `scope` is
+   * omitted, and the reader's SQL is unconditionally scoped, so `/errors` and
+   * `/errors?scope=run&name=` are identical. The real trap is the inverse —
+   * `?name=X` WITHOUT `scope` is silently ignored and returns the run totals. */
   const seen: string[] = [];
   page.on('request', (request) => {
     const url = new URL(request.url());
