@@ -17,7 +17,10 @@ import ErrorsTable from '../tables/ErrorsTable';
 import RequestStatistics from '../tables/RequestStatistics';
 import { Payload, TableSection, type Slot } from './payload';
 
-/** §13.3's elements, in order. Ids match each chart's own `Chart` id. */
+/** §13.3's chart elements — ② ③ ⑤ ⑦ ⑧ ⑨ — in that order. Ids match each
+ *  chart's own `Chart` id. Not the whole of §13.3: ① and ⑪, the two tables,
+ *  render above this stack rather than at their numbered positions — see the
+ *  comment there. */
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
 const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
@@ -92,6 +95,30 @@ export default function RequestDetail() {
       <Link to={`/runs/${encodeURIComponent(runId)}`} className="underline">
         Back to this run
       </Link>
+      {/* §13.3 ① and ⑪, ABOVE THE CHART STACK — same placement as the run
+          page's own tables (RunDetail.tsx, above its `Tables` call), and a
+          stronger case for it: there, the argument was that scrolling past
+          eight figures to reach one request's p99 is the reading order
+          nobody wants. Here, the entire numeric payload IS a single row —
+          there is nothing left for the charts to precede. */}
+      <TableSection title="Statistics" query={stats}>
+        {(data) => {
+          const row = requestRow(data, name);
+          // A name that is not in the run is a link from a stale tab or a
+          // hand-edited URL. Saying so is the whole deliverable — an empty
+          // page would read as a request that ran and recorded nothing.
+          return row === undefined ? (
+            <p role="status">This run recorded no request named {name}.</p>
+          ) : (
+            <RequestStatistics row={row} rows={data.stats} />
+          );
+        }}
+      </TableSection>
+
+      <TableSection title="Errors" query={errors}>
+        {(data) => <ErrorsTable errors={data} />}
+      </TableSection>
+
       <Payload query={stats} slots={[INDICATORS]}>
         {(data) => <IndicatorsChart stats={data} path={name} />}
       </Payload>
@@ -113,24 +140,6 @@ export default function RequestDetail() {
       <Payload query={scatter} slots={[SCATTER]}>
         {(data) => <ScatterChart scatter={data} />}
       </Payload>
-
-      <TableSection title="Statistics" query={stats}>
-        {(data) => {
-          const row = requestRow(data, name);
-          // A name that is not in the run is a link from a stale tab or a
-          // hand-edited URL. Saying so is the whole deliverable — an empty
-          // page would read as a request that ran and recorded nothing.
-          return row === undefined ? (
-            <p role="status">This run recorded no request named {name}.</p>
-          ) : (
-            <RequestStatistics row={row} rows={data.stats} />
-          );
-        }}
-      </TableSection>
-
-      <TableSection title="Errors" query={errors}>
-        {(data) => <ErrorsTable errors={data} />}
-      </TableSection>
     </div>
   );
 }
