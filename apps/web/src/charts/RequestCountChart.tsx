@@ -24,9 +24,9 @@ export default function RequestCountChart({ stats }: { stats: StatsResponse }) {
       data={data}
       kind="pie"
       // Per SLICE here, not per series — a single-series pie consumes ECharts'
-      // top-level colour list one entry per data point. `Chart`'s `statusRoles`
-      // doc spells that difference out.
-      statusRoles={OUTCOME_ROLES}
+      // top-level colour list one entry per data point. `Chart`'s `roles` doc
+      // spells that difference out.
+      roles={OUTCOME_ROLES}
     />
   );
 }

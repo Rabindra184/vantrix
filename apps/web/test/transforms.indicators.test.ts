@@ -160,25 +160,38 @@ describe('toIndicators — a run whose bands are not configurable', () => {
   });
 });
 
-describe('toIndicators — the bands wear STATUS colours, not the categorical palette', () => {
+describe('toIndicators — the bands wear the BAND RAMP, not the categorical palette', () => {
   it('gives the four bands four distinct roles', () => {
     expect(BAND_ROLES).toHaveLength(4);
     expect(new Set(BAND_ROLES).size).toBe(4);
   });
 
+  /**
+   * And they are the BAND roles, not the status ones. The donut ④ beside this
+   * chart legitimately takes the status palette — OK and KO are app-wide states
+   * — so "semantic, not categorical" is not enough to pin which of the two
+   * semantic palettes the bands took, and the first cut of this took the wrong
+   * one.
+   */
+  it('takes them from the band ramp, not from the app-wide status palette', () => {
+    expect(BAND_ROLES.every((role) => role.startsWith('band-'))).toBe(true);
+    expect(OUTCOME_ROLES.some((role) => role.startsWith('band-'))).toBe(false);
+  });
+
   it.each(MODES)('resolves those roles to four distinct colours in %s mode', (mode) => {
-    const { status } = chartTheme(mode);
-    const colours = BAND_ROLES.map((role) => status[role]);
+    const { roles } = chartTheme(mode);
+    const colours = BAND_ROLES.map((role) => roles[role]);
     // Two bands in one colour is the failure `assignPalette` exists to prevent
     // on the categorical side, and nothing was preventing it here.
     expect(new Set(colours).size).toBe(colours.length);
   });
 
   /**
-   * The point of the whole exercise. A band is a STATE — fast, borderline,
-   * slow, failed — not an identity, so it wears the status tokens the rest of
-   * the app spends its failures in (`marks.tsx`), and a reader who has learned
-   * that red means failed there is not shown red meaning "slow" here.
+   * The point of the whole exercise. A band is a POSITION ON A SCALE — fast,
+   * borderline, slow, failed — not an identity, so it wears the four-step
+   * severity ramp, whose red end is the same red the rest of the app spends its
+   * failures in (`marks.tsx`). A reader who has learned that red means failed
+   * there is not shown red meaning "slow" here.
    *
    * Asserted as "no band colour is a categorical hue" rather than as an
    * equality against a list of expected hexes, because the equality version
@@ -186,10 +199,10 @@ describe('toIndicators — the bands wear STATUS colours, not the categorical pa
    * list updated in the same edit.
    */
   it.each(MODES)('takes none of them from the categorical series palette (%s)', (mode) => {
-    const { status } = chartTheme(mode);
+    const { roles } = chartTheme(mode);
     const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
     for (const role of BAND_ROLES) {
-      expect(categorical.has(status[role])).toBe(false);
+      expect(categorical.has(roles[role])).toBe(false);
     }
   });
 });
@@ -253,8 +266,8 @@ describe('toRequestCounts — the OK/KO donut ④ (G-10)', () => {
   });
 
   it.each(MODES)('paints OK and KO in the status colours, not categorical hues (%s)', (mode) => {
-    const { status } = chartTheme(mode);
-    const colours = OUTCOME_ROLES.map((role) => status[role]);
+    const { roles } = chartTheme(mode);
+    const colours = OUTCOME_ROLES.map((role) => roles[role]);
     expect(new Set(colours).size).toBe(colours.length);
     const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
     for (const colour of colours) expect(categorical.has(colour)).toBe(false);

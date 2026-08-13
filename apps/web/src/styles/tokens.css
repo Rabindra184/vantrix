@@ -24,6 +24,24 @@
  * --chart-gridline is the hairline gridline colour (design section 11). It is
  * deliberately lighter than --color-border: a gridline that reads as strongly
  * as a container edge competes with the data.
+ *
+ * --chart-band-* are the four INDICATOR BAND colours (design section 13.2
+ * element 3), and they are a SEVERITY RAMP, not a categorical set: green,
+ * amber, orange, red, in increasing order of badness. Gatling's own report
+ * uses exactly such a four-step ramp (#68b65c / #FFDD00 / #FFA900 / #f15b4f),
+ * and the ordering is the information - a band that reads as less severe than
+ * the one below it is worse than no colour at all.
+ *
+ * Three of the four are var() aliases of the status tokens, so "the fastest
+ * band is the passed colour" and "the failed band is the failed colour" stay
+ * true by construction rather than by two hexes that happen to match. Only
+ * --chart-band-over is its own value: the ramp needs a fourth step between
+ * amber and red and the status palette has no orange. It is Primer's, the
+ * family every other status hex here comes from.
+ *
+ * Like the palette, these are mirrored in apps/web/src/charts/theme.ts and
+ * apps/web/test/palette.test.ts fails if the two disagree - in any of the four
+ * blocks. Edit the hexes there, not here.
  */
 
 @import 'tailwindcss';
@@ -47,6 +65,11 @@
   --chart-5: #56B4E9;
   --chart-6: #D55E00;
   --chart-gridline: #e9ecf0;
+
+  --chart-band-under: var(--color-status-passed);
+  --chart-band-between: var(--color-status-pending);
+  --chart-band-over: #bc4c00;
+  --chart-band-failed: var(--color-status-failed);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -69,6 +92,11 @@
     --chart-5: #3B9CD0;
     --chart-6: #D55E00;
     --chart-gridline: #262c33;
+
+    --chart-band-under: var(--color-status-passed);
+    --chart-band-between: var(--color-status-pending);
+    --chart-band-over: #db6d28;
+    --chart-band-failed: var(--color-status-failed);
   }
 }
 
@@ -93,6 +121,11 @@
   --chart-5: #56B4E9;
   --chart-6: #D55E00;
   --chart-gridline: #e9ecf0;
+
+  --chart-band-under: var(--color-status-passed);
+  --chart-band-between: var(--color-status-pending);
+  --chart-band-over: #bc4c00;
+  --chart-band-failed: var(--color-status-failed);
 }
 
 [data-theme='dark'] {
@@ -114,4 +147,9 @@
   --chart-5: #3B9CD0;
   --chart-6: #D55E00;
   --chart-gridline: #262c33;
+
+  --chart-band-under: var(--color-status-passed);
+  --chart-band-between: var(--color-status-pending);
+  --chart-band-over: #db6d28;
+  --chart-band-failed: var(--color-status-failed);
 }
