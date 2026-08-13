@@ -1089,11 +1089,9 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
     // Every one of Catalog's children sits directly beneath it, not scattered
     // among the other roots' own rows.
     const catalogIndex = paths.indexOf('Catalog');
-    expect(paths.slice(catalogIndex + 1, catalogIndex + 4)).toEqual([
-      'Catalog/Product Detail',
-      'Catalog/Recommendations',
-      'Catalog/List Products',
-    ]);
+    expect(paths.slice(catalogIndex + 1, catalogIndex + 4)).toEqual(
+      childOrderBy(stats, 'Catalog', 'p50', 'desc'),
+    );
     // The children are still children: sorting reorders siblings, it does not
     // promote anything to the root.
     expect(rowAt('Catalog/Recommendations').getAttribute('data-depth')).toBe('1');
