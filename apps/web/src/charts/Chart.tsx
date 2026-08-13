@@ -315,14 +315,25 @@ export default function Chart({
           //
           // Not `Math.round`: `formatCell` leaves integers and pre-formatted
           // strings alone, and refuses to show a non-zero value as `0`.
+          //
+          // A SCATTER POINT IS AN ARRAY, not a single number or string: its
+          // series data is `[x, y]` pairs (ChartSeries's own doc above), and
+          // ECharts hands the whole pair to `valueFormatter` at once rather
+          // than calling it once per axis. The `number | string` branch below
+          // would miss that shape entirely and fall through to `String(value)`
+          // — `String([3, 120])` is `"3,120"`, which on a milliseconds axis
+          // reads as three thousand one hundred twenty, not two separate
+          // measurements. So an array is formatted component-by-component,
+          // through the same `formatCell` every other value here uses, joined
+          // by a comma-space no reader would mistake for a digit grouping.
           valueFormatter: (value: unknown) => {
             // A gap, rendered as the table renders one. ECharts asks for a
             // value per series at the hovered category, including series that
             // have none there.
             if (value === null || value === undefined) return '—';
-            return typeof value === 'number' || typeof value === 'string'
-              ? formatCell(value)
-              : String(value);
+            const formatOne = (v: unknown): string =>
+              typeof v === 'number' || typeof v === 'string' ? formatCell(v) : String(v);
+            return Array.isArray(value) ? value.map(formatOne).join(', ') : formatOne(value);
           },
           // The crosshair `connect` propagates between grouped charts.
           axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
