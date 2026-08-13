@@ -2,6 +2,7 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { statsQuery } from '../api/metrics';
+import IndicatorsChart from '../charts/IndicatorsChart';
 import RequestStatistics from '../tables/RequestStatistics';
 
 /**
@@ -51,6 +52,7 @@ export default function RequestDetail() {
       <Link to={`/runs/${encodeURIComponent(runId)}`} className="underline">
         Back to this run
       </Link>
+      {stats.data !== undefined ? <IndicatorsChart stats={stats.data} path={name} /> : null}
       {stats.data !== undefined ? (
         (() => {
           const row = requestRow(stats.data, name);

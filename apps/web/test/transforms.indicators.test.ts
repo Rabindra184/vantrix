@@ -5,6 +5,7 @@ import {
   OUTCOME_ROLES,
   toIndicators,
   toRequestCounts,
+  toRequestIndicators,
 } from '../src/charts/transforms/indicators.js';
 import { CATEGORICAL, CATEGORICAL_DARK, chartTheme, type ChartMode } from '../src/charts/theme.js';
 import fixture from './fixtures/reference-run.json';
@@ -302,5 +303,50 @@ describe('toRequestCounts — the OK/KO donut ④ (G-10)', () => {
     });
     expect(none.empty).toBeDefined();
     expect(none.rows).toEqual([]);
+  });
+});
+
+describe('toRequestIndicators', () => {
+  it('folds one request’s own bands, not the run’s', () => {
+    const data = toRequestIndicators(stats, 'Catalog/List Products');
+    const row = stats.stats.find(
+      (r) => r.scope === 'request' && r.name === 'Catalog/List Products',
+    )!;
+    const total =
+      row.indicators.under + row.indicators.between + row.indicators.over + row.indicators.failed;
+
+    // The counts are the ROW's. Against the run's they would be larger, which
+    // is the whole failure this test exists to catch.
+    expect(data.rows.map((r) => r.values[0])).toEqual([
+      row.indicators.under,
+      row.indicators.between,
+      row.indicators.over,
+      row.indicators.failed,
+    ]);
+    expect(total).toBeLessThan(
+      stats.indicators.under +
+        stats.indicators.between +
+        stats.indicators.over +
+        stats.indicators.failed,
+    );
+  });
+
+  it('labels the axis with the request, not "All requests"', () => {
+    const data = toRequestIndicators(stats, 'Catalog/List Products');
+    expect(data.axisLabels).toEqual(['Catalog/List Products']);
+  });
+
+  it('keeps the bounds and the fixed-bands caveat, which are the response’s', () => {
+    const data = toRequestIndicators(stats, 'Catalog/List Products');
+    // Bounds are a PROJECT setting on the response, not a property of a row —
+    // a per-request transform that stopped reading them would silently label
+    // the bands with defaults.
+    expect(data.rows[0]?.label).toContain(String(stats.bounds.lowerMs));
+  });
+
+  it('is empty, with a reason, for a request the run never recorded', () => {
+    const data = toRequestIndicators(stats, 'Nope/Not Here');
+    expect(data.series).toEqual([]);
+    expect(data.empty).toContain('Nope/Not Here');
   });
 });
