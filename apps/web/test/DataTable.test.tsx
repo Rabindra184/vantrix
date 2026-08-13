@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import DataTable from '../src/charts/DataTable.js';
+import DataTable, { formatCell } from '../src/charts/DataTable.js';
 
 /**
  * The data table is the PARITY SURFACE (design §7): the numbers a chart plots,
@@ -95,6 +95,88 @@ describe('DataTable', () => {
       'aria-expanded',
       'true',
     );
+  });
+
+  /**
+   * THE DISPLAY HALF OF THE PRECISION SPLIT (Task 7 deferred this here).
+   *
+   * The transforms keep every digit — `toDistribution` passes `okPercent`
+   * through exactly as the API computed it, because rounding is recoverable
+   * from an exact number and precision is not. What that produced on screen was
+   * a cell reading `24.916201117318437`, which is the parity tolerance's two
+   * decimals with fifteen digits of noise after them. The rounding belongs
+   * where the rendering happens, and only there.
+   */
+  describe('formatCell', () => {
+    it('rounds a long percentage to the two decimals it is compared at', () => {
+      expect(formatCell(24.916201117318437)).toBe('24.92');
+      expect(formatCell(0.11173184357541899)).toBe('0.11');
+    });
+
+    it('leaves an integer exactly as it is, with no grouping separator', () => {
+      // These cells are compared against numbers the API writes plain. A
+      // locale-dependent `1,000` would make what a parity spec reads depend on
+      // where it ran.
+      expect(formatCell(0)).toBe('0');
+      expect(formatCell(12)).toBe('12');
+      expect(formatCell(1000)).toBe('1000');
+      expect(formatCell(1234567)).toBe('1234567');
+    });
+
+    it('does not trail a decimal the value does not have', () => {
+      expect(formatCell(0.5)).toBe('0.5');
+      expect(formatCell(1.1)).toBe('1.1');
+    });
+
+    it('never displays a non-zero value as zero', () => {
+      // The same failure the em dash prevents, in the other direction: `0`
+      // asserts "none happened". One KO in ten million requests is not none,
+      // and a reader has to be able to tell it from a bin that is genuinely
+      // empty.
+      expect(formatCell(0.00001)).not.toBe('0');
+      expect(Number(formatCell(0.00001))).toBeCloseTo(0.00001, 10);
+      expect(formatCell(0)).toBe('0');
+    });
+
+    it('passes a string through — a transform that formatted its own is not second-guessed', () => {
+      // `percent()` in transforms/indicators.ts emits exactly this.
+      expect(formatCell('97.3%')).toBe('97.3%');
+    });
+  });
+
+  it('keeps the unrounded value in the DOM beside the rounded one', () => {
+    // Rounding for display is only honest if nothing is thrown away. The exact
+    // number stays on the cell, so a parity spec can assert against the API's
+    // own value and a reader still gets a number they can read.
+    render(
+      <DataTable
+        id="precision"
+        caption="Precision"
+        columns={['Bin', 'OK %']}
+        rows={[{ label: '28', values: [24.916201117318437] }]}
+      />,
+    );
+
+    const cell = screen.getByTestId('chart-data-precision').querySelector('td')!;
+    expect(cell.textContent).toBe('24.92');
+    expect(cell.getAttribute('data-value')).toBe('24.916201117318437');
+  });
+
+  it('carries no value for a gap, so an absent measurement cannot be read as one', () => {
+    render(
+      <DataTable
+        id="gap"
+        caption="Gap"
+        columns={['t', 'ok']}
+        // `null` is what a transform sends for a bucket it has no observation
+        // for — see ChartData.
+        rows={[{ label: '0', values: [null as unknown as number] }]}
+      />,
+    );
+
+    const cell = screen.getByTestId('chart-data-gap').querySelector('td')!;
+    expect(cell.textContent).toBe('—');
+    expect(cell.hasAttribute('data-value')).toBe(false);
   });
 
   it('renders a table with no rows rather than vanishing, so the surface is always there', () => {
