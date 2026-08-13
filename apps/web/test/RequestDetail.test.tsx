@@ -93,4 +93,56 @@ describe('RequestDetail', () => {
     expect(errors[0]).toContain('scope=request');
     expect(errors[0]).toContain(`name=${encodeURIComponent('Catalog/List Products')}`);
   });
+
+  it('renders the row it found, and says so when there is none', async () => {
+    // Both branches, because a swapped prop or a mistyped scope check would
+    // leave one of them rendering plausible nonsense.
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      const url = String(input);
+      // `/stats` is the only endpoint this page fetches UNSCOPED — every
+      // other endpoint's URL carries `scope=request&name=...` and never
+      // contains this substring — so answering it alone is enough to isolate
+      // the branch under test from the page's four other queries.
+      if (url.includes('/stats')) {
+        return Promise.resolve(new Response(JSON.stringify(fixture.stats), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 500 }));
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    // FOUND: the fixture's own row for a request that exists reaches the
+    // table — a table cell carries ITS count, not a placeholder.
+    const found = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/r1/requests/Catalog%2FList%20Products']}>
+          <Routes>
+            <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const row = requestRow(stats, 'Catalog/List Products')!;
+    const cell = await screen.findByTestId('request-stat-count');
+    expect(cell).toHaveAttribute('data-value', String(row.count));
+    found.unmount();
+
+    // NOT FOUND: a name the run never recorded gets the status sentence,
+    // naming it — not a table of some other request's numbers.
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/r1/requests/Nope%2FNot%20Here']}>
+          <Routes>
+            <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByText('This run recorded no request named Nope/Not Here.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('request-stat-count')).not.toBeInTheDocument();
+  });
 });
