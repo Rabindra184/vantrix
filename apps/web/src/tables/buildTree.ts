@@ -323,3 +323,83 @@ export function sortTree(
         : { ...row, children: sortTree(row.children, column, direction) },
     );
 }
+
+/* ======================================================================== *
+ * FILTERING (design §7, §9 checkpoint 2)
+ * ======================================================================== */
+
+/**
+ * WHAT THE QUERY IS MATCHED AGAINST: `path`, THE FULL NAME — NOT `name`, THE
+ * DISPLAYED LEAF.
+ *
+ * The two are different for a nested row: `Catalog/Recommendations` displays
+ * as `Recommendations` because the `Catalog` row above supplies the rest.
+ * Matching the leaf alone makes that row unfindable by typing `Catalog/Rec` —
+ * the exact string the reader copied out of the detail link — and matching the
+ * path is a strict SUPERSET of matching the leaf, because a leaf is always a
+ * substring of its own path. So nothing findable by the displayed name stops
+ * being findable.
+ *
+ * The cost usually charged against path matching is that a row can be surfaced
+ * by text it does not display — matched on a parent's name it never shows. It
+ * is not charged here, because THIS filter keeps ancestors. A path match that
+ * is not also a leaf match must overlap the parent-prefix half of the path,
+ * and `buildTree` guarantees the only rows carrying such a prefix are ones
+ * whose ancestors ARE that prefix (a row is nested only under the group at its
+ * immediate parent path). Those ancestors are kept and rendered above the
+ * match, so every character the reader typed is on screen — spread down the
+ * indent, which is where the hierarchy put it. The one row with no ancestors
+ * to render is the orphan, and `buildTree` already displays a root's FULL path
+ * as its name. Either way `path` is what the reader can see.
+ *
+ * Substring, not regex: design §7 puts regex out of scope for this piece and
+ * records it as a gap against G-14. So the query is literal text — `.*` is a
+ * search for a dot and a star, and finds nothing, rather than quietly
+ * selecting every row.
+ */
+const matches = (row: TableRow, needle: string): boolean =>
+  row.path.toLowerCase().includes(needle);
+
+/**
+ * Filter the tree by name, KEEPING THE ANCESTORS OF EVERY MATCH (design §7).
+ *
+ * A node survives if it matches, or if any descendant does. A surviving
+ * ancestor is kept AS an ancestor: at its own depth, with its children pruned
+ * to the branches that lead to a match. Promoting matches to the root instead
+ * — §9 checkpoint 2 — is what turns `Catalog/Recommendations` into a row with
+ * no context, and on the D-10 payload it also collapses three sibling requests
+ * into an unnested list of things that no longer say which group they ran in.
+ *
+ * A MATCHING NODE KEEPS ITS WHOLE SUBTREE, untouched and by reference. This
+ * costs nothing in correctness: a child's path is its parent's path plus a
+ * segment, so any query the parent's path contains, the child's path contains
+ * too — the subtree would survive a recursive walk unchanged, and returning it
+ * as-is only skips rebuilding rows that are already the right answer.
+ *
+ * AN EMPTY QUERY IS NOT A QUERY. A blank filter box is the absence of a
+ * filter, so the whole tree comes back — the same array, not a copy of it.
+ * (`''.includes` would answer `true` for every row and get the same rows out,
+ * but through a full rebuild, and it would leave "no filter" indistinguishable
+ * from "a filter that happens to match everything" at the one place where the
+ * distinction is cheap to state.) The query is trimmed at its ends first: a
+ * trailing space is typing, not intent. Interior spaces are kept — `Add To
+ * Cart` is two of them.
+ *
+ * PURE, like `sortTree`: the input arrays are never mutated, `depth` and
+ * `name` are carried through rather than re-derived (an orphan is still a
+ * depth-0 root showing its full path), and unchanged subtrees are shared by
+ * reference rather than cloned.
+ */
+export function filterTree(rows: readonly TableRow[], query: string): readonly TableRow[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return rows;
+
+  const keep = (row: TableRow): TableRow | null => {
+    if (matches(row, needle)) return row;
+    const children = row.children.map(keep).filter((child): child is TableRow => child !== null);
+    // No match at or under this row: it is not context for anything.
+    return children.length === 0 ? null : { ...row, children };
+  };
+
+  return rows.map(keep).filter((row): row is TableRow => row !== null);
+}
