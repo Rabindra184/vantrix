@@ -22,6 +22,29 @@ const FORBIDDEN_IN_BROWSER = [
   { group: ['pg', '@prisma/client'], message: 'Browser code must not reach the database directly.' },
 ];
 
+// `apps/web/src/charts/echarts.ts` is the ONE module allowed to import from
+// ECharts, so the bundle cost of a new chart type is a single visible line in
+// a single diff rather than a hard-to-notice import in the eighth chart
+// component. That was a comment in echarts.ts and nothing enforced it; eight
+// chart components are about to be written against it, and `import * as
+// echarts from 'echarts'` in one of them pulls the entire library — every
+// chart type, every component — into the browser bundle while looking
+// completely ordinary in review.
+//
+// SPLIT ACROSS `paths` AND `patterns` DELIBERATELY. `patterns` uses
+// gitignore-style matching, in which a pattern containing no slash matches a
+// BASENAME at any depth — so a `group: ['echarts']` entry also rejects
+// `./echarts`, the relative import every chart component is supposed to use.
+// (Confirmed, not assumed: it flagged Chart.tsx's own `from './echarts'`.)
+// `paths` is exact-string, so it catches the bare package without catching the
+// relative sibling; `echarts/*` carries a slash and so stays anchored.
+const ECHARTS_MESSAGE =
+  'Only apps/web/src/charts/echarts.ts may import ECharts — import { echarts } from it ' +
+  'instead, and register any new chart type or component THERE so its bundle cost is visible.';
+
+const FORBIDDEN_ECHARTS_PATHS = [{ name: 'echarts', message: ECHARTS_MESSAGE }];
+const FORBIDDEN_ECHARTS_PATTERNS = [{ group: ['echarts/*'], message: ECHARTS_MESSAGE }];
+
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/node_modules/**', 'spikes/**', 'fixtures/**'] },
   ...tseslint.configs.recommended,
@@ -33,6 +56,22 @@ export default tseslint.config(
   },
   {
     files: ['apps/web/src/**/*.{ts,tsx}'],
+    // The one exemption, and the reason this is a rule rather than a comment.
+    ignores: ['apps/web/src/charts/echarts.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: FORBIDDEN_ECHARTS_PATHS,
+          patterns: [...FORBIDDEN_IN_BROWSER, ...FORBIDDEN_ECHARTS_PATTERNS],
+        },
+      ],
+    },
+  },
+  {
+    // The registration module itself: still browser code, so it keeps the
+    // server-only bans — it simply may import ECharts.
+    files: ['apps/web/src/charts/echarts.ts'],
     rules: {
       'no-restricted-imports': ['error', { patterns: FORBIDDEN_IN_BROWSER }],
     },

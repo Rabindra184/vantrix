@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CATEGORICAL,
   CATEGORICAL_DARK,
+  GRIDLINE,
   assignPalette,
   paletteFor,
   type ChartMode,
@@ -144,38 +145,73 @@ describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }
 });
 
 /**
- * `tokens.css` is the runtime source — `chartTheme` reads `--chart-N` off the
- * document — while `theme.ts` holds the compiled fallbacks and is what the
- * checks above run against. Two copies of six hex values is exactly the
- * arrangement that drifts, so the drift is a test failure rather than a
- * mystery about why a chart is the wrong colour in one theme only.
+ * `tokens.css` is the runtime source — `chartTheme` reads `--chart-*` off the
+ * document and `assignPalette` hands the result to ECharts — while `theme.ts`
+ * holds the compiled fallbacks and is what the checks above run against. Two
+ * copies of seven values is exactly the arrangement that drifts, so the drift
+ * is a test failure rather than a mystery about why a chart is the wrong
+ * colour in one theme only.
+ *
+ * ALL FOUR BLOCKS, not just the `[data-theme]` pair. This test used to check
+ * only `[data-theme='light']` and `[data-theme='dark']` — and nothing in
+ * `apps/web/src` sets `data-theme`, so those two blocks are the only ones
+ * currently INERT. The blocks actually in force are `:root` and the
+ * `prefers-color-scheme: dark` media block, and neither was checked: a typo
+ * there ships a wrong hue or a gridline that competes with the data on every
+ * machine, `chartTheme` reads it live, renders it faithfully, and nothing
+ * notices.
+ *
+ * `--chart-gridline` is included for the same reason. It was in none of the
+ * four.
  */
-describe('tokens.css and theme.ts agree about the palette', () => {
+describe('tokens.css and theme.ts agree about the chart tokens', () => {
   const css = readFileSync(
     fileURLToPath(new URL('../src/styles/tokens.css', import.meta.url)),
     'utf8',
   );
 
-  /** The `--chart-1..6` declarations inside one selector's block. */
-  function chartTokensIn(selector: string): string[] {
-    const start = css.indexOf(selector);
-    expect(start, `${selector} not found in tokens.css`).toBeGreaterThanOrEqual(0);
-    const block = css.slice(start, css.indexOf('}', start));
-    return [1, 2, 3, 4, 5, 6].map((n) => {
-      const found = new RegExp(`--chart-${n}:\\s*(#[0-9a-fA-F]{6})`).exec(block);
-      expect(found?.[1], `--chart-${n} missing from ${selector}`).toBeDefined();
-      return found![1]!.toUpperCase();
-    });
+  /**
+   * The body of one declaration block, found by a marker that is unique in the
+   * file. `:root` appears twice — once at top level and once nested inside the
+   * media query — so the nested one is located by searching from the `@media`
+   * rule rather than from the start of the file.
+   */
+  function blockAfter(marker: string, from = 0): string {
+    const start = css.indexOf(marker, from);
+    expect(start, `'${marker}' not found in tokens.css`).toBeGreaterThanOrEqual(0);
+    const open = css.indexOf('{', start);
+    return css.slice(open, css.indexOf('}', open));
   }
 
-  it.each([
-    // The explicit [data-theme] blocks are the ones checked: they are the
-    // authoritative pair, and tokens.css's own comment records that they must
-    // win over prefers-color-scheme in both directions.
-    { selector: "[data-theme='light']", expected: CATEGORICAL },
-    { selector: "[data-theme='dark']", expected: CATEGORICAL_DARK },
-  ])('$selector carries the palette theme.ts exports', ({ selector, expected }) => {
-    expect(chartTokensIn(selector)).toEqual(expected.map((hex) => hex.toUpperCase()));
+  function tokenIn(block: string, name: string, where: string): string {
+    const found = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`).exec(block);
+    expect(found?.[1], `${name} missing from ${where}`).toBeDefined();
+    return found![1]!.toUpperCase();
+  }
+
+  const mediaDark = css.indexOf('@media (prefers-color-scheme: dark)');
+
+  const BLOCKS = [
+    // The two that are IN FORCE today.
+    { where: ':root (light)', block: () => blockAfter(':root'), mode: 'light' as const },
+    {
+      where: '@media (prefers-color-scheme: dark) :root',
+      block: () => blockAfter(':root', mediaDark),
+      mode: 'dark' as const,
+    },
+    // The two a future theme toggle will switch to.
+    { where: "[data-theme='light']", block: () => blockAfter("[data-theme='light']"), mode: 'light' as const },
+    { where: "[data-theme='dark']", block: () => blockAfter("[data-theme='dark']"), mode: 'dark' as const },
+  ];
+
+  it.each(BLOCKS)('$where carries the palette theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = [1, 2, 3, 4, 5, 6].map((n) => tokenIn(body, `--chart-${n}`, where));
+    expect(found).toEqual(paletteFor(mode).map((hex) => hex.toUpperCase()));
+  });
+
+  it.each(BLOCKS)('$where carries the gridline theme.ts exports', ({ where, block, mode }) => {
+    expect(tokenIn(block(), '--chart-gridline', where)).toBe(GRIDLINE[mode].toUpperCase());
   });
 });
 
@@ -214,8 +250,55 @@ describe('assignPalette — more series than hues', () => {
     expect(assigned.limitation).toMatch(/not drawn|not plotted|data table/i);
   });
 
-  it('assigns from the mode’s own palette', () => {
-    expect(assignPalette(['a'], 'dark').drawn[0]!.color).toBe(CATEGORICAL_DARK[0]);
-    expect(assignPalette(['a'], 'light').drawn[0]!.color).toBe(CATEGORICAL[0]);
+  /**
+   * THE WHOLE PALETTE, not one slot — and the difference is not pedantry.
+   *
+   * This assertion used to read `assignPalette(['a'], 'dark').drawn[0]`, and it
+   * could not fail: index 0 is `#0072B2` in BOTH palettes, the one slot where
+   * the two are byte-identical, because it is one of the three Okabe–Ito hues
+   * that already sat inside the dark lightness band. `assignPalette` reading
+   * the light palette unconditionally would have passed that test — and drawn
+   * dark mode in the exact three hues above the dark ceiling that this whole
+   * file exists to exclude.
+   *
+   * Six names, so every slot is compared, including the three that differ.
+   */
+  it('assigns from the mode’s own palette — every slot, not just the first', () => {
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+    expect(assignPalette(six, 'dark').drawn.map((d) => d.color)).toEqual([...CATEGORICAL_DARK]);
+    expect(assignPalette(six, 'light').drawn.map((d) => d.color)).toEqual([...CATEGORICAL]);
+
+    // And the two really are different palettes, so the pair of assertions
+    // above cannot both be satisfied by one array.
+    expect([...CATEGORICAL_DARK]).not.toEqual([...CATEGORICAL]);
+  });
+});
+
+/**
+ * The dark set keeps Okabe–Ito's HUE ANGLES.
+ *
+ * This is the claim `theme.ts` rests its colour-vision-deficiency inheritance
+ * on: the dark palette is not re-picked, it is the published palette with
+ * lightness clamped into the dark band and the hue held. CVD confusability is
+ * overwhelmingly a function of hue, so "same hues, different lightness" is what
+ * makes inheriting the published property defensible — and until now it was
+ * prose in a comment. A future edit that nudged a dark hex "to taste" would
+ * break the inheritance silently.
+ */
+describe('the dark palette preserves Okabe–Ito’s hue angles', () => {
+  /** OKLCH hue, in degrees. */
+  const hueAngle = (hex: string): number => {
+    const { a, b } = hexToOkLab(hex);
+    return (Math.atan2(b, a) * 180) / Math.PI;
+  };
+
+  /** Signed separation of two angles, folded into (-180, 180]. */
+  const hueDrift = (x: number, y: number): number => ((x - y + 540) % 360) - 180;
+
+  it.each([0, 1, 2, 3, 4, 5])('slot %i holds its hue', (i) => {
+    const drift = hueDrift(hueAngle(CATEGORICAL_DARK[i]!), hueAngle(CATEGORICAL[i]!));
+    // Within a degree. The three unchanged hues drift by exactly 0; the three
+    // re-derived ones drift only by 8-bit rounding.
+    expect(Math.abs(drift)).toBeLessThan(1);
   });
 });

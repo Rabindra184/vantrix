@@ -103,7 +103,12 @@ describe('the fixture discriminates, so the tests reading it can fail', () => {
     expect(series.buckets.filter((b) => (b.startedKoCount ?? 0) > 0).length).toBeGreaterThan(0);
 
     for (const bucket of series.buckets) {
-      expect(bucket.startedOkCount).not.toBeNull();
+      // `typeof === 'number'`, not `not.toBeNull()`: the latter also passes for
+      // `undefined` — a field the capture dropped entirely — and the `?? 0` on
+      // the next line would then absorb it and let the sum assertion pass on a
+      // fixture that carries no split at all.
+      expect(typeof bucket.startedOkCount).toBe('number');
+      expect(typeof bucket.startedKoCount).toBe('number');
       expect((bucket.startedOkCount ?? 0) + (bucket.startedKoCount ?? 0)).toBe(bucket.startedCount);
     }
   });
