@@ -89,16 +89,37 @@ function bandValue(bucket: SeriesResponse['buckets'][number], band: Band): numbe
  * the reference run the two are IDENTICAL at p95 and p99 (24 failures out of
  * 895 never move the 95th), so only the lower bands can even tell them apart.
  *
- * `bands` selects a subset, for §13.2 ⑨'s band selector. Order always follows
- * `BANDS`, never the caller's argument order, so the legend and the stacking
- * cannot be reordered by how a selection happened to be built.
+ * `bands` SELECTS WHAT IS DRAWN, AND ONLY WHAT IS DRAWN — §13.2 ⑨'s band
+ * selector. Order always follows `BANDS`, never the caller's argument order, so
+ * the legend cannot be reordered by how a selection happened to be built.
+ *
+ * **THE DATA TABLE ALWAYS CARRIES ALL TEN BANDS, whatever the selection.** The
+ * two are genuinely different concerns and used to be one, which left the
+ * parity surface carrying six of the ten D-7 requires:
+ *
+ *   - The drawing is narrowed because ten lines on one axis is more than a
+ *     sighted reader can follow, and more than the six hues the categorical
+ *     palette has. That is a legibility budget, and it is real.
+ *   - `rows`/`columns` are the parity surface (design §7) and the screen-reader
+ *     route to the same information. Neither has a legibility budget: a table
+ *     column costs a reader nothing until they read it, and a screen-reader
+ *     user is not the one who narrowed the drawing. Shrinking the table with
+ *     the selection means a spec asserting parity against G-22 can only ever
+ *     see whichever six bands a control happened to be left on — and that a
+ *     reader who cannot see the chart loses four bands to a decision made about
+ *     pixels.
+ *
+ * So `series` follows `selected`; `columns` and every row's `values` follow
+ * `BANDS`. They are deliberately not the same list, and this is the one place
+ * in the file where the table and the drawing legitimately disagree.
  */
 export function toPercentiles(
   series: SeriesResponse,
   bands: readonly Band[] = BANDS,
 ): ChartData {
   const selected = BANDS.filter((b) => bands.includes(b));
-  const columns = ['Elapsed (s)', ...selected.map((b) => BAND_LABEL[b])];
+  // ALL TEN. Not `selected` — see the docstring above.
+  const columns = ['Elapsed (s)', ...BANDS.map((b) => BAND_LABEL[b])];
 
   if (series.buckets.length === 0) {
     return {
@@ -119,7 +140,7 @@ export function toPercentiles(
 
   const rows: ChartTableRow[] = series.buckets.map((bucket, i) => ({
     label: String(axisLabels[i]),
-    values: selected.map((band) => bandValue(bucket, band) ?? '—'),
+    values: BANDS.map((band) => bandValue(bucket, band) ?? '—'),
   }));
 
   const unmeasured = series.buckets.filter((b) => !measured(b)).length;
@@ -141,6 +162,26 @@ export function toPercentiles(
     axisLabels,
     columns,
     rows,
+    /**
+     * NOTHING SELECTED IS NOTHING TO DRAW, and design §11 forbids drawing
+     * empty axes for it.
+     *
+     * `empty` was set only from `series.buckets.length`, a fact about the
+     * PAYLOAD — so deselecting every band returned 62 axis labels, 62 rows and
+     * zero series, and `Chart` dutifully initialised ECharts and drew a
+     * labelled grid with no marks. That is the picture that says "we measured
+     * this second, and there was nothing in it", for a chart whose data is
+     * entirely intact and merely unselected.
+     *
+     * The message names the remedy, because unlike every other empty state in
+     * this file the reader is one click from fixing it — and the rows above are
+     * still returned in full, so the table goes on carrying all ten bands while
+     * the drawing is switched off.
+     */
+    empty:
+      selected.length === 0
+        ? 'No percentile bands are selected, so there is nothing to draw. Choose at least one band above.'
+        : undefined,
     limitation: notes.join(' '),
   };
 }

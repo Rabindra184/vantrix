@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import DataTable from './DataTable';
+import DataTable, { formatCell } from './DataTable';
 import { echarts } from './echarts';
 import {
   assignPalette,
@@ -283,6 +283,28 @@ export default function Chart({
           backgroundColor: theme.surface,
           borderColor: theme.gridline,
           textStyle: { color: theme.ink },
+          // THE SAME FORMATTING THE DATA TABLE USES, from the same function.
+          //
+          // The tooltip is the surface a sighted reader actually reads numbers
+          // off — the table is collapsed until asked for — and it was rendering
+          // ECharts' raw values: `122.74516052680153 ms` for a percentile,
+          // seventeen significant digits of a number nothing measures to more
+          // than two. `formatCell` was written for the table half of exactly
+          // this problem; sharing it is what stops the two surfaces disagreeing
+          // about the same value, and keeps the rounding a display decision in
+          // one place rather than two.
+          //
+          // Not `Math.round`: `formatCell` leaves integers and pre-formatted
+          // strings alone, and refuses to show a non-zero value as `0`.
+          valueFormatter: (value: unknown) => {
+            // A gap, rendered as the table renders one. ECharts asks for a
+            // value per series at the hovered category, including series that
+            // have none there.
+            if (value === null || value === undefined) return '—';
+            return typeof value === 'number' || typeof value === 'string'
+              ? formatCell(value)
+              : String(value);
+          },
           // The crosshair `connect` propagates between grouped charts.
           axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
         },
