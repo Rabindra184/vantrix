@@ -1,0 +1,72 @@
+/*
+ * Design tokens as CSS custom properties. Consumed by Tailwind (see
+ * tailwind config / utility classes) and, later, by charts.
+ *
+ * Light values live under :root. Dark values apply automatically via
+ * prefers-color-scheme, and are re-assertable by a future theme toggle
+ * through [data-theme="light"] / [data-theme="dark"], which must win over
+ * prefers-color-scheme in both directions - hence those selectors are
+ * declared after the media query.
+ *
+ * Status colours (passed / failed / not_applicable / pending) are tokens
+ * only. Colour is never the only signal for status - consuming components
+ * must always pair it with text and/or shape.
+ */
+
+@import 'tailwindcss';
+
+:root {
+  --color-surface: #ffffff;
+  --color-surface-raised: #f4f5f7;
+  --color-text-primary: #14171a;
+  --color-text-muted: #5b6470;
+  --color-border: #d7dbe0;
+
+  --color-status-passed: #1a7f37;
+  --color-status-failed: #cf222e;
+  --color-status-not-applicable: #6e7781;
+  --color-status-pending: #9a6700;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #14171a;
+    --color-surface-raised: #1e2226;
+    --color-text-primary: #f4f5f7;
+    --color-text-muted: #9aa4b2;
+    --color-border: #30363d;
+
+    --color-status-passed: #3fb950;
+    --color-status-failed: #f85149;
+    --color-status-not-applicable: #8b949e;
+    --color-status-pending: #d29922;
+  }
+}
+
+/* Explicit overrides win over prefers-color-scheme in both directions,
+   so a future toggle can force a theme regardless of OS setting. */
+[data-theme='light'] {
+  --color-surface: #ffffff;
+  --color-surface-raised: #f4f5f7;
+  --color-text-primary: #14171a;
+  --color-text-muted: #5b6470;
+  --color-border: #d7dbe0;
+
+  --color-status-passed: #1a7f37;
+  --color-status-failed: #cf222e;
+  --color-status-not-applicable: #6e7781;
+  --color-status-pending: #9a6700;
+}
+
+[data-theme='dark'] {
+  --color-surface: #14171a;
+  --color-surface-raised: #1e2226;
+  --color-text-primary: #f4f5f7;
+  --color-text-muted: #9aa4b2;
+  --color-border: #30363d;
+
+  --color-status-passed: #3fb950;
+  --color-status-failed: #f85149;
+  --color-status-not-applicable: #8b949e;
+  --color-status-pending: #d29922;
+}

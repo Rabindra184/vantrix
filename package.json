@@ -7,17 +7,20 @@
   },
   "scripts": {
     "preinstall": "node -e \"const [maj]=process.versions.node.split('.').map(Number); if (maj < 22) { console.error('\\nNode ' + process.versions.node + ' is below this repo\\'s floor of 22. Run: nvm use\\n'); process.exit(1); }\"",
-    "build": "tsc -b && pnpm --filter @perfportal/api build && pnpm --filter @perfportal/worker build",
+    "build": "tsc -b && pnpm --filter @perfportal/api build && pnpm --filter @perfportal/worker build && pnpm run build:web",
+    "build:web": "pnpm --filter @perfportal/web build",
     "test": "pnpm build && vitest run",
     "test:unit": "vitest run",
     "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test",
     "lint": "eslint .",
-    "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json",
+    "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p apps/web/e2e/tsconfig.json",
     "bootstrap": "pnpm --filter @perfportal/persistence run bootstrap"
   },
   "devDependencies": {
     "@perfportal/plugin-gatling": "workspace:*",
     "@perfportal/statistics": "workspace:*",
+    "@playwright/test": "1.62.1",
     "@swc/core": "^1.15.47",
     "@types/node": "^22.0.0",
     "eslint": "^9.0.0",

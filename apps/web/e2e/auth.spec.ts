@@ -1,0 +1,111 @@
+import { expect, test } from '@playwright/test';
+import { seedAdmin, seedRunWithData, seedRunsAt, seedUserWithoutOrg } from './fixtures.js';
+import { signIn } from './helpers.js';
+
+/**
+ * The cookie round trip in a real browser — the reason this sub-project
+ * exists (design §1). Everything here drives the shipped, built SPA served
+ * same-origin by the API (playwright.config.ts), so a session cookie that is
+ * `secure`/`sameSite: 'strict'` is exercised exactly as production sets it.
+ *
+ * Seeded per WORKER, not per test: playwright.config.ts sets
+ * `fullyParallel: true`, so this hook runs once in every worker process that
+ * picks up a test from this file, and each worker gets its own admin in its
+ * own org. That isolation is deliberate — no test here depends on another's
+ * data, so nothing has to run serially.
+ */
+let admin: { email: string; password: string; orgId: string };
+
+test.beforeAll(async () => {
+  admin = await seedAdmin();
+});
+
+test('signing in lands on the run list', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(admin.email);
+  await page.getByLabel('Password').fill(admin.password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/runs$/);
+});
+
+// The cookie round trip - the reason this sub-project exists.
+test('the session survives a full page reload', async ({ page }) => {
+  // One run, seeded HERE rather than in beforeAll because this is the only
+  // test in this file that needs the org to be non-empty: without a run the
+  // list renders its empty state and there is no table to assert on. A
+  // single direct-Prisma row (no HTTP, no pipeline) costs one insert.
+  await seedRunsAt(admin.orgId, [{ startedAt: new Date('2026-06-01T09:00:00Z') }]);
+
+  await signIn(page, admin);
+  await page.reload();
+  await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  // The session survived far enough to fetch org-scoped data and render it,
+  // not merely far enough to keep a Sign out button on screen.
+  await expect(page.getByRole('table')).toBeVisible();
+});
+
+test('an unauthenticated deep link redirects to login and comes back', async ({ page }) => {
+  // seedRunWithData posts the real reference bundle and runs the ingest
+  // pipeline synchronously. MEASURED on 2026-08-12 against the reference
+  // bundle: ~0.34s on the first call in a process, ~0.13s thereafter — not
+  // the ~51s design R-3 and fixtures.ts once claimed, which was never
+  // measured. Seeded HERE rather than in beforeAll because this is the only
+  // test in this file that needs a run id.
+  //
+  // The `test.setTimeout(180_000)` this comment used to justify is gone with
+  // the figure that justified it: at a third of a second the seed cannot
+  // approach the 60s default, every other test in this suite ingests the
+  // same bundle without an extended timeout, and a three-minute budget only
+  // means a genuine hang takes three minutes to report itself.
+  const runId = await seedRunWithData(admin.orgId);
+
+  await page.goto(`/runs/${runId}`);
+  await expect(page).toHaveURL(/\/login/);
+  // Already on /login. Filling in place — NOT signIn(), which re-navigates to
+  // a bare /login and discards the remembered destination.
+  await page.getByLabel('Email').fill(admin.email);
+  await page.getByLabel('Password').fill(admin.password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+});
+
+test('signing out clears the session', async ({ page }) => {
+  await signIn(page, admin);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/login/);
+  await page.goto('/runs');
+  await expect(page).toHaveURL(/\/login/);
+});
+
+/**
+ * The rejection path of `session.ts` — Better Auth's own `{ code, message }`
+ * shape (deviation D-1), which nothing else in the suite reaches. Its message
+ * is surfaced verbatim precisely because it draws distinctions this form must
+ * not flatten, so "the error is shown at all" is the assertion that keeps
+ * that code honest.
+ *
+ * NOT `signIn()` from helpers.ts: that waits for navigation away from
+ * /login, which is exactly what must not happen here — it would hang for the
+ * full timeout rather than fail.
+ */
+test('a wrong password is rejected in place, without leaving the login page', async ({ page }) => {
+  // Its own account, not the worker's shared `admin`: this is the one test
+  // that deliberately fails an authentication, and an account it owns cannot
+  // be affected by — or affect — anything another test does to that one.
+  const account = await seedAdmin();
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(account.email);
+  await page.getByLabel('Password').fill('not-the-password');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page).toHaveURL(/\/login/);
+});
+
+// A valid session with no org must NOT bounce to login - that loops forever.
+test('a user with no organisation sees an explanation, not a login loop', async ({ page }) => {
+  const orphan = await seedUserWithoutOrg();
+  await signIn(page, orphan);
+  await expect(page.getByText(/not a member of any organisation/i)).toBeVisible();
+  await expect(page).not.toHaveURL(/\/login/);
+});

@@ -1,0 +1,32 @@
+{
+  "name": "@perfportal/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@perfportal/contracts": "workspace:*",
+    "@tanstack/react-query": "5.101.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "7.18.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@perfportal/core": "workspace:*",
+    "@perfportal/persistence": "workspace:*",
+    "@perfportal/storage": "workspace:*",
+    "@playwright/test": "1.62.1",
+    "reflect-metadata": "0.2.2",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "6.0.5",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.1"
+  }
+}
