@@ -158,7 +158,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     endpoints.add(name);
     if (endpoints.size > maxEndpoints) {
       throw ingestError('ENDPOINT_CARDINALITY_EXCEEDED', {
-        message: `Run exceeds the endpoint cardinality cap: more than ${maxEndpoints} distinct request names.`,
+        message: `Run exceeds the endpoint cardinality cap: more than ${maxEndpoints} distinct request paths.`,
         remediation: 'Request names appear to contain dynamic values such as IDs. Parameterize them in the simulation, or raise the limit in project settings.',
         detail: { limit: maxEndpoints, samples: [...endpoints].slice(0, 5) },
       });

@@ -207,6 +207,12 @@ async function main() {
     // An empty array here would mean the errors table renders its empty state
     // in every test that reads this fixture, and pass.
     'errors.errors': captured.errors.errors.length,
+    // Of all six captures, this is the one most likely to come back empty on a
+    // future re-capture: it is the only endpoint parameterised by a
+    // data-dependent string that must match a stored metric name exactly
+    // (`?name=Catalog/List Products`), so a rename, a re-encoding, or a name
+    // that stops being joined would silently produce `{ ok: [], ko: [] }`.
+    'scatter.ok': captured.scatter.ok.length,
   };
   for (const [what, length] of Object.entries(nonEmpty)) {
     if (length === 0) {
