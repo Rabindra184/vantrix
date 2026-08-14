@@ -73,11 +73,18 @@ const FAMILIES = [
  * cause is the whole point: "no percentiles" would read as a group whose
  * response times were measured and found empty, which is a different and false
  * claim. Same distinction `SPLIT_UNAVAILABLE` makes for `started_ok_count`.
+ *
+ * NO CLAIM ABOUT THE REST OF THE PAGE. An earlier draft added "The statistics
+ * and distribution above are computed from the same measurements and are
+ * complete" — true on a fully-loaded page, false the moment `/stats` errors
+ * (both statistics sections are then showing an alert, not a row) or
+ * `/distribution` 404s (`payload.tsx` documents that as reachable for a
+ * completed run with no histogram). This sentence renders unconditionally, so
+ * it can only safely say what is always true.
  */
 const NO_GROUP_SERIES =
   'This platform has not recorded per-group time series, so percentiles over time cannot be ' +
-  'drawn for a group. The statistics and distribution above are computed from the same ' +
-  'measurements and are complete.';
+  'drawn for a group.';
 
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 

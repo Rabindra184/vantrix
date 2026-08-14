@@ -110,8 +110,16 @@ test('both families and both distributions are on the page', async ({ page }) =>
     await expect(page.getByTestId(`chart-data-${id}`)).toHaveCount(1);
   }
 
-  // GR-07 does not exist (§A.9 F-4).
-  await expect(page.getByText('per second')).toHaveCount(0);
+  // GR-07 does not exist (§A.9 F-4). Asserted by ID, not by title: a rate
+  // chart at group scope would be headed like the request page's own
+  // ("Number of requests"/"Number of responses", RatesChart's `title` prop),
+  // and its data-table columns read "Elapsed (s)", "All", "OK", "KO" — no
+  // "per second" text of any kind reaches the DOM. That string only ever
+  // appears in the ECharts y-axis name, drawn into the canvas, so a
+  // `getByText('per second')` guard would pass against exactly the mistake
+  // it exists to catch. The ids are stable across either title.
+  await expect(page.getByTestId('chart-requests-per-second')).toHaveCount(0);
+  await expect(page.getByTestId('chart-responses-per-second')).toHaveCount(0);
 });
 
 test('the percentile charts say the series was never recorded', async ({ page }) => {
