@@ -136,15 +136,17 @@ Add to `palette.test.ts`:
 ```ts
 const SURFACE_TOKENS_UNDER_TEST: readonly { role: SurfaceRole; token: string }[] = [
   { role: 'page', token: '--color-surface-page' },
-  { role: 'card', token: '--color-surface' },
+  // Three tokens carry a longer name than their role so the @theme key can
+  // hold the short one. A key that reads a var of its OWN name is circular.
+  { role: 'card', token: '--color-surface-card' },
   { role: 'sidebar', token: '--color-surface-sidebar' },
   { role: 'sunken', token: '--color-surface-sunken' },
   { role: 'border', token: '--color-border' },
-  { role: 'divider', token: '--color-divider' },
+  { role: 'divider', token: '--color-rule' },
   { role: 'text-primary', token: '--color-text-primary' },
   { role: 'text-muted', token: '--color-text-muted' },
   { role: 'text-subtle', token: '--color-text-subtle' },
-  { role: 'accent', token: '--color-accent' },
+  { role: 'accent', token: '--color-accent-base' },
   { role: 'accent-foreground', token: '--color-accent-foreground' },
   { role: 'ring', token: '--color-ring' },
 ];
@@ -207,24 +209,36 @@ export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceR
 
 - [ ] **Step 4: Mirror them into tokens.css, in all three blocks**
 
-Light block values from `SURFACE_TOKENS.light`, both dark blocks from `SURFACE_TOKENS.dark`. `--color-surface`, `--color-border`, `--color-text-primary` and `--color-text-muted` already exist — change their values rather than adding duplicates. Delete `--color-surface-raised`, which nothing reads.
+Light block values from `SURFACE_TOKENS.light`, both dark blocks from `SURFACE_TOKENS.dark`. `--color-border`, `--color-text-primary` and `--color-text-muted` already exist — change their values rather than adding duplicates. Delete `--color-surface-raised`, which nothing reads.
+
+**A `@theme` key and the runtime token it reads must not share a name.** `@theme inline { --color-surface: var(--color-surface) }` defines `--color-surface` at `:root` with its own value — a self-reference that resolves to nothing, silently. Three of this task's tokens would collide, so those three runtime tokens carry a distinct name and the `@theme` keys keep the short ones every later task's utilities assume:
+
+| Runtime token | `@theme` key | Utility |
+|---|---|---|
+| `--color-surface-card` | `--color-surface` | `bg-surface` |
+| `--color-rule` | `--color-divider` | `border-divider` |
+| `--color-accent-base` | `--color-accent` | `bg-accent`, `text-accent` |
+
+The other seven have no collision — `--color-surface-page` vs `--color-page`, `--color-border` vs `--color-default`, and so on — and keep the names in `SURFACE_TOKENS`.
 
 Then add the `@theme` export at the top of the file, after `@import 'tailwindcss';`:
 
 ```css
 @theme inline {
   --color-page: var(--color-surface-page);
-  --color-surface: var(--color-surface);
+  --color-surface: var(--color-surface-card);
   --color-sidebar: var(--color-surface-sidebar);
   --color-sunken: var(--color-surface-sunken);
   --color-default: var(--color-border);
-  --color-divider: var(--color-divider);
+  --color-divider: var(--color-rule);
   --color-primary: var(--color-text-primary);
   --color-muted: var(--color-text-muted);
   --color-subtle: var(--color-text-subtle);
-  --color-accent: var(--color-accent);
+  --color-accent: var(--color-accent-base);
 }
 ```
+
+One knock-on, and it is the whole reason the rename is safe to make here: `chartTheme` reads `token('--color-surface', …)` for the tooltip background. Change that single call to `'--color-surface-card'`. Nothing else in `apps/web/src` reads these three by name — Task 3 rewrites every call site to the utility form.
 
 - [ ] **Step 5: Run tests**
 
@@ -423,15 +437,26 @@ export const CATEGORICAL = [
   '#e11d48', // rose
 ] as const;
 
+/**
+ * The same six hues on a dark ground, derived by the rule this file has always
+ * used: hold the hue angle, clamp OKLCH L into the 0.48–0.67 dark band, and
+ * reduce chroma only as far as the sRGB gamut forces.
+ *
+ * The Tailwind-400 values these started from (`#818cf8`, `#2dd4bf`, `#a78bfa`,
+ * `#f59e0b`, `#38bdf8`, `#fb7185`) are all ABOVE the band — L 0.68 to 0.79 —
+ * and would glare on a dark surface. Measured, not guessed: all six failed.
+ */
 export const CATEGORICAL_DARK = [
-  '#818cf8', // indigo, lightened for a dark ground
-  '#2dd4bf', // teal
-  '#a78bfa', // violet
-  '#f59e0b', // amber
-  '#38bdf8', // sky
-  '#fb7185', // rose
+  '#6c71fe', // indigo  — L 0.620
+  '#30a79a', // teal    — L 0.660
+  '#9469ff', // violet  — L 0.640
+  '#d77500', // amber   — L 0.660
+  '#059ddf', // sky     — L 0.660
+  '#ee2f52', // rose    — L 0.620
 ] as const;
 ```
+
+These are verified against every gate in `palette.test.ts`: all six inside 0.48–0.67, all above the 0.1 chroma floor, adjacent ΔE 23.78 / 26.49 / 33.10 / 30.13 / 34.75 against the floor of 15.
 
 - [ ] **Step 4: Update the gate's own comment**
 
@@ -451,7 +476,7 @@ it('separates every adjacent pair by at least ΔE 15', () => {
 pnpm vitest run apps/web/test/palette.test.ts && pnpm test:unit
 ```
 
-Expected: PASS, including the retained lightness-band, chroma-floor and ΔE-15 gates. **If the lightness band fails**, the dark values are the ones to adjust (the band is 0.48–0.67 for dark) — never the gate.
+Expected: PASS, including the retained lightness-band, chroma-floor and ΔE-15 gates — all three were measured against these exact values before this plan was written, so a failure here means a hex was mistyped, not that the values are wrong. Never adjust the gate.
 
 - [ ] **Step 7: Commit**
 
