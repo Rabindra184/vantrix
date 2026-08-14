@@ -562,7 +562,11 @@ export default function RunHeader({
 }
 ```
 
-`formatDuration` currently lives inside `RunDetail.tsx` as a module-level function — export it from there and import it here rather than writing a second one. Its `Math.round`-not-`floor` rule and its dash-for-null branch are argued in its docstring and must not be re-derived.
+**Move `formatDuration` into `apps/web/src/routes/format.ts`**, taking its docstring with it, and import it from there in both `RunDetail.tsx` and `RunHeader.tsx`.
+
+Not exported from `RunDetail.tsx`, which is what it might look like it wants: `RunDetail` renders `RunShell`, which renders `RunHeader`, so importing back into `RunHeader` from `RunDetail` closes a cycle — `RunDetail → RunShell → RunHeader → RunDetail`. ES modules will often tolerate that and it is still a trap laid for whoever adds the next import.
+
+`format.ts` is where it belongs anyway, and that module's own docstring makes the argument: it exists because the run list and the run page each held a byte-identical private copy of the start-time formatter, and "two copies of a rule that must not drift is the setup for the drift, not a defence against it." `formatDuration` is the same rule in the same position — its `Math.round`-not-`floor` reasoning and its dash-for-null branch must not be re-derived.
 
 Keep `data-testid="run-duration"`, `"run-status"` and `"run-verdict"` on the same values they carry today; `run-detail.spec.ts` asserts all three.
 
