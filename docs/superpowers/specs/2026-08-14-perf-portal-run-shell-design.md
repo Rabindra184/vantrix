@@ -94,14 +94,25 @@ the run id could only ever have been `requests/` or `groups/`. If it proves
 annoying in practice the fix is a catch-all child redirecting to the run's own
 index, not a change to the global route. Recorded, not built.
 
-### 3b. Laziness arrives for free
+### 3b. Laziness arrives for free — and the second fetch needs a `staleTime`
 
 `Overview` currently fires four metric queries — `stats`, `users`,
 `distribution`, `series`. Under tabs, the Charts route is not rendered until it
 is opened, so its payloads are not fetched. No `enabled` flags to write and no
-decision to encode. `statsQuery` is asked for by both Overview and Charts under
-one key, so the second is served from cache, exactly as the two current call
-sites already are.
+decision to encode.
+
+`statsQuery` is asked for by both Overview and Charts under one key — but the
+key alone does not serve the second ask from cache. That was true of the
+current `Tables`/`Overview` call sites only because they mount together, in
+the same commit; a shared key dedupes concurrent observers, not a later one.
+Under tabs, Overview and Charts are separate ROUTES that mount at whatever
+moment the reader clicks between them, and `main.tsx` sets no `staleTime`, so
+TanStack's default of `0` applies: the second mount finds already-resolved
+data that is stale on arrival and refetches anyway. `api/metrics.ts` is what
+actually closes this — each metric query factory carries `staleTime: Infinity`,
+correct because a completed run's numbers do not change and a re-ingest is a
+new run id — and that `staleTime`, not the shared key by itself, is what makes
+the second ask served from cache.
 
 ### 3c. The processing branch grows no tabs
 
