@@ -93,6 +93,17 @@ test('the header states the run’s identity and its own peak', async ({ page })
   // descendant's aria-hidden the way a real AT tree does, so a badge whose
   // glyph leaks into its name passes every unit assertion and fails here.
   await expect(page.getByTestId('run-status')).toHaveAccessibleName('complete');
+
+  // THE NAME ALONE DOES NOT PIN THIS. `role="img"` on the badge's wrapper
+  // reports the identical string "complete" while turning a text pill into
+  // an assistive-tech GRAPHIC — every screen reader announces it as a
+  // picture, and `getByRole('img', …)` newly matches it, which
+  // `toHaveAccessibleName` above cannot tell apart from the correct
+  // `role="group"`. `getByRole` locators query Chromium's own computed
+  // role, not a jsdom approximation, so this is the assertion that actually
+  // fails if the role regresses even though the name stays "complete".
+  await expect(page.getByRole('group', { name: 'complete' })).toHaveCount(1);
+  await expect(page.getByRole('img', { name: 'complete' })).toHaveCount(0);
 });
 
 /**

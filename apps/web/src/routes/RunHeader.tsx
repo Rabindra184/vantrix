@@ -1,7 +1,7 @@
 import type { RunResponse } from '@perfportal/contracts';
 import Badge from '../components/Badge';
 import { formatDuration, formatStarted } from './format';
-import { STATUS, VERDICT } from './marks';
+import { STATUS, VERDICT, type Mark } from './marks';
 
 /**
  * What this run IS, before anything about how it went.
@@ -50,14 +50,53 @@ export default function RunHeader({
         </span>
         <span data-testid="run-duration">{formatDuration(run.durationMs)}</span>
         {peakUsers !== null && <span>{peakUsers.toLocaleString()} peak users</span>}
-        {/* `data-testid` goes on `Badge` itself, not on a wrapping `<span>`:
-            a bare span has ARIA's "generic" role, whose accessible name is
-            prohibited outright, so `getByTestId('run-status')` would resolve
-            to an element Chromium can never name — see Badge.tsx's own
-            docstring, which is where this actually got caught. */}
-        <Badge mark={STATUS[run.status]} data-testid="run-status" />
-        <Badge mark={VERDICT[run.verdict ?? 'none']} data-testid="run-verdict" />
+        <NamedBadge mark={STATUS[run.status]} testId="run-status" />
+        <NamedBadge mark={VERDICT[run.verdict ?? 'none']} testId="run-verdict" />
       </div>
     </header>
+  );
+}
+
+/**
+ * `Badge`, given a name and a testid where it sits with no ancestor that
+ * would compute one from its content on its own.
+ *
+ * `Badge` itself is untouched (`apps/web/src/components/Badge.tsx`) — this
+ * is scoped to `RunHeader` on purpose, not fixed on the shared component,
+ * because the shared component was never broken: `RunList.tsx`'s badges
+ * already get a correct accessible name for free, since each one sits
+ * inside a `<td>` (implicit role "cell"), and a cell computes its OWN name
+ * from its descendants' content. `Badge`'s root is a bare `<span>`, whose
+ * implicit ARIA role is "generic" — and "generic" is Name-from-PROHIBITED,
+ * so a `<span data-testid="run-status">` wrapping a Badge with no role of
+ * its own reports `""` to `toHaveAccessibleName`, regardless of the visible
+ * label text sitting right inside it. `RunHeader` is the one place a badge
+ * has no `<td>` (or other name-from-content) ancestor, so it is the one
+ * place that needs its own fix.
+ *
+ * `role="group"`, not `role="img"`. `img` was tried first and reverted: it
+ * makes an element's children PRESENTATIONAL, so the visible label stops
+ * being individually exposed and the whole node reads to assistive tech as
+ * a picture — wrong for a text pill, and `getByRole('img', { name: … })`
+ * would newly match every badge on the page, including `RunList.tsx`'s,
+ * which this component has no business changing the semantics of. `group`
+ * is "Name from: author" too (so `aria-label` still supplies the name) but
+ * does not imply a graphic and does not make children presentational.
+ *
+ * MEASURED, not assumed, that this does not double-announce: a `role=group`
+ * whose `aria-label` restates its own visible content risks a screen reader
+ * reading the name once for the group and again while entering its
+ * children. Checked with a real `ariaSnapshot()` against the built app
+ * (Chromium's actual accessibility tree, not jsdom) — `- group "complete"`,
+ * with NO nested child text node, the same shape `RunList.tsx`'s
+ * `- cell "complete"` already has. Chromium prunes the plain-text `<span>`
+ * that contributes to an ancestor's computed name rather than exposing it a
+ * second time, so nothing here duplicates what a screen reader announces.
+ */
+function NamedBadge({ mark, testId }: { readonly mark: Mark; readonly testId: string }) {
+  return (
+    <span role="group" aria-label={mark.label} data-testid={testId}>
+      <Badge mark={mark} />
+    </span>
   );
 }
