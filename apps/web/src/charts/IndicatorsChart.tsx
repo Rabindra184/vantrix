@@ -1,7 +1,7 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
-import { BAND_ROLES, toIndicators } from './transforms/indicators';
+import { BAND_ROLES, toIndicators, toRequestIndicators } from './transforms/indicators';
 
 /**
  * §13.2 ③ — the response-time indicator bands (Appendix A G-06…G-09).
@@ -20,8 +20,18 @@ import { BAND_ROLES, toIndicators } from './transforms/indicators';
  * by identity: a fresh object every render would re-issue `setOption` on every
  * render, including on every React Query background refetch.
  */
-export default function IndicatorsChart({ stats }: { stats: StatsResponse }) {
-  const data = useMemo(() => toIndicators(stats), [stats]);
+export default function IndicatorsChart({
+  stats,
+  path,
+}: {
+  readonly stats: StatsResponse;
+  /** Present on the request detail page; absent on the run's own overview. */
+  readonly path?: string;
+}) {
+  const data = useMemo(
+    () => (path === undefined ? toIndicators(stats) : toRequestIndicators(stats, path)),
+    [stats, path],
+  );
 
   return (
     <Chart

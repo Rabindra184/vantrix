@@ -293,12 +293,17 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
   const withinOnePercent = (actual: number, truth: number): boolean =>
     truth === 0 ? actual === 0 : Math.abs(actual - truth) / truth <= 0.01; // <=, never <
 
-  /** Sorted OK response times (endMs - startMs) for one named request, decoded
+  /** Sorted OK response times (endMs - startMs) for one request, decoded
    *  straight from the fixture - the same "response_time" definition the
-   *  engine uses (packages/statistics/src/engine.ts: `e.endMs - e.startMs`). */
+   *  engine uses (packages/statistics/src/engine.ts: `e.endMs - e.startMs`).
+   *  `name` is the FULL joined path (e.g. "Cart/Add To Cart"), matched the
+   *  identical way engine.ts's D-10 builds a request's identity -
+   *  `[...e.groups, e.name].join('/')` - not the raw record's bare `name`
+   *  field, so this stays correct for both grouped and genuinely groupless
+   *  requests without the caller needing to know which is which. */
   const groundTruthOkDurations = (name: string): number[] =>
     simulationLogEvents
-      .filter((e) => e.name === name && e.ok)
+      .filter((e) => [...e.groups, e.name].join('/') === name && e.ok)
       .map((e) => e.endMs - e.startMs)
       .sort((a, b) => a - b);
 
@@ -398,20 +403,32 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
 
     it('PT-RQ-05 request-scope p95 matches ground truth from the decoded event set', async () => {
       const stats = await get(`/v1/runs/${runId}/stats?scope=request`);
-      const row = stats.body.stats.find((s: { name: string }) => s.name === 'Add To Cart');
-      const truth = truePercentile(groundTruthOkDurations('Add To Cart'), 95);
+      // Any row with OK samples proves the point; a hard-coded name would
+      // silently stop matching once a request's identity is its full group
+      // path (D-10) rather than its bare leaf name.
+      const row = stats.body.stats.find((s: { okCount: number }) => s.okCount > 0);
+      expect(row).toBeDefined();
+      const truth = truePercentile(groundTruthOkDurations(row.name), 95);
       expect(withinOnePercent(row.percentiles.p95, truth)).toBe(true);
     });
 
     it('PT-RQ-09 scatter is one point per OK bucket, x a rate and y the truncated p95', async () => {
-      // "Add To Cart" (stats.stats[0] under scope=request, sorted alphabetically)
-      // has KO events, and parity.controller.ts's scatter handler deliberately
-      // emits TWO points for a bucket that has both an OK and a KO digest - one
-      // per status-filtered series (see its "Gate is presence of the
-      // status-filtered digest" comment). A KO-free request keeps the
-      // point-per-bucket count 1:1, which is what this case is actually named
-      // for; "Add To Cart" is covered separately by PT-RQ-09b below.
-      const name = 'Product Detail';
+      // "Add To Cart" has KO events, and parity.controller.ts's scatter
+      // handler deliberately emits TWO points for a bucket that has both an
+      // OK and a KO digest - one per status-filtered series (see its "Gate
+      // is presence of the status-filtered digest" comment). A KO-free
+      // request keeps the point-per-bucket count 1:1, which is what this
+      // case is actually testing; "Add To Cart" is covered separately by
+      // PT-RQ-09b below. Derived rather than named, so this stays valid
+      // regardless of which request happens to be KO-free, and regardless
+      // of a request's identity being its bare name or its full group path
+      // (D-10) - a hard-coded name would silently break on either change.
+      const statsForKoFree = await get(`/v1/runs/${runId}/stats?scope=request`);
+      const koFree = statsForKoFree.body.stats.find(
+        (s: { koCount: number; okCount: number }) => s.koCount === 0 && s.okCount > 0,
+      );
+      expect(koFree).toBeDefined();
+      const name: string = koFree.name;
       const [series, globalSeries, scatter] = await Promise.all([
         get(`/v1/runs/${runId}/series?scope=request&name=${encodeURIComponent(name)}`),
         get(`/v1/runs/${runId}/series?scope=run&name=`),
@@ -508,8 +525,18 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // AC-STAT-2's lossless-coalescing invariant - so this pins the actual
       // number rather than loosely asserting "close to Gatling's count".
       // A future change to this figure should be visible here, not silent.
+      //
+      // Named, not derived: this is deviation D-03, pinned against two
+      // SPECIFIC requests whose exact scatter counts were measured by hand
+      // against the Gatling report, so a generic "pick any request" derivation
+      // would defeat the point. "Add To Cart" is under the "Cart" group, so
+      // under D-10 its identity is the joined path "Cart/Add To Cart"; "Place
+      // Order" is one of the fixture's two genuinely groupless requests (the
+      // other being "Search"), so its identity is unchanged by D-10. The
+      // counts themselves (48/15/53/9) are untouched by D-10 - only the name
+      // used to look "Add To Cart" up changed.
       const [cart, order] = await Promise.all([
-        get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent('Add To Cart')}`),
+        get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent('Cart/Add To Cart')}`),
         get(`/v1/runs/${runId}/scatter?name=${encodeURIComponent('Place Order')}`),
       ]);
       expect(cart.body.ok).toHaveLength(48);

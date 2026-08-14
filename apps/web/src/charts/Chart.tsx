@@ -37,6 +37,10 @@ export interface ChartYAxis {
  * took, depending on `exactValues`, and the reader has no other way to tell.
  * `DistributionChart` passes `data.columns[0]`, so the drawn axis and the data
  * table's label column are one string and cannot drift.
+ *
+ * A `scatter` has no categories: its x is a measured quantity and its series
+ * carry explicit [x, y] pairs, so this names the numeric horizontal axis
+ * instead. Same prop, same position on screen, different axis type underneath.
  */
 export interface ChartXAxis {
   readonly name?: string;
@@ -48,7 +52,7 @@ export interface ChartProps {
   readonly title: string;
   readonly data: ChartData;
   /** `'line'` unless stated — the shape six of the eight overview charts take. */
-  readonly kind?: 'line' | 'bar' | 'pie';
+  readonly kind?: 'line' | 'bar' | 'pie' | 'scatter';
   /** Stacked bars, for the indicator bands. Ignored by lines and pies. */
   readonly stacked?: boolean;
   /**
@@ -253,6 +257,21 @@ export default function Chart({
       // rather than competing with it.
       splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
     };
+    /**
+     * A scatter's x is a MEASURED QUANTITY, not a category — its series carry
+     * explicit [x, y] pairs rather than one value per label, so a category axis
+     * would index them by position and draw the run's throughput as 0, 1, 2…
+     */
+    const numericAxis = {
+      type: 'value' as const,
+      name: xAxisName,
+      nameLocation: 'middle' as const,
+      nameGap: 28,
+      nameTextStyle: axisText,
+      axisLabel: axisText,
+      axisLine: { lineStyle: { color: theme.gridline } },
+      splitLine: { show: false },
+    };
 
     instance.setOption(
       {
@@ -296,14 +315,25 @@ export default function Chart({
           //
           // Not `Math.round`: `formatCell` leaves integers and pre-formatted
           // strings alone, and refuses to show a non-zero value as `0`.
+          //
+          // A SCATTER POINT IS AN ARRAY, not a single number or string: its
+          // series data is `[x, y]` pairs (ChartSeries's own doc above), and
+          // ECharts hands the whole pair to `valueFormatter` at once rather
+          // than calling it once per axis. The `number | string` branch below
+          // would miss that shape entirely and fall through to `String(value)`
+          // — `String([3, 120])` is `"3,120"`, which on a milliseconds axis
+          // reads as three thousand one hundred twenty, not two separate
+          // measurements. So an array is formatted component-by-component,
+          // through the same `formatCell` every other value here uses, joined
+          // by a comma-space no reader would mistake for a digit grouping.
           valueFormatter: (value: unknown) => {
             // A gap, rendered as the table renders one. ECharts asks for a
             // value per series at the hovered category, including series that
             // have none there.
             if (value === null || value === undefined) return '—';
-            return typeof value === 'number' || typeof value === 'string'
-              ? formatCell(value)
-              : String(value);
+            const formatOne = (v: unknown): string =>
+              typeof v === 'number' || typeof v === 'string' ? formatCell(v) : String(v);
+            return Array.isArray(value) ? value.map(formatOne).join(', ') : formatOne(value);
           },
           // The crosshair `connect` propagates between grouped charts.
           axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
@@ -322,7 +352,7 @@ export default function Chart({
               },
               ...(horizontal
                 ? { xAxis: valueAxis, yAxis: categoryAxis }
-                : { xAxis: categoryAxis, yAxis: valueAxis }),
+                : { xAxis: kind === 'scatter' ? numericAxis : categoryAxis, yAxis: valueAxis }),
             }),
         // `index`, NOT the position in `drawn`. The two agree only while the
         // drawn set is a prefix of the series list, and an `essential` series
@@ -352,7 +382,9 @@ export default function Chart({
             // noise — and the size applies to the emphasised/hovered point.
             lineStyle: { width: 2 },
             symbolSize: 8,
-            showSymbol: false,
+            // A scatter IS its symbols. `showSymbol: false` — right for a
+            // 600-bucket line — draws an empty grid here.
+            showSymbol: kind === 'scatter' ? true : false,
           };
         }),
       },

@@ -80,31 +80,37 @@ import fixture from './fixtures/reference-run.json';
 const stats = fixture.stats as unknown as StatsResponse;
 const RUN_ID = stats.runId;
 
-/** The reference run's nine root rows, in payload order. */
-const ROOT_PATHS = [
+/**
+ * The reference run's four root rows, in payload order. D-10 nests the other
+ * five requests under their groups, so `Place Order` and `Search` — the two
+ * genuinely groupless ones — are the only requests left at the root.
+ */
+const ROOT_PATHS = ['Cart', 'Catalog', 'Place Order', 'Search'];
+
+/** Every row the table can show, with `Catalog` — and only `Catalog` —
+ *  expanded: its own three direct children, `Cart`'s two staying hidden. */
+const WITH_CATALOG_EXPANDED_PATHS = [
   'Cart',
   'Catalog',
-  'Add To Cart',
-  'List Products',
+  'Catalog/Recommendations',
+  'Catalog/List Products',
+  'Catalog/Product Detail',
   'Place Order',
-  'Product Detail',
-  'Related Items',
   'Search',
-  'View Cart',
 ];
 
-/** Every row the table can show, with `Catalog` expanded. */
+/** Every row in the tree, full path — every group and request expanded. */
 const ALL_PATHS = [
   'Cart',
   'Catalog',
   'Catalog/Recommendations',
-  'Add To Cart',
-  'List Products',
+  'Cart/Add To Cart',
+  'Cart/View Cart',
+  'Catalog/List Products',
+  'Catalog/Product Detail',
+  'Catalog/Recommendations/Related Items',
   'Place Order',
-  'Product Detail',
-  'Related Items',
   'Search',
-  'View Cart',
 ];
 
 function renderTable(payload: StatsResponse = stats) {
@@ -193,24 +199,25 @@ const worstColumnIn = (payload: StatsResponse): string => {
 };
 
 /**
- * The payload rows the tree puts at its ROOT — the rows a sort of the top
- * level reorders.
+ * The payload rows the tree puts DIRECTLY under `parentPath` — `null` for the
+ * root — the sibling list a sort of that level reorders. Generalised over
+ * `buildTree`'s own rule (a row's parent is the segment before its last `/`),
+ * so it answers for any level of the D-10 tree, not only the root.
  *
- * A row is a root when its name carries no `/`, which is true of every request
- * in this payload (measured in task 2: request names carry NO group path,
- * deviation D-10) and of the two top-level groups. `Catalog/Recommendations`
- * is the one row it excludes, and it is excluded correctly: it is `Catalog`'s
- * child. The row set this produces is asserted against `ROOT_PATHS` below, so
- * a fixture that stops agreeing says so rather than quietly comparing against
- * a row the table never puts at the top.
+ * The root case is what `ROOT_PATHS` is asserted against below, so a fixture
+ * that stops agreeing says so rather than quietly comparing against a row the
+ * table never puts at the top.
  */
-const rootRowsIn = (payload: StatsResponse): StatRow[] =>
-  payload.stats.filter(
-    (r) =>
-      r.scope !== 'run' &&
-      !r.name.includes('/') &&
-      r.family === (r.scope === 'group' ? 'group_cumulated' : 'response_time'),
-  );
+const childRowsIn = (payload: StatsResponse, parentPath: string | null): StatRow[] =>
+  payload.stats.filter((r) => {
+    if (r.scope === 'run') return false;
+    if (r.family !== (r.scope === 'group' ? 'group_cumulated' : 'response_time')) return false;
+    const cut = r.name.lastIndexOf('/');
+    const parent = cut <= 0 ? null : r.name.slice(0, cut);
+    return parent === parentPath;
+  });
+
+const rootRowsIn = (payload: StatsResponse): StatRow[] => childRowsIn(payload, null);
 
 /** A payload row's own value on a column — `undefined` when it HAS none. */
 const valueOn = (row: StatRow, column: string): number | undefined => {
@@ -222,18 +229,14 @@ const valueOn = (row: StatRow, column: string): number | undefined => {
 };
 
 /**
- * The order the root rows take on a column, computed here from the payload.
+ * The order a sibling list takes on a column, computed here from the payload.
  *
  * Stable — ties keep PAYLOAD order, which is the order `buildTree` hands the
  * sort — and a row with no value on the column goes last in BOTH directions,
  * because it is absent rather than smallest.
  */
-const rootOrderBy = (
-  column: string,
-  direction: 'asc' | 'desc',
-  payload: StatsResponse = stats,
-): string[] =>
-  rootRowsIn(payload)
+const orderBy = (rows: readonly StatRow[], column: string, direction: 'asc' | 'desc'): string[] =>
+  rows
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
       const av = valueOn(a.row, column);
@@ -247,12 +250,26 @@ const rootOrderBy = (
     })
     .map((entry) => entry.row.name);
 
+const rootOrderBy = (
+  column: string,
+  direction: 'asc' | 'desc',
+  payload: StatsResponse = stats,
+): string[] => orderBy(rootRowsIn(payload), column, direction);
+
+/** The order `parentPath`'s own direct children take on a column. */
+const childOrderBy = (
+  payload: StatsResponse,
+  parentPath: string,
+  column: string,
+  direction: 'asc' | 'desc',
+): string[] => orderBy(childRowsIn(payload, parentPath), column, direction);
+
 /** The row a reader opening this run should be looking at first. */
 const slowestPathIn = (payload: StatsResponse): string =>
   rootOrderBy(worstColumnIn(payload), 'desc', payload)[0]!;
 
 /**
- * The nine root rows IN THE ORDER THE TABLE OPENS IN.
+ * The four root rows IN THE ORDER THE TABLE OPENS IN.
  *
  * `ROOT_PATHS` is payload order, which is what the table showed until task 6
  * wired the sort; it stays as the literal row SET every assertion below still
@@ -261,10 +278,13 @@ const slowestPathIn = (payload: StatsResponse): string =>
  */
 const openingPaths = (): string[] => rootOrderBy(worstColumnIn(stats), 'desc');
 
-/** …and the same, with `Catalog`'s child in place beneath it. */
+/** …and the same, with `Catalog`'s own children in place beneath it — all
+ *  three of them, D-10 gives it, in the opening sort's order. */
 const openingPathsExpanded = (): string[] =>
   openingPaths().flatMap((path) =>
-    path === 'Catalog' ? [path, 'Catalog/Recommendations'] : [path],
+    path === 'Catalog'
+      ? [path, ...childOrderBy(stats, 'Catalog', worstColumnIn(stats), 'desc')]
+      : [path],
   );
 
 /** A column's sort control, by the exact accessible name it must carry. */
@@ -420,7 +440,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
     expect(textIn(search, 'p95')).toBe('—');
     expect(cellIn(search, 'p95').getAttribute('data-value')).toBeNull();
     // The rows that DO carry p95 still show it.
-    expect(textIn(rowAt('View Cart'), 'p95')).toBe('41');
+    expect(textIn(rowAt('Cart'), 'p95')).toBe('172');
   });
 
   it('takes a key from a row that is NOT the first, which is the only thing a union does', () => {
@@ -446,8 +466,8 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
     // 2287 — correct behaviour, wrong test.)
     expect(textIn(rowAt('Search'), 'p99.9')).toBe('2280');
     // Every other row shows the gap rather than borrowing Search's number.
-    expect(textIn(rowAt('View Cart'), 'p99.9')).toBe('—');
-    expect(cellIn(rowAt('View Cart'), 'p99.9').getAttribute('data-value')).toBeNull();
+    expect(textIn(rowAt('Cart'), 'p99.9')).toBe('—');
+    expect(cellIn(rowAt('Cart'), 'p99.9').getAttribute('data-value')).toBeNull();
   });
 
   /** `p1` is not `1th`. The label is derived, so odd keys stay readable. */
@@ -509,14 +529,15 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
    * toggle passes it too and then fails on a missing button, which reads as a
    * missing FEATURE rather than a missing table.
    *
-   * So: the exact nine root rows are present while the child is not, the child
-   * is the ONLY thing the click adds, and it arrives nested — at depth 1, with
-   * the indent that depth produces.
+   * So: the exact four root rows are present while `Catalog`'s children are
+   * not, expanding `Catalog` is the ONLY thing that changes — `Cart`'s own two
+   * children, D-10 gives it, stay hidden — and every row it adds arrives
+   * nested — at depth 1, with the indent that depth produces.
    *
    * The row SET is still pinned to the literal `ROOT_PATHS`; the ORDER became
    * the opening sort's when task 6 wired it, and is asserted alongside.
    */
-  it('shows every root row while the child is hidden, and adds only the child', () => {
+  it('shows every root row while the children are hidden, and adds only Catalog s own', () => {
     renderTable();
 
     expect([...pathsOf(bodyRows())].sort()).toEqual([...ROOT_PATHS].sort());
@@ -526,7 +547,7 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
 
     expandCatalog();
 
-    expect([...pathsOf(bodyRows())].sort()).toEqual([...ALL_PATHS].sort());
+    expect([...pathsOf(bodyRows())].sort()).toEqual([...WITH_CATALOG_EXPANDED_PATHS].sort());
     expect(pathsOf(bodyRows())).toEqual(openingPathsExpanded());
     const child = rowAt('Catalog/Recommendations');
     expect(child.getAttribute('data-depth')).toBe('1');
@@ -555,14 +576,19 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
 
   /**
    * A toggle on a row with nothing to toggle is a control that does nothing,
-   * and a screen-reader user is told there are ten expandable groups when
-   * there is one. `Catalog` is the only row in the reference run with children.
+   * and a screen-reader user is told there is an expandable group where there
+   * is none. D-10 gives both top-level groups — `Cart` and `Catalog` — real
+   * children; `Place Order` and `Search`, the two groupless requests, have
+   * none. Expanding `Catalog` reveals a THIRD: `Recommendations`, its own
+   * nested subgroup, which has one child of its own (`Related Items`) and so
+   * gets a toggle the moment it is on screen.
    *
    * SCOPED TO THE BODY ROWS (task 6). It was `screen.getAllByRole('button')`,
    * which said "these are the only buttons in the table at all" — true until
    * the column headings became sort controls. Scoped to the rows it still says
-   * exactly what it names: NO ROW but `Catalog` carries a button of any kind,
-   * which is the assertion that catches a toggle rendered on a leaf.
+   * exactly what it names: no LEAF row ever carries a button of any kind,
+   * which is the assertion that catches a toggle rendered where it should not
+   * be.
    */
   it('gives a toggle to the rows that have children, and only those', () => {
     renderTable();
@@ -573,9 +599,13 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
           .map((b) => b.getAttribute('aria-label')),
       );
 
-    expect(rowButtons()).toEqual(['expand Catalog']);
+    // Opening order is worst-first by p99: Catalog, Search, Cart, Place Order
+    // — the two rows with children, in that order, each labelled to expand.
+    expect(rowButtons()).toEqual(['expand Catalog', 'expand Cart']);
     expandCatalog();
-    expect(rowButtons()).toEqual(['collapse Catalog']);
+    // Catalog's own children insert right after it — including
+    // `Recommendations`, which now shows its own toggle too.
+    expect(rowButtons()).toEqual(['collapse Catalog', 'expand Recommendations', 'expand Cart']);
   });
 
   /**
@@ -616,8 +646,11 @@ describe('StatisticsTable — the row links (G-16)', () => {
         <StatisticsTable stats={stats} runId={RUN_ID} />
       </MemoryRouter>,
     );
+    // `List Products` is `Catalog/List Products` post-D-10, nested under a
+    // group that starts collapsed.
+    fireEvent.click(screen.getByRole('button', { name: /expand Catalog/i }));
     const link = screen.getByRole('link', { name: /List Products/ });
-    expect(link.getAttribute('href')).toBe(`/runs/${RUN_ID}/requests/List%20Products`);
+    expect(link.getAttribute('href')).toBe(`/runs/${RUN_ID}/requests/Catalog%2FList%20Products`);
   });
 
   /**
@@ -629,6 +662,10 @@ describe('StatisticsTable — the row links (G-16)', () => {
   it('links every row, groups and requests to their own sections, by full path', () => {
     renderTable();
     expandCatalog();
+    // D-10 gives `Cart` its own children, and `Recommendations` its own
+    // nested request — expand both to reach every row `ALL_PATHS` names.
+    fireEvent.click(screen.getByRole('button', { name: /expand Cart/i }));
+    fireEvent.click(screen.getByRole('button', { name: /expand Recommendations/i }));
 
     for (const path of ALL_PATHS) {
       const row = rowAt(path);
@@ -788,8 +825,10 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
       'group/group_duration/Catalog',
       'group/group_cumulated/Catalog/Recommendations',
       'group/group_duration/Catalog/Recommendations',
-      'request/response_time/Related Items',
-      'request/response_time/View Cart',
+      // Payload order, not alphabetical: `Cart/View Cart` precedes
+      // `Catalog/Recommendations/Related Items` among the requests.
+      'request/response_time/Cart/View Cart',
+      'request/response_time/Catalog/Recommendations/Related Items',
       'run/response_time/',
     ]);
 
@@ -1030,9 +1069,11 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
    * the component hands `sortTree` the TREE rather than sorting the flat list
    * it renders).
    *
-   * `Catalog` sorts second on p50 (361 ms) and its child sixth (109 ms). A
-   * flat sort of the rendered rows would put five rows between a parent and
-   * its child; the tree sort keeps it directly beneath.
+   * `Catalog` sorts second on p50 (361 ms). D-10 gives it three children of
+   * its own — `Product Detail` (219 ms), `Recommendations` (109 ms), `List
+   * Products` (30 ms) — and a flat sort of the rendered rows would scatter
+   * them among the OTHER roots' rows instead of keeping them directly beneath
+   * their parent, in their own p50 order.
    */
   it('keeps a child with its group when sorted', () => {
     renderTable();
@@ -1042,13 +1083,21 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
     const paths = pathsOf(bodyRows());
     expect(paths).toEqual(
       rootOrderBy('p50', 'desc').flatMap((path) =>
-        path === 'Catalog' ? [path, 'Catalog/Recommendations'] : [path],
+        path === 'Catalog' ? [path, ...childOrderBy(stats, 'Catalog', 'p50', 'desc')] : [path],
       ),
     );
-    expect(paths.indexOf('Catalog/Recommendations')).toBe(paths.indexOf('Catalog') + 1);
-    // The child is still the child: sorting reorders siblings, it does not
+    // Every one of Catalog's children sits directly beneath it, not scattered
+    // among the other roots' own rows.
+    const catalogIndex = paths.indexOf('Catalog');
+    const catalogChildren = childOrderBy(stats, 'Catalog', 'p50', 'desc');
+    expect(paths.slice(catalogIndex + 1, catalogIndex + 1 + catalogChildren.length)).toEqual(
+      catalogChildren,
+    );
+    // The children are still children: sorting reorders siblings, it does not
     // promote anything to the root.
     expect(rowAt('Catalog/Recommendations').getAttribute('data-depth')).toBe('1');
+    expect(rowAt('Catalog/Product Detail').getAttribute('data-depth')).toBe('1');
+    expect(rowAt('Catalog/List Products').getAttribute('data-depth')).toBe('1');
   });
 
   /** Row keys are stable across a sort, so a group a reader opened stays open. */
@@ -1170,7 +1219,14 @@ describe('StatisticsTable — the name filter (G-14)', () => {
     renderTable();
     typeFilter('Recommend');
 
-    expect(pathsOf(bodyRows())).toEqual(['Catalog', 'Catalog/Recommendations']);
+    // `Recommendations` matches, and while filtering runs a kept row is
+    // treated as expanded, so its own child — `Related Items`, nested one
+    // level under it post-D-10 — is visible too.
+    expect(pathsOf(bodyRows())).toEqual([
+      'Catalog',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+    ]);
     expect(screen.getByText('Recommendations')).toBeTruthy();
     expect(rowAt('Catalog/Recommendations').getAttribute('data-depth')).toBe('1');
   });
@@ -1179,15 +1235,23 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   it('matches the full path, whatever the case, ignoring stray spaces', () => {
     renderTable();
     typeFilter('  catalog/rec  ');
-    expect(pathsOf(bodyRows())).toEqual(['Catalog', 'Catalog/Recommendations']);
+    expect(pathsOf(bodyRows())).toEqual([
+      'Catalog',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+    ]);
   });
 
   it('keeps every match, not only the first', () => {
     renderTable();
     typeFilter('Cart');
-    expect(pathsOf(bodyRows())).toEqual(
-      rootOrderBy('p99', 'desc').filter((path) => path.toLowerCase().includes('cart')),
-    );
+    // `Cart` itself matches, and while filtering runs a matching row's own
+    // subtree is visible too — its two children, D-10 gives it, in the
+    // opening sort's order (p99 desc: `Add To Cart` 144, `View Cart` 44).
+    expect(pathsOf(bodyRows())).toEqual([
+      'Cart',
+      ...childOrderBy(stats, 'Cart', 'p99', 'desc'),
+    ]);
   });
 
   /** An empty table with headings over it reads as a run that recorded nothing. */
@@ -1233,9 +1297,16 @@ describe('StatisticsTable — the name filter (G-14)', () => {
     fireEvent.click(sortButton('Min'));
     typeFilter('Product');
 
-    expect(pathsOf(bodyRows())).toEqual(
-      rootOrderBy('minMs', 'desc').filter((path) => path.toLowerCase().includes('product')),
-    );
+    // `Product` matches both of `Catalog`'s own requests — `Product Detail`
+    // directly, and `List Products` because "Products" contains "Product" —
+    // so `Catalog` is kept as their ancestor and both arrive with it, sorted
+    // by Min descending like everything else.
+    expect(pathsOf(bodyRows())).toEqual([
+      'Catalog',
+      ...childOrderBy(stats, 'Catalog', 'minMs', 'desc').filter((path) =>
+        path.toLowerCase().includes('product'),
+      ),
+    ]);
     expect(sortedColumns()).toEqual(['Min:descending']);
     // The columns come from the whole payload, so a filter down to one row
     // cannot take a percentile column away with it.

@@ -1,16 +1,18 @@
 {
   "_capture": {
     "script": "scripts/capture-chart-fixture.mjs",
-    "capturedAt": "2026-08-13T11:01:35.976Z",
-    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "capturedAt": "2026-08-14T02:26:30.696Z",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "bundle": "fixtures/gatling-3.15.1.2/reference-report/simulation.log",
     "baseUrl": "http://localhost:3000",
     "endpoints": {
-      "stats": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/stats",
-      "series": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/series?scope=run&name=",
-      "users": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/users",
-      "distribution": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/distribution?scope=run&name=&family=response_time",
-      "errors": "/v1/runs/42570217-77fe-45ff-9ef8-c4defc899ce1/errors?scope=run&name="
+      "stats": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/stats",
+      "series": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/series?scope=run&name=",
+      "users": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/users",
+      "distribution": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/distribution?scope=run&name=&family=response_time",
+      "errors": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/errors?scope=run&name=",
+      "scatter": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/scatter?name=Catalog%2FList%20Products",
+      "scatterWithFailures": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/scatter?name=Cart%2FAdd%20To%20Cart"
     },
     "counts": {
       "stats.stats": 14,
@@ -18,11 +20,13 @@
       "users.scenarios": 2,
       "users.total": 63,
       "distribution.labels": 100,
-      "errors.errors": 2
+      "errors.errors": 2,
+      "scatter.ok": 60,
+      "scatterWithFailures.ko": 15
     }
   },
   "stats": {
-    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "stats": [
       {
         "scope": "group",
@@ -182,7 +186,7 @@
       },
       {
         "scope": "request",
-        "name": "Add To Cart",
+        "name": "Cart/Add To Cart",
         "family": "response_time",
         "count": 85,
         "okCount": 70,
@@ -208,7 +212,33 @@
       },
       {
         "scope": "request",
-        "name": "List Products",
+        "name": "Cart/View Cart",
+        "family": "response_time",
+        "count": 85,
+        "okCount": 85,
+        "koCount": 0,
+        "errorRate": 0,
+        "minMs": 16,
+        "maxMs": 44,
+        "meanMs": 29.32941176470589,
+        "stddevMs": 7.444521452315067,
+        "throughputRps": 1.3679670400412,
+        "percentiles": {
+          "p50": 27.940046110299566,
+          "p75": 34.12627690364791,
+          "p95": 40.85681640262246,
+          "p99": 44.25977886833271
+        },
+        "indicators": {
+          "under": 85,
+          "between": 0,
+          "over": 0,
+          "failed": 0
+        }
+      },
+      {
+        "scope": "request",
+        "name": "Catalog/List Products",
         "family": "response_time",
         "count": 160,
         "okCount": 160,
@@ -229,6 +259,58 @@
           "under": 160,
           "between": 0,
           "over": 0,
+          "failed": 0
+        }
+      },
+      {
+        "scope": "request",
+        "name": "Catalog/Product Detail",
+        "family": "response_time",
+        "count": 160,
+        "okCount": 160,
+        "koCount": 0,
+        "errorRate": 0,
+        "minMs": 124,
+        "maxMs": 302,
+        "meanMs": 216.03124999999991,
+        "stddevMs": 54.38593819580113,
+        "throughputRps": 2.5749967812540233,
+        "percentiles": {
+          "p50": 219.23181258450958,
+          "p75": 262.46970748285696,
+          "p95": 295.93495263035277,
+          "p99": 301.91343652187516
+        },
+        "indicators": {
+          "under": 160,
+          "between": 0,
+          "over": 0,
+          "failed": 0
+        }
+      },
+      {
+        "scope": "request",
+        "name": "Catalog/Recommendations/Related Items",
+        "family": "response_time",
+        "count": 160,
+        "okCount": 160,
+        "koCount": 0,
+        "errorRate": 0,
+        "minMs": 63,
+        "maxMs": 2503,
+        "meanMs": 241.75624999999994,
+        "stddevMs": 552.4453677386911,
+        "throughputRps": 2.5749967812540233,
+        "percentiles": {
+          "p50": 108.86475589332211,
+          "p75": 132.96859962210397,
+          "p95": 2515.4601126101625,
+          "p99": 2515.4601126101625
+        },
+        "indicators": {
+          "under": 151,
+          "between": 0,
+          "over": 9,
           "failed": 0
         }
       },
@@ -260,58 +342,6 @@
       },
       {
         "scope": "request",
-        "name": "Product Detail",
-        "family": "response_time",
-        "count": 160,
-        "okCount": 160,
-        "koCount": 0,
-        "errorRate": 0,
-        "minMs": 124,
-        "maxMs": 302,
-        "meanMs": 216.03124999999991,
-        "stddevMs": 54.38593819580113,
-        "throughputRps": 2.5749967812540233,
-        "percentiles": {
-          "p50": 219.23181258450958,
-          "p75": 262.46970748285696,
-          "p95": 295.93495263035277,
-          "p99": 301.91343652187516
-        },
-        "indicators": {
-          "under": 160,
-          "between": 0,
-          "over": 0,
-          "failed": 0
-        }
-      },
-      {
-        "scope": "request",
-        "name": "Related Items",
-        "family": "response_time",
-        "count": 160,
-        "okCount": 160,
-        "koCount": 0,
-        "errorRate": 0,
-        "minMs": 63,
-        "maxMs": 2503,
-        "meanMs": 241.75624999999994,
-        "stddevMs": 552.4453677386911,
-        "throughputRps": 2.5749967812540233,
-        "percentiles": {
-          "p50": 108.86475589332211,
-          "p75": 132.96859962210397,
-          "p95": 2515.4601126101625,
-          "p99": 2515.4601126101625
-        },
-        "indicators": {
-          "under": 151,
-          "between": 0,
-          "over": 9,
-          "failed": 0
-        }
-      },
-      {
-        "scope": "request",
         "name": "Search",
         "family": "response_time",
         "count": 160,
@@ -333,32 +363,6 @@
           "under": 146,
           "between": 0,
           "over": 14,
-          "failed": 0
-        }
-      },
-      {
-        "scope": "request",
-        "name": "View Cart",
-        "family": "response_time",
-        "count": 85,
-        "okCount": 85,
-        "koCount": 0,
-        "errorRate": 0,
-        "minMs": 16,
-        "maxMs": 44,
-        "meanMs": 29.32941176470589,
-        "stddevMs": 7.444521452315067,
-        "throughputRps": 1.3679670400412,
-        "percentiles": {
-          "p50": 27.940046110299566,
-          "p75": 34.12627690364791,
-          "p95": 40.85681640262246,
-          "p99": 44.25977886833271
-        },
-        "indicators": {
-          "under": 85,
-          "between": 0,
-          "over": 0,
           "failed": 0
         }
       },
@@ -402,7 +406,7 @@
     }
   },
   "series": {
-    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "scope": "run",
     "name": "",
     "bucketWidthMs": 1000,
@@ -2628,7 +2632,7 @@
     ]
   },
   "users": {
-    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "scenarios": [
       {
         "scenario": "Browse",
@@ -3731,7 +3735,7 @@
     ]
   },
   "distribution": {
-    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "scope": "run",
     "name": "",
     "family": "response_time",
@@ -4249,7 +4253,7 @@
     "overflowCount": 0
   },
   "errors": {
-    "runId": "42570217-77fe-45ff-9ef8-c4defc899ce1",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "errors": [
       {
         "message": "status.find.is(200), found 500",
@@ -4259,6 +4263,513 @@
         "message": "status.find.is(200), found 503",
         "count": 9
       }
+    ]
+  },
+  "scatter": {
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
+    "name": "Catalog/List Products",
+    "ok": [
+      [
+        7,
+        35
+      ],
+      [
+        8,
+        49
+      ],
+      [
+        8,
+        30
+      ],
+      [
+        8,
+        31
+      ],
+      [
+        8,
+        34
+      ],
+      [
+        10,
+        34
+      ],
+      [
+        10,
+        39
+      ],
+      [
+        10,
+        38
+      ],
+      [
+        11,
+        42
+      ],
+      [
+        11,
+        47
+      ],
+      [
+        11,
+        47
+      ],
+      [
+        11,
+        29
+      ],
+      [
+        11,
+        33
+      ],
+      [
+        11,
+        34
+      ],
+      [
+        11,
+        29
+      ],
+      [
+        11,
+        39
+      ],
+      [
+        11,
+        37
+      ],
+      [
+        12,
+        25
+      ],
+      [
+        12,
+        30
+      ],
+      [
+        12,
+        40
+      ],
+      [
+        13,
+        43
+      ],
+      [
+        14,
+        40
+      ],
+      [
+        14,
+        39
+      ],
+      [
+        15,
+        38
+      ],
+      [
+        15,
+        39
+      ],
+      [
+        15,
+        36
+      ],
+      [
+        15,
+        39
+      ],
+      [
+        15,
+        32
+      ],
+      [
+        16,
+        41
+      ],
+      [
+        16,
+        43
+      ],
+      [
+        16,
+        38
+      ],
+      [
+        17,
+        34
+      ],
+      [
+        17,
+        34
+      ],
+      [
+        17,
+        22
+      ],
+      [
+        17,
+        39
+      ],
+      [
+        17,
+        33
+      ],
+      [
+        17,
+        22
+      ],
+      [
+        17,
+        36
+      ],
+      [
+        17,
+        33
+      ],
+      [
+        17,
+        29
+      ],
+      [
+        18,
+        41
+      ],
+      [
+        18,
+        42
+      ],
+      [
+        18,
+        35
+      ],
+      [
+        18,
+        21
+      ],
+      [
+        18,
+        46
+      ],
+      [
+        18,
+        29
+      ],
+      [
+        18,
+        39
+      ],
+      [
+        18,
+        34
+      ],
+      [
+        18,
+        32
+      ],
+      [
+        19,
+        36
+      ],
+      [
+        19,
+        41
+      ],
+      [
+        19,
+        32
+      ],
+      [
+        19,
+        40
+      ],
+      [
+        19,
+        45
+      ],
+      [
+        19,
+        44
+      ],
+      [
+        19,
+        38
+      ],
+      [
+        19,
+        35
+      ],
+      [
+        19,
+        36
+      ],
+      [
+        19,
+        42
+      ],
+      [
+        19,
+        41
+      ]
+    ],
+    "ko": []
+  },
+  "scatterWithFailures": {
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
+    "name": "Cart/Add To Cart",
+    "ok": [
+      [
+        10,
+        98
+      ],
+      [
+        10,
+        92
+      ],
+      [
+        11,
+        105
+      ],
+      [
+        11,
+        122
+      ],
+      [
+        11,
+        136
+      ],
+      [
+        11,
+        125
+      ],
+      [
+        11,
+        127
+      ],
+      [
+        11,
+        111
+      ],
+      [
+        11,
+        141
+      ],
+      [
+        12,
+        114
+      ],
+      [
+        12,
+        103
+      ],
+      [
+        13,
+        94
+      ],
+      [
+        14,
+        106
+      ],
+      [
+        14,
+        127
+      ],
+      [
+        15,
+        88
+      ],
+      [
+        15,
+        85
+      ],
+      [
+        15,
+        131
+      ],
+      [
+        16,
+        97
+      ],
+      [
+        16,
+        128
+      ],
+      [
+        17,
+        114
+      ],
+      [
+        17,
+        117
+      ],
+      [
+        17,
+        127
+      ],
+      [
+        17,
+        145
+      ],
+      [
+        17,
+        113
+      ],
+      [
+        17,
+        144
+      ],
+      [
+        17,
+        139
+      ],
+      [
+        17,
+        111
+      ],
+      [
+        17,
+        88
+      ],
+      [
+        18,
+        127
+      ],
+      [
+        18,
+        124
+      ],
+      [
+        18,
+        85
+      ],
+      [
+        18,
+        119
+      ],
+      [
+        18,
+        133
+      ],
+      [
+        18,
+        105
+      ],
+      [
+        18,
+        125
+      ],
+      [
+        18,
+        126
+      ],
+      [
+        18,
+        129
+      ],
+      [
+        19,
+        94
+      ],
+      [
+        19,
+        92
+      ],
+      [
+        19,
+        96
+      ],
+      [
+        19,
+        93
+      ],
+      [
+        19,
+        117
+      ],
+      [
+        19,
+        108
+      ],
+      [
+        19,
+        140
+      ],
+      [
+        19,
+        138
+      ],
+      [
+        19,
+        105
+      ],
+      [
+        19,
+        128
+      ],
+      [
+        19,
+        105
+      ]
+    ],
+    "ko": [
+      [
+        10,
+        104
+      ],
+      [
+        11,
+        141
+      ],
+      [
+        11,
+        118
+      ],
+      [
+        12,
+        106
+      ],
+      [
+        15,
+        95
+      ],
+      [
+        15,
+        88
+      ],
+      [
+        16,
+        129
+      ],
+      [
+        17,
+        112
+      ],
+      [
+        17,
+        112
+      ],
+      [
+        18,
+        137
+      ],
+      [
+        18,
+        133
+      ],
+      [
+        18,
+        113
+      ],
+      [
+        19,
+        94
+      ],
+      [
+        19,
+        114
+      ],
+      [
+        19,
+        141
+      ]
     ]
   }
 }

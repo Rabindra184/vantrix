@@ -1,5 +1,5 @@
 /**
- * Captures the five payloads for the REFERENCE RUN, from the live API,
+ * Captures the seven payloads for the REFERENCE RUN, from the live API,
  * into `apps/web/test/fixtures/reference-run.json`.
  *
  * WHY THIS EXISTS. Every chart transform in this sub-project is unit-tested
@@ -10,10 +10,10 @@
  * none of it would show up until a browser. Capturing it means the transforms
  * run against the SAME BYTES the browser receives.
  *
- * WHAT IT WRITES. Five raw response bodies, exactly as served, under the keys
- * `stats`, `series`, `users`, `distribution` and `errors`, plus a `_capture`
- * block recording where they came from. Nothing is reshaped, rounded or
- * trimmed.
+ * WHAT IT WRITES. Seven raw response bodies, exactly as served, under the
+ * keys `stats`, `series`, `users`, `distribution`, `errors`, `scatter` and
+ * `scatterWithFailures`, plus a `_capture` block recording where they came
+ * from. Nothing is reshaped, rounded or trimmed.
  *
  * ---------------------------------------------------------------------------
  * HOW TO RE-CAPTURE IT
@@ -112,6 +112,29 @@ const ENDPOINTS = [
     path: (id) => `/v1/runs/${id}/distribution?scope=run&name=&family=response_time`,
   },
   { key: 'errors', path: (id) => `/v1/runs/${id}/errors?scope=run&name=` },
+  {
+    key: 'scatter',
+    // RQ-09 is inherently request-scoped, so this endpoint takes `name` and NO
+    // `scope` — it cannot fall into the `?name=` trap the errors URL above
+    // documents, because there is no scope parameter to omit.
+    //
+    // `Catalog/List Products` is the post-D-10 identity of a request Gatling
+    // nests, so this capture also proves the joined name survives a URL.
+    path: (id) => `/v1/runs/${id}/scatter?name=${encodeURIComponent('Catalog/List Products')}`,
+  },
+  {
+    key: 'scatterWithFailures',
+    // `Catalog/List Products` above has ZERO failures, so `scatter.ko` is `[]`
+    // in that capture and the KO series is, in effect, untestable against it —
+    // a transform that plotted `s.ok` twice under both series names would pass
+    // every test that only ever reads that fixture. `Cart/Add To Cart` fails
+    // (15 KO against 48 OK points), so this second capture is the only bytes
+    // in this fixture that can pin the KO series' colour, legend and data. It
+    // is also the request D-03 is pinned against in
+    // apps/api/test/parity.e2e.test.ts, so the web and API suites reason
+    // about the same request.
+    path: (id) => `/v1/runs/${id}/scatter?name=${encodeURIComponent('Cart/Add To Cart')}`,
+  },
 ];
 
 /** Fails with the server's own words rather than a bare status code. */
@@ -197,12 +220,36 @@ async function main() {
     // An empty array here would mean the errors table renders its empty state
     // in every test that reads this fixture, and pass.
     'errors.errors': captured.errors.errors.length,
+    // Of all six captures, this is the one most likely to come back empty on a
+    // future re-capture: it is the only endpoint parameterised by a
+    // data-dependent string that must match a stored metric name exactly
+    // (`?name=Catalog/List Products`), so a rename, a re-encoding, or a name
+    // that stops being joined would silently produce `{ ok: [], ko: [] }`.
+    'scatter.ok': captured.scatter.ok.length,
+    // The opposite call from `scatter.ok` above, deliberately: that entry
+    // guards `ok` only, because `Catalog/List Products` has no failures and
+    // guarding its `ko` would fail every capture on a passing run. This
+    // request was picked BECAUSE it fails, so its `ko` — not its `ok` — is
+    // the reason this second endpoint exists at all. An empty `ko` here means
+    // the one payload that can test the KO series came back untestable, and
+    // that must fail loudly rather than silently produce a fixture as thin as
+    // the one this task exists to fix.
+    'scatterWithFailures.ko': captured.scatterWithFailures.ko.length,
   };
   for (const [what, length] of Object.entries(nonEmpty)) {
     if (length === 0) {
+      // Three distinct diagnoses share this guard. For the five run-scoped
+      // entries, empty means the run itself ingested but produced no data.
+      // The two `scatter*` entries are parameterised by a data-dependent name
+      // (see their comments above) — for them, empty more likely means that
+      // name stopped matching a stored metric, or (for `scatterWithFailures`)
+      // stopped failing, than that the run produced nothing.
+      const cause = what.startsWith('scatter')
+        ? 'either the run produced no data, or the request name above stopped matching a stored metric'
+        : 'the run ingested but produced no data';
       throw new Error(
-        `captured ${what} is empty — the run ingested but produced no data, so this fixture ` +
-          'would silently turn every transform test into a test of the empty case',
+        `captured ${what} is empty — ${cause}, so this fixture would silently turn every ` +
+          'transform test into a test of the empty case',
       );
     }
   }

@@ -24,12 +24,11 @@ import { signIn } from './helpers.js';
  * percentiles, then moves the expectation with it instead of turning this file
  * red for a reason that is not a defect — the same rule the unit suites follow.
  *
- * DEVIATION D-10 IS VISIBLE IN THESE ASSERTIONS AND IS NOT A BUG HERE. Gatling
- * nests five of the reference run's seven requests under groups; our engine
- * discards the group path for a request, so `List Products` renders at ROOT
- * beside `Catalog` rather than inside it. `openingPaths` below therefore expects
- * every request at depth 0. Piece 3's sub-project carries the fix; inventing an
- * association here would be inventing data.
+ * DEVIATION D-10 IS RESOLVED AND THESE ASSERTIONS PIN THE RESOLUTION. The
+ * engine joins a request's group path onto its name, so `List Products` is
+ * `Catalog/List Products` and nests under `Catalog` exactly as Gatling's own
+ * report nests it. `openingPaths` below derives the root set from the payload
+ * rather than listing it, so the expectation moves with a re-captured fixture.
  */
 
 /* ======================================================================== *
@@ -95,16 +94,25 @@ const percentileLabel = (key: string): string => {
 /**
  * THE ROWS THE TABLE MUST OPEN WITH, derived from the payload.
  *
- * Every `request` row (D-10: all at root), plus every ROOT `group` — a group
- * whose name has no separator. Deduplicated, because each group appears once
- * per family in the payload and the global table shows ONE row per group.
- * Nested groups are excluded: they are children, and children start collapsed.
+ * A row opens at root when its immediate parent path is not itself a group in
+ * the payload — the same rule `buildTree` applies, deliberately restated from
+ * the payload rather than imported, so a change to the tree's parenting has to
+ * disagree with this file to pass.
+ *
+ * Post-D-10 the reference run opens with 2 root groups (`Catalog`, `Cart`) and
+ * the 2 genuinely-rootless requests (`Search`, `Place Order`).
+ * `Catalog/Recommendations` is a CHILD group and starts collapsed.
  */
 function openingPaths(json: StatsJson): string[] {
+  const groups = new Set(
+    json.stats.filter((r) => r.scope === 'group').map((r) => r.name),
+  );
   const paths = new Set<string>();
   for (const row of json.stats) {
-    if (row.scope === 'request') paths.add(row.name);
-    if (row.scope === 'group' && !row.name.includes('/')) paths.add(row.name);
+    if (row.scope !== 'request' && row.scope !== 'group') continue;
+    const cut = row.name.lastIndexOf('/');
+    const parent = cut <= 0 ? null : row.name.slice(0, cut);
+    if (parent === null || !groups.has(parent)) paths.add(row.name);
   }
   return [...paths];
 }
@@ -163,9 +171,35 @@ test('a completed run shows every request and group in one table', async ({ page
    * and unit-tested — it is what makes "2503" mean something when a screen
    * reader announces it out of the row's context — so the ASSERTION moves.
    */
-  for (const name of ['List Products', 'Search', 'Place Order']) {
+  // `Search` and `Place Order` are the two rows D-10 leaves genuinely leafy —
+  // no toggle button inside their `<th>`. `Cart` and `Catalog` carry one (D-10
+  // gives both real children), and are asserted the same way right below: the
+  // `<th>` names itself via `aria-labelledby` (`StatisticsTable.tsx`'s `Row`),
+  // so the toggle's own `aria-label` does not leak into the row's name.
+  for (const name of ['Search', 'Place Order', 'Cart', 'Catalog']) {
     await expect(page.getByRole('rowheader', { name, exact: true })).toBeVisible();
   }
+
+  /* ---- THE REGRESSION ALARM: a group row's name is its name, and only that ----
+   *
+   * `Cart` and `Catalog` are exactly the rows a name-from-content `<th>` gets
+   * wrong: each holds an `aria-label`led expand button ALONGSIDE the `<Link>`
+   * that renders the name, so a `<th>` left to compute its own name from its
+   * contents announces "expand Cart Cart" in Chromium — measured, and the
+   * defect this file exists to catch on the row axis, `SortableHeader`'s own
+   * comment block having already caught it on the column axis. The loop above
+   * would pass equally for a `<th>` named "expand Cart Cart, Cart" (a
+   * substring match); `exact: true` on the plain name is what a concatenation
+   * fails and a correct `aria-labelledby` passes, so it is restated here on
+   * its own for that entire mutation class rather than folded silently into
+   * the loop above. */
+  await expect(page.getByRole('rowheader', { name: 'Catalog', exact: true })).toBeVisible();
+  await expect(page.getByRole('rowheader', { name: 'Cart', exact: true })).toBeVisible();
+  // And the concatenation itself is confirmed absent, not merely un-matched:
+  // "Cart" being found above is also true of a `<th>` named "Cart Extra", so
+  // the exact negative is pinned too.
+  await expect(page.getByRole('rowheader', { name: 'expand Cart Cart' })).toHaveCount(0);
+  await expect(page.getByRole('rowheader', { name: 'expand Catalog Catalog' })).toHaveCount(0);
 
   /* ---- the discriminating form: EVERY row, from the payload ----
    *
@@ -176,10 +210,11 @@ test('a completed run shows every request and group in one table', async ({ page
    */
   const json = await stats(page, runId);
   const expected = openingPaths(json);
-  expect(expected.length, 'the reference run should produce 7 requests + 2 root groups').toBe(9);
+  expect(expected.length, 'the reference run should open with 2 root groups + 2 root requests').toBe(4);
   expect((await renderedPaths(page)).slice().sort()).toEqual(expected.slice().sort());
 
-  // Every one of them at root, D-10 included, and no nested row on screen yet.
+  // Every OPENING row is a root row: children exist now (D-10 nests five of the
+  // seven requests) and start collapsed, so none of them is on screen yet.
   const depths = await statRows(page).evaluateAll((nodes) =>
     nodes.map((n) => n.getAttribute('data-depth')),
   );
@@ -272,8 +307,15 @@ test('filtering keeps the match in its group', async ({ page }) => {
    * that a non-match went away — both of which a filter that dropped the match
    * and kept its parent would also satisfy. The rendered set, whole, is what
    * says the filter answered the question that was asked: `Catalog` kept for
-   * context, at depth 0, with `Catalog/Recommendations` open underneath it. */
-  expect(await renderedRows(page)).toEqual(['Catalog@0', 'Catalog/Recommendations@1']);
+   * context, at depth 0, with `Catalog/Recommendations` open underneath it —
+   * and, while filtering runs, `Recommendations`' own child (`Related Items`,
+   * nested one level further down post-D-10) is open too, since a matching
+   * row's whole subtree is visible along with it. */
+  expect(await renderedRows(page)).toEqual([
+    'Catalog@0',
+    'Catalog/Recommendations@1',
+    'Catalog/Recommendations/Related Items@2',
+  ]);
   await expect(rowAt(page, 'Catalog/Recommendations')).toBeVisible();
 
   /* A filter that matches nothing says so, rather than going silently empty. */
@@ -295,12 +337,15 @@ test('filtering keeps the match in its group', async ({ page }) => {
 test('a row links to its detail page', async ({ page }) => {
   const runId = await openRun(page);
 
+  // `List Products` is `Catalog/List Products` post-D-10, nested under a
+  // group that starts collapsed.
+  await page.getByRole('button', { name: /expand Catalog/i }).click();
   await page.getByRole('link', { name: /List Products/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/requests/List%20Products$`));
-  // Piece 3 builds this page; today it must say so rather than 404.
-  await expect(page.getByText(/not built yet|coming/i)).toBeVisible();
-  // The row it came from, so the reader knows the placeholder is theirs.
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('List Products');
+  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/requests/Catalog%2FList%20Products$`));
+  // Piece 3 built this page for real (see request-detail.spec.ts, which
+  // exercises it in full); this test only needs to confirm the ROW's link
+  // actually resolves to the right request, by its full path.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Catalog/List Products');
 
   /* ---- and a GROUP row, which goes somewhere ELSE, by its FULL path ----
    *

@@ -63,7 +63,7 @@ test('shows the run header', async ({ page }) => {
   // The regex alone is satisfied by both directions of a broken unit
   // conversion: `0s` (dividing twice, or flooring a sub-second value) and
   // `61234s` (never dividing at all) each match `^\d+s$` perfectly. The
-  // reference bundle's run has a real duration — read.integration.test.ts:77
+  // reference bundle's run has a real duration — read.integration.test.ts:76
   // pins `durationMs > 60_000` — so the rendered number must land in whole
   // seconds between 60 and an hour, which neither broken direction can.
   const seconds = Number((await duration.innerText()).replace(/s$/, ''));

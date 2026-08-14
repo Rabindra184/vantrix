@@ -146,4 +146,86 @@ describe('evaluateRules', () => {
     expect(r.assertions[0]?.actualValue).toBe(900);
     expect(r.assertions[0]?.outcome).toBe('failed');
   });
+
+  it('matches a rule authored against a bare request name (D-13)', () => {
+    // D-10 joined the group path onto a request's identity. A rule written
+    // before that names the leaf, and must keep being CHECKED — a rule that
+    // silently stops enforcing is worse than one that fails.
+    const stats = [stat({ scope: 'request', name: 'Catalog/List Products', percentiles: { p95: 120 } })];
+    const rules = [rule({ scope: 'request', targetName: 'List Products', threshold: 200 })];
+
+    const { assertions, verdict } = evaluateRules(rules, stats);
+    expect(assertions[0]?.outcome).toBe('passed');
+    expect(verdict).toBe('passed');
+  });
+
+  it('names the matched stat in the message when a leaf match redirected the rule', () => {
+    // The ambiguity branch already says which candidates it refused to pick
+    // between; the single-match branch must not go quiet about the same class
+    // of non-literal match — a reader debugging why a rule "passed" needs to
+    // know it was not measured against the name it was authored with.
+    const stats = [stat({ scope: 'request', name: 'Catalog/List Products', percentiles: { p95: 120 } })];
+    const rules = [rule({ scope: 'request', targetName: 'List Products', threshold: 200 })];
+
+    const { assertions } = evaluateRules(rules, stats);
+    expect(assertions[0]?.message).toContain('Catalog/List Products');
+  });
+
+  it('prefers an exact match over a leaf match', () => {
+    // A run holding BOTH `View` at root and `Cart/View` must not have the
+    // rule quietly repointed at the nested one.
+    const stats = [
+      stat({ scope: 'request', name: 'Cart/View', percentiles: { p95: 900 } }),
+      stat({ scope: 'request', name: 'View', percentiles: { p95: 10 } }),
+    ];
+    const rules = [rule({ scope: 'request', targetName: 'View', threshold: 100 })];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
+
+  it('refuses to choose when a bare name is ambiguous, and says so', () => {
+    const stats = [
+      stat({ scope: 'request', name: 'Cart/View', percentiles: { p95: 900 } }),
+      stat({ scope: 'request', name: 'Catalog/View', percentiles: { p95: 10 } }),
+    ];
+    const rules = [rule({ scope: 'request', targetName: 'View', threshold: 100 })];
+
+    const { assertions } = evaluateRules(rules, stats);
+    expect(assertions[0]?.outcome).toBe('not_applicable');
+    // The message must name the ambiguity — "no statistics" would be a lie,
+    // and is the sentence a reader would otherwise act on.
+    expect(assertions[0]?.message).toMatch(/ambiguous/i);
+    expect(assertions[0]?.message).toContain('Cart/View');
+    expect(assertions[0]?.message).toContain('Catalog/View');
+  });
+
+  it('evaluates a run-scope rule against the run row', () => {
+    // A plain regression guard on run-scope evaluation. It does NOT pin the
+    // `target !== ''` guard: the exact match finds `name: ''` first, so this
+    // test passes with the guard deleted. The test below is the one that
+    // pins it.
+    const stats = [stat({ percentiles: { p95: 10 } })];
+    const rules = [rule({ threshold: 100 })];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('passed');
+  });
+
+  it('does not let a run-scope rule bind to a name ending in the separator', () => {
+    // THIS is what the `target !== ''` guard is for. `endsWith('/')` matches
+    // nothing in general — but it DOES match `Cart/`, the join of a group with
+    // an empty request leaf, which a malformed simulation log can produce.
+    //
+    // No stat here is named `''`, so the exact match genuinely fails and the
+    // fallback is genuinely reached — a two-row payload that also carries a
+    // `name: ''` row would NOT exercise the guard at all, because the exact
+    // match on `''` succeeds first regardless of the guard (verified: deleting
+    // `&& target !== ''` left that version passing either way). With the
+    // guard, an unmatched run-scope rule is correctly `not_applicable`;
+    // without it, the fallback would take `Cart/` and report `failed` (900 >
+    // 100) instead.
+    const stats = [stat({ name: 'Cart/', percentiles: { p95: 900 } })];
+    const rules = [rule({ threshold: 100 })];
+
+    expect(evaluateRules(rules, stats).assertions[0]?.outcome).toBe('not_applicable');
+  });
 });

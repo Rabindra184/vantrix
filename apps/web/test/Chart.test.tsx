@@ -274,3 +274,46 @@ describe('Chart — a legend only from two series up', () => {
     expect(lastOption().legend).not.toEqual({ show: false });
   });
 });
+
+/**
+ * The tooltip's `valueFormatter` shares `formatCell` with the data table
+ * (design §7 / the comment above it in Chart.tsx) specifically so the two
+ * surfaces never disagree about the same number. A scatter point breaks that
+ * sharing unless the formatter is array-aware: ECharts hands it the whole
+ * `[x, y]` pair as one value, not one call per axis, and `String([x, y])`
+ * joins with a bare comma — `String([3, 120])` is `"3,120"`, indistinguishable
+ * from a single four-figure number on a milliseconds axis.
+ */
+describe('Chart — the tooltip formats an array-valued (scatter) point', () => {
+  it('formats each component through formatCell, not the raw array', () => {
+    render(
+      <Chart
+        id="scatter"
+        title="Response time against throughput"
+        kind="scatter"
+        data={{
+          series: [{ name: 'OK', data: [[3, 120]] }],
+          axisLabels: [],
+          columns: ['Series', 'Requests per second', 'p95 (ms)'],
+          rows: [{ label: 'OK', values: [3, 120] }],
+        }}
+      />,
+    );
+
+    const { valueFormatter } = lastOption().tooltip as { valueFormatter: (value: unknown) => string };
+    // Non-integer components prove formatCell actually ran on each one — a
+    // bare `String()` of the pair would keep every digit un-rounded.
+    expect(valueFormatter([3.456, 122.74516052680153])).toBe('3.46, 122.75');
+    // The actual defect this guards: never the thousands-separator-shaped
+    // string `Array.prototype.toString` produces.
+    expect(valueFormatter([3, 120])).not.toBe(String([3, 120]));
+    expect(valueFormatter([3, 120])).toBe('3, 120');
+  });
+
+  it('still formats a plain number or string exactly as before', () => {
+    render(<Chart id="a" title="Requests per second" data={seriesData(['All'])} />);
+    const { valueFormatter } = lastOption().tooltip as { valueFormatter: (value: unknown) => string };
+    expect(valueFormatter(122.74516052680153)).toBe('122.75');
+    expect(valueFormatter(null)).toBe('—');
+  });
+});

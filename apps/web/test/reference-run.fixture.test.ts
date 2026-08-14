@@ -1,6 +1,7 @@
 import {
   DistributionResponseSchema,
   ErrorsResponseSchema,
+  ScatterResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
   UsersResponseSchema,
@@ -76,6 +77,41 @@ describe('the captured reference-run payloads', () => {
     const total = parsed.errors.reduce((n, e) => n + e.count, 0);
     const run = stats.stats.find((r) => r.scope === 'run')!;
     expect(total).toBe(run.koCount);
+  });
+
+  it('carries a scatter payload with points to draw', () => {
+    const scatter = ScatterResponseSchema.parse(fixture.scatter);
+    expect(scatter.name).toBe('Catalog/List Products');
+    // Both axes are counts/milliseconds, never null: a transform that has to
+    // defend against a null here is defending against a shape the API cannot
+    // produce.
+    expect(scatter.ok.length).toBeGreaterThan(0);
+    for (const [x, y] of scatter.ok) {
+      expect(Number.isInteger(x)).toBe(true);
+      expect(Number.isInteger(y)).toBe(true);
+    }
+  });
+
+  it('carries a second scatter payload whose KO series is non-empty', () => {
+    // `scatter` above (`Catalog/List Products`) has no failures, so its `ko`
+    // is `[]` and cannot discriminate a transform that plots the KO series
+    // from a copy of OK. This is the payload that can: a future re-capture
+    // that lost its KO points — a different reference bundle, a request that
+    // stopped failing, a name that stopped matching — must fail HERE, not
+    // silently thin out apps/web/test/transforms.scatter.test.ts's KO
+    // assertions back down to the untestable case this fixture replaced.
+    const scatterWithFailures = ScatterResponseSchema.parse(fixture.scatterWithFailures);
+    expect(scatterWithFailures.name).toBe('Cart/Add To Cart');
+    expect(scatterWithFailures.ok.length).toBeGreaterThan(0);
+    expect(scatterWithFailures.ko.length).toBeGreaterThan(0);
+    // The independence assertion in transforms.scatter.test.ts depends on
+    // these being unequal — equal lengths would let a bug that zips the two
+    // series by index pass undetected.
+    expect(scatterWithFailures.ok.length).not.toBe(scatterWithFailures.ko.length);
+    for (const [x, y] of [...scatterWithFailures.ok, ...scatterWithFailures.ko]) {
+      expect(Number.isInteger(x)).toBe(true);
+      expect(Number.isInteger(y)).toBe(true);
+    }
   });
 });
 

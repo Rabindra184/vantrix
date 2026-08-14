@@ -73,18 +73,23 @@ const find = (rs: readonly TableRow[], path: string): TableRow => {
  * The reference run's ten table rows, in payload order: three groups (one row
  * each, not two) and seven requests. Spelled out so that a row appearing,
  * vanishing or moving is a test failure rather than a silent change.
+ *
+ * D-10: five of the seven requests carry their group path joined onto their
+ * name, so their PATH — the identity this list is keyed on — is the joined
+ * form, not the bare leaf. `Place Order` and `Search` genuinely have no group
+ * and keep their bare name as their path.
  */
 const ALL_PATHS = [
   'Cart',
   'Catalog',
   'Catalog/Recommendations',
-  'Add To Cart',
-  'List Products',
+  'Cart/Add To Cart',
+  'Cart/View Cart',
+  'Catalog/List Products',
+  'Catalog/Product Detail',
+  'Catalog/Recommendations/Related Items',
   'Place Order',
-  'Product Detail',
-  'Related Items',
   'Search',
-  'View Cart',
 ];
 
 describe('buildTree — the statistics row tree ⑤ (G-11…G-13)', () => {
@@ -110,13 +115,22 @@ describe('buildTree — the statistics row tree ⑤ (G-11…G-13)', () => {
   it('nests it there and ONLY there, one level down', () => {
     const tree = buildTree(stats, 'group_cumulated');
     const catalog = find(tree, 'Catalog');
-    expect(paths(catalog.children)).toEqual(['Catalog/Recommendations']);
+    // D-10: `Catalog` has two of its own direct-child requests besides the
+    // `Recommendations` subgroup — all three are its children, and none of
+    // them is promoted to the root.
+    expect(paths(catalog.children)).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ]);
     expect(paths(tree)).not.toContain('Catalog/Recommendations');
     expect(catalog.depth).toBe(0);
     expect(find(tree, 'Catalog/Recommendations').depth).toBe(1);
-    // …and the child carries no children of its own: `Related Items` is a
-    // request, and in this payload requests do not nest (see below).
-    expect(find(tree, 'Catalog/Recommendations').children).toEqual([]);
+    // …and the child nests its own request one level further down: `Related
+    // Items` ships as `Catalog/Recommendations/Related Items`.
+    expect(paths(find(tree, 'Catalog/Recommendations').children)).toEqual([
+      'Catalog/Recommendations/Related Items',
+    ]);
   });
 
   it('leaves a group with no slash at the root', () => {
@@ -132,41 +146,34 @@ describe('buildTree — the statistics row tree ⑤ (G-11…G-13)', () => {
    * ---------------------------------------------------------------- */
 
   /**
-   * **Measured against the captured payload: request names carry no group
-   * path.** All seven — `Add To Cart`, `List Products`, `Place Order`,
-   * `Product Detail`, `Related Items`, `Search`, `View Cart` — are bare leaf
-   * names, and not one contains a `/`. So a request cannot be associated with
-   * the group it ran in, and every request sits at the root beside the
-   * top-level groups.
-   *
-   * This is a PARITY GAP, not a design choice: Gatling's own global statistics
-   * table nests five of these seven under their groups. See the task report.
-   * The gap is upstream of this file — `RequestEvent.groups` is parsed and
-   * then dropped by the statistics engine — and no mapping from request name
-   * to group is invented here to paper over it.
+   * D-10, resolved: the engine joins a request's group path onto its name, so
+   * the tree nests requests under their groups exactly as Gatling's own report
+   * does. Five of the reference run's seven requests nest; `Search` and
+   * `Place Order` genuinely have no group and stay at the root.
    */
-  it('puts every request at the root, because request names carry no group path', () => {
+  it('nests a request under its group, and leaves a groupless one at the root', () => {
     const requestNames = stats.stats.filter((r) => r.scope === 'request').map((r) => r.name);
     expect(requestNames.length).toBe(7);
-    expect(requestNames.filter((n) => n.includes('/'))).toEqual([]);
 
     const tree = buildTree(stats, 'group_cumulated');
     const requests = flat(tree).filter((r) => r.scope === 'request');
     expect(requests.length).toBe(7);
-    expect(requests.every((r) => r.depth === 0)).toBe(true);
-    expect(paths(tree.filter((r) => r.scope === 'request')).sort()).toEqual(requestNames.sort());
+
+    // Derived from the payload, not listed: a request is at root exactly when
+    // its own name has no group prefix.
+    const rootNames = requestNames.filter((n) => !n.includes('/'));
+    expect(paths(tree.filter((r) => r.scope === 'request')).sort()).toEqual(rootNames.sort());
+    expect(requests.filter((r) => r.depth > 0).length).toBe(requestNames.length - rootNames.length);
   });
 
   /**
-   * Spec §3 requires the builder to cope with path-qualified request names
-   * "in some runs and not others". The reference run is the "not" case, so
-   * the "is" case needs a payload the reference run does not supply. The
-   * rename is a well-formed input, not a doctored one: it is exactly what the
-   * statistics engine would emit if it joined `RequestEvent.groups` onto the
-   * request name the way it already does for group rows.
+   * Spec §3 requires the builder to cope with path-qualified request names.
+   * D-10 means the reference run itself is now that case: `Related Items`
+   * ships as `Catalog/Recommendations/Related Items`, joined onto the group
+   * path the way group rows already were before D-10.
    */
-  it('nests a request whose name IS path-qualified, when a payload has one', () => {
-    const tree = buildTree(renamed('Related Items', 'Catalog/Recommendations/Related Items'), 'group_cumulated');
+  it('nests a request whose name IS path-qualified, exactly as the reference run has it', () => {
+    const tree = buildTree(stats, 'group_cumulated');
     const recs = find(tree, 'Catalog/Recommendations');
     expect(paths(recs.children)).toEqual(['Catalog/Recommendations/Related Items']);
     const item = find(tree, 'Catalog/Recommendations/Related Items');
@@ -219,26 +226,26 @@ describe('buildTree — the statistics row tree ⑤ (G-11…G-13)', () => {
   it('orphans only as far as it must, keeping a surviving intermediate parent', () => {
     // `A/B/C` with `A` gone but `A/B` present: `A/B` is the orphan, `A/B/C`
     // still nests under it. Only the immediate prefix is consulted.
-    const deep = buildTree(
-      renamed('Related Items', 'Catalog/Recommendations/Related Items'),
-      'group_cumulated',
-    );
-    expect(find(deep, 'Catalog/Recommendations/Related Items').depth).toBe(2);
+    //
+    // Derived rather than hard-coded: D-10 means the reference run already
+    // ships `Related Items` joined onto its group path, so this test reads
+    // that joined name off the payload instead of assuming it is the bare
+    // `Related Items` a pre-D-10 run would have had.
+    const relatedItems = stats.stats.find(
+      (r) => r.scope === 'request' && r.name.endsWith('/Related Items'),
+    )!;
+    const group = relatedItems.name.slice(0, relatedItems.name.lastIndexOf('/'));
+
+    const deep = buildTree(stats, 'group_cumulated');
+    expect(find(deep, relatedItems.name).depth).toBe(2);
 
     const cut = without((r) => r.name === 'Catalog' && r.scope === 'group');
-    const tree = buildTree(
-      { ...cut, stats: cut.stats.map((r) =>
-        r.scope === 'request' && r.name === 'Related Items'
-          ? { ...r, name: 'Catalog/Recommendations/Related Items' }
-          : r,
-      ) },
-      'group_cumulated',
-    );
-    const recs = find(tree, 'Catalog/Recommendations');
+    const tree = buildTree(cut, 'group_cumulated');
+    const recs = find(tree, group);
     expect(recs.depth).toBe(0);
-    expect(paths(recs.children)).toEqual(['Catalog/Recommendations/Related Items']);
-    expect(find(tree, 'Catalog/Recommendations/Related Items').depth).toBe(1);
-    expect(find(tree, 'Catalog/Recommendations/Related Items').name).toBe('Related Items');
+    expect(paths(recs.children)).toEqual([relatedItems.name]);
+    expect(find(tree, relatedItems.name).depth).toBe(1);
+    expect(find(tree, relatedItems.name).name).toBe('Related Items');
   });
 
   /* ---------------------------------------------------------------- *
@@ -383,9 +390,9 @@ describe('buildTree — the statistics row tree ⑤ (G-11…G-13)', () => {
  * the tree. Measured against stubs before the implementation existed:
  *
  * - "reorders siblings without moving a child away from its parent" **passes
- *   for `sortTree = (rows) => rows`**. `Catalog` has exactly ONE child in the
- *   reference run, so no ordering of its children can be wrong, and a sort
- *   that never touches the tree trivially never promotes the child.
+ *   for `sortTree = (rows) => rows`**, whatever `Catalog`'s child count is:
+ *   it checks membership with `toContain`, not order, so no rearrangement of
+ *   the children — correct or missing — can fail it.
  * - "sorts siblings by the requested column, descending" walks the ROOTS only.
  *   A sort that orders the roots and leaves every child list in payload order
  *   passes it — and so passes the whole brief, since the test above is the
@@ -512,6 +519,16 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
     // `Search` renamed to `Catalog`: a request at the same path as the group.
     const tree = buildTree(renamed('Search', 'Catalog'), 'group_cumulated');
     const columns = ['p95', 'p50', 'minMs', 'count', 'name'] satisfies SortColumn[];
+    // D-10: `Catalog` has three children of its own (the `Recommendations`
+    // subgroup plus its two direct-child requests) — checked as a set here,
+    // because the order among them is what the sweep test below already
+    // covers; this test's job is to prove they land under the GROUP, not the
+    // same-named REQUEST.
+    const catalogsChildren = [
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+      'Catalog/Recommendations',
+    ];
 
     for (const column of columns) {
       for (const direction of ['asc', 'desc'] satisfies SortDirection[]) {
@@ -520,8 +537,8 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
         const group = sorted.find((r) => r.path === 'Catalog' && r.scope === 'group')!;
         const request = sorted.find((r) => r.path === 'Catalog' && r.scope === 'request')!;
 
-        expect(`${where}: ${paths(group.children).join()}`).toBe(
-          `${where}: Catalog/Recommendations`,
+        expect(`${where}: ${[...paths(group.children)].sort().join()}`).toBe(
+          `${where}: ${catalogsChildren.join()}`,
         );
         expect(`${where}: ${paths(request.children).join()}`).toBe(`${where}: `);
         // Exactly once in the whole tree, and never at the root.
@@ -545,10 +562,13 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
     expect(paths(sorted)).toContain('Catalog/Recommendations');
     expect(orphan.depth).toBe(0);
     expect(orphan.name).toBe('Catalog/Recommendations');
+    // D-10: with `Catalog` gone, its two direct-child requests
+    // (`Catalog/List Products`, `Catalog/Product Detail`) are orphaned too,
+    // alongside the subgroup — six roots where the full tree has four.
     expect(flat(sorted).length).toBe(ALL_PATHS.length - 1);
-    // Sorted on its merits, not stranded at either end: with `Catalog` (p95
-    // 2671.01) gone, its 2515.46 ties `Related Items` and wins the tie on
-    // arrival order, ahead of `Search` at 1939.53.
+    // Sorted on its merits, at the top: with `Catalog` (p95 2671.01) gone,
+    // the orphaned `Catalog/Recommendations` (2515.46) is the largest of the
+    // survivors.
     expect(paths(sorted)[0]).toBe('Catalog/Recommendations');
   });
 
@@ -571,41 +591,25 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
    */
   it('puts the roots in exactly the order the payload s p95 figures dictate', () => {
     const tree = buildTree(stats, 'group_cumulated');
-    // Catalog 2671.01, Related Items 2515.46, Search 1939.53, Product Detail
-    // 295.93, Cart 172.45, Add To Cart 141.19, Place Order 92.77,
-    // List Products 41.68, View Cart 40.86.
-    const worstFirst = [
-      'Catalog',
-      'Related Items',
-      'Search',
-      'Product Detail',
-      'Cart',
-      'Add To Cart',
-      'Place Order',
-      'List Products',
-      'View Cart',
-    ];
+    // D-10 leaves only four roots: Catalog 2671.01, Search 1939.53,
+    // Cart 172.45, Place Order 92.77. The other five requests, and their
+    // p95 figures, now sort inside `Cart` and `Catalog`'s own child lists —
+    // see "sorts the children of a parent too" below.
+    const worstFirst = ['Catalog', 'Search', 'Cart', 'Place Order'];
     expect(paths(sortTree(tree, 'p95', 'desc'))).toEqual(worstFirst);
     expect(paths(sortTree(tree, 'p95', 'asc'))).toEqual([...worstFirst].reverse());
   });
 
   /**
    * The one the brief's tests cannot reach: a parent with MORE THAN ONE child.
-   * The reference run gives `Catalog` exactly one, so every child list in it
-   * is sorted by definition. This is the D-10 payload — request names
-   * path-qualified, which is what the statistics engine would emit if it
-   * stopped discarding `RequestEvent.groups` — and it is the only input here
-   * on which "sort the roots and forget to recurse" is visible.
+   * D-10 means the reference run itself now gives `Catalog` three — the
+   * `Recommendations` subgroup and its two direct-child requests — so this
+   * is no longer a synthetic payload; it is `stats` unchanged, and it is the
+   * only input here on which "sort the roots and forget to recurse" is
+   * visible.
    */
   it('sorts the children of a parent too, not just the roots', () => {
-    const tree = buildTree(
-      requestsAt({
-        'List Products': 'Catalog/List Products',
-        'Product Detail': 'Catalog/Product Detail',
-        'Related Items': 'Catalog/Recommendations/Related Items',
-      }),
-      'group_cumulated',
-    );
+    const tree = buildTree(stats, 'group_cumulated');
     // Payload order under Catalog: the group row first, then the two requests.
     const catalogBefore = find(tree, 'Catalog');
     expect(paths(catalogBefore.children)).toEqual([
@@ -621,7 +625,7 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
       'Catalog/Product Detail',
       'Catalog/List Products',
     ]);
-    expect(paths(desc)).toEqual(['Catalog', 'Search', 'Cart', 'Add To Cart', 'Place Order', 'View Cart']);
+    expect(paths(desc)).toEqual(['Catalog', 'Search', 'Cart', 'Place Order']);
     // Two levels down is sorted as well, and still two levels down.
     expect(find(desc, 'Catalog/Recommendations/Related Items').depth).toBe(2);
 
@@ -635,14 +639,7 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
 
   /** Every sibling list at every depth, swept generically for both directions. */
   it('leaves every sibling list in the tree non-increasing, and asc non-decreasing', () => {
-    const tree = buildTree(
-      requestsAt({
-        'List Products': 'Catalog/List Products',
-        'Product Detail': 'Catalog/Product Detail',
-        'Related Items': 'Catalog/Recommendations/Related Items',
-      }),
-      'group_cumulated',
-    );
+    const tree = buildTree(stats, 'group_cumulated');
     for (const column of ['count', 'meanMs', 'maxMs', 'errorRate', 'p50', 'p99'] satisfies SortColumn[]) {
       for (const direction of ['asc', 'desc'] satisfies SortDirection[]) {
         for (const siblings of siblingLists(sortTree(tree, column, direction))) {
@@ -684,43 +681,29 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
   it('carries ties in the order they arrived, not the payload s or the alphabet s', () => {
     const tree = buildTree(stats, 'group_cumulated');
 
-    // From payload order: ties fall out in payload order.
+    // From payload order: ties fall out in payload order. (D-10 leaves four
+    // roots: Catalog and Search at count 160, Cart and Place Order at 85.)
     expect(paths(sortTree(tree, 'count', 'desc'))).toEqual([
       'Catalog',
-      'List Products',
-      'Product Detail',
-      'Related Items',
       'Search',
       'Cart',
-      'Add To Cart',
       'Place Order',
-      'View Cart',
     ]);
     // From p95-ascending order: the SAME two blocks, each in p95-ascending
     // order. Nothing about the payload or the alphabet produces this.
     const byP95 = sortTree(tree, 'p95', 'asc');
     expect(paths(sortTree(byP95, 'count', 'desc'))).toEqual([
-      'List Products',
-      'Product Detail',
       'Search',
-      'Related Items',
       'Catalog',
-      'View Cart',
       'Place Order',
-      'Add To Cart',
       'Cart',
     ]);
     // Ascending is the same tie order, not its reverse: the direction applies
     // to the VALUES, and ties are not values.
     expect(paths(sortTree(byP95, 'count', 'asc'))).toEqual([
-      'View Cart',
       'Place Order',
-      'Add To Cart',
       'Cart',
-      'List Products',
-      'Product Detail',
       'Search',
-      'Related Items',
       'Catalog',
     ]);
   });
@@ -746,7 +729,11 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
 
     expect(tree).toEqual(pristine);
     expect(paths(tree)).toEqual(paths(pristine));
-    expect(paths(find(tree, 'Catalog').children)).toEqual(['Catalog/Recommendations']);
+    expect(paths(find(tree, 'Catalog').children)).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ]);
   });
 
   /* ---------------------------------------------------------------- *
@@ -755,17 +742,9 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
 
   it('sorts by the displayed name, case-insensitively, in both directions', () => {
     const tree = buildTree(stats, 'group_cumulated');
-    const alphabetical = [
-      'Add To Cart',
-      'Cart',
-      'Catalog',
-      'List Products',
-      'Place Order',
-      'Product Detail',
-      'Related Items',
-      'Search',
-      'View Cart',
-    ];
+    // D-10 leaves four roots; the five nested requests sort inside their
+    // parents' own child lists, covered elsewhere.
+    const alphabetical = ['Cart', 'Catalog', 'Place Order', 'Search'];
     expect(paths(sortTree(tree, 'name', 'asc'))).toEqual(alphabetical);
     expect(paths(sortTree(tree, 'name', 'desc'))).toEqual([...alphabetical].reverse());
 
@@ -773,23 +752,15 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
     // case-INSENSITIVE sort from a case-sensitive one — measured: making the
     // comparison case-sensitive changed nothing and failed no test. A payload
     // with mixed case can: ASCII order puts every capital ahead of every
-    // lowercase letter, which is how a table ends up listing `search` after
-    // `View Cart` and reading as broken.
+    // lowercase letter, which is how a table ends up listing `apple pie`
+    // after `Catalog` and reading as broken. (`Search` and `Place Order` are
+    // the only two bare — groupless — requests D-10 leaves to rename here;
+    // the other five now carry a group prefix and are not roots at all.)
     const mixed = buildTree(
-      requestsAt({ Search: 'apple', 'View Cart': 'Banana', 'Place Order': 'cherry' }),
+      requestsAt({ Search: 'apple pie', 'Place Order': 'Banana' }),
       'group_cumulated',
     );
-    expect(paths(sortTree(mixed, 'name', 'asc'))).toEqual([
-      'Add To Cart',
-      'apple',
-      'Banana',
-      'Cart',
-      'Catalog',
-      'cherry',
-      'List Products',
-      'Product Detail',
-      'Related Items',
-    ]);
+    expect(paths(sortTree(mixed, 'name', 'asc'))).toEqual(['apple pie', 'Banana', 'Cart', 'Catalog']);
   });
 
   /**
@@ -800,22 +771,21 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
    * slot at 0 where a reader would read it as the best in the table.
    */
   it('sends rows missing the sorted percentile to the end, in both directions', () => {
-    const tree = buildTree(withoutPercentile('p99', ['Search', 'View Cart']), 'group_cumulated');
+    // `Search` and `Place Order` are the two bare — groupless — requests
+    // D-10 leaves at the root; they are also the only two rows this test can
+    // strip a percentile from and still see the effect at the root level.
+    const tree = buildTree(withoutPercentile('p99', ['Search', 'Place Order']), 'group_cumulated');
     expect(find(tree, 'Search').row.percentiles.p99).toBeUndefined();
 
     for (const direction of ['asc', 'desc'] satisfies SortDirection[]) {
       const sorted = paths(sortTree(tree, 'p99', direction));
       // Last two, and in the order they arrived — missing is not a value to
       // sort by, so the ties among them are ties.
-      expect(sorted.slice(-2)).toEqual(['Search', 'View Cart']);
-      expect(sorted.length).toBe(9);
+      expect(sorted.slice(-2)).toEqual(['Place Order', 'Search']);
+      expect(sorted.length).toBe(4);
     }
     // The rows that DO have the key are ordered on it as usual.
-    expect(paths(sortTree(tree, 'p99', 'desc')).slice(0, 3)).toEqual([
-      'Catalog',
-      'Related Items',
-      'Product Detail',
-    ]);
+    expect(paths(sortTree(tree, 'p99', 'desc')).slice(0, 2)).toEqual(['Catalog', 'Cart']);
   });
 
   it('returns an empty tree for an empty tree, and is a no-op on a single row', () => {
@@ -846,10 +816,12 @@ describe('sortTree — siblings reorder, children stay with their parent (§7)',
  * - The other two catch the coarse mutations — the empty filter, the half-case
  *   comparison, and §9 checkpoint 2's promote-matches-to-root — and MISS five
  *   real ones: keeping every child of a surviving ancestor instead of pruning
- *   to the matching branch (`Catalog` has one child in the reference run, so
- *   `children.length > 0` cannot tell the two apart), matching the displayed
- *   leaf instead of the full path, not trimming the query, reading the query
- *   as a REGEX, and mutating the caller's tree in place.
+ *   to the matching branch (a single-child parent can't tell the two apart —
+ *   D-10 gives `Catalog` three children in the reference run itself, which is
+ *   what exercises this gap directly, rather than needing a synthetic
+ *   payload for it), matching the displayed leaf instead of the full path,
+ *   not trimming the query, reading the query as a REGEX, and mutating the
+ *   caller's tree in place.
  *
  * All four are kept verbatim, because they pin the intended shape. Each is
  * followed by the assertion that can fail: an EXACT surviving path set rather
@@ -974,13 +946,25 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
     expect(paths(flat(filterTree(tree, 'Catalog/Rec')))).toEqual([
       'Catalog',
       'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
     ]);
-    // A bare separator matches every row whose path HAS one — no leaf does.
-    expect(paths(flat(filterTree(tree, '/')))).toEqual(['Catalog', 'Catalog/Recommendations']);
+    // A bare separator matches every row whose path HAS one — no root does,
+    // and D-10 gives most nested rows one, group and request alike.
+    expect(paths(flat(filterTree(tree, '/')))).toEqual([
+      'Cart',
+      'Cart/Add To Cart',
+      'Cart/View Cart',
+      'Catalog',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ]);
     // …and the leaf still matches, because a leaf is a substring of its path.
     expect(paths(flat(filterTree(tree, 'ecommend')))).toEqual([
       'Catalog',
       'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
     ]);
   });
 
@@ -1012,8 +996,13 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
     expect(filterTree(tree, 'Cata.og')).toEqual([]);
     expect(filterTree(tree, '^Cart$')).toEqual([]);
     expect(filterTree(tree, '(')).toEqual([]);
-    // The same tree is not empty for the literal spelling.
-    expect(paths(filterTree(tree, 'Cart'))).toEqual(['Cart', 'Add To Cart', 'View Cart']);
+    // The same tree is not empty for the literal spelling: `Cart` matches
+    // itself and both of its own children, which is the whole subtree.
+    expect(paths(flat(filterTree(tree, 'Cart')))).toEqual([
+      'Cart',
+      'Cart/Add To Cart',
+      'Cart/View Cart',
+    ]);
   });
 
   /* ---------------------------------------------------------------- *
@@ -1036,16 +1025,26 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
    */
   it('lowercases BOTH sides — an expected result, on a mixed-case payload', () => {
     const tree = buildTree(stats, 'group_cumulated');
-    const expected = ['Catalog', 'Catalog/Recommendations'];
+    // `Catalog` itself matches, so its whole subtree — the two direct-child
+    // requests D-10 gives it, and the `Recommendations` branch — comes along.
+    const expected = [
+      'Catalog',
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
+    ];
     for (const query of ['catalog', 'CATALOG', 'Catalog', 'cAtAlOg']) {
       expect(`${query}: ${paths(flat(filterTree(tree, query))).join()}`).toBe(
         `${query}: ${expected.join()}`,
       );
     }
 
-    // A payload with lowercase paths: an UPPERCASE query must still find them.
+    // A payload with lowercase paths: an UPPERCASE query must still find
+    // them. `Search` and `Place Order` are D-10's two groupless requests —
+    // the only ones a rename here can turn into distinct roots.
     const mixed = buildTree(
-      requestsAt({ Search: 'apple pie', 'View Cart': 'Banana' }),
+      requestsAt({ Search: 'apple pie', 'Place Order': 'Banana' }),
       'group_cumulated',
     );
     expect(paths(filterTree(mixed, 'APPLE'))).toEqual(['apple pie']);
@@ -1073,8 +1072,10 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
     expect(flat(tree).length).toBe(10);
 
     // `'Cart '` is deliberately NOT in this list: the query is trimmed, so a
-    // trailing space still finds `Cart` (see the trimming test below).
-    for (const miss of ['zzz-no-such-row', 'Catalogg', 'Cart/', 'Catalog//Recommendations', 'xCart']) {
+    // trailing space still finds `Cart` (see the trimming test below). `'Cart/'`
+    // is deliberately NOT in this list either, post-D-10: `Cart` now has real
+    // children whose paths start with `Cart/`, so that query hits.
+    for (const miss of ['zzz-no-such-row', 'Catalogg', 'Catalog//Recommendations', 'xCart']) {
       expect(`${miss}: ${paths(flat(filterTree(tree, miss))).join()}`).toBe(`${miss}: `);
     }
     // …and the tree it just emptied is full for a query that hits.
@@ -1111,8 +1112,10 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
   it('trims the query at its ends and keeps the spaces inside it', () => {
     const tree = buildTree(stats, 'group_cumulated');
     expect(paths(filterTree(tree, '  Catalog  '))).toEqual(['Catalog']);
-    expect(paths(filterTree(tree, 'To Cart'))).toEqual(['Add To Cart']);
-    expect(paths(filterTree(tree, ' To Cart '))).toEqual(['Add To Cart']);
+    // `Add To Cart` is `Cart/Add To Cart` post-D-10 — no longer a root, so
+    // its match keeps `Cart` above it as context.
+    expect(paths(flat(filterTree(tree, 'To Cart')))).toEqual(['Cart', 'Cart/Add To Cart']);
+    expect(paths(flat(filterTree(tree, ' To Cart ')))).toEqual(['Cart', 'Cart/Add To Cart']);
   });
 
   /* ---------------------------------------------------------------- *
@@ -1127,20 +1130,23 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
    */
   it('keeps the surviving rows in their original sibling order', () => {
     const tree = buildTree(stats, 'group_cumulated');
-    expect(paths(filterTree(tree, 'Cart'))).toEqual(['Cart', 'Add To Cart', 'View Cart']);
-    expect(paths(filterTree(tree, 'a'))).toEqual([
-      'Cart',
+    // `Cart` matches itself; its two children are nested under it, not
+    // separate roots, post-D-10.
+    expect(paths(filterTree(tree, 'Cart'))).toEqual(['Cart']);
+    // `p`: matches `Catalog` (via its two direct-child requests, both of
+    // which have "Products"/"Product" in their path) and `Place Order`, in
+    // their original root order. `Cart` and `Search` have no `p` anywhere in
+    // their own subtree and are gone.
+    expect(paths(filterTree(tree, 'p'))).toEqual(['Catalog', 'Place Order']);
+    expect(paths(flat(filterTree(tree, 'p')))).toEqual([
       'Catalog',
-      'Add To Cart',
+      'Catalog/List Products',
+      'Catalog/Product Detail',
       'Place Order',
-      'Product Detail',
-      'Related Items',
-      'Search',
-      'View Cart',
     ]);
-    // `List Products` is the one path with no `a` in it, and it is the one row
-    // missing — so the filter dropped exactly what it should have.
-    expect(paths(filterTree(tree, 'a'))).not.toContain('List Products');
+    // `Catalog/Recommendations` has no `p` anywhere in its own branch, so it
+    // is the one child of `Catalog` that does not survive.
+    expect(paths(flat(filterTree(tree, 'p')))).not.toContain('Catalog/Recommendations');
   });
 
   it('filters the children of a surviving parent too, not just the roots', () => {
@@ -1185,7 +1191,13 @@ describe('filterTree — a match keeps its context (§7, checkpoint 2)', () => {
     const tree = buildTree(without((r) => r.name === 'Catalog' && r.scope === 'group'), 'group_cumulated');
     const filtered = filterTree(tree, 'Recommendations');
 
-    expect(paths(flat(filtered))).toEqual(['Catalog/Recommendations']);
+    // The orphaned `Catalog/Recommendations` itself matches, so its own
+    // child — `Related Items`, nested one level under it post-D-10 — comes
+    // along as part of its subtree.
+    expect(paths(flat(filtered))).toEqual([
+      'Catalog/Recommendations',
+      'Catalog/Recommendations/Related Items',
+    ]);
     const orphan = find(filtered, 'Catalog/Recommendations');
     expect(orphan.depth).toBe(0);
     expect(orphan.name).toBe('Catalog/Recommendations');
