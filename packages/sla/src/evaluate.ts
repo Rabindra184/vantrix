@@ -63,7 +63,7 @@ export function evaluateRules(
      * it matches a name ending in the separator: a group whose request leaf is
      * empty joins to `Cart/`, and `'Cart/'.endsWith('/')` IS true. Without the
      * guard a run-scope rule could bind to that degenerate row instead of to
-     * the run. The exact match at `:63` finds the run stat first in practice,
+     * the run. The exact match at `:70` finds the run stat first in practice,
      * so this is belt and braces — but it is cheap and the degenerate row is
      * reachable from a malformed simulation log.
      */
