@@ -63,6 +63,15 @@
  * Like the palette, these are mirrored in apps/web/src/charts/theme.ts and
  * apps/web/test/palette.test.ts fails if the two disagree - in any of the
  * three blocks. Edit the hexes there, not here.
+ *
+ * --chart-pct-* are the TEN percentile-chart colours (design section 13.2
+ * element 9, appendix G-22): min through max, another SEVERITY RAMP, green at
+ * min through red at max. Percentiles are an ORDERED measure like the
+ * indicator bands, but this ramp has ten steps to the bands' four, so its
+ * gates in palette.test.ts are looser - ten steps across one hue arc sit
+ * closer together than four by necessity. Light and dark share one set of
+ * values, mirrored from PERCENTILE_RAMP / PERCENTILE_COLORS in
+ * apps/web/src/charts/theme.ts. Edit the hexes there, not here.
  */
 
 @import 'tailwindcss';
@@ -126,6 +135,17 @@
   --chart-band-between: var(--chart-status-pending);
   --chart-band-over: #f97316;
   --chart-band-failed: var(--chart-status-failed);
+
+  --chart-pct-min: #2fdac4;
+  --chart-pct-p25: #32d29c;
+  --chart-pct-p50: #22c55e;
+  --chart-pct-p75: #84cc16;
+  --chart-pct-p80: #b6c641;
+  --chart-pct-p85: #d4c026;
+  --chart-pct-p90: #e8b10c;
+  --chart-pct-p95: #f59e0b;
+  --chart-pct-p99: #f97316;
+  --chart-pct-max: #ef4444;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -165,6 +185,17 @@
     --chart-band-between: var(--chart-status-pending);
     --chart-band-over: #f97316;
     --chart-band-failed: var(--chart-status-failed);
+
+    --chart-pct-min: #2fdac4;
+    --chart-pct-p25: #32d29c;
+    --chart-pct-p50: #22c55e;
+    --chart-pct-p75: #84cc16;
+    --chart-pct-p80: #b6c641;
+    --chart-pct-p85: #d4c026;
+    --chart-pct-p90: #e8b10c;
+    --chart-pct-p95: #f59e0b;
+    --chart-pct-p99: #f97316;
+    --chart-pct-max: #ef4444;
   }
 }
 
@@ -209,4 +240,15 @@
   --chart-band-between: var(--chart-status-pending);
   --chart-band-over: #f97316;
   --chart-band-failed: var(--chart-status-failed);
+
+  --chart-pct-min: #2fdac4;
+  --chart-pct-p25: #32d29c;
+  --chart-pct-p50: #22c55e;
+  --chart-pct-p75: #84cc16;
+  --chart-pct-p80: #b6c641;
+  --chart-pct-p85: #d4c026;
+  --chart-pct-p90: #e8b10c;
+  --chart-pct-p95: #f59e0b;
+  --chart-pct-p99: #f97316;
+  --chart-pct-max: #ef4444;
 }

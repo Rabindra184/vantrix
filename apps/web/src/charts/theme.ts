@@ -112,8 +112,29 @@ export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
  */
 export type BandRole = 'band-under' | 'band-between' | 'band-over' | 'band-failed';
 
-/** Either semantic palette. What `Chart`'s `roles` prop accepts. */
-export type MarkRole = StatusRole | BandRole;
+/**
+ * The percentile chart's SEVERITY RAMP — one ordered ten-step scale, one role
+ * per band `PercentilesChart` can draw (`min` through `max`, D-7's exact set).
+ *
+ * `pct-` prefixed, distinct from `BandRole`'s `band-*`: two charts each own an
+ * ordered ramp, and the prefixes are what keeps `ROLE_TOKEN` and `fallbackFor`
+ * routing a role to the right one rather than the two colliding on a bare
+ * `min`/`max`.
+ */
+export type PercentileRole =
+  | 'pct-min'
+  | 'pct-p25'
+  | 'pct-p50'
+  | 'pct-p75'
+  | 'pct-p80'
+  | 'pct-p85'
+  | 'pct-p90'
+  | 'pct-p95'
+  | 'pct-p99'
+  | 'pct-max';
+
+/** Every semantic palette. What `Chart`'s `roles` prop accepts. */
+export type MarkRole = StatusRole | BandRole | PercentileRole;
 
 /**
  * Points every mark role at the token that carries its MARK colour.
@@ -134,6 +155,16 @@ const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
   'band-between': '--chart-band-between',
   'band-over': '--chart-band-over',
   'band-failed': '--chart-band-failed',
+  'pct-min': '--chart-pct-min',
+  'pct-p25': '--chart-pct-p25',
+  'pct-p50': '--chart-pct-p50',
+  'pct-p75': '--chart-pct-p75',
+  'pct-p80': '--chart-pct-p80',
+  'pct-p85': '--chart-pct-p85',
+  'pct-p90': '--chart-pct-p90',
+  'pct-p95': '--chart-pct-p95',
+  'pct-p99': '--chart-pct-p99',
+  'pct-max': '--chart-pct-max',
 };
 
 /**
@@ -201,20 +232,59 @@ export const BAND_RAMP: readonly BandRole[] = [
 ];
 
 /**
- * The FALLBACK for a mark role — `STATUS_MARK_COLORS` or `BAND_COLORS`,
- * never `STATUS_COLORS`, because every `MarkRole` is a chart FILL.
+ * The percentile chart's SEVERITY RAMP, in band order — `min` (fastest, green)
+ * through `max` (slowest, red). `PercentilesChart` filters this down to
+ * whichever bands are selected and hands the result to `Chart` as `roles`; see
+ * that component for why the filter must follow `BANDS`' order rather than
+ * toggle order.
+ *
+ * Do not reorder: `palette.test.ts` reads the ramp off it, and reordering
+ * would silently recolour every selected band.
+ */
+export const PERCENTILE_RAMP: readonly PercentileRole[] = [
+  'pct-min', 'pct-p25', 'pct-p50', 'pct-p75', 'pct-p80',
+  'pct-p85', 'pct-p90', 'pct-p95', 'pct-p99', 'pct-max',
+];
+
+/**
+ * MEASURED, ten steps, hue falling monotonically 181.7° → 25.3° (green to
+ * red). Light and dark share these values, as the reference this ramp is
+ * drawn from does — a ten-step ramp spread across both a light and a dark
+ * derivation would only multiply the ways two steps could end up too close.
+ *
+ * Lightness is NOT monotonic here (it dips at `pct-p50` and rises again
+ * through `pct-p85`): five of these values are inherited from the reference
+ * fixed on their own bands, and are not lightness-ordered. `palette.test.ts`
+ * gates hue rotation and pairwise separation, deliberately not lightness —
+ * see that file for why a lightness gate would fail this ramp and the
+ * four-step band ramp alike.
+ */
+const RAMP = {
+  'pct-min': '#2fdac4', 'pct-p25': '#32d29c', 'pct-p50': '#22c55e',
+  'pct-p75': '#84cc16', 'pct-p80': '#b6c641', 'pct-p85': '#d4c026',
+  'pct-p90': '#e8b10c', 'pct-p95': '#f59e0b', 'pct-p99': '#f97316',
+  'pct-max': '#ef4444',
+} as const;
+
+export const PERCENTILE_COLORS: Readonly<Record<ChartMode, Readonly<Record<PercentileRole, string>>>> =
+  { light: RAMP, dark: RAMP };
+
+/**
+ * The FALLBACK for a mark role — `STATUS_MARK_COLORS`, `BAND_COLORS` or
+ * `PERCENTILE_COLORS`, never `STATUS_COLORS`, because every `MarkRole` is a
+ * chart FILL.
  *
  * `markColor` reads the live document first, so a theme switch is picked up
  * without a rebuild; this is what is used when reading fails honestly (no
- * document at all, and jsdom, which parses no stylesheet). Both source
- * constants mirror `tokens.css`'s `--chart-status-*` and `--chart-band-*`
- * exactly, and `palette.test.ts` fails if either ever disagrees, in any of
- * the three blocks.
+ * document at all, and jsdom, which parses no stylesheet). All three source
+ * constants mirror `tokens.css`'s `--chart-status-*`, `--chart-band-*` and
+ * `--chart-pct-*` exactly, and `palette.test.ts` fails if any of them ever
+ * disagrees, in any of the three blocks.
  */
 function fallbackFor(role: MarkRole, mode: ChartMode): string {
-  return role.startsWith('band-')
-    ? BAND_COLORS[mode][role as BandRole]
-    : STATUS_MARK_COLORS[mode][role as StatusRole];
+  if (role.startsWith('band-')) return BAND_COLORS[mode][role as BandRole];
+  if (role.startsWith('pct-')) return PERCENTILE_COLORS[mode][role as PercentileRole];
+  return STATUS_MARK_COLORS[mode][role as StatusRole];
 }
 
 export function markColor(role: MarkRole, mode: ChartMode): string {
@@ -438,7 +508,7 @@ export function resolveChartMode(): ChartMode {
 
 export interface ChartTheme {
   /**
-   * The two SEMANTIC palettes, by role — for the charts whose marks mean
+   * The three SEMANTIC palettes, by role — for the charts whose marks mean
    * something. See `MarkRole`.
    */
   readonly roles: Readonly<Record<MarkRole, string>>;
@@ -464,9 +534,11 @@ export interface ChartTheme {
  *
  * What IS here, and every field is read by `Chart.tsx`:
  *
- *   - `roles` — the status and band palettes, consumed only by the charts that
- *     declare `roles` on `<Chart/>`: the indicator bands ③ and the
- *     request-count donut ④.
+ *   - `roles` — the status, band and percentile palettes, consumed only by the
+ *     charts that declare `roles` on `<Chart/>`: the indicator bands ③, the
+ *     request-count donut ④, the saturation scatter, and the percentile chart
+ *     ⑨, which is the one that also lifts the six-hue cap (see `Chart.tsx`'s
+ *     assignment memo).
  *   - `ink` / `inkMuted` — all text. Design §11 is explicit that values, labels
  *     and legend text wear ink tokens and NEVER a mark colour; a legend label
  *     painted in its series' colour is the most common way a chart quietly

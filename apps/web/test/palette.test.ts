@@ -7,6 +7,8 @@ import {
   CATEGORICAL,
   CATEGORICAL_DARK,
   GRIDLINE,
+  PERCENTILE_COLORS,
+  PERCENTILE_RAMP,
   STATUS_COLORS,
   STATUS_MARK_COLORS,
   SURFACE_TOKENS,
@@ -99,6 +101,8 @@ function hexToOkLab(hex: string): OkLab {
 }
 
 const chroma = (c: OkLab): number => Math.hypot(c.a, c.b);
+
+const hueOf = (c: OkLab): number => { const d = Math.atan2(c.b, c.a) * 180 / Math.PI; return d < 0 ? d + 360 : d; };
 
 /** Euclidean distance in OKLab, ×100 — the scale the thresholds are stated on. */
 const deltaE = (x: OkLab, y: OkLab): number => 100 * Math.hypot(x.L - y.L, x.a - y.a, x.b - y.b);
@@ -489,6 +493,60 @@ describe('the indicator band ramp', () => {
   it.each(RAMP_MODES)('shares its endpoints with the status mark palette (%s)', (mode) => {
     expect(BAND_COLORS[mode]['band-under']).toBe(STATUS_MARK_COLORS[mode].passed);
     expect(BAND_COLORS[mode]['band-failed']).toBe(STATUS_MARK_COLORS[mode].failed);
+  });
+});
+
+/**
+ * An ORDERED ramp, so the gate is ordering, not separation. Hue must fall
+ * monotonically green→red across all ten; that rotation IS the information.
+ *
+ * The ΔE floors are lower than the band ramp's on purpose and are the MEASURED
+ * minima rounded down. Ten steps across one hue arc are necessarily closer
+ * together than four; a floor set at the four-step ramp's 7.5 would be a
+ * demand that this ramp stop being a ramp. Their job is to catch a duplicate
+ * or a step nudged onto its neighbour, not to claim adjacent steps are
+ * independently identifiable.
+ *
+ * Lightness is NOT gated and is NOT monotonic (it dips at p50 and rises again
+ * through p85). The five values this ramp inherits from the reference are
+ * fixed on their own bands, and they are not lightness-ordered; a lightness
+ * gate would fail them and the four-step band ramp alike.
+ */
+const PCT_ADJACENT_FLOOR = 4.0;
+const PCT_TWO_APART_FLOOR = 8.0;
+const PCT_ENDS_FLOOR = 35;
+
+describe.each(['light', 'dark'] as const)('the percentile ramp (%s)', (mode) => {
+  const ramp = PERCENTILE_RAMP.map((role) => PERCENTILE_COLORS[mode][role]);
+
+  it('is ten distinct colours', () => {
+    expect(new Set(ramp).size).toBe(10);
+  });
+
+  it('rotates hue monotonically from green to red', () => {
+    const hues = ramp.map((hex) => hueOf(hexToOkLab(hex)));
+    expect(hues.every((h, i) => i === 0 || h < hues[i - 1]!)).toBe(true);
+  });
+
+  it('keeps adjacent steps apart', () => {
+    const lab = ramp.map(hexToOkLab);
+    const tooClose = lab.slice(1)
+      .map((next, i) => ({ pair: `${PERCENTILE_RAMP[i]}→${PERCENTILE_RAMP[i + 1]}`, dE: deltaE(lab[i]!, next) }))
+      .filter(({ dE }) => dE < PCT_ADJACENT_FLOOR);
+    expect(tooClose).toEqual([]);
+  });
+
+  it('keeps two-apart steps further apart still', () => {
+    const lab = ramp.map(hexToOkLab);
+    const tooClose: string[] = [];
+    for (let i = 0; i + 2 < lab.length; i++) {
+      if (deltaE(lab[i]!, lab[i + 2]!) < PCT_TWO_APART_FLOOR) tooClose.push(`${PERCENTILE_RAMP[i]}→${PERCENTILE_RAMP[i + 2]}`);
+    }
+    expect(tooClose).toEqual([]);
+  });
+
+  it('separates its ends', () => {
+    expect(deltaE(hexToOkLab(ramp[0]!), hexToOkLab(ramp[9]!))).toBeGreaterThanOrEqual(PCT_ENDS_FLOOR);
   });
 });
 

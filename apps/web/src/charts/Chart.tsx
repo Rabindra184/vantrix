@@ -160,11 +160,19 @@ export default function Chart({
   // A series may declare itself `essential` (see `ChartSeries`), which exempts
   // it from the cut without moving it: the concurrent-users chart's total is
   // last in the list and must be drawn even when six scenarios precede it.
+  //
+  // A chart that declares `roles` brought its own colour per series and is not
+  // spending categorical hues, so the six-slot cap does not apply to it. The
+  // cap exists to stop a SEVENTH series wrapping back to `--chart-1`; a ramp
+  // has no wraparound to prevent. Charts without `roles` are unaffected.
   const assignment = useMemo(() => {
     const names = data.series.map((series) => series.name);
+    if (roles !== undefined) {
+      return { drawn: names.map((name, index) => ({ index, name, color: '' })), undrawn: [] };
+    }
     const essential = data.series.flatMap((series, i) => (series.essential === true ? [i] : []));
     return assignPalette(names, mode, essential);
-  }, [data.series, mode]);
+  }, [data.series, mode, roles]);
 
   // THE INSTANCE'S LIFETIME, and nothing else: create, join the crosshair
   // group, follow the container's size, dispose.
@@ -277,11 +285,11 @@ export default function Chart({
       {
         // Mark colour comes from the categorical palette, which `assignPalette`
         // reads off the `--chart-*` tokens — unless the chart declared `roles`,
-        // in which case its marks mean something and wear the `--chart-status-*`
-        // or `--chart-band-*` tokens instead. Text NEVER wears any of them
-        // (design §11): the palettes are tuned for marks on a surface, and 12px
-        // type in a mark colour is the commonest way a chart quietly fails
-        // contrast.
+        // in which case its marks mean something and wear the `--chart-status-*`,
+        // `--chart-band-*` or `--chart-pct-*` tokens instead. Text NEVER wears
+        // any of them (design §11): the palettes are tuned for marks on a
+        // surface, and 12px type in a mark colour is the commonest way a chart
+        // quietly fails contrast.
         color:
           roles === undefined
             ? drawn.map((series) => series.color)

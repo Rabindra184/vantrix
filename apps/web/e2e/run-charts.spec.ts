@@ -655,8 +655,10 @@ test('the percentile table carries all ten bands while six are drawn', async ({ 
 
   const chart = page.getByTestId('chart-percentiles');
 
-  // Six DRAWN, because ten lines on one axis is more than a sighted reader can
-  // follow and more than the palette has hues for.
+  // Six DRAWN, because six is the DEFAULT SELECTION — ten lines on one axis is
+  // more than a sighted reader can follow. It is no longer a palette limit:
+  // the percentile ramp has a colour for all ten and the reader can select
+  // them.
   expect(await legendLabels(chart)).toHaveLength(6);
 
   // TEN CARRIED. The table is the parity surface (§7) and the screen-reader
@@ -680,6 +682,24 @@ test('the percentile table carries all ten bands while six are drawn', async ({ 
   }
   const p80 = rows.map((row) => row.cells[4]!.text).filter((text) => text !== '—');
   expect(p80.length).toBeGreaterThan(50);
+});
+
+test('selecting every band draws all ten, which the palette used to forbid', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  const chart = page.getByTestId('chart-percentiles');
+  for (const band of ['p25', 'p80', 'p85', 'p90']) {
+    const button = page.getByTestId(`band-${band}-percentiles`);
+    if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
+  }
+
+  await expect.poll(() => legendLabels(chart)).toHaveLength(10);
+  // And no "showing 6 of 10" prose, because nothing was dropped.
+  await expect(chart.getByText(/not drawn/)).toHaveCount(0);
 });
 
 test('deselecting every band explains itself rather than drawing an empty grid', async ({
