@@ -11,13 +11,23 @@ import { runChartsPath, runErrorsPath, runPath } from './paths';
  * The error count is DISTINCT MESSAGES, which only `/errors` knows. The stats
  * row's `koCount` is failed requests — 24 where this is 2 on the reference
  * run — so using it would put a plausible wrong number on screen.
+ *
+ * `errorCount` is `number | null`, not defaulted to `0` by its caller: `null`
+ * means "not yet known" — `errorsQuery` still pending, or failed — and `0`
+ * means the run genuinely has no distinct error messages. `RunShell` used to
+ * collapse the two with `?? 0`, which read "Errors (0)" for a run whose count
+ * had not arrived, and read it forever if the fetch failed outright while the
+ * panel beneath it rendered `role="alert"` — a confident zero over a stated
+ * failure. `peakUsers` two lines up in `RunHeader` already draws this
+ * distinction (`runUsers.ts`'s own "zero is a measurement"); this is the same
+ * argument applied to the tab that sits right beside it.
  */
 export default function RunTabs({
   runId,
   errorCount,
 }: {
   readonly runId: string;
-  readonly errorCount: number;
+  readonly errorCount: number | null;
 }) {
   const base = 'border-b-2 px-3 py-2 text-sm';
   const style = ({ isActive }: { isActive: boolean }) =>
@@ -34,7 +44,7 @@ export default function RunTabs({
         Charts
       </NavLink>
       <NavLink to={runErrorsPath(runId)} className={style}>
-        Errors ({errorCount})
+        {errorCount === null ? 'Errors' : `Errors (${errorCount})`}
       </NavLink>
     </nav>
   );

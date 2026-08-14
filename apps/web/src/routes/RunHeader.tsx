@@ -39,17 +39,56 @@ export default function RunHeader({
         <p className="text-muted">{run.description}</p>
       )}
 
+      {/* NAME/VALUE PAIRS, IN A CHIP ROW RATHER THAN A `<dl>`. The header this
+          replaced was a `<dl>` carrying this comment: "A description list,
+          not a grid of divs: these are name/value pairs and `<dt>`/`<dd>` is
+          what tells a screen reader that 'Duration' names '61s' rather than
+          merely preceding it." That argument was never answered, only
+          deleted along with the markup it was about — a flat row of bare
+          `<span>`s named nothing, so "63s" was announced between a
+          timestamp and a peak-user count with no indication which
+          measurement it was. The chip-row LOOK is a legitimate call (spec §4
+          specifies sources, not markup) and is kept; what is restored is the
+          naming, the same way `NamedBadge` below already has to: a bare
+          `<span>`'s implicit role is "generic", which is Name-from-PROHIBITED
+          (see `NamedBadge`'s own docstring), so `aria-label` on one of these
+          spans does nothing at all without `role="group"` alongside it. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
-        <span>{run.toolVersion ? `${run.tool} ${run.toolVersion}` : run.tool}</span>
-        <span>
+        <span role="group" aria-label={`Tool: ${run.tool}${run.toolVersion ? ` ${run.toolVersion}` : ''}`}>
+          {run.toolVersion ? `${run.tool} ${run.toolVersion}` : run.tool}
+        </span>
+        <span
+          role="group"
+          aria-label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${
+            isIngestTime ? ' (ingest time — the tool reported no start)' : ''
+          }`}
+        >
           {/* <time dateTime> carries the machine-readable instant beside the
               human one; the text itself is localised. Same treatment as the
-              run list. */}
+              run list. The wrapping `role="group"` + `aria-label` is what
+              says this timestamp is a START (or, when the tool reported
+              none, a RECEIVED) time — the `Started`/`Received` distinction
+              the old `<dl>`'s `Field` label carried, restated here since a
+              bare `<time>` names nothing on its own either. */}
           <time dateTime={startedAt}>{formatStarted(startedAt)}</time>
           {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
         </span>
-        <span data-testid="run-duration">{formatDuration(run.durationMs)}</span>
-        {peakUsers !== null && <span>{peakUsers.toLocaleString()} peak users</span>}
+        <span
+          role="group"
+          aria-label={`Duration: ${formatDuration(run.durationMs)}`}
+          data-testid="run-duration"
+        >
+          {formatDuration(run.durationMs)}
+        </span>
+        {peakUsers !== null && (
+          // The aria-label restates the visible text exactly, rather than
+          // prefixing a "Peak users:" name onto it — the same shape
+          // `NamedBadge` below uses, measured there not to double-announce
+          // (see its own docstring) precisely because the two strings match.
+          <span role="group" aria-label={`${peakUsers.toLocaleString()} peak users`}>
+            {peakUsers.toLocaleString()} peak users
+          </span>
+        )}
         <NamedBadge mark={STATUS[run.status]} testId="run-status" />
         <NamedBadge mark={VERDICT[run.verdict ?? 'none']} testId="run-verdict" />
       </div>

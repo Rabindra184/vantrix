@@ -26,7 +26,14 @@ import RunShell from './RunShell';
 import RunStats from './RunStats';
 
 /**
- * One run: its header, and the SLA rules that were evaluated against it.
+ * This module's default export decides WHICH of a run's three states is on
+ * screen; it renders neither a header nor the SLA rules itself any more.
+ * Those moved out when the run page grew tabs: the header is `RunHeader`,
+ * rendered by `RunShell` below, and the assertions live on `RunOverviewTab`.
+ * What is left here is four route components sharing one run — `RunDetail`
+ * itself (the three-state branch), `RunOverviewTab`, `RunChartsTab` and
+ * `RunErrorsTab` (`RunShell`'s tab children) — plus the pieces they share:
+ * `Assertions`, the Charts tab's chart-slot constants, and `describeRule`.
  *
  * The last screen of the parity shell, and the end of the definition of done
  * — a person signs in, sees their org's runs, opens one, and reads it.
@@ -229,9 +236,22 @@ function Ready({ run }: { run: RunResponse }) {
  * `RequestDetail` and `GroupDetail` already use, and the reason `RunShell`'s
  * `<Outlet/>` carries no context (see its own docstring). Assertions live
  * only on the run body, so this re-asks for `runQueryKey(runId)` — the SAME
- * key `RunDetail` already holds warm from its own poll, so this resolves
- * from cache rather than firing a second request, exactly as `statsQuery`
- * already does across this page's components.
+ * key `RunDetail` already holds warm from its own poll, so this PAINTS from
+ * that cache immediately rather than showing its own loading state.
+ *
+ * IT STILL FIRES A SECOND `GET /v1/runs/:id`, though — measured, on Overview's
+ * first paint. `runQueryKey` carries no `staleTime` (`run.ts`), on purpose:
+ * `pollIntervalFor` re-polls a `processing` run, and a query that never went
+ * stale would never be eligible to. Data is stale on arrival by TanStack's own
+ * default, so this second mount — a different component, mounted strictly
+ * after `RunDetail`'s own fetch already resolved, never in the same commit —
+ * refetches in the background even though it renders the cached value with no
+ * spinner. This docstring used to claim the SAME free reuse `statsQuery` gets
+ * across this page's components; `statsQuery` earns that honestly, with its
+ * own `staleTime: Infinity` (`api/metrics.ts`, correct because a completed
+ * run's stats never change). This key is not a candidate for the same fix —
+ * a pending run's status is precisely a value that changes — so the sentence
+ * was wrong rather than merely stale, and is corrected instead of matched.
  */
 export function RunOverviewTab() {
   const { runId } = useParams<{ runId: string }>();
@@ -345,11 +365,24 @@ const RESPONSES_PER_SECOND: Slot = {
  * chart broke that adjacency, the ORDER wins and this component grows a fifth
  * block — never the other way round.
  *
- * `aria-label="Charts"`, not an `<h2>` with `aria-labelledby`: a tab named
- * Charts directly above a heading that also said Charts (or, before the tab
- * strip existed, "Overview") would say it twice. The tab itself (Task 2's
- * `RunTabs`) is this section's name for a sighted and a screen-reader user
- * alike.
+ * NAMED BY AN `<h2>`, VISUALLY HIDDEN — not `aria-label="Charts"`, which this
+ * used to carry instead. That was reasoned as: a tab named Charts directly
+ * above a heading that also said Charts (or, before the tab strip existed,
+ * "Overview") would say it twice. True for a SIGHTED user, and irrelevant to
+ * one — the tab strip is not in view once a reader has scrolled into the
+ * chart stack. It was also incomplete: the eight charts below each render an
+ * `<h3>` (`Chart.tsx`), and `aria-label` on this section is not a heading at
+ * all, so a screen-reader user navigating by heading level jumped straight
+ * from the page's one `<h1>` (`RunHeader`) to eight `<h3>`s with no `<h2>`
+ * between them — a level skipped, and this section unreachable by that
+ * navigation mode no matter what its `aria-label` said. An `sr-only` `<h2>`
+ * both names the region (via `aria-labelledby`, so nothing is claimed twice
+ * out loud for a sighted reader) and repairs the ladder, at the one cost that
+ * argument was avoiding: a screen-reader user who tabs through headings
+ * hears "Charts" once from `RunTabs`' link and, later, again on arrival —
+ * the same trade `RunHeader`'s badges and countless real sites make
+ * routinely, and a smaller cost than a heading level a screen reader cannot
+ * jump to at all.
  */
 export function RunChartsTab() {
   const { runId } = useParams<{ runId: string }>();
@@ -362,7 +395,10 @@ export function RunChartsTab() {
   const series = useQuery({ ...seriesQuery(runId ?? ''), enabled: runId !== undefined });
 
   return (
-    <section aria-label="Charts" className="flex flex-col gap-8">
+    <section aria-labelledby="charts-heading" className="flex flex-col gap-8">
+      <h2 id="charts-heading" className="sr-only">
+        Charts
+      </h2>
       <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
         {(data) => (
           <>

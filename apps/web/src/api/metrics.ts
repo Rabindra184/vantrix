@@ -30,6 +30,26 @@ import { apiFetch } from './fetch';
  * the two would make an invalidation of the list discard every chart payload
  * the reader has open. Each key is a FUNCTION of everything the URL varies by,
  * so two scopes of the same endpoint cannot share a cache entry.
+ *
+ * EVERY FACTORY BELOW ALSO SETS `staleTime: Infinity`. A completed run's
+ * metrics do not change — `/stats`, `/series`, `/users`, `/distribution`,
+ * `/errors` and `/scatter` for a given run id are fixed the moment the run is
+ * ingested, and a re-ingest produces a new run id, not new values under this
+ * one. `main.tsx` sets no `staleTime` of its own, so without one here
+ * TanStack's default of `0` applies: a query is stale the instant it lands,
+ * and a newly mounted observer for stale data refetches on mount REGARDLESS
+ * of whether another observer already holds the same key warm. That is not
+ * hypothetical — it is what this page actually does. `RunShell` fetches
+ * `usersQuery` and `errorsQuery` for the header and the tab strip; `stats`,
+ * `users`, `distribution` and `series` are each asked for again, under the
+ * identical key, by whichever of `RunOverviewTab` / `RunChartsTab` /
+ * `RunErrorsTab` the reader opens — and because those are ROUTES that mount at
+ * DIFFERENT times, not components sharing one render, a shared key alone only
+ * dedupes observers that happen to mount while a fetch is still in flight. The
+ * `staleTime` is what stops the later, separate mount from firing a second
+ * request for data that has not gone anywhere. `run.ts`'s `runQueryKey` is
+ * deliberately NOT given one: `pollIntervalFor` re-polls a run that is still
+ * `processing` on purpose, and needs the query to be refetchable.
  */
 
 const runPath = (id: string) => `/v1/runs/${encodeURIComponent(id)}`;
@@ -48,16 +68,24 @@ export const statsQueryKey = (id: string) => ['run', id, 'stats'] as const;
  * is by definition every row there is. Filtering here would mean a second
  * request for the same run, cached under a second key, that could disagree.
  *
- * THREE CONSUMERS, ONE FETCH. `RunDetail` mounts the statistics table and the
- * chart stack as separate components and each asks for this query by name; the
- * KEY is what makes that one request and one cache entry rather than two of
- * each. Hoisting the call to their common parent would work too, and would
- * couple the chart stack's payload to a decision about tables — the key already
- * says these are the same data.
+ * TWO ROUTES, ONE FETCH — but only because of `staleTime`, not because of the
+ * KEY alone. This docstring used to say `RunDetail` "mounts the statistics
+ * table and the chart stack as separate components", which was true before
+ * this key had a route split to survive: today `RunOverviewTab` (the
+ * statistics table, and the six stat tiles) and `RunChartsTab` (the indicator
+ * bands and the request-count donut) are different ROUTES under `RunShell`,
+ * mounted at whatever moment the reader clicks a tab — not two components
+ * rendered together in one commit. A shared key on its own only dedupes
+ * observers that mount while a fetch is still in flight; it says nothing
+ * about a SECOND mount, minutes later, of an observer for data that already
+ * resolved. `staleTime: Infinity` is what makes that second mount reuse the
+ * cache instead of firing again — see this file's top-level comment for why
+ * that is correct for a completed run's stats specifically.
  */
 export const statsQuery = (id: string) => ({
   queryKey: statsQueryKey(id),
   queryFn: () => apiFetch(StatsResponseSchema, `${runPath(id)}/stats`),
+  staleTime: Infinity,
 });
 
 /* -------------------------------------------------------------------- *
@@ -83,6 +111,7 @@ export const seriesQuery = (id: string, scope = 'run', name = '', family = 'resp
       `${runPath(id)}/series?scope=${encodeURIComponent(scope)}` +
         `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}`,
     ),
+  staleTime: Infinity,
 });
 
 /* -------------------------------------------------------------------- *
@@ -96,6 +125,7 @@ export const usersQueryKey = (id: string) => ['run', id, 'users'] as const;
 export const usersQuery = (id: string) => ({
   queryKey: usersQueryKey(id),
   queryFn: () => apiFetch(UsersResponseSchema, `${runPath(id)}/users`),
+  staleTime: Infinity,
 });
 
 /* -------------------------------------------------------------------- *
@@ -130,6 +160,7 @@ export const distributionQuery = (
       `${runPath(id)}/distribution?scope=${encodeURIComponent(scope)}` +
         `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}`,
     ),
+  staleTime: Infinity,
 });
 
 /* -------------------------------------------------------------------- *
@@ -183,6 +214,7 @@ export const errorsQuery = (id: string, scope = 'run', name = '') => ({
       ErrorsResponseSchema,
       `${runPath(id)}/errors?scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`,
     ),
+  staleTime: Infinity,
 });
 
 /* -------------------------------------------------------------------- *
@@ -205,4 +237,5 @@ export const scatterQuery = (id: string, name: string) => ({
       ScatterResponseSchema,
       `${runPath(id)}/scatter?name=${encodeURIComponent(name)}`,
     ),
+  staleTime: Infinity,
 });
