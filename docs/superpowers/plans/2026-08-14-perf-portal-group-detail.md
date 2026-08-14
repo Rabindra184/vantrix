@@ -850,17 +850,19 @@ show" things that now exist.
 grep -rn "DetailPlaceholder" apps/web/src apps/web/test apps/web/e2e
 ```
 
-Expected: only `App.tsx`'s import, now unused after Task 3.
+Expected: **no output.** Task 3 already removed `App.tsx`'s import — lint fails
+on a dangling one — so the file is orphaned, imported by nothing, and rendered
+by no route. If the grep does return something, that reference is a live use and
+this task's premise is wrong: stop and report rather than deleting the file.
 
-- [ ] **Step 2: Delete it and drop the import**
+- [ ] **Step 2: Delete it**
 
 ```bash
 git rm apps/web/src/routes/DetailPlaceholder.tsx
 ```
 
-Remove the `import DetailPlaceholder from './routes/DetailPlaceholder';` line
-from `App.tsx`. Leave the block comment above the two detail routes — it still
-explains the single-segment encoding.
+Leave the block comment above the two detail routes in `App.tsx` — it still
+explains the single-segment encoding both rely on.
 
 - [ ] **Step 3: Correct §13.4's prose**
 
