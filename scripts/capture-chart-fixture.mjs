@@ -1,5 +1,5 @@
 /**
- * Captures the four chart payloads for the REFERENCE RUN, from the live API,
+ * Captures the five payloads for the REFERENCE RUN, from the live API,
  * into `apps/web/test/fixtures/reference-run.json`.
  *
  * WHY THIS EXISTS. Every chart transform in this sub-project is unit-tested
@@ -10,9 +10,10 @@
  * none of it would show up until a browser. Capturing it means the transforms
  * run against the SAME BYTES the browser receives.
  *
- * WHAT IT WRITES. Four raw response bodies, exactly as served, under the keys
- * `stats`, `series`, `users` and `distribution`, plus a `_capture` block
- * recording where they came from. Nothing is reshaped, rounded or trimmed.
+ * WHAT IT WRITES. Five raw response bodies, exactly as served, under the keys
+ * `stats`, `series`, `users`, `distribution` and `errors`, plus a `_capture`
+ * block recording where they came from. Nothing is reshaped, rounded or
+ * trimmed.
  *
  * ---------------------------------------------------------------------------
  * HOW TO RE-CAPTURE IT
@@ -83,10 +84,24 @@ const OUT = fileURLToPath(
 );
 
 /**
- * The four requests, in the exact form `apps/web/src/api/metrics.ts` issues
+ * The five requests, in the exact form `apps/web/src/api/metrics.ts` issues
  * them. Kept in step with that module deliberately: a fixture captured from a
  * different scope than the app requests is a fixture the transforms are tested
  * against and the app never sees.
+ *
+ * `errors` is the exception, and knowingly so: `metrics.ts` has no errors
+ * query yet — the errors table adds one — so this URL is the shape that
+ * builder must take rather than a copy of one that exists. It carries
+ * `?scope=run&name=` for the same reason `series` does: the app's builder must
+ * emit this exact string, and a capture taken with a different one would stop
+ * being what the browser receives.
+ *
+ * NOT because omitting it is unsafe — measured, it is not.
+ * `MetricsController.errors` sets `name` to `''` when `scope` is absent and
+ * the reader's SQL is unconditionally scoped, so `/errors` and
+ * `/errors?scope=run&name=` return identical rows. The real trap is the
+ * inverse: `?name=X` WITHOUT `scope` is silently ignored and answers with the
+ * run's totals.
  */
 const ENDPOINTS = [
   { key: 'stats', path: (id) => `/v1/runs/${id}/stats` },
@@ -96,6 +111,7 @@ const ENDPOINTS = [
     key: 'distribution',
     path: (id) => `/v1/runs/${id}/distribution?scope=run&name=&family=response_time`,
   },
+  { key: 'errors', path: (id) => `/v1/runs/${id}/errors?scope=run&name=` },
 ];
 
 /** Fails with the server's own words rather than a bare status code. */
@@ -177,6 +193,10 @@ async function main() {
     'users.scenarios': captured.users.scenarios.length,
     'users.total': captured.users.total.length,
     'distribution.labels': captured.distribution.labels.length,
+    // 24 of the reference run's 895 requests fail, in two distinct messages.
+    // An empty array here would mean the errors table renders its empty state
+    // in every test that reads this fixture, and pass.
+    'errors.errors': captured.errors.errors.length,
   };
   for (const [what, length] of Object.entries(nonEmpty)) {
     if (length === 0) {

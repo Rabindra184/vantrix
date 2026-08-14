@@ -1,5 +1,6 @@
 import {
   DistributionResponseSchema,
+  ErrorsResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
   UsersResponseSchema,
@@ -7,7 +8,8 @@ import {
 import { apiFetch } from './fetch';
 
 /**
- * The four metric endpoints behind the eight overview charts.
+ * The metric endpoints behind the run detail page: four for the eight overview
+ * charts, and `/errors` for the errors table.
  *
  * Four fetches, eight charts (design §2): `/stats` feeds the indicator bands
  * and the request-count donut, `/series` feeds percentiles-over-time,
@@ -32,17 +34,25 @@ import { apiFetch } from './fetch';
 const runPath = (id: string) => `/v1/runs/${encodeURIComponent(id)}`;
 
 /* -------------------------------------------------------------------- *
- * stats — indicator bands ③ and the request-count donut ④
+ * stats — indicator bands ③, the request-count donut ④, the statistics table ⑤
  * -------------------------------------------------------------------- */
 
 export const statsQueryKey = (id: string) => ['run', id, 'stats'] as const;
 
 /**
  * Deliberately UNFILTERED. The endpoint accepts `scope`/`name`/`family`, but
- * both charts need the whole set: the donut's totals come from the run-scope
- * row, and `StatsResponse.indicators`/`bounds`/`configurable` are properties of
- * the response rather than of any row. Filtering here would mean a second
+ * every consumer needs the whole set: the donut's totals come from the
+ * run-scope row, `StatsResponse.indicators`/`bounds`/`configurable` are
+ * properties of the response rather than of any row, and the statistics table
+ * is by definition every row there is. Filtering here would mean a second
  * request for the same run, cached under a second key, that could disagree.
+ *
+ * THREE CONSUMERS, ONE FETCH. `RunDetail` mounts the statistics table and the
+ * chart stack as separate components and each asks for this query by name; the
+ * KEY is what makes that one request and one cache entry rather than two of
+ * each. Hoisting the call to their common parent would work too, and would
+ * couple the chart stack's payload to a decision about tables — the key already
+ * says these are the same data.
  */
 export const statsQuery = (id: string) => ({
   queryKey: statsQueryKey(id),
@@ -115,5 +125,58 @@ export const distributionQuery = (
       DistributionResponseSchema,
       `${runPath(id)}/distribution?scope=${encodeURIComponent(scope)}` +
         `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}`,
+    ),
+});
+
+/* -------------------------------------------------------------------- *
+ * errors — the errors table ⑥
+ * -------------------------------------------------------------------- */
+
+export const errorsQueryKey = (id: string, scope = 'run', name = '') =>
+  ['run', id, 'errors', scope, name] as const;
+
+/**
+ * The trap on this endpoint is NOT the one an earlier version of this comment
+ * described. Measured against `MetricsController.errors`:
+ *
+ *     const sel = { scope: scope ?? 'run', name: scope === undefined ? '' : (name ?? '') };
+ *
+ * Omitting `scope` sets `name` to `''`, not `undefined`, and the reader's SQL
+ * is unconditionally `AND scope = $4 AND name = $5` with its own
+ * `{ scope: 'run', name: '' }` default. So `/errors` and `/errors?scope=run&name=`
+ * return byte-identical results — the unscoped form is safe.
+ *
+ * THE REAL TRAP IS THE INVERSE: `?name=Search` WITHOUT `scope` is silently
+ * ignored. That ternary forces `name` to `''`, so the request comes back with
+ * the RUN's totals while looking like it asked for one endpoint's. A caller
+ * scoping a read must send BOTH parameters or neither. This matters next for
+ * §13.3 RQ-11, "Errors for this request".
+ *
+ * These three characters are sent anyway, for a different and still-real
+ * reason: the captured fixture was taken with exactly this string, so keeping
+ * them identical is what makes the fixture what the browser receives.
+ *
+ * ═══ THE URL IS DUPLICATED, CHARACTER FOR CHARACTER, IN A SECOND PLACE ═══
+ *
+ * `scripts/capture-chart-fixture.mjs` re-captures
+ * `apps/web/test/fixtures/reference-run.json` by issuing
+ * `/v1/runs/${id}/errors?scope=run&name=` — its own literal, written before
+ * this builder existed. Every unit test in this sub-project runs against that
+ * capture, so if the two strings drift the fixture stops being what the browser
+ * receives and no suite in the repo notices. That duplication is now six URLs
+ * wide across the five endpoints and is recorded as follow-up rather than fixed
+ * here; `apps/web/e2e/run-tables.spec.ts` asserts the string this builder
+ * actually puts on the wire, which makes at least the app half observable.
+ *
+ * `scope`/`name` are parameters for the same reason `seriesQuery`'s are: the
+ * request detail page's "Errors for this request" (RQ-11, piece 3) calls this
+ * same endpoint scoped to one name and must not need a second fetcher to do it.
+ */
+export const errorsQuery = (id: string, scope = 'run', name = '') => ({
+  queryKey: errorsQueryKey(id, scope, name),
+  queryFn: () =>
+    apiFetch(
+      ErrorsResponseSchema,
+      `${runPath(id)}/errors?scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`,
     ),
 });

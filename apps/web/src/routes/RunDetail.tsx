@@ -3,7 +3,13 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
-import { distributionQuery, seriesQuery, statsQuery, usersQuery } from '../api/metrics';
+import {
+  distributionQuery,
+  errorsQuery,
+  seriesQuery,
+  statsQuery,
+  usersQuery,
+} from '../api/metrics';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
 import Chart from '../charts/Chart';
 import DistributionChart from '../charts/DistributionChart';
@@ -13,6 +19,8 @@ import RequestCountChart from '../charts/RequestCountChart';
 import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import type { ChartData } from '../charts/types';
+import ErrorsTable from '../tables/ErrorsTable';
+import StatisticsTable from '../tables/StatisticsTable';
 import { formatStarted } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
 import { DEFAULT_ROUTE } from './paths';
@@ -244,13 +252,101 @@ function Ready({ run }: { run: RunResponse }) {
 
       <Assertions assertions={run.assertions} />
 
+      {/* §13.2 ⑤ and ⑥, ABOVE THE CHART STACK (tables design §7, §10).
+          Deliberately not in §13.2's own numeric order, which interleaves the
+          tables between the charts: the numbers a reader came to read are the
+          tables, the charts are how those numbers moved over the run, and
+          scrolling past eight figures to reach the p99 of one request is the
+          reading order nobody wants. The statistics table first and the errors
+          table beneath it, because the second is a breakdown of the first's
+          KO column. */}
+      <Tables runId={run.id} />
+
       {/* Below the assertions, and inside this branch only. A processing run
           (202) renders `Processing` instead and never reaches here — which is
           what keeps the four metric queries from firing against a run whose
           rows do not exist yet, and is why `api/metrics.ts` can use `apiFetch`
-          rather than `fetchRun`'s three-way status branch (design §6). */}
+          rather than `fetchRun`'s three-way status branch (design §6). The
+          tables above are inside the same branch for the same reason. */}
       <Overview runId={run.id} />
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The two parity tables, §13.2 ⑤⑥
+ * ------------------------------------------------------------------ */
+
+/**
+ * The statistics table and the errors table, each fed one already-validated
+ * payload — the same division of labour `Overview` makes with the charts: this
+ * component fetches, the tables render, and neither table knows what a URL is.
+ *
+ * `statsQuery` IS ASKED FOR TWICE ON THIS PAGE — here and in `Overview` — AND
+ * FETCHED ONCE. Both call sites name the same `statsQueryKey`, so TanStack
+ * Query serves one request and one cache entry to both, which is precisely what
+ * the key convention in `api/metrics.ts` exists for. Hoisting the query into
+ * `Ready` and threading the payload down would also work, and would make the
+ * chart stack take a prop for one of its four payloads and fetch the other
+ * three — a shape that reads as though the two mattered differently.
+ */
+function Tables({ runId }: { runId: string }) {
+  const stats = useQuery(statsQuery(runId));
+  const errors = useQuery(errorsQuery(runId));
+
+  return (
+    <>
+      <TableSection title="Statistics" query={stats}>
+        {(data) => <StatisticsTable stats={data} runId={runId} />}
+      </TableSection>
+      <TableSection title="Errors" query={errors}>
+        {(data) => <ErrorsTable errors={data} />}
+      </TableSection>
+    </>
+  );
+}
+
+/**
+ * One table, or — until its payload arrives — its heading and the reason it is
+ * not there.
+ *
+ * A TABLE WHOSE FETCH FAILED MUST NOT SIMPLY VANISH, for the same reason
+ * `Payload` renders undrawn charts rather than nothing: the statistics table IS
+ * the parity surface, and a page that quietly omits it looks exactly like a run
+ * that recorded no requests. Both tables already have their own "nothing was
+ * recorded" wording for an EMPTY payload, and that is a different sentence from
+ * this one — one says the run had no errors, the other says we could not find
+ * out.
+ *
+ * The heading is rendered here rather than left to the table so that it is
+ * present in both cases; the tables render their own when they have data, which
+ * is why this branch is the only one that draws it.
+ */
+function TableSection<T>({
+  title,
+  query,
+  children,
+}: {
+  title: string;
+  query: UseQueryResult<T>;
+  children: (data: T) => ReactNode;
+}) {
+  if (query.data !== undefined) return <>{children(query.data)}</>;
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-xl font-semibold">{title}</h2>
+      {query.isPending ? (
+        <p role="status" className="text-[var(--color-text-muted)]">
+          Loading…
+        </p>
+      ) : (
+        // `role="alert"`, not a muted paragraph: this is the run's numbers
+        // failing to arrive, and the server's own `detail` and `remediation`
+        // are what a reader can act on.
+        <p role="alert">{explain(query.error, 'table')}</p>
+      )}
+    </section>
   );
 }
 
@@ -388,7 +484,7 @@ function Payload<T>({
 }) {
   if (query.data !== undefined) return <>{children(query.data)}</>;
 
-  const reason = query.isPending ? 'Loading…' : explain(query.error);
+  const reason = query.isPending ? 'Loading…' : explain(query.error, 'chart');
 
   return (
     <>
@@ -403,12 +499,18 @@ function Payload<T>({
  * The server's own sentence, not an invented one — every `/v1` error carries a
  * `detail` and a `remediation` and both are more actionable than "something
  * went wrong". Same rule the error branch at the top of this file follows.
+ *
+ * `what` names the figure that is missing, and only reaches the reader in the
+ * branch where there is no problem document to quote — a transport failure, or
+ * a schema mismatch `apiFetch` threw on. It is a parameter rather than the
+ * literal "chart" it used to be because the tables use this too, and a table
+ * that apologised for a chart would be describing the wrong hole in the page.
  */
-function explain(error: unknown): string {
+function explain(error: unknown, what: string): string {
   if (error instanceof ProblemError) return `${error.detail} ${error.remediation}`;
   return error instanceof Error
-    ? `This chart’s data could not be loaded: ${error.message}`
-    : 'This chart’s data could not be loaded.';
+    ? `This ${what}’s data could not be loaded: ${error.message}`
+    : `This ${what}’s data could not be loaded.`;
 }
 
 /**
