@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { seedAdmin, seedAdminForEmptyOrg, seedRunsAt } from './fixtures.js';
+import { seedAdmin, seedAdminForEmptyOrg, seedRunsAt, seedRunWithData } from './fixtures.js';
 import { firstRowId, signIn } from './helpers.js';
 
 /**
@@ -120,6 +120,31 @@ test('follows the cursor to the next page', async ({ page }) => {
   // run-row to be visible — the stale one already is. A bare assertion here
   // would pass or fail on timing rather than on behaviour.
   await expect.poll(() => firstRowId(page)).not.toBe(first);
+});
+
+test('a badge does not leak its glyph into the row’s accessible name', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  // Chromium, not jsdom: dom-accessibility-api does not consult a descendant's
+  // aria-hidden the way a real AT tree does, so this assertion is only
+  // meaningful in a browser (CLAUDE.md).
+  //
+  // Located by column position, not by text containing "complete" — a
+  // regex/substring name match would still find the cell even if the glyph
+  // leaked into its accessible name, since "complete" would still appear
+  // somewhere in "● complete". Started/Tool/Status/Verdict/Run is the column
+  // order RunList.tsx renders (RunRow), so index 2 is the status cell.
+  const statusCell = page.getByTestId('run-row').first().getByRole('cell').nth(2);
+  await expect(statusCell).toBeVisible();
+  // Exact match, not a substring: verified this catches the regression by
+  // temporarily removing Badge's aria-hidden and re-running this test, which
+  // failed with `Received: "● complete"` against `Expected: "complete"` — a
+  // broken aria-hidden fails this exact-equality check instead of quietly
+  // satisfying it.
+  await expect(statusCell).toHaveAccessibleName('complete');
 });
 
 test('an empty org says so instead of showing an empty table', async ({ page }) => {

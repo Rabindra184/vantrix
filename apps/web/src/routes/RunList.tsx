@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
+import Badge from '../components/Badge';
 import { ProblemError } from '../api/fetch';
 import { fetchRuns, runsQueryKey } from '../api/runs';
 // Status and verdict render identically here and on the run detail page, so
@@ -9,7 +10,7 @@ import { fetchRuns, runsQueryKey } from '../api/runs';
 // for the start-time formatter: the two screens must agree about when a run
 // started, and one definition is the only way that is guaranteed.
 import { formatStarted } from './format';
-import { Marked, STATUS, VERDICT } from './marks';
+import { STATUS, VERDICT } from './marks';
 
 type RunListItem = RunListResponse['items'][number];
 
@@ -223,10 +224,10 @@ function RunRow({ run }: { run: RunListItem }) {
       </td>
       <td className="py-2 pr-4">{run.tool}</td>
       <td className="py-2 pr-4">
-        <Marked mark={STATUS[run.status]} />
+        <Badge mark={STATUS[run.status]} />
       </td>
       <td className="py-2 pr-4">
-        <Marked mark={VERDICT[run.verdict ?? 'none']} />
+        <Badge mark={VERDICT[run.verdict ?? 'none']} />
       </td>
       <td className="py-2">
         {/* The short id is the visible text so consecutive links are told
