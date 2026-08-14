@@ -355,16 +355,20 @@ test('a row links to its detail page', async ({ page }) => {
    * `Catalog/Recommendations`, and two groups under different parents may share
    * a leaf name — so the separator must arrive as DATA (`%2F`), in one segment,
    * or the route it lands on is one nobody wrote.
+   *
+   * Piece 5 built this page for real (see group-detail.spec.ts, which
+   * exercises it in full, including a hard `page.goto()` load of this exact
+   * encoded path); this test only needs to confirm the ROW's link actually
+   * resolves to the right group, by its full path.
    */
   await page.goBack();
   await expect(statisticsTable(page)).toBeVisible();
   await page.getByRole('button', { name: /expand Catalog/i }).click();
   await page.getByRole('link', { name: 'Recommendations', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}/groups/Catalog%2FRecommendations$`));
-  await expect(page.getByText(/not built yet|coming/i)).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Catalog/Recommendations');
 
-  /* The placeholder is a page of the app, not a dead end: it is inside the
+  /* The group page is a page of the app, not a dead end: it is inside the
    * signed-in shell and offers the way back. */
   await page.getByRole('link', { name: /back to (this|the) run/i }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
