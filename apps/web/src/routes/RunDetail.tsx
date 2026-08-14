@@ -1,9 +1,18 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
+import { distributionQuery, seriesQuery, statsQuery, usersQuery } from '../api/metrics';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
+import Chart from '../charts/Chart';
+import DistributionChart from '../charts/DistributionChart';
+import IndicatorsChart from '../charts/IndicatorsChart';
+import PercentilesChart from '../charts/PercentilesChart';
+import RequestCountChart from '../charts/RequestCountChart';
+import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
+import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
+import type { ChartData } from '../charts/types';
 import { formatStarted } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
 import { DEFAULT_ROUTE } from './paths';
@@ -36,14 +45,12 @@ export default function RunDetail() {
     // after the first hit the cap renders "stopped checking automatically" on
     // its first paint and never polls once.
     //
-    // NOTHING CATCHES THIS. No suite exercises this effect at all: the e2e
-    // polling test below asserts that requests keep arriving, which is the
-    // uncapped branch, and the cap's UI is covered only by rendering
-    // `Processing` directly with `capReached` as a prop. Reaching the real
-    // cap through `RunDetail` costs two real minutes of wall clock, and the
-    // honest ways to shorten that are a DOM test environment (a new
-    // dependency) or a `?pollCapMs=` knob shipped to production so a test can
-    // reach a branch. Both were declined; this hole is tracked, not closed.
+    // COVERED, finally, by `apps/web/test/RunDetail.polling.test.tsx` — both
+    // halves: the timer that sets the flag, and this line that resets it for a
+    // second run. That test mounts this component in jsdom and advances fake
+    // timers past POLL_CAP_MS, which is what makes the two real minutes the
+    // cap needs cost nothing. Until the DOM environment existed this effect
+    // had no test that could fail; deleting it left every suite green.
     setCapReached(false);
     const timer = setTimeout(() => setCapReached(true), POLL_CAP_MS);
     return () => clearTimeout(timer);
@@ -125,11 +132,13 @@ function BackToRuns() {
  * measured and found empty rather than one nobody has looked at yet.
  *
  * EXPORTED for `apps/web/test/run-detail.test.ts`, which renders it directly
- * to static markup with both values of `capReached`. That test exists because
- * the cap UI below is otherwise unreachable from any suite: the only way to
- * reach it through `RunDetail` is to let two real minutes elapse in a browser.
- * Taking `capReached` as a prop rather than reading the timer itself is what
- * makes this component renderable without one.
+ * to static markup with both values of `capReached` — a cheap, node-environment
+ * check that the two branches say different things. The cap's WIRING (the
+ * timer in `RunDetail` that sets the flag) is covered separately, and through a
+ * real mount, by `apps/web/test/RunDetail.polling.test.tsx`.
+ *
+ * Taking `capReached` as a prop rather than reading the timer itself is still
+ * the right shape: it keeps this component renderable without a clock.
  */
 export function Processing({
   status,
@@ -234,8 +243,187 @@ function Ready({ run }: { run: RunResponse }) {
       </header>
 
       <Assertions assertions={run.assertions} />
+
+      {/* Below the assertions, and inside this branch only. A processing run
+          (202) renders `Processing` instead and never reaches here — which is
+          what keeps the four metric queries from firing against a run whose
+          rows do not exist yet, and is why `api/metrics.ts` can use `apiFetch`
+          rather than `fetchRun`'s three-way status branch (design §6). */}
+      <Overview runId={run.id} />
     </div>
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * The Gatling overview, §13.2 ③④⑦⑦ᵇ⑧⑨⑩⑪
+ * ------------------------------------------------------------------ */
+
+/**
+ * THE ONE CROSSHAIR. Every chart whose x-axis is elapsed seconds carries this
+ * `group`, and `Chart` calls `echarts.connect` with it, so hovering any one of
+ * them moves the axis pointer on all of them.
+ *
+ * That linkage is not a nicety, it is the PRD's deliberate encoding change:
+ * Gatling overlays active users on requests/s as a second y-axis, §22.4 forbids
+ * dual axes outright, and Appendix A records the split as information parity
+ * precisely BECAUSE the shared crosshair recovers the "read these two together"
+ * affordance the dual axis was buying. Break the connection and the two charts
+ * stop being one reading — which is what the e2e crosshair spec exists to catch.
+ *
+ * `PercentilesChart` and both rate charts hard-code the same string internally
+ * (they have no `group` prop to pass one through); the two users charts take it
+ * as a prop. Stated here as a named constant so the five agree on one spelling.
+ */
+const RUN_TIME = 'run-time';
+
+/** A chart's stable identity, so a payload that never arrives can still render
+ *  the figure — heading, explanation and data table — in its §13.2 position. */
+interface Slot {
+  readonly id: string;
+  readonly title: string;
+}
+
+const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
+const REQUEST_COUNTS: Slot = { id: 'request-counts', title: 'Number of requests' };
+const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
+const USER_START_RATE: Slot = { id: 'user-start-rate', title: 'Users started per second' };
+const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
+const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
+const REQUESTS_PER_SECOND: Slot = {
+  id: 'requests-per-second',
+  title: 'Requests per second over time',
+};
+const RESPONSES_PER_SECOND: Slot = {
+  id: 'responses-per-second',
+  title: 'Responses per second over time',
+};
+
+/**
+ * Four fetches, eight charts (design §2) — and the charts do the fetching
+ * nowhere: this is the only component on the page that calls a query factory,
+ * and every chart below receives an already-validated payload as a prop.
+ *
+ * `/stats` feeds ③ and ④, `/users` feeds ⑦ and ⑦ᵇ, `/distribution` feeds ⑧, and
+ * `/series` feeds ⑨, ⑩ and ⑪. That grouping is why §13.2's order can be
+ * rendered as four blocks rather than eight: each payload's charts happen to be
+ * adjacent in it, so no chart is displaced to keep a fetch tidy. If a future
+ * chart broke that adjacency, the ORDER wins and this component grows a fifth
+ * block — never the other way round.
+ */
+function Overview({ runId }: { runId: string }) {
+  const stats = useQuery(statsQuery(runId));
+  const users = useQuery(usersQuery(runId));
+  const distribution = useQuery(distributionQuery(runId));
+  const series = useQuery(seriesQuery(runId));
+
+  return (
+    <section aria-labelledby="overview-heading" className="flex flex-col gap-8">
+      <h2 id="overview-heading" className="text-xl font-semibold">
+        Overview
+      </h2>
+
+      <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
+        {(data) => (
+          <>
+            <IndicatorsChart stats={data} />
+            <RequestCountChart stats={data} />
+          </>
+        )}
+      </Payload>
+
+      <Payload query={users} slots={[CONCURRENT_USERS, USER_START_RATE]}>
+        {(data) => (
+          <>
+            {/* Its OWN chart, sharing the crosshair — never an overlay on
+                requests/s. See RUN_TIME above. */}
+            <ConcurrentUsersChart users={data} group={RUN_TIME} />
+            <UserStartRateChart users={data} group={RUN_TIME} />
+          </>
+        )}
+      </Payload>
+
+      <Payload query={distribution} slots={[DISTRIBUTION]}>
+        {(data) => <DistributionChart distribution={data} />}
+      </Payload>
+
+      <Payload query={series} slots={[PERCENTILES, REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>
+        {(data) => (
+          <>
+            <PercentilesChart series={data} />
+            <RequestRateChart series={data} />
+            <ResponseRateChart series={data} />
+          </>
+        )}
+      </Payload>
+    </section>
+  );
+}
+
+/**
+ * One payload's charts — or, until it arrives, the same figures saying why they
+ * are not drawn.
+ *
+ * A CHART WHOSE FETCH FAILED MUST NOT SIMPLY VANISH. Rendering nothing leaves a
+ * gap in a numbered sequence the reader cannot see is incomplete: §13.2's order
+ * is itself information, and a missing ⑧ silently renumbers everything after
+ * it. It also removes that chart's data table, which is the parity surface —
+ * so a page whose distribution 404'd would quietly stop being assertable.
+ *
+ * This is reachable, not defensive: `GET /v1/runs/:id/distribution` answers
+ * **404** for a completed run that has no histogram at all (ParityController),
+ * where `/stats`, `/series` and `/users` all answer 200 with empty payloads and
+ * let their transforms explain themselves. So on the same page, seven charts
+ * say "no response times were recorded" and the eighth has an error to relay.
+ * Both are the reader being told what happened; only the wording differs.
+ */
+function Payload<T>({
+  query,
+  slots,
+  children,
+}: {
+  query: UseQueryResult<T>;
+  /** The charts this payload feeds, in §13.2 order. */
+  slots: readonly Slot[];
+  children: (data: T) => ReactNode;
+}) {
+  if (query.data !== undefined) return <>{children(query.data)}</>;
+
+  const reason = query.isPending ? 'Loading…' : explain(query.error);
+
+  return (
+    <>
+      {slots.map((slot) => (
+        <Undrawn key={slot.id} slot={slot} reason={reason} />
+      ))}
+    </>
+  );
+}
+
+/**
+ * The server's own sentence, not an invented one — every `/v1` error carries a
+ * `detail` and a `remediation` and both are more actionable than "something
+ * went wrong". Same rule the error branch at the top of this file follows.
+ */
+function explain(error: unknown): string {
+  if (error instanceof ProblemError) return `${error.detail} ${error.remediation}`;
+  return error instanceof Error
+    ? `This chart’s data could not be loaded: ${error.message}`
+    : 'This chart’s data could not be loaded.';
+}
+
+/**
+ * A chart that cannot be drawn, drawn as a chart anyway: `Chart`'s own empty
+ * branch, so the figure, the heading, the explanation and the data table are
+ * the SAME markup a chart with an empty payload produces. A second, bespoke
+ * "unavailable" shape here would be a second thing to keep accessible.
+ */
+function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
+  // Memoised because `Chart`'s option effect depends on `data` by identity.
+  const data = useMemo<ChartData>(
+    () => ({ series: [], axisLabels: [], columns: [], rows: [], empty: reason }),
+    [reason],
+  );
+  return <Chart id={slot.id} title={slot.title} data={data} />;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

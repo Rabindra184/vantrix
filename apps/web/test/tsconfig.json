@@ -1,0 +1,29 @@
+{
+  // apps/web/tsconfig.json includes only `src`, so until this file existed
+  // NOTHING typechecked apps/web/test — a deliberate `const x: number =
+  // "nope"` in fetch.test.ts passed `pnpm typecheck` silently.
+  //
+  // That matters more here than in most suites: these tests assert against
+  // the contract types from @perfportal/contracts, so a test reading a field
+  // the payload does not have, or indexing a series that is shaped
+  // differently, is exactly the mistake the types exist to catch — and an
+  // untypechecked test can assert on a misspelled field and pass.
+  //
+  // Mirrors apps/web/e2e/tsconfig.json, which exists for the same reason, and
+  // like it is wired into the root `typecheck` script.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["vitest/globals"],
+    "noEmit": true
+  },
+  "include": ["."]
+}

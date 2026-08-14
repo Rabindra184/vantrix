@@ -444,6 +444,47 @@ export async function seedPendingRun(orgId: string): Promise<string> {
 }
 
 /**
+ * A run that is COMPLETE but carries no metric rows whatsoever — created
+ * directly via Prisma, never posted through HTTP and never handed to
+ * PipelineService, exactly like seedPendingRun above.
+ *
+ * seedPendingRun CANNOT stand in for this, and the difference is the whole
+ * reason this exists. A pending run answers 202, so RunDetail renders its
+ * processing branch and mounts no charts at all: a spec asserting "this page
+ * says the data is not there" against it passes with the entire chart stack
+ * deleted. This run answers 200 (RunsService.statusFor: complete + no failed
+ * verdict), so the ready branch mounts all eight charts against genuinely
+ * empty payloads — the only way to exercise every transform's empty branch,
+ * and the "explains itself rather than showing empty axes" requirement, in a
+ * real browser.
+ *
+ * What the four metric endpoints answer for it, all reachable in production
+ * for a run whose parse produced nothing:
+ *   - /stats, /series, /users  → 200 with empty payloads
+ *   - /distribution            → 404, there being no histogram to read
+ * so the page must handle both an empty payload and a failed fetch at once.
+ */
+export async function seedCompleteRunWithoutMetrics(orgId: string): Promise<string> {
+  const projectId = await projectFor(orgId);
+  const run = await prisma.run.create({
+    data: {
+      orgId,
+      projectId,
+      status: 'complete',
+      tool: 'gatling',
+      simulation: 'example.EmptyRun',
+      bundleKey: `e2e-fixture/${randomUUID()}`,
+      bundleSha256: '0'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt: new Date(),
+      startedOn: new Date(),
+      engineOptions: {},
+    },
+  });
+  return run.id;
+}
+
+/**
  * Run rows with caller-chosen timestamps, created directly via Prisma —
  * never posted through HTTP and never handed to PipelineService, so there is
  * nothing to wait on, exactly like seedPendingRun above.

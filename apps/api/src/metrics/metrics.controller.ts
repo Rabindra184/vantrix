@@ -6,7 +6,7 @@ import type {
 } from '@perfportal/contracts';
 import { parseProjectSettings } from '@perfportal/contracts';
 import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
-import { bandsFrom } from '@perfportal/statistics';
+import { bandsFrom, inferBucketWidthMs } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, uuidParam } from '../common/validation.js';
@@ -154,6 +154,18 @@ export class MetricsController {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
+      bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
+      // Derived from the rows themselves, not from a run-level flag: the
+      // columns are nullable and only rows written after the migration carry
+      // the split. `every` over an empty array is vacuously true, hence the
+      // length guard — no buckets is "nothing to draw", not "split available".
+      // Both columns, not one. They are always written together today, but the
+      // schema permits them to diverge, and a partial backfill is exactly the
+      // case where they would — a flag derived from ok alone would report
+      // `true` while the KO series plotted nulls.
+      startedSplitAvailable:
+        buckets.length > 0 &&
+        buckets.every((b) => b.startedOkCount !== null && b.startedKoCount !== null),
       buckets,
     };
   }
