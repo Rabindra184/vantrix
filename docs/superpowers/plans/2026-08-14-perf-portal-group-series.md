@@ -272,6 +272,44 @@ and duration are two series rather than one series carrying two sketches. A
 `Bucket` widened to hold both would make every run- and request-scope bucket
 carry an unused one.
 
+- [ ] **Step 0: Guard the primary key's column order**
+
+Task 1's review found that the existing pruning test does not guard what this
+plan assumed. It asserts only that the plan touches one partition
+(`new Set(plan.match(/run_series_bucket_2026_\d\d/g)).size === 1`) — never the
+scan method, never the index. A `Seq Scan` on one pruned partition passes it.
+
+And it could not detect a misplaced `family` in any case: `SERIES_SQL` binds
+`run_started_on`, `run_id`, `scope`, `name` and `family` all with equality, so
+**any** permutation of those five is fully index-served for that query. The
+prefix that breaks is `(run_started_on, run_id, scope, name)` *without* family,
+which no query in this repo issues today.
+
+So the invariant the whole migration was designed around is currently
+unguarded. Assert the key itself. Append to
+`packages/persistence/test/metrics.integration.test.ts`:
+
+```ts
+  it('keeps family fourth-from-last in the series primary key', async () => {
+    // 0001_init records that there is deliberately NO secondary index on
+    // (run_started_on, run_id, scope, name), because those columns are a strict
+    // prefix of this key and its btree already serves them. Reordering the key
+    // silently costs every such lookup its index, once per partition, with
+    // nothing erroring — and the pruning test cannot see it, because every
+    // query we issue today binds all five columns with equality.
+    const { rows } = await pool.query(
+      `SELECT pg_get_indexdef(conindid) AS def
+         FROM pg_constraint WHERE conname = 'run_series_bucket_pkey'`,
+    );
+    expect(rows[0]?.def).toContain(
+      '(run_started_on, run_id, scope, name, family, start_offset_ms)',
+    );
+  });
+```
+
+Use whatever pool or client the neighbouring tests already have; do not open a
+new connection.
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `packages/statistics/test/scopes.test.ts`, inside the group describe:
@@ -1052,7 +1090,7 @@ as stated, revert.
 
 | # | Break this | This must fail |
 |---|---|---|
-| 1 | move `family` after `scope` in the PK, re-migrate | the partition-pruning test still prunes |
+| 1 | reorder the PK's columns in the migration | the new PK-shape assertion (Task 2 Step 0) names the exact column list |
 | 2 | read `percentiles` instead of `percentilesOk` | the chart is OK-only (§A.9 F-11) |
 | 3 | emit one group series instead of two | cumulated and duration are distinct series |
 | 4 | return `groupSeriesAvailable: true` unconditionally | an old run states its gap rather than drawing empty axes |
