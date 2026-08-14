@@ -24,6 +24,7 @@ export default function IndicatorsChart({
   stats,
   row,
   label,
+  noun,
 }: {
   readonly stats: StatsResponse;
   /** A specific row's bands. Absent on the run's own overview, which folds the
@@ -31,13 +32,15 @@ export default function IndicatorsChart({
   readonly row?: StatRow;
   /** What that row is called on the axis. Required whenever `row` is given. */
   readonly label?: string;
+  /** What the subject is called when there is nothing to fold. */
+  readonly noun?: string;
 }) {
   const data = useMemo(
     () =>
       label === undefined
         ? toIndicators(stats)
-        : toRowIndicators(stats, row, label, 'request'),
-    [stats, row, label],
+        : toRowIndicators(stats, row, label, noun ?? 'request'),
+    [stats, row, label, noun],
   );
 
   return (

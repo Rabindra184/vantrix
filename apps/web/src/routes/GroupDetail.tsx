@@ -1,9 +1,11 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { statsQuery } from '../api/metrics';
+import { distributionQuery, statsQuery } from '../api/metrics';
+import DistributionChart from '../charts/DistributionChart';
+import IndicatorsChart from '../charts/IndicatorsChart';
 import ScopedStatistics from '../tables/ScopedStatistics';
-import { TableSection } from './payload';
+import { Payload, TableSection, type Slot } from './payload';
 
 /**
  * §13.4 — one group's page.
@@ -36,14 +38,41 @@ export function groupRow(
   );
 }
 
+/**
+ * §13.4's five containers, two per family plus the shared ranges chart. Ids
+ * match what each chart component passes to `Chart`, suffixed per family so the
+ * two never collide.
+ */
 const FAMILIES = [
-  { family: 'group_cumulated', title: 'Cumulated response time' },
-  { family: 'group_duration', title: 'Duration' },
+  {
+    family: 'group_cumulated',
+    title: 'Cumulated response time',
+    distribution: {
+      id: 'distribution-group_cumulated',
+      title: 'Cumulated response time distribution',
+    },
+  },
+  {
+    family: 'group_duration',
+    title: 'Duration',
+    distribution: { id: 'distribution-group_duration', title: 'Duration distribution' },
+  },
 ] as const;
+
+const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 
 export default function GroupDetail() {
   const { runId, name } = useParams<{ runId: string; name: string }>();
   const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+  const cumulated = useQuery({
+    ...distributionQuery(runId ?? '', 'group', name ?? '', 'group_cumulated'),
+    enabled: runId !== undefined && name !== undefined,
+  });
+  const duration = useQuery({
+    ...distributionQuery(runId ?? '', 'group', name ?? '', 'group_duration'),
+    enabled: runId !== undefined && name !== undefined,
+  });
+  const distributions = { group_cumulated: cumulated, group_duration: duration };
 
   // Not reachable through the router — the route cannot match without both.
   if (runId === undefined || name === undefined) {
@@ -74,6 +103,27 @@ export default function GroupDetail() {
             );
           }}
         </TableSection>
+      ))}
+
+      <Payload query={stats} slots={[INDICATORS]}>
+        {(data) => (
+          <IndicatorsChart
+            // GR-09: Gatling's group page has one `RangesContainerId`, not two.
+            // Cumulated response time is the group measure its own statistics
+            // table leads with, so that is the row folded into the one ranges
+            // chart — duration has no ranges chart of its own.
+            stats={data}
+            row={groupRow(data, name, 'group_cumulated')}
+            label={name}
+            noun="group"
+          />
+        )}
+      </Payload>
+
+      {FAMILIES.map(({ family, distribution }) => (
+        <Payload key={family} query={distributions[family]} slots={[distribution]}>
+          {(data) => <DistributionChart distribution={data} />}
+        </Payload>
       ))}
     </div>
   );
