@@ -100,7 +100,7 @@ describe('the captured reference-run payloads', () => {
     expect(s.buckets.length).toBeGreaterThan(0);
     // OK-only percentiles are what GR-04 reads (§A.9 F-11); a bucket without
     // them would make every percentile assertion vacuous.
-    expect(s.buckets.some((b) => b.percentilesOk !== null)).toBe(true);
+    expect(s.buckets.some((b) => Object.keys(b.percentilesOk).length > 0)).toBe(true);
   });
 
   it('carries a second scatter payload whose KO series is non-empty', () => {
