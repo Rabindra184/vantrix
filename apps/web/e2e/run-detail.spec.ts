@@ -71,6 +71,30 @@ test('shows the run header', async ({ page }) => {
   expect(seconds).toBeLessThan(3600);
 });
 
+/**
+ * Task 10's one content change: six stat tiles above the statistics table,
+ * every value read from the same run-scope row the table's "All Requests"
+ * row reads. This does not re-derive the number and compare it to a
+ * written-down expectation — it reads the SAME CELL the tile is required not
+ * to disagree with, off the SAME PAGE, and compares the two strings.
+ */
+test('the stat tiles agree with the statistics table', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  // `stat-row-total` is the All Requests row — the run's own totals, in its own
+  // <tbody>, and the same row RunStats reads. NOT `stat-row`, which is the
+  // per-request and per-group rows in the second body.
+  //
+  // Its first cell is a <th scope="row"> carrying "All Requests", so the Total
+  // column is the first <td>.
+  const tile = await page.getByTestId('stat-total-requests').textContent();
+  const totalCell = page.getByTestId('stat-row-total').locator('td').first();
+  expect((await totalCell.textContent())?.trim()).toBe(tile?.trim());
+});
+
 // not_applicable must never read as a pass.
 test('renders a not_applicable assertion distinctly from a pass', async ({ page }) => {
   const admin = await seedAdmin();

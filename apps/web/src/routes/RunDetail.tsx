@@ -23,6 +23,7 @@ import { formatStarted } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
+import RunStats from './RunStats';
 
 /**
  * One run: its header, and the SLA rules that were evaluated against it.
@@ -277,9 +278,10 @@ function Ready({ run }: { run: RunResponse }) {
  * ------------------------------------------------------------------ */
 
 /**
- * The statistics table and the errors table, each fed one already-validated
- * payload — the same division of labour `Overview` makes with the charts: this
- * component fetches, the tables render, and neither table knows what a URL is.
+ * The stat tiles, the statistics table, and the errors table, each fed one
+ * already-validated payload — the same division of labour `Overview` makes
+ * with the charts: this component fetches, the three render, and none of the
+ * three knows what a URL is.
  *
  * `statsQuery` IS ASKED FOR TWICE ON THIS PAGE — here and in `Overview` — AND
  * FETCHED ONCE. Both call sites name the same `statsQueryKey`, so TanStack
@@ -288,6 +290,13 @@ function Ready({ run }: { run: RunResponse }) {
  * `Ready` and threading the payload down would also work, and would make the
  * chart stack take a prop for one of its four payloads and fetch the other
  * three — a shape that reads as though the two mattered differently.
+ *
+ * `RunStats` renders INSIDE `TableSection`'s own children callback, from the
+ * SAME `data` the statistics table reads below it, rather than behind a
+ * `TableSection` of its own: a failed or still-pending `/stats` then explains
+ * itself once, in the one place this page already says so, instead of the
+ * stat row silently rendering six dashes above an error the reader has to
+ * notice separately.
  */
 function Tables({ runId }: { runId: string }) {
   const stats = useQuery(statsQuery(runId));
@@ -296,7 +305,12 @@ function Tables({ runId }: { runId: string }) {
   return (
     <>
       <TableSection title="Statistics" query={stats}>
-        {(data) => <StatisticsTable stats={data} runId={runId} />}
+        {(data) => (
+          <>
+            <RunStats stats={data} />
+            <StatisticsTable stats={data} runId={runId} />
+          </>
+        )}
       </TableSection>
       <TableSection title="Errors" query={errors}>
         {(data) => <ErrorsTable errors={data} />}
