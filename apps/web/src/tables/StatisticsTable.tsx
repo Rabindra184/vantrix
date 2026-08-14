@@ -639,6 +639,23 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 <th
                   scope="row"
                   data-column="name"
+                  // DELIBERATELY `TD`, NOT `TH_ROW` — the row-header pattern
+                  // used at the per-row name cell below, at ErrorsTable's
+                  // message cell, and at DataTable's row label. Those three
+                  // need `TH_ROW`'s `font-normal` to cancel the browser's
+                  // default bold `<th>`, because nothing else on those rows
+                  // says a row header should be bold. This row is different:
+                  // the parent `<tr>` above carries `font-semibold`, which is
+                  // an INHERITED value that this `<th>` picks up as long as it
+                  // specifies no `font-weight` of its own. `TD` carries none,
+                  // so the inherited `font-semibold` stands and the cell
+                  // renders bold. `TH_ROW`'s `font-normal` would be a
+                  // font-weight specified DIRECTLY on this `<th>`, which wins
+                  // over the inherited value and silently un-bolds the one row
+                  // that is supposed to look like a total. Guarded by
+                  // StatisticsTable.test.tsx's "does not cancel the inherited
+                  // bold on the totals row name cell" — swap this to `TH_ROW`
+                  // and that test fails.
                   className={TD}
                   style={{ paddingLeft: indentFor(0) }}
                 >
