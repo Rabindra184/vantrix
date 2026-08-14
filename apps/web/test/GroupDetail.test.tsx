@@ -84,6 +84,20 @@ it('asks for both families at group scope', () => {
   }
   expect(dist.some((u) => u.includes('family=group_cumulated'))).toBe(true);
   expect(dist.some((u) => u.includes('family=group_duration'))).toBe(true);
+
+  // The two percentiles-over-time charts fetch the same way: same scope and
+  // name, a DIFFERENT family each. Without this, a page that passed
+  // 'group_cumulated' to both `seriesQuery` calls would still make every
+  // test in this file pass — `SeriesResponseSchema` had no `family` field to
+  // discriminate the RESPONSE, so this asserts on the REQUEST instead.
+  const series = urls.filter((u) => u.includes('/series'));
+  expect(series).toHaveLength(2);
+  for (const url of series) {
+    expect(url).toContain('scope=group');
+    expect(url).toContain(`name=${encodeURIComponent('Catalog/Recommendations')}`);
+  }
+  expect(series.some((u) => u.includes('family=group_cumulated'))).toBe(true);
+  expect(series.some((u) => u.includes('family=group_duration'))).toBe(true);
 });
 
 it('gives each distribution its own figure identity', async () => {
@@ -154,9 +168,15 @@ it('renders both percentile charts, stating the run-specific gap for each family
   vi.stubGlobal('fetch', (input: RequestInfo) => {
     const url = String(input);
     if (url.includes('/series')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
       return Promise.resolve(
         new Response(
-          JSON.stringify({ ...fixture.groupSeries, groupSeriesAvailable: false, buckets: [] }),
+          JSON.stringify({
+            ...fixture.groupSeries,
+            family,
+            groupSeriesAvailable: false,
+            buckets: [],
+          }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         ),
       );
@@ -291,9 +311,15 @@ it('states a RUN-specific gap when the run has no group series', async () => {
   vi.stubGlobal('fetch', (input: RequestInfo) => {
     const url = String(input);
     if (url.includes('/series')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
       return Promise.resolve(
         new Response(
-          JSON.stringify({ ...fixture.groupSeries, groupSeriesAvailable: false, buckets: [] }),
+          JSON.stringify({
+            ...fixture.groupSeries,
+            family,
+            groupSeriesAvailable: false,
+            buckets: [],
+          }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         ),
       );

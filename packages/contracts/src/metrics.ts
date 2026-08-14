@@ -79,6 +79,7 @@ export const SeriesResponseSchema = z.object({
   runId: z.string().uuid(),
   scope: MetricScopeSchema,
   name: z.string(),
+  family: MetricFamilySchema,
   /**
    * The width of every bucket in this response. NOT always 1000: BucketSeries
    * halves resolution in place once a run exceeds its bucket cap, and the
@@ -98,13 +99,19 @@ export const SeriesResponseSchema = z.object({
    */
   startedSplitAvailable: z.boolean(),
   /**
-   * False when this run has no group-scope series at all — it was ingested
-   * before the platform recorded them. An empty `buckets` array is ALSO what a
-   * group with no traffic returns, so the two are indistinguishable without
-   * this; drawing empty axes would claim the group was measured and found idle.
+   * Only meaningful at group scope. False when this run has no group-scope
+   * series at all — it was ingested before the platform recorded them. An
+   * empty `buckets` array is ALSO what a group with no traffic returns, so the
+   * two are indistinguishable without this; drawing empty axes would claim the
+   * group was measured and found idle.
    *
    * A run-level question, unlike `startedSplitAvailable`, which reads the rows:
    * there the columns are nullable and the rows exist; here the rows are absent.
+   *
+   * `false` at any other scope, WITHOUT being consulted there: the extra
+   * `EXISTS` this needs is only worth issuing for the group page, the one
+   * reader of this flag, so a run- or request-scope call gets `false` as a
+   * fixed default rather than a real answer to a question it never asked.
    */
   groupSeriesAvailable: z.boolean(),
   buckets: z.array(SeriesBucketSchema),

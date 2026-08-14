@@ -155,6 +155,7 @@ export class MetricsController {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
+      family: family as SeriesResponse['family'],
       bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
       // Derived from the rows themselves, not from a run-level flag: the
       // columns are nullable and only rows written after the migration carry
