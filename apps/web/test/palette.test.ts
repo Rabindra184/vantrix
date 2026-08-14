@@ -114,6 +114,12 @@ const MODES: readonly { mode: ChartMode; palette: readonly string[]; lo: number;
 ];
 
 describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }) => {
+  it('is the six hues the design system names', () => {
+    expect(paletteFor('light')).toEqual([
+      '#4f46e5', '#0d9488', '#8b5cf6', '#d97706', '#0ea5e9', '#e11d48',
+    ]);
+  });
+
   it('is the six hues, and paletteFor returns it', () => {
     expect(palette).toHaveLength(6);
     expect(paletteFor(mode)).toEqual(palette);
@@ -138,7 +144,7 @@ describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }
     expect(tooGrey).toEqual([]);
   });
 
-  it('separates every adjacent pair by at least ΔE 15 for normal vision', () => {
+  it('separates every adjacent pair by at least ΔE 15', () => {
     const lab = palette.map(hexToOkLab);
     const tooClose = lab
       .slice(1)

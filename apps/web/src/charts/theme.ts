@@ -10,59 +10,50 @@
 export type ChartMode = 'light' | 'dark';
 
 /**
- * The categorical series palette for LIGHT mode: **Okabe–Ito**, verbatim.
+ * The categorical series palette. Six hues, fixed assignment order, no
+ * seventh — `assignPalette` leaves an excess series undrawn and says so rather
+ * than reusing a colour.
  *
- * Source: Masataka Okabe and Kei Ito, "Color Universal Design (CUD): How to
- * make figures and presentations that are friendly to colorblind people"
- * (https://jfly.uni-koeln.de/color/), the standard colour-universal set.
+ * THIS PALETTE IS NOT COLOUR-VISION-SAFE, AND THAT IS A DECISION, NOT AN
+ * OVERSIGHT. It replaced Okabe–Ito, which was chosen precisely because CVD
+ * separation is the one property this repo does not compute — simulating
+ * protanopia requires transcribed matrices, and one transcribed slightly wrong
+ * yields a test that passes while certifying nothing. That property was
+ * inherited from a published palette and is now given up, deliberately, for
+ * visual coherence with the rest of the design system.
  *
- * WHY A PUBLISHED PALETTE, AND WHAT THAT BUYS: colour-vision-deficiency
- * separation is the one property of a palette this repo does NOT compute.
- * Simulating protanopia/deuteranopia/tritanopia requires transcribed matrices,
- * and a matrix transcribed slightly wrong yields a test that passes while
- * certifying nothing. So the CVD property is INHERITED from a palette
- * published as colour-vision-safe rather than asserted by us. Everything that
- * IS computable — lightness band, chroma floor, adjacent-pair separation — is
- * computed, in `apps/web/test/palette.test.ts`, in both modes.
+ * What limits the cost: `routes/marks.tsx` renders every status as shape, then
+ * word, then colour, and every chart carries a complete data table. So what is
+ * lost is telling two SERIES apart, never telling a pass from a failure.
  *
- * Do not reorder these. The order is the assignment order (see
- * `assignPalette`), so reordering silently recolours every existing chart.
+ * Do not reorder. The order is the assignment order, so reordering silently
+ * recolours every existing chart.
  */
 export const CATEGORICAL = [
-  '#0072B2', // blue
-  '#E69F00', // orange
-  '#009E73', // bluish green
-  '#CC79A7', // reddish purple
-  '#56B4E9', // sky blue
-  '#D55E00', // vermillion
+  '#4f46e5', // indigo
+  '#0d9488', // teal
+  '#8b5cf6', // violet
+  '#d97706', // amber
+  '#0ea5e9', // sky
+  '#e11d48', // rose
 ] as const;
 
 /**
- * The same six hues, tuned for a DARK surface.
+ * The same six hues on a dark ground, derived by the rule this file has always
+ * used: hold the hue angle, clamp OKLCH L into the 0.48–0.67 dark band, and
+ * reduce chroma only as far as the sRGB gamut forces.
  *
- * Okabe–Ito as published does not satisfy the dark-mode lightness band
- * (0.48–0.67 in OKLCH L): `#E69F00` sits at L 0.753, `#56B4E9` at 0.735 and
- * `#CC79A7` at 0.679, all above the ceiling, where they glare against a dark
- * surface. This set is derived from the published one by a single, mechanical
- * rule — clamp OKLCH L into the band, hold the hue angle, reduce chroma only
- * as far as the sRGB gamut forces — so the three in-band hues (`#0072B2`,
- * `#009E73`, `#D55E00`) are byte-identical to Okabe–Ito and the other three
- * keep their hue and their identity across a theme switch.
- *
- * The honest caveat, recorded rather than buried: the CVD property of THIS set
- * is inherited by hue from Okabe–Ito, not re-derived. Compressing lightness
- * also compresses separation — orange and vermillion, Okabe–Ito's closest
- * pair, fall from ΔE 15.6 to 9.1 here. They are not adjacent in assignment
- * order (slots 2 and 6), so no chart with fewer than six series shows both,
- * and the adjacent-pair gate `palette.test.ts` enforces still passes at 19.1.
+ * The Tailwind-400 values these started from (`#818cf8`, `#2dd4bf`, `#a78bfa`,
+ * `#f59e0b`, `#38bdf8`, `#fb7185`) are all ABOVE the band — L 0.68 to 0.79 —
+ * and would glare on a dark surface. Measured, not guessed: all six failed.
  */
 export const CATEGORICAL_DARK = [
-  '#0072B2', // blue        — unchanged from Okabe–Ito
-  '#C08400', // orange      — L clamped from 0.753
-  '#009E73', // bluish green — unchanged
-  '#C573A0', // reddish purple — L clamped from 0.679
-  '#3B9CD0', // sky blue    — L clamped from 0.735
-  '#D55E00', // vermillion  — unchanged
+  '#6c71fe', // indigo  — L 0.620
+  '#30a79a', // teal    — L 0.660
+  '#9469ff', // violet  — L 0.640
+  '#d77500', // amber   — L 0.660
+  '#059ddf', // sky     — L 0.660
+  '#ee2f52', // rose    — L 0.620
 ] as const;
 
 export function paletteFor(mode: ChartMode): readonly string[] {
