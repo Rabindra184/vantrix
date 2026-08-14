@@ -555,7 +555,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           placeholder: a placeholder disappears the moment the reader types,
           which is exactly when a screen reader is asked what the field is. */}
       <div className="flex items-center gap-2">
-        <label htmlFor={filterId} className="text-sm text-[var(--color-text-muted)]">
+        <label htmlFor={filterId} className="text-sm text-muted">
           Filter by name
         </label>
         <input
@@ -566,7 +566,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           // Off, because the values worth completing here are the row names
           // already on screen, and the browser would offer yesterday's runs.
           autoComplete="off"
-          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-sm"
+          className="rounded border border-default px-2 py-0.5 text-sm"
         />
       </div>
 
@@ -580,7 +580,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               a reader comparing our 99th against another tool's needs to know
               it is an estimate, and that is true whether or not it was
               clamped. */}
-          <caption className="pb-3 text-left text-sm text-[var(--color-text-muted)]">
+          <caption className="pb-3 text-left text-sm text-muted">
             Statistics for every request and group in this run, with the run’s own totals in the
             first row. Response times are in milliseconds. The percentile columns are estimates,
             accurate to within 1%, and are shown clamped to their own row’s minimum and maximum — a
@@ -590,7 +590,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           <thead>
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
                 so the percentile headings do not each have to repeat it. */}
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-default">
               <SortableHeader
                 column="name"
                 label={NAME_COLUMN_LABEL}
@@ -610,7 +610,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 Response Time (ms)
               </th>
             </tr>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-default">
               {allColumns.map((column, index) => (
                 <SortableHeader
                   key={column.column}
@@ -633,7 +633,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               <tr
                 data-testid="stat-row-total"
                 data-scope="run"
-                className="border-b border-[var(--color-border)] font-semibold"
+                className="border-b border-default font-semibold"
               >
                 <th
                   scope="row"
@@ -871,7 +871,7 @@ function Row({
       data-path={row.path}
       data-scope={row.scope}
       data-depth={row.depth}
-      className="border-b border-[var(--color-border)]"
+      className="border-b border-default"
     >
       {/* `<th scope="row">`: the row's name is what makes "2503" mean
           something when a screen reader announces it out of context.
@@ -913,7 +913,7 @@ function Row({
               // This label STAYS: it is the button's own name, not the th's,
               // and `aria-labelledby` above is what keeps the two apart.
               aria-label={`${expanded ? 'collapse' : 'expand'} ${row.name}`}
-              className="w-4 text-[var(--color-text-muted)]"
+              className="w-4 text-muted"
             >
               <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
             </button>

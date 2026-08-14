@@ -72,8 +72,8 @@ export default function PercentilesChart({
                 onClick={() => toggle(band)}
                 className={`rounded border px-2 py-0.5 text-sm ${
                   on
-                    ? 'border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
-                    : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+                    ? 'border-primary text-primary'
+                    : 'border-default text-muted'
                 }`}
               >
                 {BAND_LABEL[band]}
@@ -87,7 +87,7 @@ export default function PercentilesChart({
           data-testid={`scale-toggle-${id}`}
           aria-pressed={scale === 'log'}
           onClick={() => setScale((s) => (s === 'log' ? 'value' : 'log'))}
-          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-sm text-[var(--color-text-muted)]"
+          className="rounded border border-default px-2 py-0.5 text-sm text-muted"
         >
           {scale === 'log' ? 'Log scale' : 'Linear scale'}
         </button>

@@ -408,7 +408,7 @@ export default function Chart({
         // was measured and found to be nothing"; the truth is usually "this run
         // has not been parsed yet" or "nothing was recorded", and those are
         // different facts a reader acts on differently.
-        <p role="status" className="text-[var(--color-text-muted)]">
+        <p role="status" className="text-muted">
           {data.empty}
         </p>
       ) : (
@@ -427,10 +427,10 @@ export default function Chart({
           limitation (truncated bins, a split the run predates) and the
           palette's (a seventh series that would have had to reuse a hue). */}
       {data.limitation !== undefined && (
-        <p className="text-sm text-[var(--color-text-muted)]">{data.limitation}</p>
+        <p className="text-sm text-muted">{data.limitation}</p>
       )}
       {assignment.limitation !== undefined && (
-        <p className="text-sm text-[var(--color-text-muted)]">{assignment.limitation}</p>
+        <p className="text-sm text-muted">{assignment.limitation}</p>
       )}
 
       <DataTable id={id} caption={title} columns={data.columns} rows={data.rows} />

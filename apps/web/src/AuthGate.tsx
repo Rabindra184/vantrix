@@ -118,7 +118,7 @@ function Unavailable({ detail, remediation }: { detail: string; remediation?: st
       <div role="alert" className="flex flex-col gap-4">
         <p>{detail}</p>
         {remediation !== undefined && (
-          <p className="text-[var(--color-text-muted)]">{remediation}</p>
+          <p className="text-muted">{remediation}</p>
         )}
       </div>
     </main>

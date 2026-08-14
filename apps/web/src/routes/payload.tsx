@@ -126,7 +126,7 @@ export function TableSection<T>({
     <section className="flex flex-col gap-2">
       <h2 className="text-xl font-semibold">{title}</h2>
       {query.isPending ? (
-        <p role="status" className="text-[var(--color-text-muted)]">
+        <p role="status" className="text-muted">
           Loading…
         </p>
       ) : (

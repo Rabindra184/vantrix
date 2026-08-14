@@ -132,14 +132,14 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
               It names the DENOMINATOR, from the same `total` the shares are
               divided by, so the table cannot tell a reader it is showing
               shares of 24 errors while dividing by something else. */}
-          <caption className="pb-3 text-left text-sm text-[var(--color-text-muted)]">
+          <caption className="pb-3 text-left text-sm text-muted">
             Every distinct error message recorded in this run, most frequent first. Each percentage
             is that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run
             recorded — not of the requests it made.
           </caption>
 
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-default">
               {/* Gatling's own three headings, in its own order. */}
               <th scope="col" className="py-2 pr-4 font-semibold">
                 Error
@@ -163,7 +163,7 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
                 <tr
                   key={row.message}
                   data-testid="error-row"
-                  className="border-b border-[var(--color-border)]"
+                  className="border-b border-default"
                 >
                   {/* `<th scope="row">`: the message is what makes "15" mean
                       something when a screen reader announces it out of

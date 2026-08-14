@@ -107,18 +107,18 @@ export default function DataTable({
         aria-expanded={shown}
         aria-controls={regionId}
         onClick={() => setShown((was) => !was)}
-        className="self-start rounded border border-[var(--color-border)] px-3 py-1 text-sm text-[var(--color-text-muted)]"
+        className="self-start rounded border border-default px-3 py-1 text-sm text-muted"
       >
         {shown ? 'Hide data table' : 'Show data table'}
       </button>
 
       <div id={regionId} data-testid={regionId} hidden={!shown} className="overflow-x-auto">
         <table className="w-full border-collapse text-left text-sm">
-          <caption className="pb-2 text-left text-sm text-[var(--color-text-muted)]">
+          <caption className="pb-2 text-left text-sm text-muted">
             {caption} — every value plotted above, as text.
           </caption>
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-default">
               {columns.map((column) => (
                 // scope="col" is what makes a cell comprehensible when a
                 // screen reader announces it out of context: "OK, 12" rather
@@ -133,7 +133,7 @@ export default function DataTable({
             {rows.map((row, rowIndex) => (
               // Row labels are not guaranteed unique — two buckets can carry
               // the same formatted offset — so the index is part of the key.
-              <tr key={`${row.label}-${rowIndex}`} className="border-b border-[var(--color-border)]">
+              <tr key={`${row.label}-${rowIndex}`} className="border-b border-default">
                 <th scope="row" className="py-1 pr-4 font-normal">
                   {row.label}
                 </th>
