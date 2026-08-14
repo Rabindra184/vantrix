@@ -45,6 +45,28 @@ export default function IndicatorsChart({
 
   return (
     <Chart
+      // NAMES ITSELF, DELIBERATELY — unlike `DistributionChart` and
+      // `ScopedStatistics`, which take `id`/`title` and `heading` from their
+      // caller. That is not an oversight, and the difference is not stylistic.
+      //
+      // Those two acquired a SECOND caller on one page: the group detail page
+      // renders a distribution and a statistics table per metric family
+      // (cumulated response time and duration), and a component that names
+      // itself cannot appear twice — two figures would share a DOM id and a
+      // heading, and nothing on screen would tell the two measures apart.
+      //
+      // This chart has no such caller and cannot acquire one from parity work:
+      // Gatling's group page carries a single `RangesContainerId`, so GR-09
+      // folds one row (the cumulated one) and draws one figure. All three
+      // pages render exactly one of these. Props nothing passes would be
+      // speculative generality, and a test for them would need an invented
+      // caller to have anything to assert.
+      //
+      // The rule, stated once so the asymmetry reads as a decision: a chart
+      // names itself until a page needs two of it. If one ever does — a
+      // future page showing both group measures' bands side by side — give it
+      // `id` and `title` props with these values as defaults, exactly as
+      // `DistributionChart` did.
       id="indicators"
       title="Response time ranges"
       data={data}
