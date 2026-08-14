@@ -557,11 +557,34 @@ export const STATUS_MARK_COLORS: Readonly<Record<ChartMode, Readonly<Record<Stat
 
 Point `fallbackFor` and `ROLE_TOKEN` at the MARK values and the `--chart-status-*` tokens, since `liveMarkColors` feeds `chartTheme().roles`, which is only ever consumed as a mark colour by `IndicatorsChart`, `RequestCountChart` and `ScatterChart`.
 
+**The band ramp moves with them, and this is the part that is easy to miss.** Three of the four `--chart-band-*` tokens are `var()` aliases of `--color-status-*` (`tokens.css:103-106`), so changing status text values silently drags the indicator bands to the darker text palette. Bands are chart marks, so all four take the mark family, and `BAND_COLORS` mirrors them in **both** modes:
+
+```ts
+export const BAND_COLORS: Readonly<Record<ChartMode, Readonly<Record<BandRole, string>>>> = {
+  light: {
+    'band-under': '#10b981',
+    'band-between': '#f59e0b',
+    'band-over': '#f97316',
+    'band-failed': '#ef4444',
+  },
+  dark: {
+    'band-under': '#10b981',
+    'band-between': '#f59e0b',
+    'band-over': '#f97316',
+    'band-failed': '#ef4444',
+  },
+};
+```
+
+`--chart-band-over` keeps being the one value with no status equivalent — the ramp needs a fourth step between amber and red and the status palette has no orange. It becomes `#f97316`, which is also the ramp's `p99`, so the two orange steps in this design system are one colour rather than two that nearly match.
+
+Verified against the ramp's existing gates before this plan was written: four distinct values, adjacent ΔE 23.81 / 9.60 / 10.42 against the 7.5 floor, two-apart 28.39 / 19.76 against the 15 floor, and hue falling monotonically 162.5° → 70.1° → 47.6° → 25.3°, which is the severity ordering the ramp exists to encode.
+
 - [ ] **Step 4: Add both token sets to tokens.css, all three blocks**
 
 `--color-status-{passed,pending,not-applicable,failed}` take the TEXT values.
 `--chart-status-{passed,pending,not-applicable,failed}` take the MARK values.
-`--chart-band-under` and `--chart-band-failed` alias the **mark** tokens — they are bands in a chart.
+`--chart-band-under`, `--chart-band-between` and `--chart-band-failed` alias the **mark** tokens — they are bands in a chart, not text. `--chart-band-over` stays a literal, now `#f97316` in all three blocks (it was `#bc4c00` light / `#db6d28` dark; the ramp no longer differs by theme because the mark palette does not).
 
 - [ ] **Step 5: Extend the drift check to both sets**
 
