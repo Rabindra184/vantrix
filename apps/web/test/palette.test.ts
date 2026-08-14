@@ -493,30 +493,49 @@ describe('the indicator band ramp', () => {
 });
 
 /**
- * The status palette has to hold FOUR distinct colours, because the indicator
- * bands ③ spend all four at once in one stacked bar.
+ * The status TEXT palette has to hold FOUR distinct colours.
  *
- * Asserted here rather than only in the indicators test because it is a
- * property of the palette, not of the chart: an edit to `tokens.css` that
- * pointed `--color-status-not-applicable` at the same grey as something else
- * would merge two bands into one visually while every count stayed right.
+ * Not because the indicator bands spend it — since Task 5 they no longer do;
+ * `STATUS_MARK_COLORS`/`BAND_COLORS` are what the bands and the donut spend,
+ * and each has its own distinctness gate below. This one is about the palette
+ * `routes/marks.tsx` reads: it pairs colour with a glyph and a word for every
+ * one of the four states, and two roles sharing a colour would make that
+ * colour a false cue rather than a reinforcing one, even though glyph+word
+ * alone would still disambiguate.
  */
-describe('the status palette', () => {
+describe('the status TEXT palette', () => {
   it.each(['light', 'dark'] as const)('holds four distinct colours in %s mode', (mode) => {
     const colours = Object.values(STATUS_COLORS[mode]);
     expect(colours).toHaveLength(4);
     expect(new Set(colours).size).toBe(4);
   });
+});
 
-  /**
-   * And none of them is a categorical hue. The two palettes answer different
-   * questions — "which series is this?" versus "how bad is this?" — and a
-   * status colour that collided with a series colour would make a band and an
-   * unrelated line read as the same thing on one page.
-   */
-  it.each(['light', 'dark'] as const)('shares no colour with the categorical palette (%s)', (mode) => {
-    const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
-    for (const colour of Object.values(STATUS_COLORS[mode])) {
+/**
+ * The colours actually DRAWN as marks — `STATUS_MARK_COLORS` (the donut,
+ * `RequestCountChart`/`ScatterChart`'s `passed`/`failed`) and `BAND_COLORS`
+ * (the indicator bands' severity ramp) — must share no hue with the
+ * categorical series palette. The two palettes answer different questions —
+ * "which series is this?" versus "how bad is this?" — and a mark colour that
+ * collided with a series colour would make a band, or the donut, and an
+ * unrelated line read as the same thing on one page.
+ *
+ * `STATUS_COLORS` (TEXT) is deliberately NOT checked here: it is never
+ * painted as a chart mark (design §11 — text never wears a mark colour), so a
+ * collision with a categorical hue would not create the confusion this guard
+ * exists to prevent.
+ */
+describe('the marks and bands share no colour with the categorical palette', () => {
+  const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
+
+  it.each(['light', 'dark'] as const)('STATUS_MARK_COLORS (%s)', (mode) => {
+    for (const colour of Object.values(STATUS_MARK_COLORS[mode])) {
+      expect(categorical.has(colour)).toBe(false);
+    }
+  });
+
+  it.each(['light', 'dark'] as const)('BAND_COLORS (%s)', (mode) => {
+    for (const colour of Object.values(BAND_COLORS[mode])) {
       expect(categorical.has(colour)).toBe(false);
     }
   });

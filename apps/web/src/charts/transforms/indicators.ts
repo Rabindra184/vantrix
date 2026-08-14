@@ -36,9 +36,12 @@ import type { ChartData, ChartTableRow } from '../types';
  *
  * So the bands get their own four-step ramp, `--chart-band-*`, matching what
  * Gatling's own report does (green → yellow → orange → red). Its endpoints are
- * var() aliases of the status tokens, so red still means "did not succeed" here
- * exactly as it does in `routes/marks.tsx` and in the donut ④ beside this
- * chart, which paints the very same requests. See `BandRole` in `theme.ts`.
+ * var() aliases of `--chart-status-passed`/`--chart-status-failed` — the
+ * status MARK tokens, the same family the donut ④ beside this chart spends on
+ * the very same requests, not the TEXT tokens `routes/marks.tsx` reads. Red
+ * still means "did not succeed" in all three places; it is carried by two
+ * different token families (MARK for marks, TEXT for text) tuned for two
+ * different jobs. See `BandRole` and `StatusRole` in `theme.ts`.
  */
 interface BandSpec {
   readonly key: keyof StatsResponse['indicators'];

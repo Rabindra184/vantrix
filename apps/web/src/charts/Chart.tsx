@@ -277,7 +277,7 @@ export default function Chart({
       {
         // Mark colour comes from the categorical palette, which `assignPalette`
         // reads off the `--chart-*` tokens — unless the chart declared `roles`,
-        // in which case its marks mean something and wear the `--color-status-*`
+        // in which case its marks mean something and wear the `--chart-status-*`
         // or `--chart-band-*` tokens instead. Text NEVER wears any of them
         // (design §11): the palettes are tuned for marks on a surface, and 12px
         // type in a mark colour is the commonest way a chart quietly fails
