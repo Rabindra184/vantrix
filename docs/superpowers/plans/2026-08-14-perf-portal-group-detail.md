@@ -989,7 +989,13 @@ adjacent:
       {FAMILIES.map(({ family, distribution, percentiles }) => (
         <Fragment key={family}>
           <Payload query={distributions[family]} slots={[distribution]}>
-            {(data) => <DistributionChart distribution={data} />}
+            {(data) => (
+              <DistributionChart
+                distribution={data}
+                id={distribution.id}
+                title={distribution.title}
+              />
+            )}
           </Payload>
           <Undrawn slot={percentiles} reason={NO_GROUP_SERIES} />
         </Fragment>
@@ -998,6 +1004,10 @@ adjacent:
 
 Import `Fragment` from `react` and `Undrawn` from `./payload`. The `key` moves
 to the `Fragment`, so remove it from the `Payload`.
+
+**Keep the `id` and `title` props on `DistributionChart`** — Task 4b added them
+so each family's drawn figure matches its own undrawn placeholder. Dropping them
+here would put both distributions back on one DOM id and one heading.
 
 - [ ] **Step 5: Run the test**
 
