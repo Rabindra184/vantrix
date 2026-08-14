@@ -23,8 +23,10 @@
  *   4.5:1 against --color-surface-card in each block.
  *
  *   --chart-status-* is the MARK palette — chart fills, read by
- *   apps/web/src/charts/theme.ts's liveMarkColors and consumed only as a
- *   fill by IndicatorsChart, RequestCountChart and ScatterChart.
+ *   apps/web/src/charts/theme.ts's liveMarkColors and consumed directly as a
+ *   fill by RequestCountChart, ScatterChart, DistributionChart and
+ *   RatesChart, and indirectly by IndicatorsChart, whose --chart-band-under
+ *   and --chart-band-failed alias --chart-status-passed / --chart-status-failed.
  *
  * Both are mirrored from STATUS_COLORS / STATUS_MARK_COLORS in
  * apps/web/src/charts/theme.ts, which is where the reasoning and the
@@ -83,12 +85,18 @@
 /*
  * `@theme inline` publishes the short Tailwind-facing names (`bg-surface`,
  * `border-divider`, `bg-accent` / `text-accent`, and so on) as aliases of the
- * runtime tokens below. Three of the ten aliases below point at a
- * DIFFERENTLY-NAMED runtime token — `--color-surface-card`, `--color-rule`,
- * `--color-accent-base` — because a key that reads a var() of its OWN name
- * (`--color-surface: var(--color-surface)`) resolves to nothing, silently.
- * The other seven have no such collision and keep the same name on both
- * sides.
+ * runtime tokens below. EVERY key here points at a differently-named runtime
+ * token — most runtime tokens live in their own prefixed family
+ * (`--color-surface-page`, `--color-text-muted`, and so on) and were never
+ * going to share a name with their short alias in the first place.
+ *
+ * What IS worth recording: THREE runtime tokens — `--color-surface-card`,
+ * `--color-rule`, `--color-accent-base` — were deliberately renamed away
+ * from what would otherwise have been their natural name (`--color-surface`,
+ * `--color-divider`, `--color-accent`), because a key that reads a var() of
+ * its OWN name (`--color-surface: var(--color-surface)`) resolves to nothing,
+ * silently. Only those three were ever at risk of that collision; the rest
+ * never shared a name with their alias to begin with.
  */
 @theme inline {
   --color-page: var(--color-surface-page);
@@ -99,11 +107,12 @@
   --color-divider: var(--color-rule);
   --color-primary: var(--color-text-primary);
   --color-muted: var(--color-text-muted);
-  --color-subtle: var(--color-text-subtle);
   --color-accent: var(--color-accent-base);
 }
 
 :root {
+  color-scheme: light;
+
   --color-surface-page: #f8fafc;
   --color-surface-card: #ffffff;
   --color-surface-sidebar: #ffffff;
@@ -112,7 +121,6 @@
   --color-rule: #f1f5f9;
   --color-text-primary: #0f172a;
   --color-text-muted: #64748b;
-  --color-text-subtle: #94a3b8;
   --color-accent-base: #4f46e5;
   --color-accent-foreground: #ffffff;
   --color-ring: #6366f1;
@@ -152,8 +160,22 @@
   --chart-pct-max: #ef4444;
 }
 
+/* Critical 2 (fix wave): the page's own background and foreground. Without
+   this, `Card`'s `bg-surface` and `THEAD`'s `bg-sunken` paint a themed fill
+   over UA-default (black-on-transparent) text, and — worse — a page of
+   bordered white cards on a UA-default white body reads as a wire grid,
+   which is the exact failure `--color-surface-page` exists to prevent
+   (design §3a). `color-scheme` on each block lets UA-rendered chrome (scrollbars,
+   form controls) follow the theme the same way the custom properties do. */
+body {
+  background-color: var(--color-surface-page);
+  color: var(--color-text-primary);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
+    color-scheme: dark;
+
     --color-surface-page: #0f172a;
     --color-surface-card: #1e293b;
     --color-surface-sidebar: #0f172a;
@@ -162,7 +184,6 @@
     --color-rule: #1e293b;
     --color-text-primary: #f8fafc;
     --color-text-muted: #94a3b8;
-    --color-text-subtle: #64748b;
     --color-accent-base: #818cf8;
     --color-accent-foreground: #0f172a;
     --color-ring: #818cf8;
@@ -209,6 +230,8 @@
    existing in two places that can disagree. */
 
 [data-theme='dark'] {
+  color-scheme: dark;
+
   --color-surface-page: #0f172a;
   --color-surface-card: #1e293b;
   --color-surface-sidebar: #0f172a;
@@ -217,7 +240,6 @@
   --color-rule: #1e293b;
   --color-text-primary: #f8fafc;
   --color-text-muted: #94a3b8;
-  --color-text-subtle: #64748b;
   --color-accent-base: #818cf8;
   --color-accent-foreground: #0f172a;
   --color-ring: #818cf8;

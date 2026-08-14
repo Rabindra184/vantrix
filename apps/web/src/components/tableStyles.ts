@@ -1,9 +1,18 @@
 /**
  * The table look, in one place.
  *
- * Three tables set these per file today — the statistics table, the errors
- * table, and every chart's data table — and a density change had to be made
- * three times and agreed three times.
+ * ADOPTED by three of the app's six tables: `StatisticsTable.tsx`,
+ * `ErrorsTable.tsx`, and every chart's `charts/DataTable.tsx`. A density
+ * change to these three now has to be made once and agreed once, rather than
+ * three times.
+ *
+ * NOT (yet) adopted by the other three — `RunList.tsx`, `RunDetail.tsx`'s
+ * Assertions table, and `tables/ScopedStatistics.tsx` — which keep their own
+ * `py-2 pr-4` density and left-aligned numerics. That is deliberate
+ * deferral, not an oversight: none of the three was in this sub-project's
+ * scope, and widening a fix wave to migrate them is exactly the kind of
+ * scope creep this codebase's process tries to avoid. A future sub-project
+ * that touches those pages can adopt these styles then.
  */
 export const TABLE = 'w-full border-collapse text-left text-sm';
 export const THEAD = 'bg-sunken';

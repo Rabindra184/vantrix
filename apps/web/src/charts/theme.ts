@@ -67,16 +67,19 @@ export function paletteFor(mode: ChartMode): readonly string[] {
 
 /**
  * WHY ANY OF THIS EXISTS ALONGSIDE `CATEGORICAL`. The categorical palette
- * answers "which series is this?" — its hues are interchangeable, and
- * Okabe–Ito's whole point is that they carry no meaning beyond "not the other
- * one". The indicator bands ③ and the OK/KO donut ④ ask a different question: a
- * request that failed is not merely a different series from one that
- * succeeded, it is WORSE, and the reader has already learned elsewhere on this
- * same page (`routes/marks.tsx`) that failure is `--color-status-failed`.
- * Drawing it in categorical blue because it happened to be the first series
- * would throw that away.
+ * answers "which series is this?" — its hues are interchangeable, and the
+ * whole point of a categorical palette is that they carry no meaning beyond
+ * "not the other one" (the reference palette Task 4 re-sourced `CATEGORICAL`
+ * from shares that property; it is not specific to Okabe–Ito, which this file
+ * no longer uses — see the decision record below). The indicator bands ③, the
+ * OK/KO donut ④ and the percentile ramp ⑨ ask a different question: a request
+ * that failed is not merely a different series from one that succeeded, it is
+ * WORSE, and the reader has already learned elsewhere on this same page
+ * (`routes/marks.tsx`) that failure is `--color-status-failed`. Drawing it in
+ * categorical blue because it happened to be the first series would throw
+ * that away.
  *
- * There are TWO semantic palettes, and they are not the same kind of thing.
+ * There are THREE semantic palettes, and they are not the same kind of thing.
  */
 
 /**
@@ -140,11 +143,13 @@ export type MarkRole = StatusRole | BandRole | PercentileRole;
  * Points every mark role at the token that carries its MARK colour.
  *
  * Status roles point at `--chart-status-*`, not `--color-status-*`: this is
- * `liveMarkColors`' table, which feeds `chartTheme().roles`, which is only
- * ever consumed as a chart FILL by `IndicatorsChart`, `RequestCountChart` and
- * `ScatterChart`. `--color-status-*` is the TEXT palette and belongs to
- * `routes/marks.tsx` alone — that file reads it directly off the document and
- * never goes through this table.
+ * `liveMarkColors`' table, which feeds `chartTheme().roles`, consumed
+ * directly as a chart FILL by `RequestCountChart`, `ScatterChart`,
+ * `DistributionChart` and `RatesChart`, and indirectly by `IndicatorsChart`,
+ * whose `--chart-band-under`/`--chart-band-failed` alias
+ * `--chart-status-passed`/`--chart-status-failed`. `--color-status-*` is the
+ * TEXT palette and belongs to `routes/marks.tsx` alone — that file reads it
+ * directly off the document and never goes through this table.
  */
 const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
   passed: '--chart-status-passed',
@@ -258,6 +263,13 @@ export const PERCENTILE_RAMP: readonly PercentileRole[] = [
  * gates hue rotation and pairwise separation, deliberately not lightness —
  * see that file for why a lightness gate would fail this ramp and the
  * four-step band ramp alike.
+ *
+ * `pct-p95` / `pct-p99` / `pct-max` are byte-identical to
+ * `--chart-status-pending` / `--chart-band-over` / `--chart-status-failed`
+ * respectively. DELIBERATE, not drift to dedupe later: both this ramp and
+ * those tokens are severity scales where red means "worst", so the same hex
+ * meaning the same thing in two ramps is the point, not a coincidence to
+ * collapse into a shared alias.
  */
 const RAMP = {
   'pct-min': '#2fdac4', 'pct-p25': '#32d29c', 'pct-p50': '#22c55e',
@@ -429,20 +441,20 @@ export function assignPalette(
  */
 export type SurfaceRole =
   | 'page' | 'card' | 'sidebar' | 'sunken' | 'border' | 'divider'
-  | 'text-primary' | 'text-muted' | 'text-subtle'
+  | 'text-primary' | 'text-muted'
   | 'accent' | 'accent-foreground' | 'ring';
 
 export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceRole, string>>>> = {
   light: {
     page: '#f8fafc', card: '#ffffff', sidebar: '#ffffff', sunken: '#f1f5f9',
     border: '#e2e8f0', divider: '#f1f5f9',
-    'text-primary': '#0f172a', 'text-muted': '#64748b', 'text-subtle': '#94a3b8',
+    'text-primary': '#0f172a', 'text-muted': '#64748b',
     accent: '#4f46e5', 'accent-foreground': '#ffffff', ring: '#6366f1',
   },
   dark: {
     page: '#0f172a', card: '#1e293b', sidebar: '#0f172a', sunken: '#334155',
     border: '#334155', divider: '#1e293b',
-    'text-primary': '#f8fafc', 'text-muted': '#94a3b8', 'text-subtle': '#64748b',
+    'text-primary': '#f8fafc', 'text-muted': '#94a3b8',
     accent: '#818cf8', 'accent-foreground': '#0f172a', ring: '#818cf8',
   },
 };
@@ -465,9 +477,9 @@ function token(name: string, fallback: string): string {
 /**
  * The hairline gridline colour, per mode.
  *
- * Exported so `palette.test.ts` can pin it against all four blocks of
- * `tokens.css` rather than only against the two `[data-theme]` ones. A typo in
- * the `prefers-color-scheme` block would otherwise ship a gridline that
+ * Exported so `palette.test.ts` can pin it against all three blocks of
+ * `tokens.css` rather than only against the one `[data-theme]` block. A typo
+ * in the `prefers-color-scheme` block would otherwise ship a gridline that
  * competes with the data on every dark-mode machine, be read live by
  * `chartTheme`, rendered faithfully, and go unnoticed.
  */
@@ -536,9 +548,10 @@ export interface ChartTheme {
  *
  *   - `roles` — the status, band and percentile palettes, consumed only by the
  *     charts that declare `roles` on `<Chart/>`: the indicator bands ③, the
- *     request-count donut ④, the saturation scatter, and the percentile chart
- *     ⑨, which is the one that also lifts the six-hue cap (see `Chart.tsx`'s
- *     assignment memo).
+ *     request-count donut ④, the saturation scatter, the response-time
+ *     distribution ⑧, the requests/responses-per-second charts ⑩⑪, and the
+ *     percentile chart ⑨, which is the one that also lifts the six-hue cap
+ *     (see `Chart.tsx`'s assignment memo).
  *   - `ink` / `inkMuted` — all text. Design §11 is explicit that values, labels
  *     and legend text wear ink tokens and NEVER a mark colour; a legend label
  *     painted in its series' colour is the most common way a chart quietly

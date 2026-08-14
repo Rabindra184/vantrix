@@ -40,48 +40,50 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
   if (run === undefined) return null;
 
   return (
-    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      <StatTile
-        label="Total Requests"
-        value={formatCount(run.count)}
-        hint={`${formatCount(run.okCount)} OK, ${formatCount(run.koCount)} KO`}
-        testId="stat-total-requests"
-      />
-      <StatTile
-        label="Error Rate"
-        // The field and expression `StatisticsTable`'s `% KO` column uses
-        // (`r.errorRate * 100`), at the same two-decimal precision — never
-        // `koCount / count`, which would be a second definition of one
-        // number sitting a few hundred pixels from the first.
-        value={`${(run.errorRate * 100).toFixed(2)}%`}
-        hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
-        testId="stat-error-rate"
-      />
-      <StatTile
-        label="Mean Throughput"
-        value={`${formatRate(run.throughputRps)} req/s`}
-        hint={`${formatCount(run.count)} requests over the run`}
-        testId="stat-throughput"
-      />
-      <StatTile
-        label="Mean Response"
-        value={`${formatMs(run.meanMs)} ms`}
-        hint={`up to ${formatMs(run.maxMs)} ms`}
-        testId="stat-mean-response"
-      />
-      <StatTile
-        label="95th Percentile"
-        value={percentileValue(run, 'p95')}
-        hint="an estimate, accurate to within 1%"
-        testId="stat-p95"
-      />
-      <StatTile
-        label="99th Percentile"
-        value={percentileValue(run, 'p99')}
-        hint="an estimate, accurate to within 1%"
-        testId="stat-p99"
-      />
-    </dl>
+    <section aria-label="Run totals">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <StatTile
+          label="Total Requests"
+          value={formatCount(run.count)}
+          hint={`${formatCount(run.okCount)} OK, ${formatCount(run.koCount)} KO`}
+          data-testid="stat-total-requests"
+        />
+        <StatTile
+          label="Error Rate"
+          // The field and expression `StatisticsTable`'s `% KO` column uses
+          // (`r.errorRate * 100`), at the same two-decimal precision — never
+          // `koCount / count`, which would be a second definition of one
+          // number sitting a few hundred pixels from the first.
+          value={`${(run.errorRate * 100).toFixed(2)}%`}
+          hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
+          data-testid="stat-error-rate"
+        />
+        <StatTile
+          label="Mean Throughput"
+          value={`${formatRate(run.throughputRps)} req/s`}
+          hint={`${formatCount(run.count)} requests over the run`}
+          data-testid="stat-throughput"
+        />
+        <StatTile
+          label="Mean Response"
+          value={`${formatMs(run.meanMs)} ms`}
+          hint={`up to ${formatMs(run.maxMs)} ms`}
+          data-testid="stat-mean-response"
+        />
+        <StatTile
+          label="95th Percentile"
+          value={percentileValue(run, 'p95')}
+          hint="an estimate, accurate to within 1%"
+          data-testid="stat-p95"
+        />
+        <StatTile
+          label="99th Percentile"
+          value={percentileValue(run, 'p99')}
+          hint="an estimate, accurate to within 1%"
+          data-testid="stat-p99"
+        />
+      </dl>
+    </section>
   );
 }
 

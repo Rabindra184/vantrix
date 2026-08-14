@@ -288,9 +288,11 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   /**
    * And the status MARK palette, same shape, same three blocks.
    * `liveMarkColors` reads `--chart-status-*` off the live document and hands
-   * it to `chartTheme().roles`, which `IndicatorsChart`, `RequestCountChart`
-   * and `ScatterChart` consume as a chart fill; `STATUS_MARK_COLORS` is the
-   * compiled fallback. Two palettes now, both mirrored, both gated.
+   * it to `chartTheme().roles`, consumed directly as a chart fill by
+   * `RequestCountChart`, `ScatterChart`, `DistributionChart` and
+   * `RatesChart`, and indirectly by `IndicatorsChart` through its
+   * `--chart-band-*` aliases; `STATUS_MARK_COLORS` is the compiled fallback.
+   * Two palettes now, both mirrored, both gated.
    */
   const STATUS_MARK_TOKENS: readonly { role: StatusRole; token: string }[] = [
     { role: 'passed', token: '--chart-status-passed' },
@@ -343,7 +345,6 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
     { role: 'divider', token: '--color-rule' },
     { role: 'text-primary', token: '--color-text-primary' },
     { role: 'text-muted', token: '--color-text-muted' },
-    { role: 'text-subtle', token: '--color-text-subtle' },
     { role: 'accent', token: '--color-accent-base' },
     { role: 'accent-foreground', token: '--color-accent-foreground' },
     { role: 'ring', token: '--color-ring' },
@@ -582,9 +583,10 @@ describe('the status TEXT palette', () => {
 });
 
 /**
- * The colours actually DRAWN as marks — `STATUS_MARK_COLORS` (the donut,
- * `RequestCountChart`/`ScatterChart`'s `passed`/`failed`) and `BAND_COLORS`
- * (the indicator bands' severity ramp) — must share no hue with the
+ * The colours actually DRAWN as marks — `STATUS_MARK_COLORS` (`passed`/
+ * `failed` on the request-count donut, the saturation scatter, the
+ * response-time distribution and the rate charts) and `BAND_COLORS` (the
+ * indicator bands' severity ramp) — must share no hue with the
  * categorical series palette. The two palettes answer different questions —
  * "which series is this?" versus "how bad is this?" — and a mark colour that
  * collided with a series colour would make a band, or the donut, and an
@@ -633,6 +635,45 @@ describe.each(['light', 'dark'] as const)('status TEXT is legible in %s mode', (
   const ground = SURFACE_TOKENS[mode].card;
   it.each(['passed', 'pending', 'neutral', 'failed'] as const)('%s clears AA on the card', (role) => {
     expect(contrast(STATUS_COLORS[mode][role], ground)).toBeGreaterThanOrEqual(AA);
+  });
+});
+
+/**
+ * CRITICAL 1 (fix wave): `status TEXT is legible` above gates the FOUR status
+ * roles, and that was the whole gate — which is exactly how `--color-text-subtle`
+ * walked through it unmeasured. That token rendered every stat-tile hint
+ * (`StatTile.tsx`) at 2.56:1 on a light card and 3.07:1 on a dark one, both far
+ * under AA's 4.5, because nothing checked a plain text token, only the status
+ * ones.
+ *
+ * So this widens the gate to EVERY `--color-text-*` role — walked off
+ * `SurfaceRole` itself, filtered by its `text-` prefix, rather than a
+ * hand-maintained list, so a future third text level is caught the moment it is
+ * added to `SURFACE_TOKENS`, with no second place to remember to update.
+ *
+ * BOTH GROUNDS, not just the card: Critical 2 (fix wave) now paints `body`
+ * with `--color-surface-page`, so text sits directly on the page itself
+ * wherever no `Card` wraps it, and a token that cleared AA on the card but
+ * not the page would still ship illegible text on every page background.
+ *
+ * There is no third text level, measured: `--color-text-muted` is
+ * `#64748b`, which clears 4.76:1 on white — already close to the 4.5 floor —
+ * and every slate lighter than it fails (`#6b7a90` is 4.36, `#717f95` is
+ * 4.06, `#94a3b8` — the deleted `--color-text-subtle` — is 2.56). That is why
+ * `--color-text-subtle` was deleted rather than re-measured: the fix space
+ * for a third level does not exist on this ground.
+ */
+const TEXT_ROLES = (Object.keys(SURFACE_TOKENS.light) as SurfaceRole[]).filter((role) =>
+  role.startsWith('text-'),
+);
+
+describe.each(['light', 'dark'] as const)('every --color-text-* token is legible in %s mode', (mode) => {
+  it.each(TEXT_ROLES)('%s clears AA on the card', (role) => {
+    expect(contrast(SURFACE_TOKENS[mode][role], SURFACE_TOKENS[mode].card)).toBeGreaterThanOrEqual(AA);
+  });
+
+  it.each(TEXT_ROLES)('%s clears AA on the page', (role) => {
+    expect(contrast(SURFACE_TOKENS[mode][role], SURFACE_TOKENS[mode].page)).toBeGreaterThanOrEqual(AA);
   });
 });
 

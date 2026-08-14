@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 
 /**
- * The bordered surface every chart and table sits on.
+ * The bordered surface every chart sits on. No table is wrapped in a `Card`
+ * today — `StatisticsTable`, `ErrorsTable` and `charts/DataTable` set their
+ * own styling via `tableStyles.ts` instead (see that file's docstring).
  *
  * `title` is OPTIONAL and defaults to drawing nothing, because `Chart` already
  * renders its own `<h3>` and the e2e suite finds charts by it. A card that

@@ -173,25 +173,46 @@ the darker arm.
 
 ### 3c. Percentiles become an ordered ramp
 
-`p50 → max` stops being five interchangeable categorical hues and becomes a
-severity ramp, taken from the reference unchanged: `#22c55e`, `#84cc16`,
-`#f59e0b`, `#f97316`, `#ef4444`.
+`min → max` stops being interchangeable categorical hues and becomes a
+severity ramp. **Ten steps ship**, not the five originally scoped here — one
+colour per band `PercentilesChart` can draw (D-7's exact set): `min`, `p25`,
+`p50`, `p75`, `p80`, `p85`, `p90`, `p95`, `p99`, `max`. Five of the ten are
+this section's original values (`p50` `#22c55e`, `p75` `#84cc16`, `p95`
+`#f59e0b`, `p99` `#f97316`, `max` `#ef4444`), fixed on their own bands from
+the reference; the other five (`min`, `p25`, `p80`, `p85`, `p90`) fill the arc
+between and around them.
 
-Measured against the gates in `palette.test.ts` as they already exist for
-`--chart-band-*`:
+Measured against gates in `palette.test.ts` adapted for a ten-step ramp,
+rather than the four-step `--chart-band-*` gates reused unmodified:
 
-- adjacent ΔE: 7.98, 18.98, 9.60, 10.42 — floor is 7.5
-- two-apart ΔE: 23.36, 26.77, 19.76 — floor is 15
-- hue angle: 149.6° → 130.8° → 70.1° → 47.6° → 25.3°, monotonically decreasing
+- hue angle: 181.7° → 164.8° → 149.6° → 130.8° → 116.0° → 101.3° → 85.7° →
+  70.1° → 47.6° → 25.3°, monotonically decreasing
+- adjacent ΔE: minimum **4.17** (`p80 → p85`) — floor **4.0**
+- two-apart ΔE: minimum **8.23** (`p80 → p90`) — floor **8.0**
+- ends ΔE: **37.42** (`min → max`) — floor **35**
 
-It passes unmodified. **Record the tightness**: `p50 → p75` clears the adjacent
-floor by 0.48. Green and lime are this ramp's weakest pair, and a future nudge
-to either is the likeliest way to break it.
+**Why these floors sit below the four-step band ramp's 7.5/15**: ten steps
+spread across roughly the same ~156° hue arc a four-step ramp spans are
+necessarily closer together than four steps are — this is arithmetic, not a
+looser standard. Holding this ramp to 7.5/15 would be a demand that it stop
+being a ten-step ramp; Gatling's own four-step ramp already misses 7.5 on one
+adjacent pair (§9's corroboration), and a four-times-denser ramp misses it
+more.
+
+**Record the tightness, precisely, because these floors are set close enough
+to the measured minima that they pin these specific hexes rather than assert
+a general property that would survive re-picking them**: `p80 → p85` clears
+its adjacent floor by only 0.17, and `p80 → p90` clears its two-apart floor by
+only 0.23. That neighbourhood — `p80`/`p85`/`p90`, the three steps this
+section added between the original `p75` and `p95` — is this ramp's weakest,
+and a future nudge to any of the three is the likeliest way to break it. The
+original ramp's own tightest pair, `p50 → p75` at 7.98, is unchanged and is no
+longer this ramp's tightest.
 
 Note for anyone extending this: the ramp is **not** monotonic in lightness
-(OKLCH L runs 0.72, 0.77, 0.77, 0.70, 0.64). Neither is the existing band ramp
-(0.52, 0.55, 0.56, 0.55). A lightness gate would fail both. Hue rotation is
-what carries the ordering here, and hue rotation is what gets gated.
+(OKLCH L dips at `p50` and rises again through `p85`). Neither is the existing
+band ramp. A lightness gate would fail both. Hue rotation is what carries the
+ordering here, and hue rotation is what gets gated.
 
 ### 3d. The categorical six
 
@@ -348,8 +369,13 @@ draw marks" cover the failure modes that actually reach a reader.
 2. **Status contrast holds against the surface actually used.** The numbers in
    §3b are measured against `#ffffff` and `#1e293b`. If a badge ends up on
    `--color-surface-sunken`, they must be re-measured against that.
-3. **The percentile ramp still clears 7.5 adjacent.** `p50 → p75` sits at 7.98.
-   Any nudge to green or lime re-runs this.
+3. **The percentile ramp still clears its OWN floors — 4.0 adjacent, 8.0
+   two-apart, 35 ends — not the four-step band ramp's 7.5/15** (§3c explains
+   why a ten-step ramp is held to lower floors). The measured minima are
+   `p80 → p85` at 4.17 (adjacent), `p80 → p90` at 8.23 (two-apart), and
+   `min → max` at 37.42 (ends). Any nudge to `p80`, `p85` or `p90` re-runs
+   this — that neighbourhood is where every floor sits closest to its
+   measured minimum.
 4. **The stat tiles agree with the table.** Error rate on the tile and `% KO`
    in the row below are the same quantity; assert they render the same value
    rather than trusting two call sites.

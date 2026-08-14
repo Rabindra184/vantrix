@@ -21,10 +21,11 @@ import type { ChartData, ChartTableRow } from '../types';
  *
  * NOT CATEGORICAL, because the four bands are ordered: `t < lowerMs` is
  * *better* than `t >= higherMs`, and `failed` is not merely a fifth kind of
- * thing. Okabe–Ito's six hues are deliberately meaningless — that is their
- * virtue for series — so spending them here would say "these are four different
- * bands" when what the reader needs is "these are four bands and they get worse
- * left to right".
+ * thing. The categorical palette's six hues are deliberately meaningless —
+ * that is their virtue for series, and it holds regardless of which six hues
+ * `theme.ts` currently sources it from — so spending them here would say
+ * "these are four different bands" when what the reader needs is "these are
+ * four bands and they get worse left to right".
  *
  * NOT THE STATUS PALETTE EITHER, which is where the first cut of this went
  * wrong. There are four `--color-status-*` tokens but only three form a ramp;
