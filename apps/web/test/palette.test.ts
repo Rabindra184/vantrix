@@ -319,6 +319,18 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
     expect(found).toEqual(BAND_RAMP.map((role) => BAND_COLORS[mode][role].toUpperCase()));
   });
 
+  /**
+   * And the percentile ramp, in the same three blocks. Structurally identical
+   * to the band-ramp check above — same reason: the tokens.css header comment
+   * for `--chart-pct-*` promises `palette.test.ts` fails if this file and
+   * `theme.ts` ever disagree, and that promise needs this test to be true.
+   */
+  it.each(BLOCKS)('$where carries the percentile ramp theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = PERCENTILE_RAMP.map((role) => tokenIn(body, `--chart-pct-${role.slice(4)}`, where));
+    expect(found).toEqual(PERCENTILE_RAMP.map((role) => PERCENTILE_COLORS[mode][role].toUpperCase()));
+  });
+
   /** The SURFACE, text and accent tokens (Task 2), in the same three blocks. */
   const SURFACE_TOKENS_UNDER_TEST: readonly { role: SurfaceRole; token: string }[] = [
     { role: 'page', token: '--color-surface-page' },

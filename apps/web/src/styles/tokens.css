@@ -70,8 +70,12 @@
  * indicator bands, but this ramp has ten steps to the bands' four, so its
  * gates in palette.test.ts are looser - ten steps across one hue arc sit
  * closer together than four by necessity. Light and dark share one set of
- * values, mirrored from PERCENTILE_RAMP / PERCENTILE_COLORS in
- * apps/web/src/charts/theme.ts. Edit the hexes there, not here.
+ * values.
+ *
+ * Like the palette, these are mirrored in apps/web/src/charts/theme.ts
+ * (PERCENTILE_RAMP / PERCENTILE_COLORS) and apps/web/test/palette.test.ts
+ * fails if the two disagree - in any of the three blocks. Edit the hexes
+ * there, not here.
  */
 
 @import 'tailwindcss';
