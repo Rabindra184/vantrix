@@ -36,8 +36,8 @@ const SCATTER: Slot = {
  * §13.3 — one request's own page.
  *
  * THE NAME IS A FULL PATH, arriving as ONE encoded segment. `detailPathFor`
- * encodes it (`tables/StatisticsTable.tsx:822`), the route spells it as a
- * single `:name` (`App.tsx:42`), and `useParams` decodes it — so
+ * encodes it (`tables/StatisticsTable.tsx:843`), the route spells it as a
+ * single `:name` (`App.tsx:43`), and `useParams` decodes it — so
  * `Catalog%2FList%20Products` reaches here as `Catalog/List Products`, which
  * is exactly the identity the engine rolls the request up under (D-10).
  */
