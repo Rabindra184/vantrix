@@ -136,6 +136,31 @@ describe('group scopes', () => {
     expect(duration.count).toBe(1);
     expect(duration.maxMs).toBe(300);           // 400 - 100, not the warm-up group's 200
   });
+
+  it('emits a series per family for one group name', () => {
+    const r = runEngine([
+      { type: 'meta', simulation: 'S', toolVersion: 'v', startedAtMs: base },
+      req('A', ['Catalog'], 0, 100),
+      grp(['Catalog'], 0, 500, 300),          // duration 500, cumulated 300 — deliberately different
+      grp(['Catalog', 'Recommendations'], 0, 200, 150),
+    ]);
+    const catalog = [...r.series.values()].filter(
+      (v) => v.scope === 'group' && v.name === 'Catalog',
+    );
+
+    expect(catalog.map((v) => v.family).sort()).toEqual([
+      'group_cumulated',
+      'group_duration',
+    ]);
+
+    // The file's `grp(['Catalog'], 0, 500, 300)` is annotated "duration 500,
+    // cumulated 300 — deliberately different", so a single series reused for
+    // both families would make these sketches equal.
+    const cumulated = catalog.find((v) => v.family === 'group_cumulated')!;
+    const duration = catalog.find((v) => v.family === 'group_duration')!;
+    const maxOf = (v: typeof cumulated) => Math.max(...v.buckets.map((b) => b.sketch.max));
+    expect(maxOf(cumulated)).not.toBe(maxOf(duration));
+  });
 });
 
 describe('runEngine error accounting', () => {

@@ -32,12 +32,13 @@ export interface EngineOptions {
   maxEndpoints?: number;
   maxBucketsRun?: number;
   maxBucketsEndpoint?: number;
+  maxBucketsGroup?: number;
   maxBucketsUsers?: number;
 }
 
 export interface EngineResult {
   stats: StatRollup[];
-  series: Map<string, { scope: MetricScope; name: string; buckets: Bucket[] }>;
+  series: Map<string, { scope: MetricScope; name: string; family: MetricFamily; buckets: Bucket[] }>;
   users: { scenario: string; buckets: UserBucket[] }[];
   errors: { scope: MetricScope; name: string; message: string; count: number }[];
   endpointCount: number;
@@ -61,6 +62,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   const maxEndpoints = opts.maxEndpoints ?? 2000;
   const maxBucketsRun = opts.maxBucketsRun ?? 1200;
   const maxBucketsEndpoint = opts.maxBucketsEndpoint ?? 300;
+  const maxBucketsGroup = opts.maxBucketsGroup ?? 300;
 
   let runStartMs = 0;
   let sawMeta = false;
@@ -73,11 +75,11 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   // parsing the key, so a name containing the delimiter can never be truncated or
   // collide with another entry (see the "map delimiter" regression test).
   const rollups = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; builder: RollupBuilder }>();
-  // Keyed by (scope, name) the same way `rollups` is keyed by (scope, name, family): the
-  // key is an opaque lookup token only, never parsed back — scope and name are always
-  // read from the stored entry fields, so a request name containing a space or colon can
-  // never be truncated or collide with another entry.
-  const series = new Map<string, { scope: MetricScope; name: string; series: BucketSeries }>();
+  // Keyed by (scope, name, family) the same way `rollups` is: the key is an
+  // opaque lookup token only, never parsed back — scope, name and family are
+  // always read from the stored entry fields, so a name containing a space can
+  // never truncate or collide.
+  const series = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; series: BucketSeries }>();
   // Buffered, then built after the loop: runStartMs is 0 until the meta event
   // is handled below, and a UserSeries constructed against 0 reports absolute
   // epoch offsets while every request bucket is run-relative. UserSeries
@@ -96,10 +98,15 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   let description: string | null = null;
   const endpoints = new Set<string>();
 
-  const seriesFor = (scope: MetricScope, name: string, max: number): BucketSeries => {
-    const key = `${scope} ${name}`;
+  const seriesFor = (
+    scope: MetricScope, name: string, family: MetricFamily, max: number,
+  ): BucketSeries => {
+    const key = `${scope} ${name} ${family}`;
     let entry = series.get(key);
-    if (!entry) { entry = { scope, name, series: new BucketSeries({ startMs: runStartMs, maxBuckets: max }) }; series.set(key, entry); }
+    if (!entry) {
+      entry = { scope, name, family, series: new BucketSeries({ startMs: runStartMs, maxBuckets: max }) };
+      series.set(key, entry);
+    }
     return entry.series;
   };
   // Space-joined lookup token. A group/request name may itself contain spaces, but
@@ -131,6 +138,25 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       // separate families — they diverge whenever requests inside the group overlap,
       // so one must never be derived from the other.
       const name = e.groups.join('/');
+
+      // GR-04 and GR-06. Two series, not one: cumulated response time and
+      // wall-clock duration diverge whenever requests inside the group overlap,
+      // which is the same reason `rollupFor` is called twice below.
+      //
+      // Both edges, matching the request path — the percentiles chart reads the
+      // END edge, but a series that only recorded one edge could not later feed
+      // a rate chart without a re-ingest.
+      //
+      // Series always includes warm-up (PRD 7.4), so these run BEFORE the
+      // warm-up `continue` below, mirroring the request branch's split between
+      // series (:172-177) and summary stats (:180-182).
+      const cumulated = seriesFor('group', name, 'group_cumulated', maxBucketsGroup);
+      cumulated.add(e.startMs, e.cumulatedResponseTimeMs, e.ok, 'start');
+      cumulated.add(e.endMs, e.cumulatedResponseTimeMs, e.ok, 'end');
+      const duration = seriesFor('group', name, 'group_duration', maxBucketsGroup);
+      duration.add(e.startMs, e.endMs - e.startMs, e.ok, 'start');
+      duration.add(e.endMs, e.endMs - e.startMs, e.ok, 'end');
+
       // Summary stats exclude warm-up, same as the request path (PRD 7.4).
       if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
       rollupFor('group', name, 'group_cumulated').add(e.cumulatedResponseTimeMs, e.ok);
@@ -169,10 +195,10 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     lastMs = Math.max(lastMs, e.endMs);
 
     // Series always includes warm-up (PRD 7.4).
-    const runSeries = seriesFor('run', '', maxBucketsRun);
+    const runSeries = seriesFor('run', '', 'response_time', maxBucketsRun);
     runSeries.add(e.startMs, duration, e.ok, 'start');
     runSeries.add(e.endMs, duration, e.ok, 'end');
-    const epSeries = seriesFor('request', name, maxBucketsEndpoint);
+    const epSeries = seriesFor('request', name, 'response_time', maxBucketsEndpoint);
     epSeries.add(e.startMs, duration, e.ok, 'start');
     epSeries.add(e.endMs, duration, e.ok, 'end');
 
@@ -206,7 +232,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
 
   return {
     stats,
-    series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, buckets: v.series.buckets() }])),
+    series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, family: v.family, buckets: v.series.buckets() }])),
     users: users.scenarios(),
     errors,
     endpointCount: endpoints.size,

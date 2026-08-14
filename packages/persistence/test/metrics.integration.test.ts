@@ -134,7 +134,7 @@ describe('MetricWriter / MetricReader', () => {
     const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
 
     const buckets = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '', family: 'response_time' });
-    const expected = result.series.get('run ')?.buckets ?? [];
+    const expected = [...result.series.values()].find((v) => v.scope === 'run')?.buckets ?? [];
     expect(buckets).toHaveLength(expected.length);
     expect(buckets.reduce((a, b) => a + b.startedCount, 0)).toBe(
       expected.reduce((a, b) => a + b.startedCount, 0),
@@ -163,7 +163,7 @@ describe('MetricWriter / MetricReader', () => {
     const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
 
     const stored = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '', family: 'response_time' });
-    const engineBuckets = result.series.get('run ')?.buckets ?? [];
+    const engineBuckets = [...result.series.values()].find((v) => v.scope === 'run')?.buckets ?? [];
 
     const mixed = engineBuckets.find((b) => b.okCount > 0 && b.koCount > 0);
     expect(mixed).toBeDefined();
@@ -215,6 +215,22 @@ describe('MetricWriter / MetricReader', () => {
     // a single pruned partition and mask a real pruning failure the same way.
     const scanned = new Set(plan.match(/run_series_bucket_2026_\d\d/g) ?? []).size;
     expect(scanned).toBe(1);
+  });
+
+  it('keeps family fourth-from-last in the series primary key', async () => {
+    // 0001_init records that there is deliberately NO secondary index on
+    // (run_started_on, run_id, scope, name), because those columns are a strict
+    // prefix of this key and its btree already serves them. Reordering the key
+    // silently costs every such lookup its index, once per partition, with
+    // nothing erroring — and the pruning test cannot see it, because every
+    // query we issue today binds all five columns with equality.
+    const { rows } = await pool.query(
+      `SELECT pg_get_indexdef(conindid) AS def
+         FROM pg_constraint WHERE conname = 'run_series_bucket_pkey'`,
+    );
+    expect(rows[0]?.def).toContain(
+      '(run_started_on, run_id, scope, name, family, start_offset_ms)',
+    );
   });
 
   it('persists histograms that round-trip out of the database', async () => {
@@ -328,7 +344,7 @@ describe('MetricWriter / MetricReader', () => {
     const stored = await reader.series(tenant, ctx.runId, STARTED_ON, {
       scope: 'run', name: '', family: 'response_time',
     });
-    const engineBuckets = result.series.get('run ')?.buckets ?? [];
+    const engineBuckets = [...result.series.values()].find((v) => v.scope === 'run')?.buckets ?? [];
 
     expect(stored).toHaveLength(engineBuckets.length);
     expect(stored.length).toBeGreaterThan(0);
