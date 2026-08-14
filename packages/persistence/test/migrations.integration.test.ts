@@ -18,10 +18,10 @@ async function insertBucketRow(pool: pg.Pool, runStartedOnSql: string): Promise<
     await client.query('BEGIN');
     await client.query(
       `INSERT INTO run_series_bucket
-         (run_started_on, run_id, org_id, project_id, scope, name, start_offset_ms,
+         (run_started_on, run_id, org_id, project_id, scope, name, family, start_offset_ms,
           started_count, ended_count, ok_count, ko_count, min_ms, max_ms, mean_ms, percentiles)
        VALUES (${runStartedOnSql}, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
-               'run', '', 0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb)`,
+               'run', '', 'response_time', 0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb)`,
     );
   } finally {
     await client.query('ROLLBACK');

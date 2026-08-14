@@ -76,7 +76,15 @@ export class MetricWriter {
       for (const b of entry.buckets) {
         bucketRows.push([
           ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
-          entry.scope, entry.name, b.startOffsetMs,
+          entry.scope, entry.name,
+          // A LITERAL, and only until the next task. Every series the engine
+          // emits today is a response_time series — run scope and request scope
+          // — so this is correct rather than a placeholder. Task 2 adds groups,
+          // whose entries carry their own family, and replaces this with
+          // `entry.family`. Written as a literal here so the tree is never in a
+          // state where the PK demands a column the writer cannot supply.
+          'response_time',
+          b.startOffsetMs,
           b.startedCount, b.endedCount, b.okCount, b.koCount,
           b.startedOkCount, b.startedKoCount,
           b.sketch.count === 0 ? 0 : b.sketch.min,
@@ -95,7 +103,7 @@ export class MetricWriter {
       'run_series_bucket',
       [
         'run_started_on', 'run_id', 'org_id', 'project_id',
-        'scope', 'name', 'start_offset_ms',
+        'scope', 'name', 'family', 'start_offset_ms',
         'started_count', 'ended_count', 'ok_count', 'ko_count',
         'started_ok_count', 'started_ko_count',
         'min_ms', 'max_ms', 'mean_ms', 'percentiles', 'percentiles_ok', 'percentiles_ko',

@@ -148,7 +148,7 @@ export class MetricsController {
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
       run.startedOn,
-      { scope, name },
+      { scope, name, family: 'response_time' },
     );
     return {
       runId: run.id,

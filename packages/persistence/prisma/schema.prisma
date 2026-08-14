@@ -160,6 +160,10 @@ model RunSeriesBucket {
   projectId     String   @map("project_id") @db.Uuid
   scope         String
   name          String
+  /// Which measure this series is of. 'response_time' for run and request
+  /// scope; a group carries 'group_cumulated' AND 'group_duration' under one
+  /// name, which is why this is in the primary key.
+  family        String
   startOffsetMs Int      @map("start_offset_ms")
   startedCount  Int      @map("started_count")
   endedCount    Int      @map("ended_count")
@@ -177,7 +181,7 @@ model RunSeriesBucket {
   percentilesOk Json? @map("percentiles_ok")
   percentilesKo Json? @map("percentiles_ko")
 
-  @@id([runStartedOn, runId, scope, name, startOffsetMs])
+  @@id([runStartedOn, runId, scope, name, family, startOffsetMs])
   @@map("run_series_bucket")
 }
 

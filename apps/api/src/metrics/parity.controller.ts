@@ -101,8 +101,8 @@ export class ParityController {
     const run = await this.#run(req, id);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
     const [global, own] = await Promise.all([
-      this.reader.series(tenant, run.id, run.startedOn, { scope: 'run', name: '' }),
-      this.reader.series(tenant, run.id, run.startedOn, { scope: 'request', name }),
+      this.reader.series(tenant, run.id, run.startedOn, { scope: 'run', name: '', family: 'response_time' }),
+      this.reader.series(tenant, run.id, run.startedOn, { scope: 'request', name, family: 'response_time' }),
     ]);
 
     // x is a RATE over the global REQUESTS series (started_count, both

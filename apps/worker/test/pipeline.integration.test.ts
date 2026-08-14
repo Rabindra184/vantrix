@@ -149,7 +149,7 @@ describe('PipelineService', () => {
       { orgId: ctx.orgId, projectId: ctx.projectId },
       ctx.runId,
       ctx.startedOn,
-      { scope: 'run', name: '' },
+      { scope: 'run', name: '', family: 'response_time' },
     );
     expect(buckets.length).toBeGreaterThan(0);
     expect(buckets.reduce((a, b) => a + b.startedCount, 0)).toBe(895);

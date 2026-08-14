@@ -133,7 +133,7 @@ describe('MetricWriter / MetricReader', () => {
     const reader = new MetricReader(pool);
     const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
 
-    const buckets = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '' });
+    const buckets = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '', family: 'response_time' });
     const expected = result.series.get('run ')?.buckets ?? [];
     expect(buckets).toHaveLength(expected.length);
     expect(buckets.reduce((a, b) => a + b.startedCount, 0)).toBe(
@@ -162,7 +162,7 @@ describe('MetricWriter / MetricReader', () => {
     const reader = new MetricReader(pool);
     const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
 
-    const stored = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '' });
+    const stored = await reader.series(tenant, ctx.runId, STARTED_ON, { scope: 'run', name: '', family: 'response_time' });
     const engineBuckets = result.series.get('run ')?.buckets ?? [];
 
     const mixed = engineBuckets.find((b) => b.okCount > 0 && b.koCount > 0);
@@ -205,7 +205,7 @@ describe('MetricWriter / MetricReader', () => {
     // test — see SERIES_SQL's docstring in src/metrics/read.ts.
     const { rows } = await pool.query<{ 'QUERY PLAN': string }>(
       `EXPLAIN ${SERIES_SQL}`,
-      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId, 'run', ''],
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId, 'run', '', 'response_time'],
     );
     const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
     // Distinct partition names, not raw substring matches: an index-scan plan names
@@ -313,5 +313,30 @@ describe('MetricWriter / MetricReader', () => {
     expect(reqScoped.length).toBeGreaterThan(0);
     expect(reqScoped.reduce((n, e) => n + e.count, 0))
       .toBeLessThan(runScoped.reduce((n, e) => n + e.count, 0));
+  });
+
+  it('round-trips a series through its family', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    // Everything the engine emits today is response_time; groups add a second
+    // family in the next task. What this pins is that family survives the write
+    // and is required on the read — a reader ignoring it would return every
+    // family's rows interleaved once groups exist.
+    const stored = await reader.series(tenant, ctx.runId, STARTED_ON, {
+      scope: 'run', name: '', family: 'response_time',
+    });
+    const engineBuckets = result.series.get('run ')?.buckets ?? [];
+
+    expect(stored).toHaveLength(engineBuckets.length);
+    expect(stored.length).toBeGreaterThan(0);
+
+    // A family that was never written returns nothing rather than everything.
+    const wrong = await reader.series(tenant, ctx.runId, STARTED_ON, {
+      scope: 'run', name: '', family: 'group_cumulated',
+    });
+    expect(wrong).toEqual([]);
   });
 });

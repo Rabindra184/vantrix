@@ -82,7 +82,7 @@ export const SERIES_SQL = `SELECT start_offset_ms, started_count, ended_count, o
          FROM run_series_bucket
         WHERE run_started_on = $1 AND run_id = $2
           AND org_id = $3 AND project_id = $4
-          AND scope = $5 AND name = $6
+          AND scope = $5 AND name = $6 AND family = $7
         ORDER BY start_offset_ms`;
 
 /**
@@ -141,11 +141,11 @@ export class MetricReader {
     scope: ProjectScope,
     runId: string,
     runStartedOn: Date,
-    sel: { scope: string; name: string },
+    sel: { scope: string; name: string; family: string },
   ): Promise<StoredBucket[]> {
     const { rows } = await this.pool.query(
       SERIES_SQL,
-      [runStartedOn, runId, scope.orgId, scope.projectId, sel.scope, sel.name],
+      [runStartedOn, runId, scope.orgId, scope.projectId, sel.scope, sel.name, sel.family],
     );
     return rows.map((r) => ({
       startOffsetMs: r.start_offset_ms,
