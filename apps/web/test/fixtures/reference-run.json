@@ -1,17 +1,18 @@
 {
   "_capture": {
     "script": "scripts/capture-chart-fixture.mjs",
-    "capturedAt": "2026-08-13T14:51:52.567Z",
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "capturedAt": "2026-08-14T02:26:30.696Z",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "bundle": "fixtures/gatling-3.15.1.2/reference-report/simulation.log",
     "baseUrl": "http://localhost:3000",
     "endpoints": {
-      "stats": "/v1/runs/d5562533-7d3a-4583-958c-4cd9c4a02bf9/stats",
-      "series": "/v1/runs/d5562533-7d3a-4583-958c-4cd9c4a02bf9/series?scope=run&name=",
-      "users": "/v1/runs/d5562533-7d3a-4583-958c-4cd9c4a02bf9/users",
-      "distribution": "/v1/runs/d5562533-7d3a-4583-958c-4cd9c4a02bf9/distribution?scope=run&name=&family=response_time",
-      "errors": "/v1/runs/d5562533-7d3a-4583-958c-4cd9c4a02bf9/errors?scope=run&name=",
-      "scatter": "/v1/runs/d5562533-7d3a-4583-958c-4cd9c4a02bf9/scatter?name=Catalog%2FList%20Products"
+      "stats": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/stats",
+      "series": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/series?scope=run&name=",
+      "users": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/users",
+      "distribution": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/distribution?scope=run&name=&family=response_time",
+      "errors": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/errors?scope=run&name=",
+      "scatter": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/scatter?name=Catalog%2FList%20Products",
+      "scatterWithFailures": "/v1/runs/f150bbef-c9c9-4f8a-9618-bdd96dafef45/scatter?name=Cart%2FAdd%20To%20Cart"
     },
     "counts": {
       "stats.stats": 14,
@@ -19,11 +20,13 @@
       "users.scenarios": 2,
       "users.total": 63,
       "distribution.labels": 100,
-      "errors.errors": 2
+      "errors.errors": 2,
+      "scatter.ok": 60,
+      "scatterWithFailures.ko": 15
     }
   },
   "stats": {
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "stats": [
       {
         "scope": "group",
@@ -403,7 +406,7 @@
     }
   },
   "series": {
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "scope": "run",
     "name": "",
     "bucketWidthMs": 1000,
@@ -2629,7 +2632,7 @@
     ]
   },
   "users": {
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "scenarios": [
       {
         "scenario": "Browse",
@@ -3732,7 +3735,7 @@
     ]
   },
   "distribution": {
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "scope": "run",
     "name": "",
     "family": "response_time",
@@ -4250,7 +4253,7 @@
     "overflowCount": 0
   },
   "errors": {
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "errors": [
       {
         "message": "status.find.is(200), found 500",
@@ -4263,7 +4266,7 @@
     ]
   },
   "scatter": {
-    "runId": "d5562533-7d3a-4583-958c-4cd9c4a02bf9",
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
     "name": "Catalog/List Products",
     "ok": [
       [
@@ -4508,5 +4511,265 @@
       ]
     ],
     "ko": []
+  },
+  "scatterWithFailures": {
+    "runId": "f150bbef-c9c9-4f8a-9618-bdd96dafef45",
+    "name": "Cart/Add To Cart",
+    "ok": [
+      [
+        10,
+        98
+      ],
+      [
+        10,
+        92
+      ],
+      [
+        11,
+        105
+      ],
+      [
+        11,
+        122
+      ],
+      [
+        11,
+        136
+      ],
+      [
+        11,
+        125
+      ],
+      [
+        11,
+        127
+      ],
+      [
+        11,
+        111
+      ],
+      [
+        11,
+        141
+      ],
+      [
+        12,
+        114
+      ],
+      [
+        12,
+        103
+      ],
+      [
+        13,
+        94
+      ],
+      [
+        14,
+        106
+      ],
+      [
+        14,
+        127
+      ],
+      [
+        15,
+        88
+      ],
+      [
+        15,
+        85
+      ],
+      [
+        15,
+        131
+      ],
+      [
+        16,
+        97
+      ],
+      [
+        16,
+        128
+      ],
+      [
+        17,
+        114
+      ],
+      [
+        17,
+        117
+      ],
+      [
+        17,
+        127
+      ],
+      [
+        17,
+        145
+      ],
+      [
+        17,
+        113
+      ],
+      [
+        17,
+        144
+      ],
+      [
+        17,
+        139
+      ],
+      [
+        17,
+        111
+      ],
+      [
+        17,
+        88
+      ],
+      [
+        18,
+        127
+      ],
+      [
+        18,
+        124
+      ],
+      [
+        18,
+        85
+      ],
+      [
+        18,
+        119
+      ],
+      [
+        18,
+        133
+      ],
+      [
+        18,
+        105
+      ],
+      [
+        18,
+        125
+      ],
+      [
+        18,
+        126
+      ],
+      [
+        18,
+        129
+      ],
+      [
+        19,
+        94
+      ],
+      [
+        19,
+        92
+      ],
+      [
+        19,
+        96
+      ],
+      [
+        19,
+        93
+      ],
+      [
+        19,
+        117
+      ],
+      [
+        19,
+        108
+      ],
+      [
+        19,
+        140
+      ],
+      [
+        19,
+        138
+      ],
+      [
+        19,
+        105
+      ],
+      [
+        19,
+        128
+      ],
+      [
+        19,
+        105
+      ]
+    ],
+    "ko": [
+      [
+        10,
+        104
+      ],
+      [
+        11,
+        141
+      ],
+      [
+        11,
+        118
+      ],
+      [
+        12,
+        106
+      ],
+      [
+        15,
+        95
+      ],
+      [
+        15,
+        88
+      ],
+      [
+        16,
+        129
+      ],
+      [
+        17,
+        112
+      ],
+      [
+        17,
+        112
+      ],
+      [
+        18,
+        137
+      ],
+      [
+        18,
+        133
+      ],
+      [
+        18,
+        113
+      ],
+      [
+        19,
+        94
+      ],
+      [
+        19,
+        114
+      ],
+      [
+        19,
+        141
+      ]
+    ]
   }
 }

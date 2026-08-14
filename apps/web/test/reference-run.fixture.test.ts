@@ -91,6 +91,28 @@ describe('the captured reference-run payloads', () => {
       expect(Number.isInteger(y)).toBe(true);
     }
   });
+
+  it('carries a second scatter payload whose KO series is non-empty', () => {
+    // `scatter` above (`Catalog/List Products`) has no failures, so its `ko`
+    // is `[]` and cannot discriminate a transform that plots the KO series
+    // from a copy of OK. This is the payload that can: a future re-capture
+    // that lost its KO points — a different reference bundle, a request that
+    // stopped failing, a name that stopped matching — must fail HERE, not
+    // silently thin out apps/web/test/transforms.scatter.test.ts's KO
+    // assertions back down to the untestable case this fixture replaced.
+    const scatterWithFailures = ScatterResponseSchema.parse(fixture.scatterWithFailures);
+    expect(scatterWithFailures.name).toBe('Cart/Add To Cart');
+    expect(scatterWithFailures.ok.length).toBeGreaterThan(0);
+    expect(scatterWithFailures.ko.length).toBeGreaterThan(0);
+    // The independence assertion in transforms.scatter.test.ts depends on
+    // these being unequal — equal lengths would let a bug that zips the two
+    // series by index pass undetected.
+    expect(scatterWithFailures.ok.length).not.toBe(scatterWithFailures.ko.length);
+    for (const [x, y] of [...scatterWithFailures.ok, ...scatterWithFailures.ko]) {
+      expect(Number.isInteger(x)).toBe(true);
+      expect(Number.isInteger(y)).toBe(true);
+    }
+  });
 });
 
 describe('the fixture discriminates, so the tests reading it can fail', () => {
