@@ -228,6 +228,56 @@ test('every chart actually draws — the real ECharts renders SVG marks for all 
   expect(errors).toEqual([]);
 });
 
+/**
+ * CRITICAL 2b (fix wave). Design §10 claims "Every chart still draws marks,
+ * **in both themes**" and, before this test, nothing proved the second half —
+ * no test anywhere emulated dark mode. `theme.ts` reads every `--chart-*`
+ * token off the LIVE document (`token()`'s `getComputedStyle` call), so a
+ * wrong hex in `tokens.css`'s `@media (prefers-color-scheme: dark)` block
+ * would only ever surface here, in a real browser under a forced dark
+ * scheme — the jsdom unit suite mocks ECharts entirely and never resolves a
+ * `prefers-color-scheme` media query either way.
+ *
+ * `emulateMedia` runs BEFORE `signIn`/`goto`, so the app is dark from its
+ * very first paint rather than reacting to a later flip — the same
+ * first-paint guarantee a reader with a dark OS setting actually gets.
+ *
+ * This is also the regression test for CRITICAL 2: before the fix wave,
+ * nothing set a background or `color-scheme` on `body`, so `bg-surface` and
+ * `THEAD`'s `bg-sunken` painted a dark fill behind UA-default BLACK text
+ * (measured 1.44:1) instead of the page painting `--color-surface-page` at
+ * all. The body-background assertion below is what would have caught that.
+ */
+test('every chart actually draws in dark mode too, and the page background follows', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  // The same "every chart draws marks" shape as the light-mode test above,
+  // run under a forced dark `prefers-color-scheme`.
+  for (const id of CHART_IDS) {
+    const svg = page.getByTestId(`chart-${id}`).locator('svg');
+    await expect(svg, `${id} drew no SVG in dark mode`).toHaveCount(1);
+    await expect(svg.locator('path').first(), `${id} drew no marks in dark mode`).toBeAttached();
+  }
+
+  // The RESOLVED colour, not the token string — `getComputedStyle` returns
+  // what a reader's eyes actually see, in the `rgb()` form the browser
+  // normalises every colour to. `--color-surface-page` dark is `#0f172a` =
+  // `rgb(15, 23, 42)`; light is `#f8fafc` = `rgb(248, 250, 252)`. Both are
+  // asserted — the positive AND the explicit negative — so a `body` rule
+  // that forgot to reference the token at all (and therefore stayed
+  // transparent, showing the light OS/browser default through) fails here
+  // too, rather than only a body painted the wrong dark hex.
+  const bodyBackground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  expect(bodyBackground).toBe('rgb(15, 23, 42)');
+  expect(bodyBackground).not.toBe('rgb(248, 250, 252)');
+});
+
 test("the requests/s and responses/s tables carry the API's own numbers, on their own edges", async ({
   page,
 }) => {
@@ -655,8 +705,10 @@ test('the percentile table carries all ten bands while six are drawn', async ({ 
 
   const chart = page.getByTestId('chart-percentiles');
 
-  // Six DRAWN, because ten lines on one axis is more than a sighted reader can
-  // follow and more than the palette has hues for.
+  // Six DRAWN, because six is the DEFAULT SELECTION — ten lines on one axis is
+  // more than a sighted reader can follow. It is no longer a palette limit:
+  // the percentile ramp has a colour for all ten and the reader can select
+  // them.
   expect(await legendLabels(chart)).toHaveLength(6);
 
   // TEN CARRIED. The table is the parity surface (§7) and the screen-reader
@@ -680,6 +732,24 @@ test('the percentile table carries all ten bands while six are drawn', async ({ 
   }
   const p80 = rows.map((row) => row.cells[4]!.text).filter((text) => text !== '—');
   expect(p80.length).toBeGreaterThan(50);
+});
+
+test('selecting every band draws all ten, which the palette used to forbid', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  await settled(page);
+
+  const chart = page.getByTestId('chart-percentiles');
+  for (const band of ['p25', 'p80', 'p85', 'p90']) {
+    const button = page.getByTestId(`band-${band}-percentiles`);
+    if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
+  }
+
+  await expect.poll(() => legendLabels(chart)).toHaveLength(10);
+  // And no "showing 6 of 10" prose, because nothing was dropped.
+  await expect(chart.getByText(/not drawn/)).toHaveCount(0);
 });
 
 test('deselecting every band explains itself rather than drawing an empty grid', async ({

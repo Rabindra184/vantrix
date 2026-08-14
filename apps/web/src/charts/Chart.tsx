@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Card from '../components/Card';
 import DataTable, { formatCell } from './DataTable';
 import { echarts } from './echarts';
 import {
@@ -160,11 +161,19 @@ export default function Chart({
   // A series may declare itself `essential` (see `ChartSeries`), which exempts
   // it from the cut without moving it: the concurrent-users chart's total is
   // last in the list and must be drawn even when six scenarios precede it.
+  //
+  // A chart that declares `roles` brought its own colour per series and is not
+  // spending categorical hues, so the six-slot cap does not apply to it. The
+  // cap exists to stop a SEVENTH series wrapping back to `--chart-1`; a ramp
+  // has no wraparound to prevent. Charts without `roles` are unaffected.
   const assignment = useMemo(() => {
     const names = data.series.map((series) => series.name);
+    if (roles !== undefined) {
+      return { drawn: names.map((name, index) => ({ index, name, color: '' })), undrawn: [] };
+    }
     const essential = data.series.flatMap((series, i) => (series.essential === true ? [i] : []));
     return assignPalette(names, mode, essential);
-  }, [data.series, mode]);
+  }, [data.series, mode, roles]);
 
   // THE INSTANCE'S LIFETIME, and nothing else: create, join the crosshair
   // group, follow the container's size, dispose.
@@ -277,11 +286,11 @@ export default function Chart({
       {
         // Mark colour comes from the categorical palette, which `assignPalette`
         // reads off the `--chart-*` tokens — unless the chart declared `roles`,
-        // in which case its marks mean something and wear the `--color-status-*`
-        // or `--chart-band-*` tokens instead. Text NEVER wears any of them
-        // (design §11): the palettes are tuned for marks on a surface, and 12px
-        // type in a mark colour is the commonest way a chart quietly fails
-        // contrast.
+        // in which case its marks mean something and wear the `--chart-status-*`,
+        // `--chart-band-*` or `--chart-pct-*` tokens instead. Text NEVER wears
+        // any of them (design §11): the palettes are tuned for marks on a
+        // surface, and 12px type in a mark colour is the commonest way a chart
+        // quietly fails contrast.
         color:
           roles === undefined
             ? drawn.map((series) => series.color)
@@ -400,7 +409,7 @@ export default function Chart({
   }, [data, kind, stacked, horizontal, roles, yAxisType, yAxisName, xAxisName, mode, assignment]);
 
   return (
-    <figure data-testid={`chart-${id}`} className="flex flex-col gap-2 m-0">
+    <Card as="figure" data-testid={`chart-${id}`}>
       <h3 className="text-lg font-semibold">{title}</h3>
 
       {isEmpty ? (
@@ -408,7 +417,7 @@ export default function Chart({
         // was measured and found to be nothing"; the truth is usually "this run
         // has not been parsed yet" or "nothing was recorded", and those are
         // different facts a reader acts on differently.
-        <p role="status" className="text-[var(--color-text-muted)]">
+        <p role="status" className="text-muted">
           {data.empty}
         </p>
       ) : (
@@ -427,13 +436,13 @@ export default function Chart({
           limitation (truncated bins, a split the run predates) and the
           palette's (a seventh series that would have had to reuse a hue). */}
       {data.limitation !== undefined && (
-        <p className="text-sm text-[var(--color-text-muted)]">{data.limitation}</p>
+        <p className="text-sm text-muted">{data.limitation}</p>
       )}
       {assignment.limitation !== undefined && (
-        <p className="text-sm text-[var(--color-text-muted)]">{assignment.limitation}</p>
+        <p className="text-sm text-muted">{assignment.limitation}</p>
       )}
 
       <DataTable id={id} caption={title} columns={data.columns} rows={data.rows} />
-    </figure>
+    </Card>
   );
 }

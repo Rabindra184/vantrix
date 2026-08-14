@@ -23,6 +23,7 @@ import { formatStarted } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
+import RunStats from './RunStats';
 
 /**
  * One run: its header, and the SLA rules that were evaluated against it.
@@ -79,7 +80,7 @@ export default function RunDetail() {
 
   if (run.isPending) {
     return (
-      <p role="status" className="text-[var(--color-text-muted)]">
+      <p role="status" className="text-muted">
         Loading run…
       </p>
     );
@@ -97,7 +98,7 @@ export default function RunDetail() {
         <h1 className="text-2xl font-semibold">This run could not be loaded</h1>
         <p>{problem?.detail ?? error.message}</p>
         {problem !== null && (
-          <p data-testid="problem-remediation" className="text-[var(--color-text-muted)]">
+          <p data-testid="problem-remediation" className="text-muted">
             {problem.remediation}
           </p>
         )}
@@ -117,7 +118,7 @@ function NotARun() {
   return (
     <div role="alert" className="flex flex-col items-start gap-2">
       <h1 className="text-2xl font-semibold">No run was named</h1>
-      <p className="text-[var(--color-text-muted)]">This address does not identify a run.</p>
+      <p className="text-muted">This address does not identify a run.</p>
       <BackToRuns />
     </div>
   );
@@ -163,7 +164,7 @@ export function Processing({
     <div className="flex flex-col items-start gap-3">
       <h1 className="text-2xl font-semibold">Run in progress</h1>
       <p role="status">This run is still processing.</p>
-      <p className="text-[var(--color-text-muted)]">
+      <p className="text-muted">
         <Marked mark={STATUS[status]} />
       </p>
       {capReached ? (
@@ -179,13 +180,13 @@ export function Processing({
           <button
             type="button"
             onClick={onRetry}
-            className="rounded border border-[var(--color-border)] px-3 py-2"
+            className="rounded border border-default px-3 py-2"
           >
             Check again
           </button>
         </>
       ) : (
-        <p className="text-[var(--color-text-muted)]">
+        <p className="text-muted">
           This page checks again every few seconds; there is nothing to do.
         </p>
       )}
@@ -214,7 +215,7 @@ function Ready({ run }: { run: RunResponse }) {
             to the short id for a run whose header carried no simulation. */}
         <h1 className="text-2xl font-semibold">{run.simulation ?? `Run ${run.id.slice(0, 8)}`}</h1>
         {run.description != null && run.description !== '' && (
-          <p className="text-[var(--color-text-muted)]">{run.description}</p>
+          <p className="text-muted">{run.description}</p>
         )}
 
         {/* A description list, not a grid of divs: these are name/value pairs
@@ -228,7 +229,7 @@ function Ready({ run }: { run: RunResponse }) {
                 the run list. */}
             <time dateTime={startedAt}>{formatStarted(startedAt)}</time>
             {isIngestTime && (
-              <span className="ml-2 text-sm text-[var(--color-text-muted)]">
+              <span className="ml-2 text-sm text-muted">
                 ingest time — the tool reported no start
               </span>
             )}
@@ -277,9 +278,10 @@ function Ready({ run }: { run: RunResponse }) {
  * ------------------------------------------------------------------ */
 
 /**
- * The statistics table and the errors table, each fed one already-validated
- * payload — the same division of labour `Overview` makes with the charts: this
- * component fetches, the tables render, and neither table knows what a URL is.
+ * The stat tiles, the statistics table, and the errors table, each fed one
+ * already-validated payload — the same division of labour `Overview` makes
+ * with the charts: this component fetches, the three render, and none of the
+ * three knows what a URL is.
  *
  * `statsQuery` IS ASKED FOR TWICE ON THIS PAGE — here and in `Overview` — AND
  * FETCHED ONCE. Both call sites name the same `statsQueryKey`, so TanStack
@@ -288,6 +290,13 @@ function Ready({ run }: { run: RunResponse }) {
  * `Ready` and threading the payload down would also work, and would make the
  * chart stack take a prop for one of its four payloads and fetch the other
  * three — a shape that reads as though the two mattered differently.
+ *
+ * `RunStats` renders INSIDE `TableSection`'s own children callback, from the
+ * SAME `data` the statistics table reads below it, rather than behind a
+ * `TableSection` of its own: a failed or still-pending `/stats` then explains
+ * itself once, in the one place this page already says so, instead of the
+ * stat row silently rendering six dashes above an error the reader has to
+ * notice separately.
  */
 function Tables({ runId }: { runId: string }) {
   const stats = useQuery(statsQuery(runId));
@@ -296,7 +305,12 @@ function Tables({ runId }: { runId: string }) {
   return (
     <>
       <TableSection title="Statistics" query={stats}>
-        {(data) => <StatisticsTable stats={data} runId={runId} />}
+        {(data) => (
+          <>
+            <RunStats stats={data} />
+            <StatisticsTable stats={data} runId={runId} />
+          </>
+        )}
       </TableSection>
       <TableSection title="Errors" query={errors}>
         {(data) => <ErrorsTable errors={data} />}
@@ -428,7 +442,7 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
       <section className="flex flex-col gap-2">
         <h2 className="text-xl font-semibold">Assertions</h2>
         <p>No SLA rules were evaluated against this run.</p>
-        <p className="text-[var(--color-text-muted)]">
+        <p className="text-muted">
           Rules are configured per project, and only rules that existed when the run was ingested
           are applied to it.
         </p>
@@ -440,12 +454,12 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
     <section className="flex flex-col gap-2">
       <h2 className="text-xl font-semibold">Assertions</h2>
       <table className="w-full border-collapse text-left">
-        <caption className="pb-3 text-left text-sm text-[var(--color-text-muted)]">
+        <caption className="pb-3 text-left text-sm text-muted">
           Every SLA rule evaluated against this run, as the rule read at the time it was evaluated.
           <em>Not applicable</em> means the rule could not be checked at all — it is not a pass.
         </caption>
         <thead>
-          <tr className="border-b border-[var(--color-border)]">
+          <tr className="border-b border-default">
             <th scope="col" className="py-2 pr-4 font-semibold">
               Outcome
             </th>
@@ -465,7 +479,7 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
             <tr
               key={assertion.ruleId}
               data-testid="assertion-row"
-              className="border-b border-[var(--color-border)]"
+              className="border-b border-default"
             >
               <td data-testid="assertion-outcome" className="py-2 pr-4">
                 <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />

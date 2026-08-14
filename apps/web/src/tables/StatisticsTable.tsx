@@ -11,6 +11,7 @@ import {
   type SortDirection,
   type TableRow,
 } from './buildTree';
+import { ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 
 /**
  * §13.2 ⑤ the statistics table — Appendix A G-11…G-16.
@@ -122,7 +123,7 @@ export interface Column {
  * payload, and rendering it as `NaN` is how that gets noticed rather than
  * smoothed into a dash that reads as "none recorded".
  */
-const formatCount = (value: number): string => String(value);
+export const formatCount = (value: number): string => String(value);
 
 /**
  * Whole milliseconds, which is what Gatling's own table writes: its ROOT row
@@ -133,11 +134,12 @@ const formatCount = (value: number): string => String(value);
  * The unrounded value stays in the DOM beside it (`data-value`), so rounding
  * here is a display decision rather than a loss.
  */
-const formatMs = (value: number): string =>
+export const formatMs = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(value)) : '—';
 
 /** Two decimals, as Gatling writes `% KO` (2.68) and `Cnt/s` (14.21). */
-const formatRate = (value: number): string => (Number.isFinite(value) ? value.toFixed(2) : '—');
+export const formatRate = (value: number): string =>
+  Number.isFinite(value) ? value.toFixed(2) : '—';
 
 /** Gatling's own name for the leftmost column, and it holds groups too. */
 const NAME_COLUMN_LABEL = 'Requests';
@@ -555,7 +557,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           placeholder: a placeholder disappears the moment the reader types,
           which is exactly when a screen reader is asked what the field is. */}
       <div className="flex items-center gap-2">
-        <label htmlFor={filterId} className="text-sm text-[var(--color-text-muted)]">
+        <label htmlFor={filterId} className="text-sm text-muted">
           Filter by name
         </label>
         <input
@@ -566,12 +568,12 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           // Off, because the values worth completing here are the row names
           // already on screen, and the browser would offer yesterday's runs.
           autoComplete="off"
-          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-sm"
+          className="rounded border border-default px-2 py-0.5 text-sm"
         />
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
+        <table className={TABLE}>
           {/* The caption is the table's ACCESSIBLE NAME as well as its
               explanation — `getByRole('table', { name: /statistics/i })` is how
               this suite and the Playwright specs find it.
@@ -580,17 +582,17 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               a reader comparing our 99th against another tool's needs to know
               it is an estimate, and that is true whether or not it was
               clamped. */}
-          <caption className="pb-3 text-left text-sm text-[var(--color-text-muted)]">
+          <caption className="pb-3 text-left text-sm text-muted">
             Statistics for every request and group in this run, with the run’s own totals in the
             first row. Response times are in milliseconds. The percentile columns are estimates,
             accurate to within 1%, and are shown clamped to their own row’s minimum and maximum — a
             percentile of a sample cannot lie outside that sample’s range.
           </caption>
 
-          <thead>
+          <thead className={THEAD}>
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
                 so the percentile headings do not each have to repeat it. */}
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className={ROW}>
               <SortableHeader
                 column="name"
                 label={NAME_COLUMN_LABEL}
@@ -603,14 +605,14 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               {/* The two headings that SPAN columns are not columns: there is
                   nothing to sort by, and a control here would have to guess
                   which of the five it meant. */}
-              <th colSpan={columns.executions.length} scope="colgroup" className="py-2 pr-4">
+              <th colSpan={columns.executions.length} scope="colgroup" className={TH}>
                 Executions
               </th>
-              <th colSpan={columns.responseTime.length} scope="colgroup" className="py-2 pr-4">
+              <th colSpan={columns.responseTime.length} scope="colgroup" className={TH}>
                 Response Time (ms)
               </th>
             </tr>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className={ROW}>
               {allColumns.map((column, index) => (
                 <SortableHeader
                   key={column.column}
@@ -633,12 +635,29 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               <tr
                 data-testid="stat-row-total"
                 data-scope="run"
-                className="border-b border-[var(--color-border)] font-semibold"
+                className={`${ROW} font-semibold`}
               >
                 <th
                   scope="row"
                   data-column="name"
-                  className="py-1 pr-4"
+                  // DELIBERATELY `TD`, NOT `TH_ROW` — the row-header pattern
+                  // used at the per-row name cell below, at ErrorsTable's
+                  // message cell, and at DataTable's row label. Those three
+                  // need `TH_ROW`'s `font-normal` to cancel the browser's
+                  // default bold `<th>`, because nothing else on those rows
+                  // says a row header should be bold. This row is different:
+                  // the parent `<tr>` above carries `font-semibold`, which is
+                  // an INHERITED value that this `<th>` picks up as long as it
+                  // specifies no `font-weight` of its own. `TD` carries none,
+                  // so the inherited `font-semibold` stands and the cell
+                  // renders bold. `TH_ROW`'s `font-normal` would be a
+                  // font-weight specified DIRECTLY on this `<th>`, which wins
+                  // over the inherited value and silently un-bolds the one row
+                  // that is supposed to look like a total. Guarded by
+                  // StatisticsTable.test.tsx's "does not cancel the inherited
+                  // bold on the totals row name cell" — swap this to `TH_ROW`
+                  // and that test fails.
+                  className={TD}
                   style={{ paddingLeft: indentFor(0) }}
                 >
                   {/* Gatling's own wording. Not a link: this is the run, and
@@ -667,7 +686,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 and it is handled above. */}
             {filtering && rows.length === 0 && (
               <tr>
-                <td colSpan={allColumns.length + 1} className="py-2 pl-2">
+                <td colSpan={allColumns.length + 1} className={TD}>
                   No rows match this filter.
                 </td>
               </tr>
@@ -746,7 +765,7 @@ function SortableHeader({
       // `none` on the others, not nothing: a column that CAN be sorted and
       // currently is not is a different thing from one that cannot be.
       aria-sort={sorted ? ARIA_SORT[sort.direction] : 'none'}
-      className="py-2 pr-4 font-semibold"
+      className={TH}
     >
       <button
         type="button"
@@ -871,7 +890,7 @@ function Row({
       data-path={row.path}
       data-scope={row.scope}
       data-depth={row.depth}
-      className="border-b border-[var(--color-border)]"
+      className={ROW}
     >
       {/* `<th scope="row">`: the row's name is what makes "2503" mean
           something when a screen reader announces it out of context.
@@ -898,7 +917,7 @@ function Row({
         scope="row"
         data-column="name"
         aria-labelledby={nameId}
-        className="py-1 pr-4 font-normal"
+        className={TH_ROW}
         style={{ paddingLeft: indentFor(row.depth) }}
       >
         <span className="inline-flex items-center gap-1">
@@ -913,7 +932,7 @@ function Row({
               // This label STAYS: it is the button's own name, not the th's,
               // and `aria-labelledby` above is what keeps the two apart.
               aria-label={`${expanded ? 'collapse' : 'expand'} ${row.name}`}
-              className="w-4 text-[var(--color-text-muted)]"
+              className="w-4 text-muted"
             >
               <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
             </button>
@@ -946,7 +965,7 @@ function Cells({ row, columns }: { row: StatRow; columns: readonly Column[] }) {
           <td
             key={column.column}
             data-column={column.column}
-            className="py-1 pr-4 tabular-nums"
+            className={TD_NUM}
             // THE EXACT VALUE, beside the rounded one — the same split the
             // charts' data table makes, and for the same reason: a parity spec
             // comparing against Gatling's displayed integers reads the text,

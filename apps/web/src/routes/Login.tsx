@@ -79,7 +79,7 @@ export default function Login() {
         <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold outline-none">
           PerfPortal
         </h1>
-        <h2 className="text-base text-[var(--color-text-muted)]">Sign in</h2>
+        <h2 className="text-base text-muted">Sign in</h2>
       </header>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -96,7 +96,7 @@ export default function Login() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+            className="rounded border border-default bg-surface px-3 py-2"
           />
         </div>
 
@@ -110,12 +110,12 @@ export default function Login() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+            className="rounded border border-default bg-surface px-3 py-2"
           />
         </div>
 
         {error !== null && (
-          <p role="alert" className="text-[var(--color-status-failed)]">
+          <p role="alert" className="text-[color:var(--color-status-failed)]">
             {error}
           </p>
         )}
@@ -123,7 +123,7 @@ export default function Login() {
         <button
           type="submit"
           disabled={submitting}
-          className="rounded bg-[var(--color-text-primary)] px-3 py-2 text-[var(--color-surface)] disabled:opacity-60"
+          className="rounded bg-primary px-3 py-2 text-surface disabled:opacity-60"
         >
           Sign in
         </button>

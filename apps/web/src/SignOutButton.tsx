@@ -37,12 +37,12 @@ export default function SignOutButton() {
       <button
         type="button"
         onClick={onSignOut}
-        className="rounded border border-[var(--color-border)] px-3 py-1"
+        className="rounded border border-default px-3 py-1"
       >
         Sign out
       </button>
       {failed && (
-        <p role="alert" className="text-[var(--color-status-failed)]">
+        <p role="alert" className="text-[color:var(--color-status-failed)]">
           Sign out did not complete — you may still be signed in. Try again.
         </p>
       )}

@@ -7,11 +7,17 @@ import {
   CATEGORICAL,
   CATEGORICAL_DARK,
   GRIDLINE,
+  PERCENTILE_COLORS,
+  PERCENTILE_RAMP,
   STATUS_COLORS,
+  STATUS_MARK_COLORS,
+  SURFACE_TOKENS,
   assignPalette,
+  chartTheme,
   paletteFor,
   type ChartMode,
   type StatusRole,
+  type SurfaceRole,
 } from '../src/charts/theme.js';
 
 /**
@@ -41,14 +47,13 @@ import {
  *      confusing neighbours.
  *
  * WHAT IS NOT CHECKED HERE: colour-vision-deficiency separation. Simulating
- * protanopia/deuteranopia/tritanopia needs transcribed matrices, and a matrix
- * transcribed slightly wrong produces a test that PASSES while certifying
- * nothing — which is the exact failure mode this project keeps hitting. The
- * CVD property is instead INHERITED, by using Okabe–Ito, a palette published
- * as colour-vision-safe. See `theme.ts` for the citation. The dark palette is
- * a lightness-adjusted derivative of it and its CVD property is inherited by
- * hue rather than re-derived; that limitation is recorded in the Task 4
- * report rather than papered over here.
+ * protanopia/deuteranopia/tritanopia requires transcribed matrices, and a
+ * matrix transcribed slightly wrong produces a test that PASSES while
+ * certifying nothing — which is the exact failure mode this project keeps
+ * hitting. The current palette does not claim CVD-safety: see `theme.ts` for
+ * the decision record. This file validates only what is computable — lightness
+ * band, chroma floor, adjacent-pair separation — without the machinery for
+ * simulating CVD.
  */
 
 /* ------------------------------------------------------------------ *
@@ -97,6 +102,8 @@ function hexToOkLab(hex: string): OkLab {
 
 const chroma = (c: OkLab): number => Math.hypot(c.a, c.b);
 
+const hueOf = (c: OkLab): number => { const d = Math.atan2(c.b, c.a) * 180 / Math.PI; return d < 0 ? d + 360 : d; };
+
 /** Euclidean distance in OKLab, ×100 — the scale the thresholds are stated on. */
 const deltaE = (x: OkLab, y: OkLab): number => 100 * Math.hypot(x.L - y.L, x.a - y.a, x.b - y.b);
 
@@ -111,6 +118,10 @@ const MODES: readonly { mode: ChartMode; palette: readonly string[]; lo: number;
 ];
 
 describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }) => {
+  it('is the six hues the design system names', () => {
+    expect(paletteFor(mode)).toEqual(palette);
+  });
+
   it('is the six hues, and paletteFor returns it', () => {
     expect(palette).toHaveLength(6);
     expect(paletteFor(mode)).toEqual(palette);
@@ -135,7 +146,7 @@ describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }
     expect(tooGrey).toEqual([]);
   });
 
-  it('separates every adjacent pair by at least ΔE 15 for normal vision', () => {
+  it('separates every adjacent pair by at least ΔE 15', () => {
     const lab = palette.map(hexToOkLab);
     const tooClose = lab
       .slice(1)
@@ -156,17 +167,18 @@ describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }
  * is a test failure rather than a mystery about why a chart is the wrong
  * colour in one theme only.
  *
- * ALL FOUR BLOCKS, not just the `[data-theme]` pair. This test used to check
- * only `[data-theme='light']` and `[data-theme='dark']` — and nothing in
- * `apps/web/src` sets `data-theme`, so those two blocks are the only ones
- * currently INERT. The blocks actually in force are `:root` and the
- * `prefers-color-scheme: dark` media block, and neither was checked: a typo
- * there ships a wrong hue or a gridline that competes with the data on every
- * machine, `chartTheme` reads it live, renders it faithfully, and nothing
- * notices.
+ * ALL THREE BLOCKS, not just `:root`. There is no `[data-theme='light']`
+ * block — the media query's own `:not()` already lets an explicit light
+ * theme beat a dark OS setting — so the three that remain are `:root`, the
+ * `prefers-color-scheme: dark` media block, and `[data-theme='dark']`.
+ * Nothing in `apps/web/src` sets `data-theme` yet, so that last block is
+ * currently INERT, but the two actually in force — `:root` and the media
+ * block — are exactly the ones a typo would slip past unnoticed: it ships a
+ * wrong hue or a gridline that competes with the data on every machine,
+ * `chartTheme` reads it live, renders it faithfully, and nothing notices.
  *
  * `--chart-gridline` is included for the same reason. It was in none of the
- * four.
+ * three.
  */
 describe('tokens.css and theme.ts agree about the chart tokens', () => {
   const css = readFileSync(
@@ -217,17 +229,29 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   const mediaDark = css.indexOf('@media (prefers-color-scheme: dark)');
 
   const BLOCKS = [
-    // The two that are IN FORCE today.
     { where: ':root (light)', block: () => blockAfter(':root'), mode: 'light' as const },
     {
       where: '@media (prefers-color-scheme: dark) :root',
       block: () => blockAfter(':root', mediaDark),
       mode: 'dark' as const,
     },
-    // The two a future theme toggle will switch to.
-    { where: "[data-theme='light']", block: () => blockAfter("[data-theme='light']"), mode: 'light' as const },
     { where: "[data-theme='dark']", block: () => blockAfter("[data-theme='dark']"), mode: 'dark' as const },
   ];
+
+  /**
+   * `[data-theme='light']` is GONE, and its absence is the assertion. The media
+   * query's own `:not([data-theme='light'])` is what lets an explicit light
+   * override win over a dark OS setting, so a re-added block would be a second,
+   * silently-diverging copy of the light values rather than a safety net.
+   */
+  it('declares no [data-theme=\'light\'] block', () => {
+    expect(css).not.toContain("[data-theme='light'] {");
+  });
+
+  it('scopes the dark media block so an explicit light theme still wins', () => {
+    expect(css).toContain("@media (prefers-color-scheme: dark)");
+    expect(css.slice(mediaDark, mediaDark + 200)).toContain(":root:not([data-theme='light'])");
+  });
 
   it.each(BLOCKS)('$where carries the palette theme.ts exports', ({ where, block, mode }) => {
     const body = block();
@@ -240,11 +264,11 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   });
 
   /**
-   * The STATUS palette (Task 5), for the same reason and in the same four
-   * blocks. `chartTheme` reads these off the live document and hands them to
-   * ECharts as the indicator bands' and the donut's colours; `STATUS_COLORS` is
-   * the compiled fallback the node-environment tests assert against. Two copies
-   * of eight values that must not disagree.
+   * The STATUS palette (Task 5), for the same reason and in the same three
+   * blocks. `routes/marks.tsx` reads `--color-status-*` (TEXT) directly off
+   * the document; `STATUS_COLORS` is the compiled fallback the
+   * node-environment tests assert against. Two copies of the same four values
+   * that must not disagree.
    */
   const STATUS_TOKENS: readonly { role: StatusRole; token: string }[] = [
     { role: 'passed', token: '--color-status-passed' },
@@ -262,16 +286,108 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   });
 
   /**
-   * And the band ramp, in the same four blocks. Task 4's fix round established
-   * that all four must carry the chart tokens: the two `[data-theme]` blocks
-   * are inert today, and the two that are actually in force were the ones
-   * nobody was checking.
+   * And the status MARK palette, same shape, same three blocks.
+   * `liveMarkColors` reads `--chart-status-*` off the live document and hands
+   * it to `chartTheme().roles`, consumed directly as a chart fill by
+   * `RequestCountChart`, `ScatterChart`, `DistributionChart` and
+   * `RatesChart`, and indirectly by `IndicatorsChart` through its
+   * `--chart-band-*` aliases; `STATUS_MARK_COLORS` is the compiled fallback.
+   * Two palettes now, both mirrored, both gated.
+   */
+  const STATUS_MARK_TOKENS: readonly { role: StatusRole; token: string }[] = [
+    { role: 'passed', token: '--chart-status-passed' },
+    { role: 'pending', token: '--chart-status-pending' },
+    { role: 'neutral', token: '--chart-status-not-applicable' },
+    { role: 'failed', token: '--chart-status-failed' },
+  ];
+
+  it.each(BLOCKS)('$where carries the status MARK colours theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = STATUS_MARK_TOKENS.map(({ token }) => tokenIn(body, token, where));
+    expect(found).toEqual(
+      STATUS_MARK_TOKENS.map(({ role }) => STATUS_MARK_COLORS[mode][role].toUpperCase()),
+    );
+  });
+
+  /**
+   * And the band ramp, in the same three blocks. Task 4's fix round
+   * established that all three must carry the chart tokens: the
+   * `[data-theme='dark']` block is inert today, and the two that are
+   * actually in force were the ones nobody was checking.
    */
   it.each(BLOCKS)('$where carries the band ramp theme.ts exports', ({ where, block, mode }) => {
     const body = block();
     const found = BAND_RAMP.map((role) => tokenIn(body, `--chart-band-${role.slice(5)}`, where));
     expect(found).toEqual(BAND_RAMP.map((role) => BAND_COLORS[mode][role].toUpperCase()));
   });
+
+  /**
+   * And the percentile ramp, in the same three blocks. Structurally identical
+   * to the band-ramp check above — same reason: the tokens.css header comment
+   * for `--chart-pct-*` promises `palette.test.ts` fails if this file and
+   * `theme.ts` ever disagree, and that promise needs this test to be true.
+   */
+  it.each(BLOCKS)('$where carries the percentile ramp theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = PERCENTILE_RAMP.map((role) => tokenIn(body, `--chart-pct-${role.slice(4)}`, where));
+    expect(found).toEqual(PERCENTILE_RAMP.map((role) => PERCENTILE_COLORS[mode][role].toUpperCase()));
+  });
+
+  /** The SURFACE, text and accent tokens (Task 2), in the same three blocks. */
+  const SURFACE_TOKENS_UNDER_TEST: readonly { role: SurfaceRole; token: string }[] = [
+    { role: 'page', token: '--color-surface-page' },
+    // Three tokens carry a longer name than their role so the @theme key can
+    // hold the short one. A key that reads a var of its OWN name is circular.
+    { role: 'card', token: '--color-surface-card' },
+    { role: 'sidebar', token: '--color-surface-sidebar' },
+    { role: 'sunken', token: '--color-surface-sunken' },
+    { role: 'border', token: '--color-border' },
+    { role: 'divider', token: '--color-rule' },
+    { role: 'text-primary', token: '--color-text-primary' },
+    { role: 'text-muted', token: '--color-text-muted' },
+    { role: 'accent', token: '--color-accent-base' },
+    { role: 'accent-foreground', token: '--color-accent-foreground' },
+    { role: 'ring', token: '--color-ring' },
+  ];
+
+  it.each(BLOCKS)('$where carries the surface tokens theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = SURFACE_TOKENS_UNDER_TEST.map(({ token }) => tokenIn(body, token, where));
+    expect(found).toEqual(
+      SURFACE_TOKENS_UNDER_TEST.map(({ role }) => SURFACE_TOKENS[mode][role].toUpperCase()),
+    );
+  });
+});
+
+/**
+ * `chartTheme`'s ink / inkMuted / surface FALLBACKS — a third copy of the same
+ * few hexes, and the one `tokens.css` itself cannot guard, because these are
+ * never read off a stylesheet at all. `token()` returns its fallback whenever
+ * `document` is undefined (this file's own node environment; see
+ * `vitest.config.ts`'s `environmentMatchGlobs`) or a custom property resolves
+ * to `''` (jsdom, which parses no stylesheet — every `.test.tsx` in this
+ * package, including the one that renders `Chart.tsx`). That is not a
+ * theoretical corner: it is what every unit test that mounts a chart
+ * actually exercises.
+ *
+ * `gridline` already sources its fallback from `GRIDLINE[mode]` rather than a
+ * literal hex, so it cannot drift from the compiled palette by construction.
+ * `ink`, `inkMuted` and `surface` are held to the same rule here: their
+ * fallbacks must equal `SURFACE_TOKENS[mode]`, the same compiled truth this
+ * file already pins `tokens.css` against, not an independently-typed copy of
+ * three hexes that goes stale the next time someone edits `SURFACE_TOKENS`
+ * and forgets this function exists.
+ */
+describe('chartTheme — the no-stylesheet fallbacks', () => {
+  it.each(['light', 'dark'] as const)(
+    'matches SURFACE_TOKENS in %s mode when no stylesheet defines the tokens',
+    (mode) => {
+      const theme = chartTheme(mode);
+      expect(theme.ink).toBe(SURFACE_TOKENS[mode]['text-primary']);
+      expect(theme.inkMuted).toBe(SURFACE_TOKENS[mode]['text-muted']);
+      expect(theme.surface).toBe(SURFACE_TOKENS[mode].card);
+    },
+  );
 });
 
 /**
@@ -378,45 +494,186 @@ describe('the indicator band ramp', () => {
   });
 
   /**
-   * The ramp's endpoints ARE the status colours — `--chart-band-under` and
-   * `--chart-band-failed` are declared as `var()` aliases precisely so this
-   * cannot drift. Asserted because it is what keeps red meaning "did not
-   * succeed" in the bands, in `routes/marks.tsx`, and in the donut ④ that
-   * paints the very same failed requests a few inches away.
+   * The ramp's endpoints ARE the status MARK colours — `--chart-band-under`
+   * and `--chart-band-failed` are declared as `var()` aliases of
+   * `--chart-status-passed` / `--chart-status-failed` precisely so this
+   * cannot drift. Bands are chart marks, not text, so the family they share
+   * is `STATUS_MARK_COLORS`, not the TEXT palette `routes/marks.tsx` reads.
+   * Asserted because it is what keeps red meaning "did not succeed" in the
+   * bands and in the donut ④ that paints the very same failed requests a few
+   * inches away.
    */
-  it.each(RAMP_MODES)('shares its endpoints with the status palette (%s)', (mode) => {
-    expect(BAND_COLORS[mode]['band-under']).toBe(STATUS_COLORS[mode].passed);
-    expect(BAND_COLORS[mode]['band-failed']).toBe(STATUS_COLORS[mode].failed);
+  it.each(RAMP_MODES)('shares its endpoints with the status mark palette (%s)', (mode) => {
+    expect(BAND_COLORS[mode]['band-under']).toBe(STATUS_MARK_COLORS[mode].passed);
+    expect(BAND_COLORS[mode]['band-failed']).toBe(STATUS_MARK_COLORS[mode].failed);
   });
 });
 
 /**
- * The status palette has to hold FOUR distinct colours, because the indicator
- * bands ③ spend all four at once in one stacked bar.
+ * An ORDERED ramp, so the gate is ordering, not separation. Hue must fall
+ * monotonically green→red across all ten; that rotation IS the information.
  *
- * Asserted here rather than only in the indicators test because it is a
- * property of the palette, not of the chart: an edit to `tokens.css` that
- * pointed `--color-status-not-applicable` at the same grey as something else
- * would merge two bands into one visually while every count stayed right.
+ * The ΔE floors are lower than the band ramp's on purpose and are the MEASURED
+ * minima rounded down. Ten steps across one hue arc are necessarily closer
+ * together than four; a floor set at the four-step ramp's 7.5 would be a
+ * demand that this ramp stop being a ramp. Their job is to catch a duplicate
+ * or a step nudged onto its neighbour, not to claim adjacent steps are
+ * independently identifiable.
+ *
+ * Lightness is NOT gated and is NOT monotonic (it dips at p50 and rises again
+ * through p85). The five values this ramp inherits from the reference are
+ * fixed on their own bands, and they are not lightness-ordered; a lightness
+ * gate would fail them and the four-step band ramp alike.
  */
-describe('the status palette', () => {
+const PCT_ADJACENT_FLOOR = 4.0;
+const PCT_TWO_APART_FLOOR = 8.0;
+const PCT_ENDS_FLOOR = 35;
+
+describe.each(['light', 'dark'] as const)('the percentile ramp (%s)', (mode) => {
+  const ramp = PERCENTILE_RAMP.map((role) => PERCENTILE_COLORS[mode][role]);
+
+  it('is ten distinct colours', () => {
+    expect(new Set(ramp).size).toBe(10);
+  });
+
+  it('rotates hue monotonically from green to red', () => {
+    const hues = ramp.map((hex) => hueOf(hexToOkLab(hex)));
+    expect(hues.every((h, i) => i === 0 || h < hues[i - 1]!)).toBe(true);
+  });
+
+  it('keeps adjacent steps apart', () => {
+    const lab = ramp.map(hexToOkLab);
+    const tooClose = lab.slice(1)
+      .map((next, i) => ({ pair: `${PERCENTILE_RAMP[i]}→${PERCENTILE_RAMP[i + 1]}`, dE: deltaE(lab[i]!, next) }))
+      .filter(({ dE }) => dE < PCT_ADJACENT_FLOOR);
+    expect(tooClose).toEqual([]);
+  });
+
+  it('keeps two-apart steps further apart still', () => {
+    const lab = ramp.map(hexToOkLab);
+    const tooClose: string[] = [];
+    for (let i = 0; i + 2 < lab.length; i++) {
+      if (deltaE(lab[i]!, lab[i + 2]!) < PCT_TWO_APART_FLOOR) tooClose.push(`${PERCENTILE_RAMP[i]}→${PERCENTILE_RAMP[i + 2]}`);
+    }
+    expect(tooClose).toEqual([]);
+  });
+
+  it('separates its ends', () => {
+    expect(deltaE(hexToOkLab(ramp[0]!), hexToOkLab(ramp[9]!))).toBeGreaterThanOrEqual(PCT_ENDS_FLOOR);
+  });
+});
+
+/**
+ * The status TEXT palette has to hold FOUR distinct colours.
+ *
+ * Not because the indicator bands spend it — since Task 5 they no longer do;
+ * `STATUS_MARK_COLORS`/`BAND_COLORS` are what the bands and the donut spend,
+ * and each has its own distinctness gate below. This one is about the palette
+ * `routes/marks.tsx` reads: it pairs colour with a glyph and a word for every
+ * one of the four states, and two roles sharing a colour would make that
+ * colour a false cue rather than a reinforcing one, even though glyph+word
+ * alone would still disambiguate.
+ */
+describe('the status TEXT palette', () => {
   it.each(['light', 'dark'] as const)('holds four distinct colours in %s mode', (mode) => {
     const colours = Object.values(STATUS_COLORS[mode]);
     expect(colours).toHaveLength(4);
     expect(new Set(colours).size).toBe(4);
   });
+});
 
-  /**
-   * And none of them is a categorical hue. The two palettes answer different
-   * questions — "which series is this?" versus "how bad is this?" — and a
-   * status colour that collided with a series colour would make a band and an
-   * unrelated line read as the same thing on one page.
-   */
-  it.each(['light', 'dark'] as const)('shares no colour with the categorical palette (%s)', (mode) => {
-    const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
-    for (const colour of Object.values(STATUS_COLORS[mode])) {
+/**
+ * The colours actually DRAWN as marks — `STATUS_MARK_COLORS` (`passed`/
+ * `failed` on the request-count donut, the saturation scatter, the
+ * response-time distribution and the rate charts) and `BAND_COLORS` (the
+ * indicator bands' severity ramp) — must share no hue with the
+ * categorical series palette. The two palettes answer different questions —
+ * "which series is this?" versus "how bad is this?" — and a mark colour that
+ * collided with a series colour would make a band, or the donut, and an
+ * unrelated line read as the same thing on one page.
+ *
+ * `STATUS_COLORS` (TEXT) is deliberately NOT checked here: it is never
+ * painted as a chart mark (design §11 — text never wears a mark colour), so a
+ * collision with a categorical hue would not create the confusion this guard
+ * exists to prevent.
+ */
+describe('the marks and bands share no colour with the categorical palette', () => {
+  const categorical = new Set<string>([...CATEGORICAL, ...CATEGORICAL_DARK]);
+
+  it.each(['light', 'dark'] as const)('STATUS_MARK_COLORS (%s)', (mode) => {
+    for (const colour of Object.values(STATUS_MARK_COLORS[mode])) {
       expect(categorical.has(colour)).toBe(false);
     }
+  });
+
+  it.each(['light', 'dark'] as const)('BAND_COLORS (%s)', (mode) => {
+    for (const colour of Object.values(BAND_COLORS[mode])) {
+      expect(categorical.has(colour)).toBe(false);
+    }
+  });
+});
+
+/**
+ * Text has to clear AA against the ground it is drawn on, and no single value
+ * does it in both themes: #047857 measures 5.48 on white and 2.67 on the dark
+ * card; #10b981 is the reverse. Hence two palettes, and hence this gate — the
+ * old palette had none, because Primer's values happened to pass.
+ */
+const AA = 4.5;
+
+function contrast(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const n = Number.parseInt(hex.slice(1), 16);
+    const ch = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch((n >> 16) & 0xff) + 0.7152 * ch((n >> 8) & 0xff) + 0.0722 * ch(n & 0xff);
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
+
+describe.each(['light', 'dark'] as const)('status TEXT is legible in %s mode', (mode) => {
+  const ground = SURFACE_TOKENS[mode].card;
+  it.each(['passed', 'pending', 'neutral', 'failed'] as const)('%s clears AA on the card', (role) => {
+    expect(contrast(STATUS_COLORS[mode][role], ground)).toBeGreaterThanOrEqual(AA);
+  });
+});
+
+/**
+ * CRITICAL 1 (fix wave): `status TEXT is legible` above gates the FOUR status
+ * roles, and that was the whole gate — which is exactly how `--color-text-subtle`
+ * walked through it unmeasured. That token rendered every stat-tile hint
+ * (`StatTile.tsx`) at 2.56:1 on a light card and 3.07:1 on a dark one, both far
+ * under AA's 4.5, because nothing checked a plain text token, only the status
+ * ones.
+ *
+ * So this widens the gate to EVERY `--color-text-*` role — walked off
+ * `SurfaceRole` itself, filtered by its `text-` prefix, rather than a
+ * hand-maintained list, so a future third text level is caught the moment it is
+ * added to `SURFACE_TOKENS`, with no second place to remember to update.
+ *
+ * BOTH GROUNDS, not just the card: Critical 2 (fix wave) now paints `body`
+ * with `--color-surface-page`, so text sits directly on the page itself
+ * wherever no `Card` wraps it, and a token that cleared AA on the card but
+ * not the page would still ship illegible text on every page background.
+ *
+ * There is no third text level, measured: `--color-text-muted` is
+ * `#64748b`, which clears 4.76:1 on white — already close to the 4.5 floor —
+ * and every slate lighter than it fails (`#6b7a90` is 4.36, `#717f95` is
+ * 4.06, `#94a3b8` — the deleted `--color-text-subtle` — is 2.56). That is why
+ * `--color-text-subtle` was deleted rather than re-measured: the fix space
+ * for a third level does not exist on this ground.
+ */
+const TEXT_ROLES = (Object.keys(SURFACE_TOKENS.light) as SurfaceRole[]).filter((role) =>
+  role.startsWith('text-'),
+);
+
+describe.each(['light', 'dark'] as const)('every --color-text-* token is legible in %s mode', (mode) => {
+  it.each(TEXT_ROLES)('%s clears AA on the card', (role) => {
+    expect(contrast(SURFACE_TOKENS[mode][role], SURFACE_TOKENS[mode].card)).toBeGreaterThanOrEqual(AA);
+  });
+
+  it.each(TEXT_ROLES)('%s clears AA on the page', (role) => {
+    expect(contrast(SURFACE_TOKENS[mode][role], SURFACE_TOKENS[mode].page)).toBeGreaterThanOrEqual(AA);
   });
 });
 
@@ -456,17 +713,9 @@ describe('assignPalette — more series than hues', () => {
   });
 
   /**
-   * THE WHOLE PALETTE, not one slot — and the difference is not pedantry.
-   *
-   * This assertion used to read `assignPalette(['a'], 'dark').drawn[0]`, and it
-   * could not fail: index 0 is `#0072B2` in BOTH palettes, the one slot where
-   * the two are byte-identical, because it is one of the three Okabe–Ito hues
-   * that already sat inside the dark lightness band. `assignPalette` reading
-   * the light palette unconditionally would have passed that test — and drawn
-   * dark mode in the exact three hues above the dark ceiling that this whole
-   * file exists to exclude.
-   *
-   * Six names, so every slot is compared, including the three that differ.
+   * THE WHOLE PALETTE, every slot compared. Each mode has a distinct palette,
+   * and `assignPalette` must read the one its mode asks for. Testing all six
+   * slots ensures that the right palette is wired to the right mode.
    */
   it('assigns from the mode’s own palette — every slot, not just the first', () => {
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
@@ -542,17 +791,16 @@ describe('assignPalette — a series that must survive the cut', () => {
 });
 
 /**
- * The dark set keeps Okabe–Ito's HUE ANGLES.
+ * The dark palette keeps the light palette’s HUE ANGLES.
  *
- * This is the claim `theme.ts` rests its colour-vision-deficiency inheritance
- * on: the dark palette is not re-picked, it is the published palette with
- * lightness clamped into the dark band and the hue held. CVD confusability is
- * overwhelmingly a function of hue, so "same hues, different lightness" is what
- * makes inheriting the published property defensible — and until now it was
- * prose in a comment. A future edit that nudged a dark hex "to taste" would
- * break the inheritance silently.
+ * The dark values are derived from the light values by holding the hue angle,
+ * clamping OKLCH L into the dark band, and reducing chroma only as the sRGB
+ * gamut forces. This keeps every series recognisably the same colour across a
+ * theme switch — indigo stays indigo, teal stays teal — which is essential when
+ * a reader flips the theme mid-analysis. A future edit that nudged a dark hex
+ * "to taste" while changing its hue would break this silently.
  */
-describe('the dark palette preserves Okabe–Ito’s hue angles', () => {
+describe("the dark palette holds the light palette’s hue angles", () => {
   /** OKLCH hue, in degrees. */
   const hueAngle = (hex: string): number => {
     const { a, b } = hexToOkLab(hex);

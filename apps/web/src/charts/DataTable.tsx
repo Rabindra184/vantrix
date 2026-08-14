@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { ROW, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 import type { ChartTableRow } from './types';
 
 /**
@@ -107,23 +108,23 @@ export default function DataTable({
         aria-expanded={shown}
         aria-controls={regionId}
         onClick={() => setShown((was) => !was)}
-        className="self-start rounded border border-[var(--color-border)] px-3 py-1 text-sm text-[var(--color-text-muted)]"
+        className="self-start rounded border border-default px-3 py-1 text-sm text-muted"
       >
         {shown ? 'Hide data table' : 'Show data table'}
       </button>
 
       <div id={regionId} data-testid={regionId} hidden={!shown} className="overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
-          <caption className="pb-2 text-left text-sm text-[var(--color-text-muted)]">
+        <table className={TABLE}>
+          <caption className="pb-2 text-left text-sm text-muted">
             {caption} — every value plotted above, as text.
           </caption>
-          <thead>
-            <tr className="border-b border-[var(--color-border)]">
+          <thead className={THEAD}>
+            <tr className={ROW}>
               {columns.map((column) => (
                 // scope="col" is what makes a cell comprehensible when a
                 // screen reader announces it out of context: "OK, 12" rather
                 // than "12".
-                <th key={column} scope="col" className="py-1 pr-4 font-semibold">
+                <th key={column} scope="col" className={TH}>
                   {column}
                 </th>
               ))}
@@ -133,14 +134,14 @@ export default function DataTable({
             {rows.map((row, rowIndex) => (
               // Row labels are not guaranteed unique — two buckets can carry
               // the same formatted offset — so the index is part of the key.
-              <tr key={`${row.label}-${rowIndex}`} className="border-b border-[var(--color-border)]">
-                <th scope="row" className="py-1 pr-4 font-normal">
+              <tr key={`${row.label}-${rowIndex}`} className={ROW}>
+                <th scope="row" className={TH_ROW}>
                   {row.label}
                 </th>
                 {row.values.map((value, i) => (
                   <td
                     key={i}
-                    className="py-1 pr-4 tabular-nums"
+                    className={TD_NUM}
                     // THE UNROUNDED VALUE, kept in the DOM next to the rounded
                     // one. `formatCell` above trims a percentage to the two
                     // decimals it is compared at; this is what makes that a

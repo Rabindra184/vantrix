@@ -739,6 +739,31 @@ describe('StatisticsTable — the run-scope totals row', () => {
     expect(screen.queryByText('All Requests')).toBeNull();
     expect([...pathsOf(bodyRows())].sort()).toEqual([...ROOT_PATHS].sort());
   });
+
+  /**
+   * THE TOTALS ROW'S NAME CELL STAYS BOLD BY INHERITANCE, NOT BY ITS OWN
+   * CLASS — see the comment on the cell itself.
+   *
+   * Every other `<th scope="row">` in this file's table family (the per-row
+   * name cell below, `ErrorsTable`'s message cell, `DataTable`'s row label)
+   * uses `TH_ROW`, which carries `font-normal` to cancel the browser's
+   * default bold `<th>`. This cell is the one exception: its parent `<tr>`
+   * carries `font-semibold`, and a `font-weight` specified DIRECTLY on the
+   * `<th>` — which is exactly what `TH_ROW` would add — wins over that
+   * inherited value and silently un-bolds it. So this cell has NO font
+   * utility of its own on purpose.
+   *
+   * Nothing about that is visible from outside: every other test in this
+   * suite reads text and attributes, not classes, so a "normalizing" edit
+   * that swapped this cell to `TH_ROW` — matching the visually identical
+   * pattern 260 lines away — would compile, typecheck, and pass every other
+   * test in this file. This is the one assertion that would catch it.
+   */
+  it('does not cancel the inherited bold on the totals row name cell', () => {
+    renderTable();
+    const nameCell = cellIn(totalRow(), 'name');
+    expect(nameCell.className).not.toMatch(/\bfont-normal\b/);
+  });
 });
 
 describe('StatisticsTable — the numbers a reader reads (G-12, §A.5)', () => {

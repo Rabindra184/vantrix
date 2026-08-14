@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import type { ErrorsResponse } from '@perfportal/contracts';
+import { ROW, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 
 /**
  * §13.2 ⑥ the errors table — Appendix A G-17.
@@ -124,7 +125,7 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
       </h2>
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
+        <table className={TABLE}>
           {/* The caption is the table's ACCESSIBLE NAME as well as its
               explanation — `getByRole('table', { name: /errors/i })` is how
               this suite and the Playwright specs find it.
@@ -132,22 +133,22 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
               It names the DENOMINATOR, from the same `total` the shares are
               divided by, so the table cannot tell a reader it is showing
               shares of 24 errors while dividing by something else. */}
-          <caption className="pb-3 text-left text-sm text-[var(--color-text-muted)]">
+          <caption className="pb-3 text-left text-sm text-muted">
             Every distinct error message recorded in this run, most frequent first. Each percentage
             is that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run
             recorded — not of the requests it made.
           </caption>
 
-          <thead>
-            <tr className="border-b border-[var(--color-border)]">
+          <thead className={THEAD}>
+            <tr className={ROW}>
               {/* Gatling's own three headings, in its own order. */}
-              <th scope="col" className="py-2 pr-4 font-semibold">
+              <th scope="col" className={TH}>
                 Error
               </th>
-              <th scope="col" className="py-2 pr-4 font-semibold">
+              <th scope="col" className={TH}>
                 Count
               </th>
-              <th scope="col" className="py-2 pr-4 font-semibold">
+              <th scope="col" className={TH}>
                 Percentage
               </th>
             </tr>
@@ -160,27 +161,15 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
                 // Keyed by the message, which is what makes a row distinct:
                 // the engine's `ErrorRollup` counts into a Map KEYED BY
                 // MESSAGE, so a scope's rows cannot repeat one.
-                <tr
-                  key={row.message}
-                  data-testid="error-row"
-                  className="border-b border-[var(--color-border)]"
-                >
+                <tr key={row.message} data-testid="error-row" className={ROW}>
                   {/* `<th scope="row">`: the message is what makes "15" mean
                       something when a screen reader announces it out of
                       context. `break-words` because these are raw assertion
                       strings and some of them are long. */}
-                  <th
-                    scope="row"
-                    data-column="message"
-                    className="py-1 pr-4 font-normal break-words"
-                  >
+                  <th scope="row" data-column="message" className={`${TH_ROW} break-words`}>
                     {row.message}
                   </th>
-                  <td
-                    data-column="count"
-                    data-value={String(row.count)}
-                    className="py-1 pr-4 tabular-nums"
-                  >
+                  <td data-column="count" data-value={String(row.count)} className={TD_NUM}>
                     {row.count}
                   </td>
                   {/* THE EXACT VALUE beside the rounded one, the same split
@@ -193,7 +182,7 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
                     data-testid="error-share"
                     data-column="share"
                     data-value={share === undefined ? undefined : String(share)}
-                    className="py-1 pr-4 tabular-nums"
+                    className={TD_NUM}
                   >
                     {share === undefined ? '—' : formatShare(share)}
                   </td>

@@ -14,7 +14,7 @@ import SignOutButton from './SignOutButton';
 export default function AppShell() {
   return (
     <div className="min-h-screen">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-3">
+      <header className="flex items-center justify-between border-b border-default px-6 py-3">
         <span className="font-semibold">PerfPortal</span>
         <SignOutButton />
       </header>

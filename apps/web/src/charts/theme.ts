@@ -10,59 +10,50 @@
 export type ChartMode = 'light' | 'dark';
 
 /**
- * The categorical series palette for LIGHT mode: **Okabe–Ito**, verbatim.
+ * The categorical series palette. Six hues, fixed assignment order, no
+ * seventh — `assignPalette` leaves an excess series undrawn and says so rather
+ * than reusing a colour.
  *
- * Source: Masataka Okabe and Kei Ito, "Color Universal Design (CUD): How to
- * make figures and presentations that are friendly to colorblind people"
- * (https://jfly.uni-koeln.de/color/), the standard colour-universal set.
+ * THIS PALETTE IS NOT COLOUR-VISION-SAFE, AND THAT IS A DECISION, NOT AN
+ * OVERSIGHT. It replaced Okabe–Ito, which was chosen precisely because CVD
+ * separation is the one property this repo does not compute — simulating
+ * protanopia requires transcribed matrices, and one transcribed slightly wrong
+ * yields a test that passes while certifying nothing. That property was
+ * inherited from a published palette and is now given up, deliberately, for
+ * visual coherence with the rest of the design system.
  *
- * WHY A PUBLISHED PALETTE, AND WHAT THAT BUYS: colour-vision-deficiency
- * separation is the one property of a palette this repo does NOT compute.
- * Simulating protanopia/deuteranopia/tritanopia requires transcribed matrices,
- * and a matrix transcribed slightly wrong yields a test that passes while
- * certifying nothing. So the CVD property is INHERITED from a palette
- * published as colour-vision-safe rather than asserted by us. Everything that
- * IS computable — lightness band, chroma floor, adjacent-pair separation — is
- * computed, in `apps/web/test/palette.test.ts`, in both modes.
+ * What limits the cost: `routes/marks.tsx` renders every status as shape, then
+ * word, then colour, and every chart carries a complete data table. So what is
+ * lost is telling two SERIES apart, never telling a pass from a failure.
  *
- * Do not reorder these. The order is the assignment order (see
- * `assignPalette`), so reordering silently recolours every existing chart.
+ * Do not reorder. The order is the assignment order, so reordering silently
+ * recolours every existing chart.
  */
 export const CATEGORICAL = [
-  '#0072B2', // blue
-  '#E69F00', // orange
-  '#009E73', // bluish green
-  '#CC79A7', // reddish purple
-  '#56B4E9', // sky blue
-  '#D55E00', // vermillion
+  '#4f46e5', // indigo
+  '#0d9488', // teal
+  '#8b5cf6', // violet
+  '#d97706', // amber
+  '#0ea5e9', // sky
+  '#e11d48', // rose
 ] as const;
 
 /**
- * The same six hues, tuned for a DARK surface.
+ * The same six hues on a dark ground, derived by the rule this file has always
+ * used: hold the hue angle, clamp OKLCH L into the 0.48–0.67 dark band, and
+ * reduce chroma only as far as the sRGB gamut forces.
  *
- * Okabe–Ito as published does not satisfy the dark-mode lightness band
- * (0.48–0.67 in OKLCH L): `#E69F00` sits at L 0.753, `#56B4E9` at 0.735 and
- * `#CC79A7` at 0.679, all above the ceiling, where they glare against a dark
- * surface. This set is derived from the published one by a single, mechanical
- * rule — clamp OKLCH L into the band, hold the hue angle, reduce chroma only
- * as far as the sRGB gamut forces — so the three in-band hues (`#0072B2`,
- * `#009E73`, `#D55E00`) are byte-identical to Okabe–Ito and the other three
- * keep their hue and their identity across a theme switch.
- *
- * The honest caveat, recorded rather than buried: the CVD property of THIS set
- * is inherited by hue from Okabe–Ito, not re-derived. Compressing lightness
- * also compresses separation — orange and vermillion, Okabe–Ito's closest
- * pair, fall from ΔE 15.6 to 9.1 here. They are not adjacent in assignment
- * order (slots 2 and 6), so no chart with fewer than six series shows both,
- * and the adjacent-pair gate `palette.test.ts` enforces still passes at 19.1.
+ * The Tailwind-400 values these started from (`#818cf8`, `#2dd4bf`, `#a78bfa`,
+ * `#f59e0b`, `#38bdf8`, `#fb7185`) are all ABOVE the band — L 0.68 to 0.79 —
+ * and would glare on a dark surface. Measured, not guessed: all six failed.
  */
 export const CATEGORICAL_DARK = [
-  '#0072B2', // blue        — unchanged from Okabe–Ito
-  '#C08400', // orange      — L clamped from 0.753
-  '#009E73', // bluish green — unchanged
-  '#C573A0', // reddish purple — L clamped from 0.679
-  '#3B9CD0', // sky blue    — L clamped from 0.735
-  '#D55E00', // vermillion  — unchanged
+  '#6c71fe', // indigo  — L 0.620
+  '#30a79a', // teal    — L 0.661
+  '#9469ff', // violet  — L 0.639
+  '#d77500', // amber   — L 0.660
+  '#059ddf', // sky     — L 0.660
+  '#ee2f52', // rose    — L 0.621
 ] as const;
 
 export function paletteFor(mode: ChartMode): readonly string[] {
@@ -76,22 +67,27 @@ export function paletteFor(mode: ChartMode): readonly string[] {
 
 /**
  * WHY ANY OF THIS EXISTS ALONGSIDE `CATEGORICAL`. The categorical palette
- * answers "which series is this?" — its hues are interchangeable, and
- * Okabe–Ito's whole point is that they carry no meaning beyond "not the other
- * one". The indicator bands ③ and the OK/KO donut ④ ask a different question: a
- * request that failed is not merely a different series from one that
- * succeeded, it is WORSE, and the reader has already learned elsewhere on this
- * same page (`routes/marks.tsx`) that failure is `--color-status-failed`.
- * Drawing it in categorical blue because it happened to be the first series
- * would throw that away.
+ * answers "which series is this?" — its hues are interchangeable, and the
+ * whole point of a categorical palette is that they carry no meaning beyond
+ * "not the other one" (the reference palette Task 4 re-sourced `CATEGORICAL`
+ * from shares that property; it is not specific to Okabe–Ito, which this file
+ * no longer uses — see the decision record below). The indicator bands ③, the
+ * OK/KO donut ④ and the percentile ramp ⑨ ask a different question: a request
+ * that failed is not merely a different series from one that succeeded, it is
+ * WORSE, and the reader has already learned elsewhere on this same page
+ * (`routes/marks.tsx`) that failure is `--color-status-failed`. Drawing it in
+ * categorical blue because it happened to be the first series would throw
+ * that away.
  *
- * There are TWO semantic palettes, and they are not the same kind of thing.
+ * There are THREE semantic palettes, and they are not the same kind of thing.
  */
 
 /**
  * App-wide STATES: what the rest of the UI already spends on a status, a
- * verdict or an SLA outcome (`routes/marks.tsx`). Maps one-to-one onto the four
- * `--color-status-*` tokens; `neutral` is `--color-status-not-applicable`.
+ * verdict or an SLA outcome (`routes/marks.tsx`). Four states, each with TWO
+ * tokens now — `--color-status-*` as TEXT and `--chart-status-*` as MARK —
+ * because one colour cannot clear AA as text and still read well as a chart
+ * fill. `neutral` is `not-applicable` in both token families.
  */
 export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
 
@@ -110,61 +106,125 @@ export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
  * uses a genuine four-step ramp — `#68b65c` green, `#FFDD00` yellow, `#FFA900`
  * orange, `#f15b4f` red — and the monotonic ordering is the information.
  * `--chart-band-*` is that, in this design system's own hues: three of the four
- * are var() aliases of the status tokens so the endpoints keep agreeing with
- * the rest of the app, and only the orange step is new.
+ * are var() aliases of the status MARK tokens (`--chart-status-*`) so the
+ * endpoints keep agreeing with the rest of the app, and only the orange step
+ * is new. Bands are chart fills, not text, so they take the mark family.
  *
  * The ramp's measured properties, and the one gate it does NOT meet, are in
  * `palette.test.ts`.
  */
 export type BandRole = 'band-under' | 'band-between' | 'band-over' | 'band-failed';
 
-/** Either semantic palette. What `Chart`'s `roles` prop accepts. */
-export type MarkRole = StatusRole | BandRole;
+/**
+ * The percentile chart's SEVERITY RAMP — one ordered ten-step scale, one role
+ * per band `PercentilesChart` can draw (`min` through `max`, D-7's exact set).
+ *
+ * `pct-` prefixed, distinct from `BandRole`'s `band-*`: two charts each own an
+ * ordered ramp, and the prefixes are what keeps `ROLE_TOKEN` and `fallbackFor`
+ * routing a role to the right one rather than the two colliding on a bare
+ * `min`/`max`.
+ */
+export type PercentileRole =
+  | 'pct-min'
+  | 'pct-p25'
+  | 'pct-p50'
+  | 'pct-p75'
+  | 'pct-p80'
+  | 'pct-p85'
+  | 'pct-p90'
+  | 'pct-p95'
+  | 'pct-p99'
+  | 'pct-max';
 
+/** Every semantic palette. What `Chart`'s `roles` prop accepts. */
+export type MarkRole = StatusRole | BandRole | PercentileRole;
+
+/**
+ * Points every mark role at the token that carries its MARK colour.
+ *
+ * Status roles point at `--chart-status-*`, not `--color-status-*`: this is
+ * `liveMarkColors`' table, which feeds `chartTheme().roles`, consumed
+ * directly as a chart FILL by `RequestCountChart`, `ScatterChart`,
+ * `DistributionChart` and `RatesChart`, and indirectly by `IndicatorsChart`,
+ * whose `--chart-band-under`/`--chart-band-failed` alias
+ * `--chart-status-passed`/`--chart-status-failed`. `--color-status-*` is the
+ * TEXT palette and belongs to `routes/marks.tsx` alone — that file reads it
+ * directly off the document and never goes through this table.
+ */
 const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
-  passed: '--color-status-passed',
-  pending: '--color-status-pending',
-  neutral: '--color-status-not-applicable',
-  failed: '--color-status-failed',
+  passed: '--chart-status-passed',
+  pending: '--chart-status-pending',
+  neutral: '--chart-status-not-applicable',
+  failed: '--chart-status-failed',
   'band-under': '--chart-band-under',
   'band-between': '--chart-band-between',
   'band-over': '--chart-band-over',
   'band-failed': '--chart-band-failed',
+  'pct-min': '--chart-pct-min',
+  'pct-p25': '--chart-pct-p25',
+  'pct-p50': '--chart-pct-p50',
+  'pct-p75': '--chart-pct-p75',
+  'pct-p80': '--chart-pct-p80',
+  'pct-p85': '--chart-pct-p85',
+  'pct-p90': '--chart-pct-p90',
+  'pct-p95': '--chart-pct-p95',
+  'pct-p99': '--chart-pct-p99',
+  'pct-max': '--chart-pct-max',
 };
 
 /**
- * The compiled values of those tokens, per mode.
+ * Status as TEXT — labels, badges, `routes/marks.tsx`. Gated at 4.5:1 against
+ * `SURFACE_TOKENS[mode].card`, the ground the text is actually drawn on (see
+ * `palette.test.ts`'s "status TEXT is legible" gate).
  *
- * Mirrors `tokens.css` exactly, and `palette.test.ts` fails if the two ever
- * disagree in ANY of the four blocks — the same arrangement, and the same
- * guard, the `--chart-*` palette has. These are the FALLBACKS: `markColor`
- * reads the live document first, so a theme switch is picked up without a
- * rebuild, and these cover the two cases where reading fails honestly (no
- * document at all, and jsdom, which parses no stylesheet).
- *
- * The three aliased band values are written out as the hexes they resolve TO,
- * because a fallback is what is used when no stylesheet exists and there is
- * nothing for a `var()` to resolve against. `palette.test.ts` resolves the
- * indirection when it compares, so the alias cannot drift from its target.
+ * One colour cannot serve as both chart fill and body text: `#10b981`
+ * measures 2.54:1 on white, well under AA's 4.5, and there is no single value
+ * that clears AA on both a light and a dark card — `#047857` passes on white
+ * at 5.48 and fails on the dark card at 2.67; `#10b981` is exactly the
+ * reverse. Hence this palette is TEXT ONLY. Chart fills use
+ * `STATUS_MARK_COLORS` below.
  */
 export const STATUS_COLORS: Readonly<Record<ChartMode, Readonly<Record<StatusRole, string>>>> = {
-  light: { passed: '#1a7f37', pending: '#9a6700', neutral: '#6e7781', failed: '#cf222e' },
-  dark: { passed: '#3fb950', pending: '#d29922', neutral: '#8b949e', failed: '#f85149' },
+  light: { passed: '#047857', pending: '#b45309', neutral: '#64748b', failed: '#dc2626' },
+  dark: { passed: '#10b981', pending: '#f59e0b', neutral: '#94a3b8', failed: '#f87171' },
 };
 
-/** In SEVERITY ORDER. Do not reorder: `palette.test.ts` reads the ramp off it. */
+/**
+ * Status as a MARK — chart fills, where the colour sits in a shape large
+ * enough that the text contrast rule does not apply and the brighter value
+ * reads better. Same four roles, same order, different job: this is what
+ * `--chart-status-*` holds and what `liveMarkColors` resolves the status
+ * roles to.
+ */
+export const STATUS_MARK_COLORS: Readonly<Record<ChartMode, Readonly<Record<StatusRole, string>>>> = {
+  light: { passed: '#10b981', pending: '#f59e0b', neutral: '#94a3b8', failed: '#ef4444' },
+  dark: { passed: '#10b981', pending: '#f59e0b', neutral: '#94a3b8', failed: '#ef4444' },
+};
+
+/**
+ * In SEVERITY ORDER. Do not reorder: `palette.test.ts` reads the ramp off it.
+ *
+ * Bands are chart marks, not text, so all four steps are sourced from the
+ * MARK family — `STATUS_MARK_COLORS`' `passed`/`failed` for the two aliased
+ * endpoints, same as `tokens.css`'s `--chart-band-under`/`--chart-band-failed`
+ * now alias `--chart-status-passed`/`--chart-status-failed` rather than
+ * `--color-status-*`. `--chart-band-over` has no status equivalent — the ramp
+ * needs a fourth step between amber and red — and is `#f97316` in both modes.
+ * The mark palette does not vary by theme, so neither does the ramp built
+ * from it.
+ */
 export const BAND_COLORS: Readonly<Record<ChartMode, Readonly<Record<BandRole, string>>>> = {
   light: {
-    'band-under': '#1a7f37',
-    'band-between': '#9a6700',
-    'band-over': '#bc4c00',
-    'band-failed': '#cf222e',
+    'band-under': '#10b981',
+    'band-between': '#f59e0b',
+    'band-over': '#f97316',
+    'band-failed': '#ef4444',
   },
   dark: {
-    'band-under': '#3fb950',
-    'band-between': '#d29922',
-    'band-over': '#db6d28',
-    'band-failed': '#f85149',
+    'band-under': '#10b981',
+    'band-between': '#f59e0b',
+    'band-over': '#f97316',
+    'band-failed': '#ef4444',
   },
 };
 
@@ -176,10 +236,67 @@ export const BAND_RAMP: readonly BandRole[] = [
   'band-failed',
 ];
 
+/**
+ * The percentile chart's SEVERITY RAMP, in band order — `min` (fastest, green)
+ * through `max` (slowest, red). `PercentilesChart` filters this down to
+ * whichever bands are selected and hands the result to `Chart` as `roles`; see
+ * that component for why the filter must follow `BANDS`' order rather than
+ * toggle order.
+ *
+ * Do not reorder: `palette.test.ts` reads the ramp off it, and reordering
+ * would silently recolour every selected band.
+ */
+export const PERCENTILE_RAMP: readonly PercentileRole[] = [
+  'pct-min', 'pct-p25', 'pct-p50', 'pct-p75', 'pct-p80',
+  'pct-p85', 'pct-p90', 'pct-p95', 'pct-p99', 'pct-max',
+];
+
+/**
+ * MEASURED, ten steps, hue falling monotonically 181.7° → 25.3° (green to
+ * red). Light and dark share these values, as the reference this ramp is
+ * drawn from does — a ten-step ramp spread across both a light and a dark
+ * derivation would only multiply the ways two steps could end up too close.
+ *
+ * Lightness is NOT monotonic here (it dips at `pct-p50` and rises again
+ * through `pct-p85`): five of these values are inherited from the reference
+ * fixed on their own bands, and are not lightness-ordered. `palette.test.ts`
+ * gates hue rotation and pairwise separation, deliberately not lightness —
+ * see that file for why a lightness gate would fail this ramp and the
+ * four-step band ramp alike.
+ *
+ * `pct-p95` / `pct-p99` / `pct-max` are byte-identical to
+ * `--chart-status-pending` / `--chart-band-over` / `--chart-status-failed`
+ * respectively. DELIBERATE, not drift to dedupe later: both this ramp and
+ * those tokens are severity scales where red means "worst", so the same hex
+ * meaning the same thing in two ramps is the point, not a coincidence to
+ * collapse into a shared alias.
+ */
+const RAMP = {
+  'pct-min': '#2fdac4', 'pct-p25': '#32d29c', 'pct-p50': '#22c55e',
+  'pct-p75': '#84cc16', 'pct-p80': '#b6c641', 'pct-p85': '#d4c026',
+  'pct-p90': '#e8b10c', 'pct-p95': '#f59e0b', 'pct-p99': '#f97316',
+  'pct-max': '#ef4444',
+} as const;
+
+export const PERCENTILE_COLORS: Readonly<Record<ChartMode, Readonly<Record<PercentileRole, string>>>> =
+  { light: RAMP, dark: RAMP };
+
+/**
+ * The FALLBACK for a mark role — `STATUS_MARK_COLORS`, `BAND_COLORS` or
+ * `PERCENTILE_COLORS`, never `STATUS_COLORS`, because every `MarkRole` is a
+ * chart FILL.
+ *
+ * `markColor` reads the live document first, so a theme switch is picked up
+ * without a rebuild; this is what is used when reading fails honestly (no
+ * document at all, and jsdom, which parses no stylesheet). All three source
+ * constants mirror `tokens.css`'s `--chart-status-*`, `--chart-band-*` and
+ * `--chart-pct-*` exactly, and `palette.test.ts` fails if any of them ever
+ * disagrees, in any of the three blocks.
+ */
 function fallbackFor(role: MarkRole, mode: ChartMode): string {
-  return role.startsWith('band-')
-    ? BAND_COLORS[mode][role as BandRole]
-    : STATUS_COLORS[mode][role as StatusRole];
+  if (role.startsWith('band-')) return BAND_COLORS[mode][role as BandRole];
+  if (role.startsWith('pct-')) return PERCENTILE_COLORS[mode][role as PercentileRole];
+  return STATUS_MARK_COLORS[mode][role as StatusRole];
 }
 
 export function markColor(role: MarkRole, mode: ChartMode): string {
@@ -310,6 +427,39 @@ export function assignPalette(
 }
 
 /**
+ * The SURFACE scale — everything that is not a mark and not a status.
+ *
+ * Slate rather than a chroma-zero grey, resolving an inconsistency in the
+ * reference this was taken from: its CSS surfaces are neutral while its own
+ * chart theme uses slate ink and slate gridlines. The charts are most of the
+ * page, so the charts win.
+ *
+ * `page` and `card` are DIFFERENT VALUES on purpose. A card is defined by
+ * sitting on a lighter/darker ground than the page; drawn white-on-white it is
+ * a wire outline, and twelve of them read as a grid rather than as twelve
+ * things.
+ */
+export type SurfaceRole =
+  | 'page' | 'card' | 'sidebar' | 'sunken' | 'border' | 'divider'
+  | 'text-primary' | 'text-muted'
+  | 'accent' | 'accent-foreground' | 'ring';
+
+export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceRole, string>>>> = {
+  light: {
+    page: '#f8fafc', card: '#ffffff', sidebar: '#ffffff', sunken: '#f1f5f9',
+    border: '#e2e8f0', divider: '#f1f5f9',
+    'text-primary': '#0f172a', 'text-muted': '#64748b',
+    accent: '#4f46e5', 'accent-foreground': '#ffffff', ring: '#6366f1',
+  },
+  dark: {
+    page: '#0f172a', card: '#1e293b', sidebar: '#0f172a', sunken: '#334155',
+    border: '#334155', divider: '#1e293b',
+    'text-primary': '#f8fafc', 'text-muted': '#94a3b8',
+    accent: '#818cf8', 'accent-foreground': '#0f172a', ring: '#818cf8',
+  },
+};
+
+/**
  * One design token, read off the live document.
  *
  * `tokens.css` is the runtime source of truth — it is what a theme switch
@@ -327,9 +477,9 @@ function token(name: string, fallback: string): string {
 /**
  * The hairline gridline colour, per mode.
  *
- * Exported so `palette.test.ts` can pin it against all four blocks of
- * `tokens.css` rather than only against the two `[data-theme]` ones. A typo in
- * the `prefers-color-scheme` block would otherwise ship a gridline that
+ * Exported so `palette.test.ts` can pin it against all three blocks of
+ * `tokens.css` rather than only against the one `[data-theme]` block. A typo
+ * in the `prefers-color-scheme` block would otherwise ship a gridline that
  * competes with the data on every dark-mode machine, be read live by
  * `chartTheme`, rendered faithfully, and go unnoticed.
  */
@@ -370,7 +520,7 @@ export function resolveChartMode(): ChartMode {
 
 export interface ChartTheme {
   /**
-   * The two SEMANTIC palettes, by role — for the charts whose marks mean
+   * The three SEMANTIC palettes, by role — for the charts whose marks mean
    * something. See `MarkRole`.
    */
   readonly roles: Readonly<Record<MarkRole, string>>;
@@ -396,9 +546,12 @@ export interface ChartTheme {
  *
  * What IS here, and every field is read by `Chart.tsx`:
  *
- *   - `roles` — the status and band palettes, consumed only by the charts that
- *     declare `roles` on `<Chart/>`: the indicator bands ③ and the
- *     request-count donut ④.
+ *   - `roles` — the status, band and percentile palettes, consumed only by the
+ *     charts that declare `roles` on `<Chart/>`: the indicator bands ③, the
+ *     request-count donut ④, the saturation scatter, the response-time
+ *     distribution ⑧, the requests/responses-per-second charts ⑩⑪, and the
+ *     percentile chart ⑨, which is the one that also lifts the six-hue cap
+ *     (see `Chart.tsx`'s assignment memo).
  *   - `ink` / `inkMuted` — all text. Design §11 is explicit that values, labels
  *     and legend text wear ink tokens and NEVER a mark colour; a legend label
  *     painted in its series' colour is the most common way a chart quietly
@@ -409,12 +562,11 @@ export interface ChartTheme {
  *     ECharts' default near-white panel over a dark page.
  */
 export function chartTheme(mode: ChartMode): ChartTheme {
-  const dark = mode === 'dark';
   return {
     roles: liveMarkColors(mode),
-    ink: token('--color-text-primary', dark ? '#f4f5f7' : '#14171a'),
-    inkMuted: token('--color-text-muted', dark ? '#9aa4b2' : '#5b6470'),
+    ink: token('--color-text-primary', SURFACE_TOKENS[mode]['text-primary']),
+    inkMuted: token('--color-text-muted', SURFACE_TOKENS[mode]['text-muted']),
     gridline: token('--chart-gridline', GRIDLINE[mode]),
-    surface: token('--color-surface', dark ? '#14171a' : '#ffffff'),
+    surface: token('--color-surface-card', SURFACE_TOKENS[mode].card),
   };
 }

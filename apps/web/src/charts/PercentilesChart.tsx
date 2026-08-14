@@ -1,6 +1,7 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
+import type { MarkRole } from './theme';
 import { BANDS, type Band, toPercentiles } from './transforms/percentiles';
 
 const BAND_LABEL: Record<Band, string> = {
@@ -20,10 +21,14 @@ const BAND_LABEL: Record<Band, string> = {
  * axis misleads about the SIZE of a difference, and someone comparing two
  * absolute numbers needs the other view.
  *
- * **Band selection.** Ten series is more than the six the categorical palette
- * has hues for, so by default this draws a readable subset and lets the reader
- * ask for the rest. The transform always orders by `BANDS`, so toggling never
- * reorders the legend.
+ * **Band selection.** Ten lines on one axis is more than a sighted reader can
+ * follow, so by default this draws a readable subset and lets the reader ask
+ * for the rest. It is no longer a palette limit — percentiles are an ORDERED
+ * measure, so `roles` draws them on `PERCENTILE_RAMP` (green at `min` through
+ * red at `max`) instead of the six-hue categorical palette, and `Chart` lifts
+ * its six-series cap for any chart that brings its own colour per series. All
+ * ten can be selected and all ten will draw. The transform always orders by
+ * `BANDS`, so toggling never reorders the legend.
  */
 const DEFAULT_BANDS: readonly Band[] = ['min', 'p50', 'p75', 'p95', 'p99', 'max'];
 
@@ -50,6 +55,14 @@ export default function PercentilesChart({
 
   const data = useMemo(() => toPercentiles(series, bands), [series, bands]);
 
+  // The transform always emits series in BANDS order, so the roles must be the
+  // SELECTED bands in that same order — `bands` is toggle order, which is not
+  // it. Memoised because `roles` is in Chart's option-effect dependency list.
+  const roles = useMemo(
+    () => BANDS.filter((band) => bands.includes(band)).map((band) => `pct-${band}` as MarkRole),
+    [bands],
+  );
+
   function toggle(band: Band) {
     setBands((current) =>
       current.includes(band) ? current.filter((b) => b !== band) : [...current, band],
@@ -72,8 +85,8 @@ export default function PercentilesChart({
                 onClick={() => toggle(band)}
                 className={`rounded border px-2 py-0.5 text-sm ${
                   on
-                    ? 'border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
-                    : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+                    ? 'border-primary text-primary'
+                    : 'border-default text-muted'
                 }`}
               >
                 {BAND_LABEL[band]}
@@ -87,7 +100,7 @@ export default function PercentilesChart({
           data-testid={`scale-toggle-${id}`}
           aria-pressed={scale === 'log'}
           onClick={() => setScale((s) => (s === 'log' ? 'value' : 'log'))}
-          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-sm text-[var(--color-text-muted)]"
+          className="rounded border border-default px-2 py-0.5 text-sm text-muted"
         >
           {scale === 'log' ? 'Log scale' : 'Linear scale'}
         </button>
@@ -104,6 +117,7 @@ export default function PercentilesChart({
         xAxis={{ name: 'Elapsed (s)' }}
         // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
         group="run-time"
+        roles={roles}
       />
     </div>
   );

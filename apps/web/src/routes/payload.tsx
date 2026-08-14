@@ -96,8 +96,16 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
 }
 
 /**
- * One table, or — until its payload arrives — its heading and the reason it is
- * not there.
+ * What its caller renders once the payload arrives, or — until then — a
+ * heading and the reason it is not there.
+ *
+ * USUALLY ONE TABLE (`ErrorsTable`), but not always: the Statistics slot's
+ * `children` renders `RunStats`'s six tiles ahead of `StatisticsTable`, both
+ * from this same payload, because a failed or still-pending `/stats` should
+ * explain itself once rather than leaving the tile row to render six dashes
+ * above an error the reader has to notice separately (`RunDetail.tsx`'s
+ * `Tables`). This component owns only the loading and error states; how many
+ * things `children` draws from the resolved payload is its callers' choice.
  *
  * A TABLE WHOSE FETCH FAILED MUST NOT SIMPLY VANISH, for the same reason
  * `Payload` renders undrawn charts rather than nothing: the statistics table IS
@@ -126,7 +134,7 @@ export function TableSection<T>({
     <section className="flex flex-col gap-2">
       <h2 className="text-xl font-semibold">{title}</h2>
       {query.isPending ? (
-        <p role="status" className="text-[var(--color-text-muted)]">
+        <p role="status" className="text-muted">
           Loading…
         </p>
       ) : (

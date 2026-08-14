@@ -2,14 +2,19 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
+import Badge from '../components/Badge';
 import { ProblemError } from '../api/fetch';
 import { fetchRuns, runsQueryKey } from '../api/runs';
-// Status and verdict render identically here and on the run detail page, so
-// the vocabulary lives in one module rather than in two that can drift. Same
-// for the start-time formatter: the two screens must agree about when a run
-// started, and one definition is the only way that is guaranteed.
+// Status and verdict share one vocabulary with the run detail page — the
+// same Mark data, from the same STATUS/VERDICT tables in ./marks — so a
+// status that changes a word or a glyph updates both screens from one edit
+// rather than two that can drift. The two screens render that shared Mark
+// differently on purpose: this page as a Badge pill, the run detail page as
+// Marked's plain inline text. Same for the start-time formatter: the two
+// screens must agree about when a run started, and one definition is the
+// only way that is guaranteed.
 import { formatStarted } from './format';
-import { Marked, STATUS, VERDICT } from './marks';
+import { STATUS, VERDICT } from './marks';
 
 type RunListItem = RunListResponse['items'][number];
 
@@ -46,7 +51,7 @@ export default function RunList() {
 
   if (runs.isPending) {
     return (
-      <p role="status" className="text-[var(--color-text-muted)]">
+      <p role="status" className="text-muted">
         Loading runs…
       </p>
     );
@@ -63,7 +68,7 @@ export default function RunList() {
       <div role="alert" className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold">The runs could not be loaded</h1>
         <p>{problem?.detail ?? error.message}</p>
-        {problem !== null && <p className="text-[var(--color-text-muted)]">{problem.remediation}</p>}
+        {problem !== null && <p className="text-muted">{problem.remediation}</p>}
       </div>
     );
   }
@@ -78,13 +83,13 @@ export default function RunList() {
         <EmptyPage cursor={cursor} onFirstPage={() => setCursor(null)} />
       ) : (
         <table className="w-full border-collapse text-left">
-          <caption className="pb-3 text-left text-sm text-[var(--color-text-muted)]">
+          <caption className="pb-3 text-left text-sm text-muted">
             Every run in your organisation, newest first. “Started” is the load test’s own start
             time; rows marked <em>ingest time</em> have not been parsed yet, so they fall back to
             when PerfPortal received the run.
           </caption>
           <thead>
-            <tr className="border-b border-[var(--color-border)]">
+            <tr className="border-b border-default">
               <th scope="col" className="py-2 pr-4 font-semibold">
                 Started
               </th>
@@ -128,7 +133,7 @@ export default function RunList() {
             <button
               type="button"
               onClick={() => setCursor(null)}
-              className="rounded border border-[var(--color-border)] px-3 py-2"
+              className="rounded border border-default px-3 py-2"
             >
               First page
             </button>
@@ -141,7 +146,7 @@ export default function RunList() {
             disabled={nextCursor === null || runs.isPlaceholderData}
             aria-describedby={nextCursor === null ? 'no-more-runs' : undefined}
             onClick={() => setCursor(nextCursor)}
-            className="rounded border border-[var(--color-border)] px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded border border-default px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Next
           </button>
@@ -152,7 +157,7 @@ export default function RunList() {
               aria-describedby so a screen reader hears it with the control,
               not adrift after it. */}
           {nextCursor === null && (
-            <p id="no-more-runs" className="text-sm text-[var(--color-text-muted)]">
+            <p id="no-more-runs" className="text-sm text-muted">
               You have reached the end of the list.
             </p>
           )}
@@ -177,7 +182,7 @@ function EmptyPage({ cursor, onFirstPage }: { cursor: string | null; onFirstPage
         <button
           type="button"
           onClick={onFirstPage}
-          className="rounded border border-[var(--color-border)] px-3 py-2"
+          className="rounded border border-default px-3 py-2"
         >
           Back to the first page
         </button>
@@ -188,7 +193,7 @@ function EmptyPage({ cursor, onFirstPage }: { cursor: string | null; onFirstPage
   return (
     <div className="flex flex-col gap-2">
       <p>No runs yet.</p>
-      <p className="text-[var(--color-text-muted)]">
+      <p className="text-muted">
         Runs appear here once a test bundle is uploaded to one of this organisation’s projects.
       </p>
     </div>
@@ -207,7 +212,7 @@ function RunRow({ run }: { run: RunListItem }) {
     <tr
       data-testid="run-row"
       data-run-id={run.id}
-      className="border-b border-[var(--color-border)]"
+      className="border-b border-default"
     >
       <td data-testid="run-started" className="py-2 pr-4">
         {/* <time dateTime> carries the machine-readable instant next to the
@@ -218,15 +223,15 @@ function RunRow({ run }: { run: RunListItem }) {
             string, unmodified. */}
         <time dateTime={startedAt}>{formatStarted(startedAt)}</time>
         {isIngestTime && (
-          <span className="ml-2 text-sm text-[var(--color-text-muted)]">ingest time</span>
+          <span className="ml-2 text-sm text-muted">ingest time</span>
         )}
       </td>
       <td className="py-2 pr-4">{run.tool}</td>
       <td className="py-2 pr-4">
-        <Marked mark={STATUS[run.status]} />
+        <Badge mark={STATUS[run.status]} />
       </td>
       <td className="py-2 pr-4">
-        <Marked mark={VERDICT[run.verdict ?? 'none']} />
+        <Badge mark={VERDICT[run.verdict ?? 'none']} />
       </td>
       <td className="py-2">
         {/* The short id is the visible text so consecutive links are told

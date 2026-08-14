@@ -40,7 +40,7 @@ export default function NoOrg() {
         Your sign-in worked — this is not a password problem. This account simply has not been
         added to an organisation yet, and every run in PerfPortal belongs to one.
       </p>
-      <p className="text-[var(--color-text-muted)]">
+      <p className="text-muted">
         Ask an administrator to add this account to an organisation, then sign in again.
       </p>
       <div>
