@@ -1,6 +1,6 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
-import { clampPercentile } from '../tables/StatisticsTable';
+import { clampPercentile, formatCount, formatMs, formatRate } from '../tables/StatisticsTable';
 
 /**
  * §13.2's headline numbers, above the tables.
@@ -18,6 +18,17 @@ import { clampPercentile } from '../tables/StatisticsTable';
  * than one tile's hint) and never recombined into a new quantity the row does
  * not already carry.
  *
+ * EVERY NUMBER IS WRITTEN DOWN THE SAME WAY THE TABLE WRITES IT: `formatCount`,
+ * `formatMs`, `formatRate` and `clampPercentile` are all imported from
+ * `StatisticsTable`, never re-derived here. `formatCount` in particular is
+ * `String(value)` — no grouping separator — and that is not a style choice
+ * this file gets to make independently: `StatisticsTable`'s own docstring
+ * (`formatCount`) explains that a locale-dependent separator would make what a
+ * reader (or a test) sees depend on where it ran, and a count tile that used
+ * `.toLocaleString()` would read "1,234" beside a table row reading "1234" for
+ * any run at four digits or more — a real disagreement, not a hypothetical
+ * one, and the exact class of bug this whole component exists to rule out.
+ *
  * `null`, not zeroed tiles, when the payload carries no run-scope row: a
  * statistics table with nothing to show already renders its own "no
  * statistics were recorded" message (`StatisticsTable`), and six tiles
@@ -32,8 +43,8 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
     <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <StatTile
         label="Total Requests"
-        value={run.count.toLocaleString()}
-        hint={`${run.okCount.toLocaleString()} OK, ${run.koCount.toLocaleString()} KO`}
+        value={formatCount(run.count)}
+        hint={`${formatCount(run.okCount)} OK, ${formatCount(run.koCount)} KO`}
         testId="stat-total-requests"
       />
       <StatTile
@@ -43,13 +54,13 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
         // `koCount / count`, which would be a second definition of one
         // number sitting a few hundred pixels from the first.
         value={`${(run.errorRate * 100).toFixed(2)}%`}
-        hint={`${run.koCount.toLocaleString()} of ${run.count.toLocaleString()} requests`}
+        hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
         testId="stat-error-rate"
       />
       <StatTile
         label="Mean Throughput"
         value={`${formatRate(run.throughputRps)} req/s`}
-        hint={`${run.count.toLocaleString()} requests over the run`}
+        hint={`${formatCount(run.count)} requests over the run`}
         testId="stat-throughput"
       />
       <StatTile
@@ -72,19 +83,6 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
       />
     </dl>
   );
-}
-
-/** Whole milliseconds — the same rounding `StatisticsTable`'s own `formatMs`
- *  applies to every response-time cell, so a tile's number and the table's
- *  number for the same field never round differently. */
-function formatMs(value: number): string {
-  return Number.isFinite(value) ? String(Math.round(value)) : '—';
-}
-
-/** Two decimals — the same precision `StatisticsTable`'s `Cnt/s` column
- *  writes for `throughputRps`. */
-function formatRate(value: number): string {
-  return Number.isFinite(value) ? value.toFixed(2) : '—';
 }
 
 /**

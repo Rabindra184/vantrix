@@ -123,7 +123,7 @@ export interface Column {
  * payload, and rendering it as `NaN` is how that gets noticed rather than
  * smoothed into a dash that reads as "none recorded".
  */
-const formatCount = (value: number): string => String(value);
+export const formatCount = (value: number): string => String(value);
 
 /**
  * Whole milliseconds, which is what Gatling's own table writes: its ROOT row
@@ -134,11 +134,12 @@ const formatCount = (value: number): string => String(value);
  * The unrounded value stays in the DOM beside it (`data-value`), so rounding
  * here is a display decision rather than a loss.
  */
-const formatMs = (value: number): string =>
+export const formatMs = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(value)) : '—';
 
 /** Two decimals, as Gatling writes `% KO` (2.68) and `Cnt/s` (14.21). */
-const formatRate = (value: number): string => (Number.isFinite(value) ? value.toFixed(2) : '—');
+export const formatRate = (value: number): string =>
+  Number.isFinite(value) ? value.toFixed(2) : '—';
 
 /** Gatling's own name for the leftmost column, and it holds groups too. */
 const NAME_COLUMN_LABEL = 'Requests';
