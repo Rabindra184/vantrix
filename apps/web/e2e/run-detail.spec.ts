@@ -352,3 +352,73 @@ test('a run that failed its SLA renders as a run, not as an error', async ({ pag
   // in the table, not merely summarised in the header.
   await expect(page.getByTestId('assertion-outcome')).toHaveText(/failed/i);
 });
+
+test('switching tabs does not remount the shell', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  // The heading is the shell's, not the panel's. If the layout route were
+  // three sibling routes instead, this node would be destroyed and rebuilt on
+  // every tab click — which is the whole reason for the layout route.
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toBeVisible();
+  const before = await heading.textContent();
+
+  await page.getByRole('link', { name: 'Charts' }).click();
+  await expect(page.getByTestId('chart-percentiles')).toBeVisible();
+  expect(await heading.textContent()).toBe(before);
+});
+
+test('a processing run shows no tab strip', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedPendingRun(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  // A tab strip over a run nobody has parsed yet is three doors onto three
+  // empty rooms — the same mistake the Processing branch already refuses to
+  // make with a table of dashes.
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
+  await expect(page.getByText(/still processing/i)).toBeVisible();
+});
+
+test('the errors tab counts distinct messages, not failed requests', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  // Spec §9-4. On the reference run these are 2 and 24 — distinct error
+  // messages versus failed requests. Both are derived from the page's own
+  // payloads rather than written down, so a re-captured fixture moves them
+  // together: the count must follow the errors table's row count, and must
+  // NOT follow the statistics row's KO column.
+  //
+  // `stat-row-total` is read HERE, on the Overview tab, not after navigating
+  // to `/errors`: `RunShell` is a layout route, and `RunOverviewTab` — the
+  // only tab that renders `StatisticsTable` — unmounts the moment the
+  // `<Outlet/>` swaps to `RunErrorsTab`. Reading it after the navigation
+  // waits forever for a node the errors tab never renders (confirmed at this
+  // file's "each tab is its own URL" test, which asserts `stat-row-total`
+  // has count 0 off the Overview tab).
+  const tab = page.getByRole('link', { name: /Errors/ });
+  const ko = Number(
+    (await page.getByTestId('stat-row-total').locator('td').nth(2).textContent())?.trim(),
+  );
+
+  await page.goto(`/runs/${runId}/errors`);
+  // `.count()` reads the DOM as it stands, with none of `expect(locator)`'s
+  // auto-retry — unlike the `ko` read above, whose `.textContent()` DOES
+  // auto-wait for its locator to attach. Without this, `.count()` can run
+  // before the errors table's own fetch has resolved and read back 0 rows,
+  // same pattern as "each tab is its own URL, reachable directly" above.
+  await expect(page.getByTestId('error-row').first()).toBeVisible();
+  const distinct = await page.getByTestId('error-row').count();
+  expect(distinct).toBeGreaterThan(0);
+  expect(distinct).not.toBe(ko);
+
+  await page.goto(`/runs/${runId}`);
+  await expect(tab).toHaveText(`Errors (${distinct})`);
+});
