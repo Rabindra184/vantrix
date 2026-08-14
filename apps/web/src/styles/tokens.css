@@ -73,7 +73,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --color-surface: #14171a;
     --color-surface-raised: #1e2226;
     --color-text-primary: #f4f5f7;
@@ -100,33 +100,10 @@
   }
 }
 
-/* Explicit overrides win over prefers-color-scheme in both directions,
-   so a future toggle can force a theme regardless of OS setting. */
-[data-theme='light'] {
-  --color-surface: #ffffff;
-  --color-surface-raised: #f4f5f7;
-  --color-text-primary: #14171a;
-  --color-text-muted: #5b6470;
-  --color-border: #d7dbe0;
-
-  --color-status-passed: #1a7f37;
-  --color-status-failed: #cf222e;
-  --color-status-not-applicable: #6e7781;
-  --color-status-pending: #9a6700;
-
-  --chart-1: #0072B2;
-  --chart-2: #E69F00;
-  --chart-3: #009E73;
-  --chart-4: #CC79A7;
-  --chart-5: #56B4E9;
-  --chart-6: #D55E00;
-  --chart-gridline: #e9ecf0;
-
-  --chart-band-under: var(--color-status-passed);
-  --chart-band-between: var(--color-status-pending);
-  --chart-band-over: #bc4c00;
-  --chart-band-failed: var(--color-status-failed);
-}
+/* Three blocks, not four. The media query's own :not() is what lets an
+   explicit light theme beat a dark OS setting, so [data-theme='light'] needs
+   no block of its own — and not having one is what stops the light values
+   existing in two places that can disagree. */
 
 [data-theme='dark'] {
   --color-surface: #14171a;

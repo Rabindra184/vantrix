@@ -217,17 +217,29 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   const mediaDark = css.indexOf('@media (prefers-color-scheme: dark)');
 
   const BLOCKS = [
-    // The two that are IN FORCE today.
     { where: ':root (light)', block: () => blockAfter(':root'), mode: 'light' as const },
     {
       where: '@media (prefers-color-scheme: dark) :root',
       block: () => blockAfter(':root', mediaDark),
       mode: 'dark' as const,
     },
-    // The two a future theme toggle will switch to.
-    { where: "[data-theme='light']", block: () => blockAfter("[data-theme='light']"), mode: 'light' as const },
     { where: "[data-theme='dark']", block: () => blockAfter("[data-theme='dark']"), mode: 'dark' as const },
   ];
+
+  /**
+   * `[data-theme='light']` is GONE, and its absence is the assertion. The media
+   * query's own `:not([data-theme='light'])` is what lets an explicit light
+   * override win over a dark OS setting, so a re-added block would be a second,
+   * silently-diverging copy of the light values rather than a safety net.
+   */
+  it('declares no [data-theme=\'light\'] block', () => {
+    expect(css).not.toContain("[data-theme='light'] {");
+  });
+
+  it('scopes the dark media block so an explicit light theme still wins', () => {
+    expect(css).toContain("@media (prefers-color-scheme: dark)");
+    expect(css.slice(mediaDark, mediaDark + 200)).toContain(":root:not([data-theme='light'])");
+  });
 
   it.each(BLOCKS)('$where carries the palette theme.ts exports', ({ where, block, mode }) => {
     const body = block();
