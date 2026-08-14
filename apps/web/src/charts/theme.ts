@@ -49,11 +49,11 @@ export const CATEGORICAL = [
  */
 export const CATEGORICAL_DARK = [
   '#6c71fe', // indigo  — L 0.620
-  '#30a79a', // teal    — L 0.660
-  '#9469ff', // violet  — L 0.640
+  '#30a79a', // teal    — L 0.661
+  '#9469ff', // violet  — L 0.639
   '#d77500', // amber   — L 0.660
   '#059ddf', // sky     — L 0.660
-  '#ee2f52', // rose    — L 0.620
+  '#ee2f52', // rose    — L 0.621
 ] as const;
 
 export function paletteFor(mode: ChartMode): readonly string[] {

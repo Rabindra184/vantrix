@@ -44,14 +44,13 @@ import {
  *      confusing neighbours.
  *
  * WHAT IS NOT CHECKED HERE: colour-vision-deficiency separation. Simulating
- * protanopia/deuteranopia/tritanopia needs transcribed matrices, and a matrix
- * transcribed slightly wrong produces a test that PASSES while certifying
- * nothing — which is the exact failure mode this project keeps hitting. The
- * CVD property is instead INHERITED, by using Okabe–Ito, a palette published
- * as colour-vision-safe. See `theme.ts` for the citation. The dark palette is
- * a lightness-adjusted derivative of it and its CVD property is inherited by
- * hue rather than re-derived; that limitation is recorded in the Task 4
- * report rather than papered over here.
+ * protanopia/deuteranopia/tritanopia requires transcribed matrices, and a
+ * matrix transcribed slightly wrong produces a test that PASSES while
+ * certifying nothing — which is the exact failure mode this project keeps
+ * hitting. The current palette does not claim CVD-safety: see `theme.ts` for
+ * the decision record. This file validates only what is computable — lightness
+ * band, chroma floor, adjacent-pair separation — without the machinery for
+ * simulating CVD.
  */
 
 /* ------------------------------------------------------------------ *
@@ -115,9 +114,7 @@ const MODES: readonly { mode: ChartMode; palette: readonly string[]; lo: number;
 
 describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }) => {
   it('is the six hues the design system names', () => {
-    expect(paletteFor('light')).toEqual([
-      '#4f46e5', '#0d9488', '#8b5cf6', '#d97706', '#0ea5e9', '#e11d48',
-    ]);
+    expect(paletteFor(mode)).toEqual(palette);
   });
 
   it('is the six hues, and paletteFor returns it', () => {
@@ -535,17 +532,9 @@ describe('assignPalette — more series than hues', () => {
   });
 
   /**
-   * THE WHOLE PALETTE, not one slot — and the difference is not pedantry.
-   *
-   * This assertion used to read `assignPalette(['a'], 'dark').drawn[0]`, and it
-   * could not fail: index 0 is `#0072B2` in BOTH palettes, the one slot where
-   * the two are byte-identical, because it is one of the three Okabe–Ito hues
-   * that already sat inside the dark lightness band. `assignPalette` reading
-   * the light palette unconditionally would have passed that test — and drawn
-   * dark mode in the exact three hues above the dark ceiling that this whole
-   * file exists to exclude.
-   *
-   * Six names, so every slot is compared, including the three that differ.
+   * THE WHOLE PALETTE, every slot compared. Each mode has a distinct palette,
+   * and `assignPalette` must read the one its mode asks for. Testing all six
+   * slots ensures that the right palette is wired to the right mode.
    */
   it('assigns from the mode’s own palette — every slot, not just the first', () => {
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
@@ -621,17 +610,16 @@ describe('assignPalette — a series that must survive the cut', () => {
 });
 
 /**
- * The dark set keeps Okabe–Ito's HUE ANGLES.
+ * The dark palette keeps the light palette’s HUE ANGLES.
  *
- * This is the claim `theme.ts` rests its colour-vision-deficiency inheritance
- * on: the dark palette is not re-picked, it is the published palette with
- * lightness clamped into the dark band and the hue held. CVD confusability is
- * overwhelmingly a function of hue, so "same hues, different lightness" is what
- * makes inheriting the published property defensible — and until now it was
- * prose in a comment. A future edit that nudged a dark hex "to taste" would
- * break the inheritance silently.
+ * The dark values are derived from the light values by holding the hue angle,
+ * clamping OKLCH L into the dark band, and reducing chroma only as the sRGB
+ * gamut forces. This keeps every series recognisably the same colour across a
+ * theme switch — indigo stays indigo, teal stays teal — which is essential when
+ * a reader flips the theme mid-analysis. A future edit that nudged a dark hex
+ * "to taste" while changing its hue would break this silently.
  */
-describe('the dark palette preserves Okabe–Ito’s hue angles', () => {
+describe("the dark palette holds the light palette’s hue angles", () => {
   /** OKLCH hue, in degrees. */
   const hueAngle = (hex: string): number => {
     const { a, b } = hexToOkLab(hex);
