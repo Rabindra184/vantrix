@@ -10,6 +10,7 @@ import {
   STATUS_COLORS,
   SURFACE_TOKENS,
   assignPalette,
+  chartTheme,
   paletteFor,
   type ChartMode,
   type StatusRole,
@@ -313,6 +314,37 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
       SURFACE_TOKENS_UNDER_TEST.map(({ role }) => SURFACE_TOKENS[mode][role].toUpperCase()),
     );
   });
+});
+
+/**
+ * `chartTheme`'s ink / inkMuted / surface FALLBACKS — a third copy of the same
+ * few hexes, and the one `tokens.css` itself cannot guard, because these are
+ * never read off a stylesheet at all. `token()` returns its fallback whenever
+ * `document` is undefined (this file's own node environment; see
+ * `vitest.config.ts`'s `environmentMatchGlobs`) or a custom property resolves
+ * to `''` (jsdom, which parses no stylesheet — every `.test.tsx` in this
+ * package, including the one that renders `Chart.tsx`). That is not a
+ * theoretical corner: it is what every unit test that mounts a chart
+ * actually exercises.
+ *
+ * `gridline` already sources its fallback from `GRIDLINE[mode]` rather than a
+ * literal hex, so it cannot drift from the compiled palette by construction.
+ * `ink`, `inkMuted` and `surface` are held to the same rule here: their
+ * fallbacks must equal `SURFACE_TOKENS[mode]`, the same compiled truth this
+ * file already pins `tokens.css` against, not an independently-typed copy of
+ * three hexes that goes stale the next time someone edits `SURFACE_TOKENS`
+ * and forgets this function exists.
+ */
+describe('chartTheme — the no-stylesheet fallbacks', () => {
+  it.each(['light', 'dark'] as const)(
+    'matches SURFACE_TOKENS in %s mode when no stylesheet defines the tokens',
+    (mode) => {
+      const theme = chartTheme(mode);
+      expect(theme.ink).toBe(SURFACE_TOKENS[mode]['text-primary']);
+      expect(theme.inkMuted).toBe(SURFACE_TOKENS[mode]['text-muted']);
+      expect(theme.surface).toBe(SURFACE_TOKENS[mode].card);
+    },
+  );
 });
 
 /**

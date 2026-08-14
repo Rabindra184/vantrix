@@ -442,12 +442,11 @@ export interface ChartTheme {
  *     ECharts' default near-white panel over a dark page.
  */
 export function chartTheme(mode: ChartMode): ChartTheme {
-  const dark = mode === 'dark';
   return {
     roles: liveMarkColors(mode),
-    ink: token('--color-text-primary', dark ? '#f4f5f7' : '#14171a'),
-    inkMuted: token('--color-text-muted', dark ? '#9aa4b2' : '#5b6470'),
+    ink: token('--color-text-primary', SURFACE_TOKENS[mode]['text-primary']),
+    inkMuted: token('--color-text-muted', SURFACE_TOKENS[mode]['text-muted']),
     gridline: token('--chart-gridline', GRIDLINE[mode]),
-    surface: token('--color-surface-card', dark ? '#14171a' : '#ffffff'),
+    surface: token('--color-surface-card', SURFACE_TOKENS[mode].card),
   };
 }
