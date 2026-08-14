@@ -171,17 +171,35 @@ test('a completed run shows every request and group in one table', async ({ page
    * and unit-tested — it is what makes "2503" mean something when a screen
    * reader announces it out of the row's context — so the ASSERTION moves.
    */
-  // `Cart` and `Catalog` are deliberately not in this list: D-10 gives both a
-  // toggle button, and a `<button aria-label>` inside a `<th>` contributes to
-  // the th's OWN accessible name in the name-from-content computation, so
-  // `getByRole('rowheader', { name: 'Cart', exact: true })` would look for
-  // "expand Cart Cart" and never find plain "Cart". `Search` and
-  // `Place Order` are the two rows D-10 leaves genuinely leafy — no toggle,
-  // no contamination — and the discriminating check below covers every row,
-  // groups included, by `data-path` rather than by accessible name.
-  for (const name of ['Search', 'Place Order']) {
+  // `Search` and `Place Order` are the two rows D-10 leaves genuinely leafy —
+  // no toggle button inside their `<th>`. `Cart` and `Catalog` carry one (D-10
+  // gives both real children), and are asserted the same way right below: the
+  // `<th>` names itself via `aria-labelledby` (`StatisticsTable.tsx`'s `Row`),
+  // so the toggle's own `aria-label` does not leak into the row's name.
+  for (const name of ['Search', 'Place Order', 'Cart', 'Catalog']) {
     await expect(page.getByRole('rowheader', { name, exact: true })).toBeVisible();
   }
+
+  /* ---- THE REGRESSION ALARM: a group row's name is its name, and only that ----
+   *
+   * `Cart` and `Catalog` are exactly the rows a name-from-content `<th>` gets
+   * wrong: each holds an `aria-label`led expand button ALONGSIDE the `<Link>`
+   * that renders the name, so a `<th>` left to compute its own name from its
+   * contents announces "expand Cart Cart" in Chromium — measured, and the
+   * defect this file exists to catch on the row axis, `SortableHeader`'s own
+   * comment block having already caught it on the column axis. The loop above
+   * would pass equally for a `<th>` named "expand Cart Cart, Cart" (a
+   * substring match); `exact: true` on the plain name is what a concatenation
+   * fails and a correct `aria-labelledby` passes, so it is restated here on
+   * its own for that entire mutation class rather than folded silently into
+   * the loop above. */
+  await expect(page.getByRole('rowheader', { name: 'Catalog', exact: true })).toBeVisible();
+  await expect(page.getByRole('rowheader', { name: 'Cart', exact: true })).toBeVisible();
+  // And the concatenation itself is confirmed absent, not merely un-matched:
+  // "Cart" being found above is also true of a `<th>` named "Cart Extra", so
+  // the exact negative is pinned too.
+  await expect(page.getByRole('rowheader', { name: 'expand Cart Cart' })).toHaveCount(0);
+  await expect(page.getByRole('rowheader', { name: 'expand Catalog Catalog' })).toHaveCount(0);
 
   /* ---- the discriminating form: EVERY row, from the payload ----
    *

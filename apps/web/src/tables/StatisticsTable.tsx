@@ -859,6 +859,11 @@ function Row({
   onToggle: (key: string) => void;
 }) {
   const expandable = row.children.length > 0;
+  /** Per-row, via `useId` rather than `row.key`: `row.key` is built from the
+   *  payload's own `name` (`keyOf` in `buildTree.ts`), and an id sourced from
+   *  payload data is payload-controlled — a name containing the separator two
+   *  ids collide on would be a run away from a broken `aria-labelledby`. */
+  const nameId = useId();
 
   return (
     <tr
@@ -869,10 +874,30 @@ function Row({
       className="border-b border-[var(--color-border)]"
     >
       {/* `<th scope="row">`: the row's name is what makes "2503" mean
-          something when a screen reader announces it out of context. */}
+          something when a screen reader announces it out of context.
+
+          ═══ SAME DEFECT `SortableHeader` DOCUMENTS ABOVE, ON THE OTHER AXIS ═══
+
+          A GROUP row's `<th>` also contains a labelled `<button>` — the
+          expand/collapse toggle below, named `aria-label="expand Cart"` for
+          the reason its own comment gives. Left to compute its name from its
+          own contents, a `<th>` in Chromium concatenates a descendant's
+          `aria-label` into its own name: "expand Cart" then "Cart" from the
+          `<Link>`, together "expand Cart Cart" — measured the same way
+          `SortableHeader`'s comment measures the column case, and the same
+          failure, just reached from `aria-label` instead of `aria-labelledby`
+          and from a row instead of a column. A request row has no toggle and
+          is unaffected, but D-10 gave every root group real children, so this
+          is not a one-row curiosity — it is both top-level groups today.
+
+          The fix is the same one: the `<th>` does not leave its name to be
+          computed from its contents. `aria-labelledby` points at the `<Link>`
+          below, which renders exactly the row's name and nothing else — the
+          same shape as `SortableHeader`'s span, chosen for the same reason. */}
       <th
         scope="row"
         data-column="name"
+        aria-labelledby={nameId}
         className="py-1 pr-4 font-normal"
         style={{ paddingLeft: indentFor(row.depth) }}
       >
@@ -885,6 +910,8 @@ function Row({
               // The accessible name says what the click will DO, and names the
               // row it will do it to — one "expand" button repeated down a
               // table tells a screen-reader user nothing about which group.
+              // This label STAYS: it is the button's own name, not the th's,
+              // and `aria-labelledby` above is what keeps the two apart.
               aria-label={`${expanded ? 'collapse' : 'expand'} ${row.name}`}
               className="w-4 text-[var(--color-text-muted)]"
             >
@@ -896,7 +923,7 @@ function Row({
             // nothing is announced as a control.
             <span aria-hidden="true" className="inline-block w-4" />
           )}
-          <Link to={detailPathFor(runId, row)} className="underline">
+          <Link id={nameId} to={detailPathFor(runId, row)} className="underline">
             {row.name}
           </Link>
         </span>
