@@ -74,8 +74,15 @@ function explain(error: unknown, what: string): string {
  * branch, so the figure, the heading, the explanation and the data table are
  * the SAME markup a chart with an empty payload produces. A second, bespoke
  * "unavailable" shape here would be a second thing to keep accessible.
+ *
+ * EXPORTED for charts that have no query at all. Deviation D-14: a group's
+ * percentiles-over-time have no group-scoped series to fetch — the engine has
+ * never emitted one — so there is no `UseQueryResult` for `Payload` to key off.
+ * The figure must still appear in its §13.4 position, saying why, for exactly
+ * the reason a failed fetch must: a silently missing chart is indistinguishable
+ * from one that was measured and found empty.
  */
-function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
+export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
   // Memoised because `Chart`'s option effect depends on `data` by identity.
   const data = useMemo<ChartData>(
     () => ({ series: [], axisLabels: [], columns: [], rows: [], empty: reason }),

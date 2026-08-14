@@ -114,3 +114,26 @@ it('gives each distribution its own figure identity', async () => {
   await findByTestId('chart-distribution-group_duration');
   expect(document.querySelectorAll('[data-testid="chart-distribution"]')).toHaveLength(0);
 });
+
+it('renders both percentile charts, saying the series was never recorded', async () => {
+  vi.stubGlobal('fetch', () => Promise.resolve(new Response('{}', { status: 500 })));
+
+  const { findByTestId } = render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={['/runs/r1/groups/Cart']}>
+        <Routes>
+          <Route path="/runs/:runId/groups/:name" element={<GroupDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  // Present, in their §13.4 positions — not omitted.
+  for (const id of ['percentiles-group_cumulated', 'percentiles-group_duration']) {
+    const figure = await findByTestId(`chart-${id}`);
+    // The data table is the parity surface and must exist even undrawn.
+    expect(figure).toBeInTheDocument();
+    // Names the CAUSE, not merely the absence.
+    expect(figure.textContent).toMatch(/not recorded/i);
+  }
+});

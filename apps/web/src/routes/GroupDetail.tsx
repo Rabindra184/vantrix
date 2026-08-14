@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
@@ -5,7 +6,7 @@ import { distributionQuery, statsQuery } from '../api/metrics';
 import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import ScopedStatistics from '../tables/ScopedStatistics';
-import { Payload, TableSection, type Slot } from './payload';
+import { Payload, TableSection, Undrawn, type Slot } from './payload';
 
 /**
  * §13.4 — one group's page.
@@ -51,13 +52,32 @@ const FAMILIES = [
       id: 'distribution-group_cumulated',
       title: 'Cumulated response time distribution',
     },
+    percentiles: {
+      id: 'percentiles-group_cumulated',
+      title: 'Cumulated response time percentiles over time',
+    },
   },
   {
     family: 'group_duration',
     title: 'Duration',
     distribution: { id: 'distribution-group_duration', title: 'Duration distribution' },
+    percentiles: {
+      id: 'percentiles-group_duration',
+      title: 'Duration percentiles over time',
+    },
   },
 ] as const;
+
+/**
+ * D-14. Not "no data" — the platform never recorded it for this run. Naming the
+ * cause is the whole point: "no percentiles" would read as a group whose
+ * response times were measured and found empty, which is a different and false
+ * claim. Same distinction `SPLIT_UNAVAILABLE` makes for `started_ok_count`.
+ */
+const NO_GROUP_SERIES =
+  'This platform has not recorded per-group time series, so percentiles over time cannot be ' +
+  'drawn for a group. The statistics and distribution above are computed from the same ' +
+  'measurements and are complete.';
 
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 
@@ -120,16 +140,19 @@ export default function GroupDetail() {
         )}
       </Payload>
 
-      {FAMILIES.map(({ family, distribution }) => (
-        <Payload key={family} query={distributions[family]} slots={[distribution]}>
-          {(data) => (
-            <DistributionChart
-              distribution={data}
-              id={distribution.id}
-              title={distribution.title}
-            />
-          )}
-        </Payload>
+      {FAMILIES.map(({ family, distribution, percentiles }) => (
+        <Fragment key={family}>
+          <Payload query={distributions[family]} slots={[distribution]}>
+            {(data) => (
+              <DistributionChart
+                distribution={data}
+                id={distribution.id}
+                title={distribution.title}
+              />
+            )}
+          </Payload>
+          <Undrawn slot={percentiles} reason={NO_GROUP_SERIES} />
+        </Fragment>
       ))}
     </div>
   );
