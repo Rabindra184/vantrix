@@ -1,19 +1,19 @@
 {
   "_capture": {
     "script": "scripts/capture-chart-fixture.mjs",
-    "capturedAt": "2026-08-14T08:35:08.213Z",
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "capturedAt": "2026-08-14T10:05:06.295Z",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "bundle": "fixtures/gatling-3.15.1.2/reference-report/simulation.log",
     "baseUrl": "http://localhost:3000",
     "endpoints": {
-      "stats": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/stats",
-      "series": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/series?scope=run&name=",
-      "users": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/users",
-      "distribution": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/distribution?scope=run&name=&family=response_time",
-      "errors": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/errors?scope=run&name=",
-      "scatter": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/scatter?name=Catalog%2FList%20Products",
-      "scatterWithFailures": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/scatter?name=Cart%2FAdd%20To%20Cart",
-      "groupSeries": "/v1/runs/57932889-d58c-4fdd-8ef4-5caf664c0b7f/series?scope=group&name=Cart&family=group_cumulated"
+      "stats": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/stats",
+      "series": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/series?scope=run&name=",
+      "users": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/users",
+      "distribution": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/distribution?scope=run&name=&family=response_time",
+      "errors": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/errors?scope=run&name=",
+      "scatter": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/scatter?name=Catalog%2FList%20Products",
+      "scatterWithFailures": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/scatter?name=Cart%2FAdd%20To%20Cart",
+      "groupSeries": "/v1/runs/4518cd74-f245-452a-a9db-937d9853c1c5/series?scope=group&name=Cart&family=group_cumulated"
     },
     "counts": {
       "stats.stats": 14,
@@ -28,7 +28,7 @@
     }
   },
   "stats": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "stats": [
       {
         "scope": "group",
@@ -408,9 +408,10 @@
     }
   },
   "series": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "scope": "run",
     "name": "",
+    "family": "response_time",
     "bucketWidthMs": 1000,
     "startedSplitAvailable": true,
     "groupSeriesAvailable": false,
@@ -2635,7 +2636,7 @@
     ]
   },
   "users": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "scenarios": [
       {
         "scenario": "Browse",
@@ -3738,7 +3739,7 @@
     ]
   },
   "distribution": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "scope": "run",
     "name": "",
     "family": "response_time",
@@ -4256,7 +4257,7 @@
     "overflowCount": 0
   },
   "errors": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "errors": [
       {
         "message": "status.find.is(200), found 500",
@@ -4269,7 +4270,7 @@
     ]
   },
   "scatter": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "name": "Catalog/List Products",
     "ok": [
       [
@@ -4516,7 +4517,7 @@
     "ko": []
   },
   "scatterWithFailures": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "name": "Cart/Add To Cart",
     "ok": [
       [
@@ -4776,9 +4777,10 @@
     ]
   },
   "groupSeries": {
-    "runId": "57932889-d58c-4fdd-8ef4-5caf664c0b7f",
+    "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
     "scope": "group",
     "name": "Cart",
+    "family": "group_cumulated",
     "bucketWidthMs": 1000,
     "startedSplitAvailable": true,
     "groupSeriesAvailable": true,
