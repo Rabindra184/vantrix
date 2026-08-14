@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppShell from './AppShell';
 import AuthGate from './AuthGate';
-import DetailPlaceholder from './routes/DetailPlaceholder';
+import GroupDetail from './routes/GroupDetail';
 import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
 import RequestDetail from './routes/RequestDetail';
@@ -41,7 +41,7 @@ export default function App() {
               `/runs` — without these two routes a reader who clicked a row
               would land silently on the run list. */}
           <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
-          <Route path="/runs/:runId/groups/:name" element={<DetailPlaceholder kind="group" />} />
+          <Route path="/runs/:runId/groups/:name" element={<GroupDetail />} />
         </Route>
       </Route>
 

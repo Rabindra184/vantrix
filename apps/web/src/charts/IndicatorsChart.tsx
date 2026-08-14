@@ -1,7 +1,7 @@
-import type { StatsResponse } from '@perfportal/contracts';
+import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
-import { BAND_ROLES, toIndicators, toRequestIndicators } from './transforms/indicators';
+import { BAND_ROLES, toIndicators, toRowIndicators } from './transforms/indicators';
 
 /**
  * §13.2 ③ — the response-time indicator bands (Appendix A G-06…G-09).
@@ -22,15 +22,25 @@ import { BAND_ROLES, toIndicators, toRequestIndicators } from './transforms/indi
  */
 export default function IndicatorsChart({
   stats,
-  path,
+  row,
+  label,
+  noun,
 }: {
   readonly stats: StatsResponse;
-  /** Present on the request detail page; absent on the run's own overview. */
-  readonly path?: string;
+  /** A specific row's bands. Absent on the run's own overview, which folds the
+   *  response-level `indicators` — the run row's — instead. */
+  readonly row?: StatRow;
+  /** What that row is called on the axis. Required whenever `row` is given. */
+  readonly label?: string;
+  /** What the subject is called when there is nothing to fold. */
+  readonly noun?: string;
 }) {
   const data = useMemo(
-    () => (path === undefined ? toIndicators(stats) : toRequestIndicators(stats, path)),
-    [stats, path],
+    () =>
+      label === undefined
+        ? toIndicators(stats)
+        : toRowIndicators(stats, row, label, noun ?? 'request'),
+    [stats, row, label, noun],
   );
 
   return (

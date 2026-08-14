@@ -1095,8 +1095,8 @@ Everything in §13.2 scoped to one request, plus the response-time/latency disti
 |---|---|
 | **Cumulated Response Time** statistics and charts | Sum of child request durations — Gatling group semantics |
 | **Duration** statistics and charts | Wall-clock time of the group |
-| Child request breakdown | Table of member requests with contribution share |
-| Full chart set | Distribution, percentiles over time, requests/s, responses/s — applied to both cumulated response time and duration |
+| Full chart set | Distribution and percentiles over time, applied to both cumulated response time and duration. **No per-second charts** — §A.9 F-4 records that Gatling's group page has none |
+| Group indicators / ranges | `RangesContainerId`, folded from the cumulated row (GR-09) |
 | Nested groups | Rendered hierarchically to arbitrary depth |
 
 ---

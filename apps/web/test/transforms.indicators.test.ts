@@ -6,6 +6,7 @@ import {
   toIndicators,
   toRequestCounts,
   toRequestIndicators,
+  toRowIndicators,
 } from '../src/charts/transforms/indicators.js';
 import { CATEGORICAL, CATEGORICAL_DARK, chartTheme, type ChartMode } from '../src/charts/theme.js';
 import fixture from './fixtures/reference-run.json';
@@ -348,5 +349,35 @@ describe('toRequestIndicators', () => {
     const data = toRequestIndicators(stats, 'Nope/Not Here');
     expect(data.series).toEqual([]);
     expect(data.empty).toContain('Nope/Not Here');
+  });
+});
+
+describe('toRowIndicators', () => {
+  it('folds whichever row it is handed, at any scope', () => {
+    const row = stats.stats.find(
+      (r) => r.scope === 'group' && r.name === 'Cart' && r.family === 'group_cumulated',
+    )!;
+    const data = toRowIndicators(stats, row, 'Cart', 'group');
+
+    expect(data.rows.map((r) => r.values[0])).toEqual([
+      row.indicators.under,
+      row.indicators.between,
+      row.indicators.over,
+      row.indicators.failed,
+    ]);
+    expect(data.axisLabels).toEqual(['Cart']);
+  });
+
+  it('names the noun it was given when the row is absent', () => {
+    const data = toRowIndicators(stats, undefined, 'Nope', 'group');
+    expect(data.series).toEqual([]);
+    expect(data.empty).toContain('group');
+    expect(data.empty).toContain('Nope');
+  });
+
+  it('still reads bounds from the RESPONSE, not the row', () => {
+    const row = stats.stats.find((r) => r.scope === 'group' && r.name === 'Cart')!;
+    const data = toRowIndicators(stats, row, 'Cart', 'group');
+    expect(data.rows[0]?.label).toContain(String(stats.bounds.lowerMs));
   });
 });
