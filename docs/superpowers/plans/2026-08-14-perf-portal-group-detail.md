@@ -691,6 +691,174 @@ git commit -m "feat(web): GR-09 and GR-03/GR-05, group ranges and both distribut
 
 ---
 
+## Task 4b: `DistributionChart` takes its identity from the caller
+
+**Files:**
+- Modify: `apps/web/src/charts/DistributionChart.tsx:28-32`
+- Modify: `apps/web/src/routes/GroupDetail.tsx`
+- Modify: `apps/web/test/GroupDetail.test.tsx`
+
+**Interfaces:**
+- Produces: `DistributionChart` gains `id?: string` and `title?: string`,
+  defaulting to `'distribution'` and `'Response time distribution'` so the run
+  and request pages are unchanged.
+
+**Why this task exists and is not in the original plan:** Task 4's implementer
+found it. `DistributionChart` hardcodes `id="distribution"` and
+`title="Response time distribution"`. The group page is the first to render two
+of them, so once both payloads load:
+
+- both figures carry `data-testid="chart-distribution"` — **duplicate DOM ids**,
+  which is invalid HTML and makes `getByTestId` ambiguous;
+- both are headed "Response time distribution", so nothing on screen tells
+  cumulated from duration;
+- the per-family `Slot` ids this plan defined (`distribution-group_cumulated`,
+  `distribution-group_duration`) apply **only** in `Payload`'s undrawn branch,
+  so Task 7's e2e would look for figures that vanish the moment data arrives.
+
+This is the same shape as the `title` prop the rate charts took in piece 3, and
+the `noun` prop `IndicatorsChart` took in Task 4: a component that was written
+when only one instance could exist, meeting its second caller.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `apps/web/test/GroupDetail.test.tsx`, alongside the existing render
+tests:
+
+```tsx
+it('gives each distribution its own figure identity', async () => {
+  vi.stubGlobal('fetch', (input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes('/distribution')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            runId: '00000000-0000-4000-8000-000000000000',
+            scope: 'group',
+            name: 'Cart',
+            family,
+            labels: ['0'],
+            okCounts: [1],
+            koCounts: [0],
+            okPercent: [100],
+            koPercent: [0],
+            exactValues: true,
+            overflowCount: 0,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response('{}', { status: 500 }));
+  });
+
+  const { findByTestId } = render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={['/runs/r1/groups/Cart']}>
+        <Routes>
+          <Route path="/runs/:runId/groups/:name" element={<GroupDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  // Both DRAWN, each under its own id — not one id rendered twice.
+  await findByTestId('chart-distribution-group_cumulated');
+  await findByTestId('chart-distribution-group_duration');
+  expect(document.querySelectorAll('[data-testid="chart-distribution"]')).toHaveLength(0);
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+```bash
+pnpm vitest run apps/web/test/GroupDetail.test.tsx -t 'own figure identity'
+```
+
+Expected: FAIL — `Unable to find an element by: [data-testid="chart-distribution-group_cumulated"]`,
+because both charts render as `chart-distribution`.
+
+- [ ] **Step 3: Let the caller name it**
+
+In `apps/web/src/charts/DistributionChart.tsx`, replace the signature and the
+two hardcoded props:
+
+```tsx
+/**
+ * `id` and `title` are props because the GROUP page renders TWO of these — one
+ * per metric family — and a component that names itself cannot appear twice on
+ * a page: two figures would share a DOM id and a heading, and nothing on screen
+ * would distinguish cumulated response time from duration. Defaults keep the run
+ * and request pages, which render exactly one, unchanged.
+ */
+export default function DistributionChart({
+  distribution,
+  id = 'distribution',
+  title = 'Response time distribution',
+}: {
+  readonly distribution: DistributionResponse;
+  readonly id?: string;
+  readonly title?: string;
+}) {
+```
+
+and pass them through to `Chart`:
+
+```tsx
+      id={id}
+      title={title}
+```
+
+- [ ] **Step 4: Pass each family's slot through**
+
+In `GroupDetail.tsx`, the distribution render becomes:
+
+```tsx
+          <Payload query={distributions[family]} slots={[distribution]}>
+            {(data) => (
+              <DistributionChart
+                distribution={data}
+                id={distribution.id}
+                title={distribution.title}
+              />
+            )}
+          </Payload>
+```
+
+so the drawn figure and its undrawn placeholder are the same figure — which is
+the property `Payload`'s whole design depends on.
+
+- [ ] **Step 5: Run the tests**
+
+```bash
+pnpm vitest run apps/web/test/GroupDetail.test.tsx
+```
+
+Expected: PASS.
+
+The run and request pages render one distribution each and pass no `id` or
+`title`, so their figures keep the default identity:
+
+```bash
+pnpm vitest run apps/web/test/RequestDetail.test.tsx apps/web/test/transforms.distribution.test.ts
+```
+
+Expected: PASS, unchanged.
+
+- [ ] **Step 6: Verify and commit**
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test:unit
+```
+
+```bash
+git add apps/web/src/charts/DistributionChart.tsx apps/web/src/routes/GroupDetail.tsx apps/web/test/GroupDetail.test.tsx
+git commit -m "fix(web): a distribution takes its figure identity from the caller"
+```
+
+---
+
 ## Task 5: D-14 — GR-04 and GR-06 as stated gaps
 
 **Files:**
