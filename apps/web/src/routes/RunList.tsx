@@ -5,10 +5,14 @@ import type { RunListResponse } from '@perfportal/contracts';
 import Badge from '../components/Badge';
 import { ProblemError } from '../api/fetch';
 import { fetchRuns, runsQueryKey } from '../api/runs';
-// Status and verdict render identically here and on the run detail page, so
-// the vocabulary lives in one module rather than in two that can drift. Same
-// for the start-time formatter: the two screens must agree about when a run
-// started, and one definition is the only way that is guaranteed.
+// Status and verdict share one vocabulary with the run detail page — the
+// same Mark data, from the same STATUS/VERDICT tables in ./marks — so a
+// status that changes a word or a glyph updates both screens from one edit
+// rather than two that can drift. The two screens render that shared Mark
+// differently on purpose: this page as a Badge pill, the run detail page as
+// Marked's plain inline text. Same for the start-time formatter: the two
+// screens must agree about when a run started, and one definition is the
+// only way that is guaranteed.
 import { formatStarted } from './format';
 import { STATUS, VERDICT } from './marks';
 
