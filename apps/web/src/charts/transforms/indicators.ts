@@ -1,4 +1,4 @@
-import type { StatsResponse } from '@perfportal/contracts';
+import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import type { BandRole, StatusRole } from '../theme';
 import type { ChartData, ChartTableRow } from '../types';
 
@@ -174,30 +174,45 @@ export function toIndicators(stats: StatsResponse): ChartData {
 }
 
 /**
- * §13.3 ② — the same bands, folded for ONE request.
+ * The bands for a row the CALLER has already found.
  *
- * Reads the ROW's own `indicators`, which the API computes per row
- * (`MetricsController:116`). Reading `stats.indicators` here instead would draw
- * the whole run's bands under a request's heading — a mistake nothing on the
- * chart would look wrong for, which is why the unit test compares the two
- * totals rather than merely checking the shape.
+ * The lookup lives outside deliberately. A request is identified by (scope,
+ * name); a group by (scope, name, family), because one group name carries both
+ * `group_cumulated` and `group_duration`. A transform that grew a third
+ * argument to re-find a row its caller is already holding would be the wrong
+ * boundary — and getting that lookup wrong renders one family's numbers under
+ * the other's heading, which nothing about the output looks wrong for.
+ *
+ * BOUNDS AND THE FIXED-BANDS CAVEAT COME FROM THE RESPONSE, never the row: they
+ * are a project setting and a property of the run's storage. `noun` is what the
+ * subject is called when there is nothing to fold — "request", "group".
  */
-export function toRequestIndicators(stats: StatsResponse, path: string): ChartData {
-  const row = stats.stats.find((r) => r.scope === 'request' && r.name === path);
+export function toRowIndicators(
+  stats: StatsResponse,
+  row: StatRow | undefined,
+  label: string,
+  noun: string,
+): ChartData {
   if (row === undefined) {
     return bandChart(
       { under: 0, between: 0, over: 0, failed: 0 },
       stats,
-      path,
-      `This run recorded no request named ${path}, so there are no response-time bands to show.`,
+      label,
+      `This run recorded no ${noun} named ${label}, so there are no response-time bands to show.`,
     );
   }
   return bandChart(
     row.indicators,
     stats,
-    path,
-    `No requests were recorded for ${path}, so there are no response-time bands to show.`,
+    label,
+    `No requests were recorded for ${label}, so there are no response-time bands to show.`,
   );
+}
+
+/** §13.3 ② — the same bands for one request. */
+export function toRequestIndicators(stats: StatsResponse, path: string): ChartData {
+  const row = stats.stats.find((r) => r.scope === 'request' && r.name === path);
+  return toRowIndicators(stats, row, path, 'request');
 }
 
 /* ------------------------------------------------------------------ *

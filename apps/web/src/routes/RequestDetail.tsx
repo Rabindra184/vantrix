@@ -120,7 +120,9 @@ export default function RequestDetail() {
       </TableSection>
 
       <Payload query={stats} slots={[INDICATORS]}>
-        {(data) => <IndicatorsChart stats={data} path={name} />}
+        {(data) => (
+          <IndicatorsChart stats={data} row={requestRow(data, name)} label={name} />
+        )}
       </Payload>
 
       <Payload query={distribution} slots={[DISTRIBUTION]}>
