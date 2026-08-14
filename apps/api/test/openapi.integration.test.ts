@@ -184,6 +184,21 @@ describe('OpenAPI document', () => {
     expect(names).toEqual(expect.arrayContaining(['id', 'scope', 'name', 'family']));
   });
 
+  // GET /v1/runs/{id}/series reads "family" too (SeriesController's group
+  // page needs group_cumulated vs. group_duration), but the document only
+  // ever listed [id, scope, name]. A client generated from the published
+  // document could not request a group family at all: it would send
+  // scope=group, silently default family to response_time, and get 200 with
+  // an empty buckets array — indistinguishable from a group with no traffic.
+  it('declares the query parameters GET /v1/runs/{id}/series actually reads', async () => {
+    const doc = await fetchDoc();
+    const names = (
+      (doc.paths?.['/v1/runs/{id}/series']?.get as { parameters?: { name: string }[] } | undefined)
+        ?.parameters ?? []
+    ).map((p) => p.name);
+    expect(names).toEqual(expect.arrayContaining(['id', 'scope', 'name', 'family']));
+  });
+
   it('reports indicator bands on the stats response', async () => {
     const doc = await fetchDoc();
     const schemas = doc.components?.schemas ?? {};

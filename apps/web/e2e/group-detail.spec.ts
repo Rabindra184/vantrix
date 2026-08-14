@@ -122,15 +122,40 @@ test('both families and both distributions are on the page', async ({ page }) =>
   await expect(page.getByTestId('chart-responses-per-second')).toHaveCount(0);
 });
 
-test('the percentile charts say the series was never recorded', async ({ page }) => {
+test('both percentile charts draw, with independent controls', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
   await page.goto(`/runs/${runId}/groups/Cart`);
 
-  for (const id of ['percentiles-group_cumulated', 'percentiles-group_duration']) {
-    const figure = page.getByTestId(`chart-${id}`);
-    await expect(figure).toBeVisible();
-    await expect(figure).toContainText(/not .*record/i);
-  }
+  const cumulated = page.getByTestId('chart-percentiles-group_cumulated');
+  const duration = page.getByTestId('chart-percentiles-group_duration');
+  await expect(cumulated).toBeVisible();
+  await expect(duration).toBeVisible();
+
+  // Each carries its own data table — the parity surface.
+  await expect(page.getByTestId('chart-data-percentiles-group_cumulated')).toHaveCount(1);
+  await expect(page.getByTestId('chart-data-percentiles-group_duration')).toHaveCount(1);
+
+  // INDEPENDENT, not one control rendered twice: drive one and assert the other
+  // did not move. A shared testid would also make these locators ambiguous.
+  // The toggle carries aria-pressed={scale === 'log'} and starts on log, so
+  // clicking one flips it to "false" while the other stays "true". Asserted on
+  // aria-pressed rather than the label ("Log scale"/"Linear scale") because it
+  // is the accessible state a screen reader reads, and it cannot drift with
+  // copy.
+  const cumulatedToggle = page.getByTestId('scale-toggle-percentiles-group_cumulated');
+  const durationToggle = page.getByTestId('scale-toggle-percentiles-group_duration');
+  await expect(cumulatedToggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(durationToggle).toHaveAttribute('aria-pressed', 'true');
+
+  await cumulatedToggle.click();
+
+  await expect(cumulatedToggle).toHaveAttribute('aria-pressed', 'false');
+  // THE ASSERTION THIS TEST EXISTS FOR: one control moved, the other did not.
+  await expect(durationToggle).toHaveAttribute('aria-pressed', 'true');
+
+  // GR-07 still does not exist (§A.9 F-4).
+  await expect(page.getByTestId('chart-requests-per-second')).toHaveCount(0);
+  await expect(page.getByTestId('chart-responses-per-second')).toHaveCount(0);
 });

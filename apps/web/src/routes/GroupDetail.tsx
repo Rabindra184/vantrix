@@ -2,9 +2,10 @@ import { Fragment } from 'react';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { distributionQuery, statsQuery } from '../api/metrics';
+import { distributionQuery, seriesQuery, statsQuery } from '../api/metrics';
 import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
+import PercentilesChart from '../charts/PercentilesChart';
 import ScopedStatistics from '../tables/ScopedStatistics';
 import { Payload, TableSection, Undrawn, type Slot } from './payload';
 
@@ -69,22 +70,32 @@ const FAMILIES = [
 ] as const;
 
 /**
- * D-14. Not "no data" — the platform never recorded it for this run. Naming the
- * cause is the whole point: "no percentiles" would read as a group whose
- * response times were measured and found empty, which is a different and false
- * claim. Same distinction `SPLIT_UNAVAILABLE` makes for `started_ok_count`.
+ * D-14, narrowed. The platform records per-group series as of piece 5, so this
+ * is a fact about THIS RUN, not about the product — a page that still blamed
+ * the platform would be making a false claim about it. The sentence itself
+ * must not say "platform" for the same reason: naming the product, even in
+ * passing, reads as the product being at fault rather than this one run's
+ * ingestion predating the capability.
  *
- * NO CLAIM ABOUT THE REST OF THE PAGE. An earlier draft added "The statistics
- * and distribution above are computed from the same measurements and are
- * complete" — true on a fully-loaded page, false the moment `/stats` errors
- * (both statistics sections are then showing an alert, not a row) or
- * `/distribution` 404s (`payload.tsx` documents that as reachable for a
- * completed run with no histogram). This sentence renders unconditionally, so
- * it can only safely say what is always true.
+ * NO CLAIM ABOUT THE REST OF THE PAGE — THIS IS THE THIRD DRAFT TO SAY SO, AND
+ * THE THIRD TO STRIKE A REASSURING CLOSING CLAUSE. The first draft closed with
+ * "...and are complete"; the second, after that was struck, closed with
+ * "...are computed from measurements this run does carry" — a softer claim,
+ * but the same shape of claim, and it failed for the same reason. `Undrawn`
+ * renders this string UNCONDITIONALLY, with no view of what `/stats` or
+ * `/distribution` are doing one section up: `/stats` and `/series` are
+ * independent queries, so `/stats` can be rendering `<p role="alert">` in
+ * place of a row (`TableSection`'s error branch) at the exact moment `/series`
+ * resolves with `groupSeriesAvailable: false`; `/distribution` can 404 for a
+ * completed run with no histogram at all, which `payload.tsx` documents as
+ * reachable. Either way, a clause here claiming the sections above are intact
+ * would be visibly contradicted by them. If you want to reassure the reader
+ * about the rest of the page, that has to come from a component that can see
+ * the other queries' state — not from this static string.
  */
 const NO_GROUP_SERIES =
-  'This platform has not recorded per-group time series, so percentiles over time cannot be ' +
-  'drawn for a group.';
+  'This run was ingested before per-group time series were captured, so percentiles over ' +
+  'time cannot be drawn for it.';
 
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 
@@ -100,6 +111,15 @@ export default function GroupDetail() {
     enabled: runId !== undefined && name !== undefined,
   });
   const distributions = { group_cumulated: cumulated, group_duration: duration };
+  const cumulatedSeries = useQuery({
+    ...seriesQuery(runId ?? '', 'group', name ?? '', 'group_cumulated'),
+    enabled: runId !== undefined && name !== undefined,
+  });
+  const durationSeries = useQuery({
+    ...seriesQuery(runId ?? '', 'group', name ?? '', 'group_duration'),
+    enabled: runId !== undefined && name !== undefined,
+  });
+  const seriesFor = { group_cumulated: cumulatedSeries, group_duration: durationSeries };
 
   // Not reachable through the router — the route cannot match without both.
   if (runId === undefined || name === undefined) {
@@ -158,7 +178,15 @@ export default function GroupDetail() {
               />
             )}
           </Payload>
-          <Undrawn slot={percentiles} reason={NO_GROUP_SERIES} />
+          <Payload query={seriesFor[family]} slots={[percentiles]}>
+            {(data) =>
+              data.groupSeriesAvailable ? (
+                <PercentilesChart series={data} id={percentiles.id} title={percentiles.title} />
+              ) : (
+                <Undrawn slot={percentiles} reason={NO_GROUP_SERIES} />
+              )
+            }
+          </Payload>
         </Fragment>
       ))}
     </div>

@@ -551,7 +551,7 @@ test('the percentile chart draws on a log axis by default, and the toggle really
   await settled(page);
 
   const chart = page.getByTestId('chart-percentiles');
-  const toggle = page.getByTestId('scale-toggle');
+  const toggle = page.getByTestId('scale-toggle-percentiles');
 
   // LOG IS THE DEFAULT. §11: ten bands from min to max on a linear axis push
   // every band below the 95th into a strip a few pixels tall, and the chart
@@ -629,8 +629,8 @@ test('the band selector adds and removes exactly the band it names', async ({ pa
   // categorical palette has.
   expect(await legendLabels(chart)).toEqual(['min', '50%', '75%', '95%', '99%', 'max']);
 
-  await page.getByTestId('band-p50').click();
-  await expect(page.getByTestId('band-p50')).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('band-p50-percentiles').click();
+  await expect(page.getByTestId('band-p50-percentiles')).toHaveAttribute('aria-pressed', 'false');
   // EXACTLY that one leaves, and the other five stay. A selector that redrew
   // the default set, or dropped the last band instead of the named one, passes
   // an assertion that only counted series.
@@ -639,8 +639,8 @@ test('the band selector adds and removes exactly the band it names', async ({ pa
   // Turning one on puts it in BANDS order, NOT in the order it was clicked —
   // 25% belongs between min and 75%, not at the end. `toPercentiles` promises
   // this and nothing in a browser had checked it.
-  await page.getByTestId('band-p25').click();
-  await expect(page.getByTestId('band-p25')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('band-p25-percentiles').click();
+  await expect(page.getByTestId('band-p25-percentiles')).toHaveAttribute('aria-pressed', 'true');
   await expect
     .poll(() => legendLabels(chart))
     .toEqual(['min', '25%', '75%', '95%', '99%', 'max']);
@@ -694,7 +694,7 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   const chart = page.getByTestId('chart-percentiles');
 
   for (const band of ['min', 'p25', 'p50', 'p75', 'p80', 'p85', 'p90', 'p95', 'p99', 'max']) {
-    const button = page.getByTestId(`band-${band}`);
+    const button = page.getByTestId(`band-${band}-percentiles`);
     if ((await button.getAttribute('aria-pressed')) === 'true') await button.click();
   }
 
@@ -718,13 +718,13 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   expect(await readTable(page, 'percentiles')).not.toHaveLength(0);
 
   // One click back and it draws again.
-  await page.getByTestId('band-p95').click();
+  await page.getByTestId('band-p95-percentiles').click();
   await expect(chart.locator('svg')).toHaveCount(1);
 
   // A second band, and the legend appears with exactly those two — which also
   // pins the "a legend only from two series up" rule from the other side: with
   // p95 alone above, the chart draws and names itself in its title, and there
   // is no one-entry legend pretending to be a control.
-  await page.getByTestId('band-p99').click();
+  await page.getByTestId('band-p99-percentiles').click();
   await expect.poll(() => legendLabels(chart)).toEqual(['95%', '99%']);
 });

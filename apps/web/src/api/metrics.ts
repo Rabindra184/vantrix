@@ -64,21 +64,24 @@ export const statsQuery = (id: string) => ({
  * series — percentiles over time ⑨, requests/s ⑩, responses/s ⑪
  * -------------------------------------------------------------------- */
 
-export const seriesQueryKey = (id: string, scope = 'run', name = '') =>
-  ['run', id, 'series', scope, name] as const;
+export const seriesQueryKey = (id: string, scope = 'run', name = '', family = 'response_time') =>
+  ['run', id, 'series', scope, name, family] as const;
 
 /**
  * `scope`/`name` default to the RUN as a whole, which is what all three
  * overview charts want; the parameters exist because the request- and
  * group-detail pages of later sub-projects call the same endpoint scoped to
- * one name, and they must not need a second fetcher to do it.
+ * one name, and they must not need a second fetcher to do it. `family`
+ * defaults to `response_time` so the run and request pages are unchanged;
+ * the group detail page passes `group_cumulated` or `group_duration`.
  */
-export const seriesQuery = (id: string, scope = 'run', name = '') => ({
-  queryKey: seriesQueryKey(id, scope, name),
+export const seriesQuery = (id: string, scope = 'run', name = '', family = 'response_time') => ({
+  queryKey: seriesQueryKey(id, scope, name, family),
   queryFn: () =>
     apiFetch(
       SeriesResponseSchema,
-      `${runPath(id)}/series?scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`,
+      `${runPath(id)}/series?scope=${encodeURIComponent(scope)}` +
+        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}`,
     ),
 });
 

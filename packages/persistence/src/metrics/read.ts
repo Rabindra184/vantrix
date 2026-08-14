@@ -98,6 +98,15 @@ export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended
           AND org_id = $3 AND project_id = $4
         ORDER BY scenario, start_offset_ms`;
 
+/** Existence only — the caller needs a yes/no, and a partition-pruned EXISTS is
+ *  cheaper than counting rows it will not read. */
+export const HAS_GROUP_SERIES_SQL = `SELECT EXISTS (
+         SELECT 1 FROM run_series_bucket
+          WHERE run_started_on = $1 AND run_id = $2
+            AND org_id = $3 AND project_id = $4
+            AND scope = 'group'
+        ) AS present`;
+
 export class MetricReader {
   constructor(private readonly pool: pg.Pool) {}
 
@@ -164,6 +173,18 @@ export class MetricReader {
       percentilesOk: (r.percentiles_ok ?? {}) as Record<string, number>,
       percentilesKo: (r.percentiles_ko ?? {}) as Record<string, number>,
     }));
+  }
+
+  async hasGroupSeries(
+    scope: ProjectScope,
+    runId: string,
+    runStartedOn: Date,
+  ): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      HAS_GROUP_SERIES_SQL,
+      [runStartedOn, runId, scope.orgId, scope.projectId],
+    );
+    return rows[0]?.present === true;
   }
 
   /** Both status histograms for one (scope, name, family). Null when the row has none. */

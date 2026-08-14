@@ -84,6 +84,20 @@ it('asks for both families at group scope', () => {
   }
   expect(dist.some((u) => u.includes('family=group_cumulated'))).toBe(true);
   expect(dist.some((u) => u.includes('family=group_duration'))).toBe(true);
+
+  // The two percentiles-over-time charts fetch the same way: same scope and
+  // name, a DIFFERENT family each. Without this, a page that passed
+  // 'group_cumulated' to both `seriesQuery` calls would still make every
+  // test in this file pass — `SeriesResponseSchema` had no `family` field to
+  // discriminate the RESPONSE, so this asserts on the REQUEST instead.
+  const series = urls.filter((u) => u.includes('/series'));
+  expect(series).toHaveLength(2);
+  for (const url of series) {
+    expect(url).toContain('scope=group');
+    expect(url).toContain(`name=${encodeURIComponent('Catalog/Recommendations')}`);
+  }
+  expect(series.some((u) => u.includes('family=group_cumulated'))).toBe(true);
+  expect(series.some((u) => u.includes('family=group_duration'))).toBe(true);
 });
 
 it('gives each distribution its own figure identity', async () => {
@@ -137,19 +151,56 @@ it('gives each distribution its own figure identity', async () => {
   });
 });
 
-it('renders both percentile charts, saying the series was never recorded', async () => {
-  vi.stubGlobal('fetch', () => Promise.resolve(new Response('{}', { status: 500 })));
+/**
+ * SUPERSEDES a pre-piece-6 version of this test that stubbed `/series` as a
+ * bare 500 and asserted "not recorded" text. That was only ever true because
+ * GroupDetail used to render `Undrawn` unconditionally, without fetching
+ * anything — piece 6 makes the fetch real, so a genuine 500 now correctly
+ * surfaces `Payload`'s own generic explain() text (already covered, once, by
+ * `payload.test.tsx`), not this run-specific sentence. The scenario that
+ * actually reaches `NO_GROUP_SERIES` is a 200 with `groupSeriesAvailable:
+ * false`, which is what the appended test above exercises for
+ * `group_cumulated` alone; this one closes the `group_duration` gap that test
+ * leaves, and keeps this file's original "present, in their §13.4 positions —
+ * not omitted" guarantee for BOTH families.
+ */
+it('renders both percentile charts, stating the run-specific gap for each family', async () => {
+  vi.stubGlobal('fetch', (input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes('/series')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ...fixture.groupSeries,
+            family,
+            groupSeriesAvailable: false,
+            buckets: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response('{}', { status: 500 }));
+  });
 
-  const { findByTestId } = renderGroupDetail('Cart');
+  renderGroupDetail('Cart');
 
-  // Present, in their §13.4 positions — not omitted.
-  for (const id of ['percentiles-group_cumulated', 'percentiles-group_duration']) {
-    const figure = await findByTestId(`chart-${id}`);
-    // The data table is the parity surface and must exist even undrawn.
-    expect(figure).toBeInTheDocument();
-    // Names the CAUSE, not merely the absence.
-    expect(figure.textContent).toMatch(/not recorded/i);
-  }
+  // `waitFor`, not a single `findByTestId`: `Payload` renders `Undrawn` under
+  // this SAME per-family slot id while `/series` is still pending, so a
+  // single lookup can resolve against that pending-state figure before the
+  // mocked fetch settles (see the `waitFor` comment above, on the distribution
+  // identity test, for the same race).
+  await waitFor(() => {
+    for (const id of ['percentiles-group_cumulated', 'percentiles-group_duration']) {
+      const figure = screen.getByTestId(`chart-${id}`);
+      // The data table is the parity surface and must exist even undrawn.
+      expect(within(figure).getByTestId(`chart-data-${id}`)).toBeInTheDocument();
+      // Names the run, not the product — the platform records these now.
+      expect(figure.textContent).toMatch(/this run/i);
+      expect(figure.textContent).not.toMatch(/platform/i);
+    }
+  });
 });
 
 /**
@@ -229,4 +280,59 @@ it('renders each family’s own row from a loaded /stats, and both statuses when
     await screen.findByText('This run recorded no cumulated response time for Nope.'),
   ).toBeInTheDocument();
   expect(screen.getByText('This run recorded no duration for Nope.')).toBeInTheDocument();
+});
+
+it('draws both percentile charts when the run has group series', async () => {
+  const series = fixture.groupSeries;
+  vi.stubGlobal('fetch', (input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes('/series')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
+      return Promise.resolve(
+        new Response(JSON.stringify({ ...series, family }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
+    return Promise.resolve(new Response('{}', { status: 500 }));
+  });
+
+  renderGroupDetail('Cart');
+
+  await waitFor(() => {
+    expect(screen.getByTestId('chart-percentiles-group_cumulated')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-percentiles-group_duration')).toBeInTheDocument();
+  });
+  // DRAWN, not stated: the gap sentence must be gone.
+  expect(screen.queryByText(/not recorded/i)).not.toBeInTheDocument();
+});
+
+it('states a RUN-specific gap when the run has no group series', async () => {
+  vi.stubGlobal('fetch', (input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes('/series')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ...fixture.groupSeries,
+            family,
+            groupSeriesAvailable: false,
+            buckets: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response('{}', { status: 500 }));
+  });
+
+  renderGroupDetail('Cart');
+
+  await waitFor(() => {
+    const figure = screen.getByTestId('chart-percentiles-group_cumulated');
+    // About THIS RUN, not about the platform — the platform records these now.
+    expect(figure.textContent).toMatch(/this run/i);
+    expect(figure.textContent).not.toMatch(/platform/i);
+  });
 });

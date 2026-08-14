@@ -217,7 +217,7 @@ describe('MetricWriter / MetricReader', () => {
     expect(scanned).toBe(1);
   });
 
-  it('keeps family fourth-from-last in the series primary key', async () => {
+  it('keeps family second-from-last in the series primary key', async () => {
     // 0001_init records that there is deliberately NO secondary index on
     // (run_started_on, run_id, scope, name), because those columns are a strict
     // prefix of this key and its btree already serves them. Reordering the key

@@ -100,8 +100,14 @@ The seemingly ambiguous third case — a run with no groups whatsoever — is
 unreachable: a reader arrives at a group page only from a group row in the
 statistics table, so a run with no groups has no page to ask from.
 
-Computed once per run on the series response, alongside `startedSplitAvailable`,
-which it deliberately mirrors.
+Computed on the series response, but only at group scope: the group page is
+this flag's one reader, so a run- or request-scope call gets `groupSeriesAvailable:
+false` as a fixed default rather than issuing the extra `EXISTS` to answer a
+question that reader never asked. `startedSplitAvailable` on the same response
+has no such condition — it derives from the returned rows themselves, so it is
+correct at every scope for free — which is the sense in which this flag
+deliberately mirrors it (same reason to exist, same response) without copying
+its unconditional computation.
 
 ---
 

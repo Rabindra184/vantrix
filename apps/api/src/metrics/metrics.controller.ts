@@ -142,18 +142,20 @@ export class MetricsController {
     @Req() req: Request,
     @Query('scope') scope = 'run',
     @Query('name') name = '',
+    @Query('family') family = 'response_time',
   ): Promise<SeriesResponse> {
     const run = await this.#run(req, id);
     const buckets = await this.reader.series(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
       run.startedOn,
-      { scope, name, family: 'response_time' },
+      { scope, name, family },
     );
     return {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
+      family: family as SeriesResponse['family'],
       bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
       // Derived from the rows themselves, not from a run-level flag: the
       // columns are nullable and only rows written after the migration carry
@@ -166,6 +168,14 @@ export class MetricsController {
       startedSplitAvailable:
         buckets.length > 0 &&
         buckets.every((b) => b.startedOkCount !== null && b.startedKoCount !== null),
+      // Only asked when it can matter. A run-scope or request-scope caller does
+      // not need it, and the extra query is not worth issuing for them.
+      groupSeriesAvailable:
+        scope === 'group'
+          ? await this.reader.hasGroupSeries(
+              { orgId: run.orgId, projectId: run.projectId }, run.id, run.startedOn,
+            )
+          : false,
       buckets,
     };
   }

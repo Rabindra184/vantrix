@@ -75,12 +75,16 @@ function explain(error: unknown, what: string): string {
  * the SAME markup a chart with an empty payload produces. A second, bespoke
  * "unavailable" shape here would be a second thing to keep accessible.
  *
- * EXPORTED for charts that have no query at all. Deviation D-14: a group's
- * percentiles-over-time have no group-scoped series to fetch — the engine has
- * never emitted one — so there is no `UseQueryResult` for `Payload` to key off.
- * The figure must still appear in its §13.4 position, saying why, for exactly
- * the reason a failed fetch must: a silently missing chart is indistinguishable
- * from one that was measured and found empty.
+ * EXPORTED for a chart whose query DID resolve, but whose payload itself says
+ * the data was never recorded for this run — a case `Payload`'s own loading
+ * and error branches do not cover, because the fetch neither is pending nor
+ * failed. GroupDetail's percentiles-over-time chart is the caller: it renders
+ * this from inside a `Payload` child, after `/series` has answered 200, once
+ * it reads `groupSeriesAvailable: false` on that response (D-14 — the run was
+ * ingested before per-group series existed). The figure must still appear in
+ * its §13.4 position, saying why, for exactly the reason a failed fetch must:
+ * a silently missing chart is indistinguishable from one that was measured
+ * and found empty.
  */
 export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
   // Memoised because `Chart`'s option effect depends on `data` by identity.

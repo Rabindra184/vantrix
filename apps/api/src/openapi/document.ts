@@ -201,7 +201,8 @@ const parameters: Record<string, ParameterObject> = {
     in: 'query',
     description:
       'The metric scope the named series belongs to. Not validated against the enum below — ' +
-      'an unrecognized combination of scope and name returns an empty "buckets" array, not an error.',
+      'an unrecognized combination of scope, name, and family returns an empty "buckets" ' +
+      'array, not an error.',
     schema: { type: 'string', enum: ['run', 'scenario', 'group', 'request'], default: 'run' },
   },
   SeriesName: {
@@ -211,6 +212,19 @@ const parameters: Record<string, ParameterObject> = {
       'The target name within "scope" (e.g. a request name). Empty string selects the ' +
       'run-level series, which has no name of its own.',
     schema: { type: 'string', default: '' },
+  },
+  SeriesFamily: {
+    name: 'family',
+    in: 'query',
+    description:
+      'The metric family of the target series — see "scope" above for what an unmatched ' +
+      'combination does. A group has two: "group_cumulated" (the sum of its child requests\' ' +
+      'durations) and "group_duration" (its own wall clock).',
+    schema: {
+      type: 'string',
+      enum: ['response_time', 'latency', 'group_cumulated', 'group_duration'],
+      default: 'response_time',
+    },
   },
   Limit: {
     name: 'limit',
@@ -466,7 +480,12 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Time-series buckets for one scope/name within a run',
       tags: ['metrics'],
       description: 'Requires the "read" scope.',
-      parameters: [parameters['RunId']!, parameters['SeriesScope']!, parameters['SeriesName']!],
+      parameters: [
+        parameters['RunId']!,
+        parameters['SeriesScope']!,
+        parameters['SeriesName']!,
+        parameters['SeriesFamily']!,
+      ],
       responses: {
         '200': { description: 'Time-series buckets.', content: json(schemaRef('SeriesResponse')) },
         '400': ref('BadRequest'),
