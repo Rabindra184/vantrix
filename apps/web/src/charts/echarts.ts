@@ -10,7 +10,7 @@
  * If a chart needs something not registered below, add it HERE — never reach
  * into `echarts/charts` from a component.
  */
-import { BarChart, LineChart, PieChart } from 'echarts/charts';
+import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts';
 import {
   AxisPointerComponent,
   GridComponent,
@@ -21,12 +21,22 @@ import * as echarts from 'echarts/core';
 import { SVGRenderer } from 'echarts/renderers';
 
 echarts.use([
-  // The three mark types §13.2 needs: bars (indicators, distribution), lines
-  // (concurrent users, arrival rate, percentiles, requests/s, responses/s),
-  // and pie (the request-count donut ④).
+  // The four mark types §13.2 and §13.3 need: bars (indicators, distribution),
+  // lines (concurrent users, arrival rate, percentiles, requests/s,
+  // responses/s), pie (the request-count donut ④), and scatter (⑨, response
+  // time against global requests/s — the one chart that lives ONLY on a
+  // request's own page, which is why it outlived its omission here).
+  //
+  // AN UNREGISTERED SERIES TYPE FAILS SILENTLY. ECharts discards the series,
+  // logs to the console and draws the grid and axes anyway — so ⑨ shipped as an
+  // empty frame with a full data table beneath it, past a `<figure>` visibility
+  // check and a `path` count that the axis line alone satisfied. Anything added
+  // below needs an e2e assertion about its MARKS to be load-bearing; see
+  // `request-detail.spec.ts`'s scatter test.
   BarChart,
   LineChart,
   PieChart,
+  ScatterChart,
 
   GridComponent,
   LegendComponent,

@@ -64,6 +64,9 @@ test('every §13.3 element is on the page', async ({ page }) => {
   // The request page titles its rate charts DIFFERENTLY from the global page,
   // as Gatling's own request pages do.
   //
+  // (The scatter's own marks are asserted separately below — being visible and
+  // carrying a data table is not the same as having drawn anything.)
+  //
   // `getByText` (as the brief originally wrote it) is ambiguous here: each
   // chart's `<figcaption>`-like data-table `<caption>` opens with the same
   // words as the chart's own `<h3>` title ("Number of requests — every value
@@ -81,4 +84,37 @@ test('every §13.3 element is on the page', async ({ page }) => {
   // RQ-04, RQ-06 and RQ-10 do not exist: Gatling 3.15.1.2 reports no latency
   // (§A.9 F-2). A page that grew one would be beyond parity, not parity.
   await expect(page.getByText(/latency/i)).toHaveCount(0);
+});
+
+test('the scatter draws a mark for every point in its data table', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}/requests/${encodeURIComponent(NESTED)}`);
+
+  const chart = page.getByTestId('chart-scatter');
+  const svg = chart.locator('svg');
+  await expect(svg).toHaveCount(1);
+
+  // WHY THIS IS NOT `path.first()` — the assertion the §13.3 test above and
+  // `run-charts.spec.ts:218` share. A chart that drew NOTHING still has paths:
+  // ECharts lays out the grid and draws the axis line whether or not any series
+  // reached it. The scatter shipped blank behind exactly that assertion — its
+  // series type was never registered in `charts/echarts.ts`, so ECharts
+  // discarded it silently, leaving two paths of axis furniture, a visible
+  // <figure> and a complete data table. Every one of those passed.
+  //
+  // ONE MARK PER POINT is what distinguishes drawn from merely present, and the
+  // count is DERIVED from the table rather than written down: the table is the
+  // parity surface, so a re-captured fixture moves both sides together.
+  //
+  // Asserted as a LOWER BOUND because the furniture is counted too — 62 points
+  // draw 88 paths here. That is the honest form of the claim: the failure it
+  // exists to catch is zero marks, not an off-by-one, and pinning an exact
+  // total would break on an axis gaining a tick.
+  const points = await page.getByTestId('chart-data-scatter').locator('tbody tr').count();
+  expect(points).toBeGreaterThan(0);
+  await expect
+    .poll(() => svg.locator('path').count(), { message: 'scatter drew no marks' })
+    .toBeGreaterThanOrEqual(points);
 });
