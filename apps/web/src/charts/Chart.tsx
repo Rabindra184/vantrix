@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Card from '../components/Card';
 import DataTable, { formatCell } from './DataTable';
 import { echarts } from './echarts';
 import {
@@ -408,7 +409,7 @@ export default function Chart({
   }, [data, kind, stacked, horizontal, roles, yAxisType, yAxisName, xAxisName, mode, assignment]);
 
   return (
-    <figure data-testid={`chart-${id}`} className="flex flex-col gap-2 m-0">
+    <Card as="figure" data-testid={`chart-${id}`}>
       <h3 className="text-lg font-semibold">{title}</h3>
 
       {isEmpty ? (
@@ -442,6 +443,6 @@ export default function Chart({
       )}
 
       <DataTable id={id} caption={title} columns={data.columns} rows={data.rows} />
-    </figure>
+    </Card>
   );
 }
