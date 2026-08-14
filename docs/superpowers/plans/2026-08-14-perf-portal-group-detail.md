@@ -587,6 +587,24 @@ const FAMILIES = [
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 ```
 
+**First, `IndicatorsChart` needs a `noun`.** Task 1 left it hardcoding
+`'request'` when it calls `toRowIndicators`, so a group whose row is absent
+would render "This run recorded no **request** named Cart". Add the prop:
+
+```tsx
+  /** What the subject is called when there is nothing to fold. */
+  readonly noun?: string;
+```
+
+and use it in the transform call, defaulting so the request page is unchanged:
+
+```tsx
+        : toRowIndicators(stats, row, label, noun ?? 'request'),
+```
+
+adding `noun` to the `useMemo` dependency array. The group page passes
+`noun="group"` in Step 3 below.
+
 Inside the component, beside the `stats` query:
 
 ```tsx
@@ -611,6 +629,7 @@ statistics sections:
             stats={data}
             row={groupRow(data, name, 'group_cumulated')}
             label={name}
+            noun="group"
           />
         )}
       </Payload>
