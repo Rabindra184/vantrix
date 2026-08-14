@@ -27,7 +27,24 @@ const BAND_LABEL: Record<Band, string> = {
  */
 const DEFAULT_BANDS: readonly Band[] = ['min', 'p50', 'p75', 'p95', 'p99', 'max'];
 
-export default function PercentilesChart({ series }: { readonly series: SeriesResponse }) {
+/**
+ * `id` and `title` are props because the GROUP detail page renders TWO of these
+ * — one per metric family — and a component that names itself cannot appear
+ * twice. That is true of the figure, and doubly so here: this chart owns a
+ * scale toggle and a band selector, so a hardcoded testid gives a page two
+ * controls a test cannot tell apart. Every testid below derives from `id`.
+ *
+ * Defaults keep the run and request pages, which render exactly one, unchanged.
+ */
+export default function PercentilesChart({
+  series,
+  id = 'percentiles',
+  title = 'Response time percentiles over time',
+}: {
+  readonly series: SeriesResponse;
+  readonly id?: string;
+  readonly title?: string;
+}) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
 
@@ -51,7 +68,7 @@ export default function PercentilesChart({ series }: { readonly series: SeriesRe
                 key={band}
                 type="button"
                 aria-pressed={on}
-                data-testid={`band-${band}`}
+                data-testid={`band-${band}-${id}`}
                 onClick={() => toggle(band)}
                 className={`rounded border px-2 py-0.5 text-sm ${
                   on
@@ -67,7 +84,7 @@ export default function PercentilesChart({ series }: { readonly series: SeriesRe
 
         <button
           type="button"
-          data-testid="scale-toggle"
+          data-testid={`scale-toggle-${id}`}
           aria-pressed={scale === 'log'}
           onClick={() => setScale((s) => (s === 'log' ? 'value' : 'log'))}
           className="rounded border border-[var(--color-border)] px-2 py-0.5 text-sm text-[var(--color-text-muted)]"
@@ -77,8 +94,8 @@ export default function PercentilesChart({ series }: { readonly series: SeriesRe
       </div>
 
       <Chart
-        id="percentiles"
-        title="Response time percentiles over time"
+        id={id}
+        title={title}
         data={data}
         kind="line"
         // Log by default. A log axis cannot render a zero or a null as a
