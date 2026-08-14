@@ -76,11 +76,26 @@ const FAMILIES = [
  * must not say "platform" for the same reason: naming the product, even in
  * passing, reads as the product being at fault rather than this one run's
  * ingestion predating the capability.
+ *
+ * NO CLAIM ABOUT THE REST OF THE PAGE — THIS IS THE THIRD DRAFT TO SAY SO, AND
+ * THE THIRD TO STRIKE A REASSURING CLOSING CLAUSE. The first draft closed with
+ * "...and are complete"; the second, after that was struck, closed with
+ * "...are computed from measurements this run does carry" — a softer claim,
+ * but the same shape of claim, and it failed for the same reason. `Undrawn`
+ * renders this string UNCONDITIONALLY, with no view of what `/stats` or
+ * `/distribution` are doing one section up: `/stats` and `/series` are
+ * independent queries, so `/stats` can be rendering `<p role="alert">` in
+ * place of a row (`TableSection`'s error branch) at the exact moment `/series`
+ * resolves with `groupSeriesAvailable: false`; `/distribution` can 404 for a
+ * completed run with no histogram at all, which `payload.tsx` documents as
+ * reachable. Either way, a clause here claiming the sections above are intact
+ * would be visibly contradicted by them. If you want to reassure the reader
+ * about the rest of the page, that has to come from a component that can see
+ * the other queries' state — not from this static string.
  */
 const NO_GROUP_SERIES =
   'This run was ingested before per-group time series were captured, so percentiles over ' +
-  'time cannot be drawn for it. The statistics and distribution above are computed from ' +
-  'measurements this run does carry.';
+  'time cannot be drawn for it.';
 
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 

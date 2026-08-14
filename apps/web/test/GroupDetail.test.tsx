@@ -277,7 +277,7 @@ it('draws both percentile charts when the run has group series', async () => {
     return Promise.resolve(new Response('{}', { status: 500 }));
   });
 
-  renderGroupDetail('/runs/r1/groups/Cart');
+  renderGroupDetail('Cart');
 
   await waitFor(() => {
     expect(screen.getByTestId('chart-percentiles-group_cumulated')).toBeInTheDocument();
@@ -301,7 +301,7 @@ it('states a RUN-specific gap when the run has no group series', async () => {
     return Promise.resolve(new Response('{}', { status: 500 }));
   });
 
-  renderGroupDetail('/runs/r1/groups/Cart');
+  renderGroupDetail('Cart');
 
   await waitFor(() => {
     const figure = screen.getByTestId('chart-percentiles-group_cumulated');
