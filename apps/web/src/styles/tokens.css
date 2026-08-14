@@ -2,11 +2,15 @@
  * Design tokens as CSS custom properties. Consumed by Tailwind (see
  * tailwind config / utility classes) and, later, by charts.
  *
- * Light values live under :root. Dark values apply automatically via
- * prefers-color-scheme, and are re-assertable by a future theme toggle
- * through [data-theme="light"] / [data-theme="dark"], which must win over
- * prefers-color-scheme in both directions - hence those selectors are
- * declared after the media query.
+ * Three blocks declare these tokens. Light values live under the top-level
+ * root rule. Dark values apply automatically via prefers-color-scheme,
+ * scoped so a future explicit light override still wins over a dark OS
+ * setting. A future theme toggle re-asserts the dark values through
+ * `[data-theme="dark"]`, which must win over prefers-color-scheme — hence it
+ * is declared after the media query. There is no `[data-theme="light"]`
+ * block: the media query's own scoping already lets an explicit light theme
+ * beat a dark OS setting, so a light block would only be a second copy of
+ * the light values that could drift from the root rule.
  *
  * Status colours (passed / failed / not_applicable / pending) are tokens
  * only. Colour is never the only signal for status - consuming components
@@ -40,18 +44,48 @@
  * family every other status hex here comes from.
  *
  * Like the palette, these are mirrored in apps/web/src/charts/theme.ts and
- * apps/web/test/palette.test.ts fails if the two disagree - in any of the four
- * blocks. Edit the hexes there, not here.
+ * apps/web/test/palette.test.ts fails if the two disagree - in any of the
+ * three blocks. Edit the hexes there, not here.
  */
 
 @import 'tailwindcss';
 
+/*
+ * `@theme inline` publishes the short Tailwind-facing names (`bg-surface`,
+ * `border-divider`, `bg-accent` / `text-accent`, and so on) as aliases of the
+ * runtime tokens below. Three of the ten aliases below point at a
+ * DIFFERENTLY-NAMED runtime token — `--color-surface-card`, `--color-rule`,
+ * `--color-accent-base` — because a key that reads a var() of its OWN name
+ * (`--color-surface: var(--color-surface)`) resolves to nothing, silently.
+ * The other seven have no such collision and keep the same name on both
+ * sides.
+ */
+@theme inline {
+  --color-page: var(--color-surface-page);
+  --color-surface: var(--color-surface-card);
+  --color-sidebar: var(--color-surface-sidebar);
+  --color-sunken: var(--color-surface-sunken);
+  --color-default: var(--color-border);
+  --color-divider: var(--color-rule);
+  --color-primary: var(--color-text-primary);
+  --color-muted: var(--color-text-muted);
+  --color-subtle: var(--color-text-subtle);
+  --color-accent: var(--color-accent-base);
+}
+
 :root {
-  --color-surface: #ffffff;
-  --color-surface-raised: #f4f5f7;
-  --color-text-primary: #14171a;
-  --color-text-muted: #5b6470;
-  --color-border: #d7dbe0;
+  --color-surface-page: #f8fafc;
+  --color-surface-card: #ffffff;
+  --color-surface-sidebar: #ffffff;
+  --color-surface-sunken: #f1f5f9;
+  --color-border: #e2e8f0;
+  --color-rule: #f1f5f9;
+  --color-text-primary: #0f172a;
+  --color-text-muted: #64748b;
+  --color-text-subtle: #94a3b8;
+  --color-accent-base: #4f46e5;
+  --color-accent-foreground: #ffffff;
+  --color-ring: #6366f1;
 
   --color-status-passed: #1a7f37;
   --color-status-failed: #cf222e;
@@ -74,11 +108,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --color-surface: #14171a;
-    --color-surface-raised: #1e2226;
-    --color-text-primary: #f4f5f7;
-    --color-text-muted: #9aa4b2;
-    --color-border: #30363d;
+    --color-surface-page: #0f172a;
+    --color-surface-card: #1e293b;
+    --color-surface-sidebar: #0f172a;
+    --color-surface-sunken: #334155;
+    --color-border: #334155;
+    --color-rule: #1e293b;
+    --color-text-primary: #f8fafc;
+    --color-text-muted: #94a3b8;
+    --color-text-subtle: #64748b;
+    --color-accent-base: #818cf8;
+    --color-accent-foreground: #0f172a;
+    --color-ring: #818cf8;
 
     --color-status-passed: #3fb950;
     --color-status-failed: #f85149;
@@ -106,11 +147,18 @@
    existing in two places that can disagree. */
 
 [data-theme='dark'] {
-  --color-surface: #14171a;
-  --color-surface-raised: #1e2226;
-  --color-text-primary: #f4f5f7;
-  --color-text-muted: #9aa4b2;
-  --color-border: #30363d;
+  --color-surface-page: #0f172a;
+  --color-surface-card: #1e293b;
+  --color-surface-sidebar: #0f172a;
+  --color-surface-sunken: #334155;
+  --color-border: #334155;
+  --color-rule: #1e293b;
+  --color-text-primary: #f8fafc;
+  --color-text-muted: #94a3b8;
+  --color-text-subtle: #64748b;
+  --color-accent-base: #818cf8;
+  --color-accent-foreground: #0f172a;
+  --color-ring: #818cf8;
 
   --color-status-passed: #3fb950;
   --color-status-failed: #f85149;

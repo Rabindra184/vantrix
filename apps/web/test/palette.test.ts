@@ -8,10 +8,12 @@ import {
   CATEGORICAL_DARK,
   GRIDLINE,
   STATUS_COLORS,
+  SURFACE_TOKENS,
   assignPalette,
   paletteFor,
   type ChartMode,
   type StatusRole,
+  type SurfaceRole,
 } from '../src/charts/theme.js';
 
 /**
@@ -156,17 +158,18 @@ describe.each(MODES)('the $mode categorical palette', ({ mode, palette, lo, hi }
  * is a test failure rather than a mystery about why a chart is the wrong
  * colour in one theme only.
  *
- * ALL FOUR BLOCKS, not just the `[data-theme]` pair. This test used to check
- * only `[data-theme='light']` and `[data-theme='dark']` — and nothing in
- * `apps/web/src` sets `data-theme`, so those two blocks are the only ones
- * currently INERT. The blocks actually in force are `:root` and the
- * `prefers-color-scheme: dark` media block, and neither was checked: a typo
- * there ships a wrong hue or a gridline that competes with the data on every
- * machine, `chartTheme` reads it live, renders it faithfully, and nothing
- * notices.
+ * ALL THREE BLOCKS, not just `:root`. There is no `[data-theme='light']`
+ * block — the media query's own `:not()` already lets an explicit light
+ * theme beat a dark OS setting — so the three that remain are `:root`, the
+ * `prefers-color-scheme: dark` media block, and `[data-theme='dark']`.
+ * Nothing in `apps/web/src` sets `data-theme` yet, so that last block is
+ * currently INERT, but the two actually in force — `:root` and the media
+ * block — are exactly the ones a typo would slip past unnoticed: it ships a
+ * wrong hue or a gridline that competes with the data on every machine,
+ * `chartTheme` reads it live, renders it faithfully, and nothing notices.
  *
  * `--chart-gridline` is included for the same reason. It was in none of the
- * four.
+ * three.
  */
 describe('tokens.css and theme.ts agree about the chart tokens', () => {
   const css = readFileSync(
@@ -274,15 +277,41 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   });
 
   /**
-   * And the band ramp, in the same four blocks. Task 4's fix round established
-   * that all four must carry the chart tokens: the two `[data-theme]` blocks
-   * are inert today, and the two that are actually in force were the ones
-   * nobody was checking.
+   * And the band ramp, in the same three blocks. Task 4's fix round
+   * established that all three must carry the chart tokens: the
+   * `[data-theme='dark']` block is inert today, and the two that are
+   * actually in force were the ones nobody was checking.
    */
   it.each(BLOCKS)('$where carries the band ramp theme.ts exports', ({ where, block, mode }) => {
     const body = block();
     const found = BAND_RAMP.map((role) => tokenIn(body, `--chart-band-${role.slice(5)}`, where));
     expect(found).toEqual(BAND_RAMP.map((role) => BAND_COLORS[mode][role].toUpperCase()));
+  });
+
+  /** The SURFACE, text and accent tokens (Task 2), in the same three blocks. */
+  const SURFACE_TOKENS_UNDER_TEST: readonly { role: SurfaceRole; token: string }[] = [
+    { role: 'page', token: '--color-surface-page' },
+    // Three tokens carry a longer name than their role so the @theme key can
+    // hold the short one. A key that reads a var of its OWN name is circular.
+    { role: 'card', token: '--color-surface-card' },
+    { role: 'sidebar', token: '--color-surface-sidebar' },
+    { role: 'sunken', token: '--color-surface-sunken' },
+    { role: 'border', token: '--color-border' },
+    { role: 'divider', token: '--color-rule' },
+    { role: 'text-primary', token: '--color-text-primary' },
+    { role: 'text-muted', token: '--color-text-muted' },
+    { role: 'text-subtle', token: '--color-text-subtle' },
+    { role: 'accent', token: '--color-accent-base' },
+    { role: 'accent-foreground', token: '--color-accent-foreground' },
+    { role: 'ring', token: '--color-ring' },
+  ];
+
+  it.each(BLOCKS)('$where carries the surface tokens theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = SURFACE_TOKENS_UNDER_TEST.map(({ token }) => tokenIn(body, token, where));
+    expect(found).toEqual(
+      SURFACE_TOKENS_UNDER_TEST.map(({ role }) => SURFACE_TOKENS[mode][role].toUpperCase()),
+    );
   });
 });
 

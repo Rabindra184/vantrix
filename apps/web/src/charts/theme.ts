@@ -310,6 +310,39 @@ export function assignPalette(
 }
 
 /**
+ * The SURFACE scale — everything that is not a mark and not a status.
+ *
+ * Slate rather than a chroma-zero grey, resolving an inconsistency in the
+ * reference this was taken from: its CSS surfaces are neutral while its own
+ * chart theme uses slate ink and slate gridlines. The charts are most of the
+ * page, so the charts win.
+ *
+ * `page` and `card` are DIFFERENT VALUES on purpose. A card is defined by
+ * sitting on a lighter/darker ground than the page; drawn white-on-white it is
+ * a wire outline, and twelve of them read as a grid rather than as twelve
+ * things.
+ */
+export type SurfaceRole =
+  | 'page' | 'card' | 'sidebar' | 'sunken' | 'border' | 'divider'
+  | 'text-primary' | 'text-muted' | 'text-subtle'
+  | 'accent' | 'accent-foreground' | 'ring';
+
+export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceRole, string>>>> = {
+  light: {
+    page: '#f8fafc', card: '#ffffff', sidebar: '#ffffff', sunken: '#f1f5f9',
+    border: '#e2e8f0', divider: '#f1f5f9',
+    'text-primary': '#0f172a', 'text-muted': '#64748b', 'text-subtle': '#94a3b8',
+    accent: '#4f46e5', 'accent-foreground': '#ffffff', ring: '#6366f1',
+  },
+  dark: {
+    page: '#0f172a', card: '#1e293b', sidebar: '#0f172a', sunken: '#334155',
+    border: '#334155', divider: '#1e293b',
+    'text-primary': '#f8fafc', 'text-muted': '#94a3b8', 'text-subtle': '#64748b',
+    accent: '#818cf8', 'accent-foreground': '#0f172a', ring: '#818cf8',
+  },
+};
+
+/**
  * One design token, read off the live document.
  *
  * `tokens.css` is the runtime source of truth — it is what a theme switch
@@ -415,6 +448,6 @@ export function chartTheme(mode: ChartMode): ChartTheme {
     ink: token('--color-text-primary', dark ? '#f4f5f7' : '#14171a'),
     inkMuted: token('--color-text-muted', dark ? '#9aa4b2' : '#5b6470'),
     gridline: token('--chart-gridline', GRIDLINE[mode]),
-    surface: token('--color-surface', dark ? '#14171a' : '#ffffff'),
+    surface: token('--color-surface-card', dark ? '#14171a' : '#ffffff'),
   };
 }
