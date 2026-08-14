@@ -135,6 +135,14 @@ const ENDPOINTS = [
     // about the same request.
     path: (id) => `/v1/runs/${id}/scatter?name=${encodeURIComponent('Cart/Add To Cart')}`,
   },
+  {
+    key: 'groupSeries',
+    // `Cart` because its two families diverge (141 ms cumulated against 225 ms
+    // duration); `Catalog/Recommendations` agrees to within 1 ms and would let
+    // a one-family implementation pass.
+    path: (id) =>
+      `/v1/runs/${id}/series?scope=group&name=${encodeURIComponent('Cart')}&family=group_cumulated`,
+  },
 ];
 
 /** Fails with the server's own words rather than a bare status code. */
@@ -235,6 +243,9 @@ async function main() {
     // that must fail loudly rather than silently produce a fixture as thin as
     // the one this task exists to fix.
     'scatterWithFailures.ko': captured.scatterWithFailures.ko.length,
+    // Empty here means the run was ingested without group series — the whole
+    // point of this capture — so it must fail loudly rather than be written.
+    'groupSeries.buckets': captured.groupSeries.buckets.length,
   };
   for (const [what, length] of Object.entries(nonEmpty)) {
     if (length === 0) {

@@ -92,6 +92,17 @@ describe('the captured reference-run payloads', () => {
     }
   });
 
+  it('carries a group series with buckets to draw', () => {
+    const s = SeriesResponseSchema.parse(fixture.groupSeries);
+    expect(s.scope).toBe('group');
+    expect(s.name).toBe('Cart');
+    expect(s.groupSeriesAvailable).toBe(true);
+    expect(s.buckets.length).toBeGreaterThan(0);
+    // OK-only percentiles are what GR-04 reads (§A.9 F-11); a bucket without
+    // them would make every percentile assertion vacuous.
+    expect(s.buckets.some((b) => b.percentilesOk !== null)).toBe(true);
+  });
+
   it('carries a second scatter payload whose KO series is non-empty', () => {
     // `scatter` above (`Catalog/List Products`) has no failures, so its `ko`
     // is `[]` and cannot discriminate a transform that plots the KO series
