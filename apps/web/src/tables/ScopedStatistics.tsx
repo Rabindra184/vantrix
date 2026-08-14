@@ -13,14 +13,26 @@ import { columnsFor, type Column } from './StatisticsTable';
  * set is a property of the run, and deriving it from a single row would hide a
  * column that row happens to have no value for.
  *
- * The group page calls this once per metric family.
+ * The group page calls this once per metric family — passing `heading` so the
+ * two calls stay distinguishable once their data has arrived. `TableSection`
+ * only shows its own `title` prop while a query is loading or has errored
+ * (`payload.tsx`'s early return skips it the moment `query.data` resolves), so
+ * without this override BOTH families would render the same literal
+ * "Statistics" heading in the case every real reader actually sees — a
+ * completed run — leaving cumulated and duration indistinguishable to
+ * anything reading the accessible tree rather than the surrounding prose.
  */
 export default function ScopedStatistics({
   row,
   rows,
+  heading = 'Statistics',
 }: {
   readonly row: StatRow;
   readonly rows: readonly StatRow[];
+  /** Defaults to 'Statistics' — RequestDetail's one table needs no
+   *  disambiguation, and that default keeps `TableSection`'s own `title="Statistics"`
+   *  prop true in both the loading and the loaded state there. */
+  readonly heading?: string;
 }) {
   const headingId = useId();
   const { executions, responseTime } = useMemo(() => columnsFor(rows), [rows]);
@@ -29,7 +41,7 @@ export default function ScopedStatistics({
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2 id={headingId} className="text-xl font-semibold">
-        Statistics
+        {heading}
       </h2>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

@@ -119,7 +119,7 @@ export default function GroupDetail() {
             return row === undefined ? (
               <p role="status">This run recorded no {title.toLowerCase()} for {name}.</p>
             ) : (
-              <ScopedStatistics row={row} rows={data.stats} />
+              <ScopedStatistics row={row} rows={data.stats} heading={title} />
             );
           }}
         </TableSection>
