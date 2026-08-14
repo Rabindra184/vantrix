@@ -17,18 +17,28 @@ import { DISTRIBUTION_ROLES, toDistribution } from './transforms/distribution';
  * `useMemo` on the transform because `Chart`'s option effect depends on `data`
  * by identity: a fresh object every render would re-issue `setOption` on every
  * render, including on every React Query background refetch.
+ *
+ * `id` and `title` are props because the GROUP page renders TWO of these — one
+ * per metric family — and a component that names itself cannot appear twice on
+ * a page: two figures would share a DOM id and a heading, and nothing on screen
+ * would distinguish cumulated response time from duration. Defaults keep the run
+ * and request pages, which render exactly one, unchanged.
  */
 export default function DistributionChart({
   distribution,
+  id = 'distribution',
+  title = 'Response time distribution',
 }: {
   readonly distribution: DistributionResponse;
+  readonly id?: string;
+  readonly title?: string;
 }) {
   const data = useMemo(() => toDistribution(distribution), [distribution]);
 
   return (
     <Chart
-      id="distribution"
-      title="Response time distribution"
+      id={id}
+      title={title}
       data={data}
       // A histogram, and STACKED. The two series are shares of one combined
       // total (§A.9 F-8), so a stack height is "this much of all the run's

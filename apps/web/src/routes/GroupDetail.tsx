@@ -122,7 +122,13 @@ export default function GroupDetail() {
 
       {FAMILIES.map(({ family, distribution }) => (
         <Payload key={family} query={distributions[family]} slots={[distribution]}>
-          {(data) => <DistributionChart distribution={data} />}
+          {(data) => (
+            <DistributionChart
+              distribution={data}
+              id={distribution.id}
+              title={distribution.title}
+            />
+          )}
         </Payload>
       ))}
     </div>

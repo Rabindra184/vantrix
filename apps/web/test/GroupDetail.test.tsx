@@ -1,12 +1,18 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import GroupDetail, { groupRow } from '../src/routes/GroupDetail';
 import fixture from './fixtures/reference-run.json';
 
 const stats = fixture.stats as Parameters<typeof groupRow>[0];
+
+// No global setup runs `afterEach(cleanup)` for us (see StatisticsTable.test.tsx).
+// This file now renders GroupDetail more than once, so a leftover tree from an
+// earlier test would sit in `document.body` alongside the next one and turn a
+// unique testid into a duplicate.
+afterEach(cleanup);
 
 describe('groupRow', () => {
   it('distinguishes the two families under one name', () => {
@@ -64,4 +70,47 @@ it('asks for both families at group scope', () => {
   }
   expect(dist.some((u) => u.includes('family=group_cumulated'))).toBe(true);
   expect(dist.some((u) => u.includes('family=group_duration'))).toBe(true);
+});
+
+it('gives each distribution its own figure identity', async () => {
+  vi.stubGlobal('fetch', (input: RequestInfo) => {
+    const url = String(input);
+    if (url.includes('/distribution')) {
+      const family = url.includes('group_duration') ? 'group_duration' : 'group_cumulated';
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            runId: '00000000-0000-4000-8000-000000000000',
+            scope: 'group',
+            name: 'Cart',
+            family,
+            labels: [0],
+            okCount: [1],
+            koCount: [0],
+            okPercent: [100],
+            koPercent: [0],
+            exactValues: true,
+            overflowCount: 0,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response('{}', { status: 500 }));
+  });
+
+  const { findByTestId } = render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={['/runs/r1/groups/Cart']}>
+        <Routes>
+          <Route path="/runs/:runId/groups/:name" element={<GroupDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  // Both DRAWN, each under its own id — not one id rendered twice.
+  await findByTestId('chart-distribution-group_cumulated');
+  await findByTestId('chart-distribution-group_duration');
+  expect(document.querySelectorAll('[data-testid="chart-distribution"]')).toHaveLength(0);
 });
