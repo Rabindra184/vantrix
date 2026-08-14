@@ -179,11 +179,14 @@ test('a completed run shows the eight overview charts, in §13.2 order, on their
   // NOT below the assertions panel any more — its own tab, entirely (design
   // §6). The run's own header persists across the tab switch (the layout
   // route mounts it once, design §3), so its `<h1>` is still the page's first
-  // heading; the Charts section itself carries no `<h2>` — it is named by
-  // `aria-label="Charts"`, not a heading a tab of the same name would then
-  // repeat — so "Assertions" and "Overview" appear nowhere on this tab.
+  // heading; the Charts section itself carries an `<h2>Charts</h2>` that is
+  // `sr-only` — present in the heading list below (so a screen-reader user
+  // navigating by heading can actually reach this section, which
+  // `aria-label` alone never let them do) but invisible on screen, so
+  // "Assertions" and "Overview" still appear nowhere on this tab.
   const headings = await page.getByRole('heading').allTextContents();
   expect(headings[0]).toMatch(/ParitySimulation/);
+  expect(headings).toContain('Charts');
   expect(headings).not.toContain('Assertions');
   expect(headings).not.toContain('Overview');
 });

@@ -11,7 +11,7 @@ afterEach(cleanup);
 
 const RUN = 'a66548b7-2962-43ff-8b93-7149a6f2a1b8';
 
-function renderAt(path: string, errorCount: number) {
+function renderAt(path: string, errorCount: number | null) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <RunTabs runId={RUN} errorCount={errorCount} />
@@ -46,6 +46,22 @@ describe('RunTabs', () => {
 
   it('shows the error count, including zero', () => {
     renderAt(`/runs/${RUN}`, 0);
-    expect(screen.getByRole('link', { name: /Errors/ })).toHaveTextContent('0');
+    // The exact name, not a substring: `toHaveTextContent('0')` would also
+    // pass for "Errors (10)" or the bare "Errors" this component renders for
+    // `null` — neither of which is what a genuine zero must say.
+    expect(screen.getByRole('link', { name: 'Errors (0)' })).toBeInTheDocument();
+  });
+
+  /**
+   * `null` — not yet known, distinct from a genuine zero — renders a bare
+   * label rather than a number that has not arrived. `RunShell.tsx` used to
+   * pass `errors.data?.errors.length ?? 0`, which made "not yet known" and
+   * "genuinely none" the same glyph; this is the case that distinction is
+   * for.
+   */
+  it('renders a bare label until the count is known', () => {
+    renderAt(`/runs/${RUN}`, null);
+    expect(screen.getByRole('link', { name: 'Errors' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Errors \(/ })).not.toBeInTheDocument();
   });
 });

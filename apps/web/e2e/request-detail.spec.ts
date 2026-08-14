@@ -26,6 +26,13 @@ test('a nested request page loads from a pasted URL, not just a click', async ({
   // The catch-all redirects an unmatched path to /runs, so a normalised %2F
   // shows up precisely here.
   expect(new URL(page.url()).pathname).not.toBe('/runs');
+
+  // §10-6 / §9 checkpoint 1: this page renders no run shell. Design §3a's own
+  // routing assumption was verified by hand once and never pinned — without
+  // this, the only thing that would notice a regression here is two unrelated
+  // `level: 1` heading assertions colliding in strict mode, which is not a
+  // guard, it is a coincidence.
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
 });
 
 test('the row link from the statistics table reaches the same page', async ({ page }) => {

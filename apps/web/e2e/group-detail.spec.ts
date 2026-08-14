@@ -36,6 +36,13 @@ test('a nested group page loads from a pasted URL', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(NESTED);
   expect(new URL(page.url()).pathname).not.toBe('/runs');
+
+  // §10-6 / §9 checkpoint 1: this page renders no run shell. Design §3a's own
+  // routing assumption was verified by hand once and never pinned — without
+  // this, the only thing that would notice a regression here is two unrelated
+  // `level: 1` heading assertions colliding in strict mode, which is not a
+  // guard, it is a coincidence.
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
 });
 
 test('both families and both distributions are on the page', async ({ page }) => {

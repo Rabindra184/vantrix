@@ -155,7 +155,7 @@ async function openRun(page: Page): Promise<string> {
 }
 
 /* ======================================================================== *
- * 1. BOTH TABLES ARE THERE, ABOVE THE CHARTS, HOLDING EVERY ROW
+ * 1. THE STATISTICS TABLE HOLDS EVERY ROW; THE ERRORS TABLE IS ITS OWN TAB
  * ======================================================================== */
 
 test('a completed run shows every request and group in one table', async ({ page }) => {

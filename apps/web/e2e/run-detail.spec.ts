@@ -76,7 +76,7 @@ test('the header states the run’s identity and its own peak', async ({ page })
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('example.ParitySimulation');
 
@@ -104,6 +104,17 @@ test('the header states the run’s identity and its own peak', async ({ page })
   // fails if the role regresses even though the name stays "complete".
   await expect(page.getByRole('group', { name: 'complete' })).toHaveCount(1);
   await expect(page.getByRole('img', { name: 'complete' })).toHaveCount(0);
+
+  // THE DURATION IS NAMED, NOT MERELY PRECEDED BY ITS NAME. The header used
+  // to be a `<dl>` for exactly this reason — "Duration" as `<dt>`, "63s" as
+  // `<dd>` — and lost it when the markup became a flat row of `<span>`s.
+  // `RunHeader.tsx` restores it the same way `run-status` above is already
+  // named: `role="group"` + `aria-label`, since a bare `<span>`'s implicit
+  // role is "generic", which is Name-from-PROHIBITED — jsdom's
+  // `dom-accessibility-api` does not consult a descendant's `aria-label`
+  // either way, so only Chromium's own tree, here, can see whether this
+  // actually holds.
+  await expect(page.getByTestId('run-duration')).toHaveAccessibleName(/^Duration: \d+s$/);
 });
 
 /**
@@ -391,7 +402,7 @@ test('switching tabs does not remount the shell', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // The heading is `RunHeader`'s, rendered by `RunShell` — the layout route
   // that is supposed to mount once and never again for as long as the run's
@@ -419,7 +430,7 @@ test('a processing run shows no tab strip', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedPendingRun(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // A tab strip over a run nobody has parsed yet is three doors onto three
   // empty rooms — the same mistake the Processing branch already refuses to
@@ -432,7 +443,7 @@ test('the errors tab counts distinct messages, not failed requests', async ({ pa
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // Spec §9-4. On the reference run these are 2 and 24 — distinct error
   // messages versus failed requests. Both are derived from the page's own
@@ -452,7 +463,7 @@ test('the errors tab counts distinct messages, not failed requests', async ({ pa
     (await page.getByTestId('stat-row-total').locator('td').nth(2).textContent())?.trim(),
   );
 
-  await page.goto(`/runs/${runId}/errors`);
+  await page.goto(runErrorsPath(runId));
   // `.count()` reads the DOM as it stands, with none of `expect(locator)`'s
   // auto-retry — unlike the `ko` read above, whose `.textContent()` DOES
   // auto-wait for its locator to attach. Without this, `.count()` can run
@@ -463,6 +474,6 @@ test('the errors tab counts distinct messages, not failed requests', async ({ pa
   expect(distinct).toBeGreaterThan(0);
   expect(distinct).not.toBe(ko);
 
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
   await expect(tab).toHaveText(`Errors (${distinct})`);
 });
