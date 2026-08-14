@@ -8,6 +8,7 @@ import {
   CATEGORICAL_DARK,
   GRIDLINE,
   STATUS_COLORS,
+  STATUS_MARK_COLORS,
   SURFACE_TOKENS,
   assignPalette,
   chartTheme,
@@ -259,11 +260,11 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
   });
 
   /**
-   * The STATUS palette (Task 5), for the same reason and in the same four
-   * blocks. `chartTheme` reads these off the live document and hands them to
-   * ECharts as the indicator bands' and the donut's colours; `STATUS_COLORS` is
-   * the compiled fallback the node-environment tests assert against. Two copies
-   * of eight values that must not disagree.
+   * The STATUS palette (Task 5), for the same reason and in the same three
+   * blocks. `routes/marks.tsx` reads `--color-status-*` (TEXT) directly off
+   * the document; `STATUS_COLORS` is the compiled fallback the
+   * node-environment tests assert against. Two copies of the same four values
+   * that must not disagree.
    */
   const STATUS_TOKENS: readonly { role: StatusRole; token: string }[] = [
     { role: 'passed', token: '--color-status-passed' },
@@ -277,6 +278,28 @@ describe('tokens.css and theme.ts agree about the chart tokens', () => {
     const found = STATUS_TOKENS.map(({ token }) => tokenIn(body, token, where));
     expect(found).toEqual(
       STATUS_TOKENS.map(({ role }) => STATUS_COLORS[mode][role].toUpperCase()),
+    );
+  });
+
+  /**
+   * And the status MARK palette, same shape, same three blocks.
+   * `liveMarkColors` reads `--chart-status-*` off the live document and hands
+   * it to `chartTheme().roles`, which `IndicatorsChart`, `RequestCountChart`
+   * and `ScatterChart` consume as a chart fill; `STATUS_MARK_COLORS` is the
+   * compiled fallback. Two palettes now, both mirrored, both gated.
+   */
+  const STATUS_MARK_TOKENS: readonly { role: StatusRole; token: string }[] = [
+    { role: 'passed', token: '--chart-status-passed' },
+    { role: 'pending', token: '--chart-status-pending' },
+    { role: 'neutral', token: '--chart-status-not-applicable' },
+    { role: 'failed', token: '--chart-status-failed' },
+  ];
+
+  it.each(BLOCKS)('$where carries the status MARK colours theme.ts exports', ({ where, block, mode }) => {
+    const body = block();
+    const found = STATUS_MARK_TOKENS.map(({ token }) => tokenIn(body, token, where));
+    expect(found).toEqual(
+      STATUS_MARK_TOKENS.map(({ role }) => STATUS_MARK_COLORS[mode][role].toUpperCase()),
     );
   });
 
@@ -454,15 +477,18 @@ describe('the indicator band ramp', () => {
   });
 
   /**
-   * The ramp's endpoints ARE the status colours — `--chart-band-under` and
-   * `--chart-band-failed` are declared as `var()` aliases precisely so this
-   * cannot drift. Asserted because it is what keeps red meaning "did not
-   * succeed" in the bands, in `routes/marks.tsx`, and in the donut ④ that
-   * paints the very same failed requests a few inches away.
+   * The ramp's endpoints ARE the status MARK colours — `--chart-band-under`
+   * and `--chart-band-failed` are declared as `var()` aliases of
+   * `--chart-status-passed` / `--chart-status-failed` precisely so this
+   * cannot drift. Bands are chart marks, not text, so the family they share
+   * is `STATUS_MARK_COLORS`, not the TEXT palette `routes/marks.tsx` reads.
+   * Asserted because it is what keeps red meaning "did not succeed" in the
+   * bands and in the donut ④ that paints the very same failed requests a few
+   * inches away.
    */
-  it.each(RAMP_MODES)('shares its endpoints with the status palette (%s)', (mode) => {
-    expect(BAND_COLORS[mode]['band-under']).toBe(STATUS_COLORS[mode].passed);
-    expect(BAND_COLORS[mode]['band-failed']).toBe(STATUS_COLORS[mode].failed);
+  it.each(RAMP_MODES)('shares its endpoints with the status mark palette (%s)', (mode) => {
+    expect(BAND_COLORS[mode]['band-under']).toBe(STATUS_MARK_COLORS[mode].passed);
+    expect(BAND_COLORS[mode]['band-failed']).toBe(STATUS_MARK_COLORS[mode].failed);
   });
 });
 
@@ -493,6 +519,31 @@ describe('the status palette', () => {
     for (const colour of Object.values(STATUS_COLORS[mode])) {
       expect(categorical.has(colour)).toBe(false);
     }
+  });
+});
+
+/**
+ * Text has to clear AA against the ground it is drawn on, and no single value
+ * does it in both themes: #047857 measures 5.48 on white and 2.67 on the dark
+ * card; #10b981 is the reverse. Hence two palettes, and hence this gate — the
+ * old palette had none, because Primer's values happened to pass.
+ */
+const AA = 4.5;
+
+function contrast(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const n = Number.parseInt(hex.slice(1), 16);
+    const ch = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch((n >> 16) & 0xff) + 0.7152 * ch((n >> 8) & 0xff) + 0.0722 * ch(n & 0xff);
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
+
+describe.each(['light', 'dark'] as const)('status TEXT is legible in %s mode', (mode) => {
+  const ground = SURFACE_TOKENS[mode].card;
+  it.each(['passed', 'pending', 'neutral', 'failed'] as const)('%s clears AA on the card', (role) => {
+    expect(contrast(STATUS_COLORS[mode][role], ground)).toBeGreaterThanOrEqual(AA);
   });
 });
 

@@ -81,8 +81,10 @@ export function paletteFor(mode: ChartMode): readonly string[] {
 
 /**
  * App-wide STATES: what the rest of the UI already spends on a status, a
- * verdict or an SLA outcome (`routes/marks.tsx`). Maps one-to-one onto the four
- * `--color-status-*` tokens; `neutral` is `--color-status-not-applicable`.
+ * verdict or an SLA outcome (`routes/marks.tsx`). Four states, each with TWO
+ * tokens now — `--color-status-*` as TEXT and `--chart-status-*` as MARK —
+ * because one colour cannot clear AA as text and still read well as a chart
+ * fill. `neutral` is `not-applicable` in both token families.
  */
 export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
 
@@ -101,8 +103,9 @@ export type StatusRole = 'passed' | 'pending' | 'neutral' | 'failed';
  * uses a genuine four-step ramp — `#68b65c` green, `#FFDD00` yellow, `#FFA900`
  * orange, `#f15b4f` red — and the monotonic ordering is the information.
  * `--chart-band-*` is that, in this design system's own hues: three of the four
- * are var() aliases of the status tokens so the endpoints keep agreeing with
- * the rest of the app, and only the orange step is new.
+ * are var() aliases of the status MARK tokens (`--chart-status-*`) so the
+ * endpoints keep agreeing with the rest of the app, and only the orange step
+ * is new. Bands are chart fills, not text, so they take the mark family.
  *
  * The ramp's measured properties, and the one gate it does NOT meet, are in
  * `palette.test.ts`.
@@ -112,11 +115,21 @@ export type BandRole = 'band-under' | 'band-between' | 'band-over' | 'band-faile
 /** Either semantic palette. What `Chart`'s `roles` prop accepts. */
 export type MarkRole = StatusRole | BandRole;
 
+/**
+ * Points every mark role at the token that carries its MARK colour.
+ *
+ * Status roles point at `--chart-status-*`, not `--color-status-*`: this is
+ * `liveMarkColors`' table, which feeds `chartTheme().roles`, which is only
+ * ever consumed as a chart FILL by `IndicatorsChart`, `RequestCountChart` and
+ * `ScatterChart`. `--color-status-*` is the TEXT palette and belongs to
+ * `routes/marks.tsx` alone — that file reads it directly off the document and
+ * never goes through this table.
+ */
 const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
-  passed: '--color-status-passed',
-  pending: '--color-status-pending',
-  neutral: '--color-status-not-applicable',
-  failed: '--color-status-failed',
+  passed: '--chart-status-passed',
+  pending: '--chart-status-pending',
+  neutral: '--chart-status-not-applicable',
+  failed: '--chart-status-failed',
   'band-under': '--chart-band-under',
   'band-between': '--chart-band-between',
   'band-over': '--chart-band-over',
@@ -124,38 +137,58 @@ const ROLE_TOKEN: Readonly<Record<MarkRole, string>> = {
 };
 
 /**
- * The compiled values of those tokens, per mode.
+ * Status as TEXT — labels, badges, `routes/marks.tsx`. Gated at 4.5:1 against
+ * `SURFACE_TOKENS[mode].card`, the ground the text is actually drawn on (see
+ * `palette.test.ts`'s "status TEXT is legible" gate).
  *
- * Mirrors `tokens.css` exactly, and `palette.test.ts` fails if the two ever
- * disagree in ANY of the four blocks — the same arrangement, and the same
- * guard, the `--chart-*` palette has. These are the FALLBACKS: `markColor`
- * reads the live document first, so a theme switch is picked up without a
- * rebuild, and these cover the two cases where reading fails honestly (no
- * document at all, and jsdom, which parses no stylesheet).
- *
- * The three aliased band values are written out as the hexes they resolve TO,
- * because a fallback is what is used when no stylesheet exists and there is
- * nothing for a `var()` to resolve against. `palette.test.ts` resolves the
- * indirection when it compares, so the alias cannot drift from its target.
+ * One colour cannot serve as both chart fill and body text: `#10b981`
+ * measures 2.54:1 on white, well under AA's 4.5, and there is no single value
+ * that clears AA on both a light and a dark card — `#047857` passes on white
+ * at 5.48 and fails on the dark card at 2.67; `#10b981` is exactly the
+ * reverse. Hence this palette is TEXT ONLY. Chart fills use
+ * `STATUS_MARK_COLORS` below.
  */
 export const STATUS_COLORS: Readonly<Record<ChartMode, Readonly<Record<StatusRole, string>>>> = {
-  light: { passed: '#1a7f37', pending: '#9a6700', neutral: '#6e7781', failed: '#cf222e' },
-  dark: { passed: '#3fb950', pending: '#d29922', neutral: '#8b949e', failed: '#f85149' },
+  light: { passed: '#047857', pending: '#b45309', neutral: '#64748b', failed: '#dc2626' },
+  dark: { passed: '#10b981', pending: '#f59e0b', neutral: '#94a3b8', failed: '#f87171' },
 };
 
-/** In SEVERITY ORDER. Do not reorder: `palette.test.ts` reads the ramp off it. */
+/**
+ * Status as a MARK — chart fills, where the colour sits in a shape large
+ * enough that the text contrast rule does not apply and the brighter value
+ * reads better. Same four roles, same order, different job: this is what
+ * `--chart-status-*` holds and what `liveMarkColors` resolves the status
+ * roles to.
+ */
+export const STATUS_MARK_COLORS: Readonly<Record<ChartMode, Readonly<Record<StatusRole, string>>>> = {
+  light: { passed: '#10b981', pending: '#f59e0b', neutral: '#94a3b8', failed: '#ef4444' },
+  dark: { passed: '#10b981', pending: '#f59e0b', neutral: '#94a3b8', failed: '#ef4444' },
+};
+
+/**
+ * In SEVERITY ORDER. Do not reorder: `palette.test.ts` reads the ramp off it.
+ *
+ * Bands are chart marks, not text, so all four steps are sourced from the
+ * MARK family — `STATUS_MARK_COLORS`' `passed`/`failed` for the two aliased
+ * endpoints, same as `tokens.css`'s `--chart-band-under`/`--chart-band-failed`
+ * now alias `--chart-status-passed`/`--chart-status-failed` rather than
+ * `--color-status-*`. `--chart-band-over` has no status equivalent — the ramp
+ * needs a fourth step between amber and red — and is `#f97316` in both modes.
+ * The mark palette does not vary by theme, so neither does the ramp built
+ * from it.
+ */
 export const BAND_COLORS: Readonly<Record<ChartMode, Readonly<Record<BandRole, string>>>> = {
   light: {
-    'band-under': '#1a7f37',
-    'band-between': '#9a6700',
-    'band-over': '#bc4c00',
-    'band-failed': '#cf222e',
+    'band-under': '#10b981',
+    'band-between': '#f59e0b',
+    'band-over': '#f97316',
+    'band-failed': '#ef4444',
   },
   dark: {
-    'band-under': '#3fb950',
-    'band-between': '#d29922',
-    'band-over': '#db6d28',
-    'band-failed': '#f85149',
+    'band-under': '#10b981',
+    'band-between': '#f59e0b',
+    'band-over': '#f97316',
+    'band-failed': '#ef4444',
   },
 };
 
@@ -167,10 +200,21 @@ export const BAND_RAMP: readonly BandRole[] = [
   'band-failed',
 ];
 
+/**
+ * The FALLBACK for a mark role — `STATUS_MARK_COLORS` or `BAND_COLORS`,
+ * never `STATUS_COLORS`, because every `MarkRole` is a chart FILL.
+ *
+ * `markColor` reads the live document first, so a theme switch is picked up
+ * without a rebuild; this is what is used when reading fails honestly (no
+ * document at all, and jsdom, which parses no stylesheet). Both source
+ * constants mirror `tokens.css`'s `--chart-status-*` and `--chart-band-*`
+ * exactly, and `palette.test.ts` fails if either ever disagrees, in any of
+ * the three blocks.
+ */
 function fallbackFor(role: MarkRole, mode: ChartMode): string {
   return role.startsWith('band-')
     ? BAND_COLORS[mode][role as BandRole]
-    : STATUS_COLORS[mode][role as StatusRole];
+    : STATUS_MARK_COLORS[mode][role as StatusRole];
 }
 
 export function markColor(role: MarkRole, mode: ChartMode): string {

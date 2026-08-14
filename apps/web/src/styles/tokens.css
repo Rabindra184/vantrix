@@ -16,6 +16,22 @@
  * only. Colour is never the only signal for status - consuming components
  * must always pair it with text and/or shape.
  *
+ * Status is TWO palettes, not one, because no single hex clears WCAG AA as
+ * text and still reads well as a chart fill:
+ *
+ *   --color-status-* is TEXT — labels, badges, routes/marks.tsx. Gated at
+ *   4.5:1 against --color-surface-card in each block.
+ *
+ *   --chart-status-* is the MARK palette — chart fills, read by
+ *   apps/web/src/charts/theme.ts's liveMarkColors and consumed only as a
+ *   fill by IndicatorsChart, RequestCountChart and ScatterChart.
+ *
+ * Both are mirrored from STATUS_COLORS / STATUS_MARK_COLORS in
+ * apps/web/src/charts/theme.ts, which is where the reasoning and the
+ * contrast gate live, and apps/web/test/palette.test.ts fails if this file
+ * and that module ever disagree, for either set, in any of the three blocks.
+ * Edit the hexes there, not here.
+ *
  * --chart-1 .. --chart-6 are the CATEGORICAL SERIES palette, in fixed
  * assignment order. They are NOT free-form decoration: their values are
  * mirrored from CATEGORICAL / CATEGORICAL_DARK in apps/web/src/charts/theme.ts,
@@ -36,12 +52,13 @@
  * and the ordering is the information - a band that reads as less severe than
  * the one below it is worse than no colour at all.
  *
- * Three of the four are var() aliases of the status tokens, so "the fastest
+ * Bands are chart marks, not text, so all four steps take the MARK family.
+ * Three of the four are var() aliases of --chart-status-*, so "the fastest
  * band is the passed colour" and "the failed band is the failed colour" stay
  * true by construction rather than by two hexes that happen to match. Only
  * --chart-band-over is its own value: the ramp needs a fourth step between
- * amber and red and the status palette has no orange. It is Primer's, the
- * family every other status hex here comes from.
+ * amber and red and the status palette has no orange. It is #f97316 in every
+ * block - the mark palette does not vary by theme, so neither does this ramp.
  *
  * Like the palette, these are mirrored in apps/web/src/charts/theme.ts and
  * apps/web/test/palette.test.ts fails if the two disagree - in any of the
@@ -87,10 +104,15 @@
   --color-accent-foreground: #ffffff;
   --color-ring: #6366f1;
 
-  --color-status-passed: #1a7f37;
-  --color-status-failed: #cf222e;
-  --color-status-not-applicable: #6e7781;
-  --color-status-pending: #9a6700;
+  --color-status-passed: #047857;
+  --color-status-failed: #dc2626;
+  --color-status-not-applicable: #64748b;
+  --color-status-pending: #b45309;
+
+  --chart-status-passed: #10b981;
+  --chart-status-failed: #ef4444;
+  --chart-status-not-applicable: #94a3b8;
+  --chart-status-pending: #f59e0b;
 
   --chart-1: #4f46e5;
   --chart-2: #0d9488;
@@ -100,10 +122,10 @@
   --chart-6: #e11d48;
   --chart-gridline: #e9ecf0;
 
-  --chart-band-under: var(--color-status-passed);
-  --chart-band-between: var(--color-status-pending);
-  --chart-band-over: #bc4c00;
-  --chart-band-failed: var(--color-status-failed);
+  --chart-band-under: var(--chart-status-passed);
+  --chart-band-between: var(--chart-status-pending);
+  --chart-band-over: #f97316;
+  --chart-band-failed: var(--chart-status-failed);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -121,10 +143,15 @@
     --color-accent-foreground: #0f172a;
     --color-ring: #818cf8;
 
-    --color-status-passed: #3fb950;
-    --color-status-failed: #f85149;
-    --color-status-not-applicable: #8b949e;
-    --color-status-pending: #d29922;
+    --color-status-passed: #10b981;
+    --color-status-failed: #f87171;
+    --color-status-not-applicable: #94a3b8;
+    --color-status-pending: #f59e0b;
+
+    --chart-status-passed: #10b981;
+    --chart-status-failed: #ef4444;
+    --chart-status-not-applicable: #94a3b8;
+    --chart-status-pending: #f59e0b;
 
     --chart-1: #6c71fe;
     --chart-2: #30a79a;
@@ -134,10 +161,10 @@
     --chart-6: #ee2f52;
     --chart-gridline: #262c33;
 
-    --chart-band-under: var(--color-status-passed);
-    --chart-band-between: var(--color-status-pending);
-    --chart-band-over: #db6d28;
-    --chart-band-failed: var(--color-status-failed);
+    --chart-band-under: var(--chart-status-passed);
+    --chart-band-between: var(--chart-status-pending);
+    --chart-band-over: #f97316;
+    --chart-band-failed: var(--chart-status-failed);
   }
 }
 
@@ -160,10 +187,15 @@
   --color-accent-foreground: #0f172a;
   --color-ring: #818cf8;
 
-  --color-status-passed: #3fb950;
-  --color-status-failed: #f85149;
-  --color-status-not-applicable: #8b949e;
-  --color-status-pending: #d29922;
+  --color-status-passed: #10b981;
+  --color-status-failed: #f87171;
+  --color-status-not-applicable: #94a3b8;
+  --color-status-pending: #f59e0b;
+
+  --chart-status-passed: #10b981;
+  --chart-status-failed: #ef4444;
+  --chart-status-not-applicable: #94a3b8;
+  --chart-status-pending: #f59e0b;
 
   --chart-1: #6c71fe;
   --chart-2: #30a79a;
@@ -173,8 +205,8 @@
   --chart-6: #ee2f52;
   --chart-gridline: #262c33;
 
-  --chart-band-under: var(--color-status-passed);
-  --chart-band-between: var(--color-status-pending);
-  --chart-band-over: #db6d28;
-  --chart-band-failed: var(--color-status-failed);
+  --chart-band-under: var(--chart-status-passed);
+  --chart-band-between: var(--chart-status-pending);
+  --chart-band-over: #f97316;
+  --chart-band-failed: var(--chart-status-failed);
 }
