@@ -23,6 +23,7 @@ import { formatStarted } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
+import RunShell from './RunShell';
 import RunStats from './RunStats';
 
 /**
@@ -250,60 +251,69 @@ function Ready({ run }: { run: RunResponse }) {
         </dl>
       </header>
 
-      <Assertions assertions={run.assertions} />
-
-      {/* §13.2 ⑤ and ⑥, ABOVE THE CHART STACK (tables design §7, §10).
-          Deliberately not in §13.2's own numeric order, which interleaves the
-          tables between the charts: the numbers a reader came to read are the
-          tables, the charts are how those numbers moved over the run, and
-          scrolling past eight figures to reach the p99 of one request is the
-          reading order nobody wants. The statistics table first and the errors
-          table beneath it, because the second is a breakdown of the first's
-          KO column. */}
-      <Tables runId={run.id} />
-
-      {/* Below the assertions, and inside this branch only. A processing run
-          (202) renders `Processing` instead and never reaches here — which is
-          what keeps the four metric queries from firing against a run whose
-          rows do not exist yet, and is why `api/metrics.ts` can use `apiFetch`
-          rather than `fetchRun`'s three-way status branch (design §6). The
-          tables above are inside the same branch for the same reason. */}
-      <Overview runId={run.id} />
+      {/* The run's three tabs — design §3, §6. `RunShell` is a LAYOUT ROUTE:
+          it mounts once here, inside this branch only, and its `<Outlet/>`
+          is what swaps between `RunOverviewTab`, `RunChartsTab` and
+          `RunErrorsTab` as the URL's last segment changes. A processing run
+          (202) renders `Processing` instead and never reaches here — which
+          is what keeps the tab content's metric queries from firing against
+          a run whose rows do not exist yet (design §3c), and is why
+          `api/metrics.ts` can use `apiFetch` rather than `fetchRun`'s
+          three-way status branch (design §6). */}
+      <RunShell run={run} />
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * The two parity tables, §13.2 ⑤⑥
+ * The Overview tab (index), §13.2 ⑤ and the assertions — design §6
  * ------------------------------------------------------------------ */
 
 /**
- * The stat tiles, the statistics table, and the errors table, each fed one
- * already-validated payload — the same division of labour `Overview` makes
- * with the charts: this component fetches, the three render, and none of the
- * three knows what a URL is.
+ * `/runs/:runId`, the index child under `RunShell` (design §3, §6).
  *
- * `statsQuery` IS ASKED FOR TWICE ON THIS PAGE — here and in `Overview` — AND
- * FETCHED ONCE. Both call sites name the same `statsQueryKey`, so TanStack
- * Query serves one request and one cache entry to both, which is precisely what
- * the key convention in `api/metrics.ts` exists for. Hoisting the query into
- * `Ready` and threading the payload down would also work, and would make the
- * chart stack take a prop for one of its four payloads and fetch the other
- * three — a shape that reads as though the two mattered differently.
+ * Assertions, then the stat tiles, then the statistics table: the numbers a
+ * reader came to read and the SLA verdict beside them, all on the tab that
+ * opens first. `RunChartsTab` and `RunErrorsTab` hold the eight figures and
+ * the errors table respectively — moved out to their own tabs rather than
+ * left on this one, which is what keeps the landing tab to the reading order
+ * `RunDetail.tsx` already argued for: "scrolling past eight figures to reach
+ * the p99 of one request is the reading order nobody wants."
  *
- * `RunStats` renders INSIDE `TableSection`'s own children callback, from the
- * SAME `data` the statistics table reads below it, rather than behind a
- * `TableSection` of its own: a failed or still-pending `/stats` then explains
- * itself once, in the one place this page already says so, instead of the
- * stat row silently rendering six dashes above an error the reader has to
- * notice separately.
+ * READS `runId` FROM `useParams`, not a prop — the same pattern
+ * `RequestDetail` and `GroupDetail` already use, and the reason `RunShell`'s
+ * `<Outlet/>` carries no context (see its own docstring). Assertions live
+ * only on the run body, so this re-asks for `runQueryKey(runId)` — the SAME
+ * key `RunDetail` already holds warm from its own poll, so this resolves
+ * from cache rather than firing a second request, exactly as `statsQuery`
+ * already does across this page's components.
  */
-function Tables({ runId }: { runId: string }) {
-  const stats = useQuery(statsQuery(runId));
-  const errors = useQuery(errorsQuery(runId));
+export function RunOverviewTab() {
+  const { runId } = useParams<{ runId: string }>();
+  const run = useQuery({
+    queryKey: runQueryKey(runId ?? ''),
+    queryFn: () => fetchRun(runId!),
+    enabled: runId !== undefined,
+  });
+  const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+
+  // Not reachable through the router: `RunShell` mounts this tab only once
+  // `RunDetail` has already resolved a `ready` run for this `runId`, and the
+  // query above is then served from that same warm cache entry. Guarded
+  // anyway so a render that somehow beat the cache is a blank tab rather than
+  // a crash on `run.data.run`.
+  if (runId === undefined || run.data === undefined || run.data.state !== 'ready') return null;
 
   return (
     <>
+      <Assertions assertions={run.data.run.assertions} />
+
+      {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
+          from the SAME `data` the statistics table reads below it, rather
+          than behind a `TableSection` of its own: a failed or still-pending
+          `/stats` then explains itself once, in the one place this page
+          already says so, instead of the stat row silently rendering six
+          dashes above an error the reader has to notice separately. */}
       <TableSection title="Statistics" query={stats}>
         {(data) => (
           <>
@@ -312,15 +322,35 @@ function Tables({ runId }: { runId: string }) {
           </>
         )}
       </TableSection>
-      <TableSection title="Errors" query={errors}>
-        {(data) => <ErrorsTable errors={data} />}
-      </TableSection>
     </>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * The Gatling overview, §13.2 ③④⑦⑦ᵇ⑧⑨⑩⑪
+ * The Errors tab, §13.2 ⑥ — design §6
+ * ------------------------------------------------------------------ */
+
+/**
+ * `/runs/:runId/errors`, a child under `RunShell` (design §3, §6).
+ *
+ * Its own fetch rather than a share of `RunOverviewTab`'s: `koCount` on the
+ * run-scope stats row is failed REQUESTS, a different number from the count
+ * of DISTINCT error messages this tab is about, and only `/errors` knows the
+ * second one.
+ */
+export function RunErrorsTab() {
+  const { runId } = useParams<{ runId: string }>();
+  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: runId !== undefined });
+
+  return (
+    <TableSection title="Errors" query={errors}>
+      {(data) => <ErrorsTable errors={data} />}
+    </TableSection>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The Charts tab, §13.2 ③④⑦⑦ᵇ⑧⑨⑩⑪ — design §6
  * ------------------------------------------------------------------ */
 
 /**
@@ -357,6 +387,8 @@ const RESPONSES_PER_SECOND: Slot = {
 };
 
 /**
+ * `/runs/:runId/charts`, a child under `RunShell` (design §3, §6).
+ *
  * Four fetches, eight charts (design §2) — and the charts do the fetching
  * nowhere: this is the only component on the page that calls a query factory,
  * and every chart below receives an already-validated payload as a prop.
@@ -367,19 +399,25 @@ const RESPONSES_PER_SECOND: Slot = {
  * adjacent in it, so no chart is displaced to keep a fetch tidy. If a future
  * chart broke that adjacency, the ORDER wins and this component grows a fifth
  * block — never the other way round.
+ *
+ * `aria-label="Charts"`, not an `<h2>` with `aria-labelledby`: a tab named
+ * Charts directly above a heading that also said Charts (or, before the tab
+ * strip existed, "Overview") would say it twice. The tab itself (Task 2's
+ * `RunTabs`) is this section's name for a sighted and a screen-reader user
+ * alike.
  */
-function Overview({ runId }: { runId: string }) {
-  const stats = useQuery(statsQuery(runId));
-  const users = useQuery(usersQuery(runId));
-  const distribution = useQuery(distributionQuery(runId));
-  const series = useQuery(seriesQuery(runId));
+export function RunChartsTab() {
+  const { runId } = useParams<{ runId: string }>();
+  const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+  const users = useQuery({ ...usersQuery(runId ?? ''), enabled: runId !== undefined });
+  const distribution = useQuery({
+    ...distributionQuery(runId ?? ''),
+    enabled: runId !== undefined,
+  });
+  const series = useQuery({ ...seriesQuery(runId ?? ''), enabled: runId !== undefined });
 
   return (
-    <section aria-labelledby="overview-heading" className="flex flex-col gap-8">
-      <h2 id="overview-heading" className="text-xl font-semibold">
-        Overview
-      </h2>
-
+    <section aria-label="Charts" className="flex flex-col gap-8">
       <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
         {(data) => (
           <>

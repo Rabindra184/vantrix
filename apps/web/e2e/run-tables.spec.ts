@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
 import { signIn } from './helpers.js';
+import { runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
  * §13.2 ⑤ the statistics table and ⑥ the errors table, on the run detail page,
@@ -10,9 +11,10 @@ import { signIn } from './helpers.js';
  * `ErrorsTable.test.tsx`, `buildTree.test.ts`) already pin the tree, the sort,
  * the filter, the columns and the shares against the captured fixture, in jsdom.
  * What they cannot reach is the MOUNT: that the run detail page fetches these
- * two payloads at all, that it puts both tables above the chart stack, that the
- * row links resolve to routes the router actually has, and that the accessible
- * names these tables were built around are the names a REAL ENGINE computes.
+ * two payloads at all, that the statistics table lives on the run's Overview
+ * tab and the errors table on its own (design §6), that the row links resolve
+ * to routes the router actually has, and that the accessible names these
+ * tables were built around are the names a REAL ENGINE computes.
  * That last one is not a formality — task 6 measured that jsdom's
  * `dom-accessibility-api` consults a descendant's `aria-labelledby` but not its
  * `aria-label`, and browsers do not all agree. This file is the first time
@@ -147,7 +149,7 @@ async function openRun(page: Page): Promise<string> {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
   await expect(statisticsTable(page)).toBeVisible();
   return runId;
 }
@@ -233,19 +235,23 @@ test('a completed run shows every request and group in one table', async ({ page
   // into their sum of the rows.
   await expect(page.locator('[data-testid="stat-row"][data-scope="run"]')).toHaveCount(0);
 
-  /* ---- both tables, ABOVE the chart stack (design §7, §10) ----
+  /* ---- the Overview tab holds exactly Assertions and Statistics (design §6) ----
    *
    * Through the section headings rather than pixel positions, so this survives
-   * any layout change that keeps the order. The charts are `<h3>`s inside
-   * `Overview`, so the level-2 list is exactly the page's four sections.
+   * any layout change that keeps the order. Errors and the eight charts moved
+   * to their own tabs; `Overview`'s own `<h2>` went with the split, deleted
+   * rather than left behind, since a tab named Overview directly above a
+   * heading that said Overview would say it twice.
    */
-  await expect(errorsTable(page)).toBeVisible();
   expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
     'Assertions',
     'Statistics',
-    'Errors',
-    'Overview',
   ]);
+
+  /* ---- and the errors table is one tab away, not a second scroll down ---- */
+  await page.goto(runErrorsPath(runId));
+  await expect(errorsTable(page)).toBeVisible();
+  expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual(['Errors']);
 });
 
 /* ======================================================================== *
@@ -424,7 +430,8 @@ test('the column headings are the payload’s own, and name themselves in Chromi
   // A percentile the payload does not configure gets no column.
   await expect(table.getByRole('columnheader', { name: '99.9th', exact: true })).toHaveCount(0);
 
-  // D-8: the errors table has three columns and no fourth.
+  // D-8: the errors table has three columns and no fourth — its own tab now.
+  await page.goto(runErrorsPath(runId));
   const errorHeaders = errorsTable(page).getByRole('columnheader');
   await expect(errorHeaders).toHaveText(['Error', 'Count', 'Percentage']);
 });
@@ -496,7 +503,15 @@ test('the table opens sorted worst-first, on the highest percentile the payload 
 test('the errors table shows each distinct error as a share of the run’s failures', async ({
   page,
 }) => {
-  const runId = await openRun(page);
+  // Not `openRun`: that helper lands on Overview, where the errors table
+  // no longer is (design §6) — this test is about the errors table alone,
+  // so it goes straight to its own tab.
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+  await expect(errorsTable(page)).toBeVisible();
+
   const json = await errors(page, runId);
   expect(json.errors.length, 'the reference run records two distinct errors').toBe(2);
   const total = json.errors.reduce((sum, row) => sum + row.count, 0);
@@ -565,13 +580,19 @@ test('the errors payload is fetched run-scoped, spelled exactly as the fixture c
    * omitted, and the reader's SQL is unconditionally scoped, so `/errors` and
    * `/errors?scope=run&name=` are identical. The real trap is the inverse —
    * `?name=X` WITHOUT `scope` is silently ignored and returns the run totals. */
+  // `startsWith('/v1/')` as well as `endsWith('/errors')`, now that the PAGE's
+  // own route is `/runs/:id/errors` (design §3) — a filter on the suffix
+  // alone would also catch the document navigation below and put a second,
+  // wrong entry in `seen`.
   const seen: string[] = [];
   page.on('request', (request) => {
     const url = new URL(request.url());
-    if (url.pathname.endsWith('/errors')) seen.push(`${url.pathname}${url.search}`);
+    if (url.pathname.startsWith('/v1/') && url.pathname.endsWith('/errors')) {
+      seen.push(`${url.pathname}${url.search}`);
+    }
   });
 
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runErrorsPath(runId));
   await expect(errorsTable(page)).toBeVisible();
 
   expect(seen).toEqual([`/v1/runs/${runId}/errors?scope=run&name=`]);

@@ -6,6 +6,7 @@ import {
   seedRunWithData,
 } from './fixtures.js';
 import { signIn } from './helpers.js';
+import { runChartsPath } from '../src/routes/paths.js';
 
 /**
  * The eight overview charts on the run detail page, in a real browser.
@@ -168,13 +169,13 @@ async function hoveredSecond(chart: Locator): Promise<string> {
   return /^\s*(-?[\d.]+)/.exec(text)?.[1] ?? '';
 }
 
-test('a completed run shows the eight overview charts, in §13.2 order, below the assertions', async ({
+test('a completed run shows the eight overview charts, in §13.2 order, on their own tab', async ({
   page,
 }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   for (const id of CHART_IDS) {
     await expect(page.getByTestId(`chart-data-${id}`)).toHaveCount(1);
@@ -189,13 +190,16 @@ test('a completed run shows the eight overview charts, in §13.2 order, below th
   );
   expect(rendered).toEqual(CHART_IDS.map((id) => `chart-${id}`));
 
-  // BELOW the assertions panel, which is where §13.2 puts them: the SLA
-  // verdict is what a reader opened the page for, and the charts are the
-  // evidence under it. Compared through the headings rather than pixel
-  // positions, so the check survives any layout change that keeps the order.
+  // NOT below the assertions panel any more — its own tab, entirely (design
+  // §6). The run's own header persists across the tab switch (the layout
+  // route mounts it once, design §3), so its `<h1>` is still the page's first
+  // heading; the Charts section itself carries no `<h2>` — it is named by
+  // `aria-label="Charts"`, not a heading a tab of the same name would then
+  // repeat — so "Assertions" and "Overview" appear nowhere on this tab.
   const headings = await page.getByRole('heading').allTextContents();
-  expect(headings.indexOf('Assertions')).toBeGreaterThanOrEqual(0);
-  expect(headings.indexOf('Overview')).toBeGreaterThan(headings.indexOf('Assertions'));
+  expect(headings[0]).toMatch(/ParitySimulation/);
+  expect(headings).not.toContain('Assertions');
+  expect(headings).not.toContain('Overview');
 });
 
 test('every chart actually draws — the real ECharts renders SVG marks for all eight', async ({
@@ -204,7 +208,7 @@ test('every chart actually draws — the real ECharts renders SVG marks for all 
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   // One <svg> per chart, each containing marks. This is the assertion that
   // fails if ECharts 6.1.0 does not initialise in a browser at all — which the
@@ -255,7 +259,7 @@ test('every chart actually draws in dark mode too, and the page background follo
   const runId = await seedRunWithData(admin.orgId);
   await page.emulateMedia({ colorScheme: 'dark' });
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   // The same "every chart draws marks" shape as the light-mode test above,
   // run under a forced dark `prefers-color-scheme`.
@@ -284,7 +288,7 @@ test("the requests/s and responses/s tables carry the API's own numbers, on thei
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   const series = await apiJson<SeriesPayload>(page, `/v1/runs/${runId}/series?scope=run&name=`);
   expect(series.buckets.length).toBeGreaterThan(0);
@@ -325,7 +329,7 @@ test('the distribution table reads at two decimals and keeps the exact percentag
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   const d = await apiJson<DistributionPayload>(
     page,
@@ -394,7 +398,7 @@ test('the time-linked charts share one crosshair', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   const requests = page.getByTestId('chart-requests-per-second');
   const users = page.getByTestId('chart-concurrent-users');
@@ -446,8 +450,11 @@ test('the time-linked charts share one crosshair', async ({ page }) => {
   }
 
   // Moving away takes it back. A pointer that appears once and sticks is a
-  // stale reading of a chart nobody is hovering.
-  await page.getByRole('heading', { name: 'Overview' }).hover();
+  // stale reading of a chart nobody is hovering. The "Overview" heading this
+  // used to hover is gone with the split (design §6) — the run's own `<h1>`,
+  // outside the chart stack and present on every tab, is an equally neutral
+  // target to move the mouse to.
+  await page.getByRole('heading', { level: 1 }).hover();
   await expect.poll(() => users.locator(AXIS_POINTER).count()).toBe(0);
 });
 
@@ -456,7 +463,7 @@ test('a processing run mounts no charts at all', async ({ page }) => {
   // A pending run no worker will ever pick up: `GET /v1/runs/:id` answers 202.
   const runId = await seedPendingRun(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   await expect(page.getByText(/still processing/i).first()).toBeVisible();
 
@@ -477,7 +484,7 @@ test('a completed run with no data explains every chart rather than showing empt
   // pass with the whole chart stack deleted.
   const runId = await seedCompleteRunWithoutMetrics(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   // All eight are present, in order — the sequence does not develop holes
   // because a payload was empty.
@@ -527,7 +534,7 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
 
   // WAIT FOR ALL FOUR PAYLOADS FIRST, which "all eight have drawn" proves.
   // A chart swaps from `RunDetail`'s loading figure to its real component when
@@ -597,7 +604,7 @@ test('the percentile chart draws on a log axis by default, and the toggle really
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
   await settled(page);
 
   const chart = page.getByTestId('chart-percentiles');
@@ -633,7 +640,7 @@ test('the tooltip reads at the same precision the data table does', async ({ pag
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
   await settled(page);
 
   // THE TOOLTIP IS THE SURFACE A SIGHTED READER ACTUALLY USES — the table is
@@ -670,7 +677,7 @@ test('the band selector adds and removes exactly the band it names', async ({ pa
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
   await settled(page);
 
   const chart = page.getByTestId('chart-percentiles');
@@ -700,7 +707,7 @@ test('the percentile table carries all ten bands while six are drawn', async ({ 
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
   await settled(page);
 
   const chart = page.getByTestId('chart-percentiles');
@@ -738,7 +745,7 @@ test('selecting every band draws all ten, which the palette used to forbid', asy
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
   await settled(page);
 
   const chart = page.getByTestId('chart-percentiles');
@@ -758,7 +765,7 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runChartsPath(runId));
   await settled(page);
 
   const chart = page.getByTestId('chart-percentiles');

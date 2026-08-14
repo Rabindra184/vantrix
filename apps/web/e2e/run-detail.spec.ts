@@ -9,6 +9,7 @@ import {
   seedRunWithNaAssertion,
 } from './fixtures.js';
 import { signIn } from './helpers.js';
+import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
  * The run detail page — the last screen of the parity shell, and the one the
@@ -46,7 +47,7 @@ test('shows the run header', async ({ page }) => {
   const runId = await seedRunWithData(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // The reference bundle's simulation is `example.ParitySimulation`
   // (read.integration.test.ts:75); the substring is what identifies it.
@@ -82,7 +83,7 @@ test('the stat tiles agree with the statistics table', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // `stat-row-total` is the All Requests row — the run's own totals, in its own
   // <tbody>, and the same row RunStats reads. NOT `stat-row`, which is the
@@ -101,7 +102,7 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
   const runId = await seedRunWithNaAssertion(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   const row = page.getByRole('row', { name: /not applicable/i });
   // Every `not.*` in this file is paired with a POSITIVE assertion on the
@@ -172,7 +173,7 @@ test('a not_applicable outcome and a passed outcome render differently on the pa
   const runId = await seedRunWithNaAndPassedAssertions(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   const outcomes = page.getByTestId('assertion-outcome');
   await expect(outcomes).toHaveCount(2);
@@ -215,7 +216,7 @@ test('a pending run says so rather than showing zeros', async ({ page }) => {
   const runId = await seedPendingRun(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   await expect(page.getByText(/still processing/i)).toBeVisible();
   // "rather than showing zeros" is the actual requirement, and it needs its
@@ -271,7 +272,7 @@ test('a pending run is asked about again', async ({ page }) => {
     if (request.url().includes(`/v1/runs/${runId}`)) polls += 1;
   });
 
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
   // The page is on screen and in its processing state before anything is
   // counted, so a failure below reads as "did not poll" rather than "never
   // loaded".
@@ -285,7 +286,7 @@ test('another org run is not readable', async ({ page }) => {
   const otherOrgRunId = await seedRunInOtherOrg();
 
   await signIn(page, admin);
-  await page.goto(`/runs/${otherOrgRunId}`);
+  await page.goto(runPath(otherOrgRunId));
 
   // The API's OWN words, not invented copy: RunsController.get throws
   // `new NotFoundException('No run <id> in this project.')`, which
@@ -312,6 +313,27 @@ test('another org run is not readable', async ({ page }) => {
   await expect(page.getByTestId('run-duration')).toHaveCount(0);
 });
 
+test('each tab is its own URL, reachable directly', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  // A hard load of each tab, never a click — this is what makes a link
+  // pasted into an incident channel land where it says it will.
+  await page.goto(runChartsPath(runId));
+  await expect(page.getByTestId('chart-percentiles')).toBeVisible();
+  await expect(page.getByTestId('stat-row-total')).toHaveCount(0);
+
+  await page.goto(runErrorsPath(runId));
+  await expect(page.getByTestId('error-row').first()).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+
+  // The bare path is Overview, so every link that predates tabs still works.
+  await page.goto(runPath(runId));
+  await expect(page.getByTestId('stat-row-total')).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+});
+
 test('a run that failed its SLA renders as a run, not as an error', async ({ page }) => {
   // 422 carries a full run body. Reading it as an error would tell the user
   // their most important run is unreadable.
@@ -319,7 +341,7 @@ test('a run that failed its SLA renders as a run, not as an error', async ({ pag
   const runId = await seedRunWithFailedAssertion(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   await expect(page.getByRole('heading', { name: /ParitySimulation/ })).toBeVisible();
   await expect(page.getByTestId('run-verdict')).toContainText(/failed/i);

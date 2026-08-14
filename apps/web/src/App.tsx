@@ -5,7 +5,7 @@ import GroupDetail from './routes/GroupDetail';
 import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
 import RequestDetail from './routes/RequestDetail';
-import RunDetail from './routes/RunDetail';
+import RunDetail, { RunChartsTab, RunErrorsTab, RunOverviewTab } from './routes/RunDetail';
 import RunList from './routes/RunList';
 import { DEFAULT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
 
@@ -22,7 +22,11 @@ export default function App() {
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>
           <Route path="/runs" element={<RunList />} />
-          <Route path="/runs/:runId" element={<RunDetail />} />
+          <Route path="/runs/:runId" element={<RunDetail />}>
+            <Route index element={<RunOverviewTab />} />
+            <Route path="charts" element={<RunChartsTab />} />
+            <Route path="errors" element={<RunErrorsTab />} />
+          </Route>
           {/* G-16's destinations. Inside the gate and the shell like every
               other run page: these are addresses of the product, not of a
               construction site, and a signed-out visitor to one should be
