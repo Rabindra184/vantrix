@@ -411,6 +411,7 @@
     "name": "",
     "bucketWidthMs": 1000,
     "startedSplitAvailable": true,
+    "groupSeriesAvailable": false,
     "buckets": [
       {
         "startOffsetMs": 1000,

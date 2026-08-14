@@ -97,6 +97,16 @@ export const SeriesResponseSchema = z.object({
    * recorded". Mirrors StatsResponse.configurable.
    */
   startedSplitAvailable: z.boolean(),
+  /**
+   * False when this run has no group-scope series at all — it was ingested
+   * before the platform recorded them. An empty `buckets` array is ALSO what a
+   * group with no traffic returns, so the two are indistinguishable without
+   * this; drawing empty axes would claim the group was measured and found idle.
+   *
+   * A run-level question, unlike `startedSplitAvailable`, which reads the rows:
+   * there the columns are nullable and the rows exist; here the rows are absent.
+   */
+  groupSeriesAvailable: z.boolean(),
   buckets: z.array(SeriesBucketSchema),
 });
 export type SeriesResponse = z.infer<typeof SeriesResponseSchema>;

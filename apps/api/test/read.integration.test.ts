@@ -228,6 +228,30 @@ describe('GET /v1/runs/:id/series', () => {
       res.body.buckets.reduce((a: number, b: { startedCount: number }) => a + b.startedCount, 0),
     ).toBe(895);
   });
+
+  it('reports group series as unavailable for a run that has none', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    // The only way to reach this state: this fixture has real group records
+    // ('Cart', 'Catalog', 'Catalog/Recommendations'), and the current engine
+    // and write pipeline persist group-scope series for every run that has
+    // any — there is no gate left to ingest through that skips them. Delete
+    // the rows the way a run ingested before that support existed would never
+    // have written them, mirroring the startedSplitAvailable pre-migration
+    // simulation in parity-endpoints.integration.test.ts.
+    await ctx.pool.query(`DELETE FROM run_series_bucket WHERE run_id = $1 AND scope = 'group'`, [id]);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${id}/series?scope=group&name=Cart&family=group_cumulated`)
+      .set(auth());
+
+    expect(res.status).toBe(200);
+    // Not "no data" — the run predates group series. An empty bucket array is
+    // also what a quiet group returns, which is why this flag exists.
+    expect(res.body.groupSeriesAvailable).toBe(false);
+    expect(res.body.buckets).toEqual([]);
+  });
 });
 
 describe('GET /v1/runs/:id/errors', () => {
