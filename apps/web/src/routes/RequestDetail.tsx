@@ -14,7 +14,7 @@ import PercentilesChart from '../charts/PercentilesChart';
 import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import ScatterChart from '../charts/ScatterChart';
 import ErrorsTable from '../tables/ErrorsTable';
-import RequestStatistics from '../tables/RequestStatistics';
+import ScopedStatistics from '../tables/ScopedStatistics';
 import { Payload, TableSection, type Slot } from './payload';
 
 /** §13.3's chart elements — ② ③ ⑤ ⑦ ⑧ ⑨ — in that order. Ids match each
@@ -110,7 +110,7 @@ export default function RequestDetail() {
           return row === undefined ? (
             <p role="status">This run recorded no request named {name}.</p>
           ) : (
-            <RequestStatistics row={row} rows={data.stats} />
+            <ScopedStatistics row={row} rows={data.stats} />
           );
         }}
       </TableSection>

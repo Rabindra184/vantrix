@@ -3,7 +3,7 @@ import { useId, useMemo } from 'react';
 import { columnsFor, type Column } from './StatisticsTable';
 
 /**
- * §13.3 ① — one request's statistics, in §A.5's full column set (RQ-01).
+ * §13.3 ① — renders §A.5's full column set for one row at any scope (RQ-01).
  *
  * ONE ROW, SAME COLUMNS. The columns come from `columnsFor` rather than from a
  * list here, so the percentile columns are the ones the payload carries and
@@ -12,8 +12,10 @@ import { columnsFor, type Column } from './StatisticsTable';
  * `rows` is the WHOLE payload's rows, not just this one: the percentile column
  * set is a property of the run, and deriving it from a single row would hide a
  * column that row happens to have no value for.
+ *
+ * The group page calls this once per metric family.
  */
-export default function RequestStatistics({
+export default function ScopedStatistics({
   row,
   rows,
 }: {
