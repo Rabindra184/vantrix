@@ -508,6 +508,28 @@ persists `histogram_ok`/`histogram_ko` on every stat row, and `RollupBuilder`
 builds them unconditionally for every scope. The endpoint already takes `family`
 (`parity.controller.ts:30`).
 
+- [ ] **Step 0: Fix a Task 3 test that guards nothing**
+
+`GroupDetail.test.tsx`'s `'does not match a request of the same name'` passes
+trivially. It calls `groupRow(stats, 'Catalog', 'response_time')`, and **no row
+in the fixture is named `Catalog` with family `response_time`** — so the family
+predicate rejects it and the scope predicate is never reached. Deleting
+`r.scope === 'group'` leaves the test green.
+
+Point it at a row that actually exists at another scope:
+
+```tsx
+  it('does not match a request, even on an exact name and family', () => {
+    // `Cart/Add To Cart` IS a row in this run — scope 'request', family
+    // 'response_time'. Without the scope predicate this lookup returns it, so
+    // this is the assertion that pins scope rather than family.
+    expect(groupRow(stats, 'Cart/Add To Cart', 'response_time')).toBeUndefined();
+  });
+```
+
+Verify it discriminates: delete `r.scope === 'group' &&` from `groupRow`, run
+the test, confirm it FAILS, then restore. Report both outputs.
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `apps/web/test/GroupDetail.test.tsx`:
