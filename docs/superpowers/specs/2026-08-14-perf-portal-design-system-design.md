@@ -267,9 +267,14 @@ has them.
 
 **Every value comes from the run-scope stats row the page already fetches.**
 No new request, no new endpoint, no derived figure that the table below does
-not also show. Error rate is `koCount / count`, which the table computes for
-its `% KO` column; the tile must read the same way or the page contradicts
-itself.
+not also show.
+
+Error rate specifically: the payload carries its own `errorRate` field, and
+`StatisticsTable`'s `% KO` column renders `r.errorRate * 100` to two decimals.
+The tile reads that same field with that same expression. Recomputing it as
+`koCount / count` would be arithmetically identical today and would still be a
+second definition of one number, placed a few hundred pixels from the first and
+free to disagree the day the server's rounding changes.
 
 This is the one content change in the sub-project, and it is why
 `run-detail.spec.ts` is touched rather than merely re-passing.
