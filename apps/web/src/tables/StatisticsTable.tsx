@@ -11,6 +11,7 @@ import {
   type SortDirection,
   type TableRow,
 } from './buildTree';
+import { ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 
 /**
  * §13.2 ⑤ the statistics table — Appendix A G-11…G-16.
@@ -571,7 +572,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm">
+        <table className={TABLE}>
           {/* The caption is the table's ACCESSIBLE NAME as well as its
               explanation — `getByRole('table', { name: /statistics/i })` is how
               this suite and the Playwright specs find it.
@@ -587,10 +588,10 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
             percentile of a sample cannot lie outside that sample’s range.
           </caption>
 
-          <thead>
+          <thead className={THEAD}>
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
                 so the percentile headings do not each have to repeat it. */}
-            <tr className="border-b border-default">
+            <tr className={ROW}>
               <SortableHeader
                 column="name"
                 label={NAME_COLUMN_LABEL}
@@ -603,14 +604,14 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               {/* The two headings that SPAN columns are not columns: there is
                   nothing to sort by, and a control here would have to guess
                   which of the five it meant. */}
-              <th colSpan={columns.executions.length} scope="colgroup" className="py-2 pr-4">
+              <th colSpan={columns.executions.length} scope="colgroup" className={TH}>
                 Executions
               </th>
-              <th colSpan={columns.responseTime.length} scope="colgroup" className="py-2 pr-4">
+              <th colSpan={columns.responseTime.length} scope="colgroup" className={TH}>
                 Response Time (ms)
               </th>
             </tr>
-            <tr className="border-b border-default">
+            <tr className={ROW}>
               {allColumns.map((column, index) => (
                 <SortableHeader
                   key={column.column}
@@ -633,12 +634,12 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               <tr
                 data-testid="stat-row-total"
                 data-scope="run"
-                className="border-b border-default font-semibold"
+                className={`${ROW} font-semibold`}
               >
                 <th
                   scope="row"
                   data-column="name"
-                  className="py-1 pr-4"
+                  className={TD}
                   style={{ paddingLeft: indentFor(0) }}
                 >
                   {/* Gatling's own wording. Not a link: this is the run, and
@@ -667,7 +668,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 and it is handled above. */}
             {filtering && rows.length === 0 && (
               <tr>
-                <td colSpan={allColumns.length + 1} className="py-2 pl-2">
+                <td colSpan={allColumns.length + 1} className={TD}>
                   No rows match this filter.
                 </td>
               </tr>
@@ -746,7 +747,7 @@ function SortableHeader({
       // `none` on the others, not nothing: a column that CAN be sorted and
       // currently is not is a different thing from one that cannot be.
       aria-sort={sorted ? ARIA_SORT[sort.direction] : 'none'}
-      className="py-2 pr-4 font-semibold"
+      className={TH}
     >
       <button
         type="button"
@@ -871,7 +872,7 @@ function Row({
       data-path={row.path}
       data-scope={row.scope}
       data-depth={row.depth}
-      className="border-b border-default"
+      className={ROW}
     >
       {/* `<th scope="row">`: the row's name is what makes "2503" mean
           something when a screen reader announces it out of context.
@@ -898,7 +899,7 @@ function Row({
         scope="row"
         data-column="name"
         aria-labelledby={nameId}
-        className="py-1 pr-4 font-normal"
+        className={TH_ROW}
         style={{ paddingLeft: indentFor(row.depth) }}
       >
         <span className="inline-flex items-center gap-1">
@@ -946,7 +947,7 @@ function Cells({ row, columns }: { row: StatRow; columns: readonly Column[] }) {
           <td
             key={column.column}
             data-column={column.column}
-            className="py-1 pr-4 tabular-nums"
+            className={TD_NUM}
             // THE EXACT VALUE, beside the rounded one — the same split the
             // charts' data table makes, and for the same reason: a parity spec
             // comparing against Gatling's displayed integers reads the text,
