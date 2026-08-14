@@ -29,3 +29,20 @@ const STARTED_FORMAT = new Intl.DateTimeFormat(undefined, {
 export function formatStarted(iso: string): string {
   return STARTED_FORMAT.format(new Date(iso));
 }
+
+/**
+ * Whole seconds, matching what Gatling's own run header shows (G-04).
+ *
+ * `Math.round`, not `Math.floor`: flooring reports a 1,900ms run as "1s",
+ * which is wrong by nearly a second in the one direction a reader is least
+ * likely to question. Rounding is wrong by at most half a second either way.
+ *
+ * `durationMs` is nullable in the contract — a run whose header the parser
+ * never produced has no duration at all — and an explicit dash is the honest
+ * rendering of that. `0s` would assert a measurement that was never taken,
+ * and `NaNs` would assert nothing at all.
+ */
+export function formatDuration(durationMs: number | null | undefined): string {
+  if (durationMs == null) return '—';
+  return `${Math.round(durationMs / 1000)}s`;
+}

@@ -8,7 +8,7 @@ import {
   seedRunWithNaAndPassedAssertions,
   seedRunWithNaAssertion,
 } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { apiJson, signIn } from './helpers.js';
 import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
@@ -70,6 +70,29 @@ test('shows the run header', async ({ page }) => {
   const seconds = Number((await duration.innerText()).replace(/s$/, ''));
   expect(seconds).toBeGreaterThanOrEqual(60);
   expect(seconds).toBeLessThan(3600);
+});
+
+test('the header states the run’s identity and its own peak', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('example.ParitySimulation');
+
+  // Computed from the payload the page itself fetched, never written down —
+  // a re-captured fixture moves both sides together.
+  const users = await apiJson<{ total: { maxConcurrent: number }[] }>(
+    page,
+    `/v1/runs/${runId}/users`,
+  );
+  const peak = Math.max(...users.total.map((b) => b.maxConcurrent));
+  await expect(page.getByText(`${peak.toLocaleString()} peak users`)).toBeVisible();
+
+  // Chromium, not jsdom: dom-accessibility-api does not consult a
+  // descendant's aria-hidden the way a real AT tree does, so a badge whose
+  // glyph leaks into its name passes every unit assertion and fails here.
+  await expect(page.getByTestId('run-status')).toHaveAccessibleName('complete');
 });
 
 /**
@@ -359,16 +382,26 @@ test('switching tabs does not remount the shell', async ({ page }) => {
   await signIn(page, admin);
   await page.goto(`/runs/${runId}`);
 
-  // The heading is the shell's, not the panel's. If the layout route were
-  // three sibling routes instead, this node would be destroyed and rebuilt on
-  // every tab click — which is the whole reason for the layout route.
+  // The heading is `RunHeader`'s, rendered by `RunShell` — the layout route
+  // that is supposed to mount once and never again for as long as the run's
+  // three tabs are visited. If the layout route were three sibling routes
+  // instead, this exact DOM node would be destroyed and a fresh one built on
+  // every tab click.
   const heading = page.getByRole('heading', { level: 1 });
   await expect(heading).toBeVisible();
-  const before = await heading.textContent();
+
+  // Comparing the heading's TEXT before and after (as this test used to)
+  // would not actually catch a remount: React Query's cache serves the run
+  // query from the same warm entry either way, so a freshly mounted
+  // `RunHeader` renders the identical string. Tagging the live DOM NODE with
+  // a marker React itself does not manage is what a remount destroys — a
+  // fresh mount starts from JSX with no such attribute, while a shell that
+  // truly persisted keeps carrying it across the click below.
+  await heading.evaluate((el) => el.setAttribute('data-remount-probe', 'still-here'));
 
   await page.getByRole('link', { name: 'Charts' }).click();
   await expect(page.getByTestId('chart-percentiles')).toBeVisible();
-  expect(await heading.textContent()).toBe(before);
+  await expect(heading).toHaveAttribute('data-remount-probe', 'still-here');
 });
 
 test('a processing run shows no tab strip', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
@@ -19,8 +19,7 @@ import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
 import StatisticsTable from '../tables/StatisticsTable';
-import { formatStarted } from './format';
-import { ASSERTION_OUTCOME, Marked, STATUS, VERDICT } from './marks';
+import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
 import RunShell from './RunShell';
@@ -197,72 +196,18 @@ export function Processing({
 }
 
 function Ready({ run }: { run: RunResponse }) {
-  // The tool's own start when the parser has produced it, ingest time
-  // otherwise — the same rule, spelled the same way, as the run list's
-  // `startedAt` (RunList.tsx's RunRow). The two screens must not disagree
-  // about when a run started.
-  const startedAt = run.toolStartedAt ?? run.startedAt;
-  const isIngestTime = run.toolStartedAt == null;
-
-  return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-2">
-        {/* The simulation is the run's identity to the person who ran it, so
-            it is the heading. Rendered fully-qualified, exactly as the tool
-            reported it (`example.ParitySimulation`), rather than trimmed to
-            the class name: two simulations in different packages can share a
-            class name, and truncating identity to save a few characters is
-            how two different runs come to look like the same one. Falls back
-            to the short id for a run whose header carried no simulation. */}
-        <h1 className="text-2xl font-semibold">{run.simulation ?? `Run ${run.id.slice(0, 8)}`}</h1>
-        {run.description != null && run.description !== '' && (
-          <p className="text-muted">{run.description}</p>
-        )}
-
-        {/* A description list, not a grid of divs: these are name/value pairs
-            and <dt>/<dd> is what tells a screen reader that "Duration" names
-            "61s" rather than merely preceding it. */}
-        <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-          <Field label="Tool">{run.toolVersion ? `${run.tool} ${run.toolVersion}` : run.tool}</Field>
-          <Field label={isIngestTime ? 'Received' : 'Started'}>
-            {/* <time dateTime> carries the machine-readable instant beside
-                the human one; the text itself is localised. Same treatment as
-                the run list. */}
-            <time dateTime={startedAt}>{formatStarted(startedAt)}</time>
-            {isIngestTime && (
-              <span className="ml-2 text-sm text-muted">
-                ingest time — the tool reported no start
-              </span>
-            )}
-          </Field>
-          <Field label="Duration">
-            <span data-testid="run-duration">{formatDuration(run.durationMs)}</span>
-          </Field>
-          <Field label="Status">
-            <span data-testid="run-status">
-              <Marked mark={STATUS[run.status]} />
-            </span>
-          </Field>
-          <Field label="Verdict">
-            <span data-testid="run-verdict">
-              <Marked mark={VERDICT[run.verdict ?? 'none']} />
-            </span>
-          </Field>
-        </dl>
-      </header>
-
-      {/* The run's three tabs — design §3, §6. `RunShell` is a LAYOUT ROUTE:
-          it mounts once here, inside this branch only, and its `<Outlet/>`
-          is what swaps between `RunOverviewTab`, `RunChartsTab` and
-          `RunErrorsTab` as the URL's last segment changes. A processing run
-          (202) renders `Processing` instead and never reaches here — which
-          is what keeps the tab content's metric queries from firing against
-          a run whose rows do not exist yet (design §3c), and is why
-          `api/metrics.ts` can use `apiFetch` rather than `fetchRun`'s
-          three-way status branch (design §6). */}
-      <RunShell run={run} />
-    </div>
-  );
+  // The header — identity, tool, timing, duration, status and verdict — now
+  // lives in `RunHeader`, rendered by `RunShell` above its tab strip (Task 3;
+  // design §4). `RunShell` is a LAYOUT ROUTE: it mounts once here, inside
+  // this branch only, and its `<Outlet/>` is what swaps between
+  // `RunOverviewTab`, `RunChartsTab` and `RunErrorsTab` as the URL's last
+  // segment changes. A processing run (202) renders `Processing` instead and
+  // never reaches here — which is what keeps the tab content's metric
+  // queries (and the header's own `/users` fetch) from firing against a run
+  // whose rows do not exist yet (design §3c), and is why `api/metrics.ts`
+  // can use `apiFetch` rather than `fetchRun`'s three-way status branch
+  // (design §6).
+  return <RunShell run={run} />;
 }
 
 /* ------------------------------------------------------------------ *
@@ -455,15 +400,6 @@ export function RunChartsTab() {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <dt className="font-semibold">{label}</dt>
-      <dd>{children}</dd>
-    </>
-  );
-}
-
 /**
  * The SLA rules evaluated against this run, in a real `<table>` with real
  * `<th scope="col">` headers — tabular data, and the header/cell relationship
@@ -547,22 +483,5 @@ function describeRule(rule: Assertion['rule']): string {
   const target = rule.targetName ?? 'the run';
   const comparator = rule.comparator === 'lte' ? '≤' : '≥';
   return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${rule.threshold}`;
-}
-
-/**
- * Whole seconds, matching what Gatling's own run header shows (G-04).
- *
- * `Math.round`, not `Math.floor`: flooring reports a 1,900ms run as "1s",
- * which is wrong by nearly a second in the one direction a reader is least
- * likely to question. Rounding is wrong by at most half a second either way.
- *
- * `durationMs` is nullable in the contract — a run whose header the parser
- * never produced has no duration at all — and an explicit dash is the honest
- * rendering of that. `0s` would assert a measurement that was never taken,
- * and `NaNs` would assert nothing at all.
- */
-function formatDuration(durationMs: number | null | undefined): string {
-  if (durationMs == null) return '—';
-  return `${Math.round(durationMs / 1000)}s`;
 }
 

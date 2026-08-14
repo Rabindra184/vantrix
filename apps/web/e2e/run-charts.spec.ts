@@ -5,7 +5,7 @@ import {
   seedPendingRun,
   seedRunWithData,
 } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { apiJson, signIn } from './helpers.js';
 import { runChartsPath } from '../src/routes/paths.js';
 
 /**
@@ -113,20 +113,6 @@ interface DistributionPayload {
   koPercent: number[];
   okCount: number[];
   koCount: number[];
-}
-
-/**
- * Fetches an endpoint THROUGH THE PAGE'S OWN SESSION, so a parity assertion
- * reads exactly what the browser read — not a second request made with
- * different credentials, against which "the page agrees with the API" would be
- * a weaker claim than it looks.
- */
-async function apiJson<T>(page: Page, path: string): Promise<T> {
-  return page.evaluate(async (p) => {
-    const res = await fetch(p, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`${p} answered ${res.status}: ${await res.text()}`);
-    return res.json();
-  }, path);
 }
 
 /**

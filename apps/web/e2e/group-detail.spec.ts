@@ -1,6 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { apiJson, signIn } from './helpers.js';
 
 /**
  * §13.4 in a real browser. The unit suites pin the lookup and the scoped URLs
@@ -23,20 +23,6 @@ interface StatRowJson {
 }
 interface StatsJson {
   readonly stats: readonly StatRowJson[];
-}
-
-/**
- * Fetches an endpoint THROUGH THE PAGE'S OWN SESSION — mirrors
- * run-charts.spec.ts's own `apiJson`, so a value read off the rendered page
- * can be checked against the same run the browser itself is looking at,
- * rather than a second request made with different credentials.
- */
-async function apiJson<T>(page: Page, path: string): Promise<T> {
-  return page.evaluate(async (p) => {
-    const res = await fetch(p, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`${p} answered ${res.status}: ${await res.text()}`);
-    return res.json();
-  }, path);
 }
 
 test('a nested group page loads from a pasted URL', async ({ page }) => {
