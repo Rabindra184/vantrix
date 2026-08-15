@@ -81,7 +81,20 @@ export default function ProjectRail() {
             <span className="truncate" title={project.name}>
               {project.name}
             </span>
-            {badgeFor(project.latestRun)}
+            {/* The badge is the FIXED element and the name is the flexible
+                one. Without `shrink-0 whitespace-nowrap` the badge is just
+                another shrinkable flex item, so a long label — `no verdict
+                yet` and `ingest failed` are the only two that reach this —
+                breaks across two lines and its row grows 20px taller than
+                its neighbours (measured: 62px against 42px). That is the
+                two-line row the comment above says the rail cannot afford,
+                arriving through the badge instead of through the name.
+
+                Wrapped here rather than fixed in `Badge` itself, for the
+                same reason `RAIL_INGEST_FAILED` is rail-local: `Badge` is
+                shared with the run list and the run header, where it sits
+                in a table cell with room to spare and nothing to fix. */}
+            <span className="shrink-0 whitespace-nowrap">{badgeFor(project.latestRun)}</span>
           </NavLink>
         ))}
 

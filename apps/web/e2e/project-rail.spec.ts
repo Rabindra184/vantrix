@@ -147,3 +147,41 @@ test('a skip link lets a keyboard user bypass the rail', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(page.getByRole('main')).toBeFocused();
 });
+
+test('a long badge label does not make its rail row taller', async ({ page }) => {
+  const admin = await seedAdmin();
+  // The two names are the SAME LENGTH on purpose. The only variable between
+  // these rows is the badge's label — `passed` (VERDICT.passed, the shortest
+  // the rail renders) against `no verdict yet` (VERDICT.none, the longest) —
+  // so any height difference is the badge's doing and nothing else's.
+  // Long enough to squeeze the badge. A short name leaves room for both and
+  // the bug does not reproduce — verified: at "Alpha Service"/"Bravo Service"
+  // this test passed against the unfixed component. These lengths match the
+  // real names that exposed it ("Onboarding Wizard", "Payments Gateway").
+  await seedProjectWithRuns(admin.orgId, 'alpha-svc', 'Alpha Data Pipeline', 2, 'passed');
+  await seedProjectWithRuns(admin.orgId, 'bravo-svc', 'Bravo Data Pipeline', 2, null);
+
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
+  const shortLabel = rail
+    .getByRole('link')
+    .filter({ has: page.getByText('Alpha Data Pipeline', { exact: true }) });
+  const longLabel = rail
+    .getByRole('link')
+    .filter({ has: page.getByText('Bravo Data Pipeline', { exact: true }) });
+  await expect(shortLabel).toBeVisible();
+  await expect(longLabel).toBeVisible();
+
+  // Derived, not written down: no pixel threshold, just the requirement that
+  // the two rows agree. Without `shrink-0 whitespace-nowrap` on the badge it
+  // is a shrinkable flex item, "no verdict yet" breaks across two lines, and
+  // this row grows taller than its neighbour — which is what pushed the rail
+  // out of shape with real project names.
+  const short = await shortLabel.boundingBox();
+  const long = await longLabel.boundingBox();
+  expect(short).not.toBeNull();
+  expect(long).not.toBeNull();
+  expect(long!.height).toBe(short!.height);
+});
