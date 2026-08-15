@@ -47,8 +47,10 @@ test, i.e. exactly the ones a UI change needs — throws while LOADING. Vitest
 reports those as `Errors` in a separate line from `Test Files`, and prints a
 confident `Test Files 47 passed (47) | Tests 534 passed (534)` above them. A
 green-looking local run then fails in CI, which is on 22. `nvm use` first, and
-if a run reports fewer than **67 files / 702 tests**, it did not run
-everything.
+if a run reports fewer than **70 files / 788 tests**, it did not run
+everything. (Update these two numbers when a sub-project adds suites, or the
+next reader calibrates against a stale floor and a silently-skipped run looks
+like a pass.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A
@@ -73,6 +75,17 @@ export S3_SECRET_KEY=perfportal123
 Never run `pnpm test:integration` while `scripts/capture-chart-fixture.mjs` is
 capturing: that suite truncates every table on setup and will delete the org
 the capture just seeded, mid-run.
+
+**The same applies to `pnpm test:e2e` — so run the gate in its documented
+order, integration BEFORE e2e, and not the other way round.** Playwright's
+`webServer` and the worker it starts do not stop the instant the last spec
+passes, and `test:integration` truncating every table underneath a
+still-draining queue produces a failure that reproduces on nothing. Seen once,
+running the two ad hoc in the reverse order, as a bare `exit 1` with no
+reported failing test, then two clean 814-test runs in a row. If integration
+fails right after an e2e run and the tail shows no failing assertion, re-run it
+alone before believing it.
+
 
 ## Conventions that bite
 

@@ -1,6 +1,7 @@
 import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { ProjectScope } from '../repositories/tenant.js';
+import { TRENDS_SQL, type StoredTrendRun } from './trends.js';
 
 export interface StoredStat {
   scope: string;
@@ -138,6 +139,66 @@ export class MetricReader {
       histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
       sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
     }));
+  }
+
+  /**
+   * A run's cohort — every complete run of the same simulation in the same
+   * project, newest first — with the cohort's full size beside it.
+   *
+   * NO PARTITION KEY, unlike `series` below, and that is not an oversight:
+   * `run_series_bucket` is partitioned by `run_started_on`, `run_stat` is not.
+   * A cohort spans many runs and therefore many dates, so a partition key
+   * would be the wrong shape for this query even if the table had one.
+   *
+   * ONE QUERY. `cohort_size` rides along as a window function over the inner
+   * query — PostgreSQL evaluates those before `LIMIT`, and this one has no
+   * LIMIT at all: the window is selected by the outer `WHERE`, so the count is
+   * the whole cohort's on every row.
+   *
+   * `requestedRunId` is what guarantees the asked-about run appears in its own
+   * trend. Without it the query returns the newest `limit` runs, which stops
+   * containing that run the moment the cohort outgrows the window — see
+   * `TRENDS_SQL`.
+   */
+  async trends(
+    scope: ProjectScope,
+    cohort: { simulation: string | null },
+    requestedRunId: string,
+    limit: number,
+  ): Promise<{ runs: StoredTrendRun[]; cohortSize: number }> {
+    const { rows } = await this.pool.query(TRENDS_SQL, [
+      scope.orgId,
+      scope.projectId,
+      cohort.simulation,
+      limit,
+      requestedRunId,
+    ]);
+
+    return {
+      runs: rows.map((r) => ({
+        id: r.id,
+        startedAt: r.started_at,
+        toolStartedAt: r.tool_started_at,
+        durationMs: r.duration_ms,
+        verdict: r.verdict,
+        count: r.count,
+        okCount: r.ok_count,
+        koCount: r.ko_count,
+        errorRate: r.error_rate,
+        minMs: r.min_ms,
+        maxMs: r.max_ms,
+        meanMs: r.mean_ms,
+        throughputRps: r.throughput_rps,
+        percentiles: r.percentiles as Record<string, number>,
+        // Deserialised here exactly as `stats` above does it, so the two
+        // endpoints answer percentile questions from the same object rather
+        // than from a stored float and a sketch respectively.
+        sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
+      })),
+      // Identical on every row; zero only when there are no rows at all, which
+      // cannot happen for a terminal run since it matches its own cohort.
+      cohortSize: rows[0]?.cohort_size ?? 0,
+    };
   }
 
   /**

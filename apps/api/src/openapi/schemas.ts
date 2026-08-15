@@ -14,6 +14,8 @@ import {
   SeriesResponseSchema,
   StatRowSchema,
   StatsResponseSchema,
+  TrendRunSchema,
+  TrendsResponseSchema,
   UsersResponseSchema,
 } from '@perfportal/contracts';
 
@@ -49,6 +51,8 @@ const SOURCE: Record<string, ZodTypeAny> = {
   DistributionResponse: DistributionResponseSchema,
   UsersResponse: UsersResponseSchema,
   ScatterResponse: ScatterResponseSchema,
+  TrendsResponse: TrendsResponseSchema,
+  TrendRun: TrendRunSchema,
   IndicatorBands: IndicatorBandsSchema,
 };
 

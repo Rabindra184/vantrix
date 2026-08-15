@@ -2,7 +2,7 @@
 export const DEFAULT_ROUTE = '/runs';
 
 /**
- * A run's three tabs. Spelled once here because `App.tsx` declares them,
+ * A run's four tabs. Spelled once here because `App.tsx` declares them,
  * `RunTabs` links to them and the e2e suite navigates to them — three places
  * that must agree about a string, which is two more than can be kept in step
  * by hand.
@@ -15,6 +15,9 @@ export function runChartsPath(runId: string): string {
 }
 export function runErrorsPath(runId: string): string {
   return `${runPath(runId)}/errors`;
+}
+export function runTrendsPath(runId: string): string {
+  return `${runPath(runId)}/trends`;
 }
 
 /** The no-organisation explanation. Its own URL on purpose (see NoOrg.tsx). */
