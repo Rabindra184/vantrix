@@ -131,6 +131,45 @@ export const ErrorsResponseSchema = z.object({
 });
 export type ErrorsResponse = z.infer<typeof ErrorsResponseSchema>;
 
+export const ErrorSeriesResponseSchema = z.object({
+  runId: z.string().uuid(),
+  /**
+   * The width of every bucket, STORED rather than inferred. Errors are sparse,
+   * and `inferBucketWidthMs` reads the smallest gap between offsets — three
+   * failures 35s apart would infer a 35000ms width. Equal to `/series`'
+   * `bucketWidthMs` for the same run, by construction: the engine coalesces
+   * the error buckets up to the run series' final width.
+   */
+  bucketWidthMs: z.number().int().positive(),
+  /**
+   * False ONLY for a run ingested before failures were recorded over time. A
+   * run that genuinely had no failures is `true` with an empty `series` — the
+   * two are otherwise indistinguishable, and drawing empty axes for the first
+   * would claim the run succeeded. Mirrors `groupSeriesAvailable`'s job on
+   * SeriesResponse.
+   */
+  available: z.boolean(),
+  /**
+   * At most six: the five most frequent messages plus the folded remainder,
+   * which is what the categorical palette can draw without leaving a series
+   * undrawn. Most frequent first.
+   *
+   * INCLUDES WARM-UP, unlike `/errors`. Series do (PRD 7.4), so on a project
+   * with a warm-up window these counts exceed the errors table's totals.
+   */
+  series: z.array(
+    z.object({
+      /** `null` is the folded remainder, NOT a message that failed to load. */
+      message: z.string().nullable(),
+      total: z.number().int(),
+      points: z.array(
+        z.object({ startOffsetMs: z.number().int(), count: z.number().int() }),
+      ),
+    }),
+  ),
+});
+export type ErrorSeriesResponse = z.infer<typeof ErrorSeriesResponseSchema>;
+
 export const DistributionResponseSchema = z.object({
   runId: z.string().uuid(),
   scope: MetricScopeSchema,

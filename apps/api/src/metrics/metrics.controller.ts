@@ -1,5 +1,6 @@
 import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type {
+  ErrorSeriesResponse,
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
@@ -308,6 +309,74 @@ export class MetricsController {
       sel,
     );
     return { runId: run.id, errors };
+  }
+
+  /**
+   * Failures over time, RUN SCOPE ONLY — and it takes no `scope` or `name`
+   * query parameters at all.
+   *
+   * That absence is deliberate. `errors` above has to defend itself against a
+   * caller who sends `?name=X` and no `?scope=`, because the sibling endpoints
+   * force `name` to `''` when `scope` is absent and silently answer for the
+   * whole run. The surest way not to reproduce that trap is to have no such
+   * parameters: this table holds one scope, and the signature says so.
+   */
+  @Get('errors/series')
+  @Scopes('read')
+  async errorSeries(
+    @Param('id', uuidParam('id')) id: string,
+    @Req() req: Request,
+  ): Promise<ErrorSeriesResponse> {
+    const run = await this.#run(req, id);
+    const scope = { orgId: run.orgId, projectId: run.projectId };
+
+    const [rows, flat] = await Promise.all([
+      this.reader.errorSeries(scope, run.id, run.startedOn),
+      this.reader.errors(scope, run.id),
+    ]);
+
+    /**
+     * ONE EXPRESSION OVER BOTH COUNTS, not a lookup keyed on the flat table.
+     *
+     * Four states, and a rule keyed on `flat` alone gets one of them wrong: a
+     * project with `warmupMs > 0` whose only failures fell inside the ramp has
+     * bucket rows and NO flat rows, because series include warm-up and the
+     * rollup does not. That run's data is present, not missing.
+     *
+     *   none / none  → the run genuinely had no failures     → available
+     *   some / none  → ingested before this existed          → NOT available
+     *   some / some  → recorded                              → available
+     *   none / some  → warm-up-only failures                 → available
+     */
+    const available = rows.length > 0 || flat.length === 0;
+
+    // Grouped in first-seen order, which ERROR_SERIES_SQL's ORDER BY makes the
+    // global rank order the engine emitted — most frequent first, so the
+    // palette assigns its first hue to the biggest series.
+    const byMessage = new Map<
+      string | null,
+      { total: number; points: { startOffsetMs: number; count: number }[] }
+    >();
+    for (const row of rows) {
+      let entry = byMessage.get(row.message);
+      if (!entry) {
+        entry = { total: 0, points: [] };
+        byMessage.set(row.message, entry);
+      }
+      entry.total += row.count;
+      entry.points.push({ startOffsetMs: row.startOffsetMs, count: row.count });
+    }
+
+    return {
+      runId: run.id,
+      // The STORED width, constant per run — never `inferBucketWidthMs`, which
+      // reads the smallest gap between offsets and is systematically wrong on
+      // a sparse series. `?? 1000` only for a run with no rows at all, where
+      // nothing is drawn at any width.
+      bucketWidthMs: rows[0]?.bucketWidthMs ?? 1000,
+      available,
+      series: [...byMessage.entries()].map(([message, entry]) => ({ message, ...entry })),
+    };
   }
 }
 
