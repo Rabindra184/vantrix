@@ -577,3 +577,50 @@ export async function seedRunInOtherOrg(): Promise<string> {
   const token = await mintIngestToken(orgId, projectId);
   return ingestAndProcess(token);
 }
+
+/**
+ * A complete run carrying ingest provenance, in orgId's own project.
+ *
+ * Written directly rather than posted through the ingest endpoint: the
+ * chips' accessible names are what this seeds for, and running the whole
+ * parse pipeline to set three text columns would make a header test depend
+ * on the worker.
+ *
+ * A complete run with no metric rows is an ESTABLISHED case, not a
+ * shortcut — `seedCompleteRunWithoutMetrics` above seeds the same shape and
+ * its docstring records what the endpoints answer for it: /stats, /series
+ * and /users return 200 with empty payloads, /distribution returns 404, and
+ * the run page is built to handle an empty payload and a failed fetch at
+ * once. The header renders from the run payload alone, so none of that is
+ * in this test's way. (/distribution is only fetched by the Charts tab,
+ * which this test never opens.)
+ */
+export async function seedRunWithProvenance(
+  orgId: string,
+  provenance: { environment?: string; branch?: string; commitSha?: string },
+): Promise<string> {
+  const projectId = await projectFor(orgId);
+  const startedAt = new Date(Date.UTC(2026, 7, 15, 12, 0, 0));
+  const run = await prisma.run.create({
+    data: {
+      orgId,
+      projectId,
+      status: 'complete',
+      verdict: 'passed',
+      tool: 'gatling',
+      simulation: 'example.ParitySimulation',
+      durationMs: 63161,
+      bundleKey: `e2e-fixture/${randomUUID()}`,
+      bundleSha256: '0'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt,
+      startedOn: startedAt,
+      toolStartedAt: startedAt,
+      engineOptions: {},
+      environment: provenance.environment ?? null,
+      branch: provenance.branch ?? null,
+      commitSha: provenance.commitSha ?? null,
+    },
+  });
+  return run.id;
+}

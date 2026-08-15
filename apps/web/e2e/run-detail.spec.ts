@@ -7,6 +7,7 @@ import {
   seedRunWithFailedAssertion,
   seedRunWithNaAndPassedAssertions,
   seedRunWithNaAssertion,
+  seedRunWithProvenance,
 } from './fixtures.js';
 import { apiJson, signIn } from './helpers.js';
 import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
@@ -476,4 +477,21 @@ test('the errors tab counts distinct messages, not failed requests', async ({ pa
 
   await page.goto(runPath(runId));
   await expect(tab).toHaveText(`Errors (${distinct})`);
+});
+
+test('the commit chip is named by the whole sha, not the seven visible characters', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithProvenance(admin.orgId, {
+    environment: 'staging',
+    branch: 'release/24.8',
+    commitSha: 'abc1234def5678',
+  });
+  await signIn(page, admin);
+  await page.goto(`/runs/${runId}`);
+  // jsdom cannot answer this: dom-accessibility-api does not compute a
+  // <code> descendant's contribution the way Chromium's tree does, so
+  // whether the truncated text pollutes or replaces the aria-label is only
+  // observable in a real browser.
+  await expect(page.getByTestId('run-commit')).toHaveAccessibleName('Commit: abc1234def5678');
+  await expect(page.getByTestId('run-environment')).toHaveAccessibleName('Environment: staging');
 });
