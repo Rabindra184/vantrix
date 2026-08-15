@@ -219,4 +219,20 @@ describe('OpenAPI document', () => {
       | undefined;
     expect(get?.parameters?.map((p) => p.name)).toContain('project');
   });
+
+  // The precedent this fixes: commit 08a6967 on main shipped a fix for
+  // run_series_bucket.family being absent from the document — "the document
+  // validates" never catches an omission, because a document missing a
+  // field is still a valid document. `RunResponse` is declared truthy
+  // elsewhere in this file (see the "derives non-empty components.schemas"
+  // test above), which passes regardless of which properties it carries;
+  // these two are the properties assertions for project identity and ingest
+  // provenance that spec §9 requires and that check does not provide.
+  it('declares RunResponse.project and the three ingest fields', async () => {
+    const doc = await fetchDoc();
+    const schemas = doc.components?.schemas ?? {};
+    const props = (schemas['RunResponse'] as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(props['project']).toBeDefined();
+    for (const f of ['environment', 'branch', 'commitSha']) expect(props[f], f).toBeDefined();
+  });
 });
