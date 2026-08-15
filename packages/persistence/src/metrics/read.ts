@@ -1,6 +1,7 @@
 import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { ProjectScope } from '../repositories/tenant.js';
+import { COHORT_SIZE_SQL, TRENDS_SQL, type StoredTrendRun } from './trends.js';
 
 export interface StoredStat {
   scope: string;
@@ -138,6 +139,54 @@ export class MetricReader {
       histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
       sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
     }));
+  }
+
+  /**
+   * A run's cohort — every complete run of the same simulation in the same
+   * project, newest first — with the cohort's full size beside it.
+   *
+   * NO PARTITION KEY, unlike `series` below, and that is not an oversight:
+   * `run_series_bucket` is partitioned by `run_started_on`, `run_stat` is not.
+   * A cohort spans many runs and therefore many dates, so a partition key
+   * would be the wrong shape for this query even if the table had one.
+   *
+   * TWO QUERIES, ISSUED TOGETHER. The count cannot ride along with the rows:
+   * a window function is evaluated after the LIMIT, so a sixty-run cohort read
+   * twenty at a time would report its size as twenty — the exact number
+   * `cohortSize` exists to contradict. They are independent, so they go in
+   * parallel rather than in sequence.
+   */
+  async trends(
+    scope: ProjectScope,
+    cohort: { simulation: string | null },
+    limit: number,
+  ): Promise<{ runs: StoredTrendRun[]; cohortSize: number }> {
+    const params = [scope.orgId, scope.projectId, cohort.simulation];
+
+    const [rows, size] = await Promise.all([
+      this.pool.query(TRENDS_SQL, [...params, limit]),
+      this.pool.query(COHORT_SIZE_SQL, params),
+    ]);
+
+    return {
+      runs: rows.rows.map((r) => ({
+        id: r.id,
+        startedAt: r.started_at,
+        toolStartedAt: r.tool_started_at,
+        durationMs: r.duration_ms,
+        verdict: r.verdict,
+        count: r.count,
+        okCount: r.ok_count,
+        koCount: r.ko_count,
+        errorRate: r.error_rate,
+        minMs: r.min_ms,
+        maxMs: r.max_ms,
+        meanMs: r.mean_ms,
+        throughputRps: r.throughput_rps,
+        percentiles: r.percentiles as Record<string, number>,
+      })),
+      cohortSize: size.rows[0]?.size ?? 0,
+    };
   }
 
   /**
