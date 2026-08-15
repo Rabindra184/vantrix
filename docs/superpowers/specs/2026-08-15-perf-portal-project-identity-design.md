@@ -461,6 +461,23 @@ enumerating every construction site, not a defect.
    §8.3 is present; without it the assertion fails on a screen that looks
    merely empty rather than broken.
 
+   **This check belongs in jsdom, not Playwright, and the reason is the
+   whole point of the guard.** It was first written as an e2e test using
+   `page.goto('/projects/beta')` — and it passed identically with and
+   without the `key`, because `page.goto` is a full document load: React
+   unmounts entirely and the cursor dies whatever the key says. The bug
+   only exists across a CLIENT-SIDE transition between two URLs matching
+   the same route, which is a fact about React reusing a component
+   instance, not about the browser. So the test renders `MemoryRouter` and
+   performs the transition through a link click. An e2e version cannot be
+   written today in any case: nothing in the app links from one project to
+   another until the sidebar arrives in 3b.
+
+   This is the inverse of the repo's usual rule. Accessible names go in
+   Playwright because jsdom cannot see them; component identity across a
+   route change goes in jsdom because Playwright's navigation resets the
+   very state under test.
+
 ---
 
 ## 11. Success criteria
