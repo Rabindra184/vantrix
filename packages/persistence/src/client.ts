@@ -24,6 +24,7 @@ export const SCHEMA_TABLES = [
   'run_series_bucket',
   'run_user_bucket',
   'run_error',
+  'run_error_bucket',
   'sla_rule',
   'run_assertion',
   'user',

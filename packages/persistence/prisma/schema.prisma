@@ -242,6 +242,36 @@ model RunUserBucket {
   @@map("run_user_bucket")
 }
 
+/// Partitioned by range on run_started_on — see migration
+/// 20260815180000_run_error_bucket, hand-edited. Prisma cannot express
+/// partitioning.
+///
+/// Run scope only, which is why there are no scope/name/family columns:
+/// request-scope errors keep their flat rollup in run_error. INCLUDES WARM-UP,
+/// unlike run_error — series do (PRD 7.4), so summing these will exceed the
+/// errors table's total on any project with a warm-up window.
+model RunErrorBucket {
+  runStartedOn  DateTime @map("run_started_on") @db.Date
+  runId         String   @map("run_id") @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  projectId     String   @map("project_id") @db.Uuid
+  startOffsetMs Int      @map("start_offset_ms")
+  /// '' when isOther. A real message is never empty — the engine maps a
+  /// missing one to '(no message)'.
+  message       String
+  /// The folded remainder — everything outside the five most frequent
+  /// messages. A column rather than a magic `message` value, which would
+  /// collide with a genuine error message of that text.
+  isOther       Boolean  @map("is_other")
+  count         Int
+  /// Constant per run, denormalised deliberately: inferring a width from
+  /// sparse offsets is systematically wrong. See the migration.
+  bucketWidthMs Int      @map("bucket_width_ms")
+
+  @@id([runStartedOn, runId, startOffsetMs, message, isOther])
+  @@map("run_error_bucket")
+}
+
 model RunAssertion {
   id           String  @id @default(uuid()) @db.Uuid
   runId        String  @map("run_id") @db.Uuid

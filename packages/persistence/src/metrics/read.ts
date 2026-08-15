@@ -37,6 +37,20 @@ export interface StoredUserBucket {
   maxConcurrent: number;
 }
 
+export interface StoredErrorBucket {
+  startOffsetMs: number;
+  /**
+   * `null` is the FOLDED REMAINDER — everything outside the five most frequent
+   * messages — reconstructed from the `is_other` column. Not a message that
+   * failed to load, and not a message literally named 'other', which is a real
+   * value this column can also carry.
+   */
+  message: string | null;
+  count: number;
+  /** Constant per run; see ERROR_SERIES_SQL and the migration. */
+  bucketWidthMs: number;
+}
+
 export interface StoredBucket {
   startOffsetMs: number;
   startedCount: number;
@@ -98,6 +112,25 @@ export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended
         WHERE run_started_on = $1 AND run_id = $2
           AND org_id = $3 AND project_id = $4
         ORDER BY scenario, start_offset_ms`;
+
+/**
+ * Shared verbatim with the "prunes partitions" integration test, for the same
+ * load-bearing reason as SERIES_SQL and USER_SERIES_SQL: `run_started_on = $1`
+ * is the partition-key predicate, and a test asserting the plan of a COPY of
+ * this string would keep passing after the real one lost it.
+ *
+ * No `scope`/`name` predicate: this table is run scope only, by design.
+ *
+ * `ORDER BY start_offset_ms, count DESC, message` puts a bucket's rows in
+ * global rank order — the order the engine emitted them in — so the API can
+ * group by message in first-seen order and get the most frequent series first
+ * without re-sorting.
+ */
+export const ERROR_SERIES_SQL = `SELECT start_offset_ms, message, is_other, count, bucket_width_ms
+         FROM run_error_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+        ORDER BY start_offset_ms ASC, count DESC, message ASC`;
 
 /** Existence only — the caller needs a yes/no, and a partition-pruned EXISTS is
  *  cheaper than counting rows it will not read. */
@@ -280,6 +313,32 @@ export class MetricReader {
       started: r.started,
       ended: r.ended,
       maxConcurrent: r.max_concurrent,
+    }));
+  }
+
+  /**
+   * Failures over time, run scope.
+   *
+   * runStartedOn is REQUIRED for the same partition-pruning reason as series():
+   * it is the partition key, and a query filtering on run_id alone cannot prune
+   * and scans every partition. The signature is what enforces that.
+   */
+  async errorSeries(
+    scope: ProjectScope,
+    runId: string,
+    runStartedOn: Date,
+  ): Promise<StoredErrorBucket[]> {
+    const { rows } = await this.pool.query(
+      ERROR_SERIES_SQL,
+      [runStartedOn, runId, scope.orgId, scope.projectId],
+    );
+    return rows.map((r) => ({
+      startOffsetMs: r.start_offset_ms,
+      // The column pair collapses back to one nullable field here, so no
+      // caller has to know that '' plus a boolean means "everything else".
+      message: r.is_other ? null : r.message,
+      count: r.count,
+      bucketWidthMs: r.bucket_width_ms,
     }));
   }
 

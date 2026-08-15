@@ -1,7 +1,7 @@
 import { bandsFrom, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, MetricReader, MetricWriter, SERIES_SQL, USER_SERIES_SQL } from '../src/index.js';
+import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, USER_SERIES_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -60,8 +60,15 @@ async function seedRun() {
   return { orgId: org.id, projectId: project.id, runId: run.id };
 }
 
-async function persist(ctx: { orgId: string; projectId: string; runId: string }) {
-  const result = runEngine(events(), { percentiles: [50, 95, 99] });
+async function persist(
+  ctx: { orgId: string; projectId: string; runId: string },
+  // Defaulted, so every existing caller is unchanged. The fixed `events()`
+  // above produce a single distinct error message, which is enough for a round
+  // trip and can never produce a folded row — the error-series cases below
+  // pass their own.
+  evts: CanonicalEvent[] = events(),
+) {
+  const result = runEngine(evts, { percentiles: [50, 95, 99] });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -354,5 +361,73 @@ describe('MetricWriter / MetricReader', () => {
       scope: 'run', name: '', family: 'group_cumulated',
     });
     expect(wrong).toEqual([]);
+  });
+});
+
+describe('error series', () => {
+  const BASE = STARTED_AT.getTime();
+  const start: CanonicalEvent = {
+    type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: BASE,
+  };
+  const fail = (i: number, message: string): CanonicalEvent => ({
+    type: 'request', name: 'GET /a', groups: [], userId: String(i),
+    startMs: BASE + i * 100, endMs: BASE + i * 100 + 20, ok: false, message,
+  });
+
+  it('round-trips rows, mapping the folded remainder to null', async () => {
+    const ctx = await seedRun();
+    // Seven distinct messages at descending frequency: five are kept by name
+    // and two fold, so both row kinds are exercised.
+    const evts: CanonicalEvent[] = [start];
+    for (let rank = 0; rank < 7; rank += 1) {
+      for (let n = 0; n < 10 - rank; n += 1) evts.push(fail(rank * 10 + n, `m${rank}`));
+    }
+    const result = await persist(ctx, evts);
+
+    const rows = await new MetricReader(pool).errorSeries(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON,
+    );
+
+    // Derived from what the engine produced, never written down.
+    expect(rows).toHaveLength(result.errorSeries.rows.length);
+    expect(rows.some((r) => r.message === null)).toBe(true);
+    expect(rows.every((r) => r.bucketWidthMs === result.errorSeries.bucketWidthMs)).toBe(true);
+    expect(rows.reduce((n, r) => n + r.count, 0)).toBe(
+      result.errorSeries.rows.reduce((n, r) => n + r.count, 0),
+    );
+  });
+
+  it('does not collide when a real message is literally "other"', async () => {
+    // The failure `is_other` exists to prevent. With a magic message value the
+    // folded row and this real one share a primary key, and the INSERT fails
+    // the whole ingest rather than merely drawing something wrong.
+    const ctx = await seedRun();
+    const evts: CanonicalEvent[] = [start];
+    // 'other' frequent enough to be kept BY NAME (20), plus six rarer messages
+    // so that something really does fold as well.
+    for (let n = 0; n < 20; n += 1) evts.push(fail(n, 'other'));
+    for (let rank = 0; rank < 6; rank += 1) {
+      for (let n = 0; n < 6 - rank; n += 1) evts.push(fail(100 + rank * 10 + n, `m${rank}`));
+    }
+    await persist(ctx, evts);
+
+    const rows = await new MetricReader(pool).errorSeries(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON,
+    );
+    expect(rows.some((r) => r.message === 'other')).toBe(true);
+    expect(rows.some((r) => r.message === null)).toBe(true);
+  });
+
+  it('prunes partitions when reading error buckets', async () => {
+    // Mirrors the run_user_bucket pruning test, and EXPLAINs the exported
+    // constant rather than a copy of it — a test against a copy keeps passing
+    // after the real query loses its partition predicate.
+    const ctx = await seedRun();
+    await persist(ctx);
+    const { rows } = await pool.query(
+      `EXPLAIN (FORMAT JSON) ${ERROR_SERIES_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId],
+    );
+    expect(JSON.stringify(rows)).not.toMatch(/run_error_bucket_2026_(0[1-7]|09|1[0-2])/);
   });
 });

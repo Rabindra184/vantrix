@@ -132,6 +132,28 @@ export class MetricWriter {
         e.scope, e.name, e.message, e.count,
       ]),
     );
+
+    await insertBatched(
+      client,
+      'run_error_bucket',
+      [
+        'run_started_on', 'run_id', 'org_id', 'project_id',
+        'start_offset_ms', 'message', 'is_other', 'count', 'bucket_width_ms',
+      ],
+      result.errorSeries.rows.map((r) => [
+        ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
+        r.startOffsetMs,
+        // The folded remainder is carried by the COLUMN PAIR, not by a message
+        // value a real error could also have. `('other', false)` and
+        // `('', true)` are distinct primary keys; two rows both messaged
+        // 'other' would not be.
+        r.message ?? '', r.message === null,
+        r.count,
+        // Constant per run, repeated per row. See the migration for why it is
+        // stored at all rather than inferred from the offsets.
+        result.errorSeries.bucketWidthMs,
+      ]),
+    );
   }
 }
 
