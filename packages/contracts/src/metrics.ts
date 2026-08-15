@@ -1,4 +1,11 @@
 import { z } from 'zod';
+/**
+ * IMPORTED, NOT RESTATED. A run's verdict is one vocabulary, and a second
+ * `z.enum(['passed', 'failed', 'not_evaluated'])` here would be free to drift
+ * from the one `RunResponse` uses the day a fourth value is added. `run.ts`
+ * imports nothing but zod, so this direction cannot cycle.
+ */
+import { RunVerdictSchema } from './run.js';
 
 export const MetricScopeSchema = z.enum(['run', 'scenario', 'group', 'request']);
 export const MetricFamilySchema = z.enum([
@@ -183,3 +190,72 @@ export const ScatterResponseSchema = z.object({
   ko: z.array(z.tuple([z.number().int(), z.number().int()])),
 });
 export type ScatterResponse = z.infer<typeof ScatterResponseSchema>;
+
+/**
+ * One run in a cohort, as `GET /v1/runs/:id/trends` reports it: run identity
+ * plus the run-scope `StatRow` already stored for it.
+ *
+ * NOT A `StatRow` WITH EXTRA FIELDS, deliberately. `StatRow` carries `scope`,
+ * `name`, `family` and `indicators`, and every one of those is either constant
+ * across this whole response — `scope: 'run'`, `name: ''`, `family:
+ * 'response_time'`, which is what the endpoint's join pins — or, in
+ * `indicators`' case, a fold at project settings this endpoint does not read.
+ * Reusing the schema would ship four fields per run that mean nothing here,
+ * one of which would be an outright lie.
+ *
+ * `stddevMs` is likewise absent: nothing on the three trend figures plots it,
+ * and a field carried "in case" is a field a later reader has to work out the
+ * provenance of.
+ */
+export const TrendRunSchema = z.object({
+  id: z.string().uuid(),
+  startedAt: z.string().datetime(),
+  /** The tool's own start. Null until the worker parses the run header. */
+  toolStartedAt: z.string().datetime().nullable(),
+  durationMs: z.number().int().nullable(),
+  verdict: RunVerdictSchema.nullable(),
+  count: z.number().int(),
+  okCount: z.number().int(),
+  koCount: z.number().int(),
+  errorRate: z.number(),
+  minMs: z.number(),
+  maxMs: z.number(),
+  meanMs: z.number(),
+  throughputRps: z.number(),
+  /** Keys are p<number>, exactly as `StatRow.percentiles` are. */
+  percentiles: z.record(z.number()),
+});
+export type TrendRun = z.infer<typeof TrendRunSchema>;
+
+/**
+ * `GET /v1/runs/:id/trends` — the asked-about run in the context of its
+ * cohort.
+ *
+ * THE COHORT IS (project, simulation), WITH NULL AS ITS OWN EQUIVALENCE CLASS
+ * rather than a wildcard. Two runs that both lack a simulation name are
+ * grouped because they match by the same rule — and the UI says the grouping
+ * is by absence, rather than claiming they are the same test.
+ *
+ * `runs` IS NEWEST FIRST, matching `/v1/runs` so the two cannot disagree about
+ * what "most recent" means. A trend reads left-to-right in time, so the chart
+ * transform reverses it; that is stated in both places precisely so the
+ * reversal cannot end up applied twice or not at all.
+ *
+ * `cohortSize` IS NOT `runs.length`, and the difference is the point: a reader
+ * looking at twenty of sixty runs has to be told, rather than shown a
+ * truncated history that looks complete.
+ *
+ * THE ASKED-ABOUT RUN IS ALWAYS IN `runs` when it is terminal — it matches its
+ * own cohort by construction. A non-terminal run has no stat row and so
+ * appears in neither `runs` nor `cohortSize`; a gap in a trend reads as a
+ * regression, which is the one thing an unparsed run must not look like.
+ */
+export const TrendsResponseSchema = z.object({
+  runId: z.string().uuid(),
+  /** The cohort key. Null is a real cohort, not "unknown". */
+  simulation: z.string().nullable(),
+  /** Total runs matching the cohort, which may exceed `runs.length`. */
+  cohortSize: z.number().int(),
+  runs: z.array(TrendRunSchema),
+});
+export type TrendsResponse = z.infer<typeof TrendsResponseSchema>;
