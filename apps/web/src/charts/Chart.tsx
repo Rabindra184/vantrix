@@ -134,20 +134,42 @@ export default function Chart({
   const yAxisName = yAxis?.name;
   const xAxisName = xAxis?.name;
 
-  // Follow the OS colour scheme while the page is open, so a chart drawn in
-  // light mode is not left with light-mode hues on a dark surface.
+  // Follow the active colour scheme while the page is open, so a chart drawn
+  // in light mode is not left with light-mode hues on a dark surface.
   //
-  // Only `prefers-color-scheme` is watched. `tokens.css` also honours an
-  // explicit `[data-theme]`, but nothing in this app sets one yet; when a
-  // toggle lands it has to notify here too (a MutationObserver on
-  // `documentElement`, or lifting the mode into context), and adding that
-  // watcher now for a control that does not exist would be untestable.
+  // TWO SOURCES, because `resolveChartMode` reads two: the OS setting, and an
+  // explicit `[data-theme]` on `<html>` which overrides it. Watching only
+  // `prefers-color-scheme` — which is all this did while no toggle existed —
+  // means clicking Dark in `ThemeToggle` repaints the whole app around eight
+  // charts still drawn in light-mode ink, gridlines and tooltip fills, on a
+  // near-black card. The MutationObserver is the notification this file's
+  // previous comment said a toggle would have to bring with it.
+  //
+  // `attributeFilter` keeps this to the one attribute that matters: React
+  // Router and TanStack both touch `<html>`/`<body>` classes, and an
+  // unfiltered observer would recompute the mode on every one of them.
   useEffect(() => {
-    if (typeof matchMedia !== 'function') return;
-    const query = matchMedia('(prefers-color-scheme: dark)');
     const onChange = () => setMode(resolveChartMode());
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
+
+    const query = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+    query?.addEventListener('change', onChange);
+
+    // Guarded: jsdom has MutationObserver, but a non-DOM test environment
+    // (`vitest.config.ts`'s node-environment globs) has neither it nor
+    // `document`, and a chart must not throw when rendered to a string.
+    const observer =
+      typeof MutationObserver === 'function' && typeof document !== 'undefined'
+        ? new MutationObserver(onChange)
+        : null;
+    observer?.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+
+    return () => {
+      query?.removeEventListener('change', onChange);
+      observer?.disconnect();
+    };
   }, []);
 
   const isEmpty = data.empty !== undefined;
@@ -410,14 +432,26 @@ export default function Chart({
 
   return (
     <Card as="figure" data-testid={`chart-${id}`}>
-      <h3 className="text-lg font-semibold">{title}</h3>
+      {/* `Chart`'s own `<h3>`, not `Card`'s `title` prop — which is exactly
+          why that prop is optional (see `Card`'s docstring): a card that always
+          drew a heading would give every figure two, and the figure's
+          accessible name would become whichever won. */}
+      <h3 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
 
       {isEmpty ? (
         // An explanation, never empty axes. A grid with no marks reads as "this
         // was measured and found to be nothing"; the truth is usually "this run
         // has not been parsed yet" or "nothing was recorded", and those are
         // different facts a reader acts on differently.
-        <p role="status" className="text-muted">
+        //
+        // Given the height a drawn chart would have occupied, so a stack of
+        // eight figures keeps its rhythm when one of them has nothing to draw —
+        // and so the page does not resize around the reader if a pending
+        // payload arrives while they are looking at it.
+        <p
+          role="status"
+          className="flex h-72 items-center justify-center rounded-lg bg-sunken px-6 text-center text-[13px] text-muted"
+        >
           {data.empty}
         </p>
       ) : (
@@ -434,12 +468,17 @@ export default function Chart({
 
       {/* Anything the chart is not showing, in prose. Both the transform's own
           limitation (truncated bins, a split the run predates) and the
-          palette's (a seventh series that would have had to reuse a hue). */}
-      {data.limitation !== undefined && (
-        <p className="text-sm text-muted">{data.limitation}</p>
-      )}
-      {assignment.limitation !== undefined && (
-        <p className="text-sm text-muted">{assignment.limitation}</p>
+          palette's (a seventh series that would have had to reuse a hue).
+
+          Set apart with a rule and a smaller size rather than left as another
+          paragraph: these are caveats ABOUT the figure, and a reader
+          skimming eight charts has to be able to tell them from the figure's
+          own description at a glance. */}
+      {(data.limitation !== undefined || assignment.limitation !== undefined) && (
+        <div className="flex flex-col gap-1 border-t border-divider pt-3 text-[12px] leading-relaxed text-muted">
+          {data.limitation !== undefined && <p>{data.limitation}</p>}
+          {assignment.limitation !== undefined && <p>{assignment.limitation}</p>}
+        </div>
       )}
 
       <DataTable id={id} caption={title} columns={data.columns} rows={data.rows} />

@@ -3,7 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- No `maximum-scale` and no `user-scalable=no`. Both stop a reader
+         pinch-zooming, which WCAG 1.4.4 requires and which is the only way
+         some people can read a table of four-digit response times. -->
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="PerfPortal — load-test results for your organisation: runs, SLA verdicts, response-time statistics and charts."
+    />
     <title>PerfPortal</title>
+    <!--
+      THE THEME, BEFORE THE FIRST PAINT.
+
+      This must run synchronously in <head>, ahead of any stylesheet-driven
+      paint: applying the theme from a React effect renders the light theme
+      first and then repaints, which is the white flash every dark-mode site
+      with that bug has. It is deliberately five hand-copied lines rather than
+      a module import, because a module in <head> is exactly the render-
+      blocking round trip this exists to avoid.
+
+      Kept in step with `src/theme.ts` BY HAND — same storage key, same
+      attribute, same three values. Change both together.
+
+      try/catch because `localStorage` throws outright in Safari's private
+      mode and under a blocked-storage policy in an iframe. A theme preference
+      is not worth a blank page.
+    -->
+    <script>
+      (function () {
+        try {
+          var choice = localStorage.getItem('perfportal-theme');
+          if (choice === 'light' || choice === 'dark') {
+            document.documentElement.setAttribute('data-theme', choice);
+          }
+        } catch (e) {
+          /* no stored preference reachable — fall through to the OS setting */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
