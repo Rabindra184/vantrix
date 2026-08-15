@@ -114,6 +114,7 @@ exists to grow.
 ### 3.2 `packages/contracts/src/project.ts` (new)
 
 ```ts
+import { z } from 'zod';
 import { RunStatusSchema, RunVerdictSchema } from './run.js';
 
 export const ProjectListResponseSchema = z.object({
@@ -247,10 +248,13 @@ which would make every call site read ambiguously.
 
 `RunRepository.list` resolves the cursor **under the same scope it lists
 with**. A cursor obtained from the unfiltered list therefore does not
-resolve once `?project=` is applied, and the caller gets an empty page —
-the repository's existing, deliberate behaviour for an unresolvable cursor
+resolve once `?project=` is applied *if the cursor's run belongs to a
+different project than the one now being filtered to* — the lookup's `WHERE`
+adds `projectId` and finds nothing, so the caller gets an empty page: the
+repository's existing, deliberate behaviour for an unresolvable cursor
 ("silently restarting pagination would resurface items the caller already
-saw").
+saw"). If the cursor's run belongs to the selected project, the lookup finds
+it under the narrower scope too and paging continues normally.
 
 This is correct and stays. The web resets the cursor when the filter
 changes, so the state is unreachable from the UI. It is documented here so

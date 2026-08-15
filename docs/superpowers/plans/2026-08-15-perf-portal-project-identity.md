@@ -22,7 +22,7 @@
 - **`<RunList key={slug} …>` is required**, not stylistic. Without it, `/projects/a` → `/projects/b` reuses the component and its cursor.
 - **Expectations are computed from the payload, never written down.** A test that hard-codes a value a fixture supplies breaks on the next re-capture for a reason that is not a defect.
 - **Accessible-name assertions go in Playwright, never jsdom.** `dom-accessibility-api` does not consult a descendant's `aria-hidden` the way Chromium's accessibility tree does.
-- **Narrow a suite from the repo ROOT, never with `pnpm --filter <pkg> exec`.** `--filter` changes cwd to the package directory, and vitest only looks for config in cwd — so `apps/web` resolves `vite.config.ts`, which has no `test` block, and the environment silently defaults to `node` instead of the jsdom that the root `vitest.config.ts`'s `environmentMatchGlobs` assigns to `apps/web/test/*.tsx`. Every web component test then dies with `ReferenceError: document is not defined`, including ones that pass in CI. Use `pnpm exec vitest run apps/web/test/<file>` from the root. Likewise `pnpm test:e2e -- <file>` does not narrow — the argument is not forwarded, and the full suite runs; use `pnpm exec playwright test <file>`.
+- **Narrow a DOM-dependent suite from the repo ROOT, never with `pnpm --filter <pkg> exec`.** `--filter` changes cwd to the package directory, and vitest resolves config by searching upward from cwd — so `apps/web` finds its own `vite.config.ts` first, which has no `test` block, and the environment silently defaults to `node` instead of the jsdom that the root `vitest.config.ts`'s `environmentMatchGlobs` assigns to `apps/web/test/*.tsx`. Every web component test then dies with `ReferenceError: document is not defined`, including ones that pass in CI. Use `pnpm exec vitest run apps/web/test/<file>` from the root. This is specifically about losing jsdom: a package with no vite/vitest config of its own (e.g. `packages/contracts`, whose tests are pure Zod and need no DOM) has nothing to shadow the root config with, so `pnpm --filter @perfportal/contracts exec vitest run test/contracts.test.ts` — used in Task 1 below — resolves the same root config and is fine. Likewise `pnpm test:e2e -- <file>` does not narrow — the argument is not forwarded, and the full suite runs; use `pnpm exec playwright test <file>`.
 - **Run every command under Node 22.** `package.json` sets `engines: { node: ">=22" }` and `.nvmrc` pins `22.19.0`. Under Node 20, `pnpm test:unit` **exits 1** with 16 jsdom/undici errors and silently collects only 47 of 63 test files — 534 tests instead of 679. It looks like a passing run if you read the "534 passed" line and not the exit code. Start every session with:
   ```bash
   export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && nvm use 22.19.0 && node --version
@@ -1405,6 +1405,17 @@ git add -A && git commit -m "feat(web): the run list names each row by its proje
 - [ ] **Step 1: Write the failing e2e test**
 
 This is falsification checkpoint 5. It needs *page forward, then switch* — no click-through finds it.
+
+**Superseded during execution.** This form turned out to be unfalsifiable:
+`page.goto` is a full document load, so React unmounts and `RunList`'s cursor
+resets whether or not `key={slug}` is present — the test passed identically
+either way. The guard was moved to a jsdom test that drives a real
+client-side transition instead (`MemoryRouter` plus a `Link` click), which is
+the only kind of navigation React Router can reuse a component instance
+across: `apps/web/test/ProjectRuns.test.tsx`, shipped in commit `d6de986`. The
+argument for why this belongs in jsdom rather than Playwright is in spec §10
+checkpoint 5. The Playwright test below is kept as a record of what was
+originally planned, not as something to reintroduce.
 
 ```ts
 test('switching projects after paging forward shows the second project\'s first page', async ({ page }) => {
