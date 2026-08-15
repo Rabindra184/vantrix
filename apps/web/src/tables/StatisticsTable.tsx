@@ -11,7 +11,10 @@ import {
   type SortDirection,
   type TableRow,
 } from './buildTree';
-import { ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
+import SectionHeading from '../components/SectionHeading';
+import { EmptyState } from '../components/States';
+import TableFrame from '../components/TableFrame';
+import { INPUT, ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 
 /**
  * §13.2 ⑤ the statistics table — Appendix A G-11…G-16.
@@ -534,13 +537,11 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
 
   if (total === null && tree.length === 0) {
     return (
-      <section aria-labelledby={headingId} className="flex flex-col gap-2">
-        <h2 id={headingId} className="text-xl font-semibold">
-          Statistics
-        </h2>
+      <section aria-labelledby={headingId} className="flex flex-col gap-3">
+        <SectionHeading id={headingId}>Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
-        <p>No statistics were recorded for this run.</p>
+        <EmptyState title="No statistics were recorded for this run" />
       </section>
     );
   }
@@ -548,46 +549,54 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
   const allColumns = [...columns.executions, ...columns.responseTime];
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-2">
-      <h2 id={headingId} className="text-xl font-semibold">
-        Statistics
-      </h2>
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      {/* The heading and the filter share a row on a wide screen — the filter
+          acts ON this table and belongs to its header, not to the page — and
+          stack on a narrow one, where a 200px input beside a heading leaves
+          neither enough room. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <SectionHeading id={headingId}>Statistics</SectionHeading>
 
-      {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
-          placeholder: a placeholder disappears the moment the reader types,
-          which is exactly when a screen reader is asked what the field is. */}
-      <div className="flex items-center gap-2">
-        <label htmlFor={filterId} className="text-sm text-muted">
-          Filter by name
-        </label>
-        <input
-          id={filterId}
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          // Off, because the values worth completing here are the row names
-          // already on screen, and the browser would offer yesterday's runs.
-          autoComplete="off"
-          className="rounded border border-default px-2 py-0.5 text-sm"
-        />
+        {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
+            placeholder: a placeholder disappears the moment the reader types,
+            which is exactly when a screen reader is asked what the field is. */}
+        <div className="flex items-center gap-2">
+          <label htmlFor={filterId} className="shrink-0 text-[12px] text-muted">
+            Filter by name
+          </label>
+          <input
+            id={filterId}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            // Off, because the values worth completing here are the row names
+            // already on screen, and the browser would offer yesterday's runs.
+            autoComplete="off"
+            placeholder="e.g. Catalog"
+            // Capped, because `INPUT` is `w-full` for the login form's stacked
+            // fields and an unbounded search box here would stretch to the
+            // card's whole width for a value that is never more than a few
+            // words.
+            className={`${INPUT} sm:w-56`}
+          />
+        </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <TableFrame caption={CAPTION_TEXT} label="Statistics table">
         <table className={TABLE}>
           {/* The caption is the table's ACCESSIBLE NAME as well as its
               explanation — `getByRole('table', { name: /statistics/i })` is how
-              this suite and the Playwright specs find it.
+              this suite and the Playwright specs find it, and this suite reads
+              this element's own `textContent` for the percentile caveat.
 
-              It states the percentile caveat because the ruling requires it:
-              a reader comparing our 99th against another tool's needs to know
-              it is an estimate, and that is true whether or not it was
-              clamped. */}
-          <caption className="pb-3 text-left text-sm text-muted">
-            Statistics for every request and group in this run, with the run’s own totals in the
-            first row. Response times are in milliseconds. The percentile columns are estimates,
-            accurate to within 1%, and are shown clamped to their own row’s minimum and maximum — a
-            percentile of a sample cannot lie outside that sample’s range.
-          </caption>
+              It states that caveat because the ruling requires it: a reader
+              comparing our 99th against another tool's needs to know it is an
+              estimate, and that is true whether or not it was clamped.
+
+              `sr-only`, with the SAME text drawn visibly by `TableFrame` above
+              the scroll box — a `<caption>` is as wide as its table, and this
+              table is far wider than a phone. See `TableFrame`'s docstring. */}
+          <caption className="sr-only">{CAPTION_TEXT}</caption>
 
           <thead className={THEAD}>
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
@@ -686,17 +695,31 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 and it is handled above. */}
             {filtering && rows.length === 0 && (
               <tr>
-                <td colSpan={allColumns.length + 1} className={TD}>
+                <td colSpan={allColumns.length + 1} className={`${TD} py-8 text-center text-muted`}>
                   No rows match this filter.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-      </div>
+      </TableFrame>
     </section>
   );
 }
+
+/**
+ * The statistics table's caption, as a module constant.
+ *
+ * A plain string rather than JSX because it is used in two places —
+ * `TableFrame`'s visible copy and the table's own `sr-only` `<caption>` — and
+ * a constant is what guarantees they cannot drift. It carries no markup, so
+ * there is nothing JSX would buy.
+ */
+const CAPTION_TEXT =
+  'Statistics for every request and group in this run, with the run’s own totals in the first ' +
+  'row. Response times are in milliseconds. The percentile columns are estimates, accurate to ' +
+  'within 1%, and are shown clamped to their own row’s minimum and maximum — a percentile of a ' +
+  'sample cannot lie outside that sample’s range.';
 
 /* ======================================================================== *
  * 6. THE COLUMN HEADINGS, WHICH ARE THE SORT CONTROLS

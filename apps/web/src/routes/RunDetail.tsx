@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
+import Button, { linkButtonClasses } from '../components/Button';
+import SectionHeading from '../components/SectionHeading';
+import { Skeleton, SkeletonTable } from '../components/Skeleton';
+import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import TableFrame from '../components/TableFrame';
+import { ChevronLeftIcon, RefreshIcon } from '../components/icons';
+import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import {
   distributionQuery,
@@ -87,9 +94,25 @@ export default function RunDetail() {
 
   if (run.isPending) {
     return (
-      <p role="status" className="text-muted">
-        Loading run…
-      </p>
+      <LoadingState label="Loading run…">
+        <div className="flex flex-col gap-6">
+          {/* The shape the run page actually takes: heading block, tab strip,
+              stat row, table. Reserving it is what stops the whole page
+              jumping when the payload lands. */}
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-7 w-80 max-w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+          <Skeleton className="h-9 w-64" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Skeleton key={i} className="h-[92px]" />
+            ))}
+          </div>
+          <SkeletonTable columns={6} rows={5} />
+        </div>
+      </LoadingState>
     );
   }
 
@@ -101,16 +124,17 @@ export default function RunDetail() {
     const error = run.error;
     const problem = error instanceof ProblemError ? error : null;
     return (
-      <div role="alert" className="flex flex-col items-start gap-2">
-        <h1 className="text-2xl font-semibold">This run could not be loaded</h1>
-        <p>{problem?.detail ?? error.message}</p>
-        {problem !== null && (
-          <p data-testid="problem-remediation" className="text-muted">
-            {problem.remediation}
-          </p>
-        )}
-        <BackToRuns />
-      </div>
+      // `titleAs="h1"`: this branch replaces the entire page, so its title IS
+      // the document's heading. `ErrorState` defaults to a paragraph for the
+      // commoner case where a page keeps its own `<h1>` above the alert.
+      <ErrorState
+        titleAs="h1"
+        title="This run could not be loaded"
+        detail={problem?.detail ?? error.message}
+        remediation={problem?.remediation}
+        remediationTestId="problem-remediation"
+        action={<BackToRuns />}
+      />
     );
   }
 
@@ -123,17 +147,25 @@ export default function RunDetail() {
 
 function NotARun() {
   return (
-    <div role="alert" className="flex flex-col items-start gap-2">
-      <h1 className="text-2xl font-semibold">No run was named</h1>
-      <p className="text-muted">This address does not identify a run.</p>
-      <BackToRuns />
-    </div>
+    <ErrorState
+      titleAs="h1"
+      title="No run was named"
+      detail="This address does not identify a run."
+      action={<BackToRuns />}
+    />
   );
 }
 
+/**
+ * A `<Link>` wearing the secondary button's look — never a `<button>` with an
+ * `onClick` that navigates. It is a destination, so it must middle-click into
+ * a new tab and show its target in the status bar, which only a real anchor
+ * does (see `Button`'s docstring on why there is no `asChild` escape hatch).
+ */
 function BackToRuns() {
   return (
-    <Link to={DEFAULT_ROUTE} className="underline">
+    <Link to={DEFAULT_ROUTE} className={`${linkButtonClasses} mt-1`}>
+      <ChevronLeftIcon className="h-3.5 w-3.5" />
       Back to all runs
     </Link>
   );
@@ -168,32 +200,64 @@ export function Processing({
   onRetry: () => void;
 }) {
   return (
-    <div className="flex flex-col items-start gap-3">
-      <h1 className="text-2xl font-semibold">Run in progress</h1>
-      <p role="status">This run is still processing.</p>
-      <p className="text-muted">
+    <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-xl border border-dashed border-default px-6 py-14 text-center">
+      {/* The status mark IS the illustration — a pulsing ring in the pending
+          colour, with the word beside it — rather than a generic spinner. A
+          spinner says "something is happening"; this says which of `pending`
+          and `parsing` is happening, which is the one fact the reader can act
+          on (a run stuck in `pending` never reached the worker). The pulse is
+          decorative and `tokens.css` turns it off under reduced-motion. */}
+      {/* The colour arrives as DATA on the `Mark`, through an inline `style`,
+          which is the same route `Marked` and `Badge` already take and the
+          reason `routes/marks.tsx` is exempt from the arbitrary-value gate in
+          `test/tokens.test.ts`. Reaching for the pending token as a Tailwind
+          arbitrary value instead would trip that gate — correctly, and not
+          only on a technicality: a token written in here would be a second
+          place to edit on the day `parsing` and `pending` stop sharing a
+          colour. `tint` then derives the wash and the ring from
+          `currentColor`, so all three follow the one value.
+
+          (The gate greps the raw file, comments included, which is why this
+          paragraph describes the spelling rather than quoting it.) */}
+      <span
+        className="tint relative flex h-11 w-11 items-center justify-center rounded-full border"
+        style={{ color: STATUS[status].colour }}
+      >
+        <span className="absolute inset-0 animate-ping rounded-full bg-current opacity-20" />
+        <span aria-hidden="true" className="relative text-lg leading-none">
+          {STATUS[status].glyph}
+        </span>
+      </span>
+
+      <h1 className="text-[15px] font-semibold tracking-tight text-primary">Run in progress</h1>
+      {/* `role="status"` on the sentence that changes, so a screen reader
+          hears the transition rather than only the first paint. */}
+      <p role="status" className="text-[13px] text-muted">
+        This run is still processing.
+      </p>
+      <p className="text-[13px]">
         <Marked mark={STATUS[status]} />
       </p>
+
       {capReached ? (
         // The cap has been reached: the page has stopped asking on its own.
         // Saying so — and handing the reader the control — is the difference
         // between a page that gave up and a page that appears to be working
         // while making no requests at all.
         <>
-          <p>
+          <p className="max-w-sm text-[13px] leading-relaxed text-muted">
             PerfPortal stopped checking automatically after two minutes. The run has not finished
             yet.
           </p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="rounded border border-default px-3 py-2"
-          >
+          {/* `primary`: on a page whose only other control is "Back to all
+              runs", re-checking is what the reader came to do. */}
+          <Button variant="primary" size="sm" onClick={onRetry}>
+            <RefreshIcon className="h-3.5 w-3.5" />
             Check again
-          </button>
+          </Button>
         </>
       ) : (
-        <p className="text-muted">
+        <p className="max-w-sm text-[13px] leading-relaxed text-muted">
           This page checks again every few seconds; there is nothing to do.
         </p>
       )}
@@ -395,7 +459,20 @@ export function RunChartsTab() {
   const series = useQuery({ ...seriesQuery(runId ?? ''), enabled: runId !== undefined });
 
   return (
-    <section aria-labelledby="charts-heading" className="flex flex-col gap-8">
+    // TWO COLUMNS FROM `2xl`, ONE BELOW IT — and the order the charts are
+    // declared in is preserved either way, because CSS grid fills row-major.
+    // §13.2's numbering is information (a missing ⑧ silently renumbers
+    // everything after it, which is why `payload.tsx` renders undrawn charts
+    // rather than nothing), so the pairing must never reorder them; it only
+    // decides how many sit side by side.
+    //
+    // The break is at `2xl` (1536px) rather than `xl`, because each figure
+    // holds a 288px-tall plot plus a legend plus a data-table toggle, and two
+    // of those in a 1280px window leaves each chart ~600px — narrow enough
+    // that a 60-bucket time axis starts dropping every other tick label.
+    // Above 1536px there is room for both, and halving the scroll depth of an
+    // eight-figure page is worth real time to a reader comparing two of them.
+    <section aria-labelledby="charts-heading" className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
       <h2 id="charts-heading" className="sr-only">
         Charts
       </h2>
@@ -449,64 +526,69 @@ export function RunChartsTab() {
 function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
   if (assertions.length === 0) {
     return (
-      <section className="flex flex-col gap-2">
-        <h2 className="text-xl font-semibold">Assertions</h2>
-        <p>No SLA rules were evaluated against this run.</p>
-        <p className="text-muted">
-          Rules are configured per project, and only rules that existed when the run was ingested
-          are applied to it.
-        </p>
+      <section className="flex flex-col gap-3">
+        <SectionHeading>Assertions</SectionHeading>
+        <EmptyState
+          title="No SLA rules were evaluated against this run"
+          body="Rules are configured per project, and only rules that existed when the run was ingested are applied to it."
+        />
       </section>
     );
   }
 
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-xl font-semibold">Assertions</h2>
-      <table className="w-full border-collapse text-left">
-        <caption className="pb-3 text-left text-sm text-muted">
-          Every SLA rule evaluated against this run, as the rule read at the time it was evaluated.
-          <em>Not applicable</em> means the rule could not be checked at all — it is not a pass.
-        </caption>
-        <thead>
-          <tr className="border-b border-default">
-            <th scope="col" className="py-2 pr-4 font-semibold">
-              Outcome
-            </th>
-            <th scope="col" className="py-2 pr-4 font-semibold">
-              Rule
-            </th>
-            <th scope="col" className="py-2 pr-4 font-semibold">
-              Actual
-            </th>
-            <th scope="col" className="py-2 font-semibold">
-              What happened
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {assertions.map((assertion) => (
-            <tr
-              key={assertion.ruleId}
-              data-testid="assertion-row"
-              className="border-b border-default"
-            >
-              <td data-testid="assertion-outcome" className="py-2 pr-4">
-                <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
-              </td>
-              <td className="py-2 pr-4">{describeRule(assertion.rule)}</td>
-              {/* Null for a not_applicable assertion — there was nothing to
-                  measure (AssertionSchema). A dash, never `0`: zero is a
-                  measurement, and this is the absence of one. */}
-              <td className="py-2 pr-4">{assertion.actualValue ?? '—'}</td>
-              <td className="py-2">{assertion.message}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <section className="flex flex-col gap-3">
+      <SectionHeading>Assertions</SectionHeading>
+      <TableFrame caption={ASSERTIONS_CAPTION} label="Assertions table">
+          <table className={TABLE}>
+            {/* `sr-only`, with the same node drawn visibly outside the scroll
+                box — see `TableFrame`. */}
+            <caption className="sr-only">{ASSERTIONS_CAPTION}</caption>
+            <thead className={THEAD}>
+              <tr>
+                <th scope="col" className={TH}>
+                  Outcome
+                </th>
+                <th scope="col" className={TH}>
+                  Rule
+                </th>
+                <th scope="col" className={TH}>
+                  Actual
+                </th>
+                <th scope="col" className={TH}>
+                  What happened
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {assertions.map((assertion) => (
+                <tr key={assertion.ruleId} data-testid="assertion-row" className={ROW}>
+                  <td data-testid="assertion-outcome" className={`${TD} whitespace-nowrap`}>
+                    <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
+                  </td>
+                  <td className={`${TD} font-mono text-[12px]`}>{describeRule(assertion.rule)}</td>
+                  {/* Null for a not_applicable assertion — there was nothing to
+                      measure (AssertionSchema). A dash, never `0`: zero is a
+                      measurement, and this is the absence of one. */}
+                  <td className={TD_NUM}>{assertion.actualValue ?? '—'}</td>
+                  <td className={`${TD} text-muted`}>{assertion.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+      </TableFrame>
     </section>
   );
 }
+
+/** One node, rendered visibly by `TableFrame` and again as the table's own
+ *  `sr-only` `<caption>`, so the two cannot drift. */
+const ASSERTIONS_CAPTION = (
+  <>
+    Every SLA rule evaluated against this run, as the rule read at the time it was evaluated.{' '}
+    <em>Not applicable</em> means the rule could not be checked at all — it is not a pass.
+  </>
+);
 
 /**
  * The rule in the same words the evaluator used when it wrote the assertion's

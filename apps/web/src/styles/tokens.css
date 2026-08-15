@@ -1,16 +1,16 @@
 /*
- * Design tokens as CSS custom properties. Consumed by Tailwind (see
- * tailwind config / utility classes) and, later, by charts.
+ * Design tokens as CSS custom properties. Consumed by Tailwind (see the
+ * `@theme inline` block below) and, at runtime, by charts.
  *
  * Three blocks declare these tokens. Light values live under the top-level
  * root rule. Dark values apply automatically via prefers-color-scheme,
- * scoped so a future explicit light override still wins over a dark OS
- * setting. A future theme toggle re-asserts the dark values through
- * `[data-theme="dark"]`, which must win over prefers-color-scheme — hence it
- * is declared after the media query. There is no `[data-theme="light"]`
+ * scoped so an explicit light override still wins over a dark OS setting. The
+ * theme toggle (`components/ThemeToggle.tsx`) re-asserts the dark values
+ * through `[data-theme="dark"]`, which must win over prefers-color-scheme —
+ * hence it is declared after the media query. There is no light data-theme
  * block: the media query's own scoping already lets an explicit light theme
- * beat a dark OS setting, so a light block would only be a second copy of
- * the light values that could drift from the root rule.
+ * beat a dark OS setting, so such a block would only be a second copy of the
+ * light values that could drift from the root rule.
  *
  * Status colours (passed / failed / not_applicable / pending) are tokens
  * only. Colour is never the only signal for status - consuming components
@@ -78,9 +78,33 @@
  * (PERCENTILE_RAMP / PERCENTILE_COLORS) and apps/web/test/palette.test.ts
  * fails if the two disagree - in any of the three blocks. Edit the hexes
  * there, not here.
+ *
+ * ---------------------------------------------------------------------------
+ * TOKENS BELOW THIS LINE ARE PRESENTATION ONLY, and deliberately NOT mirrored
+ * in theme.ts: nothing a chart draws reads them, so there is no second copy to
+ * keep in step and palette.test.ts has nothing to gate.
+ *
+ * --color-brand is the product mark, and is NOT --color-accent-base. The
+ * accent is the INTERACTIVE colour — links, the active nav row, primary
+ * buttons — and a reader learns it means "you can act on this". The brand is
+ * an identity, worn by exactly one element (the shell's logo tile). Spending
+ * one colour on both jobs is how a logo comes to look clickable.
+ *
+ * --elevation-* are the three surface heights. A dashboard whose every
+ * container is a 1px border on the same fill has no hierarchy at all; these
+ * give the panel, the popover and the modal distinguishable depth. Dark mode
+ * gets a RING rather than a drop shadow: a shadow is the absence of light and
+ * is invisible on a near-black canvas, so depth there is carried by a
+ * hairline highlight instead. That is why they are theme-scoped tokens rather
+ * than one Tailwind shadow scale.
+ *
+ * --ring-* / --duration-* / --ease-* keep focus and motion consistent across
+ * every component rather than re-decided per file. See the motion block at the
+ * bottom, which turns all of it off under prefers-reduced-motion.
  */
 
 @import 'tailwindcss';
+@import '../fonts/fonts.css';
 
 /*
  * `@theme inline` publishes the short Tailwind-facing names (`bg-surface`,
@@ -97,6 +121,10 @@
  * its OWN name (`--color-surface: var(--color-surface)`) resolves to nothing,
  * silently. Only those three were ever at risk of that collision; the rest
  * never shared a name with their alias to begin with.
+ *
+ * The same trap is why the elevation tokens are `--elevation-*` at runtime and
+ * `--shadow-*` here: `--shadow-panel: var(--shadow-panel)` would resolve to
+ * nothing in exactly the same silent way.
  */
 @theme inline {
   --color-page: var(--color-surface-page);
@@ -108,6 +136,35 @@
   --color-primary: var(--color-text-primary);
   --color-muted: var(--color-text-muted);
   --color-accent: var(--color-accent-base);
+  /*
+   * `on-accent`, NOT `accent-foreground`, and the rename is load-bearing
+   * rather than stylistic — this shipped broken once and the failure was
+   * silent, which is the whole reason it is written down.
+   *
+   * The runtime token is `--color-accent-foreground`, and its name is fixed:
+   * `palette.test.ts` pins it, and `charts/theme.ts` mirrors it. A key here
+   * spelled the same would read `var()` of its OWN name and resolve to
+   * nothing — the exact trap the paragraph above records for `surface`, `rule`
+   * and `accent-base`. But simply LEAVING IT OUT, which is what happened,
+   * fails in a way that looks like it works: Tailwind generates no
+   * `text-accent-foreground` rule at all, the class is inert, and the element
+   * quietly inherits `color` from `body`. So the skip link and every primary
+   * button rendered dark slate on indigo — 2.84:1, an AA failure — while the
+   * markup read as if it said white. Only a contrast sweep of the live DOM
+   * caught it.
+   *
+   * Naming it after Material's `on-<surface>` convention keeps it distinct
+   * from the runtime token by construction, so the collision cannot come back.
+   */
+  --color-on-accent: var(--color-accent-foreground);
+  --color-brand-mark: var(--color-brand);
+
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+
+  --shadow-panel: var(--elevation-panel);
+  --shadow-raised: var(--elevation-raised);
+  --shadow-overlay: var(--elevation-overlay);
 }
 
 :root {
@@ -120,10 +177,11 @@
   --color-border: #e2e8f0;
   --color-rule: #f1f5f9;
   --color-text-primary: #0f172a;
-  --color-text-muted: #64748b;
+  --color-text-muted: #475569;
   --color-accent-base: #4f46e5;
   --color-accent-foreground: #ffffff;
-  --color-ring: #6366f1;
+  --color-ring: #8b5cf6;
+  --color-brand: #f97316;
 
   --color-status-passed: #047857;
   --color-status-failed: #dc2626;
@@ -158,6 +216,13 @@
   --chart-pct-p95: #f59e0b;
   --chart-pct-p99: #f97316;
   --chart-pct-max: #ef4444;
+
+  --font-family-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-family-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+
+  --elevation-panel: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.03);
+  --elevation-raised: 0 4px 16px -4px rgba(15, 23, 42, 0.1);
+  --elevation-overlay: 0 12px 32px -8px rgba(15, 23, 42, 0.18);
 }
 
 /* Critical 2 (fix wave): the page's own background and foreground. Without
@@ -170,23 +235,69 @@
 body {
   background-color: var(--color-surface-page);
   color: var(--color-text-primary);
+  font-family: var(--font-family-sans);
+  /* 14px, not the UA's 16. This is a data product: the run list, the
+     statistics table and the eight chart data tables are the page, and at
+     16px a statistics row of thirteen numeric columns no longer fits a
+     laptop without horizontal scroll. Inputs are exempted below — 14px in a
+     text field is what makes iOS Safari zoom on focus. */
+  font-size: 0.875rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* `cv11` disambiguates the single-storey `a`; `ss01` is Geist's own
+     stylistic set. Both are no-ops for the fallback stack. */
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* A form control smaller than 16px makes iOS Safari zoom the viewport on
+   focus and never zoom back out — the commonest way a responsive layout
+   breaks on a phone despite every breakpoint being correct. Desktop keeps the
+   14px body size, where no such behaviour exists. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 1rem;
+  }
+}
+
+/* EVERY figure in this app is a measurement, and measurements are read in
+   columns. Lining figures of equal advance width are what stop a column of
+   response times from jittering as the digits change. Applied to the mono
+   family globally rather than per-table, so a number cannot be rendered
+   proportionally by having been put somewhere nobody thought about. */
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-family-mono);
+  font-feature-settings: 'tnum';
+}
+
+/* Quiet scrollbars that follow the active theme, rather than the UA's own
+   light-mode chrome sitting on a near-black canvas. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-text-muted) 40%, transparent) transparent;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
 
-    --color-surface-page: #0f172a;
-    --color-surface-card: #1e293b;
-    --color-surface-sidebar: #0f172a;
-    --color-surface-sunken: #334155;
-    --color-border: #334155;
-    --color-rule: #1e293b;
-    --color-text-primary: #f8fafc;
+    --color-surface-page: #0b0d12;
+    --color-surface-card: #101319;
+    --color-surface-sidebar: #0d1015;
+    --color-surface-sunken: #171b23;
+    --color-border: #232833;
+    --color-rule: #191d25;
+    --color-text-primary: #e8ecf4;
     --color-text-muted: #94a3b8;
     --color-accent-base: #818cf8;
-    --color-accent-foreground: #0f172a;
-    --color-ring: #818cf8;
+    --color-accent-foreground: #0b0d12;
+    --color-ring: #a78bfa;
+    --color-brand: #f97316;
 
     --color-status-passed: #10b981;
     --color-status-failed: #f87171;
@@ -221,28 +332,36 @@ body {
     --chart-pct-p95: #f59e0b;
     --chart-pct-p99: #f97316;
     --chart-pct-max: #ef4444;
+
+    /* A drop shadow is the absence of light and does not exist on a
+       near-black canvas. Depth here is a hairline top highlight plus a
+       containing ring — the same reading, by the opposite mechanism. */
+    --elevation-panel: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --elevation-raised: 0 8px 24px -12px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --elevation-overlay: 0 20px 48px -16px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 }
 
 /* Three blocks, not four. The media query's own :not() is what lets an
-   explicit light theme beat a dark OS setting, so [data-theme='light'] needs
-   no block of its own — and not having one is what stops the light values
-   existing in two places that can disagree. */
+   explicit light theme beat a dark OS setting, so a light data-theme block is
+   unnecessary — and not having one is what stops the light values existing in
+   two places that can disagree. */
 
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --color-surface-page: #0f172a;
-  --color-surface-card: #1e293b;
-  --color-surface-sidebar: #0f172a;
-  --color-surface-sunken: #334155;
-  --color-border: #334155;
-  --color-rule: #1e293b;
-  --color-text-primary: #f8fafc;
+  --color-surface-page: #0b0d12;
+  --color-surface-card: #101319;
+  --color-surface-sidebar: #0d1015;
+  --color-surface-sunken: #171b23;
+  --color-border: #232833;
+  --color-rule: #191d25;
+  --color-text-primary: #e8ecf4;
   --color-text-muted: #94a3b8;
   --color-accent-base: #818cf8;
-  --color-accent-foreground: #0f172a;
-  --color-ring: #818cf8;
+  --color-accent-foreground: #0b0d12;
+  --color-ring: #a78bfa;
+  --color-brand: #f97316;
 
   --color-status-passed: #10b981;
   --color-status-failed: #f87171;
@@ -277,4 +396,84 @@ body {
   --chart-pct-p95: #f59e0b;
   --chart-pct-p99: #f97316;
   --chart-pct-max: #ef4444;
+
+  --elevation-panel: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --elevation-raised: 0 8px 24px -12px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --elevation-overlay: 0 20px 48px -16px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/*
+ * ONE FOCUS TREATMENT, applied by the browser's own `:focus-visible` heuristic
+ * rather than per component. Two things had to be true and neither was:
+ * a mouse click must not leave a ring behind (`:focus` alone does), and the
+ * ring must be visible on both a white card and a near-black rail — which is
+ * why it is a token that moves with the theme rather than a fixed colour.
+ *
+ * `outline`, not `box-shadow`: an outline follows the element's border-radius,
+ * is never clipped by an ancestor's `overflow: hidden` (a real problem for the
+ * rail's scroll container and every table cell), and survives forced-colours
+ * mode, where box-shadow is dropped entirely.
+ */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* A control the reader can act on says so with the cursor. Buttons get this
+     from the UA on nothing but `<a href>`; `<button>` does not. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-accent-base) 24%, transparent);
+  }
+}
+
+/*
+ * A tonal fill derived from whatever colour the element already carries.
+ *
+ * `Badge` sets `style={{ color: mark.colour }}` — the mark's own text colour,
+ * gated at 4.5:1 against the card — and this turns that into a matching wash
+ * behind it without a second token per status, and without the badge needing
+ * to know which status it is showing. A hard-coded `bg-emerald-50` would be a
+ * fourth place the status palette lives, and would be wrong in dark mode.
+ */
+@utility tint {
+  background-color: color-mix(in oklab, currentColor 10%, transparent);
+  border-color: color-mix(in oklab, currentColor 22%, transparent);
+}
+
+/*
+ * MOTION, in one place and switchable off in one place.
+ *
+ * Every transition in this app is 150ms ease-out on colour-ish properties
+ * only — never on width, height, top or left, which are laid out on the main
+ * thread and drop frames on a page already drawing eight ECharts instances.
+ */
+@utility transition-ui {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/*
+ * `prefers-reduced-motion` is a medical setting, not a preference for less
+ * decoration: vestibular disorders make movement genuinely painful. Nothing
+ * here is load-bearing, so all of it goes — reduced to 1ms rather than 0 so
+ * that `transitionend` listeners still fire and nothing waits forever.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
 }

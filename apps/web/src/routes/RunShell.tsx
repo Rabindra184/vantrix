@@ -5,6 +5,7 @@ import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
 import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
+import useDocumentTitle from '../useDocumentTitle';
 
 /**
  * The chrome around one run's identity and its three tabs.
@@ -15,6 +16,14 @@ import RunTabs from './RunTabs';
  * Here the shell mounts once and only the `<Outlet/>` swaps.
  */
 export default function RunShell({ run }: { readonly run: RunResponse }) {
+  // The run's identity, spelled the way `RunHeader`'s `<h1>` spells it — the
+  // fully-qualified simulation, falling back to the short id for a run whose
+  // header carried none. Two runs of the same simulation are then two tabs
+  // that read alike, which is the honest rendering: the id in the breadcrumb
+  // is what tells them apart, and a title long enough to include it would be
+  // truncated to uselessness in a tab strip anyway.
+  useDocumentTitle(run.simulation ?? `Run ${run.id.slice(0, 8)}`);
+
   // The Errors tab's own count, not the statistics row's `koCount`: that
   // figure is failed REQUESTS, a different number from the DISTINCT error
   // MESSAGES this tab is named after (24 vs 2 on the reference run). Reusing

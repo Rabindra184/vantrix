@@ -1,6 +1,9 @@
 import { useMemo, type ReactNode } from 'react';
 import { type UseQueryResult } from '@tanstack/react-query';
 import { ProblemError } from '../api/fetch';
+import SectionHeading from '../components/SectionHeading';
+import { SkeletonTable } from '../components/Skeleton';
+import { ErrorState, LoadingState } from '../components/States';
 import Chart from '../charts/Chart';
 import type { ChartData } from '../charts/types';
 
@@ -132,17 +135,29 @@ export function TableSection<T>({
   if (query.data !== undefined) return <>{children(query.data)}</>;
 
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-xl font-semibold">{title}</h2>
+    <section className="flex flex-col gap-3">
+      <SectionHeading>{title}</SectionHeading>
       {query.isPending ? (
-        <p role="status" className="text-muted">
-          Loading…
-        </p>
+        <LoadingState label="Loading…">
+          <SkeletonTable columns={6} rows={5} />
+        </LoadingState>
       ) : (
         // `role="alert"`, not a muted paragraph: this is the run's numbers
         // failing to arrive, and the server's own `detail` and `remediation`
-        // are what a reader can act on.
-        <p role="alert">{explain(query.error, 'table')}</p>
+        // are what a reader can act on. `ErrorState` renders that role itself.
+        //
+        // ONE STRING, not `detail` + `remediation` as separate props, because
+        // `explain` below already joins them — and it has to, since its other
+        // branches produce a single sentence from an `Error` that carries no
+        // problem document at all. Splitting them here would mean two
+        // `explain`s that could disagree about the transport-failure wording.
+        //
+        // The title is the section's own name — "Statistics could not be
+        // loaded", "Errors could not be loaded" — which reads for both
+        // callers, where a fixed noun would not: "this table could not be
+        // loaded" is vaguer than the page already knows, and the `<h2>`
+        // directly above already says which section this is.
+        <ErrorState title={`${title} could not be loaded`} detail={explain(query.error, 'table')} />
       )}
     </section>
   );

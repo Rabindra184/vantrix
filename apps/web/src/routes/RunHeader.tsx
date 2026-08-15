@@ -1,6 +1,8 @@
+import type { ReactNode } from 'react';
 import type { RunResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
+import { ChevronRightIcon } from '../components/icons';
 import { formatDuration, formatStarted } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
 import { projectPath } from './paths';
@@ -13,6 +15,28 @@ import { projectPath } from './paths';
  * each renders only when the run actually carries it, so a run predating that
  * migration, or one whose caller sent none of the three, looks exactly as it
  * did before this existed rather than growing three dashes.
+ *
+ * NOT ONE CHARACTER OF VISIBLE TEXT MAY BE ADDED INSIDE A CHIP, however much
+ * a "Branch:" or "Commit:" label would help a sighted reader. The chips are
+ * pinned by their own text content in three separate ways and each would break
+ * differently:
+ *
+ *   `RunHeader.test.tsx` reads `getByTestId('run-commit')`'s text and asserts
+ *   `commitSha.startsWith(visible)` — a label inside makes the visible string
+ *   `Commit9b71f35`, which starts nothing.
+ *
+ *   `run-detail.spec.ts` asserts `getByText('8 peak users')` is visible, which
+ *   requires that string to be one element's whole text.
+ *
+ *   The same spec reads the `<h1>` with `toHaveText`, an EXACT match, so the
+ *   heading may hold the simulation and nothing else — no badge, no id, no
+ *   copy button.
+ *
+ * The naming those labels would have provided is already there and is the
+ * point of every `role="group"` + `aria-label` below: a screen reader hears
+ * "Branch: release/24.8", the sighted reader sees the value in a labelled
+ * position. Styling — a tinted pill, an icon, a separator — is unconstrained,
+ * because none of it is text.
  */
 export default function RunHeader({
   run,
@@ -29,27 +53,63 @@ export default function RunHeader({
   const isIngestTime = run.toolStartedAt == null;
 
   return (
-    <header className="flex flex-col gap-2">
+    <header className="flex flex-col gap-3">
       {/* The project above the simulation, not beside it: it is the run's
           address, and the simulation is its identity. A link because the
           reader who wants "this project's other runs" is one click from
-          them. */}
-      <p className="text-sm text-muted">
-        <Link to={projectPath(run.project.slug)} className="underline">
+          them.
+
+          Drawn as a breadcrumb — project › this run's short id — so the link
+          reads as a position in a hierarchy rather than as a stray link above
+          a heading. The trailing segment is plain text with `aria-current`,
+          never a link to the page you are already on, and it carries the id
+          because the `<h1>` beneath carries the SIMULATION: two runs of the
+          same simulation are otherwise indistinguishable at a glance, and the
+          id is the only thing on this page that tells them apart. */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[13px] text-muted">
+        <Link
+          to={projectPath(run.project.slug)}
+          className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
+        >
           {run.project.name}
         </Link>
-      </p>
-      {/* The simulation is the run's identity to the person who ran it, so
-          it is the heading. Rendered fully-qualified, exactly as the tool
-          reported it (`example.ParitySimulation`), rather than trimmed to
-          the class name: two simulations in different packages can share a
-          class name, and truncating identity to save a few characters is
-          how two different runs come to look like the same one. Falls back
-          to the short id for a run whose header carried no simulation. */}
-      <h1 className="text-2xl font-semibold">{run.simulation ?? `Run ${run.id.slice(0, 8)}`}</h1>
-      {run.description != null && run.description !== '' && (
-        <p className="text-muted">{run.description}</p>
-      )}
+        <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
+        <code aria-current="page" className="text-[12px]">
+          {run.id.slice(0, 8)}
+        </code>
+      </nav>
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          {/* The simulation is the run's identity to the person who ran it, so
+              it is the heading. Rendered fully-qualified, exactly as the tool
+              reported it (`example.ParitySimulation`), rather than trimmed to
+              the class name: two simulations in different packages can share a
+              class name, and truncating identity to save a few characters is
+              how two different runs come to look like the same one. Falls back
+              to the short id for a run whose header carried no simulation.
+
+              `break-all` rather than `truncate`: a fully-qualified class name
+              is long by design, and hiding the END of it — which is the part
+              that distinguishes two simulations in the same package — is the
+              one truncation this heading cannot afford. */}
+          <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">
+            {run.simulation ?? `Run ${run.id.slice(0, 8)}`}
+          </h1>
+          {run.description != null && run.description !== '' && (
+            <p className="max-w-2xl text-[13px] leading-relaxed text-muted">{run.description}</p>
+          )}
+        </div>
+
+        {/* The verdict is what the reader came for, so on a wide screen it
+            sits at the top right where the eye lands after the heading, and
+            on a narrow one it falls back into the flow above the metadata.
+            `shrink-0` so a long simulation name never squeezes it. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <NamedBadge mark={STATUS[run.status]} testId="run-status" />
+          <NamedBadge mark={VERDICT[run.verdict ?? 'none']} testId="run-verdict" />
+        </div>
+      </div>
 
       {/* NAME/VALUE PAIRS, IN A CHIP ROW RATHER THAN A `<dl>`. The header this
           replaced was a `<dl>` carrying this comment: "A description list,
@@ -64,11 +124,19 @@ export default function RunHeader({
           naming, the same way `NamedBadge` below already has to: a bare
           `<span>`'s implicit role is "generic", which is Name-from-PROHIBITED
           (see `NamedBadge`'s own docstring), so `aria-label` on one of these
-          spans does nothing at all without `role="group"` alongside it. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
-        <span role="group" aria-label={`Tool: ${run.tool}${run.toolVersion ? ` ${run.toolVersion}` : ''}`}>
+          spans does nothing at all without `role="group"` alongside it.
+
+          The row is now a bordered strip rather than free-floating text: six
+          unrelated values separated only by whitespace read as a sentence
+          that has lost its punctuation, and the divider between each is what
+          says they are six things. `divide-x` draws it without adding an
+          element, and `gap-y` keeps the rows apart when it wraps on a phone —
+          where the vertical dividers disappear, which is correct, because
+          stacked chips need no separator. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-default bg-surface px-3 py-2 text-[12px] text-muted shadow-panel sm:gap-x-0 sm:divide-x sm:divide-default">
+        <Chip label={`Tool: ${run.tool}${run.toolVersion ? ` ${run.toolVersion}` : ''}`}>
           {run.toolVersion ? `${run.tool} ${run.toolVersion}` : run.tool}
-        </span>
+        </Chip>
         {/* Provenance from ingest metadata. Each renders only when the run
             carries it: a run submitted without them looks exactly as it did
             before this existed, rather than growing three dashes. The
@@ -78,27 +146,26 @@ export default function RunHeader({
             here has them: a bare <span>'s implicit role is "generic", which
             is Name-from-PROHIBITED, so aria-label alone does nothing. */}
         {run.environment != null && run.environment !== '' && (
-          <span role="group" aria-label={`Environment: ${run.environment}`} data-testid="run-environment">
+          <Chip label={`Environment: ${run.environment}`} testId="run-environment">
             {run.environment}
-          </span>
+          </Chip>
         )}
         {run.branch != null && run.branch !== '' && (
-          <span role="group" aria-label={`Branch: ${run.branch}`} data-testid="run-branch">
+          <Chip label={`Branch: ${run.branch}`} testId="run-branch">
             {run.branch}
-          </span>
+          </Chip>
         )}
         {run.commitSha != null && run.commitSha !== '' && (
           // Seven characters visible, the WHOLE sha in the accessible name —
           // the same short-versus-full treatment the run list gives a run id.
           // NOT a link: the platform does not know the repository host, and a
           // chip that looks like a link but is not is worse than plain text.
-          <span role="group" aria-label={`Commit: ${run.commitSha}`} data-testid="run-commit">
+          <Chip label={`Commit: ${run.commitSha}`} testId="run-commit">
             <code>{run.commitSha.slice(0, 7)}</code>
-          </span>
+          </Chip>
         )}
-        <span
-          role="group"
-          aria-label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${
+        <Chip
+          label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${
             isIngestTime ? ' (ingest time — the tool reported no start)' : ''
           }`}
         >
@@ -109,29 +176,63 @@ export default function RunHeader({
               none, a RECEIVED) time — the `Started`/`Received` distinction
               the old `<dl>`'s `Field` label carried, restated here since a
               bare `<time>` names nothing on its own either. */}
-          <time dateTime={startedAt}>{formatStarted(startedAt)}</time>
+          <time dateTime={startedAt} className="tabular-nums">
+            {formatStarted(startedAt)}
+          </time>
           {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
-        </span>
-        <span
-          role="group"
-          aria-label={`Duration: ${formatDuration(run.durationMs)}`}
-          data-testid="run-duration"
-        >
-          {formatDuration(run.durationMs)}
-        </span>
+        </Chip>
+        <Chip label={`Duration: ${formatDuration(run.durationMs)}`} testId="run-duration">
+          <span className="tabular-nums">{formatDuration(run.durationMs)}</span>
+        </Chip>
         {peakUsers !== null && (
           // The aria-label restates the visible text exactly, rather than
           // prefixing a "Peak users:" name onto it — the same shape
           // `NamedBadge` below uses, measured there not to double-announce
           // (see its own docstring) precisely because the two strings match.
-          <span role="group" aria-label={`${peakUsers.toLocaleString()} peak users`}>
+          //
+          // ONE ELEMENT, ONE STRING. `run-detail.spec.ts` asserts
+          // `getByText('8 peak users')` is visible, which only resolves while
+          // the count and the words share a single text container — splitting
+          // the number into its own styled span would break it.
+          <Chip label={`${peakUsers.toLocaleString()} peak users`}>
             {peakUsers.toLocaleString()} peak users
-          </span>
+          </Chip>
         )}
-        <NamedBadge mark={STATUS[run.status]} testId="run-status" />
-        <NamedBadge mark={VERDICT[run.verdict ?? 'none']} testId="run-verdict" />
       </div>
     </header>
+  );
+}
+
+/**
+ * One metadata chip: a value that is named for assistive tech and unlabelled
+ * for the eye.
+ *
+ * `role="group"` is not decoration — see the module docstring and
+ * `NamedBadge` below. A bare `<span>` computes to role "generic", which is
+ * Name-from-PROHIBITED, so `aria-label` on it is silently ignored.
+ *
+ * `children` is passed straight through with no wrapper element, so the
+ * chip's own text content stays exactly what the caller wrote — which is what
+ * the three text-content assertions in the module docstring depend on.
+ */
+function Chip({
+  label,
+  testId,
+  children,
+}: {
+  readonly label: string;
+  readonly testId?: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <span
+      role="group"
+      aria-label={label}
+      data-testid={testId}
+      className="whitespace-nowrap sm:px-3 sm:first:pl-0 sm:last:pr-0"
+    >
+      {children}
+    </span>
   );
 }
 

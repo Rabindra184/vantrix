@@ -438,6 +438,22 @@ export function assignPalette(
  * sitting on a lighter/darker ground than the page; drawn white-on-white it is
  * a wire outline, and twelve of them read as a grid rather than as twelve
  * things.
+ *
+ * DARK IS NEAR-BLACK, not dark slate. `page` was `#0f172a` — slate-900, a
+ * distinctly blue ground — and `card` `#1e293b` above it. Two problems, both
+ * visible rather than theoretical: the six categorical hues and the four band
+ * colours are themselves saturated, so a blue ground put the whole page in
+ * competition with its own data; and slate-900 is light enough that the
+ * elevation shadows had nothing to fall on. The values here are the canvas
+ * (`#0b0d12`), panel (`#101319`) and rail (`#0d1015`) of the reference
+ * dashboard this design borrows from — a near-neutral ramp that lets a
+ * saturated mark be the only saturated thing in view.
+ *
+ * `ring` is VIOLET (`#8b5cf6` / `#a78bfa`), not a shade of the accent. Focus
+ * has to be legible against every surface the app draws INCLUDING the accent
+ * itself — a focused primary button rings against its own indigo fill, and an
+ * indigo ring on indigo is invisible. A neighbouring hue is distinguishable on
+ * that fill and everywhere else too.
  */
 export type SurfaceRole =
   | 'page' | 'card' | 'sidebar' | 'sunken' | 'border' | 'divider'
@@ -448,14 +464,14 @@ export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceR
   light: {
     page: '#f8fafc', card: '#ffffff', sidebar: '#ffffff', sunken: '#f1f5f9',
     border: '#e2e8f0', divider: '#f1f5f9',
-    'text-primary': '#0f172a', 'text-muted': '#64748b',
-    accent: '#4f46e5', 'accent-foreground': '#ffffff', ring: '#6366f1',
+    'text-primary': '#0f172a', 'text-muted': '#475569',
+    accent: '#4f46e5', 'accent-foreground': '#ffffff', ring: '#8b5cf6',
   },
   dark: {
-    page: '#0f172a', card: '#1e293b', sidebar: '#0f172a', sunken: '#334155',
-    border: '#334155', divider: '#1e293b',
-    'text-primary': '#f8fafc', 'text-muted': '#94a3b8',
-    accent: '#818cf8', 'accent-foreground': '#0f172a', ring: '#818cf8',
+    page: '#0b0d12', card: '#101319', sidebar: '#0d1015', sunken: '#171b23',
+    border: '#232833', divider: '#191d25',
+    'text-primary': '#e8ecf4', 'text-muted': '#94a3b8',
+    accent: '#818cf8', 'accent-foreground': '#0b0d12', ring: '#a78bfa',
   },
 };
 

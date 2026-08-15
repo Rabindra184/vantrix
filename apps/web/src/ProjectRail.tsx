@@ -1,7 +1,8 @@
-import { Link, NavLink } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ProjectListResponse } from '@perfportal/contracts';
 import Badge from './components/Badge';
+import { CubeIcon, LayersIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { DEFAULT_ROUTE, projectPath } from './routes/paths';
 import { STATUS, VERDICT, type Mark } from './routes/marks';
@@ -15,16 +16,30 @@ type ProjectItem = ProjectListResponse['items'][number];
  * meaning content tangentially related to the page, and a primary navigation
  * rail is not that. The landmark that matters is the `<nav>` below.
  *
- * The brand is a `<Link>` rather than a heading so it does not compete with
- * the `<h1>` every page renders inside `<main>` — and as a link it doubles as
- * the way back to the org-wide list.
+ * THE BRAND IS NO LONGER HERE. It moved to the shell's full-width header
+ * (`AppShell.tsx`), which is where the design pass merged it with the theme
+ * control and Sign out — see that file on why three bands of chrome above the
+ * content on a phone became two. It is still a `<Link>` to the org-wide list
+ * and still not a heading, for the reason it never was one: a heading there
+ * would compete with the `<h1>` every page renders inside `<main>`.
  *
  * Below `lg` the same `<nav>` lays out horizontally and scrolls. Deliberately
  * NOT a drawer: a toggle overlay needs focus management, an escape handler, a
  * scrim and return-focus-on-close to be correct, and this repo runs Playwright
  * with a single `Desktop Chrome` project — so every one of those would ship
  * unverified. A plainer nav that is always in the document cannot trap a
- * keyboard user.
+ * keyboard user. `project-rail.spec.ts` pins that shape: it seeds six
+ * projects, narrows to 480px and clicks the LAST row, which only passes if
+ * the row is in the DOM and reachable by scrolling.
+ *
+ * NOTHING MAY BE ADDED TO A ROW'S TEXT CONTENT. `ProjectRail.test.tsx`
+ * asserts `link.textContent === 'Billing Exports'` exactly, for a project with
+ * no runs — that is what proves absence of a badge rather than a neutral one.
+ * A run count, an environment chip or a "last run 4h ago" line inside the link
+ * would all break it, and each would be a real regression in what the row
+ * claims rather than a test being fussy. The icons here are `<svg>` with no
+ * `<title>`, whose `textContent` is the empty string, which is exactly why an
+ * icon is the one thing that CAN be added.
  */
 export default function ProjectRail() {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
@@ -46,32 +61,43 @@ export default function ProjectRail() {
       : null;
 
   return (
-    <div className="flex flex-col border-b border-default bg-sidebar lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
-      <Link to={DEFAULT_ROUTE} className="px-4 py-3 font-semibold">
-        PerfPortal
-      </Link>
+    // STICKY BENEATH THE HEADER, not from the top of the viewport: the shell's
+    // header is a 56px sticky bar above both columns, so `top-0` here would
+    // slide the rail's first row under it. `h-[calc(100dvh-3.5rem)]` is the
+    // matching height — `dvh` rather than `vh` because on mobile Safari `100vh`
+    // is the viewport WITHOUT browser chrome, which would make the rail taller
+    // than the screen and hide its last project behind the address bar.
+    <div className="z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-[17rem] lg:border-b-0 lg:border-r">
+      {/* An overline, not a heading: the `<nav>` below is already named
+          "Projects" for assistive tech by its own `aria-label`, and a real
+          <h2> here would put a heading above every page's <h1> in the
+          document's heading order.
+
+          `uppercase` is safe HERE and is not on a column heading or a section
+          heading, because nothing queries a `<p>` by accessible name — see
+          `tableStyles.ts`'s `TH` for the case where it is not safe.
+
+          Hidden below `lg`, where the rail is a horizontal strip and a section
+          label would cost a whole row. */}
+      <p className="hidden px-4 pt-4 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted lg:block">
+        Projects
+      </p>
 
       <nav
         aria-label="Projects"
-        className="flex gap-1 overflow-x-auto px-2 pb-2 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-4"
+        className="flex gap-1 overflow-x-auto px-2 pb-2 lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-4"
       >
         {/* `end` is load-bearing: without it React Router marks this active
             for /runs/:runId too, so the rail would claim the reader is on the
             org-wide list while they are reading one run. */}
-        <NavLink
-          to={DEFAULT_ROUTE}
-          end
-          className="shrink-0 rounded px-3 py-2 text-sm hover:bg-sunken aria-[current=page]:bg-sunken aria-[current=page]:font-medium"
-        >
+        <NavLink to={DEFAULT_ROUTE} end className={rowClasses}>
+          <LayersIcon className="h-4 w-4 shrink-0 opacity-70" />
           All runs
         </NavLink>
 
         {items.map((project) => (
-          <NavLink
-            key={project.id}
-            to={projectPath(project.slug)}
-            className="flex shrink-0 items-center justify-between gap-2 rounded px-3 py-2 text-sm hover:bg-sunken aria-[current=page]:bg-sunken aria-[current=page]:font-medium"
-          >
+          <NavLink key={project.id} to={projectPath(project.slug)} className={rowClasses}>
+            <CubeIcon className="h-4 w-4 shrink-0 opacity-70" />
             {/* Truncated, not wrapped: a rail whose rows are two lines tall
                 holds half as many projects, and the full name is on the page
                 this links to. `title` is for the sighted, truncated case
@@ -93,8 +119,12 @@ export default function ProjectRail() {
                 Wrapped here rather than fixed in `Badge` itself, for the
                 same reason `RAIL_INGEST_FAILED` is rail-local: `Badge` is
                 shared with the run list and the run header, where it sits
-                in a table cell with room to spare and nothing to fix. */}
-            <span className="shrink-0 whitespace-nowrap">{badgeFor(project.latestRun)}</span>
+                in a table cell with room to spare and nothing to fix.
+                (`Badge` has since grown `whitespace-nowrap` of its own for
+                unrelated reasons; this stays because `shrink-0` is the half
+                that actually holds the row's height, and because a shared
+                component is free to drop a class this row depends on.) */}
+            <span className="ml-auto shrink-0 whitespace-nowrap">{badgeFor(project.latestRun)}</span>
           </NavLink>
         ))}
 
@@ -109,11 +139,41 @@ export default function ProjectRail() {
             date" back to normal, gets announced, not just whatever state
             happened to be present at first paint. */}
         <div aria-live="polite" className="shrink-0">
-          {message != null && <p className="px-3 py-2 text-sm text-muted">{message}</p>}
+          {message != null && (
+            <p className="px-3 py-2 text-[12px] leading-snug text-muted">{message}</p>
+          )}
         </div>
       </nav>
     </div>
   );
+}
+
+/**
+ * One rail row, in both orientations.
+ *
+ * A function rather than a constant because `NavLink` supplies `isActive`, and
+ * the active row is the only place the accent appears in the rail. The active
+ * treatment is THREE signals, not one: a tinted fill, a heavier weight, and
+ * the accent as text colour — so it survives a monochrome print-out and a
+ * forced-colours theme, the same rule `marks.tsx` follows for status.
+ *
+ * `h-9` fixes the row height explicitly. It is what makes
+ * `project-rail.spec.ts`'s equal-height assertion structural rather than
+ * incidental: with a fixed height a badge that wrapped would overflow
+ * visibly instead of silently growing its row, so the failure mode is one
+ * somebody notices.
+ */
+function rowClasses({ isActive }: { isActive: boolean }) {
+  return [
+    'transition-ui flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
+    // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
+    // horizontal strip and "All runs" breaking after "All" is what it looks
+    // like without it.
+    'whitespace-nowrap',
+    isActive
+      ? 'bg-accent/10 font-semibold text-accent'
+      : 'font-medium text-muted hover:bg-sunken hover:text-primary',
+  ].join(' ');
 }
 
 /**

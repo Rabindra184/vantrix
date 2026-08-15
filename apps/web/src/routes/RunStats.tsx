@@ -41,7 +41,14 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
 
   return (
     <section aria-label="Run totals">
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {/* SIX ACROSS ONLY AT `xl`, not at `lg`. The six-column grid was
+          breaking at 1024px: `14.40 req/s` is the widest value any tile
+          renders, and in a ~150px column it wrapped onto a second line, which
+          pushed that one tile's hint down and left the row's baselines
+          visibly out of step. Three across from `sm` to `xl` gives every value
+          a line to itself at the widths a laptop actually uses, and the row
+          only goes to six when there is room for it. */}
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile
           label="Total Requests"
           value={formatCount(run.count)}

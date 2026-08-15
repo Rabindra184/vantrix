@@ -1,5 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { AlertMark } from './components/States';
+import { ActivityIcon } from './components/icons';
 import { ProblemError } from './api/fetch';
 import { fetchRuns, runsQueryKey } from './api/runs';
 import { getSession, sessionQueryKey } from './api/session';
@@ -93,11 +95,30 @@ export default function AuthGate() {
   return <Outlet />;
 }
 
+/**
+ * The very first thing the app paints, before it knows whether there is a
+ * session.
+ *
+ * It gets the brand mark rather than a bare sentence, and the reason is not
+ * decoration: this is the ONE render where the reader has no rail, no header
+ * and no content to tell them what they opened. A line of grey text on an
+ * empty page is indistinguishable from a page that failed to load — which is
+ * what it looks like for the whole of a cold API call.
+ *
+ * `role="status"` and not `role="alert"`: waiting is not an error, and an
+ * assertive region would interrupt whatever a screen-reader user was doing to
+ * announce it.
+ */
 function Bootstrapping() {
   return (
-    <p role="status" className="p-6">
-      Checking your session…
-    </p>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-3 p-6">
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-white shadow-raised">
+        <ActivityIcon className="h-6 w-6" />
+      </span>
+      <p role="status" className="text-[13px] text-muted">
+        Checking your session…
+      </p>
+    </main>
   );
 }
 
@@ -113,13 +134,19 @@ function Bootstrapping() {
  */
 function Unavailable({ detail, remediation }: { detail: string; remediation?: string }) {
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-4 p-6">
-      <h1 className="text-2xl font-semibold">PerfPortal is not answering</h1>
-      <div role="alert" className="flex flex-col gap-4">
-        <p>{detail}</p>
-        {remediation !== undefined && (
-          <p className="text-muted">{remediation}</p>
-        )}
+    <main className="flex min-h-dvh flex-col items-center justify-center p-4 sm:p-6">
+      <div className="flex w-full max-w-lg flex-col items-center gap-3 rounded-xl border border-default bg-surface p-6 text-center shadow-panel sm:p-8">
+        <AlertMark />
+        <h1 className="text-xl font-semibold tracking-tight">PerfPortal is not answering</h1>
+        {/* The live region wraps ONLY the two sentences that arrived from the
+            server — never the heading, never the <main>. See this component's
+            docstring. */}
+        <div role="alert" className="flex flex-col gap-2">
+          <p className="text-[13px] leading-relaxed">{detail}</p>
+          {remediation !== undefined && (
+            <p className="text-[13px] leading-relaxed text-muted">{remediation}</p>
+          )}
+        </div>
       </div>
     </main>
   );
