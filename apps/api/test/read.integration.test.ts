@@ -422,3 +422,27 @@ describe('GET /v1/projects/:slug/runs', () => {
     expect(res.body.items.length).toBeGreaterThan(0);
   });
 });
+
+describe('project identity', () => {
+  it('names the run\'s project on both the detail and the list', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const detail = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set(auth());
+    expect(detail.status).toBe(200);
+    expect(detail.body.project).toEqual({
+      id: ctx.projectId,
+      slug: 'checkout',
+      name: 'Checkout',
+    });
+
+    const list = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
+    expect(list.status).toBe(200);
+    const row = list.body.items.find((i: { id: string }) => i.id === runId);
+    // Derived from the detail response, not written down a second time: the
+    // two shapes must agree, and hard-coding both proves only that this test
+    // is self-consistent.
+    expect(row.project).toEqual(detail.body.project);
+    expect(row.simulation).toBe(detail.body.simulation);
+  });
+});

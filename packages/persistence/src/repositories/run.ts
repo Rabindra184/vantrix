@@ -5,6 +5,14 @@ export interface RunRecord {
   id: string;
   orgId: string;
   projectId: string;
+  /**
+   * Joined from `project`. REQUIRED: run.project_id is NOT NULL, so every
+   * read path can supply it and no consumer should have to check. The
+   * worker's findByIdUnscoped pays one indexed foreign-key join it does not
+   * read — cheaper than a second RunRecord shape, and far cheaper than an
+   * optional-but-always-present field.
+   */
+  project: { id: string; slug: string; name: string };
   status: string;
   verdict: string | null;
   tool: string;
@@ -47,6 +55,7 @@ interface RunRow {
   id: string;
   orgId: string;
   projectId: string;
+  project: { id: string; slug: string; name: string };
   status: string;
   verdict: string | null;
   tool: string;
@@ -71,6 +80,7 @@ function toRecord(row: RunRow): RunRecord {
     id: row.id,
     orgId: row.orgId,
     projectId: row.projectId,
+    project: { id: row.project.id, slug: row.project.slug, name: row.project.name },
     status: row.status,
     verdict: row.verdict,
     tool: row.tool,
@@ -89,6 +99,21 @@ function toRecord(row: RunRow): RunRecord {
     engineOptions: (row.engineOptions ?? {}) as Record<string, unknown>,
     error: (row.error ?? null) as RunRecord['error'],
   };
+}
+
+/**
+ * The raw-SQL list's row shape. Flat project columns rather than RunRow's
+ * nested object, because a SQL result set has no nesting — fromSqlRow below
+ * is the one place that difference is reconciled.
+ */
+interface RunSqlRow extends Omit<RunRow, 'project'> {
+  projectSlug: string;
+  projectName: string;
+}
+
+function fromSqlRow(row: RunSqlRow): RunRecord {
+  const { projectSlug, projectName, ...rest } = row;
+  return toRecord({ ...rest, project: { id: row.projectId, slug: projectSlug, name: projectName } });
 }
 
 /** UTC date of the run start — the partition key. Derived, never supplied. */
@@ -117,6 +142,7 @@ export class RunRepository {
         startedOn: startedOnFrom(input.startedAt),
         engineOptions: input.engineOptions as object,
       },
+      include: { project: true },
     });
     return toRecord(row);
   }
@@ -128,19 +154,21 @@ export class RunRepository {
         orgId: scope.orgId,
         ...(scope.projectId ? { projectId: scope.projectId } : {}),
       },
+      include: { project: true },
     });
     return row ? toRecord(row) : null;
   }
 
   /** Unscoped by design: the worker holds a job, not a caller's credential. */
   async findByIdUnscoped(id: string): Promise<RunRecord | null> {
-    const row = await this.prisma.run.findUnique({ where: { id } });
+    const row = await this.prisma.run.findUnique({ where: { id }, include: { project: true } });
     return row ? toRecord(row) : null;
   }
 
   async findByIdempotencyKey(scope: ProjectScope, key: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: { orgId: scope.orgId, projectId: scope.projectId, idempotencyKey: key },
+      include: { project: true },
     });
     return row ? toRecord(row) : null;
   }
@@ -207,28 +235,30 @@ export class RunRepository {
       cursorKey = { effective: cursorRun.toolStartedAt ?? cursorRun.startedAt, id: cursorRun.id };
     }
 
-    const rows = await this.prisma.$queryRaw<RunRow[]>`
+    const rows = await this.prisma.$queryRaw<RunSqlRow[]>`
       SELECT
-        id, org_id AS "orgId", project_id AS "projectId", status, verdict, tool,
-        tool_version AS "toolVersion", simulation, description,
-        duration_ms AS "durationMs", bundle_key AS "bundleKey",
-        bundle_sha256 AS "bundleSha256", bundle_bytes AS "bundleBytes",
-        idempotency_key AS "idempotencyKey", started_at AS "startedAt",
-        started_on AS "startedOn", tool_started_at AS "toolStartedAt",
-        ingested_at AS "ingestedAt", engine_options AS "engineOptions", error
-      FROM run
-      WHERE org_id = ${scope.orgId}::uuid
-      ${scope.projectId ? Prisma.sql`AND project_id = ${scope.projectId}::uuid` : Prisma.empty}
+        r.id, r.org_id AS "orgId", r.project_id AS "projectId", r.status, r.verdict, r.tool,
+        r.tool_version AS "toolVersion", r.simulation, r.description,
+        r.duration_ms AS "durationMs", r.bundle_key AS "bundleKey",
+        r.bundle_sha256 AS "bundleSha256", r.bundle_bytes AS "bundleBytes",
+        r.idempotency_key AS "idempotencyKey", r.started_at AS "startedAt",
+        r.started_on AS "startedOn", r.tool_started_at AS "toolStartedAt",
+        r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
+        p.slug AS "projectSlug", p.name AS "projectName"
+      FROM run r
+      JOIN project p ON p.id = r.project_id
+      WHERE r.org_id = ${scope.orgId}::uuid
+      ${scope.projectId ? Prisma.sql`AND r.project_id = ${scope.projectId}::uuid` : Prisma.empty}
       ${
         cursorKey
-          ? Prisma.sql`AND (COALESCE(tool_started_at, started_at), id) < (${cursorKey.effective}::timestamp(3), ${cursorKey.id}::uuid)`
+          ? Prisma.sql`AND (COALESCE(r.tool_started_at, r.started_at), r.id) < (${cursorKey.effective}::timestamp(3), ${cursorKey.id}::uuid)`
           : Prisma.empty
       }
-      ORDER BY COALESCE(tool_started_at, started_at) DESC, id DESC
+      ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
       LIMIT ${opts.limit + 1}
     `;
     const page = rows.slice(0, opts.limit);
     const next = rows.length > opts.limit ? (page[page.length - 1]?.id ?? null) : null;
-    return { items: page.map(toRecord), nextCursor: next };
+    return { items: page.map(fromSqlRow), nextCursor: next };
   }
 }

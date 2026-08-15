@@ -33,6 +33,7 @@ export class RunsService {
 
     return {
       id: run.id,
+      project: run.project,
       status: run.status as RunResponse['status'],
       verdict: (run.verdict ?? null) as RunResponse['verdict'],
       tool: run.tool,

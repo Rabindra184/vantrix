@@ -69,6 +69,8 @@ export class RunsController {
 function toListItem(r: RunRecord): RunListResponse['items'][number] {
   return {
     id: r.id,
+    project: r.project,
+    simulation: r.simulation,
     status: r.status as RunListResponse['items'][number]['status'],
     verdict: (r.verdict ?? null) as RunListResponse['items'][number]['verdict'],
     tool: r.tool,
