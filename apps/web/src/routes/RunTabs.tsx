@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { runChartsPath, runErrorsPath, runPath } from './paths';
+import { runChartsPath, runErrorsPath, runPath, runTrendsPath } from './paths';
 
 /**
- * A run's three sections, as navigation.
+ * A run's four sections, as navigation.
  *
  * `NavLink` supplies `aria-current="page"` itself when its `to` matches — and
  * `end` on the Overview link is what stops it matching `/charts` and
@@ -61,6 +61,12 @@ export default function RunTabs({
             a `getByText('2')` target on a page full of numbers. */}
         {errorCount === null ? 'Errors' : `Errors (${errorCount})`}
       </Tab>
+      {/* LAST, AND THE POSITION IS THE ARGUMENT. The first three tabs answer
+          questions about THIS run, narrowing as they go — what happened, what
+          it looked like, what went wrong. Trends is the only one that leaves
+          the run, so it sits at the end rather than beside Charts, which it
+          superficially resembles. */}
+      <Tab to={runTrendsPath(runId)}>Trends</Tab>
     </nav>
   );
 }

@@ -484,6 +484,30 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/runs/{id}/trends': {
+    get: {
+      operationId: 'getRunTrends',
+      summary: 'This run in the context of its cohort',
+      tags: ['metrics'],
+      description:
+        'Requires the "read" scope. The cohort is every complete run of the SAME SIMULATION ' +
+        'in the same project, newest first — with a null simulation forming its own cohort ' +
+        'rather than matching every run. "cohortSize" is the whole cohort and may exceed the ' +
+        'number of runs returned, which "limit" caps. Percentiles are recomputed from each ' +
+        'run\'s stored sketch at the project\'s current percentile set, exactly as ' +
+        'GET /v1/runs/{id}/stats does, so the two cannot disagree.',
+      parameters: [parameters['RunId']!, parameters['Limit']!],
+      responses: {
+        '200': {
+          description: 'This run\'s cohort, newest first.',
+          content: json(schemaRef('TrendsResponse')),
+        },
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
   '/v1/runs/{id}/series': {
     get: {
       operationId: 'getRunSeries',

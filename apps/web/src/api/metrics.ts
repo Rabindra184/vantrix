@@ -4,6 +4,7 @@ import {
   ScatterResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
+  TrendsResponseSchema,
   UsersResponseSchema,
 } from '@perfportal/contracts';
 import { apiFetch } from './fetch';
@@ -238,4 +239,42 @@ export const scatterQuery = (id: string, name: string) => ({
       `${runPath(id)}/scatter?name=${encodeURIComponent(name)}`,
     ),
   staleTime: Infinity,
+});
+
+/* -------------------------------------------------------------------- *
+ * trends — this run in the context of its cohort
+ * -------------------------------------------------------------------- */
+
+export const trendsQueryKey = (id: string, limit: number) =>
+  ['run', id, 'trends', limit] as const;
+
+/**
+ * THE ONE FACTORY IN THIS FILE WITH NO `staleTime: Infinity`, and its absence
+ * is the point.
+ *
+ * Every other query here is cached forever because a completed run's own
+ * metrics are fixed the moment it is ingested — `/stats`, `/series`,
+ * `/distribution` for a given run id never change, and a re-ingest produces a
+ * new run id rather than new values under this one. That argument is stated at
+ * the top of this file and it is correct.
+ *
+ * IT DOES NOT HOLD FOR A COHORT. This answer is about a SET of runs, and
+ * ingesting a new run of the same simulation changes it without changing any
+ * run already in it — the new run appears, `cohortSize` grows, and the oldest
+ * may fall out of the window. Cached forever, a reader who left this tab open,
+ * shipped a fix, ran the test again and came back would be looking at a trend
+ * that ends before the run they came to see.
+ *
+ * So this query takes TanStack's default `staleTime: 0` deliberately: stale on
+ * arrival, refetched on the next mount. That is the behaviour the rest of the
+ * file suppresses, and here it is the correct one.
+ *
+ * `limit` IS IN THE KEY because it is in the URL. Two windows of the same
+ * cohort are two different answers, and sharing one cache entry between them
+ * would serve whichever arrived first under both.
+ */
+export const trendsQuery = (id: string, limit = 20) => ({
+  queryKey: trendsQueryKey(id, limit),
+  queryFn: () =>
+    apiFetch(TrendsResponseSchema, `${runPath(id)}/trends?limit=${limit}`),
 });
