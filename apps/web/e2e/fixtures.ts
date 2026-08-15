@@ -529,6 +529,47 @@ export async function seedRunsAt(
   });
 }
 
+/**
+ * A project of its own inside orgId, with `count` complete runs.
+ *
+ * Its OWN project rather than the org's shared 'checkout' (via projectFor),
+ * because the test this exists for is about moving BETWEEN projects — two
+ * seeds landing in one project would make the assertion vacuous.
+ *
+ * `startedAt` walks backwards a minute per row so the list's order is
+ * deterministic, and `startedOn` mirrors its date because that column is the
+ * ingest-date partition key (see schema.prisma).
+ */
+export async function seedProjectWithRuns(
+  orgId: string,
+  slug: string,
+  name: string,
+  count: number,
+): Promise<{ projectId: string; slug: string }> {
+  const project = await prisma.project.create({ data: { orgId, slug, name, settings: {} } });
+  const base = Date.UTC(2026, 7, 15, 12, 0, 0);
+  await prisma.run.createMany({
+    data: Array.from({ length: count }, (_, i) => {
+      const startedAt = new Date(base - i * 60_000);
+      return {
+        orgId,
+        projectId: project.id,
+        status: 'complete',
+        verdict: 'passed',
+        tool: 'gatling',
+        bundleKey: `e2e-fixture/${randomUUID()}`,
+        bundleSha256: '0'.repeat(64),
+        bundleBytes: BigInt(1),
+        startedAt,
+        startedOn: startedAt,
+        toolStartedAt: null,
+        engineOptions: {},
+      };
+    }),
+  });
+  return { projectId: project.id, slug };
+}
+
 /** A real, fully-ingested run in a BRAND NEW org the caller has no
  *  membership in — Task 7's cross-org case. */
 export async function seedRunInOtherOrg(): Promise<string> {

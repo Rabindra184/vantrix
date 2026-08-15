@@ -40,7 +40,7 @@ export default function AuthGate() {
   const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
   const runs = useQuery({
     // `runsQueryKey()` with no cursor is the run list's FIRST page, by
-    // construction (`['runs', null]`) — so this probe's result is what
+    // construction (`['runs', null, null]`) — so this probe's result is what
     // RunList renders on first paint rather than a second loading state.
     // Wrapped in an arrow, not passed as `queryFn: fetchRuns`: TanStack
     // hands the query function a QueryFunctionContext, which `fetchRuns`

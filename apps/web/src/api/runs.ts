@@ -12,13 +12,16 @@ export const PAGE_SIZE = 25;
 
 /**
  * ONE query key for the run list, exported rather than spelled out at each
- * call site — and a FUNCTION of the cursor, because paging means the same
- * component holds a different page under a different key.
+ * call site — and a FUNCTION of the cursor AND the project slug, because
+ * paging means the same component holds a different page under a different
+ * key, and a filtered and an unfiltered list are different data under the
+ * same cursor: sharing a key would serve one as the other.
  *
- * `runsQueryKey()` with no argument is `['runs', null]`: the first page, and
- * the exact key `AuthGate`'s membership probe uses. That identity is
- * deliberate — the list's first page renders from the bootstrap's cached
- * result instead of showing a second loading state on first paint.
+ * `runsQueryKey()` with no arguments is `['runs', null, null]`: the first
+ * page of the org-wide list, and the exact key `AuthGate`'s membership probe
+ * uses. That identity is deliberate — the list's first page renders from the
+ * bootstrap's cached result instead of showing a second loading state on
+ * first paint.
  *
  * It does NOT mean the first page fires zero requests. `staleTime` is unset
  * (default `0`) and `AuthGate` stays mounted as a layout route, so the list
@@ -29,7 +32,8 @@ export const PAGE_SIZE = 25;
  * likely to be out of date by the time the user is looking at it. The win is
  * the instant paint, not a saved GET.
  */
-export const runsQueryKey = (cursor: string | null = null) => ['runs', cursor] as const;
+export const runsQueryKey = (cursor: string | null = null, projectSlug: string | null = null) =>
+  ['runs', cursor, projectSlug] as const;
 
 /**
  * `GET /v1/runs`, org-scoped by the session cookie (the API derives the org
@@ -41,13 +45,20 @@ export const runsQueryKey = (cursor: string | null = null) => ['runs', cursor] a
  * offset/page-number form to fall back on, so a caller cannot jump to page N
  * — only follow `nextCursor` forward.
  *
+ * `projectSlug`, when given, narrows the list to one project via `?project=`
+ * (RunsController.list) — `null` asks for the whole org.
+ *
  * Rejects with `ProblemError` for every non-2xx, per `apiFetch`'s contract.
  * The 401/403 distinction that rejection carries is the whole point of the
  * bootstrap probe: a valid session belonging to no organisation is a 403
  * here, and nothing in `/auth/get-session` can tell you that.
  */
-export function fetchRuns(cursor: string | null = null): Promise<RunListResponse> {
+export function fetchRuns(
+  cursor: string | null = null,
+  projectSlug: string | null = null,
+): Promise<RunListResponse> {
   const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
   if (cursor !== null) query.set('cursor', cursor);
+  if (projectSlug !== null) query.set('project', projectSlug);
   return apiFetch(RunListResponseSchema, `/v1/runs?${query.toString()}`);
 }

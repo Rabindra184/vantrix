@@ -4,6 +4,7 @@ import AuthGate from './AuthGate';
 import GroupDetail from './routes/GroupDetail';
 import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
+import ProjectRuns from './routes/ProjectRuns';
 import RequestDetail from './routes/RequestDetail';
 import RunDetail, { RunChartsTab, RunErrorsTab, RunOverviewTab } from './routes/RunDetail';
 import RunList from './routes/RunList';
@@ -22,6 +23,7 @@ export default function App() {
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>
           <Route path="/runs" element={<RunList />} />
+          <Route path="/projects/:slug" element={<ProjectRuns />} />
           <Route path="/runs/:runId" element={<RunDetail />}>
             <Route index element={<RunOverviewTab />} />
             <Route path="charts" element={<RunChartsTab />} />

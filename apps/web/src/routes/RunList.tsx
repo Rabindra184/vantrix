@@ -33,7 +33,14 @@ type RunListItem = RunListResponse['items'][number];
  * relied on by Task 7, so it is deliberately independent of visible text and
  * column order.
  */
-export default function RunList() {
+export default function RunList({
+  projectSlug = null,
+  heading = 'Runs',
+}: {
+  /** Narrows the list to one project. Null is the org-wide list. */
+  readonly projectSlug?: string | null;
+  readonly heading?: string;
+} = {}) {
   // The cursor is component state, not a URL query parameter. Keyset
   // pagination has no stable notion of "page 3": a cursor is the id of a row
   // on the previous page, so a bookmarked or shared ?cursor= would silently
@@ -43,8 +50,8 @@ export default function RunList() {
   const [cursor, setCursor] = useState<string | null>(null);
 
   const runs = useQuery({
-    queryKey: runsQueryKey(cursor),
-    queryFn: () => fetchRuns(cursor),
+    queryKey: runsQueryKey(cursor, projectSlug),
+    queryFn: () => fetchRuns(cursor, projectSlug),
     // Keeps the current page on screen while the next one loads, instead of
     // blanking the table back to a loading state on every click of Next.
     placeholderData: keepPreviousData,
@@ -78,14 +85,15 @@ export default function RunList() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Runs</h1>
+      <h1 className="text-2xl font-semibold">{heading}</h1>
 
       {items.length === 0 ? (
         <EmptyPage cursor={cursor} onFirstPage={() => setCursor(null)} />
       ) : (
         <table className="w-full border-collapse text-left">
           <caption className="pb-3 text-left text-sm text-muted">
-            Every run in your organisation, newest first, with the project it belongs to.
+            {projectSlug === null ? 'Every run in your organisation' : 'Every run in this project'},
+            newest first, with the project it belongs to.
             “Started” is the load test’s own start time; rows marked <em>ingest time</em> have not
             been parsed yet, so they fall back to when PerfPortal received the run.
           </caption>
