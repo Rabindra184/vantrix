@@ -419,8 +419,8 @@ it('does not update provenance on an idempotent re-post', async () => {
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-pnpm test:integration --filter @perfportal/api -- read.integration.test.ts
-pnpm test:integration --filter @perfportal/api -- ingest.integration.test.ts
+pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/read.integration.test.ts
+pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/ingest.integration.test.ts
 ```
 
 Expected: the round-trip test FAILS with `expected undefined to be 'staging'` — the field is not on the response at all. The null test FAILS on `toBeNull` for the same reason (`undefined` is not `null`). The idempotency test FAILS with `expected undefined to be 'main'` — vitest transpiles without typechecking, so `row?.branch` is simply absent from the row rather than a compile error. `pnpm typecheck` is where the missing Prisma field shows up as a type error.
@@ -556,8 +556,8 @@ The same conditional-spread form the line below already uses for `idempotencyKey
 - [ ] **Step 9: Run the tests and watch them pass**
 
 ```bash
-pnpm test:integration --filter @perfportal/api -- read.integration.test.ts
-pnpm test:integration --filter @perfportal/api -- ingest.integration.test.ts
+pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/read.integration.test.ts
+pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/ingest.integration.test.ts
 ```
 
 Expected: all three PASS.
@@ -673,7 +673,7 @@ describe('GET /v1/projects', () => {
 
 - [ ] **Step 2: Run and watch it fail**
 
-Run: `pnpm test:integration --filter @perfportal/api -- projects.integration.test.ts`
+Run: `pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/projects.integration.test.ts`
 Expected: FAIL with 404 on every request — the route does not exist.
 
 - [ ] **Step 3: Write the contract**
@@ -883,7 +883,7 @@ In `apps/api/src/app.module.ts`, add the import and put `ProjectsModule` in `imp
 
 - [ ] **Step 6: Run the tests and watch them pass**
 
-Run: `pnpm test:integration --filter @perfportal/api -- projects.integration.test.ts`
+Run: `pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/projects.integration.test.ts`
 Expected: all three PASS. If the second fails with the two ids equal, the lateral is ordering by `started_at` rather than the `COALESCE` — re-read Step 4.
 
 - [ ] **Step 7: Declare it in OpenAPI**
@@ -1016,7 +1016,7 @@ describe('GET /v1/runs?project=', () => {
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `pnpm test:integration --filter @perfportal/api -- read.integration.test.ts`
+Run: `pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/read.integration.test.ts`
 Expected: the 404 and 400 tests FAIL with 200 — the parameter is ignored today, so every one of these returns the unfiltered list.
 
 - [ ] **Step 3: Add the lookup**
@@ -1103,7 +1103,7 @@ Update this method's docstring: it currently says the spread "is the only produc
 
 - [ ] **Step 5: Run and watch them pass**
 
-Run: `pnpm test:integration --filter @perfportal/api -- read.integration.test.ts`
+Run: `pnpm build && pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/read.integration.test.ts`
 Expected: all five PASS.
 
 - [ ] **Step 6: Declare the parameter, and assert it is declared**
