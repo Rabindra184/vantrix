@@ -108,6 +108,24 @@ export default function RunCompare() {
     return data === undefined ? [] : [{ id, label: labelFor(id), stats: data }];
   });
 
+  /**
+   * RUNS WHOSE DATA FAILED TO LOAD, NAMED.
+   *
+   * The two `flatMap`s above drop a run whose query has no data — which is
+   * right while it is still in flight and WRONG once it has errored, because
+   * the run then disappears from the overlay and the matrix permanently, with
+   * every remaining line looking perfectly healthy. That is the same failure
+   * the "left out" notice below guards against for the URL, and it slipped
+   * through because `selected.length` is unchanged by a failed fetch: the run
+   * is still selected, it simply has nothing to draw.
+   *
+   * A reader comparing two runs and shown one, with no explanation, concludes
+   * the comparison is the whole story.
+   */
+  const failed = selected.filter(
+    (_, i) => seriesResults[i]?.isError === true || statsResults[i]?.isError === true,
+  );
+
   const metricLabel = COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
 
   return (
@@ -126,6 +144,26 @@ export default function RunCompare() {
               <p className="text-[13px] text-muted">
                 Some runs named in this link were left out: a run can only be compared with
                 others of the same simulation, and at most {MAX_COMPARE} at a time.
+              </p>
+            )}
+
+            {/* `role="alert"`, unlike the notice above: a run silently missing
+                from a comparison changes what the chart MEANS, and a reader
+                using a screen reader must not have to go looking for it.
+
+                NOT PAINTED IN THE STATUS PALETTE. `--color-status-*` is kept
+                out of `@theme` on purpose (see `components/States.tsx`), so no
+                `text-status-failed` utility exists — reaching for one emits no
+                CSS at all, silently, and `tokens.test.ts` exempts exactly one
+                component from the rule rather than growing the exemption by a
+                route every time a page learns to fail. The alert role and the
+                wording carry this; colour was never allowed to be the only
+                signal anyway. */}
+            {failed.length > 0 && (
+              <p role="alert" className="text-[13px] font-medium text-primary">
+                {failed.length === 1 ? 'One run could not be loaded' : `${failed.length} runs could not be loaded`}
+                {' '}({failed.map(labelFor).join(', ')}), so {failed.length === 1 ? 'it is' : 'they are'}{' '}
+                missing from the chart and the table below. Reload to try again.
               </p>
             )}
 

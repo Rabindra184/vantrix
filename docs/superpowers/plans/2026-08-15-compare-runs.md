@@ -53,13 +53,13 @@ Update the spec's §1.3 as part of Task 2.
 |---|---|
 | `apps/web/src/routes/compareSelection.ts` | Parse, validate and serialise `?runs=`. Pure. |
 | `apps/web/src/charts/transforms/compare.ts` | N runs → one overlay `ChartData`. |
-| `apps/web/src/tables/compareMatrix.ts` | N runs' `/stats` → the per-request matrix. |
+| `apps/web/src/tables/buildCompareMatrix.ts` | N runs' `/stats` → the per-request matrix. |
 | `apps/web/src/routes/RunCompare.tsx` | Route: selection, fetching, layout. |
 | `apps/web/src/charts/CompareChart.tsx` | The overlay figure and its metric selector. |
 | `apps/web/src/tables/CompareMatrix.tsx` | The matrix table. |
 | `apps/web/test/compareSelection.test.ts` | |
 | `apps/web/test/transforms.compare.test.ts` | |
-| `apps/web/test/compareMatrix.test.ts` | |
+| `apps/web/test/buildCompareMatrix.test.ts` | |
 | `apps/web/e2e/run-compare.spec.ts` | |
 
 **Modified:** `apps/web/src/routes/paths.ts` (`runComparePath`), `apps/web/src/routes/RunTrends.tsx` (the entry point), `apps/web/src/App.tsx` (route).
@@ -79,7 +79,12 @@ Update the spec's §1.3 as part of Task 2.
 
 Cover, one case each:
 
-1. **`null` yields just the current run** — arriving with no parameter is not an error.
+1. **`null` yields the current run AND its nearest neighbour** — a page called
+   Compare that opens with one run has answered nothing. The cohort is
+   newest-first, so the neighbour is the NEXT index (older); the oldest run in
+   a cohort falls back to the previous index (newer), because its only
+   available comparison is against a later run and "was this ever fixed" is
+   why someone opens an old run from a ticket.
 2. **Ids outside the cohort are dropped.** A run of a different simulation is not comparable, and the picker never offers it; a hand-typed URL must not bypass that.
 3. **The current run is always included, first**, even if `?runs=` omits it — this page is reached *from* a run and must not silently drop it.
 4. **Duplicates collapse**, preserving first-seen order.
@@ -186,7 +191,7 @@ Replace §1.3's resampling paragraph with the reasoning at the top of this plan:
 
 Requests down, runs across. This is what turns "run 7 got slower" into "`GET /cart` got slower in run 7".
 
-**Files:** create `apps/web/src/tables/compareMatrix.ts`, `apps/web/test/compareMatrix.test.ts`
+**Files:** create `apps/web/src/tables/buildCompareMatrix.ts`, `apps/web/test/buildCompareMatrix.test.ts`
 
 **Interfaces:**
 - Produces: `toCompareMatrix(runs: readonly { id: string; label: string; stats: StatsResponse }[], metric: CompareMetric): { requests: string[]; cells: (number | null)[][] }`.

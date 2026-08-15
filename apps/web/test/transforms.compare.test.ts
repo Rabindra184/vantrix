@@ -167,3 +167,25 @@ describe('compareLabels', () => {
     expect(labels[0]).not.toBe(labels[1]);
   });
 });
+
+describe('compareLabels — ids that share a prefix', () => {
+  it('grows the suffix until the labels really are distinct', () => {
+    // Six characters is usually enough and occasionally is not. Two runs whose
+    // ids share a prefix AND a minute would get identical labels again, which
+    // merges their ECharts series and duplicates a matrix column key — the
+    // exact failure this function exists to prevent.
+    const labels = compareLabels([
+      { id: 'aaaaaa-1111-4444-8888-000000000001', at: '2026-08-15T16:45:00.000Z' },
+      { id: 'aaaaaa-1111-4444-8888-000000000002', at: '2026-08-15T16:45:30.000Z' },
+    ]);
+    expect(new Set(labels).size).toBe(2);
+  });
+
+  it('keeps the suffix short when six characters already separate them', () => {
+    const labels = compareLabels([
+      { id: 'aaaaaaaa-1111', at: '2026-08-15T16:45:00.000Z' },
+      { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:30.000Z' },
+    ]);
+    for (const label of labels) expect(label).toHaveLength('08-15 16:45 · aaaaaa'.length);
+  });
+});

@@ -201,7 +201,28 @@ export function compareLabels(runs: readonly { id: string; at: string }[]): stri
   const seen = new Map<string, number>();
   for (const label of base) seen.set(label, (seen.get(label) ?? 0) + 1);
 
-  return base.map((label, i) =>
-    (seen.get(label) ?? 0) > 1 ? `${label} · ${runs[i]!.id.slice(0, 6)}` : label,
-  );
+  return base.map((label, i) => {
+    if ((seen.get(label) ?? 0) <= 1) return label;
+    // The colliding group, and the shortest id prefix that separates ALL of
+    // them — six characters is usually plenty and occasionally is not, and two
+    // runs whose ids share a prefix AND a minute would otherwise get identical
+    // labels again, which is the exact failure this function exists to prevent.
+    const group = runs.filter((_, j) => base[j] === label).map((run) => run.id);
+    return `${label} · ${runs[i]!.id.slice(0, shortestUniquePrefix(group))}`;
+  });
+}
+
+/**
+ * The shortest prefix length that tells every id in `group` apart.
+ *
+ * Starts at six because that is short enough to sit in a legend, and grows
+ * only when it has to. Ids are unique, so the full length always separates
+ * them and the loop terminates.
+ */
+function shortestUniquePrefix(group: readonly string[]): number {
+  const longest = Math.max(...group.map((id) => id.length));
+  for (let length = 6; length < longest; length += 1) {
+    if (new Set(group.map((id) => id.slice(0, length))).size === group.length) return length;
+  }
+  return longest;
 }

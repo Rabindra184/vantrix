@@ -357,9 +357,12 @@ compare, and a bad query string is no reason to refuse them. This mirrors
 | Metric overlay | One series per run against elapsed offset; metric-selectable |
 | Per-request matrix | Requests down, runs across, cells shaded by the metric |
 
-**Metric selector** covers what `series` + `stats` + `users` actually provide:
-`p50 / p90 / p95 / p99 / max`, throughput, error count, concurrent users. It
-does **not** offer CPU, which Gatling has and we do not collect.
+**Metric selector** covers what `/series` alone can answer: `p50 / p95 / p99 /
+max`, throughput, and errors. It does **not** offer CPU, which Gatling has and
+we do not collect — nor concurrent users, which was in an earlier draft of this
+paragraph: that lives in `/users`, not `/series`, so offering it would make the
+selector change which endpoints the page fetches. A selector promising a metric
+the page cannot produce from what it holds is worse than a shorter selector.
 
 **X-axis on trend charts.** Runs are not evenly spaced in time, so the axis is
 **categorical by run**, labelled with a short timestamp, not a time axis that
