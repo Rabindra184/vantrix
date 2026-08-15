@@ -423,7 +423,7 @@ pnpm test:integration --filter @perfportal/api -- read.integration.test.ts
 pnpm test:integration --filter @perfportal/api -- ingest.integration.test.ts
 ```
 
-Expected: the round-trip test FAILS with `expected undefined to be 'staging'` — the field is not on the response at all. The null test FAILS on `toBeNull` for the same reason (`undefined` is not `null`). The idempotency test FAILS at compile time — `row.branch` does not exist on the Prisma type yet.
+Expected: the round-trip test FAILS with `expected undefined to be 'staging'` — the field is not on the response at all. The null test FAILS on `toBeNull` for the same reason (`undefined` is not `null`). The idempotency test FAILS with `expected undefined to be 'main'` — vitest transpiles without typechecking, so `row?.branch` is simply absent from the row rather than a compile error. `pnpm typecheck` is where the missing Prisma field shows up as a type error.
 
 - [ ] **Step 3: Write the migration**
 
@@ -589,11 +589,16 @@ git add -A && git commit -m "feat(api): store the ingest metadata the API was va
 
 - [ ] **Step 1: Write the failing integration test**
 
-Create `apps/api/test/projects.integration.test.ts`. Copy the `beforeEach`/`afterEach` setup shape from `apps/api/test/read.integration.test.ts` — same `createTestApp()` / `ctx.close()` pair.
+Create `apps/api/test/projects.integration.test.ts`. This suite's tests each
+build their own app — `let ctx: TestContext;` at module scope, an
+`afterEach(async () => { await ctx?.close(); })`, and `ctx = await
+createTestApp();` as the first line of every `it`. That is the shape
+`read.integration.test.ts` uses; a shared `beforeEach` is not it.
 
 ```ts
 describe('GET /v1/projects', () => {
   it('lists a project with no runs, carrying latestRun: null', async () => {
+    ctx = await createTestApp();
     // ctx's org has exactly one project ('checkout') and no runs yet.
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/projects')
@@ -609,6 +614,7 @@ describe('GET /v1/projects', () => {
   });
 
   it('reports the same run GET /v1/runs puts first, not the most recently ingested', async () => {
+    ctx = await createTestApp();
     // Two runs whose ingest order and TOOL order disagree, so a query
     // ordering by the wrong column picks the wrong run. Ordering by
     // COALESCE(tool_started_at, started_at) must choose `later`; ordering by
@@ -652,6 +658,7 @@ describe('GET /v1/projects', () => {
   });
 
   it('shows a bearer token only the project it was minted against', async () => {
+    ctx = await createTestApp();
     const other = await ctx.prisma.project.create({
       data: { orgId: ctx.orgId, slug: 'search', name: 'Search', settings: {} },
     });
@@ -954,56 +961,53 @@ Append to `apps/api/test/read.integration.test.ts`:
 ```ts
 describe('GET /v1/runs?project=', () => {
   it('filters to the named project', async () => {
-    const runId = await ingestReferenceRun(ctx);
-    const res = await request(ctx.app.getHttpServer())
-      .get('/v1/runs?project=checkout')
-      .set('Authorization', `Bearer ${ctx.readToken}`);
+    ctx = await createTestApp();
+    const runId = await ingested();
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=checkout').set(auth());
     expect(res.status).toBe(200);
     expect(res.body.items.map((i: { id: string }) => i.id)).toContain(runId);
   });
 
   it('404s for a slug that does not exist in this org', async () => {
+    ctx = await createTestApp();
     const res = await request(ctx.app.getHttpServer())
       .get('/v1/runs?project=no-such-project')
-      .set('Authorization', `Bearer ${ctx.readToken}`);
+      .set(auth());
     // 404, never an empty 200: an empty 200 would describe a project that
     // exists and happens to be idle, and a caller cannot tell those apart.
     expect(res.status).toBe(404);
   });
 
   it('404s — not 403 — for a project belonging to another org', async () => {
+    ctx = await createTestApp();
     const otherOrg = await ctx.prisma.org.create({
-      data: { slug: `other-${Date.now()}`, name: 'Other' },
+      data: { slug: `other-${randomUUID().slice(0, 8)}`, name: 'Other' },
     });
     await ctx.prisma.project.create({
       data: { orgId: otherOrg.id, slug: 'secret', name: 'Secret', settings: {} },
     });
-    const res = await request(ctx.app.getHttpServer())
-      .get('/v1/runs?project=secret')
-      .set('Authorization', `Bearer ${ctx.readToken}`);
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=secret').set(auth());
     // 403 would confirm the project exists. The status code must not
     // distinguish "no such project" from "not yours".
     expect(res.status).toBe(404);
   });
 
   it('is identical to omitting the parameter when a token names its own project', async () => {
-    await ingestReferenceRun(ctx);
+    ctx = await createTestApp();
+    await ingested();
     const withParam = await request(ctx.app.getHttpServer())
       .get('/v1/runs?project=checkout')
-      .set('Authorization', `Bearer ${ctx.readToken}`);
-    const without = await request(ctx.app.getHttpServer())
-      .get('/v1/runs')
-      .set('Authorization', `Bearer ${ctx.readToken}`);
+      .set(auth());
+    const without = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
     expect(withParam.body).toEqual(without.body);
   });
 
   it('400s with PROJECT_MISMATCH when a token names another project', async () => {
+    ctx = await createTestApp();
     await ctx.prisma.project.create({
       data: { orgId: ctx.orgId, slug: 'search', name: 'Search', settings: {} },
     });
-    const res = await request(ctx.app.getHttpServer())
-      .get('/v1/runs?project=search')
-      .set('Authorization', `Bearer ${ctx.readToken}`);
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=search').set(auth());
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('PROJECT_MISMATCH');
   });
