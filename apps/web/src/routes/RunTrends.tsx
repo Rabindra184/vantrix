@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { trendsQuery } from '../api/metrics';
 import TrendsCharts from '../charts/TrendsCharts';
+import { MAX_COMPARE } from './compareSelection';
 import { Payload, type Slot } from './payload';
+import { runComparePath } from './paths';
 
 /**
  * The Trends tab — this run in the context of every other run of the same
@@ -61,6 +63,24 @@ export default function RunTrends() {
               <p className="text-[13px] text-muted">
                 These runs are grouped because none of them carries a simulation name, not
                 because they are known to be the same test.
+              </p>
+            )}
+
+            {/* THE ENTRY POINT TO COMPARE, and only when there is something
+                to compare against. A control that is always present but
+                usually useless teaches a reader to stop seeing it — and a
+                cohort of one has no comparison to offer.
+
+                Here rather than in the tab strip because a comparison needs a
+                SELECTION, and this page is where the runs are listed. */}
+            {data.runs.length > 1 && (
+              <p className="text-[13px]">
+                <Link to={runComparePath(data.runId)} className="text-accent underline">
+                  Compare these runs
+                </Link>{' '}
+                <span className="text-muted">
+                  — overlay up to {MAX_COMPARE} of them on one metric.
+                </span>
               </p>
             )}
 

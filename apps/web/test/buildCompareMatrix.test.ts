@@ -1,6 +1,6 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { toCompareMatrix, type CompareStats } from '../src/tables/compareMatrix';
+import { toCompareMatrix, type CompareStats } from '../src/tables/buildCompareMatrix';
 import fixture from './fixtures/reference-run.json';
 
 const REFERENCE = fixture.stats as unknown as StatsResponse;

@@ -6,6 +6,7 @@ import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
 import ProjectRuns from './routes/ProjectRuns';
 import RequestDetail from './routes/RequestDetail';
+import RunCompare from './routes/RunCompare';
 import RunTrends from './routes/RunTrends';
 import RunDetail, { RunChartsTab, RunErrorsTab, RunOverviewTab } from './routes/RunDetail';
 import RunList from './routes/RunList';
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="charts" element={<RunChartsTab />} />
             <Route path="errors" element={<RunErrorsTab />} />
             <Route path="trends" element={<RunTrends />} />
+            <Route path="compare" element={<RunCompare />} />
           </Route>
           {/* G-16's destinations. Inside the gate and the shell like every
               other run page: these are addresses of the product, not of a
