@@ -1802,6 +1802,15 @@ Add to `apps/web/e2e/fixtures.ts`:
  * chips' accessible names are what this seeds for, and running the whole
  * parse pipeline to set three text columns would make a header test depend
  * on the worker.
+ *
+ * A complete run with no metric rows is an ESTABLISHED case, not a
+ * shortcut — `seedCompleteRunWithoutMetrics` above seeds the same shape and
+ * its docstring records what the endpoints answer for it: /stats, /series
+ * and /users return 200 with empty payloads, /distribution returns 404, and
+ * the run page is built to handle an empty payload and a failed fetch at
+ * once. The header renders from the run payload alone, so none of that is
+ * in this test's way. (/distribution is only fetched by the Charts tab,
+ * which this test never opens.)
  */
 export async function seedRunWithProvenance(
   orgId: string,
