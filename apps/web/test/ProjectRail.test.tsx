@@ -1,0 +1,167 @@
+import '@testing-library/jest-dom/vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ProjectListResponse } from '@perfportal/contracts';
+import ProjectRail from '../src/ProjectRail';
+
+afterEach(cleanup);
+
+/**
+ * Names are deliberately NOT substrings or case variants of each other or of
+ * their slugs. `getByRole(role, { name })` is exact here but a
+ * case-insensitive substring in Playwright (CLAUDE.md), and fixtures that
+ * cannot collide stay correct under either matcher.
+ *
+ * The three latestRun shapes are the three badge branches: complete with a
+ * verdict, not-complete, and none at all.
+ */
+const PROJECTS: ProjectListResponse['items'] = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
+    slug: 'checkout',
+    name: 'Checkout Flow',
+    latestRun: { id: 'aaaaaaaa-1111-4111-8111-111111111111', status: 'complete', verdict: 'passed' },
+  },
+  {
+    id: '22222222-2222-4222-8222-222222222222',
+    slug: 'search',
+    name: 'Search Indexing',
+    latestRun: { id: 'bbbbbbbb-2222-4222-8222-222222222222', status: 'pending', verdict: null },
+  },
+  {
+    id: '33333333-3333-4333-8333-333333333333',
+    slug: 'billing',
+    name: 'Billing Exports',
+    latestRun: null,
+  },
+];
+
+function renderRail(
+  items: ProjectListResponse['items'],
+  { route = '/runs', fail = false, hang = false } = {},
+) {
+  vi.stubGlobal('fetch', () => {
+    if (hang) return new Promise<Response>(() => {});
+    if (fail) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ code: 'INTERNAL', detail: 'boom', remediation: 'Retry later.' }),
+          { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      );
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ items }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[route]}>
+        <ProjectRail />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('ProjectRail', () => {
+  it('lists every project as a link to its own page', async () => {
+    renderRail(PROJECTS);
+    expect(await screen.findByRole('link', { name: /Checkout Flow/ })).toHaveAttribute(
+      'href',
+      '/projects/checkout',
+    );
+    expect(screen.getByRole('link', { name: /Search Indexing/ })).toHaveAttribute(
+      'href',
+      '/projects/search',
+    );
+    expect(screen.getByRole('link', { name: /Billing Exports/ })).toHaveAttribute(
+      'href',
+      '/projects/billing',
+    );
+  });
+
+  it("reads a complete run's verdict", async () => {
+    renderRail(PROJECTS);
+    // 'passed' belongs only to VERDICT — no STATUS mark uses that word — so
+    // this cannot pass by accidentally rendering a status.
+    expect(await screen.findByRole('link', { name: /Checkout Flow/ })).toHaveTextContent('passed');
+  });
+
+  it("reads a pending run's STATUS and never a verdict", async () => {
+    renderRail(PROJECTS);
+    const search = await screen.findByRole('link', { name: /Search Indexing/ });
+    expect(search).toHaveTextContent('pending');
+    // The obvious wrong implementation reads VERDICT[verdict ?? 'none']
+    // unconditionally, which renders 'no verdict yet' for this run — a claim
+    // about a run nobody has measured.
+    expect(search).not.toHaveTextContent('no verdict yet');
+  });
+
+  it('gives a project with no runs no badge, while a sibling with runs has one', async () => {
+    renderRail(PROJECTS);
+    const billing = await screen.findByRole('link', { name: /Billing Exports/ });
+    // Absence, asserted exactly: the link's whole text is the name, with no
+    // glyph and no label appended.
+    expect(billing.textContent).toBe('Billing Exports');
+    // PAIRED POSITIVE, same test on purpose: without it this passes against a
+    // rail that renders no badges at all.
+    const checkout = screen.getByRole('link', { name: /Checkout Flow/ });
+    expect(checkout.textContent).not.toBe('Checkout Flow');
+  });
+
+  it('marks All runs as the current page on /runs', async () => {
+    renderRail(PROJECTS, { route: '/runs' });
+    expect(await screen.findByRole('link', { name: 'All runs' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('marks the project, not All runs, as current on a project page', async () => {
+    renderRail(PROJECTS, { route: '/projects/checkout' });
+    const checkout = await screen.findByRole('link', { name: /Checkout Flow/ });
+    expect(checkout).toHaveAttribute('aria-current', 'page');
+    // `end` on the All runs NavLink is what makes this true.
+    expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('marks nothing as current on a run detail page', async () => {
+    renderRail(PROJECTS, { route: '/runs/a66548b7-2962-43ff-8b93-7149a6f2a1b8' });
+    // Paired positive FIRST: the rail rendered its rows, so the absences
+    // below are about aria-current and not about an empty rail.
+    const checkout = await screen.findByRole('link', { name: /Checkout Flow/ });
+    expect(checkout).not.toHaveAttribute('aria-current');
+    // This is the assertion `end` exists for. Without it React Router treats
+    // /runs as a prefix match for /runs/:runId, and the rail would claim the
+    // reader is on the org-wide list while they are reading one run.
+    expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('says so when the projects cannot be loaded, and keeps All runs', async () => {
+    renderRail([], { fail: true });
+    expect(await screen.findByText('Projects could not be loaded.')).toBeInTheDocument();
+    // Paired positive: the rail degraded rather than vanished.
+    expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
+  });
+
+  it('says so when the org has no projects, and keeps All runs', async () => {
+    renderRail([]);
+    expect(await screen.findByText('No projects yet.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
+  });
+
+  it('shows neither message while the query is in flight', async () => {
+    renderRail([], { hang: true });
+    // Paired positive FIRST — this is what proves the rail rendered at all,
+    // so the two absence assertions below mean something.
+    expect(await screen.findByRole('link', { name: 'All runs' })).toBeInTheDocument();
+    expect(screen.queryByText('Projects could not be loaded.')).toBeNull();
+    expect(screen.queryByText('No projects yet.')).toBeNull();
+  });
+});
