@@ -2,7 +2,8 @@
 export const DEFAULT_ROUTE = '/runs';
 
 /**
- * A run's four tabs. Spelled once here because `App.tsx` declares them,
+ * A run's four tabs, plus Compare, which is reached from Trends rather than
+ * from the strip. Spelled once here because `App.tsx` declares them,
  * `RunTabs` links to them and the e2e suite navigates to them — three places
  * that must agree about a string, which is two more than can be kept in step
  * by hand.
@@ -18,6 +19,20 @@ export function runErrorsPath(runId: string): string {
 }
 export function runTrendsPath(runId: string): string {
   return `${runPath(runId)}/trends`;
+}
+
+/**
+ * Compare, optionally carrying the selection.
+ *
+ * The selection is in the QUERY rather than the path because it is state a
+ * reader edits in place — toggling a run must not push a new history entry
+ * per click — and because a comparison is a thing people paste into tickets.
+ */
+export function runComparePath(runId: string, runs?: readonly string[]): string {
+  const base = `${runPath(runId)}/compare`;
+  return runs === undefined || runs.length === 0
+    ? base
+    : `${base}?runs=${encodeURIComponent(runs.join(','))}`;
 }
 
 /** The no-organisation explanation. Its own URL on purpose (see NoOrg.tsx). */

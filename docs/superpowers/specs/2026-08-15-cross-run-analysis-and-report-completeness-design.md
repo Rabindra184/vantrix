@@ -293,14 +293,31 @@ keys stay per-run, that caching stays correct — a completed run's numbers stil
 never change — and a reader who has already opened one of these runs pays
 nothing to include it.
 
-**Bucket widths differ across runs and this is the one real trap.**
-`SeriesResponse.bucketWidthMs` "is NOT always 1000: BucketSeries halves
-resolution in place once a run exceeds its bucket cap". Overlaying a 1000 ms run
-on a 2000 ms run without resampling draws two curves at different densities and
-silently misstates the shorter one's rate. The transform must **resample every
-selected run to the coarsest `bucketWidthMs` in the selection** before
-overlaying, and this gets a unit test built from two fixtures of different
-widths.
+**Bucket widths differ across runs, and this paragraph used to prescribe the
+wrong fix.** `SeriesResponse.bucketWidthMs` "is NOT always 1000: BucketSeries
+halves resolution in place once a run exceeds its bucket cap".
+
+It originally said the transform must **resample every selected run to the
+coarsest width** before overlaying. **Do not do that.** Both premises are
+wrong, and the second is dangerous:
+
+- **A rate is already normalised.** `transforms/rates.ts` divides by
+  `bucketWidthMs / 1000`, and the contract's own comment on the field says
+  that is why it is sent. There is nothing to correct.
+- **A percentile cannot be resampled at all.** Merging two 1000 ms buckets is
+  sound for counts, which sum, and unsound for quantiles: the 95th percentile
+  of a union is not the mean, the max, or any function of the two buckets'
+  95ths — recovering it needs the underlying sketches, and `SeriesBucket`
+  carries quantiles. Resampling would produce a number wrong by an unbounded
+  amount that looks entirely plausible on a chart.
+
+**What the overlay does instead:** each run plots at its own `startOffsetMs`
+on a **value x-axis** (`ChartXAxis.type`, added in Phase 2 for the
+percentiles-distribution chart), so runs meet at real elapsed times rather
+than being indexed against each other by bucket position. A coarser run simply
+has fewer points — visible, true, and stated in `limitation`. Rates divide by
+each run's own width. The unit test asserts that a 2000 ms run carrying the
+same counts as a 1000 ms run draws at exactly half the rate.
 
 ## 1.4 Web — routes and IA
 
@@ -340,9 +357,12 @@ compare, and a bad query string is no reason to refuse them. This mirrors
 | Metric overlay | One series per run against elapsed offset; metric-selectable |
 | Per-request matrix | Requests down, runs across, cells shaded by the metric |
 
-**Metric selector** covers what `series` + `stats` + `users` actually provide:
-`p50 / p90 / p95 / p99 / max`, throughput, error count, concurrent users. It
-does **not** offer CPU, which Gatling has and we do not collect.
+**Metric selector** covers what `/series` alone can answer: `p50 / p95 / p99 /
+max`, throughput, and errors. It does **not** offer CPU, which Gatling has and
+we do not collect — nor concurrent users, which was in an earlier draft of this
+paragraph: that lives in `/users`, not `/series`, so offering it would make the
+selector change which endpoints the page fetches. A selector promising a metric
+the page cannot produce from what it holds is worse than a shorter selector.
 
 **X-axis on trend charts.** Runs are not evenly spaced in time, so the axis is
 **categorical by run**, labelled with a short timestamp, not a time axis that
@@ -364,7 +384,7 @@ therefore the `<svg>`-count invariant in `run-charts.spec.ts` applies to them:
 TDD throughout: a failing test, then the code that passes it.
 
 **Unit (`vitest`).** New transforms (`percentileDistribution`, the compare
-resampler, the trends transform) each get their own suite. Expectations are
+compare overlay, the trends transform) each get their own suite. Expectations are
 **derived from the fixture payload, never hard-coded** — a re-capture of
 `reference-run.json` must not break a test for a reason that is not a defect.
 The CSV escaper gets a hostile-name case. The tooltip formatter gets an
