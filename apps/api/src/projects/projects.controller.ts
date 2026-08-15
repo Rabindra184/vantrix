@@ -1,6 +1,6 @@
 import { Controller, Get, Req } from '@nestjs/common';
 import type { Request } from 'express';
-import type { ProjectListResponse, RunStatus, RunVerdict } from '@perfportal/contracts';
+import { ProjectListResponseSchema, type ProjectListResponse, type RunStatus, type RunVerdict } from '@perfportal/contracts';
 import { ProjectRepository } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 
@@ -23,15 +23,21 @@ export class ProjectsController {
   async list(@Req() req: Request): Promise<ProjectListResponse> {
     const tenant = req.tenant!;
     const rows = await this.projects.listForOrg(tenant.orgId, tenant.projectId);
-    return {
+    // The repository reads status and verdict off raw SQL, so they arrive as
+    // `string`. Narrowed here rather than in the repository, which has no
+    // business importing the contract's enums — and the assembled response
+    // is parsed through ProjectListResponseSchema below, so these casts are
+    // provisional, not the actual validation. There is no global validation
+    // pipe (see main.ts): without the parse below, a malformed stored value
+    // would have escaped as a 200 that violates its own contract. A row that
+    // fails to parse now produces a 500 instead — the right trade, and the
+    // same stance apiFetch's docstring takes on the client (apps/web/src/api/fetch.ts):
+    // a response the schema rejects is a bug, not data.
+    return ProjectListResponseSchema.parse({
       items: rows.map((r) => ({
         id: r.id,
         slug: r.slug,
         name: r.name,
-        // The repository reads status and verdict off raw SQL, so they
-        // arrive as `string`. Narrowed here rather than in the repository,
-        // which has no business importing the contract's enums — and the
-        // Zod schema is what actually validates the value on the way out.
         latestRun:
           r.latestRun === null
             ? null
@@ -41,6 +47,6 @@ export class ProjectsController {
                 verdict: r.latestRun.verdict as RunVerdict | null,
               },
       })),
-    };
+    });
   }
 }
