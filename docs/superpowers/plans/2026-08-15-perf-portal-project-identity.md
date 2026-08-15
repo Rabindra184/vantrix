@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **`project` on `RunResponse` is REQUIRED, not `.optional()`.** `run.project_id` is `NOT NULL`; an optional field would model a state the database cannot hold.
-- **The lateral's inner `ORDER BY` is `COALESCE(tool_started_at, started_at) DESC, id DESC`** — character-for-character what `RunRepository.list` orders by. If they drift, the sidebar's "latest run" and the run list's top row name different runs and nothing looks broken.
+- **The lateral's inner `ORDER BY` is `COALESCE(tool_started_at, started_at) DESC, id DESC`**, which must resolve the same run `RunRepository.list` puts first — same `COALESCE`, same tie-break. The requirement is semantic, not textual: `list()` qualifies its columns `r.` because it joins `project`, while this subquery reads from `run` alone and needs no alias. If the two ever disagree, the sidebar's "latest run" and the run list's top row name different runs and nothing looks broken.
 - **404 for a slug outside the caller's org.** Never 403, never an empty 200. A 403 confirms the project exists; an empty 200 describes a project that exists and is idle.
 - **400 `PROJECT_MISMATCH`** when a bearer token names a project other than its own.
 - **Three nullable columns, no default, no backfill, no index.** Nothing to backfill from; nothing filters on them.
@@ -22,6 +22,11 @@
 - **`<RunList key={slug} …>` is required**, not stylistic. Without it, `/projects/a` → `/projects/b` reuses the component and its cursor.
 - **Expectations are computed from the payload, never written down.** A test that hard-codes a value a fixture supplies breaks on the next re-capture for a reason that is not a defect.
 - **Accessible-name assertions go in Playwright, never jsdom.** `dom-accessibility-api` does not consult a descendant's `aria-hidden` the way Chromium's accessibility tree does.
+- **Run every command under Node 22.** `package.json` sets `engines: { node: ">=22" }` and `.nvmrc` pins `22.19.0`. Under Node 20, `pnpm test:unit` **exits 1** with 16 jsdom/undici errors and silently collects only 47 of 63 test files — 534 tests instead of 679. It looks like a passing run if you read the "534 passed" line and not the exit code. Start every session with:
+  ```bash
+  export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && nvm use 22.19.0 && node --version
+  ```
+  and confirm it prints `v22.19.0`. **A suite that reports fewer than 63 unit test files is running on the wrong runtime, not passing.**
 - **Full verification before claiming completion:**
   `pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e`
   `test:integration` and `test:e2e` need the local stack (`infra/docker-compose.yml`) and the env vars in `CLAUDE.md`.
@@ -745,10 +750,14 @@ import { Prisma, type PrismaClient } from '@prisma/client';
    * the one with nothing in it — and DISTINCT ON over the run table would
    * silently omit it.
    *
-   * The inner ORDER BY is spelled character-for-character like
-   * RunRepository.list's. If those two expressions ever disagree, a
-   * project's "latest run" and the run list's top row name different runs,
-   * and nothing on screen looks wrong.
+   * The inner ORDER BY resolves the same run RunRepository.list puts first
+   * — same COALESCE, same tie-break — though unaliased here, because this
+   * subquery reads from `run` alone while list() qualifies its columns `r.`
+   * to disambiguate the `project` join. Do not "fix" that difference by
+   * adding an alias: there is no second table here to disambiguate from.
+   * If the two expressions ever disagree, a project's "latest run" and the
+   * run list's top row name different runs, and nothing on screen looks
+   * wrong.
    *
    * `projectId` narrows to a single project for a bearer token, which is
    * scoped to exactly one. Absent for a session, which sees the whole org.

@@ -178,10 +178,18 @@ project with zero runs must appear in the sidebar — an org's newest project
 is exactly the one with nothing in it — and `DISTINCT ON` over the run table
 would silently omit it. This is falsification checkpoint 2.
 
-**The inner `ORDER BY` is spelled character-for-character like
-`RunRepository.list`'s.** If those two expressions ever disagree, the
-sidebar's "latest run" and the run list's top row describe different runs,
-and nothing on screen looks wrong. This is falsification checkpoint 1.
+**The inner `ORDER BY` must resolve the same run `RunRepository.list` puts
+first** — same `COALESCE`, same tie-break. If those two expressions ever
+disagree, the sidebar's "latest run" and the run list's top row describe
+different runs, and nothing on screen looks wrong. This is falsification
+checkpoint 1.
+
+The requirement is semantic, not textual. `RunRepository.list` qualifies its
+columns `r.` because it joins `project` and both tables carry an `id`; this
+lateral's subquery reads from `run` alone and needs no alias. Demanding a
+literal match would mean inventing an alias for a single-table subquery, and
+a comment claiming the two are "character-for-character" identical would
+invite a later reader to add one.
 
 Ordered by `p.name ASC` — the sidebar is a list a human scans, so it sorts
 the way a human expects, not by creation time.
