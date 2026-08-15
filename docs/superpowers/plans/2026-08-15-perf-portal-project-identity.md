@@ -1341,7 +1341,16 @@ Expected: PASS.
 
 - [ ] **Step 5: Update the e2e spec**
 
-`apps/web/e2e/run-list.spec.ts` — any assertion naming the `Tool` or `Run` column headers, or selecting the last cell for the link, needs to move. `data-testid="run-row"` and `data-run-id` are unchanged, so `helpers.ts`'s `firstRowId` needs nothing.
+`apps/web/e2e/run-list.spec.ts` — `data-testid="run-row"` and `data-run-id` are unchanged, so `helpers.ts`'s `firstRowId` needs nothing. But **one assertion selects a cell by POSITION and will silently target the wrong column**:
+
+```ts
+// apps/web/e2e/run-list.spec.ts:140
+const statusCell = page.getByTestId('run-row').first().getByRole('cell').nth(2);
+```
+
+Its comment three lines above states the assumption: *"Started/Tool/Status/Verdict/Run is the column order RunList.tsx renders (RunRow), so index 2 is the status cell."* After this task the order is **Started / Project / Simulation / Status / Verdict**, so index 2 is the **Simulation** cell and index **3** is the status cell. Change the `.nth(2)` to `.nth(3)` and update that comment to name the new order.
+
+Do NOT "fix" this by switching to a text or name-based locator. The comment explains why it is positional: the assertion is `toHaveAccessibleName('complete')` exactly, and it exists to catch `Badge`'s `aria-hidden` glyph leaking into the name. A `getByRole('cell', { name: /complete/ })` locator would still match `"● complete"` and the regression it was written to catch would pass silently. The positional locator is the point.
 
 Add one spec that a jsdom test cannot make:
 
