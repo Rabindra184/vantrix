@@ -88,7 +88,7 @@ export default function RunList({
       <h1 className="text-2xl font-semibold">{heading}</h1>
 
       {items.length === 0 ? (
-        <EmptyPage cursor={cursor} onFirstPage={() => setCursor(null)} />
+        <EmptyPage cursor={cursor} projectSlug={projectSlug} onFirstPage={() => setCursor(null)} />
       ) : (
         <table className="w-full border-collapse text-left">
           <caption className="pb-3 text-left text-sm text-muted">
@@ -181,10 +181,19 @@ export default function RunList({
 }
 
 /**
- * An org with no runs gets a sentence, not a table with a header row and
- * nothing under it — an empty table looks like a list that failed to load.
+ * An org (or project) with no runs gets a sentence, not a table with a
+ * header row and nothing under it — an empty table looks like a list that
+ * failed to load.
  */
-function EmptyPage({ cursor, onFirstPage }: { cursor: string | null; onFirstPage: () => void }) {
+function EmptyPage({
+  cursor,
+  projectSlug,
+  onFirstPage,
+}: {
+  cursor: string | null;
+  projectSlug: string | null;
+  onFirstPage: () => void;
+}) {
   if (cursor !== null) {
     // Reachable only if rows vanished between the request that produced this
     // cursor and this one (RunRepository.list returns an empty page for a
@@ -207,7 +216,9 @@ function EmptyPage({ cursor, onFirstPage }: { cursor: string | null; onFirstPage
     <div className="flex flex-col gap-2">
       <p>No runs yet.</p>
       <p className="text-muted">
-        Runs appear here once a test bundle is uploaded to one of this organisation’s projects.
+        {projectSlug === null
+          ? 'Runs appear here once a test bundle is uploaded to one of this organisation’s projects.'
+          : 'Runs appear here once a test bundle is uploaded to this project.'}
       </p>
     </div>
   );
