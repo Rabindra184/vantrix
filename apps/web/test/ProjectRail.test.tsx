@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectListResponse } from '@perfportal/contracts';
 import ProjectRail from '../src/ProjectRail';
+import { projectsQueryKey } from '../src/api/projects';
 
 afterEach(cleanup);
 
@@ -14,8 +15,11 @@ afterEach(cleanup);
  * case-insensitive substring in Playwright (CLAUDE.md), and fixtures that
  * cannot collide stay correct under either matcher.
  *
- * The three latestRun shapes are the three badge branches: complete with a
- * verdict, not-complete, and none at all.
+ * The four latestRun shapes are the four badge branches of spec §4.3:
+ * complete with a verdict, complete with NO verdict, not-complete, and none
+ * at all. Spec §8 claims unit coverage of "all four branches" — until
+ * `onboarding` was added here, only three were actually asserted; see the
+ * "no verdict yet" test below for the one that was missing.
  */
 const PROJECTS: ProjectListResponse['items'] = [
   {
@@ -35,6 +39,12 @@ const PROJECTS: ProjectListResponse['items'] = [
     slug: 'billing',
     name: 'Billing Exports',
     latestRun: null,
+  },
+  {
+    id: '44444444-4444-4444-8444-444444444444',
+    slug: 'onboarding',
+    name: 'Onboarding Wizard',
+    latestRun: { id: 'cccccccc-4444-4444-8444-444444444444', status: 'complete', verdict: null },
   },
 ];
 
@@ -101,6 +111,18 @@ describe('ProjectRail', () => {
     // unconditionally, which renders 'no verdict yet' for this run — a claim
     // about a run nobody has measured.
     expect(search).not.toHaveTextContent('no verdict yet');
+  });
+
+  it("reads 'no verdict yet' for a complete run with no verdict", async () => {
+    renderRail(PROJECTS);
+    // The fourth §4.3 branch, asserted POSITIVELY: `status === 'complete'`
+    // with `verdict === null` reads VERDICT.none, not STATUS.complete and not
+    // no badge at all. Before this test, `?? 'none'` on ProjectRail.tsx's
+    // `badgeFor` could be changed to `?? 'not_evaluated'` and the whole gate
+    // stayed green — this branch's absence was asserted only negatively (by
+    // the pending-run test above), never positively.
+    const onboarding = await screen.findByRole('link', { name: /Onboarding Wizard/ });
+    expect(onboarding).toHaveTextContent('no verdict yet');
   });
 
   it('gives a project with no runs no badge, while a sibling with runs has one', async () => {
@@ -197,5 +219,55 @@ describe('ProjectRail', () => {
     expect(slaFailed).toHaveTextContent('failed');
     expect(slaFailed).not.toHaveTextContent('ingest failed');
     expect(ingestFailed.textContent).not.toBe(slaFailed.textContent);
+  });
+
+  it('keeps the rows and says they may be out of date after a refetch fails', async () => {
+    // Own fixture path, not an extra assertion on an existing test: this
+    // sequence — a successful load, THEN a failed refetch — is a state none
+    // of the tests above ever reach, since renderRail's stub answers every
+    // call the same way.
+    let calls = 0;
+    vi.stubGlobal('fetch', () => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ items: PROJECTS }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ code: 'INTERNAL', detail: 'boom', remediation: 'Retry later.' }),
+          { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      );
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <ProjectRail />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Paired positive FIRST: the initial load succeeded and the rows are on
+    // screen, so what follows is about SURVIVING a failed refetch, not about
+    // a rail that never rendered projects to begin with.
+    expect(await screen.findByRole('link', { name: /Checkout Flow/ })).toBeInTheDocument();
+
+    // Force the second call — wired above to fail — and wait for it to
+    // settle before asserting on the result.
+    await client.refetchQueries({ queryKey: projectsQueryKey });
+
+    expect(await screen.findByText('Projects may be out of date.')).toBeInTheDocument();
+    // TanStack Query keeps the last-known-good data across a failed refetch:
+    // the rows must still be here, and the ORIGINAL "could not be loaded"
+    // copy — which would now be false, since the rows are plainly still on
+    // screen — must not appear instead.
+    expect(screen.getByRole('link', { name: /Checkout Flow/ })).toBeInTheDocument();
+    expect(screen.queryByText('Projects could not be loaded.')).toBeNull();
   });
 });

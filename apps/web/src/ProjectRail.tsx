@@ -30,6 +30,21 @@ export default function ProjectRail() {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const items = projects.data?.items ?? [];
 
+  // TanStack Query keeps the last-known-good `data` across a failed refetch,
+  // so `isError` and a non-empty `items` can both be true at once — the
+  // ordinary shape of "loaded fine, then a later refetch failed". Blanking
+  // the rows in that case would throw away information the reader can still
+  // act on, so the rows stay and the message names what actually happened
+  // rather than claiming nothing loaded (the same overclaim the D-14
+  // sentence fix corrected on the run page, one level up in the tree).
+  const message = projects.isError
+    ? items.length > 0
+      ? 'Projects may be out of date.'
+      : 'Projects could not be loaded.'
+    : projects.isSuccess && items.length === 0
+      ? 'No projects yet.'
+      : null;
+
   return (
     <div className="flex flex-col border-b border-default bg-sidebar lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
       <Link to={DEFAULT_ROUTE} className="px-4 py-3 font-semibold">
@@ -46,7 +61,7 @@ export default function ProjectRail() {
         <NavLink
           to={DEFAULT_ROUTE}
           end
-          className="shrink-0 rounded px-3 py-2 text-sm aria-[current=page]:bg-sunken"
+          className="shrink-0 rounded px-3 py-2 text-sm hover:bg-sunken aria-[current=page]:bg-sunken aria-[current=page]:font-medium"
         >
           All runs
         </NavLink>
@@ -55,25 +70,35 @@ export default function ProjectRail() {
           <NavLink
             key={project.id}
             to={projectPath(project.slug)}
-            className="flex shrink-0 items-center justify-between gap-2 rounded px-3 py-2 text-sm aria-[current=page]:bg-sunken"
+            className="flex shrink-0 items-center justify-between gap-2 rounded px-3 py-2 text-sm hover:bg-sunken aria-[current=page]:bg-sunken aria-[current=page]:font-medium"
           >
             {/* Truncated, not wrapped: a rail whose rows are two lines tall
                 holds half as many projects, and the full name is on the page
-                this links to. */}
-            <span className="truncate">{project.name}</span>
+                this links to. `title` is for the sighted, truncated case
+                specifically — a screen reader already gets the whole name,
+                since truncation is CSS-only and the accessible name is the
+                untouched `project.name`. */}
+            <span className="truncate" title={project.name}>
+              {project.name}
+            </span>
             {badgeFor(project.latestRun)}
           </NavLink>
         ))}
-      </nav>
 
-      {/* Outside the <nav>, which contains only links. Both messages sit
-          where the list would be. */}
-      {projects.isError && (
-        <p className="px-5 pb-3 text-sm text-muted">Projects could not be loaded.</p>
-      )}
-      {projects.isSuccess && items.length === 0 && (
-        <p className="px-5 pb-3 text-sm text-muted">No projects yet.</p>
-      )}
+        {/* INSIDE <nav>, not outside it. <nav> is flow content and may hold
+            a <p> — nothing in HTML or ARIA restricts it to links. Outside,
+            a screen-reader user who landed on the *Projects* landmark heard
+            "All runs" and nothing else, and a keyboard user tabbing forward
+            went straight to Sign out without ever meeting the message.
+            The wrapper is rendered unconditionally and carries the
+            `aria-live` region, so it is registered before its content ever
+            changes — a transition into or out of an error, or from "out of
+            date" back to normal, gets announced, not just whatever state
+            happened to be present at first paint. */}
+        <div aria-live="polite" className="shrink-0">
+          {message != null && <p className="px-3 py-2 text-sm text-muted">{message}</p>}
+        </div>
+      </nav>
     </div>
   );
 }

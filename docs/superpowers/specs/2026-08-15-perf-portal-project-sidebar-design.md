@@ -213,7 +213,8 @@ filter. One change, both parts.
 | State | Rail renders | Copy |
 |---|---|---|
 | Loading | Brand, **All runs**, nothing else | — |
-| Error | Brand, **All runs**, one quiet line | "Projects could not be loaded." |
+| Error, no cached rows | Brand, **All runs**, one quiet line | "Projects could not be loaded." |
+| Error, cached rows present | Brand, **All runs**, the STALE rows, one quiet line | "Projects may be out of date." |
 | Empty (no projects) | Brand, **All runs**, one line | "No projects yet." |
 | Loaded | Brand, **All runs**, the rows | — |
 
@@ -221,6 +222,18 @@ The error line says what failed and nothing more. It does not offer a retry
 the rail cannot perform, and it does not apologise on behalf of a page that
 is working: everything in `<main>` rendered fine, and a rail that implied
 otherwise would be the same overclaim §5.1 exists to prevent.
+
+**Two error rows, not one, because TanStack Query keeps last-known-good
+`data` across a failed refetch.** A rail that loaded fine and then had ONE
+refetch fail is `isError` and non-empty `items` at the same time — and
+rendering "Projects could not be loaded." over a visibly-populated list would
+be a false statement, the exact overclaim §5.1 exists to prevent, just
+inverted: instead of the rail implying `<main>` broke, it would be claiming
+its own rows do not exist while they sit on screen. The rows are kept rather
+than blanked — a transient blip should not throw away information the reader
+can still act on — and the copy is chosen to match what is actually true:
+"may be out of date" when there is something to be out of date about,
+"could not be loaded" only when there is nothing on screen at all.
 
 **No skeleton.** The list is short; four shimmering placeholders for
 something that resolves in one round trip is noise, and it makes the rail
