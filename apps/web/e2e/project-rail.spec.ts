@@ -68,3 +68,39 @@ test('the project nav reflows rather than disappearing on a narrow viewport', as
     .click();
   await expect(page).toHaveURL(/\/projects\/billing$/);
 });
+
+test('a skip link lets a keyboard user bypass the rail', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedProjectWithRuns(admin.orgId, 'billing', 'Billing Exports', 2);
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  // `goto` resolves once navigation commits, not once AuthGate's own session
+  // check settles — immediately after `goto` the document still reads
+  // "Checking your session…" (AuthGate.tsx), which mounts none of AppShell,
+  // so a Tab pressed that early has no skip link, no rail, nothing to land
+  // on at all (measured: `document.activeElement` was plain `<body>` with
+  // that loading text). Waiting for the rail confirms AppShell — and the
+  // skip link that is its first child — has actually mounted.
+  await expect(page.getByRole('navigation', { name: 'Projects', exact: true })).toBeVisible();
+
+  // A full navigation also leaves the document with no active element at
+  // all, so the very first Tab press has nothing to advance FROM.
+  // Explicitly focusing <body> — a no-op for anything visible — establishes
+  // the same "nothing in particular is focused yet" starting point a real
+  // browser has after a fresh load, so the Tab that follows really is the
+  // first stop. Before this fix it would have landed on the brand link, then
+  // "All runs", then one stop per seeded project — now it must land on the
+  // skip link FIRST, ahead of all of them.
+  await page.locator('body').focus();
+  await page.keyboard.press('Tab');
+  const skipLink = page.getByRole('link', { name: 'Skip to content', exact: true });
+  await expect(skipLink).toBeFocused();
+
+  // Activating it must actually MOVE focus onto <main>, not just scroll to
+  // it — <main id="main"> carries `tabIndex={-1}` for exactly this, since a
+  // <main> is not natively focusable and a skip link that only scrolls
+  // leaves a screen-reader user's focus behind at the link.
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('main')).toBeFocused();
+});

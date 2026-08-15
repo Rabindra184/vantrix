@@ -164,4 +164,38 @@ describe('ProjectRail', () => {
     expect(screen.queryByText('Projects could not be loaded.')).toBeNull();
     expect(screen.queryByText('No projects yet.')).toBeNull();
   });
+
+  it('renders an ingest failure and an SLA failure differently', async () => {
+    // A separate, small fixture rather than an addition to PROJECTS: this is
+    // about ONE collision (STATUS.failed vs VERDICT.failed, both '✕ failed'
+    // in routes/marks.tsx), not another §4.3 badge branch, and folding it
+    // into the four-branch fixture above would blur the two concerns.
+    const projects: ProjectListResponse['items'] = [
+      {
+        id: '66666666-6666-4666-8666-666666666666',
+        slug: 'data-pipeline',
+        name: 'Data Pipeline',
+        // The bundle never parsed — an INGEST failure.
+        latestRun: { id: 'eeeeeeee-6666-4666-8666-666666666666', status: 'failed', verdict: null },
+      },
+      {
+        id: '77777777-7777-4777-8777-777777777777',
+        slug: 'legacy-export',
+        name: 'Legacy Export',
+        // The run completed and its SLA rule failed — a VERDICT failure.
+        latestRun: { id: 'ffffffff-7777-4777-8777-777777777777', status: 'complete', verdict: 'failed' },
+      },
+    ];
+    renderRail(projects);
+    const ingestFailed = await screen.findByRole('link', { name: /Data Pipeline/ });
+    const slaFailed = screen.getByRole('link', { name: /Legacy Export/ });
+    // The rail-local override: an ingest failure reads distinguishably from
+    // an SLA failure, both in what is on screen and in the accessible name —
+    // there is no column header here to disambiguate them the way RunList's
+    // "Status"/"Verdict" columns and RunHeader's NamedBadge groups do.
+    expect(ingestFailed).toHaveTextContent('ingest failed');
+    expect(slaFailed).toHaveTextContent('failed');
+    expect(slaFailed).not.toHaveTextContent('ingest failed');
+    expect(ingestFailed.textContent).not.toBe(slaFailed.textContent);
+  });
 });

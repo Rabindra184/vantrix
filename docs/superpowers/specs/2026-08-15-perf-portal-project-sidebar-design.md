@@ -118,6 +118,16 @@ DOM order is rail → header → main, which matches the visual order in both
 layouts. No CSS reordering, so a screen reader and a sighted user traverse
 the same sequence.
 
+**That ordering has a cost, and this sub-project pays it with a bypass.**
+Before this branch a keyboard user reached page content after one tab stop.
+Rail → header → main now puts brand, **All runs** and one link per project
+ahead of everything else, on every authenticated page — 2 + N identical stops
+for a sighted keyboard user who wants none of them. `AppShell` answers this
+with a skip link (`<a href="#main">Skip to content</a>`, visually hidden until
+focused) as its first child, jumping to `<main id="main" tabIndex={-1}>` so
+activating it actually moves focus onto the content rather than only
+scrolling to it.
+
 ---
 
 ## 4. What the rail contains
@@ -166,6 +176,26 @@ sub-project 2's contract docstring says to read `status` first.
 
 **A project with no runs shows no badge**, not an empty or neutral one.
 Absence is the honest rendering of "nothing has been ingested here".
+
+**`STATUS.failed` and `VERDICT.failed` collide, and the rail is the one place
+that matters.** Both are `{ glyph: '✕', label: 'failed', colour:
+var(--color-status-failed) }` in `routes/marks.tsx`, identically, by design —
+`RunList` renders them under separate "Status" and "Verdict" columns and
+`RunHeader` renders them as two separately-named `NamedBadge` groups, so the
+column header or the group's accessible name disambiguates "could not be
+ingested" (`status: 'failed'`) from "ingested and failed its SLA" (`status:
+'complete', verdict: 'failed'`) in both places that already existed. The rail
+has one badge and no column header, so a project whose latest run could not
+be ingested and a project whose latest run completed and failed its SLA
+render **the same row**.
+
+The fix is rail-local, not a change to `marks.tsx`: `ProjectRail.tsx` defines
+`RAIL_INGEST_FAILED`, a `Mark` with `STATUS.failed`'s glyph and colour but the
+label `'ingest failed'`, and `badgeFor` renders it instead of `STATUS.failed`
+specifically when `status === 'failed'`. `marks.tsx`'s own two fields are
+untouched — the run list and the run header still say plain "failed" in both
+columns, which is correct there. `pending` and `parsing` need no equivalent
+override: neither word or glyph collides with anything `VERDICT` renders.
 
 ### 4.4 No search box
 

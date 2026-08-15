@@ -4,7 +4,7 @@ import type { ProjectListResponse } from '@perfportal/contracts';
 import Badge from './components/Badge';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { DEFAULT_ROUTE, projectPath } from './routes/paths';
-import { STATUS, VERDICT } from './routes/marks';
+import { STATUS, VERDICT, type Mark } from './routes/marks';
 
 type ProjectItem = ProjectListResponse['items'][number];
 
@@ -79,6 +79,36 @@ export default function ProjectRail() {
 }
 
 /**
+ * A rail-local override of `STATUS.failed`, for this component only.
+ *
+ * `STATUS.failed` and `VERDICT.failed` (`routes/marks.tsx`) are identical in
+ * glyph, label and colour — deliberately: `RunList` and `RunHeader` render
+ * status and verdict in separate columns/chips, so the column header (or
+ * `NamedBadge`'s accessible name) disambiguates "could not be ingested" from
+ * "ingested and failed its SLA" wherever those live. The rail renders ONE
+ * badge with no column header, so nothing here disambiguates them — exactly
+ * the conflation `marks.tsx`'s own docstring calls the worst class of UI bug,
+ * because nothing looks broken. This reintroduces that conflation on the one
+ * surface now visible from every page, unless the rail says something
+ * different for the two cases.
+ *
+ * Do not "fix" this by editing `STATUS.failed` in `marks.tsx`: that label is
+ * correct for the two-column contexts that use it, and changing it there
+ * would relabel the run list and the run header too. This is a rail-local
+ * rendering of the SAME underlying fact (`status: 'failed'` — the bundle
+ * never parsed), not a change to the shared vocabulary.
+ *
+ * `pending` and `parsing` need no such override: neither's word or glyph
+ * collides with anything `VERDICT` renders, so their shared marks already
+ * read unambiguously here.
+ */
+const RAIL_INGEST_FAILED: Mark = {
+  glyph: STATUS.failed.glyph,
+  label: 'ingest failed',
+  colour: STATUS.failed.colour,
+};
+
+/**
  * Status first, verdict second — and the contract carries both fields
  * precisely so this decision can be made here.
  *
@@ -88,9 +118,16 @@ export default function ProjectRail() {
  *
  * A project with no runs gets NO badge rather than a neutral one: absence is
  * the honest rendering of "nothing has been ingested here".
+ *
+ * `status === 'failed'` renders `RAIL_INGEST_FAILED`, not `STATUS.failed`
+ * itself — see that constant's docstring for why the rail cannot reuse the
+ * shared mark here, the way it safely does for `pending`/`parsing`/`complete`.
  */
 function badgeFor(latestRun: ProjectItem['latestRun']) {
   if (latestRun === null) return null;
-  if (latestRun.status !== 'complete') return <Badge mark={STATUS[latestRun.status]} />;
+  if (latestRun.status !== 'complete') {
+    const mark = latestRun.status === 'failed' ? RAIL_INGEST_FAILED : STATUS[latestRun.status];
+    return <Badge mark={mark} />;
+  }
   return <Badge mark={VERDICT[latestRun.verdict ?? 'none']} />;
 }
