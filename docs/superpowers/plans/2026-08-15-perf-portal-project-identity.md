@@ -1252,10 +1252,20 @@ describe('RunList columns', () => {
     // Derived from the row, not written down: re-slicing the id here the way
     // the component does would just restate the implementation. Assert
     // instead that the accessible name carries the WHOLE id while the visible
-    // text is a strict prefix of it.
+    // text is a NON-EMPTY strict prefix of it.
     const link = await screen.findByRole('link', { name: `View run ${ROWS[1]!.id}` });
-    expect(ROWS[1]!.id.startsWith(link.textContent!)).toBe(true);
-    expect(link.textContent).not.toBe(ROWS[1]!.id);
+    const visible = link.textContent!;
+    // Non-empty FIRST, and it is load-bearing: `''.startsWith` is vacuously
+    // true and `'' !== id` is too, so without this an implementation that
+    // rendered nothing for a null simulation — `run.simulation && …` instead
+    // of `run.simulation ?? …`, since `null && x` is `null` — would satisfy
+    // both assertions below. `findByRole` would still match it, because the
+    // aria-label supplies the accessible name whatever the content is. A
+    // test for a fallback that passes when the fallback is gone is worse
+    // than no test.
+    expect(visible.length).toBeGreaterThan(0);
+    expect(ROWS[1]!.id.startsWith(visible)).toBe(true);
+    expect(visible).not.toBe(ROWS[1]!.id);
   });
 });
 ```
