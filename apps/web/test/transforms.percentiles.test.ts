@@ -208,3 +208,91 @@ describe('toPercentiles — nothing to draw', () => {
     expect(toPercentiles(series).empty).toBeUndefined();
   });
 });
+
+/**
+ * THE OUTCOME SELECTOR — the three-way OK / KO / all control Gatling puts on
+ * this figure.
+ *
+ * `'ok'` is the DEFAULT and is what G-22 / RQ-05 specify, so the chart a
+ * reader already knows does not move under them. The other two exist because
+ * `percentilesKo` has been in the payload since the parity migration and
+ * nothing in the web app read it.
+ *
+ * The interesting case is the emptiness rule. It was keyed on `percentilesOk`
+ * being non-empty for reasons about the START edge that hold equally for all
+ * three maps — left pinned to the OK map, a KO series would draw as a
+ * continuous line across seconds that recorded no failure at all.
+ */
+describe('toPercentiles — outcome selection', () => {
+  it('defaults to OK, so existing callers are unchanged', () => {
+    expect(toPercentiles(series)).toEqual(toPercentiles(series, BANDS, 'ok'));
+  });
+
+  it('reads percentilesKo when KO is selected', () => {
+    const i = series.buckets.findIndex((b) => Object.keys(b.percentilesKo).length > 0);
+    expect(i).toBeGreaterThanOrEqual(0); // the fixture must contain failures
+
+    const drawn = toPercentiles(series, ['p95'], 'ko').series[0]!.data as readonly (
+      | number
+      | null
+    )[];
+    expect(drawn[i]).toBe(series.buckets[i]!.percentilesKo.p95);
+  });
+
+  it('leaves a bucket with no KO as a gap, not a zero', () => {
+    const i = series.buckets.findIndex((b) => Object.keys(b.percentilesKo).length === 0);
+    expect(i).toBeGreaterThanOrEqual(0);
+
+    const drawn = toPercentiles(series, ['p95'], 'ko').series[0]!.data as readonly (
+      | number
+      | null
+    )[];
+    expect(drawn[i]).toBeNull();
+  });
+
+  it('does not simply reuse the OK gaps for KO', () => {
+    // The regression this whole task guards: a bucket that measured a success
+    // and no failure must be a POINT on the OK series and a GAP on the KO one.
+    const i = series.buckets.findIndex(
+      (b) => Object.keys(b.percentilesOk).length > 0 && Object.keys(b.percentilesKo).length === 0,
+    );
+    expect(i).toBeGreaterThanOrEqual(0);
+
+    const ok = toPercentiles(series, ['p95'], 'ok').series[0]!.data as readonly (number | null)[];
+    const ko = toPercentiles(series, ['p95'], 'ko').series[0]!.data as readonly (number | null)[];
+    expect(ok[i]).not.toBeNull();
+    expect(ko[i]).toBeNull();
+  });
+
+  it('reads the combined map when all is selected', () => {
+    const i = series.buckets.findIndex((b) => Object.keys(b.percentiles).length > 0);
+    const drawn = toPercentiles(series, ['p95'], 'all').series[0]!.data as readonly (
+      | number
+      | null
+    )[];
+    expect(drawn[i]).toBe(series.buckets[i]!.percentiles.p95);
+  });
+
+  it('names the selected outcome in the deviation note', () => {
+    expect(toPercentiles(series, BANDS, 'ok').limitation).toContain('OK-only');
+    expect(toPercentiles(series, BANDS, 'ko').limitation).toContain('KO-only');
+    expect(toPercentiles(series, BANDS, 'all').limitation).not.toContain('-only');
+  });
+
+  it('counts unmeasured seconds against the SELECTED outcome', () => {
+    // Derived from the payload, never written down: the two counts differ
+    // because most seconds of a healthy run record no failure.
+    const okGaps = series.buckets.filter((b) => Object.keys(b.percentilesOk).length === 0).length;
+    const koGaps = series.buckets.filter((b) => Object.keys(b.percentilesKo).length === 0).length;
+    expect(koGaps).not.toBe(okGaps);
+
+    expect(toPercentiles(series, BANDS, 'ko').limitation).toContain(String(koGaps));
+  });
+
+  it('still carries all ten bands in the table whatever the outcome', () => {
+    // The drawing has a legibility budget; the parity surface does not.
+    const d = toPercentiles(series, ['p95'], 'ko');
+    expect(d.columns).toHaveLength(BANDS.length + 1);
+    expect(d.rows).toHaveLength(series.buckets.length);
+  });
+});
