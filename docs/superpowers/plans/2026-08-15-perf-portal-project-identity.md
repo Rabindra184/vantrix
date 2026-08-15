@@ -22,6 +22,7 @@
 - **`<RunList key={slug} …>` is required**, not stylistic. Without it, `/projects/a` → `/projects/b` reuses the component and its cursor.
 - **Expectations are computed from the payload, never written down.** A test that hard-codes a value a fixture supplies breaks on the next re-capture for a reason that is not a defect.
 - **Accessible-name assertions go in Playwright, never jsdom.** `dom-accessibility-api` does not consult a descendant's `aria-hidden` the way Chromium's accessibility tree does.
+- **Narrow a suite from the repo ROOT, never with `pnpm --filter <pkg> exec`.** `--filter` changes cwd to the package directory, and vitest only looks for config in cwd — so `apps/web` resolves `vite.config.ts`, which has no `test` block, and the environment silently defaults to `node` instead of the jsdom that the root `vitest.config.ts`'s `environmentMatchGlobs` assigns to `apps/web/test/*.tsx`. Every web component test then dies with `ReferenceError: document is not defined`, including ones that pass in CI. Use `pnpm exec vitest run apps/web/test/<file>` from the root. Likewise `pnpm test:e2e -- <file>` does not narrow — the argument is not forwarded, and the full suite runs; use `pnpm exec playwright test <file>`.
 - **Run every command under Node 22.** `package.json` sets `engines: { node: ">=22" }` and `.nvmrc` pins `22.19.0`. Under Node 20, `pnpm test:unit` **exits 1** with 16 jsdom/undici errors and silently collects only 47 of 63 test files — 534 tests instead of 679. It looks like a passing run if you read the "534 passed" line and not the exit code. Start every session with:
   ```bash
   export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && nvm use 22.19.0 && node --version
@@ -1261,7 +1262,7 @@ describe('RunList columns', () => {
 
 - [ ] **Step 2: Run and watch it fail**
 
-Run: `pnpm --filter @perfportal/web exec vitest run test/RunList.test.tsx`
+Run: `pnpm exec vitest run apps/web/test/RunList.test.tsx`
 Expected: FAIL — no `Project` columnheader exists, and the `Tool` one does.
 
 - [ ] **Step 3: Change the columns**
@@ -1336,7 +1337,7 @@ Add a comment above the `<thead>` recording why Tool is gone:
 
 - [ ] **Step 4: Run and watch it pass**
 
-Run: `pnpm --filter @perfportal/web exec vitest run test/RunList.test.tsx`
+Run: `pnpm exec vitest run apps/web/test/RunList.test.tsx`
 Expected: PASS.
 
 - [ ] **Step 5: Update the e2e spec**
@@ -1369,7 +1370,7 @@ test('a row link is named by the whole run id, not by its visible text', async (
 - [ ] **Step 6: Run the e2e suite for this spec, then commit**
 
 ```bash
-pnpm test:e2e -- run-list.spec.ts
+pnpm exec playwright test run-list.spec.ts
 git add -A && git commit -m "feat(web): the run list names each row by its project and simulation"
 ```
 
@@ -1466,7 +1467,7 @@ export async function seedProjectWithRuns(
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `pnpm test:e2e -- project-runs.spec.ts`
+Run: `pnpm exec playwright test project-runs.spec.ts`
 Expected: FAIL at the first `page.goto` — `/projects/alpha` matches the catch-all and redirects to `/runs`.
 
 - [ ] **Step 3: Add the web projects reader**
@@ -1615,7 +1616,7 @@ export default function ProjectRuns() {
 
 - [ ] **Step 7: Run the e2e test and watch it pass**
 
-Run: `pnpm test:e2e -- project-runs.spec.ts`
+Run: `pnpm exec playwright test project-runs.spec.ts`
 Expected: PASS. To prove the `key` is load-bearing rather than decorative, delete it, re-run, and confirm the second assertion fails with 0 rows; then put it back.
 
 - [ ] **Step 8: Full gate, then commit**
@@ -1693,7 +1694,7 @@ it('does not make the commit a link — the platform does not know the repo host
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `pnpm --filter @perfportal/web exec vitest run test/RunHeader.test.tsx`
+Run: `pnpm exec vitest run apps/web/test/RunHeader.test.tsx`
 Expected: FAIL — no link named `Checkout`, and no `run-environment` testid.
 
 - [ ] **Step 3: Render the project name and the chips**
@@ -1755,7 +1756,7 @@ Replace this component's docstring paragraph that reads *"There is no environmen
 
 - [ ] **Step 4: Run and watch them pass**
 
-Run: `pnpm --filter @perfportal/web exec vitest run test/RunHeader.test.tsx`
+Run: `pnpm exec vitest run apps/web/test/RunHeader.test.tsx`
 Expected: PASS.
 
 - [ ] **Step 5: Assert the accessible names in Chromium**
