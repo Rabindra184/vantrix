@@ -1629,7 +1629,25 @@ git add -A && git commit -m "feat(web): /projects/:slug lists one project's runs
 
 - [ ] **Step 1: Write the failing unit tests**
 
-`apps/web/test/RunHeader.test.tsx` — this file's existing render helper needs a `MemoryRouter` wrapper now, because the header contains a `<Link>`. Add it there once.
+`apps/web/test/RunHeader.test.tsx` needs a `MemoryRouter` wrapper now, because the header contains a `<Link>` and React Router throws outside a router context.
+
+**There is no render helper in this file to add it to** — all four existing tests call `render(<RunHeader run={…} peakUsers={…} />)` directly (lines 29, 34, 40, 45). Introduce one and convert those four call sites to it, so the wrapper exists in exactly one place:
+
+```tsx
+import { MemoryRouter } from 'react-router-dom';
+
+function renderHeader(run: RunResponse, peakUsers: number | null = null) {
+  return render(
+    <MemoryRouter>
+      <RunHeader run={run} peakUsers={peakUsers} />
+    </MemoryRouter>,
+  );
+}
+```
+
+The four existing calls become `renderHeader(RUN, 42)`, `renderHeader({ ...RUN, simulation: null })`, `renderHeader(RUN)` and `renderHeader({ ...RUN, toolStartedAt: null })` — the `peakUsers: null` cases rely on the default. Their assertions are unchanged; this is a mechanical conversion, and if any of the four starts failing, the wrapper is not what broke it.
+
+`RUN` at the top of the file already carries a `project` field (Task 1 added it), so the new tests below can spread it without redeclaring one.
 
 ```tsx
 it('names the project, linking to its run list', () => {
