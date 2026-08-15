@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import ProjectRail from './ProjectRail';
 import SignOutButton from './SignOutButton';
 
 /**
@@ -6,21 +7,28 @@ import SignOutButton from './SignOutButton';
  * `AuthGate`, so its presence on screen is itself the proof that a session
  * survived — which is what the reload test asserts.
  *
- * Deliberately empty of content. Task 6 renders the run list into the
- * `<Outlet/>` and Task 7 the run detail; a placeholder table here would be a
- * competing implementation for them to delete rather than a foundation to
- * build on.
+ * Two columns on wide screens, one stacked column below `lg`, with DOM order
+ * rail → header → main in both. No CSS reordering, so a screen reader and a
+ * sighted reader traverse the same sequence.
+ *
+ * The brand moved into the rail; this header keeps `SignOutButton` and
+ * nothing else yet. It renders ONCE — a second copy hidden by a `lg:` class
+ * would make Playwright's `getByRole('button', { name: 'Sign out' })` resolve
+ * to two nodes and throw under strict mode, and two identical controls
+ * sharing one accessible name is a defect whatever the CSS says.
  */
 export default function AppShell() {
   return (
-    <div className="min-h-screen">
-      <header className="flex items-center justify-between border-b border-default px-6 py-3">
-        <span className="font-semibold">PerfPortal</span>
-        <SignOutButton />
-      </header>
-      <main className="p-6">
-        <Outlet />
-      </main>
+    <div className="min-h-screen lg:grid lg:grid-cols-[16rem_1fr]">
+      <ProjectRail />
+      <div>
+        <header className="flex items-center justify-end border-b border-default px-6 py-3">
+          <SignOutButton />
+        </header>
+        <main className="p-6">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }
