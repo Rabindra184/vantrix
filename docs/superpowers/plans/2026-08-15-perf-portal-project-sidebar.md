@@ -526,8 +526,8 @@ Create `apps/web/e2e/project-rail.spec.ts`. Model the imports on `apps/web/e2e/p
 
 ```ts
 import { expect, test } from '@playwright/test';
-import { seedAdmin, seedProjectWithRuns } from './fixtures';
-import { signIn } from './helpers';
+import { seedAdmin, seedProjectWithRuns } from './fixtures.js';
+import { signIn } from './helpers.js';
 
 /**
  * `exact: true` on every name query. Playwright's default is a

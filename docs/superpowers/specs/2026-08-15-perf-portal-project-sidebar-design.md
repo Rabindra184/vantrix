@@ -60,7 +60,7 @@ previous one already paid the API cost.
 
 ## 3. Shell structure
 
-```
+```tsx
 <div className="min-h-screen lg:grid lg:grid-cols-[16rem_1fr]">
   <div>                              {/* the rail */}
     <Link to={DEFAULT_ROUTE}>PerfPortal</Link>
@@ -162,7 +162,7 @@ page it links to.
 
 ### 4.3 The badge reads status first, verdict second
 
-```
+```text
 latestRun === null        → no badge at all
 latestRun.status ≠ complete → STATUS[status]
 latestRun.status = complete → VERDICT[verdict ?? 'none']
@@ -249,6 +249,16 @@ This is falsification checkpoint 3, and it matters because the rail is now
 on every authenticated page: a rail that threw would take the whole app
 down rather than one region of it.
 
+**"Never break the page" holds for the query-failure path this checkpoint
+covers — not for every conceivable failure.** The app has no error boundary
+anywhere, so a render-time throw inside `ProjectRail` would still unmount the
+whole tree, same as a throw anywhere else in it. The guarantee that matters
+in practice rests on `badgeFor`'s two lookups (`STATUS[status]`,
+`VERDICT[verdict ?? 'none']`) being **total** `Record` types over finite
+unions — every `RunStatus` and every `RunVerdict | 'none'` has an entry, so
+neither lookup can return `undefined` and neither can throw. Containment is
+not what makes the rail safe; the totality of those two tables is.
+
 ### 5.2 Every authenticated page now fetches `/v1/projects`
 
 Previously only `/projects/:slug` did. One small query under a shared key,
@@ -258,6 +268,14 @@ Caching it indefinitely would freeze the badge the rail exists to show.
 
 Stated rather than discovered. If that request ever matters, the honest fix
 is a `staleTime` with a refetch interval, not removing the badge.
+
+**What follows from that, stated rather than discovered:** `staleTime: 0`
+combined with TanStack Query 5's default `refetchOnWindowFocus: true` —
+`main.tsx`'s `QueryClient` overrides only `retry`, leaving that default in
+place — means `GET /v1/projects` refires on every window focus, on every
+authenticated page, for the lifetime of the session. Cheap per call, and the
+same trade sub-project 2 already made for this endpoint; recorded here
+because it is now global rather than scoped to one route.
 
 ---
 

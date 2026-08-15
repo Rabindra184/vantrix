@@ -90,3 +90,13 @@ variant of the value you actually mean to require — otherwise the assertion
 passes whether or not the real value ever loaded. Cheaper still: pick fixture
 values that cannot collide with their fallback in the first place —
 `'beta'`/`'Beta Checkout Flow'`, never `'beta'`/`'Beta'`.
+
+**Every page-scoped `getByRole('link', { name })` in the e2e suite now shares
+a document with N rail links.** `ProjectRail` (`apps/web/src/ProjectRail.tsx`)
+renders on every authenticated page — brand, **All runs**, one link per
+project — so a link query that used to have the page mostly to itself can
+now also be satisfied by a rail row instead of the one it meant to find,
+under Playwright's case-insensitive substring default above. Green today
+only because no seeded project name collides with a page's own link text;
+that is a standing constraint on fixture naming from here on, not a one-off
+check to pass once.
