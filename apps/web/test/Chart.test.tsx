@@ -276,15 +276,32 @@ describe('Chart — a legend only from two series up', () => {
 });
 
 /**
- * The tooltip's `valueFormatter` shares `formatCell` with the data table
- * (design §7 / the comment above it in Chart.tsx) specifically so the two
- * surfaces never disagree about the same number. A scatter point breaks that
- * sharing unless the formatter is array-aware: ECharts hands it the whole
- * `[x, y]` pair as one value, not one call per axis, and `String([x, y])`
+ * The tooltip shares `formatCell` with the data table (design §7) specifically
+ * so the two surfaces never disagree about the same number. A scatter point
+ * breaks that sharing unless the formatter is array-aware: ECharts hands it the
+ * whole `[x, y]` pair as one value, not one call per axis, and `String([x, y])`
  * joins with a bare comma — `String([3, 120])` is `"3,120"`, indistinguishable
  * from a single four-figure number on a milliseconds axis.
+ *
+ * ═══ THIS ASSERTS THE WIRING, NOT THE FORMATTING ═══
+ *
+ * The rules themselves now live in `charts/tooltip.ts` and are unit-tested
+ * there without a DOM. What these two cases still buy is proof that `Chart`
+ * actually INSTALLS that formatter — the option key moved from
+ * `valueFormatter` to `formatter` when the tooltip gained units, escaping and
+ * a two-column layout, and a chart wired to neither would render ECharts'
+ * default panel with seventeen significant digits in it and no test would
+ * notice.
+ *
+ * So these call `formatter` with ECharts-shaped params and assert on the
+ * rendered string, rather than reaching for a value-only hook that no longer
+ * exists.
  */
 describe('Chart — the tooltip formats an array-valued (scatter) point', () => {
+  const params = (value: unknown, seriesName = 'OK') => [
+    { axisValueLabel: '0', marker: '', seriesName, value },
+  ];
+
   it('formats each component through formatCell, not the raw array', () => {
     render(
       <Chart
@@ -300,20 +317,20 @@ describe('Chart — the tooltip formats an array-valued (scatter) point', () => 
       />,
     );
 
-    const { valueFormatter } = lastOption().tooltip as { valueFormatter: (value: unknown) => string };
+    const { formatter } = lastOption().tooltip as { formatter: (params: unknown) => string };
     // Non-integer components prove formatCell actually ran on each one — a
     // bare `String()` of the pair would keep every digit un-rounded.
-    expect(valueFormatter([3.456, 122.74516052680153])).toBe('3.46, 122.75');
+    expect(formatter(params([3.456, 122.74516052680153]))).toContain('3.46, 122.75');
     // The actual defect this guards: never the thousands-separator-shaped
     // string `Array.prototype.toString` produces.
-    expect(valueFormatter([3, 120])).not.toBe(String([3, 120]));
-    expect(valueFormatter([3, 120])).toBe('3, 120');
+    expect(formatter(params([3, 120]))).not.toContain(String([3, 120]));
+    expect(formatter(params([3, 120]))).toContain('3, 120');
   });
 
-  it('still formats a plain number or string exactly as before', () => {
+  it('still formats a plain number, and a gap, exactly as before', () => {
     render(<Chart id="a" title="Requests per second" data={seriesData(['All'])} />);
-    const { valueFormatter } = lastOption().tooltip as { valueFormatter: (value: unknown) => string };
-    expect(valueFormatter(122.74516052680153)).toBe('122.75');
-    expect(valueFormatter(null)).toBe('—');
+    const { formatter } = lastOption().tooltip as { formatter: (params: unknown) => string };
+    expect(formatter(params(122.74516052680153, 'All'))).toContain('122.75');
+    expect(formatter(params(null, 'All'))).toContain('—');
   });
 });

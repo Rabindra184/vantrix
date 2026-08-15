@@ -44,9 +44,32 @@ const BAND_LABEL: Record<Band, string> = {
 };
 
 /**
- * Did this bucket measure any OK response time?
+ * WHICH OF `SeriesBucket`'S THREE PERCENTILE MAPS THIS CHART IS READING.
  *
- * Keyed on `percentilesOk` being non-empty, and deliberately NOT on
+ * `'ok'` is the default, and is what G-22 / RQ-05 specify — Gatling's own
+ * percentiles-over-time chart is OK-only, and so was this one for its whole
+ * life. The other two exist because Gatling puts a three-way selector on the
+ * figure, and `percentilesKo` has been in our payload since the parity
+ * migration with nothing in the web app reading it.
+ */
+export type Outcome = 'ok' | 'ko' | 'all';
+
+/**
+ * Deliberately a lookup rather than three branches: `measured` and `bandValue`
+ * must read the SAME map as each other on every call, and a second `if` chain
+ * is how one of them comes to read `percentilesOk` while the other reads
+ * `percentilesKo`.
+ */
+const MAP = {
+  ok: 'percentilesOk',
+  ko: 'percentilesKo',
+  all: 'percentiles',
+} as const satisfies Record<Outcome, keyof SeriesResponse['buckets'][number]>;
+
+/**
+ * Did this bucket measure any response time OF THE SELECTED OUTCOME?
+ *
+ * Keyed on the percentile map being non-empty, and deliberately NOT on
  * `okCount`. Those are different edges: `okCount` counts requests that ENDED
  * OK in this second, while the percentile sketches are fed on the START edge
  * to match Gatling. They disagree, and the reference run contains the case —
@@ -58,9 +81,15 @@ const BAND_LABEL: Record<Band, string> = {
  * but is nullable for runs ingested before the migration that added it. The
  * emptiness of the map we actually read cannot be null and cannot disagree
  * with itself.
+ *
+ * THE ARGUMENT ABOVE IS ABOUT THE EDGE, NOT ABOUT SUCCESS, so it holds for all
+ * three maps — which is why this takes the outcome rather than staying pinned
+ * to `percentilesOk`. Pinned, a KO series would draw as a continuous line
+ * across the 41 seconds of the reference run that recorded no failure at all,
+ * because those seconds DID record a success and so looked "measured".
  */
-function measured(bucket: SeriesResponse['buckets'][number]): boolean {
-  return Object.keys(bucket.percentilesOk).length > 0;
+function measured(bucket: SeriesResponse['buckets'][number], outcome: Outcome): boolean {
+  return Object.keys(bucket[MAP[outcome]]).length > 0;
 }
 
 /**
@@ -71,11 +100,41 @@ function measured(bucket: SeriesResponse['buckets'][number]): boolean {
  * — and `minMs` is literally `0` in the reference run's unmeasured bucket, so
  * this is the difference between a correct gap and a false floor.
  */
-function bandValue(bucket: SeriesResponse['buckets'][number], band: Band): number | null {
-  if (!measured(bucket)) return null;
-  if (band === 'min') return bucket.minMs;
-  if (band === 'max') return bucket.maxMs;
-  return bucket.percentilesOk[band] ?? null;
+function bandValue(
+  bucket: SeriesResponse['buckets'][number],
+  band: Band,
+  outcome: Outcome,
+): number | null {
+  if (!measured(bucket, outcome)) return null;
+
+  /**
+   * ═══ MIN AND MAX ARE NOT SPLIT BY OUTCOME ═══
+   *
+   * All three percentile maps hold `p25`…`p99` and NOTHING ELSE. These two
+   * bands come from `bucket.minMs` / `maxMs`, which are the bucket's COMBINED
+   * OK+KO extremes and the only extrema the payload carries.
+   *
+   * `all` — exactly right, and the only outcome for which they are.
+   *
+   * `ok` — a documented approximation, and what shipped. `DEFAULT_BANDS` draws
+   * both, this is the default view, and G-22 parity was established against
+   * it. On a mostly-successful run the combined extrema are the OK ones to
+   * within a rounding error. Left alone deliberately; the note names it.
+   *
+   * `ko` — NOT DRAWN, because here the approximation is not small. In the
+   * reference run's first bucket with failures the combined minimum is 21 ms
+   * while the 25th percentile of the KO responses is 141 ms, so a "KO min"
+   * would sit almost seven times below the lowest KO band and pull the series
+   * to the axis. A KO minimum was never measured, and this file's whole
+   * argument about gaps is that a measurement nobody took is absent rather
+   * than borrowed from somebody else's.
+   */
+  if (band === 'min' || band === 'max') {
+    if (outcome === 'ko') return null;
+    return band === 'min' ? bucket.minMs : bucket.maxMs;
+  }
+
+  return bucket[MAP[outcome]][band] ?? null;
 }
 
 /**
@@ -113,9 +172,26 @@ function bandValue(bucket: SeriesResponse['buckets'][number], band: Band): numbe
  * `BANDS`. They are deliberately not the same list, and this is the one place
  * in the file where the table and the drawing legitimately disagree.
  */
+const OUTCOME_NOTE: Record<Outcome, string> = {
+  ok: 'min and max are the combined OK+KO extremes; the other bands are OK-only.',
+  ko:
+    'These bands are KO-only, and min and max are not shown: the payload carries no ' +
+    'failure-only extremes, and its combined ones include successful responses faster ' +
+    'than any failure.',
+  all: 'All bands include both successful and failed responses.',
+};
+
+/** What a second with no measurement of the selected outcome recorded none OF. */
+const NOTHING_MEASURED: Record<Outcome, string> = {
+  ok: 'no successful response',
+  ko: 'no failed response',
+  all: 'no response',
+};
+
 export function toPercentiles(
   series: SeriesResponse,
   bands: readonly Band[] = BANDS,
+  outcome: Outcome = 'ok',
 ): ChartData {
   const selected = BANDS.filter((b) => bands.includes(b));
   // ALL TEN. Not `selected` — see the docstring above.
@@ -135,25 +211,25 @@ export function toPercentiles(
 
   const drawn: ChartSeries[] = selected.map((band) => ({
     name: BAND_LABEL[band],
-    data: series.buckets.map((bucket) => bandValue(bucket, band)),
+    data: series.buckets.map((bucket) => bandValue(bucket, band, outcome)),
   }));
 
   const rows: ChartTableRow[] = series.buckets.map((bucket, i) => ({
     label: String(axisLabels[i]),
-    values: BANDS.map((band) => bandValue(bucket, band) ?? '—'),
+    values: BANDS.map((band) => bandValue(bucket, band, outcome) ?? '—'),
   }));
 
-  const unmeasured = series.buckets.filter((b) => !measured(b)).length;
+  const unmeasured = series.buckets.filter((b) => !measured(b, outcome)).length;
 
   // min and max are the bucket's COMBINED OK+KO extremes — the payload carries
-  // no OK-only ones, only percentilesOk's p25…p99. Gatling's own min/max in
-  // this chart are OK-only, so these two bands are a known deviation and are
-  // said so rather than presented as OK-only alongside eight bands that are.
-  const notes = ['min and max are the combined OK+KO extremes; the other bands are OK-only.'];
+  // no outcome-split ones, only the three maps' p25…p99. Gatling's own min/max
+  // in this chart are OK-only, so these two bands are a known deviation and are
+  // said so rather than presented as split alongside eight bands that are.
+  const notes = [OUTCOME_NOTE[outcome]];
   if (unmeasured > 0) {
     notes.unshift(
-      `${unmeasured} of ${series.buckets.length} seconds recorded no successful ` +
-        'response, so those points are absent rather than zero.',
+      `${unmeasured} of ${series.buckets.length} seconds recorded ` +
+        `${NOTHING_MEASURED[outcome]}, so those points are absent rather than zero.`,
     );
   }
 

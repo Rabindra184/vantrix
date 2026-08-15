@@ -11,10 +11,12 @@ import {
   type SortDirection,
   type TableRow,
 } from './buildTree';
+import Button from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { INPUT, ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
+import { downloadCsv, toCsv } from './csv';
 
 /**
  * §13.2 ⑤ the statistics table — Appendix A G-11…G-16.
@@ -392,6 +394,62 @@ const GUTTER_REM = 0.5;
  */
 const indentFor = (depth: number): string => `${depth * INDENT_REM + GUTTER_REM}rem`;
 
+/** The label the totals row carries in the table, and therefore in the file. */
+const TOTAL_LABEL = 'All Requests';
+
+/**
+ * The statistics table, as a CSV.
+ *
+ * Exported and pure so it can be asserted without a DOM: `downloadCsv` needs
+ * `URL.createObjectURL`, which jsdom does not implement, and the interesting
+ * decisions are all in here rather than in the handing-over.
+ *
+ * ═══ WHICH ROWS, AND WHY THEY ARE NOT THE VISIBLE ONES ═══
+ *
+ * Three pieces of table state could narrow this file, and they are not alike:
+ *
+ *   - THE SORT is honoured. A reader who sorted by p99 and then exported
+ *     expects the file to match what they were looking at.
+ *   - THE FILTER is honoured. Typing in the box is an explicit act of
+ *     selection — "these rows, not those" — and an export that quietly
+ *     re-widened it would answer a question the reader did not ask.
+ *   - EXPANSION IS NOT. A collapsed group is a display convenience, not a
+ *     statement about which rows exist, and its children are still rows of the
+ *     statistics table. Dropping them would be silent data loss in a file
+ *     nobody re-reads against the screen. So this takes the FULLY FLATTENED
+ *     tree, not `visibleRows`.
+ *
+ * ═══ THE FULL PATH, NOT THE LEAF NAME ═══
+ *
+ * On screen, indentation supplies a row's context and `name` can be the leaf.
+ * A CSV has no indentation, so `Recommendations` alone is ambiguous where
+ * `Catalog/Recommendations` is not — and a spreadsheet is exactly where
+ * someone sorts the rows and destroys whatever order implied the hierarchy.
+ */
+export function statisticsCsv(
+  total: StatRow | null,
+  rows: readonly TableRow[],
+  columns: readonly Column[],
+): string {
+  const header = [NAME_COLUMN_LABEL, ...columns.map((column) => column.label)];
+
+  const cells = (name: string, row: StatRow): string[] => [
+    name,
+    ...columns.map((column) => {
+      const value = column.value(row);
+      // EMPTY, not `0` and not `—`. A row with no value on this column had
+      // nothing measured, and a spreadsheet reading an empty cell will leave
+      // it out of an average where it would fold a zero in.
+      return value === undefined ? '' : column.format(value);
+    }),
+  ];
+
+  return toCsv(header, [
+    ...(total === null ? [] : [cells(TOTAL_LABEL, total)]),
+    ...rows.map((row) => cells(row.path, row.row)),
+  ]);
+}
+
 export default function StatisticsTable({ stats, runId }: { stats: StatsResponse; runId: string }) {
   const headingId = useId();
   const filterId = useId();
@@ -548,6 +606,20 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
 
   const allColumns = [...columns.executions, ...columns.responseTime];
 
+  /**
+   * `flatten(sorted)`, not `rows`: the export follows the sort and the filter
+   * but ignores which groups happen to be open. See `statisticsCsv`.
+   *
+   * The run id is in the filename because two runs' tables are otherwise
+   * indistinguishable once downloaded, and comparing them is the commonest
+   * reason to download one at all.
+   */
+  const exportCsv = () =>
+    downloadCsv(
+      `perfportal-${runId}-statistics.csv`,
+      statisticsCsv(total, flatten(sorted), allColumns),
+    );
+
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       {/* The heading and the filter share a row on a wide screen — the filter
@@ -579,6 +651,13 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
             // words.
             className={`${INPUT} sm:w-56`}
           />
+
+          {/* Beside the filter, because both act ON this table rather than on
+              the page — and after it, because the file is a thing you take
+              away once you have narrowed to what you wanted. */}
+          <Button type="button" variant="secondary" onClick={exportCsv}>
+            Download CSV
+          </Button>
         </div>
       </div>
 

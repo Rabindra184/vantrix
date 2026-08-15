@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Card from '../components/Card';
-import DataTable, { formatCell } from './DataTable';
+import DataTable from './DataTable';
 import { echarts } from './echarts';
+import { tooltipFormatter } from './tooltip';
 import {
   assignPalette,
   chartTheme,
@@ -45,6 +46,19 @@ export interface ChartYAxis {
  */
 export interface ChartXAxis {
   readonly name?: string;
+  /**
+   * `'value'` when the horizontal axis is a MEASURED QUANTITY rather than a
+   * category, so the series carry explicit `[x, y]` pairs.
+   *
+   * A scatter is always this and does not need to say so — `kind` already
+   * settles it. The prop exists for a LINE whose x is a measurement: the
+   * percentiles-distribution chart plots response time against percentile, and
+   * its percentiles are not evenly spaced (they come from a cumulative sum over
+   * bin counts, so they arrive at 12%, 47%, 89%…). Drawn on a category axis
+   * those would be spread at equal intervals, which straightens exactly the
+   * curvature the chart exists to show.
+   */
+  readonly type?: 'category' | 'value';
 }
 
 export interface ChartProps {
@@ -93,6 +107,19 @@ export interface ChartProps {
    * "read these two together" affordance a dual axis was buying.
    */
   readonly group?: string;
+  /**
+   * The unit every value in this chart's TOOLTIP carries — `'ms'`, `'%'`,
+   * `'req/s'`.
+   *
+   * Per chart, because the chart is what knows its own axis. The unit was
+   * previously only in the axis title, which is not where a reader's eye is
+   * when they are reading a tooltip: the tooltip is the surface they take
+   * numbers off, since the data table is collapsed until asked for.
+   *
+   * Omitted where an axis is unitless or mixed. Never a unit that disagrees
+   * with the axis title already on screen.
+   */
+  readonly unit?: string;
   readonly yAxis?: ChartYAxis;
   readonly xAxis?: ChartXAxis;
 }
@@ -119,6 +146,7 @@ export default function Chart({
   stacked = false,
   horizontal = false,
   group,
+  unit,
   yAxis,
   xAxis,
   roles,
@@ -133,6 +161,10 @@ export default function Chart({
   const yAxisType = yAxis?.type ?? 'value';
   const yAxisName = yAxis?.name;
   const xAxisName = xAxis?.name;
+  // A scatter's x is numeric by definition; any other chart has to ask. Folded
+  // to a primitive here for the same reason the other three are — see the
+  // option effect's closing comment about identity-compared object props.
+  const xAxisNumeric = kind === 'scatter' || xAxis?.type === 'value';
 
   // Follow the active colour scheme while the page is open, so a chart drawn
   // in light mode is not left with light-mode hues on a dark surface.
@@ -289,9 +321,13 @@ export default function Chart({
       splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
     };
     /**
-     * A scatter's x is a MEASURED QUANTITY, not a category — its series carry
-     * explicit [x, y] pairs rather than one value per label, so a category axis
-     * would index them by position and draw the run's throughput as 0, 1, 2…
+     * FOR A CHART WHOSE X IS A MEASURED QUANTITY, not a category — its series
+     * carry explicit [x, y] pairs rather than one value per label, so a category
+     * axis would index them by position and draw the run's throughput as 0, 1, 2…
+     *
+     * Every scatter, and any other chart that asks via `xAxis.type: 'value'`.
+     * That second case is the percentiles-distribution line, whose percentiles
+     * come from a cumulative sum and so are not evenly spaced.
      */
     const numericAxis = {
       type: 'value' as const,
@@ -333,39 +369,17 @@ export default function Chart({
           backgroundColor: theme.surface,
           borderColor: theme.gridline,
           textStyle: { color: theme.ink },
-          // THE SAME FORMATTING THE DATA TABLE USES, from the same function.
+          // ONE FORMATTER, in `./tooltip`, which owns every decision about what
+          // this panel says: the shared `formatCell` rounding, the unit suffix,
+          // the escaping of series names (which are PAYLOAD DATA and therefore
+          // untrusted), and the switch to two columns above eight series.
           //
-          // The tooltip is the surface a sighted reader actually reads numbers
-          // off — the table is collapsed until asked for — and it was rendering
-          // ECharts' raw values: `122.74516052680153 ms` for a percentile,
-          // seventeen significant digits of a number nothing measures to more
-          // than two. `formatCell` was written for the table half of exactly
-          // this problem; sharing it is what stops the two surfaces disagreeing
-          // about the same value, and keeps the rounding a display decision in
-          // one place rather than two.
-          //
-          // Not `Math.round`: `formatCell` leaves integers and pre-formatted
-          // strings alone, and refuses to show a non-zero value as `0`.
-          //
-          // A SCATTER POINT IS AN ARRAY, not a single number or string: its
-          // series data is `[x, y]` pairs (ChartSeries's own doc above), and
-          // ECharts hands the whole pair to `valueFormatter` at once rather
-          // than calling it once per axis. The `number | string` branch below
-          // would miss that shape entirely and fall through to `String(value)`
-          // — `String([3, 120])` is `"3,120"`, which on a milliseconds axis
-          // reads as three thousand one hundred twenty, not two separate
-          // measurements. So an array is formatted component-by-component,
-          // through the same `formatCell` every other value here uses, joined
-          // by a comma-space no reader would mistake for a digit grouping.
-          valueFormatter: (value: unknown) => {
-            // A gap, rendered as the table renders one. ECharts asks for a
-            // value per series at the hovered category, including series that
-            // have none there.
-            if (value === null || value === undefined) return '—';
-            const formatOne = (v: unknown): string =>
-              typeof v === 'number' || typeof v === 'string' ? formatCell(v) : String(v);
-            return Array.isArray(value) ? value.map(formatOne).join(', ') : formatOne(value);
-          },
+          // It replaced `valueFormatter`, which could only see a value and so
+          // could not do the last three. Keeping `valueFormatter` for narrow
+          // charts and adding a custom `formatter` for wide ones would have put
+          // two code paths on the same value — the exact bug that sharing
+          // `formatCell` with the data table exists to prevent.
+          formatter: (params: unknown) => tooltipFormatter(params, unit),
           // The crosshair `connect` propagates between grouped charts.
           axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
         },
@@ -383,7 +397,7 @@ export default function Chart({
               },
               ...(horizontal
                 ? { xAxis: valueAxis, yAxis: categoryAxis }
-                : { xAxis: kind === 'scatter' ? numericAxis : categoryAxis, yAxis: valueAxis }),
+                : { xAxis: xAxisNumeric ? numericAxis : categoryAxis, yAxis: valueAxis }),
             }),
         // `index`, NOT the position in `drawn`. The two agree only while the
         // drawn set is a prefix of the series list, and an `essential` series
@@ -428,7 +442,20 @@ export default function Chart({
     // `yAxisName`, `xAxisName`) rather than listed here as objects: they are
     // compared by identity, and the documented call site
     // `<Chart yAxis={{ type: 'log' }} …/>` builds a new one every render.
-  }, [data, kind, stacked, horizontal, roles, yAxisType, yAxisName, xAxisName, mode, assignment]);
+  }, [
+    data,
+    kind,
+    stacked,
+    horizontal,
+    roles,
+    unit,
+    yAxisType,
+    yAxisName,
+    xAxisName,
+    xAxisNumeric,
+    mode,
+    assignment,
+  ]);
 
   return (
     <Card as="figure" data-testid={`chart-${id}`}>

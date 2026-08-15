@@ -46,6 +46,7 @@ function RateChart({ id, title, yName, data }: {
       roles={RATE_ROLES}
       yAxis={{ name: yName }}
       xAxis={{ name: 'Elapsed (s)' }}
+      unit="/s"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
       // This is the linkage that replaces Gatling's dual axis: active users is
       // its own chart directly above rather than an overlay on this one, and

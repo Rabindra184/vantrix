@@ -37,8 +37,14 @@ import { runChartsPath } from '../src/routes/paths.js';
  * ③④⑦⑦ᵇ⑧⑨⑩⑪ and the sequence is itself information: concurrent users sits
  * directly above the arrival rate, and requests/s directly above responses/s,
  * because each pair is meant to be read against its neighbour. A page holding
- * all eight in a shuffled order satisfies "the eight charts are present" and
- * fails the thing the section actually specifies.
+ * them all in a shuffled order satisfies "the charts are present" and fails
+ * the thing the section actually specifies.
+ *
+ * `percentile-distribution` follows `distribution` under exactly that rule,
+ * and is not an exception to it: the two are folds of the same payload and
+ * answer halves of one question — where the mass of the response times is, and
+ * how bad the tail gets. Read apart, the histogram invites eyeballing the area
+ * under an unmarked stretch of its right-hand side.
  */
 const CHART_IDS = [
   'indicators',
@@ -46,6 +52,7 @@ const CHART_IDS = [
   'concurrent-users',
   'user-start-rate',
   'distribution',
+  'percentile-distribution',
   'percentiles',
   'requests-per-second',
   'responses-per-second',

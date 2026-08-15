@@ -52,6 +52,10 @@ export function ConcurrentUsersChart({ users, group }: UsersChartProps) {
       // labels on two lines of similar shape is how a reader ends up believing
       // they are the same measurement.
       yAxis={{ name: 'Users' }}
+      // Matching the axis above it, for the same reason that axis is named
+      // apart from the arrival rate's: the tooltip is where the two charts are
+      // most easily confused, since it is read without the axis in view.
+      unit="users"
     />
   );
 }
@@ -67,6 +71,7 @@ export function UserStartRateChart({ users, group }: UsersChartProps) {
       data={data}
       group={group}
       yAxis={{ name: 'Users/s' }}
+      unit="users/s"
     />
   );
 }

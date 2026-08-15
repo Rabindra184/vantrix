@@ -2,7 +2,20 @@ import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
 import type { MarkRole } from './theme';
-import { BANDS, type Band, toPercentiles } from './transforms/percentiles';
+import { BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
+
+/**
+ * The outcome control's three states, in the order they are drawn.
+ *
+ * `'ok'` first and selected by default: it is what G-22 specifies and what
+ * this chart has always shown, so a reader who never touches the control sees
+ * exactly the chart they saw before.
+ */
+const OUTCOMES: readonly { readonly value: Outcome; readonly label: string }[] = [
+  { value: 'ok', label: 'OK' },
+  { value: 'ko', label: 'KO' },
+  { value: 'all', label: 'All' },
+];
 
 const BAND_LABEL: Record<Band, string> = {
   min: 'min', p25: '25%', p50: '50%', p75: '75%', p80: '80%',
@@ -52,8 +65,12 @@ export default function PercentilesChart({
 }) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
+  const [outcome, setOutcome] = useState<Outcome>('ok');
 
-  const data = useMemo(() => toPercentiles(series, bands), [series, bands]);
+  const data = useMemo(
+    () => toPercentiles(series, bands, outcome),
+    [series, bands, outcome],
+  );
 
   // The transform always emits series in BANDS order, so the roles must be the
   // SELECTED bands in that same order — `bands` is toggle order, which is not
@@ -95,6 +112,28 @@ export default function PercentilesChart({
           })}
         </fieldset>
 
+        {/* `aria-pressed` rather than a radio group, to match the band
+            selector this sits beside — one interaction idiom on one toolbar.
+            The legend names it "Response outcome", not "Outcome", because a
+            screen-reader user meets it with no chart context. */}
+        <fieldset className="flex items-center gap-1">
+          <legend className="sr-only">Response outcome</legend>
+          {OUTCOMES.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={outcome === value}
+              data-testid={`outcome-${value}-${id}`}
+              onClick={() => setOutcome(value)}
+              className={`rounded border px-2 py-0.5 text-sm ${
+                outcome === value ? 'border-primary text-primary' : 'border-default text-muted'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </fieldset>
+
         <button
           type="button"
           data-testid={`scale-toggle-${id}`}
@@ -115,6 +154,7 @@ export default function PercentilesChart({
         // point, which is correct here: an unmeasured second is a gap.
         yAxis={{ type: scale, name: 'Response time (ms)' }}
         xAxis={{ name: 'Elapsed (s)' }}
+        unit="ms"
         // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
         group="run-time"
         roles={roles}

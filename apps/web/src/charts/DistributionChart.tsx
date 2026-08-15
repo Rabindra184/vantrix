@@ -60,6 +60,7 @@ export default function DistributionChart({
       // OK+KO count, which is what Gatling displays and what G-20/G-21's
       // tolerance is written against. The exact counts are in the table.
       yAxis={{ name: '% of all requests' }}
+      unit="%"
     />
   );
 }
