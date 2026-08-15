@@ -3,11 +3,15 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { distributionQuery, seriesQuery, statsQuery } from '../api/metrics';
+import { linkButtonClasses } from '../components/Button';
+import { EmptyState } from '../components/States';
+import { ChevronLeftIcon } from '../components/icons';
 import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import ScopedStatistics from '../tables/ScopedStatistics';
 import { Payload, TableSection, Undrawn, type Slot } from './payload';
+import useDocumentTitle from '../useDocumentTitle';
 
 /**
  * §13.4 — one group's page.
@@ -101,6 +105,9 @@ const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 
 export default function GroupDetail() {
   const { runId, name } = useParams<{ runId: string; name: string }>();
+
+  useDocumentTitle(name ?? null);
+
   const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
   const cumulated = useQuery({
     ...distributionQuery(runId ?? '', 'group', name ?? '', 'group_cumulated'),
@@ -124,7 +131,8 @@ export default function GroupDetail() {
   // Not reachable through the router — the route cannot match without both.
   if (runId === undefined || name === undefined) {
     return (
-      <Link to="/runs" className="underline">
+      <Link to="/runs" className={linkButtonClasses}>
+        <ChevronLeftIcon className="h-3.5 w-3.5" />
         Back to all runs
       </Link>
     );
@@ -132,19 +140,34 @@ export default function GroupDetail() {
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Rendered as text through React, which escapes it: a group name comes
-          out of an uploaded simulation log. */}
-      <h1 className="text-2xl font-semibold">{name}</h1>
-      <Link to={`/runs/${encodeURIComponent(runId)}`} className="underline">
-        Back to this run
-      </Link>
+      {/* Back link above the heading — see `RequestDetail`'s matching comment
+          on why it moved: below the `<h1>` it sat between the page's title and
+          its first section. */}
+      <header className="flex flex-col gap-3">
+        <Link
+          to={`/runs/${encodeURIComponent(runId)}`}
+          className="transition-ui inline-flex w-fit items-center gap-1 text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+        >
+          <ChevronLeftIcon className="h-3.5 w-3.5" />
+          Back to this run
+        </Link>
+        {/* Rendered as text through React, which escapes it: a group name comes
+            out of an uploaded simulation log. `break-all` because a nested
+            group name is a slash-separated path with nowhere else to wrap. */}
+        <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">{name}</h1>
+      </header>
 
       {FAMILIES.map(({ family, title }) => (
         <TableSection key={family} title={title} query={stats}>
           {(data) => {
             const row = groupRow(data, name, family);
             return row === undefined ? (
-              <p role="status">This run recorded no {title.toLowerCase()} for {name}.</p>
+              // Politely announced and drawn as an empty state, not an alert:
+              // a group that recorded no duration is an answer, not a fault.
+              // The sentence is unchanged.
+              <div role="status">
+                <EmptyState title={`This run recorded no ${title.toLowerCase()} for ${name}.`} />
+              </div>
             ) : (
               <ScopedStatistics row={row} rows={data.stats} heading={title} />
             );

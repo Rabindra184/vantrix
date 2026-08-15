@@ -1,5 +1,8 @@
 import type { StatRow } from '@perfportal/contracts';
 import { useId, useMemo } from 'react';
+import Card from '../components/Card';
+import SectionHeading from '../components/SectionHeading';
+import { ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { columnsFor, type Column } from './StatisticsTable';
 
 /**
@@ -40,43 +43,56 @@ export default function ScopedStatistics({
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
-      <h2 id={headingId} className="text-xl font-semibold">
-        {heading}
-      </h2>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr>
-              {columns.map((c) => (
-                <th key={c.column} scope="col" title={c.hint} className="text-left font-medium">
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              {columns.map((c) => {
-                const value = c.value(row);
-                return (
-                  <td
-                    key={c.column}
-                    data-column={c.column}
-                    data-testid={`request-stat-${c.column}`}
-                    // The UNROUNDED value, beside the rounded display — so
-                    // rounding stays a display decision and every cell is
-                    // assertable against the payload.
-                    data-value={value === undefined ? undefined : String(value)}
-                  >
-                    {/* undefined is not zero: this row HAS no value here. */}
-                    {value === undefined ? '—' : c.format(value)}
-                  </td>
-                );
-              })}
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <SectionHeading id={headingId}>{heading}</SectionHeading>
+      <Card padding="none">
+        <div className={SCROLLER} tabIndex={0} role="region" aria-label={`${heading} table`}>
+          {/* NOW ON THE SHARED STYLES — it was the last of the six tables
+              still setting its own (`w-full text-sm`, left-aligned numerics,
+              no header fill, no cell padding at all), which is why a
+              one-row table on the request page read as loose text rather
+              than as a table. `tableStyles.ts`'s docstring recorded that
+              deferral; this pass is the sub-project it was deferred to. */}
+          <table className={TABLE}>
+            <thead className={THEAD}>
+              <tr>
+                {columns.map((c) => (
+                  // `title` carries the column's hint. Left as a title
+                  // attribute rather than promoted to visible help text: the
+                  // header's ACCESSIBLE NAME must stay the bare label, because
+                  // `run-tables.spec.ts` matches these headers by exact name
+                  // and `title` does not contribute to the name while visible
+                  // text would.
+                  <th key={c.column} scope="col" title={c.hint} className={TH}>
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className={ROW}>
+                {columns.map((c) => {
+                  const value = c.value(row);
+                  return (
+                    <td
+                      key={c.column}
+                      data-column={c.column}
+                      data-testid={`request-stat-${c.column}`}
+                      className={TD_NUM}
+                      // The UNROUNDED value, beside the rounded display — so
+                      // rounding stays a display decision and every cell is
+                      // assertable against the payload.
+                      data-value={value === undefined ? undefined : String(value)}
+                    >
+                      {/* undefined is not zero: this row HAS no value here. */}
+                      {value === undefined ? '—' : c.format(value)}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
-import { ROW, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
+import Button from '../components/Button';
+import { CAPTION, ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 import type { ChartTableRow } from './types';
 
 /**
@@ -102,20 +103,53 @@ export default function DataTable({
 
   return (
     <>
-      <button
+      {/* `ghost`, deliberately the quietest variant in the set. This control
+          appears once per chart — eight times on the Charts tab — and it is
+          an accessibility affordance rather than the thing the reader came
+          for. Eight bordered buttons down the page would compete with the
+          eight figures they belong to.
+
+          NO ICON, AND THAT IS A HARD CONSTRAINT RATHER THAN A PREFERENCE. A
+          rotating chevron was tried here and reverted: `Chart` renders this
+          inside its `<figure>`, and the e2e suite proves a chart actually drew
+          by counting SVG elements within the figure — `figures(page)
+          .locator('svg')).toHaveCount(8)`, and, for a chart with nothing to
+          draw, `chart.locator('svg')).toHaveCount(0)`. A decorative `<svg>`
+          anywhere inside the figure makes both counts wrong, and worse, makes
+          "an SVG is present" stop meaning "ECharts rendered something" — which
+          is the property nine specs in `run-charts.spec.ts` and
+          `request-detail.spec.ts` are built on. The changing LABEL is the
+          affordance, and it is the one a screen reader announces anyway. */}
+      <Button
         id={buttonId}
-        type="button"
+        size="sm"
+        variant="ghost"
         aria-expanded={shown}
         aria-controls={regionId}
         onClick={() => setShown((was) => !was)}
-        className="self-start rounded border border-default px-3 py-1 text-sm text-muted"
+        className="self-start"
       >
         {shown ? 'Hide data table' : 'Show data table'}
-      </button>
+      </Button>
 
-      <div id={regionId} data-testid={regionId} hidden={!shown} className="overflow-x-auto">
+      {/* `hidden` on the region and `SCROLLER` inside it, not both on one
+          element: `hidden` sets `display: none`, and a `display:none` scroll
+          container reports zero scroll width, so a collapsed table that is
+          later revealed would start un-scrollable in some engines. */}
+      <div id={regionId} data-testid={regionId} hidden={!shown}>
+        {/* The caption, visibly, OUTSIDE the scroll box. A `<caption>` is as
+            wide as its table and a 60-bucket data table is far wider than a
+            phone, so left inside `overflow-x-auto` this sentence scrolls away
+            with the columns instead of wrapping. `aria-hidden` because the
+            real `<caption>` below is what assistive tech reads — the same
+            two-copies-one-source arrangement `TableFrame` documents at
+            length for the four full-width tables. */}
+        <p aria-hidden="true" className={CAPTION}>
+          {caption} — every value plotted above, as text.
+        </p>
+        <div className={SCROLLER} tabIndex={0} role="region" aria-label={`${caption} data table`}>
         <table className={TABLE}>
-          <caption className="pb-2 text-left text-sm text-muted">
+          <caption className="sr-only">
             {caption} — every value plotted above, as text.
           </caption>
           <thead className={THEAD}>
@@ -161,6 +195,7 @@ export default function DataTable({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </>
   );

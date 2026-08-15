@@ -93,10 +93,57 @@ values that cannot collide with their fallback in the first place —
 
 **Every page-scoped `getByRole('link', { name })` in the e2e suite now shares
 a document with N rail links.** `ProjectRail` (`apps/web/src/ProjectRail.tsx`)
-renders on every authenticated page — brand, **All runs**, one link per
+renders on every authenticated page — **All runs** plus one link per
 project — so a link query that used to have the page mostly to itself can
 now also be satisfied by a rail row instead of the one it meant to find,
 under Playwright's case-insensitive substring default above. Green today
 only because no seeded project name collides with a page's own link text;
 that is a standing constraint on fixture naming from here on, not a one-off
-check to pass once.
+check to pass once. (The brand link moved to `AppShell`'s header in the
+design pass, but it is still in the document on every page — same rule.)
+
+## Conventions the design pass added
+
+Each of these shipped as a real defect first and was caught by a browser, not
+by the unit suite.
+
+**`text-transform` CHANGES A PLAYWRIGHT ACCESSIBLE NAME.** Playwright computes
+accessible names in its own injected script and applies `text-transform`, so a
+`<th class="uppercase">Percentage</th>` is named `PERCENTAGE` and
+`getByRole('columnheader', { name: 'Percentage', exact: true })` no longer
+resolves. jsdom's `dom-accessibility-api` reads `textContent` and sees none of
+it, so the unit suite stays green. **Never put `uppercase` on anything queried
+by accessible name** — column headings (`tableStyles.ts`'s `TH`) and section
+headings (`components/SectionHeading.tsx`) both carry a comment saying so. It
+is fine on a `<dt>`, a `<p>` label, or a rail overline, where nothing queries by
+name.
+
+**A token that is not in `@theme` produces NO utility, silently.** Tailwind v4
+generates utilities only from `@theme` declarations, never from a bare `:root`
+custom property. `text-accent-foreground` looked correct in the markup, matched
+a real token in `tokens.css`, and emitted no CSS at all — so the skip link and
+every primary button inherited `color` from `body` and rendered dark slate on
+indigo at 2.84:1. Publish the alias under a DIFFERENT name than the runtime
+token (`--color-on-accent: var(--color-accent-foreground)`), because a key that
+reads a `var()` of its own name also resolves to nothing, equally silently.
+
+**A decorative `<svg>` inside a chart `<figure>` breaks nine specs.**
+`run-charts.spec.ts` and `request-detail.spec.ts` prove a chart really drew by
+counting SVG elements within the figure — `toHaveCount(1)` per chart, and
+`toHaveCount(0)` for one with nothing to draw. An icon in `DataTable`'s toggle
+(which `Chart` renders inside the figure) makes both counts wrong AND destroys
+the invariant they rest on. Icons are fine everywhere else; not in there.
+
+**`focus:not-sr-only` resets `padding` to 0.** It has to, to undo `sr-only` —
+and a `focus:`-variant utility outranks an unprefixed one, so `sr-only … px-3
+focus:not-sr-only` reveals a skip link with no padding. Every visual utility on
+a skip link must be `focus:`-prefixed, including the padding.
+
+**A `<caption>` is as wide as its TABLE, not its scroll box.** Put a table in
+`overflow-x-auto` and its caption stops wrapping at the viewport and scrolls
+sideways with the columns — on a phone the reader gets half a sentence and has
+to drag a data table to finish it. `components/TableFrame.tsx` is the fix:
+one caption node, drawn visibly outside the scroller and again as the real
+`sr-only` `<caption>` inside, so the accessible name and the
+`caption.textContent` assertions in `ErrorsTable.test.tsx` /
+`StatisticsTable.test.tsx` keep working.

@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import Button from '../components/Button';
+import { ActivityIcon, AlertIcon } from '../components/icons';
+import { INPUT } from '../components/tableStyles';
 import { AuthError, signIn } from '../api/session';
 import { safeNext } from './paths';
+import useDocumentTitle from '../useDocumentTitle';
 
 /**
  * The ONLY consumer of Better Auth's own error shape in this app (design §5,
@@ -20,6 +24,8 @@ export default function Login() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const heading = useRef<HTMLHeadingElement>(null);
+
+  useDocumentTitle('Sign in');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -74,60 +80,96 @@ export default function Login() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 p-6">
-      <header>
-        <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold outline-none">
-          PerfPortal
-        </h1>
-        <h2 className="text-base text-muted">Sign in</h2>
-      </header>
+    // The one page in the app with no rail and no header, so it centres its
+    // own card. `min-h-dvh`, not `min-h-screen`: `100vh` on mobile Safari is
+    // the viewport WITHOUT the browser chrome, so a vertically-centred card
+    // sits partly under the address bar until the user scrolls. `dvh` is the
+    // dynamic height that accounts for it.
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 p-4 sm:p-6">
+      <div className="w-full max-w-sm">
+        <header className="mb-6 flex flex-col items-center gap-3 text-center">
+          {/* The brand mark, at the one moment the product has to introduce
+              itself. Same tile as the rail's, so the page a user lands on and
+              the app they land in are visibly the same product. */}
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-white shadow-raised">
+            <ActivityIcon className="h-6 w-6" />
+          </span>
+          <div className="flex flex-col gap-1">
+            <h1
+              ref={heading}
+              tabIndex={-1}
+              className="text-2xl font-semibold tracking-tight outline-none"
+            >
+              PerfPortal
+            </h1>
+            {/* Still an `<h2>`, not a styled `<p>`: the form below is a
+                section of this page and this names it, which is what a
+                screen-reader user navigating by heading needs. */}
+            <h2 className="text-[13px] text-muted">Sign in to your organisation</h2>
+          </div>
+        </header>
 
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          {/* A real <label htmlFor>, not a placeholder or aria-label: the
-              Playwright suite selects by label (helpers.ts), so losing the
-              association fails a test rather than quietly failing an audit. */}
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="username"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="rounded border border-default bg-surface px-3 py-2"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="rounded border border-default bg-surface px-3 py-2"
-          />
-        </div>
-
-        {error !== null && (
-          <p role="alert" className="text-[color:var(--color-status-failed)]">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded bg-primary px-3 py-2 text-surface disabled:opacity-60"
+        <form
+          onSubmit={onSubmit}
+          className="flex flex-col gap-4 rounded-xl border border-default bg-surface p-5 shadow-panel sm:p-6"
         >
-          Sign in
-        </button>
-      </form>
+          <div className="flex flex-col gap-1.5">
+            {/* A real <label htmlFor>, not a placeholder or aria-label: the
+                Playwright suite selects by label (helpers.ts), so losing the
+                association fails a test rather than quietly failing an audit. */}
+            <label htmlFor="email" className="text-[13px] font-medium">
+              Email
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={`${INPUT} h-10`}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="password" className="text-[13px] font-medium">
+              Password
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={`${INPUT} h-10`}
+            />
+          </div>
+
+          {error !== null && (
+            // Below the fields and above the submit button — the reading order
+            // a reader who just pressed Sign in follows back up. `role="alert"`
+            // announces it without moving focus, so a keyboard user is not
+            // thrown out of the field they were about to correct.
+            <p
+              role="alert"
+              className="tint flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px] text-[color:var(--color-status-failed)]"
+            >
+              <AlertIcon className="mt-px h-4 w-4 shrink-0" />
+              {error}
+            </p>
+          )}
+
+          {/* The one primary action on the page. `loading` disables it AND
+              says so with `aria-busy`, which is what stops a second submit
+              racing the first. */}
+          <Button type="submit" variant="primary" loading={submitting} className="mt-1 w-full">
+            Sign in
+          </Button>
+        </form>
+      </div>
     </main>
   );
 }

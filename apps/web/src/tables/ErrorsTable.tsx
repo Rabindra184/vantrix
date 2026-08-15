@@ -1,5 +1,8 @@
 import { useId } from 'react';
 import type { ErrorsResponse } from '@perfportal/contracts';
+import SectionHeading from '../components/SectionHeading';
+import { EmptyState } from '../components/States';
+import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
 
 /**
@@ -106,38 +109,53 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
 
   if (rows.length === 0) {
     return (
-      <section aria-labelledby={headingId} className="flex flex-col gap-2">
-        <h2 id={headingId} className="text-xl font-semibold">
-          Errors
-        </h2>
+      <section aria-labelledby={headingId} className="flex flex-col gap-3">
+        <SectionHeading id={headingId}>Errors</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a table that failed to load, and a run with no failures is
-            the good outcome — it should say so in words. */}
-        <p>No errors were recorded for this run.</p>
+            the good outcome — it should say so in words.
+
+            `EmptyState`, not `ErrorState`, and the distinction is the whole
+            point of this branch: a run with no errors is the GOOD outcome, and
+            `ErrorState`'s `role="alert"` would interrupt a screen reader to
+            announce success as a problem. */}
+        <EmptyState
+          title="No errors were recorded for this run"
+          body="Every request this run made came back OK."
+        />
       </section>
     );
   }
 
-  return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-2">
-      <h2 id={headingId} className="text-xl font-semibold">
-        Errors
-      </h2>
+  // ONE node, used as both the visible caption and the table's own. It names
+  // the DENOMINATOR, from the same `total` the shares are divided by, so the
+  // table cannot tell a reader it is showing shares of 24 errors while
+  // dividing by something else.
+  const caption = (
+    <>
+      Every distinct error message recorded in this run, most frequent first. Each percentage is
+      that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run recorded —
+      not of the requests it made.
+    </>
+  );
 
-      <div className="overflow-x-auto">
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <SectionHeading id={headingId}>Errors</SectionHeading>
+
+      <TableFrame caption={caption} label="Errors table">
         <table className={TABLE}>
           {/* The caption is the table's ACCESSIBLE NAME as well as its
               explanation — `getByRole('table', { name: /errors/i })` is how
-              this suite and the Playwright specs find it.
+              this suite and the Playwright specs find it, and
+              `ErrorsTable.test.tsx` reads this element's own `textContent` for
+              the denominator.
 
-              It names the DENOMINATOR, from the same `total` the shares are
-              divided by, so the table cannot tell a reader it is showing
-              shares of 24 errors while dividing by something else. */}
-          <caption className="pb-3 text-left text-sm text-muted">
-            Every distinct error message recorded in this run, most frequent first. Each percentage
-            is that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run
-            recorded — not of the requests it made.
-          </caption>
+              `sr-only`, with the SAME node drawn visibly by `TableFrame` above
+              the scroll box: a `<caption>` is table-width, so inside
+              `overflow-x-auto` this sentence would run off the side of a phone
+              instead of wrapping. See `TableFrame`'s docstring. */}
+          <caption className="sr-only">{caption}</caption>
 
           <thead className={THEAD}>
             <tr className={ROW}>
@@ -191,7 +209,7 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
             })}
           </tbody>
         </table>
-      </div>
+      </TableFrame>
     </section>
   );
 }

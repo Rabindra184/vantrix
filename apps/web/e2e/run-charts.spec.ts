@@ -6,6 +6,7 @@ import {
   seedRunWithData,
 } from './fixtures.js';
 import { apiJson, signIn } from './helpers.js';
+import { SURFACE_TOKENS } from '../src/charts/theme.js';
 import { runChartsPath } from '../src/routes/paths.js';
 
 /**
@@ -260,16 +261,32 @@ test('every chart actually draws in dark mode too, and the page background follo
 
   // The RESOLVED colour, not the token string — `getComputedStyle` returns
   // what a reader's eyes actually see, in the `rgb()` form the browser
-  // normalises every colour to. `--color-surface-page` dark is `#0f172a` =
-  // `rgb(15, 23, 42)`; light is `#f8fafc` = `rgb(248, 250, 252)`. Both are
-  // asserted — the positive AND the explicit negative — so a `body` rule
-  // that forgot to reference the token at all (and therefore stayed
-  // transparent, showing the light OS/browser default through) fails here
-  // too, rather than only a body painted the wrong dark hex.
+  // normalises every colour to. Both are asserted — the positive AND the
+  // explicit negative — so a `body` rule that forgot to reference the token at
+  // all (and therefore stayed transparent, showing the light OS/browser
+  // default through) fails here too, rather than only a body painted the wrong
+  // dark hex.
+  //
+  // DERIVED FROM `SURFACE_TOKENS`, NOT WRITTEN DOWN. Both hexes were literals
+  // here (`rgb(15, 23, 42)` / `rgb(248, 250, 252)`), and the design pass that
+  // moved the dark canvas from slate-900 to a near-neutral `#0b0d12` broke this
+  // assertion for a reason that was not a defect — the exact failure mode
+  // CLAUDE.md's "expectations are computed from the payload, never written
+  // down" rule exists to prevent, arriving through a design token instead of
+  // through a fixture. `charts/theme.ts` is the single source both this and
+  // `tokens.css` are gated against (`palette.test.ts`), so reading it here
+  // means a deliberate palette change updates the test with the code and an
+  // ACCIDENTAL one still fails.
   const bodyBackground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  expect(bodyBackground).toBe('rgb(15, 23, 42)');
-  expect(bodyBackground).not.toBe('rgb(248, 250, 252)');
+  expect(bodyBackground).toBe(rgbOf(SURFACE_TOKENS.dark.page));
+  expect(bodyBackground).not.toBe(rgbOf(SURFACE_TOKENS.light.page));
 });
+
+/** `#0b0d12` → `rgb(11, 13, 18)`, the form `getComputedStyle` normalises to. */
+function rgbOf(hex: string): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}
 
 test("the requests/s and responses/s tables carry the API's own numbers, on their own edges", async ({
   page,
