@@ -47,7 +47,19 @@ test('the rail navigates to a project', async ({ page }) => {
 
 test('the project nav reflows rather than disappearing on a narrow viewport', async ({ page }) => {
   const admin = await seedAdmin();
-  await seedProjectWithRuns(admin.orgId, 'billing', 'Billing Exports', 2);
+  // Six projects, not one. Two fit in a 480px row without ever needing to
+  // scroll, so a single-project seed exercises `overflow-x-auto` in name
+  // only — the row never actually overflows, and the test would pass just as
+  // well against `overflow-x-hidden`. Named so the LAST one sorts last under
+  // `ORDER BY p.name ASC` (spec §4.2) regardless of where `seedAdmin`'s own
+  // "Checkout" project falls alphabetically, so "last" here means the same
+  // row the rail itself renders last.
+  await seedProjectWithRuns(admin.orgId, 'alpha', 'Alpha Analytics', 1);
+  await seedProjectWithRuns(admin.orgId, 'bravo', 'Bravo Analytics', 1);
+  await seedProjectWithRuns(admin.orgId, 'charlie', 'Charlie Analytics', 1);
+  await seedProjectWithRuns(admin.orgId, 'delta', 'Delta Analytics', 1);
+  await seedProjectWithRuns(admin.orgId, 'echo', 'Echo Analytics', 1);
+  await seedProjectWithRuns(admin.orgId, 'zulu', 'Zulu Analytics', 1);
   await signIn(page, admin);
   await page.setViewportSize({ width: 480, height: 900 });
   await page.goto('/runs');
@@ -55,18 +67,49 @@ test('the project nav reflows rather than disappearing on a narrow viewport', as
   const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
   await expect(rail).toBeVisible();
   // Visible is not enough — the spec's claim is that it stays USABLE, so the
-  // test clicks through rather than stopping at presence.
+  // test clicks through to the LAST row rather than stopping at presence.
+  // Playwright's click auto-scrolls the target into view within its nearest
+  // scrollable ancestor before clicking; that only succeeds if the row is
+  // both present in the DOM and reachable by scrolling — the actual claim
+  // `overflow-x-auto` makes, which a row that already fits on screen cannot
+  // exercise.
   //
   // Filtered by the exact project-name text rather than
-  // `getByRole('link', { name: 'Billing Exports', exact: true })` — see the
+  // `getByRole('link', { name: 'Zulu Analytics', exact: true })` — see the
   // matching comment in the test above: the seeded run's Badge puts "passed"
   // in the link's real accessible name, so an exact match on the bare
   // project name would never resolve.
   await rail
     .getByRole('link')
-    .filter({ has: page.getByText('Billing Exports', { exact: true }) })
+    .filter({ has: page.getByText('Zulu Analytics', { exact: true }) })
     .click();
-  await expect(page).toHaveURL(/\/projects\/billing$/);
+  await expect(page).toHaveURL(/\/projects\/zulu$/);
+});
+
+test('the rail sits left of the content column on a wide viewport', async ({ page }) => {
+  const admin = await seedAdmin();
+  await signIn(page, admin);
+  // Explicit rather than relying on the `Desktop Chrome` device default:
+  // the claim under test is specifically the `lg:` breakpoint's two-column
+  // grid (`lg:grid lg:grid-cols-[16rem_1fr]`, AppShell.tsx), and a config
+  // default that happened to change would silently stop testing it.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/runs');
+
+  const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
+  const main = page.getByRole('main');
+  const railBox = await rail.boundingBox();
+  const mainBox = await main.boundingBox();
+  if (!railBox || !mainBox) {
+    throw new Error(
+      'the rail or <main> reported no bounding box — one of them is not laid out on screen',
+    );
+  }
+  // The sub-project's central structural claim had NO assertion in either
+  // suite before this. The rail's right edge must not cross main's left
+  // edge — the two columns sit side by side at a viewport above `lg`, not
+  // stacked as they are below it.
+  expect(railBox.x + railBox.width).toBeLessThanOrEqual(mainBox.x);
 });
 
 test('a skip link lets a keyboard user bypass the rail', async ({ page }) => {

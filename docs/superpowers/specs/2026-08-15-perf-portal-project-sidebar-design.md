@@ -302,8 +302,14 @@ mounting the whole shell.
 so the real `fetchProjects` and the real `ProjectListResponseSchema` both
 run:
 
-- The badge rule, all four branches of §4.3
-- The three non-loaded states of §5, by their exact copy
+- The badge rule, all four branches of §4.3, each asserted positively — the
+  fourth (`complete` + `verdict: null` → "no verdict yet") was previously
+  claimed but not actually covered; it is now
+- The `STATUS.failed` / `VERDICT.failed` collision (§4.3): an ingest failure
+  and an SLA failure render differently in the same test
+- The four non-loaded states of §5, by their exact copy, including the
+  cached-rows-plus-failed-refetch sequence that produces "Projects may be
+  out of date." with the rows still on screen
 - **All runs** carries `aria-current="page"` on `/runs` and not on
   `/projects/:slug`
 - The rail degrading without taking `<main>` with it (checkpoint 3)
@@ -313,9 +319,14 @@ run:
 - `Sign out` resolves to exactly one node (§3.1) — a DOM-count fact that
   depends on the real CSS being applied, which jsdom does not do
 - The rail's links navigate and the destination renders
-- At a narrow viewport the nav is still present and its links still work —
-  a layout question, and the only one in this sub-project that needs a real
-  browser doing real layout
+- At a narrow viewport, with enough projects seeded to actually force
+  `overflow-x-auto` to scroll, the nav is still present and its last link is
+  still reachable and clickable
+- At a wide viewport, the rail's bounding box sits left of `<main>`'s —
+  the two-column grid's central structural claim, asserted for the first
+  time
+- A skip link is the first Tab stop from a fresh page load, and activating
+  it moves focus onto `<main>`, not just scrolls to it
 
 **One trap this family has paid for seven times.** Several assertions here
 are about ABSENCE — no badge when `latestRun` is null, nothing current on a

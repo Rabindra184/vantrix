@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AppShell from '../src/AppShell';
@@ -43,7 +43,12 @@ describe('AppShell', () => {
     renderShell();
     expect(await screen.findByText('Projects could not be loaded.')).toBeInTheDocument();
     // The point of the test: main is unaffected by the rail's failure.
-    expect(screen.getByText('page content stand-in')).toBeInTheDocument();
+    // Scoped to <main> itself, not just present anywhere in the document —
+    // recorded here as a deferred item whose justification was false: nothing
+    // on this branch previously asserted DOM order, so a sentinel rendered
+    // inside the rail (a real regression) would have passed this assertion
+    // just as easily as one rendered where it belongs.
+    expect(within(screen.getByRole('main')).getByText('page content stand-in')).toBeInTheDocument();
   });
 
   it('renders the rail and exactly one Sign out control', async () => {
