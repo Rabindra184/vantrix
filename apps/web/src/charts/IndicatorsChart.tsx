@@ -77,6 +77,7 @@ export default function IndicatorsChart({
       // app-wide status colours — see `BandRole` in theme.ts.
       roles={BAND_ROLES}
       yAxis={{ name: 'Requests' }}
+      unit="requests"
     />
   );
 }

@@ -115,6 +115,7 @@ export default function PercentilesChart({
         // point, which is correct here: an unmeasured second is a gap.
         yAxis={{ type: scale, name: 'Response time (ms)' }}
         xAxis={{ name: 'Elapsed (s)' }}
+        unit="ms"
         // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
         group="run-time"
         roles={roles}

@@ -23,6 +23,11 @@ export default function ScatterChart({ scatter }: { readonly scatter: ScatterRes
       roles={SCATTER_ROLES}
       xAxis={{ name: 'Requests per second (all requests)' }}
       yAxis={{ name: 'p95 response time (ms)' }}
+      // NO `unit`, deliberately. Every other chart's values share one unit;
+      // this one's are `[x, y]` pairs spanning TWO — requests per second and
+      // milliseconds — and `Chart`'s unit is per chart, not per axis. Suffixing
+      // the pair with either one would label half of it wrongly, which is worse
+      // than the axis titles carrying it alone.
     />
   );
 }

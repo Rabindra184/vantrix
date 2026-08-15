@@ -23,6 +23,9 @@ export default function RequestCountChart({ stats }: { stats: StatsResponse }) {
       title="Number of requests"
       data={data}
       kind="pie"
+      // A donut has no axis to carry the unit, so the tooltip is the ONLY place
+      // it can appear — "OK: 871" beside "KO: 24" is a count of nothing stated.
+      unit="requests"
       // Per SLICE here, not per series — a single-series pie consumes ECharts'
       // top-level colour list one entry per data point. `Chart`'s `roles` doc
       // spells that difference out.
