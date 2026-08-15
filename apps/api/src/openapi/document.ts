@@ -575,6 +575,27 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/projects': {
+    get: {
+      operationId: 'listProjects',
+      summary: 'Projects this credential can see',
+      tags: ['projects'],
+      description:
+        'Requires the "read" scope. A session names no project and sees every project in its ' +
+        'org; a bearer token is minted against exactly one and sees that one, as a ' +
+        'one-element list. Each project carries its most recent run by the same ordering ' +
+        'GET /v1/runs uses, or null for a project nothing has been ingested into. Not ' +
+        'paginated: an org has a handful of projects, not a page of them.',
+      responses: {
+        '200': {
+          description: 'Every project this credential can see, ordered by name.',
+          content: json(schemaRef('ProjectListResponse')),
+        },
+        ...authFailureResponses,
+      },
+    },
+  },
+
   '/v1/projects/{slug}/runs': {
     get: {
       operationId: 'listProjectRuns',

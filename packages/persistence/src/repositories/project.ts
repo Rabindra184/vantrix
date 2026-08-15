@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type { ProjectScope } from './tenant.js';
 
 /**
@@ -28,6 +28,22 @@ export interface ProjectRecord {
    * that want an ad hoc engine/bundle knob read it directly off this bag.
    */
   settings: Record<string, unknown>;
+}
+
+interface RawProjectRow {
+  id: string;
+  slug: string;
+  name: string;
+  latestRunId: string | null;
+  latestRunStatus: string | null;
+  latestRunVerdict: string | null;
+}
+
+export interface ProjectListRow {
+  id: string;
+  slug: string;
+  name: string;
+  latestRun: { id: string; status: string; verdict: string | null } | null;
 }
 
 export class ProjectRepository {
@@ -64,5 +80,49 @@ export class ProjectRepository {
       where: { id: scope.projectId, orgId: scope.orgId },
     });
     return (row?.settings ?? {}) as Record<string, unknown>;
+  }
+
+  /**
+   * Every project in an org, each with its most recent run.
+   *
+   * LEFT JOIN LATERAL, not DISTINCT ON (project_id) over `run`: a project
+   * with zero runs must still appear — an org's newest project is exactly
+   * the one with nothing in it — and DISTINCT ON over the run table would
+   * silently omit it.
+   *
+   * The inner ORDER BY is spelled character-for-character like
+   * RunRepository.list's. If those two expressions ever disagree, a
+   * project's "latest run" and the run list's top row name different runs,
+   * and nothing on screen looks wrong.
+   *
+   * `projectId` narrows to a single project for a bearer token, which is
+   * scoped to exactly one. Absent for a session, which sees the whole org.
+   */
+  async listForOrg(orgId: string, projectId?: string): Promise<ProjectListRow[]> {
+    const rows = await this.prisma.$queryRaw<RawProjectRow[]>`
+      SELECT p.id, p.slug, p.name,
+             r.id AS "latestRunId", r.status AS "latestRunStatus",
+             r.verdict AS "latestRunVerdict"
+      FROM project p
+      LEFT JOIN LATERAL (
+        SELECT id, status, verdict
+        FROM run
+        WHERE project_id = p.id
+        ORDER BY COALESCE(tool_started_at, started_at) DESC, id DESC
+        LIMIT 1
+      ) r ON true
+      WHERE p.org_id = ${orgId}::uuid
+      ${projectId ? Prisma.sql`AND p.id = ${projectId}::uuid` : Prisma.empty}
+      ORDER BY p.name ASC
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      latestRun:
+        row.latestRunId === null
+          ? null
+          : { id: row.latestRunId, status: row.latestRunStatus!, verdict: row.latestRunVerdict },
+    }));
   }
 }

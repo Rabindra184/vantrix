@@ -199,6 +199,12 @@ describe('OpenAPI document', () => {
     expect(names).toEqual(expect.arrayContaining(['id', 'scope', 'name', 'family']));
   });
 
+  it('declares GET /v1/projects and its response schema', async () => {
+    const doc = await fetchDoc();
+    expect(doc.paths?.['/v1/projects']?.['get']).toBeTruthy();
+    expect(doc.components?.schemas?.['ProjectListResponse']).toBeTruthy();
+  });
+
   it('reports indicator bands on the stats response', async () => {
     const doc = await fetchDoc();
     const schemas = doc.components?.schemas ?? {};
