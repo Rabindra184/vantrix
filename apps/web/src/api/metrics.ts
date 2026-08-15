@@ -1,5 +1,6 @@
 import {
   DistributionResponseSchema,
+  ErrorSeriesResponseSchema,
   ErrorsResponseSchema,
   ScatterResponseSchema,
   SeriesResponseSchema,
@@ -215,6 +216,26 @@ export const errorsQuery = (id: string, scope = 'run', name = '') => ({
       ErrorsResponseSchema,
       `${runPath(id)}/errors?scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`,
     ),
+  staleTime: Infinity,
+});
+
+/* -------------------------------------------------------------------- *
+ * errors over time — errors per second, beside the errors table ⑥
+ * -------------------------------------------------------------------- */
+
+export const errorSeriesQueryKey = (id: string) => ['run', id, 'errors', 'series'] as const;
+
+/**
+ * TAKES NO `scope`/`name`, unlike `errorsQuery` directly above — and that is
+ * the point rather than an omission.
+ *
+ * The endpoint is run scope only and declares no such parameters, so the trap
+ * that comment spends a paragraph on ("`?name=Search` without `scope` is
+ * silently ignored") cannot arise here: there is nothing to forget to send.
+ */
+export const errorSeriesQuery = (id: string) => ({
+  queryKey: errorSeriesQueryKey(id),
+  queryFn: () => apiFetch(ErrorSeriesResponseSchema, `${runPath(id)}/errors/series`),
   staleTime: Infinity,
 });
 

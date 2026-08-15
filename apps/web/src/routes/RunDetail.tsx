@@ -12,6 +12,7 @@ import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import {
   distributionQuery,
+  errorSeriesQuery,
   errorsQuery,
   seriesQuery,
   statsQuery,
@@ -19,6 +20,7 @@ import {
 } from '../api/metrics';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
 import DistributionChart from '../charts/DistributionChart';
+import ErrorsChart from '../charts/ErrorsChart';
 import PercentileDistributionChart from '../charts/PercentileDistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
@@ -371,11 +373,28 @@ export function RunOverviewTab() {
 export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
   const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: runId !== undefined });
+  const series = useQuery({ ...errorSeriesQuery(runId ?? ''), enabled: runId !== undefined });
 
   return (
-    <TableSection title="Errors" query={errors}>
-      {(data) => <ErrorsTable errors={data} />}
-    </TableSection>
+    <div className="flex flex-col gap-6">
+      {/* WHEN, then WHAT. The chart answers "did this run degrade, or was it
+          broken throughout" — the question a reader arrives at this tab with.
+          The table below answers "what exactly failed", and holds EVERY
+          message rather than only the five the palette can draw, which is why
+          the chart does not replace it.
+
+          Two fetches, not one: the flat totals and the time series are
+          different endpoints, and either can fail without taking the other
+          down. `Payload` keeps a failed chart visible and saying why, rather
+          than leaving a gap the reader cannot see is missing. */}
+      <Payload query={series} slots={[{ id: 'errors-over-time', title: 'Errors per second' }]}>
+        {(data) => <ErrorsChart data={data} />}
+      </Payload>
+
+      <TableSection title="Errors" query={errors}>
+        {(data) => <ErrorsTable errors={data} />}
+      </TableSection>
+    </div>
   );
 }
 

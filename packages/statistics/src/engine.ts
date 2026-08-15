@@ -1,6 +1,7 @@
 import { ingestError, type CanonicalEvent, type MetricFamily, type MetricScope } from '@perfportal/core';
 import { BucketSeries, type Bucket } from './buckets.js';
 import { ErrorRollup } from './errors-rollup.js';
+import { ErrorSeries, type ErrorSeriesResult } from './errors-series.js';
 import { isWarmup } from './indicators.js';
 import { RollupBuilder, type StatRollup } from './rollup.js';
 import { UserSeries, type UserBucket } from './users.js';
@@ -19,6 +20,17 @@ import { UserSeries, type UserBucket } from './users.js';
  * scatter hardcodes quantile(0.95), so removing it would break RQ-09.
  */
 export const BUCKET_PERCENTILES = [25, 50, 75, 80, 85, 90, 95, 99] as const;
+
+/**
+ * The label a failure is filed under.
+ *
+ * SHARED by the flat rollup and the time series deliberately. The two are read
+ * side by side on the errors tab, and a failure that appeared as `(no message)`
+ * in one and as an empty string in the other would look like two different
+ * failures.
+ */
+const errorMessageOf = (message: string | undefined): string =>
+  message !== undefined && message.length > 0 ? message : '(no message)';
 
 export interface EngineOptions {
   warmupMs?: number;
@@ -41,6 +53,15 @@ export interface EngineResult {
   series: Map<string, { scope: MetricScope; name: string; family: MetricFamily; buckets: Bucket[] }>;
   users: { scenario: string; buckets: UserBucket[] }[];
   errors: { scope: MetricScope; name: string; message: string; count: number }[];
+  /**
+   * Failures over time, run scope. Coalesced to the run-scope response-time
+   * series' width so both charts share one resolution — see `errors-series.ts`.
+   *
+   * INCLUDES WARM-UP, unlike `errors` above. Series do (PRD 7.4), and a bucket
+   * inside the warm-up window that showed `koCount > 0` on the responses chart
+   * and nothing here would be two contradictory answers on one axis.
+   */
+  errorSeries: ErrorSeriesResult;
   endpointCount: number;
   /**
    * The load test's own start, from the 'meta' event's startedAtMs — the
@@ -94,6 +115,25 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     if (!entry) { entry = { scope, name, rollup: new ErrorRollup() }; errorsByKey.set(key, entry); }
     return entry.rollup;
   };
+  // LAZY, exactly like `seriesFor`'s BucketSeries instances and for the reason
+  // `userEvents` is buffered: `runStartMs` is 0 until the meta event is handled
+  // below, and a series constructed against 0 files every failure at an
+  // absolute epoch offset while every request bucket is run-relative.
+  //
+  // `maxBucketsRun` is not a free choice. The coalesce in `finish` can only
+  // merge, never split, and what guarantees that is the error series never
+  // halving before the run series does — which holds because their timestamps
+  // are a subset and their caps are the SAME.
+  // Constructed at the first failure in the loop body rather than behind a
+  // `seriesFor`-style closure: a `let` assigned only inside a nested function
+  // is not narrowed by control-flow analysis, so `errorSeries.finish()` after
+  // the loop would not typecheck.
+  let errorSeries: ErrorSeries | null = null;
+  // Captured rather than looked up by key after the loop: `series` is keyed by
+  // `${scope} ${name} ${family}`, so the run-scope entry's key contains a
+  // DOUBLE SPACE, and a lookup that got the spacing wrong would silently fall
+  // back to 1000ms and misalign the chart it exists to align.
+  let runResponseSeries: BucketSeries | null = null;
   let simulation: string | null = null;
   let description: string | null = null;
   const endpoints = new Set<string>();
@@ -196,11 +236,24 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
 
     // Series always includes warm-up (PRD 7.4).
     const runSeries = seriesFor('run', '', 'response_time', maxBucketsRun);
+    runResponseSeries = runSeries;
     runSeries.add(e.startMs, duration, e.ok, 'start');
     runSeries.add(e.endMs, duration, e.ok, 'end');
     const epSeries = seriesFor('request', name, 'response_time', maxBucketsEndpoint);
     epSeries.add(e.startMs, duration, e.ok, 'start');
     epSeries.add(e.endMs, duration, e.ok, 'end');
+
+    // BEFORE the warm-up guard below, unlike the flat `errorsFor` calls after
+    // it: this is a series, and series include warm-up.
+    //
+    // At `endMs`, which is where `koCount` is counted — so within a bucket the
+    // drawn series plus the folded remainder sum to that bucket's koCount. At
+    // `startMs` a request beginning at 10.9s and failing at 11.2s would sit in
+    // a different bucket from its own KO.
+    if (!e.ok) {
+      errorSeries ??= new ErrorSeries({ startMs: runStartMs, maxBuckets: maxBucketsRun });
+      errorSeries.add(e.endMs, errorMessageOf(e.message));
+    }
 
     // Summary stats exclude warm-up.
     if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
@@ -210,7 +263,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     // explicit bucket so sum(errors[].count) always reconciles instead of
     // silently undercounting.
     if (!e.ok) {
-      const message = e.message && e.message.length > 0 ? e.message : '(no message)';
+      const message = errorMessageOf(e.message);
       errorsFor('run', '').add(message);
       errorsFor('request', name).add(message);
     }
@@ -227,6 +280,13 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     for (const e of rollup.top(200)) errors.push({ scope, name, message: e.message, count: e.count });
   }
 
+  // The run series' final width, which the error series is lifted to match.
+  // 1000 when there is no run series at all, which implies no requests and so
+  // no failures either — nothing is drawn at any width.
+  const runWidthMs = runResponseSeries?.widthMs ?? 1000;
+  const errorSeriesResult: ErrorSeriesResult =
+    errorSeries === null ? { bucketWidthMs: runWidthMs, rows: [] } : errorSeries.finish(runWidthMs);
+
   const users = new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
   for (const u of userEvents) users.add(u.scenario, u.kind, u.tsMs);
 
@@ -235,6 +295,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, family: v.family, buckets: v.series.buckets() }])),
     users: users.scenarios(),
     errors,
+    errorSeries: errorSeriesResult,
     endpointCount: endpoints.size,
     runStartedAtMs: sawMeta ? runStartMs : null,
     simulation,

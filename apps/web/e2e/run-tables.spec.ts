@@ -53,6 +53,10 @@ interface StatsJson {
 interface ErrorsJson {
   readonly errors: readonly { readonly message: string; readonly count: number }[];
 }
+interface ErrorSeriesJson {
+  /** `message: null` is the folded remainder, which is still a drawn series. */
+  readonly series: readonly { readonly message: string | null }[];
+}
 
 /**
  * The run's own payload, read through the SAME session the browser is using —
@@ -68,6 +72,8 @@ async function payload<T>(page: Page, path: string): Promise<T> {
 const stats = (page: Page, runId: string) => payload<StatsJson>(page, `/v1/runs/${runId}/stats`);
 const errors = (page: Page, runId: string) =>
   payload<ErrorsJson>(page, `/v1/runs/${runId}/errors?scope=run&name=`);
+const errorSeriesPayload = (page: Page, runId: string) =>
+  payload<ErrorSeriesJson>(page, `/v1/runs/${runId}/errors/series`);
 
 /** `p99.9` → 99.9; a key naming no percentile → null. Written here rather than
  *  imported from `StatisticsTable`, so the code under test does not get to
@@ -596,4 +602,61 @@ test('the errors payload is fetched run-scoped, spelled exactly as the fixture c
   await expect(errorsTable(page)).toBeVisible();
 
   expect(seen).toEqual([`/v1/runs/${runId}/errors?scope=run&name=`]);
+});
+
+/* ======================================================================== *
+ * ERRORS OVER TIME — the chart above the table
+ * ======================================================================== */
+
+test('the errors tab draws failures over time above the table', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  const figure = page.getByTestId('chart-errors-over-time');
+  // EXACTLY ONE svg in the figure. Nine other specs rest on this invariant,
+  // and it is why no icon may be rendered inside a chart's figure.
+  await expect(figure.locator('svg')).toHaveCount(1);
+
+  // The table is still below it, holding every message rather than five.
+  await expect(errorsTable(page)).toBeVisible();
+});
+
+test('it draws a series per message the payload really carries', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  // DERIVED FROM THE ENDPOINT THE CHART ACTUALLY DRAWS, not from the flat
+  // `/errors` table beside it. Two things make the flat payload the wrong
+  // source, and `Math.min(…, 5)` was papering over both:
+  //
+  //   - It EXCLUDES WARM-UP and this series includes it, so on a project with
+  //     a warm-up window the two disagree about which messages exist at all.
+  //   - It cannot represent the folded remainder. A run with more than five
+  //     distinct messages draws SIX series — five named plus `Other errors` —
+  //     and a count capped at five would fail on a perfectly valid re-capture.
+  //
+  // The drawn series count is just the payload's series count.
+  const body = await errorSeriesPayload(page, runId);
+  const expected = body.series.length;
+  expect(expected, 'the reference run has no failures to draw').toBeGreaterThan(0);
+
+  // `Chart` draws no legend below two series — "a one-entry legend is a label
+  // pretending to be a control" — so the legend can only be counted when the
+  // run really has two or more distinct messages.
+  const legend = page.getByTestId('chart-errors-over-time').locator('svg text[text-anchor="start"]');
+  await expect(legend).toHaveCount(expected > 1 ? expected : 0);
+});
+
+test('the errors chart carries its data table, like every other chart', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  // The parity surface, and the screen-reader route to the same numbers.
+  await expect(page.getByTestId('chart-data-errors-over-time')).toHaveCount(1);
 });
