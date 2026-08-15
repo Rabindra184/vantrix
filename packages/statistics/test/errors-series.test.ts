@@ -114,6 +114,29 @@ describe('ErrorSeries', () => {
     expect(at(out, 0)['@other']).toBe(250 - 200 + (200 - ERROR_SERIES_KEEP));
   });
 
+  it('folds a late message even when it becomes the most frequent — a stated limit', () => {
+    // THE COST OF THE FIRST-SEEN CAP, pinned so it cannot change unnoticed.
+    //
+    // 200 one-off messages fill the tracking set before the run's real problem
+    // ever appears. That message then dominates the run and is still folded,
+    // because admission is first-seen and a single pass cannot recover the
+    // per-bucket counts of something it already discarded.
+    //
+    // Promoting it on overtake would draw its curve from the promotion point
+    // onward, understating its height — a series lying about its magnitude,
+    // which a reader cannot detect. Absent is the more honest failure.
+    const s = new ErrorSeries({ startMs: 0, maxBuckets: 100 });
+    for (let i = 0; i < 200; i += 1) s.add(0, `m${i}`);
+    for (let n = 0; n < 5_000; n += 1) s.add(1000, 'the-real-problem');
+
+    const out = s.finish(1000);
+    expect(out.rows.some((r) => r.message === 'the-real-problem')).toBe(false);
+
+    // NOT LOST, only unattributed. The bucket's drawn total still reconciles
+    // with its koCount, which is what stops this from corrupting the chart.
+    expect(at(out, 1000)).toEqual({ '@other': 5_000 });
+  });
+
   it('is empty, not broken, when nothing was ever added', () => {
     expect(new ErrorSeries({ startMs: 0, maxBuckets: 100 }).finish(1000)).toEqual({
       bucketWidthMs: 1000,

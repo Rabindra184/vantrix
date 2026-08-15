@@ -134,11 +134,20 @@ export type ErrorsResponse = z.infer<typeof ErrorsResponseSchema>;
 export const ErrorSeriesResponseSchema = z.object({
   runId: z.string().uuid(),
   /**
-   * The width of every bucket, STORED rather than inferred. Errors are sparse,
-   * and `inferBucketWidthMs` reads the smallest gap between offsets — three
-   * failures 35s apart would infer a 35000ms width. Equal to `/series`'
-   * `bucketWidthMs` for the same run, by construction: the engine coalesces
-   * the error buckets up to the run series' final width.
+   * The width of every bucket in `series`, STORED rather than inferred. Errors
+   * are sparse, and `inferBucketWidthMs` reads the smallest gap between
+   * offsets — three failures 35s apart would infer a 35000ms width.
+   *
+   * EQUAL TO `/series`' `bucketWidthMs` WHENEVER ANY FAILURE WAS RECORDED,
+   * because the engine coalesces the error buckets up to the run series' final
+   * width before persisting them.
+   *
+   * A run with NO failures is the one exception, and it is a placeholder
+   * rather than a measurement: the width lives on the rows, so a run with no
+   * rows has nowhere to carry it and this reports 1000 while `/series` may
+   * report far more on a long run. Nothing is drawn in that state — `series`
+   * is empty and the chart says so — but do not scale anything by this without
+   * checking `series` first.
    */
   bucketWidthMs: z.number().int().positive(),
   /**
@@ -150,9 +159,18 @@ export const ErrorSeriesResponseSchema = z.object({
    */
   available: z.boolean(),
   /**
-   * At most six: the five most frequent messages plus the folded remainder,
-   * which is what the categorical palette can draw without leaving a series
-   * undrawn. Most frequent first.
+   * At most six in practice: the five most frequent messages plus the folded
+   * remainder, which is what the categorical palette can draw without leaving
+   * a series undrawn. Most frequent first.
+   *
+   * THAT BOUND IS ENFORCED SERVER-SIDE, by `ERROR_SERIES_KEEP` in
+   * `@perfportal/statistics`, and is deliberately NOT a `.max(6)` here. This
+   * schema also runs in the browser through `apiFetch`, so a bound would turn
+   * a seventh series — a cosmetic problem `assignPalette` already handles by
+   * drawing six and saying so — into a rejected payload and a chart that fails
+   * to load. Degrading gracefully beats failing loudly for a server-side
+   * invariant the client cannot repair. (The `.max()` calls elsewhere in these
+   * contracts are all on ingest INPUTS, where rejecting really is the point.)
    *
    * INCLUDES WARM-UP, unlike `/errors`. Series do (PRD 7.4), so on a project
    * with a warm-up window these counts exceed the errors table's totals.

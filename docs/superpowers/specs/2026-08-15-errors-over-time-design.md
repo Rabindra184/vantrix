@@ -22,7 +22,7 @@ not rediscovered a third time.
 `packages/plugin-gatling/src/records.ts` decodes a `REQUEST` record as exactly
 six fields:
 
-```
+```text
 groups, name, startMs, endMs, ok, message
 ```
 
@@ -251,11 +251,28 @@ than silently dropping the `other` series off the errors chart.
 
 **Distinct messages tracked cap at 200**, matching `ErrorRollup.top(200)`;
 beyond that, newly-seen messages fold into `other` on arrival. Without a cap the
-structure is `distinct messages × occupied buckets` and unbounded — the flat
-rollup carries the same unbounded map today, but multiplying it by bucket count
-is what makes it worth bounding here. The divergence from the flat table's
-"top 200 by count" is real and only occurs on runs with more than 200 distinct
-messages, where both surfaces are already collapsing.
+structure is `distinct messages × occupied buckets` — the flat rollup carries
+the same unbounded map today, but multiplying it by bucket count is what makes
+it worth bounding here.
+
+**This makes the top five a bounded approximation, and the spec says so rather
+than claiming an exact ranking.** Admission is first-seen, so on a run with more
+than 200 distinct messages one that first appears after the cap is reached folds
+into `other` however often it then occurs — including when it is the run's most
+frequent failure.
+
+The obvious repair is worse. Evicting a weak tracked message and promoting the
+newcomer on overtake cannot recover the newcomer's pre-promotion per-bucket
+counts, which are already folded; its curve would begin mid-run and understate
+its own height. **A series that is consistently absent is honest; a series drawn
+at the wrong magnitude is not**, and nothing on the chart tells a reader which
+one they are looking at. Exact ranking *with* per-bucket curves needs both to
+come from the same tracked set, i.e. tracking everything.
+
+What survives either way: whatever folds still lands in `other`, so a bucket's
+drawn total reconciles exactly with its `koCount`, and the errors table beside
+the chart still lists every message with its true total. The failures are never
+lost — only unattributed.
 
 `EngineResult` gains one field, `errorSeries`, of `finish()`'s return type.
 
@@ -416,14 +433,13 @@ defects here once:
 
 Gate, in its documented order — integration **before** e2e:
 
-```
+```bash
 pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e
 ```
 
-on the Node in `.nvmrc` (22). A unit run reporting fewer than **74 files / 830
-tests** did not run everything — measured on `main` at `b6bd0dc`, and raised in
-`CLAUDE.md` by this branch because the floor recorded there (70 / 788) predates
-Trends and Compare.
+on the Node in `.nvmrc` (22). A unit run reporting fewer than **76 files / 855
+tests** did not run everything — the floor this branch leaves in `CLAUDE.md`,
+raised from the 70 / 788 recorded there, which predated Trends and Compare.
 
 ---
 

@@ -40,18 +40,25 @@ rather than trusting a PR body or a merge click.
 
 ## Verification
 
-**Use the Node in `.nvmrc` (22). On Node 20 the unit suite silently runs 47 of
-its 67 files.** jsdom 30 pulls an undici whose `webidl.util.markAsUncloneable`
-does not exist on 20, so every DOM-environment file — which is every component
-test, i.e. exactly the ones a UI change needs — throws while LOADING. Vitest
-reports those as `Errors` in a separate line from `Test Files`, and prints a
-confident `Test Files 47 passed (47) | Tests 534 passed (534)` above them. A
-green-looking local run then fails in CI, which is on 22. `nvm use` first, and
-if a run reports fewer than **76 files / 855 tests**, it did not run
-everything. (Update these two numbers when a sub-project adds suites, or the
-next reader calibrates against a stale floor and a silently-skipped run looks
-like a pass. Last measured on `feat/errors-over-time`; the floor was 70 / 788
-until Trends and Compare landed, which is how far it had drifted.)
+**Use the Node in `.nvmrc` (22). On Node 20 the unit suite silently skips every
+DOM-environment file.** jsdom 30 pulls an undici whose
+`webidl.util.markAsUncloneable` does not exist on 20, so every component test —
+i.e. exactly the ones a UI change needs — throws while LOADING. Vitest reports
+those as `Errors` on a separate line from `Test Files`, and prints a confident
+`Test Files N passed (N) | Tests M passed (M)` above them, counting only the
+files that did load. A green-looking local run then fails in CI, which is on 22.
+
+Only the RATIO matters, and it is roughly two thirds of the suite vanishing: on
+Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
+against those absolutes — they were true of a smaller suite and are recorded
+only to show the scale of what disappears.
+
+`nvm use` first, and if a run reports fewer than **76 files / 855 tests**, it
+did not run everything. (Update those two numbers when a sub-project adds
+suites, or the next reader calibrates against a stale floor and a
+silently-skipped run looks like a pass. Last measured on
+`feat/errors-over-time`; the floor sat at 70 / 788 through Trends and Compare
+before this, which is how far it had drifted.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A

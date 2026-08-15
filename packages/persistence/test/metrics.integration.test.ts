@@ -402,10 +402,13 @@ describe('error series', () => {
     // folded row and this real one share a primary key, and the INSERT fails
     // the whole ingest rather than merely drawing something wrong.
     const ctx = await seedRun();
+    // Named once and used for both the input and the expectation, so the two
+    // cannot drift — and so the test says which literal is load-bearing.
+    const COLLIDING = 'other';
     const evts: CanonicalEvent[] = [start];
-    // 'other' frequent enough to be kept BY NAME (20), plus six rarer messages
-    // so that something really does fold as well.
-    for (let n = 0; n < 20; n += 1) evts.push(fail(n, 'other'));
+    // Frequent enough to be kept BY NAME (20), plus six rarer messages so that
+    // something really does fold as well.
+    for (let n = 0; n < 20; n += 1) evts.push(fail(n, COLLIDING));
     for (let rank = 0; rank < 6; rank += 1) {
       for (let n = 0; n < 6 - rank; n += 1) evts.push(fail(100 + rank * 10 + n, `m${rank}`));
     }
@@ -414,7 +417,7 @@ describe('error series', () => {
     const rows = await new MetricReader(pool).errorSeries(
       { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON,
     );
-    expect(rows.some((r) => r.message === 'other')).toBe(true);
+    expect(rows.some((r) => r.message === COLLIDING)).toBe(true);
     expect(rows.some((r) => r.message === null)).toBe(true);
   });
 

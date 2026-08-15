@@ -48,18 +48,32 @@ export const ERROR_SERIES_KEEP = 5;
 
 /**
  * How many DISTINCT messages are tracked in the time dimension before further
- * new ones fold on arrival.
+ * new ones fold on arrival. Matches `ErrorRollup.top()`'s limit.
  *
- * Matches `ErrorRollup.top()`'s limit, so the two surfaces agree except on runs
- * with more than this many distinct messages — where both are already
- * collapsing. Without a cap the structure is `distinct messages × occupied
- * buckets`; the flat rollup carries the same unbounded map today, but
- * multiplying it by bucket count is what makes it worth bounding here.
+ * ═══ THIS MAKES THE TOP FIVE A BOUNDED APPROXIMATION, NOT AN EXACT RANKING ═══
  *
- * FIRST-SEEN, not most-frequent: the top set cannot be known until the stream
- * ends, and a single pass cannot revisit what it already discarded. This
- * diverges from the flat table's "top 200 by count" only for runs that exceed
- * the cap, where both surfaces are already lossy.
+ * Admission is FIRST-SEEN. So on a run with more than this many distinct
+ * messages, one that first appears after the cap is reached folds into `other`
+ * however often it then occurs — including when it is the run's single most
+ * frequent failure. That is a real limitation, and it is chosen rather than
+ * overlooked. `errors-series.test.ts` pins it as a regression case.
+ *
+ * THE OBVIOUS FIX IS WORSE. Evicting a weak tracked message and promoting the
+ * newcomer once its running total overtakes cannot recover the newcomer's
+ * per-bucket counts from before the promotion — those are already folded into
+ * `other`. Its curve would begin mid-run and understate its own height. A
+ * series that is consistently absent is honest; a series drawn at the wrong
+ * magnitude is not, and nothing on the chart tells the reader which it is
+ * looking at.
+ *
+ * Exact ranking WITH per-bucket curves needs both to come from the same
+ * tracked set, which means tracking every message — and this structure is
+ * `distinct messages × occupied buckets`, against the flat rollup's `distinct`.
+ *
+ * WHAT SURVIVES EITHER WAY: whatever folds still lands in `other`, so a
+ * bucket's drawn total continues to reconcile exactly with its `koCount`. The
+ * failures are never lost, only unattributed — and the errors table beside the
+ * chart still lists every message with its true total.
  */
 const MAX_TRACKED_MESSAGES = 200;
 

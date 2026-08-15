@@ -149,6 +149,26 @@ describe('GET /v1/runs/:id/errors/series', () => {
     expect(body.series).toEqual([]);
   });
 
+  it('reports a placeholder width for a run with no failures, and draws nothing', async () => {
+    // A run with no failures has no rows, and the width lives ON the rows — so
+    // there is nowhere to carry it and the endpoint reports 1000 even where
+    // /series reports more. Pinned rather than fixed: `series` is empty in this
+    // state, so nothing is scaled by the number and nothing is drawn wrong.
+    //
+    // Deleting BOTH tables is what makes this a clean run rather than a
+    // pre-migration one — the case above deletes only the bucket rows, and the
+    // difference between the two is exactly what `available` reports.
+    ctx = await createTestApp();
+    const id = await ingested();
+    await ctx.pool.query('DELETE FROM run_error_bucket WHERE run_id = $1', [id]);
+    await ctx.pool.query('DELETE FROM run_error WHERE run_id = $1', [id]);
+
+    const body = ErrorSeriesResponseSchema.parse((await errorSeries(id)).body);
+    expect(body.available).toBe(true);
+    expect(body.series).toEqual([]);
+    expect(body.bucketWidthMs).toBe(1000);
+  });
+
   it('404s for a run in another org', async () => {
     // 404, never 403: the status must not distinguish "no such run" from "not
     // yours", exactly as the sibling routes already reason about.
