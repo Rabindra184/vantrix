@@ -33,8 +33,19 @@ import { signIn } from './helpers.js';
 test('switching projects after paging forward shows the second project\'s first page', async ({ page }) => {
   const admin = await seedAdmin();
   // PAGE_SIZE is 25, so 26 runs in the first project guarantee a Next.
-  const alpha = await seedProjectWithRuns(admin.orgId, 'alpha', 'Alpha', 26);
-  await seedProjectWithRuns(admin.orgId, 'beta', 'Beta', 3);
+  //
+  // Names are deliberately NOT case variants of their slugs
+  // ('alpha'/'Alpha Load Test', not 'alpha'/'Alpha'): Playwright's
+  // `getByRole(role, { name })` defaults to a case-insensitive SUBSTRING
+  // match (verified against installed playwright-core@1.62.1 —
+  // escapeForAttributeSelector emits `"Alpha"i` and the role matcher uses
+  // `*=` unless `exact: true` is passed), so a name that is only a case
+  // variant of the slug would make `{ name: 'Alpha' }` pass whether or not
+  // `ProjectRuns.tsx` ever calls `fetchProjects` — its `heading={project?.name
+  // ?? slug}` fallback to the raw slug would satisfy the same loose match.
+  // See CLAUDE.md's "Conventions that bite" for the general rule.
+  const alpha = await seedProjectWithRuns(admin.orgId, 'alpha', 'Alpha Load Test', 26);
+  await seedProjectWithRuns(admin.orgId, 'beta', 'Beta Checkout Flow', 3);
 
   await signIn(page, admin);
   await page.goto(`/projects/${alpha.slug}`);
@@ -46,5 +57,7 @@ test('switching projects after paging forward shows the second project\'s first 
   // SERVER response correctly, not about `key={slug}` surviving anything.
   await page.goto('/projects/beta');
   await expect(page.getByTestId('run-row')).toHaveCount(3);
-  await expect(page.getByRole('heading', { name: 'Beta' })).toBeVisible();
+  // exact: true, so this can only pass on the real project name — the
+  // heading's `?? slug` fallback ('beta') would fail it.
+  await expect(page.getByRole('heading', { name: 'Beta Checkout Flow', exact: true })).toBeVisible();
 });

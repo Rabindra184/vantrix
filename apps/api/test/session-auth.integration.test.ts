@@ -614,3 +614,46 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     expect(secondPage.body.nextCursor).toBeNull();
   });
 });
+
+// GET /v1/projects under a session. Every existing test against this route
+// (projects.integration.test.ts) authenticates with ctx.readToken, a
+// project-scoped bearer token — so all of them go down
+// ProjectRepository.listForOrg's `AND p.id = $2` branch and none of them
+// exercise the org-wide branch a session takes. Placed here, beside the
+// GET /v1/runs session tests above, rather than duplicating
+// signUpAsOrgMember into projects.integration.test.ts — this file is where
+// the session-credential story for this API lives, which is also why Task
+// 4's own `?project=` session test sits in the describe block just above.
+describe('GET /v1/projects — org-scoped by credential', () => {
+  it('shows a session every project in its own org, and none of another org\'s', async () => {
+    ctx = await createTestApp();
+    // A second project in the caller's OWN org, alongside the 'checkout'
+    // project createTestApp() already seeds — so the assertion below is
+    // discriminating between "the org's projects" and "one project",
+    // not just between "some org" and "another org".
+    const search = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'search', name: 'Search' },
+    });
+    // A project in a genuinely SEPARATE org. If listForOrg's
+    // `WHERE p.org_id = ${orgId}` were ever removed, this project would show
+    // up in the response and the toEqual below would fail on the extra slug.
+    const otherOrg = await ctx.prisma.org.create({
+      data: { slug: 'other-org-projects-session', name: 'Other' },
+    });
+    await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
+    });
+
+    const cookie = await signUpAsOrgMember(ctx, 'projects-session@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects')
+      .set('Cookie', cookie)
+      .expect(200);
+
+    // toEqual, not toContain/not.toContain: sorted so the assertion does not
+    // depend on listForOrg's ORDER BY p.name ASC, and exact so that either a
+    // missing own-org project or a leaked other-org project fails it.
+    const slugs = res.body.items.map((p: { slug: string }) => p.slug).sort();
+    expect(slugs).toEqual(['checkout', search.slug].sort());
+  });
+});
