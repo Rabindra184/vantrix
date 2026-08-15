@@ -65,6 +65,15 @@ model Run {
   verdict        String?
   tool           String
   toolVersion    String?   @map("tool_version")
+  /// Ingest metadata, frozen at accept time exactly like engineOptions and
+  /// for the same reason: they describe the run that was submitted, and a
+  /// later edit must not rewrite what was true when it ran. Never written by
+  /// the worker. Null for every run created before migration
+  /// 20260815000000_run_ingest_provenance, and for any run whose caller
+  /// sent none of them.
+  environment String?
+  branch      String?
+  commitSha   String? @map("commit_sha")
   /// The tool's own simulation identity and run description, from the run
   /// header. Null until the worker parses, and forever for a failed run.
   simulation  String?

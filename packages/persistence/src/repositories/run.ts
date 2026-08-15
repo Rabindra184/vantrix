@@ -17,6 +17,10 @@ export interface RunRecord {
   verdict: string | null;
   tool: string;
   toolVersion: string | null;
+  /** Ingest metadata, frozen at accept time. Null when the caller sent none. */
+  environment: string | null;
+  branch: string | null;
+  commitSha: string | null;
   /** The tool's own simulation identity and run description, from the run
    *  header. Null until the worker parses, and forever for a failed run. */
   simulation: string | null;
@@ -43,6 +47,9 @@ export interface CreateRunInput {
   orgId: string;
   projectId: string;
   tool: string;
+  environment?: string;
+  branch?: string;
+  commitSha?: string;
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: number;
@@ -60,6 +67,9 @@ interface RunRow {
   verdict: string | null;
   tool: string;
   toolVersion: string | null;
+  environment: string | null;
+  branch: string | null;
+  commitSha: string | null;
   simulation: string | null;
   description: string | null;
   durationMs: number | null;
@@ -85,6 +95,9 @@ function toRecord(row: RunRow): RunRecord {
     verdict: row.verdict,
     tool: row.tool,
     toolVersion: row.toolVersion,
+    environment: row.environment,
+    branch: row.branch,
+    commitSha: row.commitSha,
     simulation: row.simulation,
     description: row.description,
     durationMs: row.durationMs,
@@ -134,6 +147,9 @@ export class RunRepository {
         status: 'pending',
         verdict: null,
         tool: input.tool,
+        environment: input.environment ?? null,
+        branch: input.branch ?? null,
+        commitSha: input.commitSha ?? null,
         bundleKey: input.bundleKey,
         bundleSha256: input.bundleSha256,
         bundleBytes: BigInt(input.bundleBytes),
@@ -238,7 +254,8 @@ export class RunRepository {
     const rows = await this.prisma.$queryRaw<RunSqlRow[]>`
       SELECT
         r.id, r.org_id AS "orgId", r.project_id AS "projectId", r.status, r.verdict, r.tool,
-        r.tool_version AS "toolVersion", r.simulation, r.description,
+        r.tool_version AS "toolVersion", r.environment, r.branch, r.commit_sha AS "commitSha",
+        r.simulation, r.description,
         r.duration_ms AS "durationMs", r.bundle_key AS "bundleKey",
         r.bundle_sha256 AS "bundleSha256", r.bundle_bytes AS "bundleBytes",
         r.idempotency_key AS "idempotencyKey", r.started_at AS "startedAt",

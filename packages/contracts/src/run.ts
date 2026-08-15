@@ -52,6 +52,14 @@ export const RunResponseSchema = z.object({
   verdict: RunVerdictSchema.nullable(),
   tool: z.string(),
   toolVersion: z.string().nullable().optional(),
+  /**
+   * From ingest metadata, frozen at accept time. Null for every run created
+   * before migration 20260815000000_run_ingest_provenance, and for any run
+   * whose caller did not send them.
+   */
+  environment: z.string().nullable().optional(),
+  branch: z.string().nullable().optional(),
+  commitSha: z.string().nullable().optional(),
   /** The tool's own simulation identity and run description (G-01, G-02). */
   simulation: z.string().nullable().optional(),
   description: z.string().nullable().optional(),

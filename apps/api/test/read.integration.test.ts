@@ -36,7 +36,7 @@ afterEach(async () => {
   await ctx?.close();
 });
 
-async function ingested(): Promise<string> {
+async function ingested(extra: Record<string, unknown> = {}): Promise<string> {
   const q = new Queue('ingest', { connection: { url: process.env.REDIS_URL ?? 'redis://localhost:6380' } });
   await q.obliterate({ force: true });
   await q.close();
@@ -44,7 +44,7 @@ async function ingested(): Promise<string> {
   const res = await request(ctx.app.getHttpServer())
     .post('/v1/runs')
     .set('Authorization', `Bearer ${ctx.ingestToken}`)
-    .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+    .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, ...extra }))
     .attach('bundle', bundle, 'bundle.tgz');
   await runPipelineFor(ctx, res.body.id);
   return res.body.id;
@@ -444,5 +444,34 @@ describe('project identity', () => {
     // is self-consistent.
     expect(row.project).toEqual(detail.body.project);
     expect(row.simulation).toBe(detail.body.simulation);
+  });
+});
+
+describe('ingest provenance', () => {
+  it('stores environment, branch and commitSha from ingest metadata', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested({
+      environment: 'staging',
+      branch: 'release/24.8',
+      commitSha: 'abc1234def5678',
+    });
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.environment).toBe('staging');
+    expect(res.body.branch).toBe('release/24.8');
+    expect(res.body.commitSha).toBe('abc1234def5678');
+  });
+
+  it('reads null, not empty string, for a run that carried none of them', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set(auth());
+    // null, never '': an empty string would claim the caller sent an empty
+    // branch, which is a different fact from having sent nothing.
+    expect(res.body.environment).toBeNull();
+    expect(res.body.branch).toBeNull();
+    expect(res.body.commitSha).toBeNull();
   });
 });

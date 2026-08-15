@@ -174,4 +174,28 @@ describe('POST /v1/runs', () => {
     expect(res.status).toBe(400);
     expect(res.body.remediation).toBeTruthy();
   });
+
+  it('does not update provenance on an idempotent re-post', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+
+    const first = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      .field('metadata', JSON.stringify({ tool: 'gatling', idempotencyKey: 'build-42', branch: 'main' }))
+      .attach('bundle', bundle, 'bundle.tgz');
+
+    const second = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      .field('metadata', JSON.stringify({ tool: 'gatling', idempotencyKey: 'build-42', branch: 'corrected' }))
+      .attach('bundle', bundle, 'bundle.tgz');
+    expect(second.body.id).toBe(first.body.id);   // one run, by idempotency
+
+    const row = await ctx.prisma.run.findUnique({ where: { id: first.body.id } });
+    // accept() returns the existing run BEFORE writing anything, so the second
+    // post is a no-op. Pinned because the first person to fix a typo in a
+    // pipeline and re-run it will expect otherwise.
+    expect(row?.branch).toBe('main');
+  });
 });
