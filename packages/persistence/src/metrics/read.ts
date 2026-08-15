@@ -184,6 +184,10 @@ export class MetricReader {
         meanMs: r.mean_ms,
         throughputRps: r.throughput_rps,
         percentiles: r.percentiles as Record<string, number>,
+        // Deserialised here exactly as `stats` above does it, so the two
+        // endpoints answer percentile questions from the same object rather
+        // than from a stored float and a sketch respectively.
+        sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
       })),
       cohortSize: size.rows[0]?.size ?? 0,
     };

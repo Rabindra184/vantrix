@@ -1,3 +1,5 @@
+import type { Sketch } from '@perfportal/statistics';
+
 /**
  * The cohort query behind `GET /v1/runs/:id/trends`.
  *
@@ -54,7 +56,7 @@
 export const TRENDS_SQL = `
   SELECT r.id, r.started_at, r.tool_started_at, r.duration_ms, r.verdict,
          s.count, s.ok_count, s.ko_count, s.error_rate,
-         s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles
+         s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch
     FROM run r
     JOIN run_stat s
       ON s.run_id = r.id
@@ -111,5 +113,24 @@ export interface StoredTrendRun {
   readonly maxMs: number;
   readonly meanMs: number;
   readonly throughputRps: number;
+  /**
+   * The FROZEN column, written at ingest. A fallback only — see `sketch`.
+   */
   readonly percentiles: Record<string, number>;
+  /**
+   * THE SKETCH, WHICH IS WHERE A TREND'S PERCENTILES ACTUALLY COME FROM.
+   *
+   * `/stats` recomputes percentiles from this at the project's CURRENTLY
+   * configured set (spec §9.1, K-03) — that is the entire reason the sketch is
+   * persisted, so reconfiguring the set needs no re-ingest. The frozen
+   * `percentiles` column is only for rows written before it existed.
+   *
+   * A trend reading the frozen column instead would put the statistics table
+   * and the trend on DIFFERENT PERCENTILE SETS the moment a project
+   * reconfigured — silently, since both would look like plausible numbers.
+   * They also disagree in the last few decimal places even when the sets
+   * match, one being a sketch quantile and the other a stored float, which is
+   * how this was caught.
+   */
+  readonly sketch: Sketch | null;
 }

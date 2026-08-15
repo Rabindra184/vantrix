@@ -3,13 +3,14 @@ import type {
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
+  TrendsResponse,
 } from '@perfportal/contracts';
 import { parseProjectSettings } from '@perfportal/contracts';
 import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
 import { bandsFrom, inferBucketWidthMs } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, uuidParam } from '../common/validation.js';
+import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -35,6 +36,93 @@ export class MetricsController {
     );
     if (!run) throw new NotFoundException(`No run ${id} in this project.`);
     return run;
+  }
+
+  /**
+   * A run in the context of its cohort — every complete run of the same
+   * simulation in the same project.
+   *
+   * RUN-SCOPED RATHER THAN PROJECT-SCOPED (`/v1/projects/:slug/trends`),
+   * because it needs no slug resolution and no new authorization reasoning:
+   * `#run` already resolves and tenant-checks exactly as every sibling route
+   * here does, so "another org's run is 404, not 403" is inherited rather than
+   * re-argued. It also matches how a reader arrives — from a run, wanting that
+   * run in context.
+   *
+   * `#run`'s other job, supplying the partition key, is not needed here:
+   * `run_stat` is not partitioned. The run is still resolved first because the
+   * COHORT KEY comes off it — the caller names a run, not a simulation, and
+   * the server is what decides which cohort that run belongs to. A client
+   * passing its own `?simulation=` would be able to read a cohort by guessing
+   * a name.
+   */
+  @Get('trends')
+  @Scopes('read')
+  async trends(
+    @Param('id', uuidParam('id')) id: string,
+    @Req() req: Request,
+    @Query('limit') limit = '20',
+  ): Promise<TrendsResponse> {
+    const run = await this.#run(req, id);
+
+    /**
+     * PERCENTILES ARE RECOMPUTED FROM EACH RUN'S SKETCH, at the project's
+     * currently configured set — exactly as `/stats` does, and for the same
+     * reason (spec §9.1, K-03): the sketch is persisted so that reconfiguring
+     * the percentile set needs no re-ingest.
+     *
+     * Reading the frozen `percentiles` column here instead would put the
+     * statistics table and the trend on DIFFERENT SETS the moment a project
+     * reconfigured, silently — both would look like plausible numbers. It also
+     * disagrees in the last decimal places even when the sets match, which is
+     * what an integration test comparing the two endpoints caught.
+     *
+     * Unlike `/stats`, this does not need `indicators`, so a settings document
+     * whose bounds are invalid is not this endpoint's problem — only
+     * `percentiles` is read, and `parseProjectSettings` supplies a default set
+     * when the document omits it.
+     */
+    const settings = parseProjectSettings(
+      await this.projects.settings({ orgId: run.orgId, projectId: run.projectId }),
+    );
+
+    const { runs, cohortSize } = await this.reader.trends(
+      { orgId: run.orgId, projectId: run.projectId },
+      { simulation: run.simulation ?? null },
+      // The same clamp the run list uses, imported rather than restated: two
+      // answers to "how many is too many" is one too many.
+      parseLimit(limit),
+    );
+
+    return {
+      runId: run.id,
+      simulation: run.simulation ?? null,
+      cohortSize,
+      runs: runs.map((r) => ({
+        id: r.id,
+        startedAt: r.startedAt.toISOString(),
+        toolStartedAt: r.toolStartedAt?.toISOString() ?? null,
+        durationMs: r.durationMs,
+        verdict: (r.verdict ?? null) as TrendsResponse['runs'][number]['verdict'],
+        count: r.count,
+        okCount: r.okCount,
+        koCount: r.koCount,
+        errorRate: r.errorRate,
+        minMs: r.minMs,
+        maxMs: r.maxMs,
+        meanMs: r.meanMs,
+        throughputRps: r.throughputRps,
+        // The same expression `/stats` uses, including the `count > 0` guard:
+        // an empty stat has a sketch with nothing to quantile, and its frozen
+        // column is the only answer available.
+        percentiles:
+          r.sketch && r.count > 0
+            ? Object.fromEntries(
+                settings.percentiles.map((p) => [`p${p}`, r.sketch!.quantile(p / 100)]),
+              )
+            : r.percentiles,
+      })),
+    };
   }
 
   @Get('stats')
