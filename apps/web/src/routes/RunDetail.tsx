@@ -19,6 +19,7 @@ import {
 } from '../api/metrics';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
 import DistributionChart from '../charts/DistributionChart';
+import PercentileDistributionChart from '../charts/PercentileDistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import RequestCountChart from '../charts/RequestCountChart';
@@ -405,6 +406,15 @@ const REQUEST_COUNTS: Slot = { id: 'request-counts', title: 'Number of requests'
 const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
 const USER_START_RATE: Slot = { id: 'user-start-rate', title: 'Users started per second' };
 const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
+/**
+ * The tail's shape, beside the histogram that shows where the mass is. Both
+ * are folds of the SAME `/distribution` payload — one fetch, two figures, no
+ * second cache key — so they always describe the same run.
+ */
+const PERCENTILE_DISTRIBUTION: Slot = {
+  id: 'percentile-distribution',
+  title: 'Response time percentiles distribution',
+};
 const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
 const REQUESTS_PER_SECOND: Slot = {
   id: 'requests-per-second',
@@ -496,8 +506,13 @@ export function RunChartsTab() {
         )}
       </Payload>
 
-      <Payload query={distribution} slots={[DISTRIBUTION]}>
-        {(data) => <DistributionChart distribution={data} />}
+      <Payload query={distribution} slots={[DISTRIBUTION, PERCENTILE_DISTRIBUTION]}>
+        {(data) => (
+          <>
+            <DistributionChart distribution={data} />
+            <PercentileDistributionChart distribution={data} />
+          </>
+        )}
       </Payload>
 
       <Payload query={series} slots={[PERCENTILES, REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>

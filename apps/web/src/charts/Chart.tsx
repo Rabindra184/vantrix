@@ -46,6 +46,19 @@ export interface ChartYAxis {
  */
 export interface ChartXAxis {
   readonly name?: string;
+  /**
+   * `'value'` when the horizontal axis is a MEASURED QUANTITY rather than a
+   * category, so the series carry explicit `[x, y]` pairs.
+   *
+   * A scatter is always this and does not need to say so — `kind` already
+   * settles it. The prop exists for a LINE whose x is a measurement: the
+   * percentiles-distribution chart plots response time against percentile, and
+   * its percentiles are not evenly spaced (they come from a cumulative sum over
+   * bin counts, so they arrive at 12%, 47%, 89%…). Drawn on a category axis
+   * those would be spread at equal intervals, which straightens exactly the
+   * curvature the chart exists to show.
+   */
+  readonly type?: 'category' | 'value';
 }
 
 export interface ChartProps {
@@ -148,6 +161,10 @@ export default function Chart({
   const yAxisType = yAxis?.type ?? 'value';
   const yAxisName = yAxis?.name;
   const xAxisName = xAxis?.name;
+  // A scatter's x is numeric by definition; any other chart has to ask. Folded
+  // to a primitive here for the same reason the other three are — see the
+  // option effect's closing comment about identity-compared object props.
+  const xAxisNumeric = kind === 'scatter' || xAxis?.type === 'value';
 
   // Follow the active colour scheme while the page is open, so a chart drawn
   // in light mode is not left with light-mode hues on a dark surface.
@@ -304,9 +321,13 @@ export default function Chart({
       splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
     };
     /**
-     * A scatter's x is a MEASURED QUANTITY, not a category — its series carry
-     * explicit [x, y] pairs rather than one value per label, so a category axis
-     * would index them by position and draw the run's throughput as 0, 1, 2…
+     * FOR A CHART WHOSE X IS A MEASURED QUANTITY, not a category — its series
+     * carry explicit [x, y] pairs rather than one value per label, so a category
+     * axis would index them by position and draw the run's throughput as 0, 1, 2…
+     *
+     * Every scatter, and any other chart that asks via `xAxis.type: 'value'`.
+     * That second case is the percentiles-distribution line, whose percentiles
+     * come from a cumulative sum and so are not evenly spaced.
      */
     const numericAxis = {
       type: 'value' as const,
@@ -376,7 +397,7 @@ export default function Chart({
               },
               ...(horizontal
                 ? { xAxis: valueAxis, yAxis: categoryAxis }
-                : { xAxis: kind === 'scatter' ? numericAxis : categoryAxis, yAxis: valueAxis }),
+                : { xAxis: xAxisNumeric ? numericAxis : categoryAxis, yAxis: valueAxis }),
             }),
         // `index`, NOT the position in `drawn`. The two agree only while the
         // drawn set is a prefix of the series list, and an `essential` series
@@ -431,6 +452,7 @@ export default function Chart({
     yAxisType,
     yAxisName,
     xAxisName,
+    xAxisNumeric,
     mode,
     assignment,
   ]);
