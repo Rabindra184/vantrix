@@ -44,11 +44,20 @@ function tsxFiles(dir: string): string[] {
  *     docstring. So these two reach the token the only way `@theme` leaves
  *     open, and stay exempt rather than growing a utility that would blur
  *     that split.
+ *   - `components/States.tsx`, for the same reason as those two, and added
+ *     with the design pass. It is the app's ONE error/empty/loading component,
+ *     and the six routes that previously each wrote their own failure markup
+ *     now render it instead. That direction matters for this gate
+ *     specifically: without it, every route that learns to fail is a candidate
+ *     for a fourth, fifth and sixth exemption. With it, the count of files
+ *     allowed to paint in the status palette goes DOWN as more pages handle
+ *     errors properly.
  */
 const EXEMPT_PATHS = new Set([
   'routes/marks.tsx',
   'SignOutButton.tsx',
   'routes/Login.tsx',
+  'components/States.tsx',
 ]);
 
 describe('components reach tokens by name, not by arbitrary value', () => {
