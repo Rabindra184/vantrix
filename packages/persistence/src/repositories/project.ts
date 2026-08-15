@@ -90,10 +90,14 @@ export class ProjectRepository {
    * the one with nothing in it — and DISTINCT ON over the run table would
    * silently omit it.
    *
-   * The inner ORDER BY is spelled character-for-character like
-   * RunRepository.list's. If those two expressions ever disagree, a
-   * project's "latest run" and the run list's top row name different runs,
-   * and nothing on screen looks wrong.
+   * The inner ORDER BY resolves the same run RunRepository.list puts first
+   * — same COALESCE, same tie-break — though unaliased here, because this
+   * subquery reads from `run` alone while list() qualifies its columns `r.`
+   * to disambiguate the `project` join. Do not "fix" that difference by
+   * adding an alias: there is no second table here to disambiguate from.
+   * If the two expressions ever disagree, a project's "latest run" and the
+   * run list's top row name different runs, and nothing on screen looks
+   * wrong.
    *
    * `projectId` narrows to a single project for a bearer token, which is
    * scoped to exactly one. Absent for a session, which sees the whole org.

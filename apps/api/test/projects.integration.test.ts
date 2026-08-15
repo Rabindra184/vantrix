@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ProjectListResponseSchema } from '@perfportal/contracts';
 import { createTestApp, type TestContext } from './support/app.js';
 
 let ctx: TestContext;
@@ -16,6 +17,7 @@ describe('GET /v1/projects', () => {
       .get('/v1/projects')
       .set('Authorization', `Bearer ${ctx.readToken}`);
     expect(res.status).toBe(200);
+    expect(() => ProjectListResponseSchema.parse(res.body)).not.toThrow();
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0]).toEqual({
       id: ctx.projectId,
