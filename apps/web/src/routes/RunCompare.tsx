@@ -3,7 +3,12 @@ import { useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { seriesQuery, statsQuery, trendsQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
-import { COMPARE_METRICS, type CompareMetric, type CompareRun } from '../charts/transforms/compare';
+import {
+  COMPARE_METRICS,
+  compareLabels,
+  type CompareMetric,
+  type CompareRun,
+} from '../charts/transforms/compare';
 import { EmptyState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
 import type { CompareStats } from '../tables/buildCompareMatrix';
@@ -74,14 +79,24 @@ export default function RunCompare() {
     queries: selected.map((id) => ({ ...statsQuery(id), enabled: true })),
   });
 
-  const labelFor = (id: string): string => {
-    const run = cohort.data?.runs.find((candidate) => candidate.id === id);
-    if (run === undefined) return id.slice(0, 8);
-    return new Date(run.toolStartedAt ?? run.startedAt)
-      .toISOString()
-      .slice(5, 16)
-      .replace('T', ' ');
-  };
+  /**
+   * Labels for the WHOLE COHORT, not just the selection.
+   *
+   * Computed across every candidate so a run's label does not change when a
+   * neighbour is selected or dropped — a chip that renames itself as the
+   * selection moves is one a reader cannot navigate by. `compareLabels` adds a
+   * short id suffix only where two runs would otherwise collide, which they do
+   * whenever two runs start in the same minute.
+   */
+  const labels = useMemo(() => {
+    const runs = cohort.data?.runs ?? [];
+    const computed = compareLabels(
+      runs.map((run) => ({ id: run.id, at: run.toolStartedAt ?? run.startedAt })),
+    );
+    return new Map(runs.map((run, i) => [run.id, computed[i]!]));
+  }, [cohort.data]);
+
+  const labelFor = (id: string): string => labels.get(id) ?? id.slice(0, 8);
 
   const overlayRuns: CompareRun[] = selected.flatMap((id, i) => {
     const data = seriesResults[i]?.data;

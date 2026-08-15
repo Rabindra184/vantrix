@@ -39,6 +39,19 @@ export const MAX_COMPARE = 5;
  * a comparison whose colours reshuffle when a second run is added is one a
  * reader has to re-learn each time.
  *
+ * ═══ NO PARAMETER MEANS THIS RUN AND ITS NEAREST NEIGHBOUR ═══
+ *
+ * Not "this run alone". A page called Compare that opens with one run on it
+ * has answered nothing and asks the reader to go find a second — and the
+ * comparison they almost always want first is against the previous run, which
+ * is the "did my change make this worse" question. See `defaultSelection` for
+ * why the oldest run in a cohort falls back to a NEWER neighbour rather than
+ * to nothing.
+ *
+ * AN EXPLICIT PARAMETER IS ALWAYS HONOURED, including one that names only the
+ * current run: a reader who deselected everything down to one run gets
+ * `?runs=<current>`, which is not absent, so the default does not fight them.
+ *
  * ═══ A BAD VALUE FALLS BACK, IT DOES NOT THROW ═══
  *
  * `safeNext`'s stance, applied to a different parameter: the reader asked to
@@ -51,10 +64,13 @@ export function parseCompareSelection(
   cohort: readonly string[],
   current: string,
 ): string[] {
-  const asked = (raw ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter((id) => id !== '');
+  const asked =
+    raw === null
+      ? defaultSelection(cohort, current)
+      : raw
+          .split(',')
+          .map((id) => id.trim())
+          .filter((id) => id !== '');
 
   const allowed = new Set(cohort);
 
@@ -66,6 +82,32 @@ export function parseCompareSelection(
     out.push(id);
   }
   return out;
+}
+
+/**
+ * The run to compare against when the URL names none: `current`'s NEAREST
+ * NEIGHBOUR IN THE COHORT, preferring the older one.
+ *
+ * `cohort` is newest-first — the order `/v1/runs/:id/trends` returns and
+ * `/v1/runs` uses — so "older" is the NEXT index, not the previous one.
+ * Getting that backwards would default to comparing a run against a newer one,
+ * which asks "did this used to be worse" instead of "did I make it worse".
+ *
+ * THE FALLBACK TO THE NEWER NEIGHBOUR IS NOT A DETAIL. The oldest run in a
+ * cohort has no predecessor, and returning nothing for it opens Compare with a
+ * single run on it — a page that has answered nothing and asks the reader to
+ * go find a second. The only comparison available to the oldest run is against
+ * a newer one, and that is still worth having: it answers "was this ever
+ * fixed", which is exactly why someone opens an old run from a ticket.
+ *
+ * Only a cohort of ONE genuinely has no neighbour, and the page renders its own
+ * explanation for that rather than an overlay of one line.
+ */
+function defaultSelection(cohort: readonly string[], current: string): string[] {
+  const here = cohort.indexOf(current);
+  if (here < 0) return [];
+  const neighbour = cohort[here + 1] ?? cohort[here - 1];
+  return neighbour === undefined ? [] : [neighbour];
 }
 
 /** The inverse, for writing the selection back to the URL. */

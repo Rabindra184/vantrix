@@ -172,3 +172,36 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
     limitation: widthNote(runs.map((r) => r.series.bucketWidthMs)),
   };
 }
+
+/**
+ * A readable, and UNIQUE, label per selected run.
+ *
+ * ═══ WHY UNIQUENESS IS A CORRECTNESS PROBLEM HERE ═══
+ *
+ * The natural label is the run's start time at minute resolution, which is
+ * short enough for a legend and for a matrix column header. Two runs can
+ * share one: the same minute, or — as every fixture-driven test does — the
+ * same recorded simulation start.
+ *
+ * When they do, the failure is not cosmetic. ECharts DEDUPES SERIES BY NAME,
+ * so two identically-named runs draw one legend entry and the reader cannot
+ * tell which line is which; the matrix grows two columns with the same header
+ * and no way to attribute a number to a run. A comparison whose columns cannot
+ * be told apart is not a comparison.
+ *
+ * So a colliding label gains a short id suffix, and only a colliding one — the
+ * common case stays a clean timestamp, and the suffix appears exactly where it
+ * is needed to disambiguate.
+ */
+export function compareLabels(runs: readonly { id: string; at: string }[]): string[] {
+  const base = runs.map((run) =>
+    new Date(run.at).toISOString().slice(5, 16).replace('T', ' '),
+  );
+
+  const seen = new Map<string, number>();
+  for (const label of base) seen.set(label, (seen.get(label) ?? 0) + 1);
+
+  return base.map((label, i) =>
+    (seen.get(label) ?? 0) > 1 ? `${label} · ${runs[i]!.id.slice(0, 6)}` : label,
+  );
+}

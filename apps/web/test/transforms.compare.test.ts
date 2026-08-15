@@ -1,6 +1,11 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { COMPARE_METRICS, toCompare, type CompareRun } from '../src/charts/transforms/compare';
+import {
+  COMPARE_METRICS,
+  compareLabels,
+  toCompare,
+  type CompareRun,
+} from '../src/charts/transforms/compare';
 import fixture from './fixtures/reference-run.json';
 
 const REFERENCE = fixture.series as unknown as SeriesResponse;
@@ -128,5 +133,37 @@ describe('toCompare', () => {
       if (!metric.value.startsWith('p')) continue;
       expect(available.has(metric.value), `${metric.value} is not in the payload`).toBe(true);
     }
+  });
+});
+
+describe('compareLabels', () => {
+  it('is a short timestamp when nothing collides', () => {
+    const labels = compareLabels([
+      { id: 'aaaaaaaa-1111', at: '2026-08-14T09:30:00.000Z' },
+      { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:00.000Z' },
+    ]);
+    expect(labels).toEqual(['08-14 09:30', '08-15 16:45']);
+  });
+
+  it('disambiguates runs that share a minute', () => {
+    // ECharts DEDUPES SERIES BY NAME, so two identically-labelled runs draw
+    // one legend entry and the matrix grows two columns with the same header
+    // — a comparison whose columns cannot be told apart.
+    const labels = compareLabels([
+      { id: 'aaaaaaaa-1111', at: '2026-08-15T16:45:00.000Z' },
+      { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:30.000Z' },
+    ]);
+    expect(new Set(labels).size).toBe(2);
+    for (const label of labels) expect(label).toContain('08-15 16:45');
+  });
+
+  it('suffixes only the colliding labels, leaving the rest clean', () => {
+    const labels = compareLabels([
+      { id: 'aaaaaaaa-1111', at: '2026-08-15T16:45:00.000Z' },
+      { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:10.000Z' },
+      { id: 'cccccccc-3333', at: '2026-08-14T09:30:00.000Z' },
+    ]);
+    expect(labels[2]).toBe('08-14 09:30');
+    expect(labels[0]).not.toBe(labels[1]);
   });
 });

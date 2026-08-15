@@ -17,9 +17,35 @@ const COHORT = Array.from({ length: 7 }, (_, i) => `run-${i}`);
 const CURRENT = COHORT[3]!;
 
 describe('parseCompareSelection', () => {
-  it('returns just the current run when nothing was asked for', () => {
-    expect(parseCompareSelection(null, COHORT, CURRENT)).toEqual([CURRENT]);
+  it('defaults to this run and the one before it', () => {
+    // A page called Compare that opens with one run has answered nothing. The
+    // cohort is newest-first, so "before" is the NEXT index — defaulting to
+    // the previous index would compare a run against a NEWER one, which asks
+    // the question backwards.
+    expect(parseCompareSelection(null, COHORT, CURRENT)).toEqual([CURRENT, COHORT[4]]);
+  });
+
+  it('honours an explicit parameter naming only the current run', () => {
+    // A reader who deselected everything gets `?runs=<current>`, which is not
+    // absent — so the default must not fight them back to a pair.
+    expect(parseCompareSelection(CURRENT, COHORT, CURRENT)).toEqual([CURRENT]);
     expect(parseCompareSelection('', COHORT, CURRENT)).toEqual([CURRENT]);
+  });
+
+  it('falls back to the NEWER neighbour for the oldest run in the cohort', () => {
+    // The oldest run has no predecessor, and answering with nothing opens a
+    // page called Compare with one run on it. The only comparison available to
+    // it is against a newer run, which answers "was this ever fixed" — the
+    // reason someone opens an old run from a ticket at all.
+    const oldest = COHORT[COHORT.length - 1]!;
+    expect(parseCompareSelection(null, COHORT, oldest)).toEqual([
+      oldest,
+      COHORT[COHORT.length - 2],
+    ]);
+  });
+
+  it('has no default for a cohort of one, which the page explains itself', () => {
+    expect(parseCompareSelection(null, ['only'], 'only')).toEqual(['only']);
   });
 
   it('keeps the current run first even when the URL omits it', () => {
