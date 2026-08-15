@@ -545,6 +545,13 @@ export async function seedProjectWithRuns(
   slug: string,
   name: string,
   count: number,
+  /**
+   * The verdict every seeded run carries. Defaulted, so every existing caller
+   * is unaffected — but overridable, because the rail's badge LABEL is what
+   * some tests are about and `passed` is its shortest one. `null` yields
+   * VERDICT.none, "no verdict yet", the longest label the rail can render.
+   */
+  verdict: 'passed' | 'failed' | 'not_evaluated' | null = 'passed',
 ): Promise<{ projectId: string; slug: string }> {
   const project = await prisma.project.create({ data: { orgId, slug, name, settings: {} } });
   const base = Date.UTC(2026, 7, 15, 12, 0, 0);
@@ -555,7 +562,7 @@ export async function seedProjectWithRuns(
         orgId,
         projectId: project.id,
         status: 'complete',
-        verdict: 'passed',
+        verdict,
         tool: 'gatling',
         bundleKey: `e2e-fixture/${randomUUID()}`,
         bundleSha256: '0'.repeat(64),
