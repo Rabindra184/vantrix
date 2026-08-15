@@ -199,10 +199,40 @@ describe('OpenAPI document', () => {
     expect(names).toEqual(expect.arrayContaining(['id', 'scope', 'name', 'family']));
   });
 
+  it('declares GET /v1/projects and its response schema', async () => {
+    const doc = await fetchDoc();
+    expect(doc.paths?.['/v1/projects']?.['get']).toBeTruthy();
+    expect(doc.components?.schemas?.['ProjectListResponse']).toBeTruthy();
+  });
+
   it('reports indicator bands on the stats response', async () => {
     const doc = await fetchDoc();
     const schemas = doc.components?.schemas ?? {};
     expect((schemas['StatsResponse'] as { properties?: Record<string, unknown> } | undefined)?.properties?.['configurable']).toBeDefined();
     expect((schemas['StatRow'] as { properties?: Record<string, unknown> } | undefined)?.properties?.['indicators']).toBeDefined();
+  });
+
+  it('declares the project filter on GET /v1/runs', async () => {
+    const doc = await fetchDoc();
+    const get = doc.paths?.['/v1/runs']?.['get'] as
+      | { parameters?: { name?: string }[] }
+      | undefined;
+    expect(get?.parameters?.map((p) => p.name)).toContain('project');
+  });
+
+  // The precedent this fixes: commit 08a6967 on main shipped a fix for
+  // run_series_bucket.family being absent from the document — "the document
+  // validates" never catches an omission, because a document missing a
+  // field is still a valid document. `RunResponse` is declared truthy
+  // elsewhere in this file (see the "derives non-empty components.schemas"
+  // test above), which passes regardless of which properties it carries;
+  // these two are the properties assertions for project identity and ingest
+  // provenance that spec §9 requires and that check does not provide.
+  it('declares RunResponse.project and the three ingest fields', async () => {
+    const doc = await fetchDoc();
+    const schemas = doc.components?.schemas ?? {};
+    const props = (schemas['RunResponse'] as { properties?: Record<string, unknown> }).properties ?? {};
+    expect(props['project']).toBeDefined();
+    for (const f of ['environment', 'branch', 'commitSha']) expect(props[f], f).toBeDefined();
   });
 });

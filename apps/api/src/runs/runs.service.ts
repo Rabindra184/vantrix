@@ -33,10 +33,14 @@ export class RunsService {
 
     return {
       id: run.id,
+      project: run.project,
       status: run.status as RunResponse['status'],
       verdict: (run.verdict ?? null) as RunResponse['verdict'],
       tool: run.tool,
       toolVersion: run.toolVersion,
+      environment: run.environment,
+      branch: run.branch,
+      commitSha: run.commitSha,
       simulation: run.simulation ?? null,
       description: run.description ?? null,
       durationMs: run.durationMs ?? null,

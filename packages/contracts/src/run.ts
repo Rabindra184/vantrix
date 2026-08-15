@@ -26,12 +26,40 @@ export const AssertionSchema = z.object({
 });
 export type Assertion = z.infer<typeof AssertionSchema>;
 
+/**
+ * A run's owning project, as every run response carries it. Its own schema
+ * rather than an inline object so RunResponse and RunListResponse cannot
+ * describe the same thing two ways.
+ */
+export const ProjectRefSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+});
+export type ProjectRef = z.infer<typeof ProjectRefSchema>;
+
 export const RunResponseSchema = z.object({
   id: z.string().uuid(),
+  /**
+   * The project this run belongs to. REQUIRED, not optional: run.project_id
+   * is NOT NULL, so an optional field would model a state the database
+   * cannot hold — and apps/web parses with RunResponseSchema.parse, so a
+   * server that forgets it must fail loudly rather than render a blank
+   * where a project name belongs.
+   */
+  project: ProjectRefSchema,
   status: RunStatusSchema,
   verdict: RunVerdictSchema.nullable(),
   tool: z.string(),
   toolVersion: z.string().nullable().optional(),
+  /**
+   * From ingest metadata, frozen at accept time. Null for every run created
+   * before migration 20260815000000_run_ingest_provenance, and for any run
+   * whose caller did not send them.
+   */
+  environment: z.string().nullable().optional(),
+  branch: z.string().nullable().optional(),
+  commitSha: z.string().nullable().optional(),
   /** The tool's own simulation identity and run description (G-01, G-02). */
   simulation: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -72,11 +100,13 @@ export const RunListResponseSchema = z.object({
   items: z.array(
     RunResponseSchema.pick({
       id: true,
+      project: true,
       status: true,
       verdict: true,
       tool: true,
       startedAt: true,
       toolStartedAt: true,
+      simulation: true,
     }),
   ),
   nextCursor: z.string().nullable(),

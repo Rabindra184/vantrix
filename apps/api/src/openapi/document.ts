@@ -243,6 +243,15 @@ const parameters: Record<string, ParameterObject> = {
       'UUID — an invalid value is rejected with 400 INVALID_CURSOR, unlike "limit" above.',
     schema: { type: 'string', format: 'uuid' },
   },
+  ProjectFilter: {
+    name: 'project',
+    in: 'query',
+    description:
+      'Restrict to one project, by slug. Validated: a slug not in the caller\'s org is a 404, ' +
+      'never an empty result, so a caller can tell "no such project" from "that project is ' +
+      'idle". A bearer token naming a project other than its own gets a 400 PROJECT_MISMATCH.',
+    schema: { type: 'string' },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -371,13 +380,14 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. Scoped by the credential, not by the URL: a project-scoped ' +
         'token sees only that project\'s runs, exactly like GET /v1/projects/{slug}/runs; a ' +
-        'session names no project and sees every run across its whole org instead. This is the ' +
-        'session-reachable list route named by GET /v1/projects/{slug}/runs\'s ' +
-        'PROJECT_REQUIRED remediation.',
-      parameters: [parameters['Limit']!, parameters['Cursor']!],
+        'session names no project and sees every run across its whole org instead, unless ' +
+        '"project" below narrows it to one. This is the session-reachable list route named by ' +
+        'GET /v1/projects/{slug}/runs\'s PROJECT_REQUIRED remediation.',
+      parameters: [parameters['Limit']!, parameters['Cursor']!, parameters['ProjectFilter']!],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
         '400': ref('BadRequest'),
+        '404': ref('NotFound'),
         ...authFailureResponses,
       },
     },
@@ -570,6 +580,27 @@ const paths: Record<string, PathItemObject> = {
         '200': { description: 'OK and KO (x=throughput, y=p95) point series.', content: json(schemaRef('ScatterResponse')) },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/projects': {
+    get: {
+      operationId: 'listProjects',
+      summary: 'Projects this credential can see',
+      tags: ['projects'],
+      description:
+        'Requires the "read" scope. A session names no project and sees every project in its ' +
+        'org; a bearer token is minted against exactly one and sees that one, as a ' +
+        'one-element list. Each project carries its most recent run by the same ordering ' +
+        'GET /v1/runs uses, or null for a project nothing has been ingested into. Not ' +
+        'paginated: an org has a handful of projects, not a page of them.',
+      responses: {
+        '200': {
+          description: 'Every project this credential can see, ordered by name.',
+          content: json(schemaRef('ProjectListResponse')),
+        },
         ...authFailureResponses,
       },
     },

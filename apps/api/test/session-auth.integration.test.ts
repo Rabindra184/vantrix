@@ -434,6 +434,62 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     expect(ids).toEqual([ownRunId, secondRunId].sort());
   });
 
+  // The reason ?project= exists in the first place: a project page (Task 6)
+  // is session-driven, not token-driven, and a session is the ONE
+  // credential where the filter is load-bearing — for a bearer token,
+  // runs.controller.ts's PROJECT_MISMATCH branch (`tenant.projectId && ...`)
+  // can fire, but for a session tenant.projectId is always falsy, so that
+  // branch short-circuits and the slug lookup alone decides the query. Task
+  // 4's own brief tests all authenticate with a bearer token, so none of
+  // them ever execute that path. Two real projects, one run each, so the
+  // unfiltered call below is a genuine positive control: without it, a
+  // ?project=checkout call that (bug) still returned both runs would look
+  // identical to one that correctly returned one, because nothing would have
+  // proven the unfiltered baseline was ever more than one run to begin with.
+  it('filters by project slug for a session — the credential a project page actually uses', async () => {
+    ctx = await createTestApp();
+    const checkoutRunId = await ingestFullRun(ctx);
+
+    const search = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'search', name: 'Search' },
+    });
+    const searchToken = await mintIngestTokenFor(ctx, ctx.orgId, search.id);
+    const searchRunId = await ingestFullRun(ctx, searchToken);
+
+    const cookie = await signUpAsOrgMember(ctx, 'project-filter-session@example.test');
+
+    // Unfiltered: both projects' runs — the baseline that makes the two
+    // filtered assertions below discriminating rather than vacuous.
+    const unfiltered = await request(ctx.app.getHttpServer())
+      .get('/v1/runs')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(unfiltered.body.items.map((r: { id: string }) => r.id).sort()).toEqual(
+      [checkoutRunId, searchRunId].sort(),
+    );
+
+    // Filtered to checkout: only the checkout run. If ?project= were
+    // ignored for a session (as it silently was before this fix), this
+    // would return both runs and fail here. The 200 (not 400) is also the
+    // assertion that a session naming a project it may see never hits
+    // PROJECT_MISMATCH — that check requires tenant.projectId to be set,
+    // and a session's is not.
+    const checkoutOnly = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=checkout')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(checkoutOnly.body.items.map((r: { id: string }) => r.id)).toEqual([checkoutRunId]);
+
+    // Filtered to search: only the search run — proves the filter is
+    // resolving the NAMED slug, not just always narrowing to the org's
+    // first/default project.
+    const searchOnly = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=search')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(searchOnly.body.items.map((r: { id: string }) => r.id)).toEqual([searchRunId]);
+  });
+
   // The tenancy assertion. A session must not see another org's runs, built
   // the same way the cross-org isolation describe block above does: a real
   // second org/project/token, and a genuinely ingested run on it — not a
@@ -556,5 +612,48 @@ describe('GET /v1/runs — org-scoped by credential', () => {
     // silently repeated forever (or dropped the terminal null) would pass —
     // the assertions above already pin the two items' identities and order.
     expect(secondPage.body.nextCursor).toBeNull();
+  });
+});
+
+// GET /v1/projects under a session. Every existing test against this route
+// (projects.integration.test.ts) authenticates with ctx.readToken, a
+// project-scoped bearer token — so all of them go down
+// ProjectRepository.listForOrg's `AND p.id = $2` branch and none of them
+// exercise the org-wide branch a session takes. Placed here, beside the
+// GET /v1/runs session tests above, rather than duplicating
+// signUpAsOrgMember into projects.integration.test.ts — this file is where
+// the session-credential story for this API lives, which is also why Task
+// 4's own `?project=` session test sits in the describe block just above.
+describe('GET /v1/projects — org-scoped by credential', () => {
+  it('shows a session every project in its own org, and none of another org\'s', async () => {
+    ctx = await createTestApp();
+    // A second project in the caller's OWN org, alongside the 'checkout'
+    // project createTestApp() already seeds — so the assertion below is
+    // discriminating between "the org's projects" and "one project",
+    // not just between "some org" and "another org".
+    const search = await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'search', name: 'Search' },
+    });
+    // A project in a genuinely SEPARATE org. If listForOrg's
+    // `WHERE p.org_id = ${orgId}` were ever removed, this project would show
+    // up in the response and the toEqual below would fail on the extra slug.
+    const otherOrg = await ctx.prisma.org.create({
+      data: { slug: 'other-org-projects-session', name: 'Other' },
+    });
+    await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'other-project', name: 'Other Project' },
+    });
+
+    const cookie = await signUpAsOrgMember(ctx, 'projects-session@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects')
+      .set('Cookie', cookie)
+      .expect(200);
+
+    // toEqual, not toContain/not.toContain: sorted so the assertion does not
+    // depend on listForOrg's ORDER BY p.name ASC, and exact so that either a
+    // missing own-org project or a leaked other-org project fails it.
+    const slugs = res.body.items.map((p: { slug: string }) => p.slug).sort();
+    expect(slugs).toEqual(['checkout', search.slug].sort());
   });
 });

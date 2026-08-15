@@ -21,6 +21,7 @@ describe('RunResponseSchema', () => {
   it('requires a verdict on a complete run', () => {
     const ok = RunResponseSchema.parse({
       id: '018f0000-0000-7000-8000-000000000000',
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
       status: 'complete',
       verdict: 'passed',
       tool: 'gatling',
@@ -33,6 +34,7 @@ describe('RunResponseSchema', () => {
   it('accepts a null toolStartedAt (not yet parsed) additively — every existing field still validates', () => {
     const ok = RunResponseSchema.parse({
       id: '018f0000-0000-7000-8000-000000000000',
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
       status: 'complete',
       verdict: 'passed',
       tool: 'gatling',
@@ -46,6 +48,7 @@ describe('RunResponseSchema', () => {
   it('accepts a distinct, non-null toolStartedAt alongside startedAt', () => {
     const ok = RunResponseSchema.parse({
       id: '018f0000-0000-7000-8000-000000000000',
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
       status: 'complete',
       verdict: 'passed',
       tool: 'gatling',
@@ -68,6 +71,30 @@ describe('RunResponseSchema', () => {
         assertions: [],
       }),
     ).toThrow();
+  });
+});
+
+describe('RunResponseSchema project identity', () => {
+  const base = {
+    id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+    status: 'complete',
+    verdict: 'passed',
+    tool: 'gatling',
+    startedAt: '2026-08-15T10:00:00.000Z',
+    assertions: [],
+  };
+
+  it('rejects a run with no project — run.project_id is NOT NULL', () => {
+    expect(() => RunResponseSchema.parse(base)).toThrow();
+  });
+
+  it('carries the project through', () => {
+    const ok = RunResponseSchema.parse({
+      ...base,
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+    });
+    expect(ok.project.slug).toBe('checkout');
+    expect(ok.project.name).toBe('Checkout');
   });
 });
 

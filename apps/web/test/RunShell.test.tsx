@@ -10,6 +10,7 @@ afterEach(cleanup);
 
 const RUN: RunResponse = {
   id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
+  project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
   status: 'complete',
   verdict: 'not_evaluated',
   tool: 'gatling',

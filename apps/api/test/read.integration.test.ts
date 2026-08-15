@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +37,7 @@ afterEach(async () => {
   await ctx?.close();
 });
 
-async function ingested(): Promise<string> {
+async function ingested(extra: Record<string, unknown> = {}): Promise<string> {
   const q = new Queue('ingest', { connection: { url: process.env.REDIS_URL ?? 'redis://localhost:6380' } });
   await q.obliterate({ force: true });
   await q.close();
@@ -44,7 +45,7 @@ async function ingested(): Promise<string> {
   const res = await request(ctx.app.getHttpServer())
     .post('/v1/runs')
     .set('Authorization', `Bearer ${ctx.ingestToken}`)
-    .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+    .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, ...extra }))
     .attach('bundle', bundle, 'bundle.tgz');
   await runPipelineFor(ctx, res.body.id);
   return res.body.id;
@@ -420,5 +421,112 @@ describe('GET /v1/projects/:slug/runs', () => {
     // (does not 500 or otherwise choke on an out-of-range limit) — the cap
     // itself is exercised directly in the parseLimit unit coverage.
     expect(res.body.items.length).toBeGreaterThan(0);
+  });
+});
+
+describe('project identity', () => {
+  it('names the run\'s project on both the detail and the list', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const detail = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set(auth());
+    expect(detail.status).toBe(200);
+    expect(detail.body.project).toEqual({
+      id: ctx.projectId,
+      slug: 'checkout',
+      name: 'Checkout',
+    });
+
+    const list = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
+    expect(list.status).toBe(200);
+    const row = list.body.items.find((i: { id: string }) => i.id === runId);
+    // Derived from the detail response, not written down a second time: the
+    // two shapes must agree, and hard-coding both proves only that this test
+    // is self-consistent.
+    expect(row.project).toEqual(detail.body.project);
+    expect(row.simulation).toBe(detail.body.simulation);
+  });
+});
+
+describe('GET /v1/runs?project=', () => {
+  it('filters to the named project', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=checkout').set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((i: { id: string }) => i.id)).toContain(runId);
+  });
+
+  it('404s for a slug that does not exist in this org', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=no-such-project')
+      .set(auth());
+    // 404, never an empty 200: an empty 200 would describe a project that
+    // exists and happens to be idle, and a caller cannot tell those apart.
+    expect(res.status).toBe(404);
+  });
+
+  it('404s — not 403 — for a project belonging to another org', async () => {
+    ctx = await createTestApp();
+    const otherOrg = await ctx.prisma.org.create({
+      data: { slug: `other-${randomUUID().slice(0, 8)}`, name: 'Other' },
+    });
+    await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'secret', name: 'Secret', settings: {} },
+    });
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=secret').set(auth());
+    // 403 would confirm the project exists. The status code must not
+    // distinguish "no such project" from "not yours".
+    expect(res.status).toBe(404);
+  });
+
+  it('is identical to omitting the parameter when a token names its own project', async () => {
+    ctx = await createTestApp();
+    await ingested();
+    const withParam = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=checkout')
+      .set(auth());
+    const without = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
+    expect(withParam.body).toEqual(without.body);
+  });
+
+  it('400s with PROJECT_MISMATCH when a token names another project', async () => {
+    ctx = await createTestApp();
+    await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'search', name: 'Search', settings: {} },
+    });
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=search').set(auth());
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PROJECT_MISMATCH');
+  });
+});
+
+describe('ingest provenance', () => {
+  it('stores environment, branch and commitSha from ingest metadata', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested({
+      environment: 'staging',
+      branch: 'release/24.8',
+      commitSha: 'abc1234def5678',
+    });
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.environment).toBe('staging');
+    expect(res.body.branch).toBe('release/24.8');
+    expect(res.body.commitSha).toBe('abc1234def5678');
+  });
+
+  it('reads null, not empty string, for a run that carried none of them', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const res = await request(ctx.app.getHttpServer()).get(`/v1/runs/${runId}`).set(auth());
+    // null, never '': an empty string would claim the caller sent an empty
+    // branch, which is a different fact from having sent nothing.
+    expect(res.body.environment).toBeNull();
+    expect(res.body.branch).toBeNull();
+    expect(res.body.commitSha).toBeNull();
   });
 });

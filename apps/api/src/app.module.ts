@@ -4,10 +4,11 @@ import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health.controller.js';
 import { IngestModule } from './ingest/ingest.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
+import { ProjectsModule } from './projects/projects.module.js';
 import { RunsModule } from './runs/runs.module.js';
 
 @Module({
-  imports: [AuthModule, RunsModule, IngestModule, MetricsModule],
+  imports: [AuthModule, RunsModule, IngestModule, MetricsModule, ProjectsModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

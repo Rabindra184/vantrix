@@ -40,6 +40,7 @@ const RUN_ID = '11111111-1111-4111-8111-111111111111';
 function runBody(verdict: RunResponse['verdict']): RunResponse {
   return {
     id: RUN_ID,
+    project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
     status: 'complete',
     verdict,
     tool: 'gatling',

@@ -224,7 +224,9 @@ describe('the adaptive verdict', () => {
     const runsService = ctx.app.get(RunsService);
 
     const run: RunRecord = {
-      id: 'unseeded', orgId: ctx.orgId, projectId: ctx.projectId, status: 'failed',
+      id: 'unseeded', orgId: ctx.orgId, projectId: ctx.projectId,
+      project: { id: ctx.projectId, slug: 'checkout', name: 'Checkout' },
+      status: 'failed',
       verdict: null, tool: 'gatling', toolVersion: null, bundleKey: 'k',
       bundleSha256: 'x'.repeat(64), bundleBytes: 1, idempotencyKey: null,
       startedAt: new Date(), startedOn: new Date(), toolStartedAt: null,

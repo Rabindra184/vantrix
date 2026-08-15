@@ -79,3 +79,14 @@ not just the correct call.
 does not consult a descendant's `aria-label`; Chromium does. A `<button
 aria-label>` inside a `<th>` therefore pollutes the header's name in a browser
 and in no unit test. Those assertions belong in Playwright.
+
+**`getByRole(role, { name })` is EXACT in Testing Library and a
+case-insensitive SUBSTRING in Playwright.** The same call reads as the same
+assertion in `apps/web/test` and `apps/web/e2e`, but it is not: Playwright's
+default `name` match will pass `{ name: 'Beta' }` against rendered text
+`'beta'`, or against `'Beta Checkout'`. Pass `exact: true` whenever a
+fallback value (a slug, an id, a placeholder) could be a substring or case
+variant of the value you actually mean to require — otherwise the assertion
+passes whether or not the real value ever loaded. Cheaper still: pick fixture
+values that cannot collide with their fallback in the first place —
+`'beta'`/`'Beta Checkout Flow'`, never `'beta'`/`'Beta'`.

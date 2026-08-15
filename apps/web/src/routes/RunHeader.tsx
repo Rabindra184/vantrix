@@ -1,15 +1,18 @@
 import type { RunResponse } from '@perfportal/contracts';
+import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { formatDuration, formatStarted } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
+import { projectPath } from './paths';
 
 /**
  * What this run IS, before anything about how it went.
  *
- * Everything here comes from payloads the page already holds. There is no
- * environment and no branch: `IngestMetadataSchema` accepts both and nothing
- * stores them, so the platform does not know them — see the spec's §2. Adding
- * a blank chip would claim we asked and got nothing back.
+ * Everything here comes from payloads the page already holds. Environment,
+ * branch and commit are ingest metadata, frozen at accept time (Task 2) —
+ * each renders only when the run actually carries it, so a run predating that
+ * migration, or one whose caller sent none of the three, looks exactly as it
+ * did before this existed rather than growing three dashes.
  */
 export default function RunHeader({
   run,
@@ -27,6 +30,15 @@ export default function RunHeader({
 
   return (
     <header className="flex flex-col gap-2">
+      {/* The project above the simulation, not beside it: it is the run's
+          address, and the simulation is its identity. A link because the
+          reader who wants "this project's other runs" is one click from
+          them. */}
+      <p className="text-sm text-muted">
+        <Link to={projectPath(run.project.slug)} className="underline">
+          {run.project.name}
+        </Link>
+      </p>
       {/* The simulation is the run's identity to the person who ran it, so
           it is the heading. Rendered fully-qualified, exactly as the tool
           reported it (`example.ParitySimulation`), rather than trimmed to
@@ -57,6 +69,33 @@ export default function RunHeader({
         <span role="group" aria-label={`Tool: ${run.tool}${run.toolVersion ? ` ${run.toolVersion}` : ''}`}>
           {run.toolVersion ? `${run.tool} ${run.toolVersion}` : run.tool}
         </span>
+        {/* Provenance from ingest metadata. Each renders only when the run
+            carries it: a run submitted without them looks exactly as it did
+            before this existed, rather than growing three dashes. The
+            spec's §2 promise, now that the platform actually stores them.
+
+            role="group" + aria-label for the same reason every other chip
+            here has them: a bare <span>'s implicit role is "generic", which
+            is Name-from-PROHIBITED, so aria-label alone does nothing. */}
+        {run.environment != null && run.environment !== '' && (
+          <span role="group" aria-label={`Environment: ${run.environment}`} data-testid="run-environment">
+            {run.environment}
+          </span>
+        )}
+        {run.branch != null && run.branch !== '' && (
+          <span role="group" aria-label={`Branch: ${run.branch}`} data-testid="run-branch">
+            {run.branch}
+          </span>
+        )}
+        {run.commitSha != null && run.commitSha !== '' && (
+          // Seven characters visible, the WHOLE sha in the accessible name —
+          // the same short-versus-full treatment the run list gives a run id.
+          // NOT a link: the platform does not know the repository host, and a
+          // chip that looks like a link but is not is worse than plain text.
+          <span role="group" aria-label={`Commit: ${run.commitSha}`} data-testid="run-commit">
+            <code>{run.commitSha.slice(0, 7)}</code>
+          </span>
+        )}
         <span
           role="group"
           aria-label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${

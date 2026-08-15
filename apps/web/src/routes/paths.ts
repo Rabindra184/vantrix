@@ -20,6 +20,12 @@ export function runErrorsPath(runId: string): string {
 /** The no-organisation explanation. Its own URL on purpose (see NoOrg.tsx). */
 export const NO_ORG_ROUTE = '/no-organisation';
 
+/** One project's runs. Spelled once because App.tsx declares it, RunHeader
+ *  links to it and the e2e suite navigates to it. */
+export function projectPath(slug: string): string {
+  return `/projects/${encodeURIComponent(slug)}`;
+}
+
 /**
  * `/login`, carrying the destination the user was actually trying to reach.
  *
