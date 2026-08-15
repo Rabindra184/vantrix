@@ -597,3 +597,52 @@ test('the errors payload is fetched run-scoped, spelled exactly as the fixture c
 
   expect(seen).toEqual([`/v1/runs/${runId}/errors?scope=run&name=`]);
 });
+
+/* ======================================================================== *
+ * ERRORS OVER TIME — the chart above the table
+ * ======================================================================== */
+
+test('the errors tab draws failures over time above the table', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  const figure = page.getByTestId('chart-errors-over-time');
+  // EXACTLY ONE svg in the figure. Nine other specs rest on this invariant,
+  // and it is why no icon may be rendered inside a chart's figure.
+  await expect(figure.locator('svg')).toHaveCount(1);
+
+  // The table is still below it, holding every message rather than five.
+  await expect(errorsTable(page)).toBeVisible();
+});
+
+test('it draws a series per message the payload really carries', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  // DERIVED FROM THE WIRE, never written down: the reference bundle's message
+  // set changes on re-capture and that is not a defect. Capped at five,
+  // because a sixth named series would leave the folded remainder undrawn.
+  const body = await errors(page, runId);
+  const expected = Math.min(body.errors.length, 5);
+  expect(expected, 'the reference run has no failures to draw').toBeGreaterThan(0);
+
+  // `Chart` draws no legend below two series — "a one-entry legend is a label
+  // pretending to be a control" — so the legend can only be counted when the
+  // run really has two or more distinct messages.
+  const legend = page.getByTestId('chart-errors-over-time').locator('svg text[text-anchor="start"]');
+  await expect(legend).toHaveCount(expected > 1 ? expected : 0);
+});
+
+test('the errors chart carries its data table, like every other chart', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  // The parity surface, and the screen-reader route to the same numbers.
+  await expect(page.getByTestId('chart-data-errors-over-time')).toHaveCount(1);
+});
