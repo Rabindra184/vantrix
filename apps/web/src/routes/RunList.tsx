@@ -15,6 +15,7 @@ import { fetchRuns, runsQueryKey } from '../api/runs';
 // only way that is guaranteed.
 import { formatStarted } from './format';
 import { STATUS, VERDICT } from './marks';
+import { runPath } from './paths';
 
 type RunListItem = RunListResponse['items'][number];
 
@@ -84,26 +85,30 @@ export default function RunList() {
       ) : (
         <table className="w-full border-collapse text-left">
           <caption className="pb-3 text-left text-sm text-muted">
-            Every run in your organisation, newest first. “Started” is the load test’s own start
-            time; rows marked <em>ingest time</em> have not been parsed yet, so they fall back to
-            when PerfPortal received the run.
+            Every run in your organisation, newest first, with the project it belongs to.
+            “Started” is the load test’s own start time; rows marked <em>ingest time</em> have not
+            been parsed yet, so they fall back to when PerfPortal received the run.
           </caption>
+          {/* No Tool column. TOOL_IDS has exactly one member, so it read
+              "gatling" on every row this platform can produce. It returns
+              the day a second tool ships, at which point it carries
+              information; the field stays in the contract meanwhile. */}
           <thead>
             <tr className="border-b border-default">
               <th scope="col" className="py-2 pr-4 font-semibold">
                 Started
               </th>
               <th scope="col" className="py-2 pr-4 font-semibold">
-                Tool
+                Project
+              </th>
+              <th scope="col" className="py-2 pr-4 font-semibold">
+                Simulation
               </th>
               <th scope="col" className="py-2 pr-4 font-semibold">
                 Status
               </th>
-              <th scope="col" className="py-2 pr-4 font-semibold">
-                Verdict
-              </th>
               <th scope="col" className="py-2 font-semibold">
-                Run
+                Verdict
               </th>
             </tr>
           </thead>
@@ -226,20 +231,23 @@ function RunRow({ run }: { run: RunListItem }) {
           <span className="ml-2 text-sm text-muted">ingest time</span>
         )}
       </td>
-      <td className="py-2 pr-4">{run.tool}</td>
+      <td className="py-2 pr-4">{run.project.name}</td>
+      <td data-testid="run-simulation" className="py-2 pr-4">
+        {/* The simulation is what a reader is looking for, so it is the
+            link. Falls back to the short id for a run the worker has not
+            parsed (or never will), which is what this column showed before
+            the simulation was available at all. The accessible name carries
+            the WHOLE id either way, because "View" repeated down a column
+            names nothing. */}
+        <Link to={runPath(run.id)} aria-label={`View run ${run.id}`} className="underline">
+          {run.simulation ?? <code>{run.id.slice(0, 8)}</code>}
+        </Link>
+      </td>
       <td className="py-2 pr-4">
         <Badge mark={STATUS[run.status]} />
       </td>
-      <td className="py-2 pr-4">
-        <Badge mark={VERDICT[run.verdict ?? 'none']} />
-      </td>
       <td className="py-2">
-        {/* The short id is the visible text so consecutive links are told
-            apart by sight; the accessible name carries the whole id, because
-            "View" repeated down a column names nothing. */}
-        <Link to={`/runs/${run.id}`} aria-label={`View run ${run.id}`} className="underline">
-          <code>{run.id.slice(0, 8)}</code>
-        </Link>
+        <Badge mark={VERDICT[run.verdict ?? 'none']} />
       </td>
     </tr>
   );

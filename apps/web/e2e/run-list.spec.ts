@@ -135,9 +135,10 @@ test('a badge does not leak its glyph into the row’s accessible name', async (
   // Located by column position, not by text containing "complete" — a
   // regex/substring name match would still find the cell even if the glyph
   // leaked into its accessible name, since "complete" would still appear
-  // somewhere in "● complete". Started/Tool/Status/Verdict/Run is the column
-  // order RunList.tsx renders (RunRow), so index 2 is the status cell.
-  const statusCell = page.getByTestId('run-row').first().getByRole('cell').nth(2);
+  // somewhere in "● complete". Started/Project/Simulation/Status/Verdict is
+  // the column order RunList.tsx renders (RunRow), so index 3 is the status
+  // cell.
+  const statusCell = page.getByTestId('run-row').first().getByRole('cell').nth(3);
   await expect(statusCell).toBeVisible();
   // Exact match, not a substring: verified this catches the regression by
   // temporarily removing Badge's aria-hidden and re-running this test, which
@@ -160,4 +161,14 @@ test('an empty org says so instead of showing an empty table', async ({ page }) 
   // had never walked. There is nothing to page through, so there is nothing
   // to page with.
   await expect(page.getByRole('button', { name: 'Next' })).toHaveCount(0);
+});
+
+test('a row link is named by the whole run id, not by its visible text', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);       // this suite's existing seed
+  await signIn(page, admin);
+  await page.goto('/runs');
+  // Chromium's real accessibility tree — a <code> inside the link must not
+  // pollute or replace the name the aria-label supplies.
+  await expect(page.getByRole('link', { name: `View run ${runId}` })).toBeVisible();
 });
