@@ -77,18 +77,39 @@ export class MetricsController {
      * disagrees in the last decimal places even when the sets match, which is
      * what an integration test comparing the two endpoints caught.
      *
-     * Unlike `/stats`, this does not need `indicators`, so a settings document
-     * whose bounds are invalid is not this endpoint's problem — only
-     * `percentiles` is read, and `parseProjectSettings` supplies a default set
-     * when the document omits it.
+     * THE PARSE IS GUARDED even though this endpoint only reads
+     * `percentiles`. `parseProjectSettings` validates the WHOLE document, so a
+     * project with inverted `indicators` bounds — which `/stats` proves is
+     * reachable, since it has its own guard for exactly this — would throw a
+     * ZodError here and turn a misconfigured setting into a 500 on a page that
+     * never looks at indicators.
+     *
+     * It answers 400 rather than degrading to a default percentile set: a
+     * silent fallback would put this trend on a DIFFERENT set from the
+     * statistics table, which is the divergence the sketch recomputation above
+     * exists to prevent. `/stats` fails the same way for the same project, so
+     * the two stay consistent, and the message names the setting to fix.
      */
-    const settings = parseProjectSettings(
-      await this.projects.settings({ orgId: run.orgId, projectId: run.projectId }),
-    );
+    let settings;
+    try {
+      settings = parseProjectSettings(
+        await this.projects.settings({ orgId: run.orgId, projectId: run.projectId }),
+      );
+    } catch (err) {
+      throw badRequest(
+        'PROJECT_SETTINGS_INVALID',
+        `This project's settings are invalid, so trend percentiles cannot be computed: ${message(err)}`,
+        'Ask a project admin to fix the "indicators" setting (lowerMs must be below higherMs) and retry.',
+      );
+    }
 
     const { runs, cohortSize } = await this.reader.trends(
       { orgId: run.orgId, projectId: run.projectId },
       { simulation: run.simulation ?? null },
+      // THE REQUESTED RUN, passed so the query can add it back when it falls
+      // outside the newest `limit`. Without it a run older than the window is
+      // absent from its own trend — see TRENDS_SQL.
+      run.id,
       // The same clamp the run list uses, imported rather than restated: two
       // answers to "how many is too many" is one too many.
       parseLimit(limit),

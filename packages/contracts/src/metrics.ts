@@ -245,10 +245,16 @@ export type TrendRun = z.infer<typeof TrendRunSchema>;
  * looking at twenty of sixty runs has to be told, rather than shown a
  * truncated history that looks complete.
  *
- * THE ASKED-ABOUT RUN IS ALWAYS IN `runs` when it is terminal — it matches its
- * own cohort by construction. A non-terminal run has no stat row and so
- * appears in neither `runs` nor `cohortSize`; a gap in a trend reads as a
- * regression, which is the one thing an unparsed run must not look like.
+ * THE ASKED-ABOUT RUN IS ALWAYS IN `runs` when it is terminal, and this is a
+ * guarantee the server works for rather than one that falls out. The window is
+ * the newest `limit` runs; a run older than that is ADDED BACK, so `runs` holds
+ * at most `limit + 1` entries and the last of them may not be adjacent in time
+ * to the rest. Consumers must key off `id` and the timestamps rather than
+ * assuming consecutive entries are consecutive runs.
+ *
+ * A non-terminal run has no stat row and so appears in neither `runs` nor
+ * `cohortSize`; a gap in a trend reads as a regression, which is the one thing
+ * an unparsed run must not look like.
  */
 export const TrendsResponseSchema = z.object({
   runId: z.string().uuid(),

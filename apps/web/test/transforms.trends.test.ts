@@ -90,8 +90,10 @@ describe('the trend transforms, in general', () => {
     const truncated = response([...THREE.runs], { cohortSize: 60 });
     for (const transform of ALL) {
       const d = transform(truncated);
-      expect(d.limitation).toContain('3');
-      expect(d.limitation).toContain('60');
+      // Both numbers derived from the payload: a change to THREE's length must
+      // not need this assertion edited to stay honest.
+      expect(d.limitation).toContain(String(truncated.runs.length));
+      expect(d.limitation).toContain(String(truncated.cohortSize));
     }
   });
 
@@ -112,17 +114,22 @@ describe('toStatusTrend', () => {
   it('plots percentages, so runs of different sizes are comparable', () => {
     // A run of 100 and a run of 100,000 with the same failure ratio must draw
     // at the same height; raw counts would make load look like quality.
-    const d = toStatusTrend(
-      response([
-        run({ id: 'big', startedAt: '2026-08-02T10:00:00.000Z', count: 1000, okCount: 900, koCount: 100 }),
-        run({ id: 'small', startedAt: '2026-08-01T10:00:00.000Z', count: 10, okCount: 9, koCount: 1 }),
-      ]),
-    );
+    const big = response([
+      run({ id: 'big', startedAt: '2026-08-02T10:00:00.000Z', count: 1000, okCount: 900, koCount: 100 }),
+      run({ id: 'small', startedAt: '2026-08-01T10:00:00.000Z', count: 10, okCount: 9, koCount: 1 }),
+    ]);
+    const d = toStatusTrend(big);
 
     const ok = d.series.find((s) => s.name === 'OK')!.data as readonly (number | null)[];
     const ko = d.series.find((s) => s.name === 'KO')!.data as readonly (number | null)[];
-    expect(ok).toEqual([90, 90]);
-    expect(ko).toEqual([10, 10]);
+    // Derived from the two runs' own counts, so the point being made — that
+    // the SHARE is what is plotted — survives a change to either run's size.
+    const shares = [...big.runs].reverse().map((r) => [
+      (r.okCount / r.count) * 100,
+      (r.koCount / r.count) * 100,
+    ]);
+    expect(ok).toEqual(shares.map(([o]) => o));
+    expect(ko).toEqual(shares.map(([, k]) => k));
   });
 
   it('sums to 100 per run', () => {
@@ -166,7 +173,8 @@ describe('toPercentileTrend', () => {
         }),
       ]),
     );
-    expect(d.series.map((s) => s.name)).toContain('99.9%');
+    // The label is derived from the key that was added, not written twice.
+    expect(d.series.map((s) => s.name)).toContain(`${Number.parseFloat('99.9')}%`);
   });
 
   it('leaves a run missing a percentile as a gap, not zero', () => {
@@ -185,22 +193,22 @@ describe('toPercentileTrend', () => {
 
 describe('toThroughputTrend', () => {
   it('splits the rate by the run’s own outcome counts', () => {
-    const d = toThroughputTrend(
-      response([
-        run({
-          id: 'a',
-          startedAt: '2026-08-01T10:00:00.000Z',
-          count: 100,
-          okCount: 75,
-          koCount: 25,
-          throughputRps: 8,
-        }),
-      ]),
-    );
+    const one = response([
+      run({
+        id: 'a',
+        startedAt: '2026-08-01T10:00:00.000Z',
+        count: 100,
+        okCount: 75,
+        koCount: 25,
+        throughputRps: 8,
+      }),
+    ]);
+    const d = toThroughputTrend(one);
     const ok = d.series.find((s) => s.name === 'OK')!.data as readonly (number | null)[];
     const ko = d.series.find((s) => s.name === 'KO')!.data as readonly (number | null)[];
-    expect(ok[0]).toBeCloseTo(6, 6);
-    expect(ko[0]).toBeCloseTo(2, 6);
+    const only = one.runs[0]!;
+    expect(ok[0]).toBeCloseTo(only.throughputRps * (only.okCount / only.count), 6);
+    expect(ko[0]).toBeCloseTo(only.throughputRps * (only.koCount / only.count), 6);
   });
 
   it('sums to the run’s total rate', () => {

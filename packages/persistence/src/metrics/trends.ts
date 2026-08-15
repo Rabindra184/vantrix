@@ -38,12 +38,34 @@ import type { Sketch } from '@perfportal/statistics';
  * and it excludes a `failed` run, which CAN carry partial stats and would put
  * a spurious dip in the trend.
  *
- * ═══ ORDERING ═══
+ * ═══ ORDERING, AND WHY THE REQUESTED RUN IS ADDED BACK ═══
  *
  * `COALESCE(tool_started_at, started_at) DESC` is the same effective ordering
  * key `RunRepository.list` uses, so a trend and the run list cannot disagree
  * about what "most recent" means. Newest first; the chart transform reverses,
  * because a trend reads left-to-right in time.
+ *
+ * THE WINDOW IS THE NEWEST `limit` RUNS, PLUS THE REQUESTED ONE IF IT IS NOT
+ * AMONG THEM — `rn <= $4 OR id = $5`, so at most `limit + 1` rows.
+ *
+ * A bare `LIMIT` was wrong: it returns the n newest runs of the cohort, which
+ * the moment a cohort outgrows n stops containing the run the reader is
+ * looking at. The page is titled "this run in context", the contract states
+ * outright that a terminal run is always in its own response, and a trend
+ * without the run you opened it from is worse than no trend.
+ *
+ * ANCHORING THE WINDOW AT THE REQUESTED RUN INSTEAD — the `limit` runs up to
+ * and including it — was tried and rejected. It is contiguous, which is nice,
+ * but it hides every run that came AFTER the one being viewed: open a
+ * regression from a ticket three weeks old and the page cannot tell you it was
+ * fixed the next day. It also makes "the trend" mean something different
+ * depending on which run you happened to enter from.
+ *
+ * The cost of adding the run back is that the axis may be non-contiguous. The
+ * x labels are timestamps, so the jump is legible, and the transform states
+ * the window size beside the cohort size — but a reader must not take two
+ * adjacent slots for two consecutive runs, which is why the label is a date
+ * rather than an index.
  *
  * No index covers (project_id, simulation, COALESCE(...)). Neither does
  * `RunRepository.list`'s ordering, and for a cohort of a few hundred runs the
@@ -52,53 +74,57 @@ import type { Sketch } from '@perfportal/statistics';
  * does not have to rediscover which it was.
  */
 
-/** The cohort's rows, newest first, capped. */
-export const TRENDS_SQL = `
-  SELECT r.id, r.started_at, r.tool_started_at, r.duration_ms, r.verdict,
-         s.count, s.ok_count, s.ko_count, s.error_rate,
-         s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch
-    FROM run r
-    JOIN run_stat s
-      ON s.run_id = r.id
-     AND s.org_id = r.org_id
-     AND s.project_id = r.project_id
-     AND s.scope = 'run'
-     AND s.name = ''
-     AND s.family = 'response_time'
-   WHERE r.org_id = $1 AND r.project_id = $2
-     AND r.simulation IS NOT DISTINCT FROM $3
-     AND r.status = 'complete'
-   ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
-   LIMIT $4`;
-
 /**
- * The same predicate, counted.
+ * The cohort's rows: the newest `$4`, plus the requested run `$5` if it fell
+ * outside them. At most `limit + 1` rows.
  *
- * ITS OWN QUERY RATHER THAN A WINDOW FUNCTION. `COUNT(*) OVER ()` alongside
- * the rows would be one round trip, but it is evaluated against the result set
- * the LIMIT produced — so a cohort of sixty read twenty at a time would report
- * its size as twenty, which is precisely the number this column exists to
- * contradict.
+ * ONE QUERY, AND THE COUNT RIDES ALONG. `cohort_size` is a window function
+ * over the inner query, which has no LIMIT — PostgreSQL evaluates window
+ * functions before `LIMIT` anyway, verified rather than assumed:
+ *
+ *     SELECT id, COUNT(*) OVER() FROM (VALUES (1),(2),(3),(4),(5)) …LIMIT 2
+ *     -- 1|5
+ *     -- 2|5
+ *
+ * An earlier version of this file split it into two statements on the stated
+ * grounds that a window function "is evaluated against the result set the
+ * LIMIT produced". That was simply false, and the second query was a round
+ * trip spent on a misconception.
+ *
+ * `ROW_NUMBER()` and `COUNT(*)` are computed over the WHOLE cohort in the
+ * inner query; the outer `WHERE` then selects the window. So `cohort_size` is
+ * the cohort's real size on every row, which is exactly the number the client
+ * needs in order to say "showing 20 of 60".
  */
-export const COHORT_SIZE_SQL = `
-  SELECT COUNT(*)::int AS size
-    FROM run r
-    JOIN run_stat s
-      ON s.run_id = r.id
-     AND s.org_id = r.org_id
-     AND s.project_id = r.project_id
-     AND s.scope = 'run'
-     AND s.name = ''
-     AND s.family = 'response_time'
-   WHERE r.org_id = $1 AND r.project_id = $2
-     AND r.simulation IS NOT DISTINCT FROM $3
-     AND r.status = 'complete'`;
+export const TRENDS_SQL = `
+  SELECT t.id, t.started_at, t.tool_started_at, t.duration_ms, t.verdict,
+         t.count, t.ok_count, t.ko_count, t.error_rate,
+         t.min_ms, t.max_ms, t.mean_ms, t.throughput_rps, t.percentiles, t.sketch,
+         t.cohort_size
+    FROM (
+      SELECT r.id, r.started_at, r.tool_started_at, r.duration_ms, r.verdict,
+             s.count, s.ok_count, s.ko_count, s.error_rate,
+             s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch,
+             COALESCE(r.tool_started_at, r.started_at) AS effective,
+             ROW_NUMBER() OVER (
+               ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
+             ) AS rn,
+             COUNT(*) OVER ()::int AS cohort_size
+        FROM run r
+        JOIN run_stat s
+          ON s.run_id = r.id
+         AND s.org_id = r.org_id
+         AND s.project_id = r.project_id
+         AND s.scope = 'run'
+         AND s.name = ''
+         AND s.family = 'response_time'
+       WHERE r.org_id = $1 AND r.project_id = $2
+         AND r.simulation IS NOT DISTINCT FROM $3
+         AND r.status = 'complete'
+    ) t
+   WHERE t.rn <= $4 OR t.id = $5::uuid
+   ORDER BY t.effective DESC, t.id DESC`;
 
-/**
- * A cohort row as the database returns it — `Date`s and raw numerics, before
- * the controller serialises them. Deliberately not `TrendRun`: that is the
- * wire shape, with ISO strings, and persistence has no business knowing it.
- */
 export interface StoredTrendRun {
   readonly id: string;
   readonly startedAt: Date;

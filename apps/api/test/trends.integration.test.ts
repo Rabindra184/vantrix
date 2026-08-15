@@ -258,17 +258,57 @@ describe('GET /v1/runs/:id/trends', () => {
   });
 
   it('caps runs with limit while cohortSize keeps counting', async () => {
-    // The whole point of the separate count query: a window function would be
-    // evaluated after the LIMIT and report 2 here.
+    // Asked about the NEWEST run, so `limit` is a plain cap with nothing to
+    // add back. cohort_size is a window function over the un-windowed inner
+    // query, which is why it still reports the whole cohort.
     ctx = await createTestApp();
-    const a = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
+    await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
+    for (const day of ['02', '03', '04']) {
+      await seedRun({ simulation: 'checkout', startedAt: at(`2026-08-${day}T10:00:00Z`) });
+    }
+    const newest = await seedRun({
+      simulation: 'checkout',
+      startedAt: at('2026-08-05T10:00:00Z'),
+    });
+
+    const body = TrendsResponseSchema.parse((await trends(newest, '?limit=2')).body);
+    expect(body.runs).toHaveLength(2);
+    expect(body.runs.map((r) => r.id)).toContain(newest);
+    expect(body.cohortSize).toBe(5);
+  });
+
+  it('includes the asked-about run even when it is older than the window', async () => {
+    // THE CONTRACT SAYS THE ASKED-ABOUT RUN IS ALWAYS IN `runs`, and a page
+    // titled "this run in context" that omits the run is worse than useless.
+    // Newest-first with a bare LIMIT excluded it the moment the cohort grew
+    // past the window.
+    ctx = await createTestApp();
+    const oldest = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
     for (const day of ['02', '03', '04', '05']) {
       await seedRun({ simulation: 'checkout', startedAt: at(`2026-08-${day}T10:00:00Z`) });
     }
 
-    const body = TrendsResponseSchema.parse((await trends(a, '?limit=2')).body);
-    expect(body.runs).toHaveLength(2);
+    const body = TrendsResponseSchema.parse((await trends(oldest, '?limit=2')).body);
+    expect(body.runs.map((r) => r.id)).toContain(oldest);
     expect(body.cohortSize).toBe(5);
+  });
+
+  it('adds the asked-about run to the newest window rather than replacing it', async () => {
+    // The window stays the RECENT trend - the question is "is this simulation
+    // getting worse", and a run three weeks old must still be able to show
+    // what happened after it. So the newest `limit` are kept and the requested
+    // run joins them: at most limit + 1 rows.
+    ctx = await createTestApp();
+    const oldest = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
+    await seedRun({ simulation: 'checkout', startedAt: at('2026-08-02T10:00:00Z') });
+    const third = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-03T10:00:00Z') });
+    const fourth = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-04T10:00:00Z') });
+
+    const body = TrendsResponseSchema.parse((await trends(oldest, '?limit=2')).body);
+    // Newest first: the two newest, then the requested one appended in order.
+    expect(body.runs.map((r) => r.id)).toEqual([fourth, third, oldest]);
+    expect(body.runs.length).toBeLessThanOrEqual(2 + 1);
+    expect(body.cohortSize).toBe(4);
   });
 
   it('excludes a run that has not finished parsing', async () => {

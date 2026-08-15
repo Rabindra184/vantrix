@@ -1,7 +1,7 @@
 import { Histogram, Sketch } from '@perfportal/statistics';
 import type pg from 'pg';
 import type { ProjectScope } from '../repositories/tenant.js';
-import { COHORT_SIZE_SQL, TRENDS_SQL, type StoredTrendRun } from './trends.js';
+import { TRENDS_SQL, type StoredTrendRun } from './trends.js';
 
 export interface StoredStat {
   scope: string;
@@ -150,26 +150,32 @@ export class MetricReader {
    * A cohort spans many runs and therefore many dates, so a partition key
    * would be the wrong shape for this query even if the table had one.
    *
-   * TWO QUERIES, ISSUED TOGETHER. The count cannot ride along with the rows:
-   * a window function is evaluated after the LIMIT, so a sixty-run cohort read
-   * twenty at a time would report its size as twenty — the exact number
-   * `cohortSize` exists to contradict. They are independent, so they go in
-   * parallel rather than in sequence.
+   * ONE QUERY. `cohort_size` rides along as a window function over the inner
+   * query — PostgreSQL evaluates those before `LIMIT`, and this one has no
+   * LIMIT at all: the window is selected by the outer `WHERE`, so the count is
+   * the whole cohort's on every row.
+   *
+   * `requestedRunId` is what guarantees the asked-about run appears in its own
+   * trend. Without it the query returns the newest `limit` runs, which stops
+   * containing that run the moment the cohort outgrows the window — see
+   * `TRENDS_SQL`.
    */
   async trends(
     scope: ProjectScope,
     cohort: { simulation: string | null },
+    requestedRunId: string,
     limit: number,
   ): Promise<{ runs: StoredTrendRun[]; cohortSize: number }> {
-    const params = [scope.orgId, scope.projectId, cohort.simulation];
-
-    const [rows, size] = await Promise.all([
-      this.pool.query(TRENDS_SQL, [...params, limit]),
-      this.pool.query(COHORT_SIZE_SQL, params),
+    const { rows } = await this.pool.query(TRENDS_SQL, [
+      scope.orgId,
+      scope.projectId,
+      cohort.simulation,
+      limit,
+      requestedRunId,
     ]);
 
     return {
-      runs: rows.rows.map((r) => ({
+      runs: rows.map((r) => ({
         id: r.id,
         startedAt: r.started_at,
         toolStartedAt: r.tool_started_at,
@@ -189,7 +195,9 @@ export class MetricReader {
         // than from a stored float and a sketch respectively.
         sketch: r.sketch ? Sketch.deserialize(new Uint8Array(r.sketch)) : null,
       })),
-      cohortSize: size.rows[0]?.size ?? 0,
+      // Identical on every row; zero only when there are no rows at all, which
+      // cannot happen for a terminal run since it matches its own cohort.
+      cohortSize: rows[0]?.cohort_size ?? 0,
     };
   }
 

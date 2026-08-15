@@ -76,13 +76,15 @@ Never run `pnpm test:integration` while `scripts/capture-chart-fixture.mjs` is
 capturing: that suite truncates every table on setup and will delete the org
 the capture just seeded, mid-run.
 
-**The same applies to `pnpm test:e2e`, and the gate command runs them in that
-order.** Playwright's `webServer` and the worker it starts do not stop the
-instant the last spec passes, and `test:integration` truncating every table
-underneath a still-draining queue produces a failure that reproduces on
-nothing. Seen once as a bare `exit 1` with no reported failing test, then two
-clean 814-test runs in a row. If integration fails immediately after e2e and
-the tail shows no failing assertion, re-run it alone before believing it.
+**The same applies to `pnpm test:e2e` — so run the gate in its documented
+order, integration BEFORE e2e, and not the other way round.** Playwright's
+`webServer` and the worker it starts do not stop the instant the last spec
+passes, and `test:integration` truncating every table underneath a
+still-draining queue produces a failure that reproduces on nothing. Seen once,
+running the two ad hoc in the reverse order, as a bare `exit 1` with no
+reported failing test, then two clean 814-test runs in a row. If integration
+fails right after an e2e run and the tail shows no failing assertion, re-run it
+alone before believing it.
 
 
 ## Conventions that bite
