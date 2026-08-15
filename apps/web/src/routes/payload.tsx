@@ -104,8 +104,9 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
  * from this same payload, because a failed or still-pending `/stats` should
  * explain itself once rather than leaving the tile row to render six dashes
  * above an error the reader has to notice separately (`RunDetail.tsx`'s
- * `Tables`). This component owns only the loading and error states; how many
- * things `children` draws from the resolved payload is its callers' choice.
+ * `RunOverviewTab`). This component owns only the loading and error states;
+ * how many things `children` draws from the resolved payload is its callers'
+ * choice.
  *
  * A TABLE WHOSE FETCH FAILED MUST NOT SIMPLY VANISH, for the same reason
  * `Payload` renders undrawn charts rather than nothing: the statistics table IS

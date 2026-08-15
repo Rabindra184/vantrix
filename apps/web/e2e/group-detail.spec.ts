@@ -1,6 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { apiJson, signIn } from './helpers.js';
 
 /**
  * §13.4 in a real browser. The unit suites pin the lookup and the scoped URLs
@@ -25,20 +25,6 @@ interface StatsJson {
   readonly stats: readonly StatRowJson[];
 }
 
-/**
- * Fetches an endpoint THROUGH THE PAGE'S OWN SESSION — mirrors
- * run-charts.spec.ts's own `apiJson`, so a value read off the rendered page
- * can be checked against the same run the browser itself is looking at,
- * rather than a second request made with different credentials.
- */
-async function apiJson<T>(page: Page, path: string): Promise<T> {
-  return page.evaluate(async (p) => {
-    const res = await fetch(p, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`${p} answered ${res.status}: ${await res.text()}`);
-    return res.json();
-  }, path);
-}
-
 test('a nested group page loads from a pasted URL', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
@@ -50,6 +36,13 @@ test('a nested group page loads from a pasted URL', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(NESTED);
   expect(new URL(page.url()).pathname).not.toBe('/runs');
+
+  // §10-6 / §9 checkpoint 1: this page renders no run shell. Design §3a's own
+  // routing assumption was verified by hand once and never pinned — without
+  // this, the only thing that would notice a regression here is two unrelated
+  // `level: 1` heading assertions colliding in strict mode, which is not a
+  // guard, it is a coincidence.
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
 });
 
 test('both families and both distributions are on the page', async ({ page }) => {

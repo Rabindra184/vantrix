@@ -55,9 +55,11 @@ export function requestRow(stats: StatsResponse, path: string): StatRow | undefi
 
 export default function RequestDetail() {
   const { runId, name } = useParams<{ runId: string; name: string }>();
-  // Called under the SAME key `Tables`/`Overview` use, so this page's first
-  // render finds a warm cache entry rather than issuing a second request for
-  // a payload the run page already fetched.
+  // Called under the SAME key `RunOverviewTab` and `RunChartsTab` use
+  // (`RunDetail.tsx`), so this page's first render finds a warm cache entry
+  // rather than issuing a second request for a payload the run page already
+  // fetched — `statsQuery`'s `staleTime: Infinity` (`api/metrics.ts`) is what
+  // keeps that entry warm across all three routes; the key alone would not.
   const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
   const series = useQuery({
     ...seriesQuery(runId ?? '', 'request', name ?? ''),
@@ -96,7 +98,8 @@ export default function RequestDetail() {
         Back to this run
       </Link>
       {/* §13.3 ① and ⑪, ABOVE THE CHART STACK — same placement as the run
-          page's own tables (RunDetail.tsx, above its `Tables` call), and a
+          page's own statistics table (RunDetail.tsx's `RunOverviewTab`,
+          above the Charts tab it no longer shares a page with), and a
           stronger case for it: there, the argument was that scrolling past
           eight figures to reach one request's p99 is the reading order
           nobody wants. Here, the entire numeric payload IS a single row —

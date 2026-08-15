@@ -1,6 +1,22 @@
 /** Where an authenticated session with nowhere particular to go ends up. */
 export const DEFAULT_ROUTE = '/runs';
 
+/**
+ * A run's three tabs. Spelled once here because `App.tsx` declares them,
+ * `RunTabs` links to them and the e2e suite navigates to them — three places
+ * that must agree about a string, which is two more than can be kept in step
+ * by hand.
+ */
+export function runPath(runId: string): string {
+  return `/runs/${encodeURIComponent(runId)}`;
+}
+export function runChartsPath(runId: string): string {
+  return `${runPath(runId)}/charts`;
+}
+export function runErrorsPath(runId: string): string {
+  return `${runPath(runId)}/errors`;
+}
+
 /** The no-organisation explanation. Its own URL on purpose (see NoOrg.tsx). */
 export const NO_ORG_ROUTE = '/no-organisation';
 

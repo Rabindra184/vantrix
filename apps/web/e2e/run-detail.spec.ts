@@ -8,7 +8,8 @@ import {
   seedRunWithNaAndPassedAssertions,
   seedRunWithNaAssertion,
 } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { apiJson, signIn } from './helpers.js';
+import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
  * The run detail page — the last screen of the parity shell, and the one the
@@ -46,7 +47,7 @@ test('shows the run header', async ({ page }) => {
   const runId = await seedRunWithData(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // The reference bundle's simulation is `example.ParitySimulation`
   // (read.integration.test.ts:75); the substring is what identifies it.
@@ -71,6 +72,51 @@ test('shows the run header', async ({ page }) => {
   expect(seconds).toBeLessThan(3600);
 });
 
+test('the header states the run’s identity and its own peak', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('example.ParitySimulation');
+
+  // Computed from the payload the page itself fetched, never written down —
+  // a re-captured fixture moves both sides together.
+  const users = await apiJson<{ total: { maxConcurrent: number }[] }>(
+    page,
+    `/v1/runs/${runId}/users`,
+  );
+  const peak = Math.max(...users.total.map((b) => b.maxConcurrent));
+  await expect(page.getByText(`${peak.toLocaleString()} peak users`)).toBeVisible();
+
+  // Chromium, not jsdom: dom-accessibility-api does not consult a
+  // descendant's aria-hidden the way a real AT tree does, so a badge whose
+  // glyph leaks into its name passes every unit assertion and fails here.
+  await expect(page.getByTestId('run-status')).toHaveAccessibleName('complete');
+
+  // THE NAME ALONE DOES NOT PIN THIS. `role="img"` on the badge's wrapper
+  // reports the identical string "complete" while turning a text pill into
+  // an assistive-tech GRAPHIC — every screen reader announces it as a
+  // picture, and `getByRole('img', …)` newly matches it, which
+  // `toHaveAccessibleName` above cannot tell apart from the correct
+  // `role="group"`. `getByRole` locators query Chromium's own computed
+  // role, not a jsdom approximation, so this is the assertion that actually
+  // fails if the role regresses even though the name stays "complete".
+  await expect(page.getByRole('group', { name: 'complete' })).toHaveCount(1);
+  await expect(page.getByRole('img', { name: 'complete' })).toHaveCount(0);
+
+  // THE DURATION IS NAMED, NOT MERELY PRECEDED BY ITS NAME. The header used
+  // to be a `<dl>` for exactly this reason — "Duration" as `<dt>`, "63s" as
+  // `<dd>` — and lost it when the markup became a flat row of `<span>`s.
+  // `RunHeader.tsx` restores it the same way `run-status` above is already
+  // named: `role="group"` + `aria-label`, since a bare `<span>`'s implicit
+  // role is "generic", which is Name-from-PROHIBITED — jsdom's
+  // `dom-accessibility-api` does not consult a descendant's `aria-label`
+  // either way, so only Chromium's own tree, here, can see whether this
+  // actually holds.
+  await expect(page.getByTestId('run-duration')).toHaveAccessibleName(/^Duration: \d+s$/);
+});
+
 /**
  * Task 10's one content change: six stat tiles above the statistics table,
  * every value read from the same run-scope row the table's "All Requests"
@@ -82,7 +128,7 @@ test('the stat tiles agree with the statistics table', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   // `stat-row-total` is the All Requests row — the run's own totals, in its own
   // <tbody>, and the same row RunStats reads. NOT `stat-row`, which is the
@@ -101,7 +147,7 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
   const runId = await seedRunWithNaAssertion(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   const row = page.getByRole('row', { name: /not applicable/i });
   // Every `not.*` in this file is paired with a POSITIVE assertion on the
@@ -172,7 +218,7 @@ test('a not_applicable outcome and a passed outcome render differently on the pa
   const runId = await seedRunWithNaAndPassedAssertions(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   const outcomes = page.getByTestId('assertion-outcome');
   await expect(outcomes).toHaveCount(2);
@@ -215,7 +261,7 @@ test('a pending run says so rather than showing zeros', async ({ page }) => {
   const runId = await seedPendingRun(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   await expect(page.getByText(/still processing/i)).toBeVisible();
   // "rather than showing zeros" is the actual requirement, and it needs its
@@ -271,7 +317,7 @@ test('a pending run is asked about again', async ({ page }) => {
     if (request.url().includes(`/v1/runs/${runId}`)) polls += 1;
   });
 
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
   // The page is on screen and in its processing state before anything is
   // counted, so a failure below reads as "did not poll" rather than "never
   // loaded".
@@ -285,7 +331,7 @@ test('another org run is not readable', async ({ page }) => {
   const otherOrgRunId = await seedRunInOtherOrg();
 
   await signIn(page, admin);
-  await page.goto(`/runs/${otherOrgRunId}`);
+  await page.goto(runPath(otherOrgRunId));
 
   // The API's OWN words, not invented copy: RunsController.get throws
   // `new NotFoundException('No run <id> in this project.')`, which
@@ -312,6 +358,27 @@ test('another org run is not readable', async ({ page }) => {
   await expect(page.getByTestId('run-duration')).toHaveCount(0);
 });
 
+test('each tab is its own URL, reachable directly', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  // A hard load of each tab, never a click — this is what makes a link
+  // pasted into an incident channel land where it says it will.
+  await page.goto(runChartsPath(runId));
+  await expect(page.getByTestId('chart-percentiles')).toBeVisible();
+  await expect(page.getByTestId('stat-row-total')).toHaveCount(0);
+
+  await page.goto(runErrorsPath(runId));
+  await expect(page.getByTestId('error-row').first()).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+
+  // The bare path is Overview, so every link that predates tabs still works.
+  await page.goto(runPath(runId));
+  await expect(page.getByTestId('stat-row-total')).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+});
+
 test('a run that failed its SLA renders as a run, not as an error', async ({ page }) => {
   // 422 carries a full run body. Reading it as an error would tell the user
   // their most important run is unreadable.
@@ -319,7 +386,7 @@ test('a run that failed its SLA renders as a run, not as an error', async ({ pag
   const runId = await seedRunWithFailedAssertion(admin.orgId);
 
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  await page.goto(runPath(runId));
 
   await expect(page.getByRole('heading', { name: /ParitySimulation/ })).toBeVisible();
   await expect(page.getByTestId('run-verdict')).toContainText(/failed/i);
@@ -329,4 +396,84 @@ test('a run that failed its SLA renders as a run, not as an error', async ({ pag
   // The run is readable AND the failure is legible: the rule that failed is
   // in the table, not merely summarised in the header.
   await expect(page.getByTestId('assertion-outcome')).toHaveText(/failed/i);
+});
+
+test('switching tabs does not remount the shell', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // The heading is `RunHeader`'s, rendered by `RunShell` — the layout route
+  // that is supposed to mount once and never again for as long as the run's
+  // three tabs are visited. If the layout route were three sibling routes
+  // instead, this exact DOM node would be destroyed and a fresh one built on
+  // every tab click.
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toBeVisible();
+
+  // Comparing the heading's TEXT before and after (as this test used to)
+  // would not actually catch a remount: React Query's cache serves the run
+  // query from the same warm entry either way, so a freshly mounted
+  // `RunHeader` renders the identical string. Tagging the live DOM NODE with
+  // a marker React itself does not manage is what a remount destroys — a
+  // fresh mount starts from JSX with no such attribute, while a shell that
+  // truly persisted keeps carrying it across the click below.
+  await heading.evaluate((el) => el.setAttribute('data-remount-probe', 'still-here'));
+
+  await page.getByRole('link', { name: 'Charts' }).click();
+  await expect(page.getByTestId('chart-percentiles')).toBeVisible();
+  await expect(heading).toHaveAttribute('data-remount-probe', 'still-here');
+});
+
+test('a processing run shows no tab strip', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedPendingRun(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // A tab strip over a run nobody has parsed yet is three doors onto three
+  // empty rooms — the same mistake the Processing branch already refuses to
+  // make with a table of dashes.
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
+  await expect(page.getByText(/still processing/i)).toBeVisible();
+});
+
+test('the errors tab counts distinct messages, not failed requests', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // Spec §9-4. On the reference run these are 2 and 24 — distinct error
+  // messages versus failed requests. Both are derived from the page's own
+  // payloads rather than written down, so a re-captured fixture moves them
+  // together: the count must follow the errors table's row count, and must
+  // NOT follow the statistics row's KO column.
+  //
+  // `stat-row-total` is read HERE, on the Overview tab, not after navigating
+  // to `/errors`: `RunShell` is a layout route, and `RunOverviewTab` — the
+  // only tab that renders `StatisticsTable` — unmounts the moment the
+  // `<Outlet/>` swaps to `RunErrorsTab`. Reading it after the navigation
+  // waits forever for a node the errors tab never renders (confirmed at this
+  // file's "each tab is its own URL" test, which asserts `stat-row-total`
+  // has count 0 off the Overview tab).
+  const tab = page.getByRole('link', { name: /Errors/ });
+  const ko = Number(
+    (await page.getByTestId('stat-row-total').locator('td').nth(2).textContent())?.trim(),
+  );
+
+  await page.goto(runErrorsPath(runId));
+  // `.count()` reads the DOM as it stands, with none of `expect(locator)`'s
+  // auto-retry — unlike the `ko` read above, whose `.textContent()` DOES
+  // auto-wait for its locator to attach. Without this, `.count()` can run
+  // before the errors table's own fetch has resolved and read back 0 rows,
+  // same pattern as "each tab is its own URL, reachable directly" above.
+  await expect(page.getByTestId('error-row').first()).toBeVisible();
+  const distinct = await page.getByTestId('error-row').count();
+  expect(distinct).toBeGreaterThan(0);
+  expect(distinct).not.toBe(ko);
+
+  await page.goto(runPath(runId));
+  await expect(tab).toHaveText(`Errors (${distinct})`);
 });

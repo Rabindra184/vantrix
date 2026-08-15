@@ -55,3 +55,22 @@ export async function firstRowId(page: Page): Promise<string> {
   }
   return id;
 }
+
+/**
+ * Fetches an endpoint THROUGH THE PAGE'S OWN SESSION, so a parity assertion
+ * reads exactly what the browser read — not a second request made with
+ * different credentials, against which "the page agrees with the API" would be
+ * a weaker claim than it looks.
+ *
+ * Byte-identical in run-charts.spec.ts and group-detail.spec.ts before this
+ * moved here; run-detail.spec.ts is the third caller, and three private
+ * copies of the same function is the point past which the duplication itself
+ * becomes the convention.
+ */
+export async function apiJson<T>(page: Page, path: string): Promise<T> {
+  return page.evaluate(async (p) => {
+    const res = await fetch(p, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`${p} answered ${res.status}: ${await res.text()}`);
+    return res.json();
+  }, path);
+}
