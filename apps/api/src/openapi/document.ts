@@ -380,9 +380,9 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. Scoped by the credential, not by the URL: a project-scoped ' +
         'token sees only that project\'s runs, exactly like GET /v1/projects/{slug}/runs; a ' +
-        'session names no project and sees every run across its whole org instead. This is the ' +
-        'session-reachable list route named by GET /v1/projects/{slug}/runs\'s ' +
-        'PROJECT_REQUIRED remediation.',
+        'session names no project and sees every run across its whole org instead, unless ' +
+        '"project" below narrows it to one. This is the session-reachable list route named by ' +
+        'GET /v1/projects/{slug}/runs\'s PROJECT_REQUIRED remediation.',
       parameters: [parameters['Limit']!, parameters['Cursor']!, parameters['ProjectFilter']!],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
