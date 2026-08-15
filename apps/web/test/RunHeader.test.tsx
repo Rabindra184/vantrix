@@ -82,6 +82,14 @@ describe('RunHeader', () => {
     // Derived from the value, not written down: assert the visible text is a
     // strict prefix of the full sha rather than restating the slice length.
     const visible = screen.getByTestId('run-commit').textContent!;
+    // Non-empty FIRST, and load-bearing: `commitSha.startsWith('')` is
+    // vacuously true and `'' !== commitSha` is too, so without this a
+    // regression that blanked the visible text — slice(0, 0), or the <code>
+    // content dropped while the chip and its aria-label survive — would pass
+    // both assertions below while showing a sighted reader nothing. The e2e
+    // test cannot cover this: it asserts the aria-label, which sits on the
+    // outer span and is unaffected by an empty <code>.
+    expect(visible.length).toBeGreaterThan(0);
     expect(commitSha.startsWith(visible)).toBe(true);
     expect(visible).not.toBe(commitSha);
   });
