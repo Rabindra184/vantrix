@@ -44,7 +44,8 @@ export default function ScopedStatistics({
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <SectionHeading id={headingId}>{heading}</SectionHeading>
-      <Card padding="none">
+      {/* `as="div"` — see `Card`'s `as` prop and `TableFrame`. */}
+      <Card as="div" padding="none">
         <div className={SCROLLER} tabIndex={0} role="region" aria-label={`${heading} table`}>
           {/* NOW ON THE SHARED STYLES — it was the last of the six tables
               still setting its own (`w-full text-sm`, left-aligned numerics,

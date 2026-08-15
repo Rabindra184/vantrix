@@ -40,6 +40,16 @@ rather than trusting a PR body or a merge click.
 
 ## Verification
 
+**Use the Node in `.nvmrc` (22). On Node 20 the unit suite silently runs 47 of
+its 67 files.** jsdom 30 pulls an undici whose `webidl.util.markAsUncloneable`
+does not exist on 20, so every DOM-environment file — which is every component
+test, i.e. exactly the ones a UI change needs — throws while LOADING. Vitest
+reports those as `Errors` in a separate line from `Test Files`, and prints a
+confident `Test Files 47 passed (47) | Tests 534 passed (534)` above them. A
+green-looking local run then fails in CI, which is on 22. `nvm use` first, and
+if a run reports fewer than **67 files / 702 tests**, it did not run
+everything.
+
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A
 change to anything the API consumes by name can pass every unit gate and still

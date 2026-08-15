@@ -52,7 +52,11 @@ export default function TableFrame({
   readonly children: ReactNode;
 }) {
   return (
-    <Card padding="none">
+    // `as="div"`: every caller already sits inside a `<section aria-labelledby>`
+    // that names the region, and a nested unnamed `<section>` for the visual
+    // frame both means nothing and breaks a `closest('section')` walk up from a
+    // cell. See `Card`'s `as` prop.
+    <Card as="div" padding="none">
       <p aria-hidden="true" className={`${CAPTION} px-4 pt-4`}>
         {caption}
       </p>

@@ -35,7 +35,24 @@ export default function Card({
   readonly title?: string;
   readonly description?: string;
   readonly actions?: ReactNode;
-  readonly as?: 'section' | 'figure';
+  /**
+   * `div` IS FOR A CARD THAT IS PURELY A SURFACE, and choosing it is not a
+   * style decision — `TableFrame` and `ScopedStatistics` both need it.
+   *
+   * Those two put a card INSIDE a `<section aria-labelledby>` that already
+   * names the region, so a second `<section>` for the visual frame is
+   * meaningless nesting. It is also actively harmful: `GroupDetail.test.tsx`
+   * finds a family's heading with `cell.closest('section').querySelector('h2')`
+   * — walking up from a `<td>` to the named section — and a card rendered as
+   * `<section>` intercepts that walk and returns a container with no heading
+   * in it. That is not the test being brittle; `closest('section')` is a
+   * reasonable thing to write, and an unnamed `<section>` wrapping a table is
+   * the wrong element.
+   *
+   * The default stays `section` because a TITLED card is a real section of
+   * the page; only the frame-around-something-else case takes `div`.
+   */
+  readonly as?: 'section' | 'figure' | 'div';
   /**
    * `none` is for a card whose child is a full-bleed table: a table inside
    * `p-5` has a 20px gutter its header fill does not reach, which reads as a
