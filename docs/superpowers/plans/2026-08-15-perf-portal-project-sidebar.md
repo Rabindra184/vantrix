@@ -553,7 +553,17 @@ test('the rail navigates to a project', async ({ page }) => {
   await page.goto('/runs');
 
   const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
-  await rail.getByRole('link', { name: 'Billing Exports', exact: true }).click();
+  // NOT `rail.getByRole('link', { name: 'Billing Exports', exact: true })`.
+  // `Badge` marks only its GLYPH aria-hidden, not its label, so a rail link
+  // carrying a badge has the accessible name "Billing Exports passed" and an
+  // exact match on the bare project name can never resolve. Filtering on the
+  // exact VISIBLE text keeps the substring protection while accommodating the
+  // badge — and, unlike asserting the full name, does not bake the fixture's
+  // hard-coded verdict into the test.
+  await rail
+    .getByRole('link')
+    .filter({ has: page.getByText('Billing Exports', { exact: true }) })
+    .click();
 
   await expect(page).toHaveURL(/\/projects\/billing$/);
   await expect(page.getByRole('heading', { name: 'Billing Exports', exact: true })).toBeVisible();
@@ -570,7 +580,17 @@ test('the project nav reflows rather than disappearing on a narrow viewport', as
   await expect(rail).toBeVisible();
   // Visible is not enough — the spec's claim is that it stays USABLE, so the
   // test clicks through rather than stopping at presence.
-  await rail.getByRole('link', { name: 'Billing Exports', exact: true }).click();
+  // NOT `rail.getByRole('link', { name: 'Billing Exports', exact: true })`.
+  // `Badge` marks only its GLYPH aria-hidden, not its label, so a rail link
+  // carrying a badge has the accessible name "Billing Exports passed" and an
+  // exact match on the bare project name can never resolve. Filtering on the
+  // exact VISIBLE text keeps the substring protection while accommodating the
+  // badge — and, unlike asserting the full name, does not bake the fixture's
+  // hard-coded verdict into the test.
+  await rail
+    .getByRole('link')
+    .filter({ has: page.getByText('Billing Exports', { exact: true }) })
+    .click();
   await expect(page).toHaveURL(/\/projects\/billing$/);
 });
 ```
