@@ -1363,6 +1363,7 @@ git add -A && git commit -m "feat(web): the run list names each row by its proje
 - Create: `apps/web/src/api/projects.ts`
 - Create: `apps/web/src/routes/ProjectRuns.tsx`
 - Modify: `apps/web/src/api/runs.ts`
+- Modify: `apps/web/src/AuthGate.tsx` (a comment only — see Step 4)
 - Modify: `apps/web/src/routes/RunList.tsx`
 - Modify: `apps/web/src/routes/paths.ts`
 - Modify: `apps/web/src/App.tsx`
@@ -1502,6 +1503,13 @@ export function fetchRuns(
 ```
 
 Add to `runsQueryKey`'s docstring: the slug is part of the key because a filtered and an unfiltered list are different data under the same cursor, and sharing a key would serve one as the other. `runsQueryKey()` with no arguments is now `['runs', null, null]` — still the exact key `AuthGate`'s membership probe uses, so the first paint still renders from the bootstrap's cached result.
+
+**Two docstrings assert the key's literal shape and this change falsifies both.** Fix them in the same commit:
+
+- `apps/web/src/api/runs.ts` — the line reading ``` `runsQueryKey()` with no argument is `['runs', null]` ``` becomes `['runs', null, null]`.
+- `apps/web/src/AuthGate.tsx:42-43` — the comment reading ``` by construction (`['runs', null]`) ``` becomes `['runs', null, null]`. **`AuthGate.tsx` is otherwise untouched by this task**, which is exactly why this is easy to miss: its call is `runsQueryKey()` with no arguments, so it keeps working and only the comment goes wrong. Verified before this task was dispatched that these are the only two places the shape is written down, and that no call site anywhere spells the array literally — every one goes through the function, so the identity holds by construction.
+
+The neighbouring comment in `AuthGate.tsx` — that `queryFn` is wrapped in an arrow because TanStack would otherwise hand `fetchRuns` a `QueryFunctionContext` as its `cursor` — stays true and becomes more load-bearing, since `fetchRuns` now takes a second parameter too. Leave it.
 
 - [ ] **Step 5: Give `RunList` its two props**
 
