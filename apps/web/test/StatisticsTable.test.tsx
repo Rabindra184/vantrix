@@ -1380,3 +1380,105 @@ describe('StatisticsTable — the table itself', () => {
     expect(bodyRows()).toEqual([]);
   });
 });
+
+/**
+ * CSV EXPORT.
+ *
+ * The interesting decision is WHICH ROWS, and it is not "the visible ones":
+ * expansion is a display convenience, so a collapsed group's children are
+ * still rows of the statistics table and must be in the file. The filter and
+ * the sort ARE honoured, because both are explicit acts of selection.
+ *
+ * Driven through the real button rather than by calling `statisticsCsv`
+ * directly, so the wiring is covered too — `flatten(sorted)` versus `rows` is
+ * exactly the mistake this guards, and it lives at the call site.
+ */
+describe('StatisticsTable — CSV export', () => {
+  /** jsdom implements neither of these; the Blob itself is real. */
+  function clickDownload(): Blob {
+    const held: { blob: Blob | null } = { blob: null };
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: (blob: Blob) => {
+        held.blob = blob;
+        return 'blob:test';
+      },
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => {} });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }));
+
+    if (held.blob === null) throw new Error('Download CSV produced no blob');
+    return held.blob;
+  }
+
+  /**
+   * `Blob.text()` UTF-8-DECODES, and decoding strips a leading BOM — so the
+   * text a test reads never contains one however the file was written. The BOM
+   * is asserted on the bytes instead, in its own case below.
+   */
+  const csvText = (): Promise<string> => clickDownload().text();
+
+  it('exports every row in the tree, including collapsed groups’ children', async () => {
+    // The table opens with every group COLLAPSED, so only the four roots are
+    // on screen. All ten must still be in the file.
+    renderTable();
+    const csv = await csvText();
+
+    for (const path of ALL_PATHS) {
+      expect(csv, `${path} missing from the export`).toContain(`"${path}"`);
+    }
+  });
+
+  it('puts the totals row first, labelled as the table labels it', async () => {
+    renderTable();
+    const csv = await csvText();
+    const records = csv.split('\r\n');
+
+    expect(records[1]).toContain('"All Requests"');
+  });
+
+  it('heads the file with the columns the table is rendering', async () => {
+    renderTable();
+    const csv = await csvText();
+
+    // Derived from the payload, not written down: the percentile columns are
+    // whatever this run configured.
+    //
+    // THE LEAF HEADERS ONLY. The table heads its columns in two rows - the
+    // GROUPS ("Executions", "Response Time (ms)") carry the unit and span
+    // several columns each, and are not columns themselves. `colSpan > 1` is
+    // what tells them apart, and it is the same fact the markup encodes.
+    const rendered = screen
+      .getAllByRole('columnheader')
+      .filter((th) => (th as HTMLTableCellElement).colSpan <= 1)
+      .map((th) => th.textContent?.trim() ?? '')
+      .filter((label) => label !== '');
+    const header = csv.split('\r\n')[0] ?? '';
+
+    expect(rendered.length).toBeGreaterThan(5);
+    for (const label of rendered) {
+      expect(header, `${label} missing from the header`).toContain(`"${label}"`);
+    }
+  });
+
+  it('honours the filter, because typing one is an act of selection', async () => {
+    renderTable();
+    fireEvent.change(screen.getByLabelText('Filter by name'), {
+      target: { value: 'Recommendations' },
+    });
+
+    const csv = await csvText();
+    expect(csv).toContain('"Catalog/Recommendations"');
+    expect(csv).not.toContain('"Search"');
+  });
+
+  it('writes a UTF-8 BOM, so Excel does not mangle a non-ASCII name', async () => {
+    // Asserted on the BYTES. Blob.text() UTF-8-decodes, and decoding consumes
+    // the BOM, so a text-level assertion can never see one and would fail
+    // whether or not the file actually has it.
+    renderTable();
+    const bytes = new Uint8Array(await clickDownload().arrayBuffer());
+    expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
+  });
+});
