@@ -47,10 +47,11 @@ test, i.e. exactly the ones a UI change needs — throws while LOADING. Vitest
 reports those as `Errors` in a separate line from `Test Files`, and prints a
 confident `Test Files 47 passed (47) | Tests 534 passed (534)` above them. A
 green-looking local run then fails in CI, which is on 22. `nvm use` first, and
-if a run reports fewer than **70 files / 788 tests**, it did not run
+if a run reports fewer than **74 files / 830 tests**, it did not run
 everything. (Update these two numbers when a sub-project adds suites, or the
 next reader calibrates against a stale floor and a silently-skipped run looks
-like a pass.)
+like a pass. Last measured on `main` at `b6bd0dc`, after Trends and Compare
+landed; the previous floor of 70 / 788 predated both.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A
