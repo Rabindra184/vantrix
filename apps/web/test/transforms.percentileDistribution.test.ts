@@ -27,9 +27,73 @@ describe('toPercentileDistribution', () => {
     }
   });
 
-  it('reaches 100 per cent of the binned observations', () => {
+  it('reaches 100 per cent when nothing overflowed the histogram', () => {
     const p = points({ ...distribution, overflowCount: 0 }, 'ok');
     expect(p.at(-1)![0]).toBeCloseTo(100, 6);
+  });
+
+  /**
+   * OVERFLOW MUST STOP THE CURVE SHORT OF 100%.
+   *
+   * An observation above the histogram's cap is counted but lands in no bin.
+   * Normalising by the binned total alone puts the last point at exactly 100%
+   * whatever overflowed — a curve that terminates at 100% reads as "and this
+   * is the maximum", which is the one thing an overflowed histogram cannot
+   * tell you. Prose beside the chart does not undo a drawn claim.
+   *
+   * This is also the convention the histogram beside it already follows: the
+   * API divides `okPercent`/`koPercent` by a total that INCLUDES the overflow,
+   * so those series deliberately sum to less than 100.
+   */
+  describe('with observations above the histogram cap', () => {
+    const overflowed = { ...distribution, overflowCount: 40 };
+
+    it('stops the curve short of 100 per cent', () => {
+      const last = points(overflowed, 'all').at(-1)![0];
+      expect(last).toBeLessThan(100);
+    });
+
+    it('places the shortfall exactly, for the outcome that owns every observation', () => {
+      // `all` is the one case where the arithmetic is exact: every binned
+      // observation plus every overflowed one is the whole run.
+      const binned = sum(distribution.okCount) + sum(distribution.koCount);
+      const last = points(overflowed, 'all').at(-1)![0];
+      expect(last).toBeCloseTo((binned / (binned + 40)) * 100, 6);
+    });
+
+    it('stops short on the single-outcome views too', () => {
+      // The payload does not say which outcome the unplaceable observations
+      // belonged to, so these are a LOWER bound rather than an exact figure —
+      // and erring low is the safe direction for a chart read for its tail.
+      expect(points(overflowed, 'ok').at(-1)![0]).toBeLessThan(100);
+      expect(points(overflowed, 'ko').at(-1)![0]).toBeLessThan(100);
+    });
+
+    it('says the single-outcome curves understate, rather than leaving it implied', () => {
+      expect(toPercentileDistribution(overflowed, 'ok').limitation).toContain('understate');
+      // `all` needs no such caveat: its arithmetic is exact.
+      expect(toPercentileDistribution(overflowed, 'all').limitation).not.toContain('understate');
+    });
+
+    it('is empty when EVERY observation overflowed, not a pair of bare axes', () => {
+      // With the overflow in the denominator, the total is non-zero while
+      // there is not one point to plot. Keyed on the binned count instead, or
+      // this falls through to the drawing branch and returns a series with an
+      // empty `data` — which renders as a grid with no marks, the "measured,
+      // and found to be nothing" reading the empty branch exists to prevent.
+      const all = toPercentileDistribution(
+        {
+          ...distribution,
+          okCount: distribution.okCount.map(() => 0),
+          koCount: distribution.koCount.map(() => 0),
+          overflowCount: 40,
+        },
+        'all',
+      );
+      expect(all.series).toHaveLength(0);
+      expect(all.empty).toBeTruthy();
+      expect(all.limitation).toContain('40');
+    });
   });
 
   it('plots payload labels as the y values, never a bin index', () => {

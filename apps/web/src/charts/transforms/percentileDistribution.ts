@@ -80,12 +80,20 @@ const NOTHING_RECORDED: Record<Outcome, string> = {
  * does not carry, and inventing a figure here would be a claim this module
  * cannot support.
  */
-function overflowNote(count: number): string {
+function overflowNote(count: number, outcome: Outcome): string {
   const times = count === 1 ? 'response time' : 'response times';
-  return (
+  const head =
     `${count} ${times} exceeded the range this histogram records and fall into no bin, so this ` +
-    'curve describes only the binned observations and the true tail extends beyond its ' +
-    'right-hand end.'
+    'curve stops short of 100% and the true tail extends beyond its right-hand end.';
+
+  // `all` is exact: every binned observation plus every overflowed one is the
+  // whole run, so the shortfall is precisely the unplaceable share.
+  if (outcome === 'all') return head;
+
+  return (
+    `${head} The payload does not record which outcome those responses had, so they are counted ` +
+    'against this curve as well — the percentiles here understate slightly rather than claim ' +
+    'coverage the data cannot support.'
   );
 }
 
@@ -97,12 +105,49 @@ export function toPercentileDistribution(
   // Emitted in the empty branch too: "everything overflowed" is exactly the
   // case with no curve to draw AND the case where the reader most needs to
   // know why.
-  const limitation = d.overflowCount > 0 ? overflowNote(d.overflowCount) : undefined;
+  const limitation =
+    d.overflowCount > 0 ? overflowNote(d.overflowCount, outcome) : undefined;
 
   const counts = countsFor(d, outcome);
-  const total = counts.reduce((sum, n) => sum + n, 0);
 
-  if (d.labels.length === 0 || total <= 0) {
+  /**
+   * ═══ THE DENOMINATOR INCLUDES THE OVERFLOW ═══
+   *
+   * An observation above the histogram's cap is counted but lands in no bin.
+   * Dividing by the BINNED total alone puts the last point at exactly 100%
+   * however much overflowed — and a percentile curve that terminates at 100%
+   * reads as "and this is the maximum", which is precisely what an overflowed
+   * histogram cannot tell you. Prose beside a chart does not undo a claim the
+   * chart draws.
+   *
+   * This is also the convention the histogram beside it already follows:
+   * `distribution()` divides `okPercent` / `koPercent` by a total that
+   * includes the overflow, so those two series deliberately sum to less than
+   * 100 and `toDistribution`'s own note says so.
+   *
+   * FOR `all` THE ARITHMETIC IS EXACT — binned plus overflowed is the whole
+   * run. For `ok` and `ko` it is not, because the payload does not say which
+   * outcome the unplaceable observations had: `overflowCount` is one combined
+   * figure. Counting all of it against each single-outcome curve makes those
+   * percentiles a LOWER BOUND, which is the safe direction for a chart read
+   * for its tail — it can understate coverage, never overstate it. Splitting
+   * the overflow by the binned OK:KO ratio was the alternative and was
+   * rejected: the observations that overflowed are the slowest in the run, and
+   * assuming they failed in the same proportion as the fast ones is exactly
+   * the assumption a tail chart exists to test.
+   */
+  const binned = counts.reduce((sum, n) => sum + n, 0);
+  const total = binned + d.overflowCount;
+
+  /**
+   * THE EMPTY TEST IS ON `binned`, NOT ON `total`. With the overflow in the
+   * denominator, a run whose observations ALL exceeded the cap has a non-zero
+   * total and not one point to plot — testing `total` there would fall through
+   * to the drawing branch and return a series with an empty `data`, which
+   * renders as axes with nothing on them: the exact "measured, and found to be
+   * nothing" reading this branch exists to prevent.
+   */
+  if (d.labels.length === 0 || binned <= 0) {
     return {
       series: [],
       axisLabels: [],

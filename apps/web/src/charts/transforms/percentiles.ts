@@ -106,8 +106,34 @@ function bandValue(
   outcome: Outcome,
 ): number | null {
   if (!measured(bucket, outcome)) return null;
-  if (band === 'min') return bucket.minMs;
-  if (band === 'max') return bucket.maxMs;
+
+  /**
+   * ═══ MIN AND MAX ARE NOT SPLIT BY OUTCOME ═══
+   *
+   * All three percentile maps hold `p25`…`p99` and NOTHING ELSE. These two
+   * bands come from `bucket.minMs` / `maxMs`, which are the bucket's COMBINED
+   * OK+KO extremes and the only extrema the payload carries.
+   *
+   * `all` — exactly right, and the only outcome for which they are.
+   *
+   * `ok` — a documented approximation, and what shipped. `DEFAULT_BANDS` draws
+   * both, this is the default view, and G-22 parity was established against
+   * it. On a mostly-successful run the combined extrema are the OK ones to
+   * within a rounding error. Left alone deliberately; the note names it.
+   *
+   * `ko` — NOT DRAWN, because here the approximation is not small. In the
+   * reference run's first bucket with failures the combined minimum is 21 ms
+   * while the 25th percentile of the KO responses is 141 ms, so a "KO min"
+   * would sit almost seven times below the lowest KO band and pull the series
+   * to the axis. A KO minimum was never measured, and this file's whole
+   * argument about gaps is that a measurement nobody took is absent rather
+   * than borrowed from somebody else's.
+   */
+  if (band === 'min' || band === 'max') {
+    if (outcome === 'ko') return null;
+    return band === 'min' ? bucket.minMs : bucket.maxMs;
+  }
+
   return bucket[MAP[outcome]][band] ?? null;
 }
 
@@ -148,7 +174,10 @@ function bandValue(
  */
 const OUTCOME_NOTE: Record<Outcome, string> = {
   ok: 'min and max are the combined OK+KO extremes; the other bands are OK-only.',
-  ko: 'min and max are the combined OK+KO extremes; the other bands are KO-only.',
+  ko:
+    'These bands are KO-only, and min and max are not shown: the payload carries no ' +
+    'failure-only extremes, and its combined ones include successful responses faster ' +
+    'than any failure.',
   all: 'All bands include both successful and failed responses.',
 };
 

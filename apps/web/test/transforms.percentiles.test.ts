@@ -296,3 +296,66 @@ describe('toPercentiles — outcome selection', () => {
     expect(d.rows).toHaveLength(series.buckets.length);
   });
 });
+
+/**
+ * MIN AND MAX ARE NOT SPLIT BY OUTCOME, AND THE KO VIEW MUST NOT PRETEND THEY
+ * ARE.
+ *
+ * `SeriesBucket` carries three percentile maps, and every one of them holds
+ * `p25`…`p99` — NOT `min` and `max`. Those two bands are read off
+ * `bucket.minMs` / `bucket.maxMs`, which are the bucket's COMBINED OK+KO
+ * extremes and the only extrema the payload has.
+ *
+ * On the OK view of a mostly-successful run that is a small, disclosed
+ * approximation, and it is what shipped. On the KO view it is not small: in
+ * the reference run's first bucket with failures, the combined minimum is
+ * 21 ms while the 25th percentile of the KO responses is 141 ms — so a drawn
+ * "KO min" would sit almost seven times below the lowest KO band and plunge
+ * the series to the axis.
+ *
+ * A KO minimum was never measured, so it is not drawn. Same rule as a bucket
+ * with no failures: absent, not zero, not somebody else's number.
+ */
+describe('toPercentiles — min and max under outcome selection', () => {
+  const withKo = series.buckets.findIndex((b) => Object.keys(b.percentilesKo).length > 0);
+
+  it('omits min and max on the KO view, because the payload has no KO extrema', () => {
+    const d = toPercentiles(series, ['min', 'max'], 'ko');
+    for (const drawn of d.series) {
+      expect(drawn.data.every((value) => value === null)).toBe(true);
+    }
+  });
+
+  it('would otherwise have drawn a KO min far below the lowest KO band', () => {
+    // The defect, stated as arithmetic so it cannot quietly come back.
+    const bucket = series.buckets[withKo]!;
+    expect(bucket.minMs).toBeLessThan(bucket.percentilesKo.p25!);
+  });
+
+  it('renders those cells as dashes in the table rather than a borrowed number', () => {
+    const d = toPercentiles(series, ['min', 'max'], 'ko');
+    const minColumn = BANDS.indexOf('min');
+    const maxColumn = BANDS.indexOf('max');
+    expect(d.rows[withKo]!.values[minColumn]).toBe('—');
+    expect(d.rows[withKo]!.values[maxColumn]).toBe('—');
+  });
+
+  it('keeps them on the All view, where the combined extrema are exactly right', () => {
+    const d = toPercentiles(series, ['min', 'max'], 'all');
+    const drawn = d.series[0]!.data as readonly (number | null)[];
+    expect(drawn[withKo]).toBe(series.buckets[withKo]!.minMs);
+  });
+
+  it('keeps them on the OK view, which is what shipped and is disclosed', () => {
+    // Unchanged deliberately: `DEFAULT_BANDS` draws min and max, this is the
+    // default view, and G-22 parity was established against it. The same
+    // approximation applies and the note names it.
+    const d = toPercentiles(series, ['min'], 'ok');
+    const drawn = d.series[0]!.data as readonly (number | null)[];
+    expect(drawn[withKo]).toBe(series.buckets[withKo]!.minMs);
+  });
+
+  it('says which bands the KO view is actually showing', () => {
+    expect(toPercentiles(series, BANDS, 'ko').limitation).toContain('min and max are not shown');
+  });
+});

@@ -79,8 +79,26 @@ zero-millisecond response time is a measurement, and drawing one is a lie. The
 existing transform already returns `null` for an absent band; the change must
 not regress that.
 
-**Band set.** `BANDS` is ten entries (`min, p25 … p99, max`) and stays ten. The
-per-bucket sketches emit the same keys for all three maps.
+**Band set.** `BANDS` is ten entries (`min, p25 … p99, max`) and stays ten.
+
+**But min and max are not in any of the three maps.** All three carry `p25` …
+`p99` and nothing else; those two bands are read off `bucket.minMs` /
+`bucket.maxMs`, which are the bucket's **combined OK+KO extremes** and the only
+extrema the payload holds. So:
+
+- `all` — exact.
+- `ok` — a documented approximation, and what shipped. On a mostly-successful
+  run the combined extrema are the OK ones to within a rounding error;
+  `DEFAULT_BANDS` draws both and G-22 parity was established against that.
+  Unchanged, with the note naming it.
+- `ko` — **not drawn.** Here the approximation is not small: in the reference
+  run's first bucket with failures the combined minimum is 21 ms while the 25th
+  percentile of the KO responses is 141 ms, so a "KO min" would sit almost seven
+  times below the lowest KO band and pull the series to the axis. A KO minimum
+  was never measured, so it is absent rather than borrowed.
+
+Outcome-split extrema would need a contract and ingest change; they are not in
+this sub-project.
 
 ## 2.2 Percentiles-distribution chart
 
@@ -93,7 +111,7 @@ response-time bucket. Walking `labels[]` in ascending order and accumulating
 `okCount[]` yields, at each bucket, "this many observations were at or below
 this response time" — divide by the total and it is a percentile. So:
 
-```
+```text
 x = 100 * cumulative(counts[0..i]) / total
 y = labels[i]
 ```
@@ -105,10 +123,27 @@ tests. No new endpoint, no new query, no new cache key — it consumes the
 **Two honesty constraints, both from fields the contract already carries:**
 
 - **`overflowCount > 0` means the bins are incomplete above the histogram cap.**
-  The curve must not be drawn to 100% in that case, because the observations
-  above the cap are counted but unplaceable. Truncate the curve at the last
-  real bucket and state the overflow, rather than drawing a line that asserts a
-  maximum the data does not support.
+  The curve must not reach 100% in that case, because the observations above the
+  cap are counted but unplaceable — and a percentile curve that terminates at
+  100% reads as "and this is the maximum", which is the one thing an overflowed
+  histogram cannot tell you. Prose beside a chart does not undo a claim the
+  chart draws.
+
+  **The overflow therefore goes in the denominator**, which is the convention
+  the histogram beside it already follows: `distribution()` divides
+  `okPercent`/`koPercent` by a total that includes it, so those series
+  deliberately sum to less than 100. For `all` this is exact. For `ok` and `ko`
+  it is not — `overflowCount` is a single combined figure and the payload does
+  not say which outcome those responses had — so counting all of it against each
+  single-outcome curve makes those percentiles a **lower bound**, which errs in
+  the safe direction for a chart read for its tail. Splitting the overflow by
+  the binned OK:KO ratio was considered and rejected: the overflowed
+  observations are the slowest in the run, and assuming they failed in the same
+  proportion as the fast ones is exactly the assumption a tail chart exists to
+  test.
+
+  The empty test keys on the **binned** count, not the overflow-inclusive total:
+  a run where everything overflowed has a non-zero total and no points to plot.
 - **`exactValues`** — when true, Gatling skipped bucketing and the labels are
   exact values rather than midpoints. The transform must not re-interpolate.
 
@@ -205,7 +240,7 @@ absence, not claim they are the same test.
 
 ## 1.2 API — one new endpoint
 
-```
+```http
 GET /v1/runs/:id/trends?limit=20
 ```
 
@@ -351,7 +386,7 @@ substring match can be satisfied by a rail row instead of the target. No
 **Gate before claiming done**, per `CLAUDE.md` — `test:unit` excludes the other
 two suites:
 
-```
+```bash
 pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e
 ```
 

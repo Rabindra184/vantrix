@@ -6,7 +6,7 @@
 
 **Architecture:** Entirely client-side. No contract change, no migration, no ingest change, no new endpoint. Every number already arrives in `SeriesResponse`, `DistributionResponse` or `StatsResponse`; three of the four tasks are new pure transforms plus a control, and the fourth is a serialiser. Transforms stay plain TypeScript with no React and no ECharts, so they unit-test in the node environment against the captured fixture — the boundary `charts/types.ts` exists to hold.
 
-**Tech Stack:** React 19, TypeScript, Vite, Tailwind v4, ECharts, TanStack Query, Zod contracts, Vitest (unit), Playwright (e2e).
+**Tech Stack:** React 18.3.1, TypeScript, Vite, Tailwind v4, ECharts, TanStack Query, Zod contracts, Vitest (unit), Playwright (e2e). Node ≥22 — see Global Constraints.
 
 **Spec:** `docs/superpowers/specs/2026-08-15-cross-run-analysis-and-report-completeness-design.md`
 
@@ -18,6 +18,11 @@
 - **Expectations are computed from the payload, never written down.** A test hard-coding a value that `apps/web/test/fixtures/reference-run.json` supplies breaks on the next re-capture for a reason that is not a defect. Derive it.
 - **A token that is not in `@theme` produces no utility, silently.** Tailwind v4 generates utilities only from `@theme` declarations. If a task needs a new colour utility, publish the alias under a *different* name than the runtime token.
 - **Null is not zero.** A gap in a series is `null` and draws as a gap. A missing value in a table cell is `—`. Rendering either as `0` states a measurement that was never made.
+- **Node ≥22 is required to run the suite, and Node 20 fails silently.** On
+  v20, jsdom cannot load (`webidl.util.markAsUncloneable is not a function`) and
+  vitest reports *20 unhandled errors and exit 1* while still printing a
+  green-looking "534 passed" — every jsdom suite is skipped rather than failed.
+  The real count on v22 is 760. Check `node -v` before trusting a pass.
 - **Verification gate**, before any task is called done:
   `pnpm typecheck && pnpm lint && pnpm test:unit`
   and before the *plan* is called done, additionally `pnpm test:integration && pnpm test:e2e` with the local stack up.
