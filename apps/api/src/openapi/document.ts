@@ -243,6 +243,15 @@ const parameters: Record<string, ParameterObject> = {
       'UUID — an invalid value is rejected with 400 INVALID_CURSOR, unlike "limit" above.',
     schema: { type: 'string', format: 'uuid' },
   },
+  ProjectFilter: {
+    name: 'project',
+    in: 'query',
+    description:
+      'Restrict to one project, by slug. Validated: a slug not in the caller\'s org is a 404, ' +
+      'never an empty result, so a caller can tell "no such project" from "that project is ' +
+      'idle". A bearer token naming a project other than its own gets a 400 PROJECT_MISMATCH.',
+    schema: { type: 'string' },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -374,10 +383,11 @@ const paths: Record<string, PathItemObject> = {
         'session names no project and sees every run across its whole org instead. This is the ' +
         'session-reachable list route named by GET /v1/projects/{slug}/runs\'s ' +
         'PROJECT_REQUIRED remediation.',
-      parameters: [parameters['Limit']!, parameters['Cursor']!],
+      parameters: [parameters['Limit']!, parameters['Cursor']!, parameters['ProjectFilter']!],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
         '400': ref('BadRequest'),
+        '404': ref('NotFound'),
         ...authFailureResponses,
       },
     },

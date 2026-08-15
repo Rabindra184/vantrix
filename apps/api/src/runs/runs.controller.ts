@@ -20,13 +20,17 @@ import { RunsService } from './runs.service.js';
 // 14/14); see the Task 9 report for that run.
 @Controller('/v1/runs')
 export class RunsController {
-  constructor(private readonly runs: RunsService) {}
+  constructor(
+    private readonly runs: RunsService,
+    private readonly projects: ProjectRepository,
+  ) {}
 
   /**
    * Org-scoped by credential, not by URL. A bearer token carries a projectId
    * and stays restricted to it, exactly as before. A session carries none and
-   * sees every run in its org — the spread below is what expresses that, and
-   * it is the only production caller of RunRepository.list's org-only branch.
+   * sees every run in its org unless "project" narrows it by slug — the
+   * spread below takes the org-only branch of RunRepository.list whenever a
+   * session names no project.
    */
   @Get()
   @Scopes('read')
@@ -34,11 +38,35 @@ export class RunsController {
     @Req() req: Request,
     @Query('limit') limit = '25',
     @Query('cursor') cursor?: string,
+    @Query('project') project?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
+    let projectId = tenant.projectId;
+
+    if (project !== undefined) {
+      const named = await this.projects.findBySlugInOrg(tenant.orgId, project);
+      // 404, never 403 and never an empty 200: a 403 confirms the project
+      // exists, and an empty 200 describes a project that exists and happens
+      // to be idle. The status code must not distinguish "no such project"
+      // from "not yours".
+      if (!named) throw new NotFoundException(`No project "${project}" in this organisation.`);
+      // A bearer token is minted against exactly one project. Naming another
+      // is a caller mistake, not a permission question — and answering with
+      // that token's own runs under someone else's slug would be a silent
+      // wrong answer.
+      if (tenant.projectId && tenant.projectId !== named.id) {
+        throw badRequest(
+          'PROJECT_MISMATCH',
+          `This token belongs to a different project than "${project}".`,
+          'Omit "project", or use a session, which can read every project in the org.',
+        );
+      }
+      projectId = named.id;
+    }
+
     const parsedCursor = parseCursor(cursor);
     const page = await this.runs.runs().list(
-      { orgId: tenant.orgId, ...(tenant.projectId ? { projectId: tenant.projectId } : {}) },
+      { orgId: tenant.orgId, ...(projectId ? { projectId } : {}) },
       { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
     );
     return { items: page.items.map(toListItem), nextCursor: page.nextCursor };

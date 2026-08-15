@@ -63,6 +63,25 @@ export class ProjectRepository {
     };
   }
 
+  /**
+   * A project by slug WITHIN an org id.
+   *
+   * Separate from findBySlug, which takes an org SLUG. `req.tenant` carries
+   * an org id, and bending one method into accepting either would make
+   * every call site read ambiguously.
+   */
+  async findBySlugInOrg(orgId: string, slug: string): Promise<ProjectRecord | null> {
+    const row = await this.prisma.project.findFirst({ where: { orgId, slug } });
+    if (!row) return null;
+    return {
+      id: row.id,
+      orgId: row.orgId,
+      slug: row.slug,
+      name: row.name,
+      settings: (row.settings ?? {}) as Record<string, unknown>,
+    };
+  }
+
   async byId(projectId: string): Promise<ProjectRecord | null> {
     const row = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (!row) return null;

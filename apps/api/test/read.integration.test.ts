@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -444,6 +445,60 @@ describe('project identity', () => {
     // is self-consistent.
     expect(row.project).toEqual(detail.body.project);
     expect(row.simulation).toBe(detail.body.simulation);
+  });
+});
+
+describe('GET /v1/runs?project=', () => {
+  it('filters to the named project', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=checkout').set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((i: { id: string }) => i.id)).toContain(runId);
+  });
+
+  it('404s for a slug that does not exist in this org', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=no-such-project')
+      .set(auth());
+    // 404, never an empty 200: an empty 200 would describe a project that
+    // exists and happens to be idle, and a caller cannot tell those apart.
+    expect(res.status).toBe(404);
+  });
+
+  it('404s — not 403 — for a project belonging to another org', async () => {
+    ctx = await createTestApp();
+    const otherOrg = await ctx.prisma.org.create({
+      data: { slug: `other-${randomUUID().slice(0, 8)}`, name: 'Other' },
+    });
+    await ctx.prisma.project.create({
+      data: { orgId: otherOrg.id, slug: 'secret', name: 'Secret', settings: {} },
+    });
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=secret').set(auth());
+    // 403 would confirm the project exists. The status code must not
+    // distinguish "no such project" from "not yours".
+    expect(res.status).toBe(404);
+  });
+
+  it('is identical to omitting the parameter when a token names its own project', async () => {
+    ctx = await createTestApp();
+    await ingested();
+    const withParam = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=checkout')
+      .set(auth());
+    const without = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
+    expect(withParam.body).toEqual(without.body);
+  });
+
+  it('400s with PROJECT_MISMATCH when a token names another project', async () => {
+    ctx = await createTestApp();
+    await ctx.prisma.project.create({
+      data: { orgId: ctx.orgId, slug: 'search', name: 'Search', settings: {} },
+    });
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs?project=search').set(auth());
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('PROJECT_MISMATCH');
   });
 });
 

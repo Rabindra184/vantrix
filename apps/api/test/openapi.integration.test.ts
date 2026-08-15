@@ -211,4 +211,12 @@ describe('OpenAPI document', () => {
     expect((schemas['StatsResponse'] as { properties?: Record<string, unknown> } | undefined)?.properties?.['configurable']).toBeDefined();
     expect((schemas['StatRow'] as { properties?: Record<string, unknown> } | undefined)?.properties?.['indicators']).toBeDefined();
   });
+
+  it('declares the project filter on GET /v1/runs', async () => {
+    const doc = await fetchDoc();
+    const get = doc.paths?.['/v1/runs']?.['get'] as
+      | { parameters?: { name?: string }[] }
+      | undefined;
+    expect(get?.parameters?.map((p) => p.name)).toContain('project');
+  });
 });
