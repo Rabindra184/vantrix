@@ -62,6 +62,12 @@ describe('GET /v1/projects', () => {
       .get('/v1/projects')
       .set('Authorization', `Bearer ${ctx.readToken}`);
 
+    // Unlike the "no runs" test above, latestRun is populated here, so this
+    // is the assertion that actually exercises the inner object schema —
+    // RunStatusSchema and RunVerdictSchema.nullable() only run when the
+    // wrapping .nullable() sees a non-null value to hand them.
+    expect(() => ProjectListResponseSchema.parse(projects.body)).not.toThrow();
+
     // Derived from the run list, not written down: these two must agree, and
     // asserting a literal id would prove only that this test is self-consistent.
     expect(projects.body.items[0].latestRun.id).toBe(runs.body.items[0].id);
