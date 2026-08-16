@@ -32,6 +32,7 @@ import StatisticsTable from '../tables/StatisticsTable';
 import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
+import { useRunWindow } from './useRunWindow';
 import RunShell from './RunShell';
 import RunStats from './RunStats';
 
@@ -327,7 +328,8 @@ export function RunOverviewTab() {
     queryFn: () => fetchRun(runId!),
     enabled: runId !== undefined,
   });
-  const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
+  const { window } = useRunWindow(Number.MAX_SAFE_INTEGER);
+  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
 
   // Not reachable through the router: `RunShell` mounts this tab only once
   // `RunDetail` has already resolved a `ready` run for this `runId`, and the
@@ -373,7 +375,11 @@ export function RunOverviewTab() {
 export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
   const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: runId !== undefined });
-  const series = useQuery({ ...errorSeriesQuery(runId ?? ''), enabled: runId !== undefined });
+  const { window } = useRunWindow(Number.MAX_SAFE_INTEGER);
+  const series = useQuery({
+    ...errorSeriesQuery(runId ?? '', window),
+    enabled: runId !== undefined,
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -479,13 +485,20 @@ const RESPONSES_PER_SECOND: Slot = {
  */
 export function RunChartsTab() {
   const { runId } = useParams<{ runId: string }>();
-  const stats = useQuery({ ...statsQuery(runId ?? ''), enabled: runId !== undefined });
-  const users = useQuery({ ...usersQuery(runId ?? ''), enabled: runId !== undefined });
+  // ONE WINDOW FOR THE WHOLE TAB, so every figure below describes the same
+  // stretch of the run. A per-chart window would let two figures under one
+  // heading disagree about what they are showing.
+  const { window } = useRunWindow(Number.MAX_SAFE_INTEGER);
+  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
+  const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: runId !== undefined });
   const distribution = useQuery({
-    ...distributionQuery(runId ?? ''),
+    ...distributionQuery(runId ?? '', 'run', '', 'response_time', window),
     enabled: runId !== undefined,
   });
-  const series = useQuery({ ...seriesQuery(runId ?? ''), enabled: runId !== undefined });
+  const series = useQuery({
+    ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
+    enabled: runId !== undefined,
+  });
 
   return (
     // TWO COLUMNS FROM `2xl`, ONE BELOW IT — and the order the charts are

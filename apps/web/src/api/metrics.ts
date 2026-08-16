@@ -8,7 +8,9 @@ import {
   TrendsResponseSchema,
   UsersResponseSchema,
 } from '@perfportal/contracts';
+import type { Window } from '@perfportal/contracts';
 import { apiFetch } from './fetch';
+import { rangeSuffix } from '../routes/window';
 
 /**
  * The metric endpoints behind the run detail page: four for the eight overview
@@ -60,7 +62,8 @@ const runPath = (id: string) => `/v1/runs/${encodeURIComponent(id)}`;
  * stats — indicator bands ③, the request-count donut ④, the statistics table ⑤
  * -------------------------------------------------------------------- */
 
-export const statsQueryKey = (id: string) => ['run', id, 'stats'] as const;
+export const statsQueryKey = (id: string, window: Window | null) =>
+  ['run', id, 'stats', window?.fromMs ?? null, window?.toMs ?? null] as const;
 
 /**
  * Deliberately UNFILTERED. The endpoint accepts `scope`/`name`/`family`, but
@@ -84,9 +87,9 @@ export const statsQueryKey = (id: string) => ['run', id, 'stats'] as const;
  * cache instead of firing again — see this file's top-level comment for why
  * that is correct for a completed run's stats specifically.
  */
-export const statsQuery = (id: string) => ({
-  queryKey: statsQueryKey(id),
-  queryFn: () => apiFetch(StatsResponseSchema, `${runPath(id)}/stats`),
+export const statsQuery = (id: string, window: Window | null = null) => ({
+  queryKey: statsQueryKey(id, window),
+  queryFn: () => apiFetch(StatsResponseSchema, `${runPath(id)}/stats${rangeSuffix(window)}`),
   staleTime: Infinity,
 });
 
@@ -105,13 +108,22 @@ export const seriesQueryKey = (id: string, scope = 'run', name = '', family = 'r
  * defaults to `response_time` so the run and request pages are unchanged;
  * the group detail page passes `group_cumulated` or `group_duration`.
  */
-export const seriesQuery = (id: string, scope = 'run', name = '', family = 'response_time') => ({
-  queryKey: seriesQueryKey(id, scope, name, family),
+export const seriesQuery = (
+  id: string,
+  scope = 'run',
+  name = '',
+  family = 'response_time',
+  window: Window | null = null,
+) => ({
+  queryKey: [...seriesQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
   queryFn: () =>
     apiFetch(
       SeriesResponseSchema,
       `${runPath(id)}/series?scope=${encodeURIComponent(scope)}` +
-        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}`,
+        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}` +
+        // '&' — this URL already carries a query string, and a second '?'
+        // would leave the server seeing neither bound.
+        rangeSuffix(window, '&'),
     ),
   staleTime: Infinity,
 });
@@ -120,13 +132,14 @@ export const seriesQuery = (id: string, scope = 'run', name = '', family = 'resp
  * users — concurrent users ⑦ and users started per second ⑦ᵇ
  * -------------------------------------------------------------------- */
 
-export const usersQueryKey = (id: string) => ['run', id, 'users'] as const;
+export const usersQueryKey = (id: string, window: Window | null = null) =>
+  ['run', id, 'users', window?.fromMs ?? null, window?.toMs ?? null] as const;
 
 /** Takes no parameters: the response already carries every scenario and the
  *  cross-scenario total, and both charts read it whole. */
-export const usersQuery = (id: string) => ({
-  queryKey: usersQueryKey(id),
-  queryFn: () => apiFetch(UsersResponseSchema, `${runPath(id)}/users`),
+export const usersQuery = (id: string, window: Window | null = null) => ({
+  queryKey: usersQueryKey(id, window),
+  queryFn: () => apiFetch(UsersResponseSchema, `${runPath(id)}/users${rangeSuffix(window)}`),
   staleTime: Infinity,
 });
 
@@ -154,13 +167,15 @@ export const distributionQuery = (
   scope = 'run',
   name = '',
   family = 'response_time',
+  window: Window | null = null,
 ) => ({
-  queryKey: distributionQueryKey(id, scope, name, family),
+  queryKey: [...distributionQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
   queryFn: () =>
     apiFetch(
       DistributionResponseSchema,
       `${runPath(id)}/distribution?scope=${encodeURIComponent(scope)}` +
-        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}`,
+        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}` +
+        rangeSuffix(window, '&'),
     ),
   staleTime: Infinity,
 });
@@ -223,7 +238,8 @@ export const errorsQuery = (id: string, scope = 'run', name = '') => ({
  * errors over time — errors per second, beside the errors table ⑥
  * -------------------------------------------------------------------- */
 
-export const errorSeriesQueryKey = (id: string) => ['run', id, 'errors', 'series'] as const;
+export const errorSeriesQueryKey = (id: string, window: Window | null = null) =>
+  ['run', id, 'errors', 'series', window?.fromMs ?? null, window?.toMs ?? null] as const;
 
 /**
  * TAKES NO `scope`/`name`, unlike `errorsQuery` directly above — and that is
@@ -233,9 +249,10 @@ export const errorSeriesQueryKey = (id: string) => ['run', id, 'errors', 'series
  * that comment spends a paragraph on ("`?name=Search` without `scope` is
  * silently ignored") cannot arise here: there is nothing to forget to send.
  */
-export const errorSeriesQuery = (id: string) => ({
-  queryKey: errorSeriesQueryKey(id),
-  queryFn: () => apiFetch(ErrorSeriesResponseSchema, `${runPath(id)}/errors/series`),
+export const errorSeriesQuery = (id: string, window: Window | null = null) => ({
+  queryKey: errorSeriesQueryKey(id, window),
+  queryFn: () =>
+    apiFetch(ErrorSeriesResponseSchema, `${runPath(id)}/errors/series${rangeSuffix(window)}`),
   staleTime: Infinity,
 });
 
@@ -252,12 +269,12 @@ export const scatterQueryKey = (id: string, name: string) =>
  * §13.3 defines — so the `?name=` trap documented above cannot arise here:
  * there is no scope parameter to omit.
  */
-export const scatterQuery = (id: string, name: string) => ({
-  queryKey: scatterQueryKey(id, name),
+export const scatterQuery = (id: string, name: string, window: Window | null = null) => ({
+  queryKey: [...scatterQueryKey(id, name), window?.fromMs ?? null, window?.toMs ?? null] as const,
   queryFn: () =>
     apiFetch(
       ScatterResponseSchema,
-      `${runPath(id)}/scatter?name=${encodeURIComponent(name)}`,
+      `${runPath(id)}/scatter?name=${encodeURIComponent(name)}` + rangeSuffix(window, '&'),
     ),
   staleTime: Infinity,
 });

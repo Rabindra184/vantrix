@@ -1,5 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import TimeBrush from '../charts/TimeBrush';
+import { useRunWindow } from './useRunWindow';
 import type { RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -32,6 +34,10 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
   // fires the one request the count needs on its own.
   const errors = useQuery(errorsQuery(run.id));
 
+  // Read here and written here, so every tab below shares one window — and
+  // declared BEFORE the fetches that key on it.
+  const { window, setWindow } = useRunWindow(run.durationMs ?? Number.MAX_SAFE_INTEGER);
+
   // THE ONE FETCH OVERVIEW MAKES WHOSE ONLY CONSUMER HERE IS A LINE OF
   // HEADER TEXT. `/users` exists for the two charts on the Charts tab
   // (design §4b); asking for it here so the header can state a peak means
@@ -48,7 +54,7 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
   // happening; the honest alternative, if the request ever matters even once
   // cached, is to drop the peak-users line, not to fetch it lazily and have
   // the header flicker a value in.
-  const users = useQuery(usersQuery(run.id));
+  const users = useQuery(usersQuery(run.id, window));
 
   return (
     <div className="flex flex-col gap-6">
@@ -61,6 +67,30 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
           it rendered `role="alert"` (`payload.tsx`'s `TableSection`) — a
           confident zero over a stated failure. */}
       <RunTabs runId={run.id} errorCount={errors.data ? errors.data.errors.length : null} />
+
+      {/* ABOVE THE TABS' CONTENT, in the shell rather than in any one tab, so
+          a window survives moving between them: a reader who narrows the
+          charts and then opens the statistics table is still looking at the
+          stretch they selected.
+
+          OFFERED ONLY WHEN THE RUN CAN HONOUR IT. A run ingested before
+          per-bucket histograms returns 400 WINDOW_UNAVAILABLE for every
+          windowed call — correct of the API and useless to a reader who was
+          invited to drag something. `windowable` is optional in the contract,
+          so a server that predates the field is treated as unable. */}
+      {run.windowable === true && run.durationMs != null && (
+        <TimeBrush
+          runDurationMs={run.durationMs}
+          window={window}
+          // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
+          // typed. Taken from `/users`, which this shell already fetches for
+          // the header's peak-users figure — every windowed response carries
+          // the same snapped range, so this needs no request of its own.
+          applied={users.data?.window ?? null}
+          onChange={setWindow}
+        />
+      )}
+
       <Outlet />
     </div>
   );

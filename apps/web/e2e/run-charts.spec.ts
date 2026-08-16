@@ -818,3 +818,76 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   await page.getByTestId('band-p99-percentiles').click();
   await expect.poll(() => legendLabels(chart)).toEqual(['95%', '99%']);
 });
+
+/* ======================================================================== *
+ * THE TIME WINDOW — a re-aggregation, not a redrawn axis
+ * ======================================================================== */
+
+interface WindowedStats {
+  readonly stats: readonly { readonly scope: string; readonly family: string; readonly count: number }[];
+  readonly window: { readonly fromMs: number; readonly toMs: number; readonly bucketWidthMs: number } | null;
+}
+
+const runRow = (body: WindowedStats): number =>
+  body.stats.find((s) => s.scope === 'run' && s.family === 'response_time')!.count;
+
+test('brushing recomputes the statistics, not just the axis', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  // DERIVED FROM THE RUN ITSELF: the reference bundle's duration changes on
+  // re-capture, so the cut is taken from the run's own series rather than
+  // written down.
+  const series = await apiJson<{ buckets: { startOffsetMs: number }[]; bucketWidthMs: number }>(
+    page, `/v1/runs/${runId}/series?scope=run&name=&family=response_time`);
+  const offsets = series.buckets.map((b) => b.startOffsetMs).sort((a, b) => a - b);
+  const cut = offsets[Math.floor(offsets.length / 2)]!;
+
+  const whole = runRow(await apiJson<WindowedStats>(page, `/v1/runs/${runId}/stats?scope=run&name=`));
+  const part = runRow(await apiJson<WindowedStats>(
+    page, `/v1/runs/${runId}/stats?scope=run&name=&from=0&to=${cut}`));
+
+  // The numbers really move. An axis clip pretending to be a re-aggregation
+  // would return the same count for both.
+  expect(part).toBeGreaterThan(0);
+  expect(part).toBeLessThan(whole);
+});
+
+test('the brush writes the window into the URL and states what it computed', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  const brush = page.getByTestId('time-brush');
+  await expect(brush).toBeVisible();
+
+  await page.getByTestId('window-from').fill('0');
+  await page.getByTestId('window-to').fill('10');
+  await page.getByTestId('window-apply').click();
+
+  // In the URL, so the selection can be pasted into a ticket.
+  await expect(page).toHaveURL(/[?&]from=0/);
+  await expect(page).toHaveURL(/[?&]to=10000/);
+
+  // And the page states the SNAPPED range it actually computed, not the one
+  // that was typed.
+  await expect(page.getByTestId('window-applied')).toBeVisible();
+
+  // Clearing returns to the whole run.
+  await page.getByTestId('window-clear').click();
+  await expect(page).not.toHaveURL(/[?&]from=/);
+});
+
+test('a run with no metrics is offered no brush at all', async ({ page }) => {
+  // Its buckets carry no histograms, so every windowed call would 400. An
+  // invitation to drag something that cannot work is worse than no invitation.
+  const admin = await seedAdmin();
+  const runId = await seedCompleteRunWithoutMetrics(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  await expect(page.getByTestId('time-brush')).toHaveCount(0);
+});
