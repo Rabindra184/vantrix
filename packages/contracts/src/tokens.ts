@@ -35,12 +35,21 @@ export type MintTokenRequest = z.infer<typeof MintTokenRequestSchema>;
  *
  * Only `tokenHash` is persisted, so this value cannot be recovered or
  * re-derived. A caller who loses it mints a new token.
+ *
+ * `scopes` is `z.array(z.string())`, NOT `z.array(z.enum(TOKEN_SCOPES))`.
+ * This is a RESPONSE schema: the controller parses the row the repository
+ * just echoed back, not the request that was already validated by
+ * `MintTokenRequestSchema`. A strict enum here would throw a `ZodError` (and
+ * `ProblemFilter` would turn that into a bare 500) the moment a stored
+ * `scopes` value doesn't match the current enum — reachable the moment a
+ * scope is renamed or a row is seeded/edited by hand. Rejecting is the
+ * request schema's job; this one must echo whatever is actually stored.
  */
 export const MintedTokenSchema = z.object({
   token: z.string(),
   prefix: z.string(),
   name: z.string(),
-  scopes: z.array(z.enum(TOKEN_SCOPES)),
+  scopes: z.array(z.string()),
   createdAt: z.string().datetime(),
 });
 export type MintedToken = z.infer<typeof MintedTokenSchema>;
@@ -53,11 +62,18 @@ export type MintedToken = z.infer<typeof MintedTokenSchema>;
  * is how an operator finds the credential nothing has used since March.
  * `authenticateRequest` maintains it, throttled to at most one write per
  * minute per token.
+ *
+ * `scopes` is `z.array(z.string())` for the same reason as on
+ * `MintedTokenSchema` above: GET and DELETE both parse this against a row
+ * already in the database, so a strict enum would let one token with a
+ * stale/renamed scope 500 the whole list or revoke route for the entire
+ * project — including every OTHER token in it. See `MintTokenRequestSchema`
+ * for where rejecting an unknown scope belongs.
  */
 export const TokenSummarySchema = z.object({
   prefix: z.string(),
   name: z.string(),
-  scopes: z.array(z.enum(TOKEN_SCOPES)),
+  scopes: z.array(z.string()),
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime().nullable(),
   revokedAt: z.string().datetime().nullable(),

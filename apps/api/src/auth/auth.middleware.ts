@@ -11,6 +11,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import type { NextFunction, Request, Response } from 'express';
 import { authenticateRequest, type Tenant } from './auth.guard.js';
 import { auth } from './better-auth.instance.js';
+import { SESSION_TOKEN_ID_PREFIX } from './session-only.guard.js';
 import { internalProblem, logInternalError, problem } from '../common/problem.js';
 
 /**
@@ -36,7 +37,7 @@ async function authenticateSession(req: Request, members: OrgMemberRepository): 
   // run in their org. Scopes are full within the org; RBAC is M6.
   return {
     orgId: membership.orgId,
-    tokenId: `session:${session.session.id}`,
+    tokenId: `${SESSION_TOKEN_ID_PREFIX}${session.session.id}`,
     // NOT 'telemetry'. A browser session has no reason to post host counters,
     // and widening this would make the scope's whole purpose decorative.
     scopes: ['read', 'ingest'],
