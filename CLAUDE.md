@@ -53,12 +53,15 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **78 files / 904 tests**, it
+`nvm use` first, and if a run reports fewer than **81 files / 931 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. Last measured on
-`feat/errors-over-time`; the floor sat at 70 / 788 through Trends and Compare
-before this, which is how far it had drifted.)
+`feat/telemetry-agent`; the floor sat at 78 / 904 through the telemetry agent's
+own backend and chart work before this, which is how far it had drifted — this
+sub-project's own addition is entirely e2e (`run-telemetry.spec.ts`), which
+`pnpm test:unit` does not run, so the unit floor moves only because it had
+never been updated to match Tasks 1–10's own suites.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A
