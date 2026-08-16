@@ -20,6 +20,15 @@ export function runErrorsPath(runId: string): string {
 export function runTrendsPath(runId: string): string {
   return `${runPath(runId)}/trends`;
 }
+/**
+ * `load-generators`, not `telemetry`. The URL is the reader's, and "load
+ * generators" is what Gatling calls this section and what the question in the
+ * reader's head sounds like — "was the generator the bottleneck?". The endpoint
+ * keeps the engineering name.
+ */
+export function runTelemetryPath(runId: string): string {
+  return `${runPath(runId)}/load-generators`;
+}
 
 /**
  * Compare, optionally carrying the selection.

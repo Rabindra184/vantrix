@@ -28,17 +28,17 @@ describe('RunTabs', () => {
    */
   it('renders navigation links, not ARIA tabs', () => {
     renderAt(`/runs/${RUN}`, 2);
-    expect(screen.getAllByRole('link')).toHaveLength(4);
+    expect(screen.getAllByRole('link')).toHaveLength(5);
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('puts Trends last, after the three that are about this run alone', () => {
+  it('puts Trends last, after the four that are about this run alone', () => {
     // The order is the argument, so it is asserted rather than left to the
-    // reading order of the JSX: Overview, Charts and Errors narrow in on THIS
-    // run; Trends is the only tab that leaves it.
+    // reading order of the JSX: Overview, Charts, Load generators and Errors
+    // narrow in on THIS run; Trends is the only tab that leaves it.
     renderAt(`/runs/${RUN}`, 2);
     const names = screen.getAllByRole('link').map((link) => link.textContent);
-    expect(names).toEqual(['Overview', 'Charts', 'Errors (2)', 'Trends']);
+    expect(names).toEqual(['Overview', 'Charts', 'Load generators', 'Errors (2)', 'Trends']);
   });
 
   it('marks Trends current on its own URL', () => {

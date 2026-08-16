@@ -5,6 +5,7 @@ import {
   ScatterResponseSchema,
   SeriesResponseSchema,
   StatsResponseSchema,
+  TelemetryResponseSchema,
   TrendsResponseSchema,
   UsersResponseSchema,
 } from '@perfportal/contracts';
@@ -276,6 +277,29 @@ export const scatterQuery = (id: string, name: string, window: Window | null = n
       ScatterResponseSchema,
       `${runPath(id)}/scatter?name=${encodeURIComponent(name)}` + rangeSuffix(window, '&'),
     ),
+  staleTime: Infinity,
+});
+
+/* -------------------------------------------------------------------- *
+ * load-generator telemetry — CPU, memory, bandwidth, TCP (spec §7)
+ * -------------------------------------------------------------------- */
+
+export const telemetryQueryKey = (id: string, window: Window | null = null) =>
+  ['run', id, 'telemetry', window?.fromMs ?? null, window?.toMs ?? null] as const;
+
+/**
+ * TAKES NO `scope`/`name`, like `errorSeriesQuery` and for the same reason:
+ * the endpoint declares no such parameters, so the "`?name=` without `scope=`
+ * is silently ignored" trap has nothing to catch here.
+ *
+ * The window IS in the key. A windowed and an unwindowed payload are different
+ * answers, and sharing a key under `staleTime: Infinity` would serve one for
+ * the other.
+ */
+export const telemetryQuery = (id: string, window: Window | null = null) => ({
+  queryKey: telemetryQueryKey(id, window),
+  queryFn: () =>
+    apiFetch(TelemetryResponseSchema, `${runPath(id)}/telemetry${rangeSuffix(window)}`),
   staleTime: Infinity,
 });
 

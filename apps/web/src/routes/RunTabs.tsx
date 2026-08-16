@@ -1,13 +1,19 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { runChartsPath, runErrorsPath, runPath, runTrendsPath } from './paths';
+import { runChartsPath, runErrorsPath, runPath, runTelemetryPath, runTrendsPath } from './paths';
 
 /**
- * A run's four sections, as navigation.
+ * A run's five sections, as navigation.
  *
  * `NavLink` supplies `aria-current="page"` itself when its `to` matches — and
  * `end` on the Overview link is what stops it matching `/charts` and
  * `/errors` too, since both start with the run's own path.
+ *
+ * Load generators sits between Charts and Errors: it answers a question about
+ * THIS run (which is what the first tabs do), and it is the one a reader turns
+ * to when the charts look wrong — so it belongs beside them, not after the
+ * failures. Trends stays last for the reason below: it is the only tab that
+ * leaves the run.
  *
  * STILL LINKS IN A `<nav>`, NOT AN ARIA TAB PATTERN, and the design pass did
  * not change that. `role="tablist"`/`role="tab"` is what this LOOKS like and
@@ -53,6 +59,7 @@ export default function RunTabs({
         Overview
       </Tab>
       <Tab to={runChartsPath(runId)}>Charts</Tab>
+      <Tab to={runTelemetryPath(runId)}>Load generators</Tab>
       <Tab to={runErrorsPath(runId)}>
         {/* One text node, so the tab's accessible name is "Errors (2)" rather
             than a name assembled from two children — `run-detail.spec.ts`
