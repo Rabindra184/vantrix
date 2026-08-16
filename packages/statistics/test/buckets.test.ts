@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BucketSeries } from '../src/buckets.js';
 import { Sketch } from '../src/sketch.js';
+import { Histogram } from '../src/histogram.js';
 
 const sample = (i: number) => 20 + ((i * 37) % 500);
 
@@ -211,5 +212,74 @@ describe('BucketSeries buckets by request START, not end (parity with Gatling)',
     for (const x of b) {
       expect(x.startedOkCount + x.startedKoCount).toBe(x.startedCount);
     }
+  });
+});
+
+describe('bucket histograms', () => {
+  it('records the same observations as the bucket sketches', () => {
+    // Fed on the START edge, where sketchOk/sketchKo are. A windowed p95 from
+    // end-edge data would disagree with the percentiles-over-time chart at the
+    // same window, on the same screen.
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    s.add(100, 50, true, 'start');
+    s.add(150, 50, true, 'end');
+    s.add(200, 90, false, 'start');
+    s.add(260, 90, false, 'end');
+
+    const b = s.buckets()[0] as NonNullable<ReturnType<BucketSeries['buckets']>[number]>;
+    expect(b.histogramOk.total).toBe(b.sketchOk.count);
+    expect(b.histogramKo.total).toBe(b.sketchKo.count);
+  });
+
+  it('matches the START-edge outcome split exactly', () => {
+    // The invariant the persisted columns are checkable against: startedOkCount
+    // and sketchOk are incremented under the same condition on the same edge.
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    for (let i = 0; i < 30; i += 1) {
+      const ok = i % 4 !== 0;
+      s.add(i * 100, 10 + i, ok, 'start');
+      s.add(i * 100 + 50, 10 + i, ok, 'end');
+    }
+    for (const b of s.buckets()) {
+      expect(b.histogramOk.total).toBe(b.startedOkCount);
+      expect(b.histogramKo.total).toBe(b.startedKoCount);
+    }
+  });
+
+  it('merges losslessly when buckets coalesce', () => {
+    const fine = new BucketSeries({ startMs: 0, maxBuckets: 1_000 });
+    const coarse = new BucketSeries({ startMs: 0, maxBuckets: 4 });
+    for (let i = 0; i < 40; i += 1) {
+      for (const s of [fine, coarse]) {
+        s.add(i * 1_000, 10 + (i % 7), true, 'start');
+        s.add(i * 1_000 + 10, 10 + (i % 7), true, 'end');
+      }
+    }
+    const sum = (bs: ReturnType<BucketSeries['buckets']>) =>
+      bs.reduce((n, b) => n + b.histogramOk.total, 0);
+    expect(sum(coarse.buckets())).toBe(sum(fine.buckets()));
+    expect(coarse.widthMs).toBeGreaterThan(fine.widthMs);
+  });
+
+  it('does not record an end-edge observation twice', () => {
+    // The caller passes the same value on both edges; only 'start' feeds the
+    // summarisers. Feeding both would double every count.
+    const s = new BucketSeries({ startMs: 0, maxBuckets: 100 });
+    s.add(0, 42, true, 'start');
+    s.add(10, 42, true, 'end');
+    expect((s.buckets()[0] as { histogramOk: { total: number } }).histogramOk.total).toBe(1);
+  });
+
+  it('preserves the exact quantile through a coalesce', () => {
+    // Merging is what a window does, so a coalesced bucket must answer the same
+    // p95 as the union of the buckets it absorbed.
+    const fine = new BucketSeries({ startMs: 0, maxBuckets: 1_000 });
+    const coarse = new BucketSeries({ startMs: 0, maxBuckets: 2 });
+    for (let i = 0; i < 20; i += 1) {
+      for (const s of [fine, coarse]) s.add(i * 1_000, 10 + i, true, 'start');
+    }
+    const union = fine.buckets().reduce((acc, b) => { acc.merge(b.histogramOk); return acc; }, new Histogram());
+    const merged = coarse.buckets().reduce((acc, b) => { acc.merge(b.histogramOk); return acc; }, new Histogram());
+    expect(merged.quantile(0.95)).toBe(union.quantile(0.95));
   });
 });

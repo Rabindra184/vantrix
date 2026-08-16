@@ -1,3 +1,4 @@
+import { Histogram } from './histogram.js';
 import { Sketch } from './sketch.js';
 
 export interface Bucket {
@@ -24,6 +25,19 @@ export interface Bucket {
    */
   sketchOk: Sketch;
   sketchKo: Sketch;
+  /**
+   * The same observations `sketchOk`/`sketchKo` hold, in a form a TIME WINDOW
+   * can merge.
+   *
+   * Both are kept rather than one replacing the other. The sketch is what
+   * `run_stat` already stores for the whole run and what K-03 recomputes
+   * percentiles from; these are what a sub-range is re-aggregated from, and
+   * they are a different trade. Measured: a DDSketch protobuf costs 1068 bytes
+   * for a SINGLE observation because its store is dense, while this costs 12 —
+   * and its quantiles are exact rather than within RELATIVE_ACCURACY.
+   */
+  histogramOk: Histogram;
+  histogramKo: Histogram;
 }
 
 /**
@@ -51,6 +65,7 @@ export class BucketSeries {
         startOffsetMs: idx * this.#widthMs, startedCount: 0, endedCount: 0,
         okCount: 0, koCount: 0, startedOkCount: 0, startedKoCount: 0,
         sketch: new Sketch(), sketchOk: new Sketch(), sketchKo: new Sketch(),
+        histogramOk: new Histogram(), histogramKo: new Histogram(),
       };
       this.#buckets.set(idx, b);
     }
@@ -72,6 +87,10 @@ export class BucketSeries {
       // both edges, so this only changes WHICH bucket the sketch lands in.
       b.sketch.accept(value);
       if (ok) b.sketchOk.accept(value); else b.sketchKo.accept(value);
+      // Same edge, same condition as the split above — which is what makes
+      // histogramOk.total equal startedOkCount, the invariant the persisted
+      // column is checked against at every layer.
+      if (ok) b.histogramOk.accept(value); else b.histogramKo.accept(value);
     } else {
       b.endedCount++;
       if (ok) b.okCount++; else b.koCount++;
@@ -98,6 +117,8 @@ export class BucketSeries {
           target.sketch.merge(b.sketch);      // exact — this is why coalescing is lossless
           target.sketchOk.merge(b.sketchOk);
           target.sketchKo.merge(b.sketchKo);
+          target.histogramOk.merge(b.histogramOk);   // exact, like the sketches
+          target.histogramKo.merge(b.histogramKo);
         }
       }
       this.#buckets = next;
