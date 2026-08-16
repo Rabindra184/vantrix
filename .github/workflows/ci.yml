@@ -135,6 +135,9 @@ jobs:
 
       - run: go vet ./...
       - run: go test ./... -race
+      # WITHOUT -race. The detector multiplies CPU by 5-10x, so a budget
+      # measured under it is measuring the detector.
+      - run: go test -run TestFootprintBudget -v ./...
 
       # Cross-compiled for the platforms load generators actually run on
       # (spec §9). linux/amd64 and linux/arm64 at minimum; CGO_ENABLED=0 so the
