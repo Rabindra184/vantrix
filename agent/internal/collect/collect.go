@@ -12,6 +12,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,24 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 )
+
+// connectionsMinInterval bounds how often Sample actually calls
+// net.Connections, independent of the caller's own sampling interval — see
+// shouldReadConnections and the Collector.connectionStates doc comment.
+//
+// MEASURED, not guessed. On Linux, gopsutil's net.Connections walks
+// /proc/<pid>/fd across EVERY process on the host to map socket inodes to
+// connection states, so its cost scales with the host's process and socket
+// count, not just this agent's own footprint. Bisected in a golang:1.24
+// container over a 10s window: 0.373% of one core WITH the call, 0.180%
+// WITHOUT it — roughly half the total cost — and on a GitHub Actions
+// ubuntu-latest runner, with a real /proc to walk, the SAME 10s footprint
+// test measured 1.386%, over the §5 budget (agent/footprint_test.go). A load
+// generator holding tens of thousands of sockets in production is the worst
+// case, so even 1.386% is optimistic. Every other field in Sample — CPU,
+// memory, bandwidth, the TCP protocol counters — is cheap and stays at the
+// full interval; only this one call is throttled.
+const connectionsMinInterval = 5 * time.Second
 
 // Sample is one instant of host state. The JSON tags are the wire format and
 // must stay identical to TelemetrySampleSchema in packages/contracts.
@@ -100,6 +119,25 @@ func (c *counterSource) shouldDegrade() bool {
 	return !c.everSucceeded.Load()
 }
 
+// shouldReadConnections reports whether Sample should call net.Connections
+// now, given when it last actually did.
+//
+// A TIME threshold, not a tick count: --interval is configurable, so "every
+// Nth tick" would mean connectionsMinInterval at the default 1s interval and
+// something ten times coarser at `--interval 10s`, silently changing the
+// staleness bound with it. Comparing elapsed wall-clock time instead means a
+// coarse --interval naturally reads every tick (elapsed already exceeds
+// minInterval), which is exactly what the last table case below checks.
+// lastRead.IsZero() covers the very first sample, which must always read —
+// there is nothing to carry forward yet.
+//
+// Extracted so the decision is testable without faking a slow net.Connections
+// call, in the same style as counterSource.shouldDegrade above — see
+// TestShouldReadConnections.
+func shouldReadConnections(lastRead, now time.Time, minInterval time.Duration) bool {
+	return lastRead.IsZero() || now.Sub(lastRead) >= minInterval
+}
+
 // Collector reads host state. Safe for concurrent use; the agent uses one.
 type Collector struct {
 	// Set once, the first time ProtoCounters is unavailable AND has never
@@ -114,6 +152,15 @@ type Collector struct {
 	// counterSource's doc comment for why a failure needs to know this.
 	io    counterSource
 	proto counterSource
+
+	// connMu guards lastConnRead and lastConnStates, the mutable state behind
+	// connectionStates' slower cadence (see connectionsMinInterval). A plain
+	// mutex, not an atomic, because what it protects is a map: read and
+	// written on every Sample(), and Sample may be called concurrently per
+	// this type's own contract above.
+	connMu         sync.Mutex
+	lastConnRead   time.Time
+	lastConnStates map[string]int
 }
 
 // New returns a Collector.
@@ -164,7 +211,6 @@ func (c *Collector) Sample(ctx context.Context) (Sample, error) {
 		CPUIowaitMs:   secondsToMs(times[0].Iowait), // always 0 on darwin
 		MemUsedBytes:  int64(vm.Used),
 		MemTotalBytes: int64(vm.Total),
-		TCPStates:     map[string]int{},
 	}
 
 	// `false` = summed across every interface. A per-interface breakdown is
@@ -209,16 +255,77 @@ func (c *Collector) Sample(ctx context.Context) (Sample, error) {
 		return Sample{}, fmt.Errorf("net.ProtoCounters regressed after previously succeeding: %w", err)
 	}
 
-	if conns, err := net.ConnectionsWithContext(ctx, "tcp"); err == nil {
-		for _, conn := range conns {
-			if conn.Status == "" {
-				continue
-			}
-			s.TCPStates[conn.Status]++
-		}
-	}
+	s.TCPStates = c.connectionStates(ctx, now)
 
 	return s, nil
+}
+
+// connectionStates returns the TCP-state counts to attach to this sample: a
+// fresh net.Connections read when at least connectionsMinInterval has
+// elapsed since the last one (or this is the first sample ever), otherwise
+// the states from the last successful read, carried forward unchanged.
+//
+// CARRYING FORWARD ON A SKIPPED TICK, NEVER AN EMPTY MAP. TCPStates is a
+// GAUGE, and Sample's own field comment records that the wire format omits a
+// state at zero rather than sending it — "absent means zero". The web
+// transform toTcpStateChart (apps/web/src/charts/transforms/telemetry.ts)
+// takes that literally: it zero-fills every state it has EVER seen for a
+// host across the whole series. So an empty map on the four ticks out of
+// five that skip the real read would not read as "no new data" — it would
+// render as every connection state dropping to zero and springing back,
+// four times out of five: a sawtooth with no basis in the host's actual
+// state. Carrying the last reading forward instead is also simply honest: a
+// gauge sampled less often than the rest of the row is a step function, not
+// a gap, and a step function is what this produces.
+//
+// A read that fails (net.Connections returns an error) is treated the same
+// as a skipped tick — carry forward — except lastConnRead is NOT advanced,
+// so the very next call retries immediately rather than waiting out another
+// full connectionsMinInterval.
+//
+// The map handed back is always a fresh copy: a caller holding onto a
+// Sample must not be able to mutate this Collector's internal state by
+// mutating the map it received.
+func (c *Collector) connectionStates(ctx context.Context, now time.Time) map[string]int {
+	c.connMu.Lock()
+	lastRead := c.lastConnRead
+	carried := copyConnStates(c.lastConnStates)
+	c.connMu.Unlock()
+
+	if !shouldReadConnections(lastRead, now, connectionsMinInterval) {
+		return carried
+	}
+
+	conns, err := net.ConnectionsWithContext(ctx, "tcp")
+	if err != nil {
+		return carried
+	}
+
+	states := map[string]int{}
+	for _, conn := range conns {
+		if conn.Status == "" {
+			continue
+		}
+		states[conn.Status]++
+	}
+
+	c.connMu.Lock()
+	c.lastConnRead = now
+	c.lastConnStates = states
+	c.connMu.Unlock()
+
+	return copyConnStates(states)
+}
+
+// copyConnStates returns a fresh copy of m, never nil — so a Sample's
+// TCPStates is always a real map (see TestSampleReadsGaugesAndCumulativeCounters)
+// and never aliases a Collector's internal state.
+func copyConnStates(m map[string]int) map[string]int {
+	out := make(map[string]int, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func secondsToMs(seconds float64) int64 { return int64(seconds * 1000) }

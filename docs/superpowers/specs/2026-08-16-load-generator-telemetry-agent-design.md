@@ -204,6 +204,39 @@ the agent's sampling loop pause inside the measurement it is taking.
 A single static Go binary using `gopsutil/v4`. It samples on a fixed interval
 (default 1 s, configurable), batches, and POSTs.
 
+> **Correction, 2026-08-16.** The claim above is no longer wholly true. CPU,
+> memory, bandwidth and the TCP protocol counters do still sample on the
+> agent's own fixed interval — but connection states (`net.Connections`, the
+> "TCP Connection By State" row in §1) now sample on a separate, slower fixed
+> cadence of their own: at most once every 5 seconds, regardless of
+> `--interval`.
+>
+> This was forced by the footprint budget below, measured rather than
+> assumed: `agent/footprint_test.go` passed on darwin but failed on GitHub
+> Actions' ubuntu runner at 1.386% of one core, over the 1% bound. Bisecting
+> in a `golang:1.24` container isolated the cause to `net.Connections` —
+> 0.373% of one core over a 10 s window with the call, 0.180% without it — and
+> explained why the CI number was worse than either: on Linux, gopsutil's
+> `net.Connections` walks `/proc/<pid>/fd` across EVERY process on the host to
+> map socket inodes to connection states, so its cost scales with the host's
+> total process and socket count, not just this agent's own. GitHub Actions'
+> runner has a fuller `/proc` than a near-empty container; a real load
+> generator holding tens of thousands of sockets is worse still.
+>
+> The bound was not raised — this file already says why not, and
+> `footprint_test.go`'s own failure message agrees. Instead, `net.Connections`
+> reads at most every 5 s (`connectionsMinInterval` in
+> `agent/internal/collect/collect.go`), a TIME threshold rather than a tick
+> count so a coarser `--interval` still reads every tick instead of the
+> staleness bound silently drifting with it. A skipped tick carries the
+> previous reading forward rather than sending an empty map — connection
+> states are a GAUGE, the wire format omits a state at zero rather than
+> sending it, and the web transform `toTcpStateChart`
+> (`apps/web/src/charts/transforms/telemetry.ts`) zero-fills every state it
+> has ever seen for a host, so an empty map on a skipped tick would have
+> rendered as every connection dropping to zero on 4 ticks out of 5 — a
+> sawtooth with no basis in the host's actual state.
+
 **Batching:** whichever comes first — 30 samples or 10 seconds. Small enough
 that a crash loses at most ten seconds of history, large enough that a 1 s
 sampler is not one request per second per generator. The endpoint takes an

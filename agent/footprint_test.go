@@ -49,10 +49,18 @@ func cpuUsed(t *testing.T) time.Duration {
 // The §5 footprint budget. Skipped under -short so `go test ./...` in a tight
 // loop stays fast; CI runs the full form.
 //
-// IF THIS FAILS, THE FIRST LEVER IS THE INTERVAL, not the bound. The likely
-// culprit is net.Connections, which walks the kernel's socket table and grows
-// with the connection count — on a generator holding tens of thousands of
-// sockets it is by far the most expensive call in Sample().
+// IF THIS FAILS, THE FIRST LEVER IS connectionsMinInterval
+// (internal/collect/collect.go), not the bound. net.Connections is by far
+// the most expensive call in Sample() — it walks the kernel's socket table,
+// and its cost scales with the HOST's process and socket count, not just this
+// agent's — which is why it is already throttled to at most one real read per
+// connectionsMinInterval (5s) rather than once per tick; see that constant's
+// doc comment for the measured numbers (a GitHub Actions ubuntu runner once
+// failed this exact test at 1.386% before that throttle existed). If the
+// budget is still breached after that, raise connectionsMinInterval further
+// before touching --interval: --interval controls how often the CHEAP
+// fields (CPU, memory, bandwidth, TCP protocol counters) are read, and does
+// not change how often net.Connections runs at all.
 func TestFootprintBudgetAtTheDefaultInterval(t *testing.T) {
 	if testing.Short() {
 		t.Skip("footprint budget takes 10s; run without -short")

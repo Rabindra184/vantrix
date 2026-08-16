@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -154,12 +155,178 @@ func TestCounterSourceKeepsDegradingAcrossRepeatedFailures(t *testing.T) {
 	}
 }
 
+// FIX 2 (footprint budget). shouldReadConnections is the predicate that lets
+// Sample throttle net.Connections to connectionsMinInterval regardless of the
+// caller's own --interval. Extracted so it is testable in isolation, in the
+// same style as TestCounterSourceShouldDegrade above — net.Connections itself
+// cannot easily be made to fail or have its calls counted from the outside.
+func TestShouldReadConnections(t *testing.T) {
+	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	const minInterval = 5 * time.Second
+
+	tests := []struct {
+		name     string
+		lastRead time.Time
+		now      time.Time
+		want     bool
+	}{
+		{
+			name:     "zero lastRead (the very first sample) -> always read",
+			lastRead: time.Time{},
+			now:      base,
+			want:     true,
+		},
+		{
+			name:     "one second later, default 1s --interval -> skip (well under the threshold)",
+			lastRead: base,
+			now:      base.Add(time.Second),
+			want:     false,
+		},
+		{
+			name:     "just under the threshold -> skip",
+			lastRead: base,
+			now:      base.Add(minInterval - time.Millisecond),
+			want:     false,
+		},
+		{
+			name:     "exactly the threshold elapsed -> read (>=, not >)",
+			lastRead: base,
+			now:      base.Add(minInterval),
+			want:     true,
+		},
+		{
+			name:     "coarse --interval (10s), longer than the threshold -> reads every tick",
+			lastRead: base,
+			now:      base.Add(10 * time.Second),
+			want:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldReadConnections(tt.lastRead, tt.now, minInterval); got != tt.want {
+				t.Fatalf("shouldReadConnections(%v, %v, %v) = %v, want %v",
+					tt.lastRead, tt.now, minInterval, got, tt.want)
+			}
+		})
+	}
+}
+
+// A collector sampled several times in rapid succession (well inside
+// connectionsMinInterval) must call net.Connections at most once. There is no
+// hook to count gopsutil's own calls, so this asserts the effect that proves
+// it: lastConnRead — only ever advanced on an actual read, see
+// connectionStates — must not move across three back-to-back Sample() calls.
+// Before the fix, Sample called net.Connections on every tick with no
+// lastConnRead field at all; this test (and the field it depends on) is part
+// of the fix, so reverting the implementation change alone makes it fail to
+// even compile, let alone pass.
+func TestSampleReadsConnectionsAtMostOncePerMinInterval(t *testing.T) {
+	c := New()
+	if _, err := c.Sample(context.Background()); err != nil {
+		t.Fatalf("Sample() error = %v", err)
+	}
+
+	c.connMu.Lock()
+	firstRead := c.lastConnRead
+	c.connMu.Unlock()
+	if firstRead.IsZero() {
+		t.Fatal("lastConnRead is still zero after the first Sample() — the first tick must always read connections")
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := c.Sample(context.Background()); err != nil {
+			t.Fatalf("Sample() error = %v", err)
+		}
+	}
+
+	c.connMu.Lock()
+	laterRead := c.lastConnRead
+	c.connMu.Unlock()
+	if !laterRead.Equal(firstRead) {
+		t.Fatalf("lastConnRead moved from %v to %v across 3 rapid Sample() calls — "+
+			"net.Connections was read more than once inside connectionsMinInterval", firstRead, laterRead)
+	}
+}
+
+// The first sample always reads connections directly through
+// connectionStates, independent of the Sample()-level test above.
+func TestConnectionStatesAlwaysReadsOnTheFirstSample(t *testing.T) {
+	c := New()
+	now := time.Now()
+	_ = c.connectionStates(context.Background(), now)
+
+	c.connMu.Lock()
+	lastRead := c.lastConnRead
+	c.connMu.Unlock()
+	if lastRead.IsZero() {
+		t.Fatal("lastConnRead is still zero after the first connectionStates() call — " +
+			"the first sample must always attempt a real read")
+	}
+}
+
+// FIX 2's critical property. A skipped tick (well inside
+// connectionsMinInterval of the last real read) must carry the previous
+// states forward — never send an empty map. toTcpStateChart
+// (apps/web/src/charts/transforms/telemetry.ts) zero-fills every state it
+// has ever seen for a host, so an empty map on a skipped tick would render
+// as every connection state dropping to zero on 4 ticks out of 5: a sawtooth
+// with no basis in reality. The collector's internal state is seeded
+// directly here (not via a real net.Connections read) so the assertion does
+// not depend on what connections happen to exist on the test host.
+func TestConnectionStatesCarriesForwardOnASkippedTick(t *testing.T) {
+	c := New()
+	now := time.Now()
+	seeded := map[string]int{"ESTABLISHED": 7, "TIME_WAIT": 3}
+
+	c.connMu.Lock()
+	c.lastConnRead = now
+	c.lastConnStates = seeded
+	c.connMu.Unlock()
+
+	// Well inside connectionsMinInterval (5s): must skip the real read and
+	// carry the seeded states forward.
+	got := c.connectionStates(context.Background(), now.Add(time.Second))
+
+	if len(got) == 0 {
+		t.Fatal("connectionStates on a skipped tick returned an empty map — " +
+			"toTcpStateChart zero-fills every state it has ever seen, so this would render " +
+			"as every connection dropping to zero (apps/web/src/charts/transforms/telemetry.ts)")
+	}
+	want := map[string]int{"ESTABLISHED": 7, "TIME_WAIT": 3}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("connectionStates = %v, want the carried-forward %v", got, want)
+	}
+
+	// Mutating the returned map must not corrupt the collector's own state —
+	// connectionStates must hand back a copy, not the internal map itself.
+	got["ESTABLISHED"] = 999
+	c.connMu.Lock()
+	internal := c.lastConnStates["ESTABLISHED"]
+	c.connMu.Unlock()
+	if internal != 7 {
+		t.Fatalf("mutating the returned map changed the collector's internal state (ESTABLISHED = %d, want 7) — "+
+			"connectionStates must return a copy", internal)
+	}
+
+	// lastConnRead must be untouched by a skipped tick — otherwise a run of
+	// skips could each reset the clock and connections would never be read
+	// again.
+	c.connMu.Lock()
+	lastRead := c.lastConnRead
+	c.connMu.Unlock()
+	if !lastRead.Equal(now) {
+		t.Fatalf("lastConnRead changed from %v to %v on a skipped tick", now, lastRead)
+	}
+}
+
 // SAMPLING MUST NOT SLEEP. cpu.Percent(d, …) blocks for d, which would make
 // the agent pause inside the measurement it is taking (spec §4). Nothing in
 // Sample may do that. The budget is generous because net.Connections walks the
-// kernel's socket table and is the slowest call here — if this ever fails, the
-// lever is to sample connection states on a slower cadence than the rest, not
-// to raise the bound.
+// kernel's socket table and is the slowest call here, on the ticks that
+// actually read it — connectionsMinInterval already throttles those to at
+// most one every 5s regardless of --interval (see connectionsMinInterval's
+// doc comment in collect.go). If this ever fails again, the lever is to
+// raise that constant further, not this bound.
 func TestSampleDoesNotBlockForAnInterval(t *testing.T) {
 	c := New()
 	start := time.Now()
