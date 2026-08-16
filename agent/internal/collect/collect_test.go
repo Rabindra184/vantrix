@@ -42,7 +42,8 @@ func TestProtoCountersPopulateTheTCPSegmentSeriesOnLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("net.ProtoCounters is not implemented on %s; spec §10", runtime.GOOS)
 	}
-	s, err := New().Sample(context.Background())
+	c := New()
+	s, err := c.Sample(context.Background())
 	if err != nil {
 		t.Fatalf("Sample() error = %v", err)
 	}
@@ -57,6 +58,13 @@ func TestProtoCountersPopulateTheTCPSegmentSeriesOnLinux(t *testing.T) {
 	if s.TCPActiveOpens <= 0 {
 		t.Fatalf("TCPActiveOpens = %d, want > 0", s.TCPActiveOpens)
 	}
+	// The other half of the ProtoUnavailable contract: CI is ubuntu-latest, so
+	// this is the ONLY environment that ever proves the flag stays false when
+	// the counters really did come back. Without this, its correctness rested
+	// entirely on someone happening to run the degraded-path test on a Mac.
+	if c.ProtoUnavailable() {
+		t.Fatal("ProtoUnavailable() = true, want false — the counters populated above, nothing degraded")
+	}
 }
 
 func TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable(t *testing.T) {
@@ -66,12 +74,25 @@ func TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable(t *testing.T)
 	// The whole point: on a platform with no ProtoCounters, Sample still
 	// returns a usable sample rather than an error, so a developer on macOS
 	// gets CPU, memory, bandwidth and connection states.
-	s, err := New().Sample(context.Background())
+	c := New()
+	s, err := c.Sample(context.Background())
 	if err != nil {
 		t.Fatalf("Sample() error = %v, want a degraded sample and no error", err)
 	}
 	if s.MemTotalBytes <= 0 {
 		t.Fatal("the degraded path dropped the gauges too")
+	}
+	// The degrade signal itself. This is the only test in the module that
+	// exercises c.protoUnavailable.Store(true) at all — CI is ubuntu-latest,
+	// so that line of collect.go never runs there. Without this assertion, a
+	// developer on macOS could delete the .Store(true) call outright and
+	// every test, everywhere, would stay green.
+	if !c.ProtoUnavailable() {
+		t.Fatal("ProtoUnavailable() = false, want true — ProtoCounters is not implemented on this platform")
+	}
+	if s.TCPInSegs != 0 || s.TCPOutSegs != 0 || s.TCPActiveOpens != 0 {
+		t.Fatalf("TCPInSegs = %d, TCPOutSegs = %d, TCPActiveOpens = %d, want all 0 on the degraded path",
+			s.TCPInSegs, s.TCPOutSegs, s.TCPActiveOpens)
 	}
 }
 
