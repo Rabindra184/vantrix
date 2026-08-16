@@ -81,7 +81,7 @@ than either.
 | Constant | Value | Where | Why |
 |---|---|---|---|
 | `DEFAULT_INTERVAL` | `1s` | agent | Gatling's own cadence |
-| `BATCH_SAMPLES` | `30` | agent | at 1 s, one request per 30 s per generator |
+| `BATCH_SAMPLES` | `30` | agent | at 1 s, `BATCH_WINDOW` fires first — one request per 10 s carrying ~10 samples; the 30-sample bound only binds below a 1/3 s interval |
 | `BATCH_WINDOW` | `10s` | agent | a crash loses at most ten seconds |
 | `BUFFER_BATCHES` | `64` | agent | bounded; ~32 min of history at the above |
 | `TELEMETRY_LOOKBACK_MS` | `60_000` | persistence | gives the first in-run bucket a predecessor to difference against |

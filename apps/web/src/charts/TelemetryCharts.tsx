@@ -85,7 +85,7 @@ export default function TelemetryCharts({
         group="run-time"
         xAxis={{ name: 'Elapsed (ms)' }}
         yAxis={{ name: 'Memory' }}
-        unit=" MB"
+        unit="MB"
       />
       <Chart
         id="telemetry-bandwidth"
