@@ -144,9 +144,40 @@ func drain(ctx context.Context, client *send.Client, ring *buffer.Ring[collect.S
 			// One last flush on SIGTERM, with a fresh context: ctx is already
 			// cancelled, and the samples in hand are the ones describing
 			// whatever just killed the process.
+			//
+			// DRAIN UNTIL EMPTY, not one batch. The ring is bufferSamples deep
+			// (~1920) specifically so a slow-server blip or a brief outage does
+			// not lose data; a single DrainUpTo(batchSamples) here would flush
+			// only the oldest 30 and abandon everything behind it — throwing
+			// away, at the one moment durability matters most, exactly the
+			// backlog Task 2's buffer exists to preserve. DrainUpTo(n) returns
+			// at least one element whenever Len() > 0, so Len() strictly
+			// decreases every iteration and this loop terminates.
+			//
+			// STOP ON THE FIRST FAILURE, though. Looping past one is the same
+			// mistake as retrying: a POST that fails because the server is
+			// unreachable will keep failing, and hammering it while the
+			// process is dying turns shutdown into a retry storm against the
+			// machine whose load is the measurement — spec §5, same rule as
+			// flush() above. The 5s timeout on `final` is the actual bound in
+			// wall-clock terms: once it elapses every Post fails immediately
+			// on a cancelled context and the loop exits on the next iteration.
 			final, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = client.Post(final, ring.DrainUpTo(batchSamples))
+			sent := 0
+			for ring.Len() > 0 {
+				s := ring.DrainUpTo(batchSamples)
+				if err := client.Post(final, s); err != nil {
+					// Logged unconditionally (not rate-limited like the
+					// steady-state path): this is the only diagnostic anyone
+					// will ever have for "did the last batch make it out."
+					log.Printf("final flush sent %d samples, then failed with %d unsent (%d in the failed POST, %d never attempted): %v",
+						sent, len(s)+ring.Len(), len(s), ring.Len(), err)
+					return
+				}
+				sent += len(s)
+			}
+			log.Printf("final flush sent %d samples", sent)
 			return
 		case <-ticker.C:
 			if ring.Len() >= batchSamples || time.Since(lastFlush) >= batchWindow {
