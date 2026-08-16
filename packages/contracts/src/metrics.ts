@@ -144,6 +144,11 @@ export const SeriesResponseSchema = z.object({
    * fixed default rather than a real answer to a question it never asked.
    */
   groupSeriesAvailable: z.boolean(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   buckets: z.array(SeriesBucketSchema),
 });
 export type SeriesResponse = z.infer<typeof SeriesResponseSchema>;
@@ -196,6 +201,11 @@ export const ErrorSeriesResponseSchema = z.object({
    */
   available: z.boolean(),
   /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
+  /**
    * At most six in practice: the five most frequent messages plus the folded
    * remainder, which is what the categorical palette can draw without leaving
    * a series undrawn. Most frequent first.
@@ -227,6 +237,11 @@ export type ErrorSeriesResponse = z.infer<typeof ErrorSeriesResponseSchema>;
 
 export const DistributionResponseSchema = z.object({
   runId: z.string().uuid(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   scope: MetricScopeSchema,
   name: z.string(),
   family: MetricFamilySchema,
@@ -246,6 +261,11 @@ export type DistributionResponse = z.infer<typeof DistributionResponseSchema>;
 
 export const UsersResponseSchema = z.object({
   runId: z.string().uuid(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   scenarios: z.array(
     z.object({
       scenario: z.string(),
@@ -279,6 +299,11 @@ export type UsersResponse = z.infer<typeof UsersResponseSchema>;
 export const ScatterResponseSchema = z.object({
   runId: z.string().uuid(),
   name: z.string(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   /** [global requests/s, this request's truncated p95 in that bucket]. */
   ok: z.array(z.tuple([z.number().int(), z.number().int()])),
   ko: z.array(z.tuple([z.number().int(), z.number().int()])),

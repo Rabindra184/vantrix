@@ -1,7 +1,6 @@
 import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type {
   ErrorSeriesResponse,
-  Window,
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
@@ -12,7 +11,8 @@ import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/pers
 import { Histogram, bandsFrom, inferBucketWidthMs, rollupFromHistograms } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, parseLimit, parseRange, uuidParam } from '../common/validation.js';
+import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
+import { inRange, resolveRange, snapWindow } from '../common/window.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -182,20 +182,9 @@ export class MetricsController {
       );
     }
 
-    const range = parseRange(from, to);
+    const range = await resolveRange(this.reader, run, from, to);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
-
     if (range !== null) {
-      if (!(await this.reader.isWindowable(tenant, run.id, run.startedOn))) {
-        // 400 rather than whole-run numbers under a windowed request. Serving
-        // the full run here would be the silently-ignored-parameter failure in
-        // its most damaging form: a table that looks brushed and is not.
-        throw badRequest(
-          'WINDOW_UNAVAILABLE',
-          'This run was ingested before per-bucket histograms were recorded, so it cannot be re-aggregated over a time window.',
-          'Re-ingest the run to enable time-window analysis, or request the whole run by omitting "from" and "to".',
-        );
-      }
       return this.#windowedStats(run, tenant, range, settings, scope, name, family);
     }
 
@@ -274,20 +263,28 @@ export class MetricsController {
     @Query('scope') scope = 'run',
     @Query('name') name = '',
     @Query('family') family = 'response_time',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<SeriesResponse> {
     const run = await this.#run(req, id);
-    const buckets = await this.reader.series(
+    const range = await resolveRange(this.reader, run, from, to);
+    const all = await this.reader.series(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
       run.startedOn,
       { scope, name, family },
     );
+    // Filtered here rather than in SQL: the width has to be inferred from the
+    // WHOLE series, or a narrow window over a coalesced run would infer its
+    // own gap as the bucket width and scale every rate wrongly.
+    const bucketWidthMs = inferBucketWidthMs(all.map((b) => b.startOffsetMs));
+    const buckets = all.filter((b) => inRange(b.startOffsetMs, range));
     return {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
       family: family as SeriesResponse['family'],
-      bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
+      bucketWidthMs,
       // Derived from the rows themselves, not from a run-level flag: the
       // columns are nullable and only rows written after the migration carry
       // the split. `every` over an empty array is vacuously true, hence the
@@ -307,34 +304,12 @@ export class MetricsController {
               { orgId: run.orgId, projectId: run.projectId }, run.id, run.startedOn,
             )
           : false,
+      window: range === null ? null : snapWindow(all.map((b) => b.startOffsetMs), range),
       buckets,
     };
   }
 
 
-  /**
-   * Snaps a requested range OUTWARD to bucket boundaries.
-   *
-   * Outward, never inward: nothing the reader selected may fall outside the
-   * answer. The upper edge also stops at the last bucket that exists, so a
-   * window dragged past the end of a run reports the run's extent rather than
-   * a range with no data behind half of it.
-   */
-  #snap(offsets: readonly number[], range: { fromMs: number; toMs: number }): Window {
-    // The width comes from the OFFSETS THEMSELVES, never a 1000ms constant:
-    // the engine halves resolution on a long run, and assuming 1000 would
-    // scale every rate by a power of two with nothing looking wrong.
-    const bucketWidthMs = inferBucketWidthMs([...offsets].sort((a, b) => a - b));
-    const fromMs = Math.floor(range.fromMs / bucketWidthMs) * bucketWidthMs;
-    const last = offsets.length === 0 ? fromMs : Math.max(...offsets);
-    const toMs = Math.min(
-      Math.ceil(range.toMs / bucketWidthMs) * bucketWidthMs,
-      last + bucketWidthMs,
-    );
-    // A range entirely past the end of the run still has to describe a
-    // non-empty span, or WindowSchema's positive `toMs` rejects it.
-    return { fromMs, toMs: Math.max(toMs, fromMs + bucketWidthMs), bucketWidthMs };
-  }
 
   /**
    * The statistics table re-aggregated over a time window.
@@ -358,7 +333,7 @@ export class MetricsController {
       tenant, run.id, run.startedOn, { scope: wanted, family: wantedFamily }, range,
     );
 
-    const window = this.#snap(rows.map((r) => r.startOffsetMs), range);
+    const window = snapWindow(rows.map((r) => r.startOffsetMs), range);
 
     const byName = new Map<string, { ok: Histogram; ko: Histogram }>();
     for (const row of rows) {
@@ -433,11 +408,14 @@ export class MetricsController {
   async errorSeries(
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<ErrorSeriesResponse> {
     const run = await this.#run(req, id);
+    const range = await resolveRange(this.reader, run, from, to);
     const scope = { orgId: run.orgId, projectId: run.projectId };
 
-    const [rows, flat] = await Promise.all([
+    const [all, flat] = await Promise.all([
       this.reader.errorSeries(scope, run.id, run.startedOn),
       this.reader.errors(scope, run.id),
     ]);
@@ -455,7 +433,11 @@ export class MetricsController {
      *   some / some  → recorded                              → available
      *   none / some  → warm-up-only failures                 → available
      */
-    const available = rows.length > 0 || flat.length === 0;
+    const available = all.length > 0 || flat.length === 0;
+    // Availability is a property of the RUN, not of the window — asked before
+    // filtering, so a window over a quiet stretch reports "no failures here"
+    // rather than "this run was never recorded".
+    const rows = all.filter((r) => inRange(r.startOffsetMs, range));
 
     // Grouped in first-seen order, which ERROR_SERIES_SQL's ORDER BY makes the
     // global rank order the engine emitted — most frequent first, so the
@@ -480,8 +462,9 @@ export class MetricsController {
       // reads the smallest gap between offsets and is systematically wrong on
       // a sparse series. `?? 1000` only for a run with no rows at all, where
       // nothing is drawn at any width.
-      bucketWidthMs: rows[0]?.bucketWidthMs ?? 1000,
+      bucketWidthMs: all[0]?.bucketWidthMs ?? 1000,
       available,
+      window: range === null ? null : snapWindow(all.map((r) => r.startOffsetMs), range),
       series: [...byMessage.entries()].map(([message, entry]) => ({ message, ...entry })),
     };
   }

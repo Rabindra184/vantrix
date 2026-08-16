@@ -2634,7 +2634,8 @@
         "percentilesOk": {},
         "percentilesKo": {}
       }
-    ]
+    ],
+    "window": null
   },
   "users": {
     "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
@@ -3737,7 +3738,8 @@
         "ended": 1,
         "maxConcurrent": 1
       }
-    ]
+    ],
+    "window": null
   },
   "distribution": {
     "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
@@ -4255,7 +4257,8 @@
       0
     ],
     "exactValues": false,
-    "overflowCount": 0
+    "overflowCount": 0,
+    "window": null
   },
   "errors": {
     "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
@@ -4515,7 +4518,8 @@
         41
       ]
     ],
-    "ko": []
+    "ko": [],
+    "window": null
   },
   "scatterWithFailures": {
     "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
@@ -4775,7 +4779,8 @@
         19,
         141
       ]
-    ]
+    ],
+    "window": null
   },
   "groupSeries": {
     "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",
@@ -6673,6 +6678,7 @@
         },
         "percentilesKo": {}
       }
-    ]
+    ],
+    "window": null
   }
 }

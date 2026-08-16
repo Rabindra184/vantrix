@@ -1,10 +1,11 @@
 import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type { DistributionResponse, ScatterResponse, UsersResponse } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type StoredBucket } from '@perfportal/persistence';
-import { distribution, inferBucketWidthMs } from '@perfportal/statistics';
+import { Histogram, distribution, inferBucketWidthMs } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { uuidParam } from '../common/validation.js';
+import { inRange, resolveRange, snapWindow } from '../common/window.js';
 
 @Controller('/v1/runs/:id')
 export class ParityController {
@@ -28,15 +29,43 @@ export class ParityController {
     @Query('scope') scope = 'run',
     @Query('name') name = '',
     @Query('family') family = 'response_time',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<DistributionResponse> {
     const run = await this.#run(req, id);
-    const h = await this.reader.histograms(
-      { orgId: run.orgId, projectId: run.projectId }, run.id, { scope, name, family },
-    );
+    const tenant = { orgId: run.orgId, projectId: run.projectId };
+    const range = await resolveRange(this.reader, run, from, to);
+
+    // Two sources for the same shape. Unwindowed reads run_stat's whole-run
+    // histograms; windowed merges the bucket histograms for the range — the
+    // same pair of classes either way, so `distribution` cannot tell them
+    // apart and neither can the chart.
+    let h: { ok: Histogram; ko: Histogram } | null;
+    let window: DistributionResponse['window'] = null;
+    if (range === null) {
+      h = await this.reader.histograms(tenant, run.id, { scope, name, family });
+    } else {
+      const rows = await this.reader.windowedBuckets(
+        tenant, run.id, run.startedOn, { scope, family }, range,
+      );
+      window = snapWindow(rows.map((r) => r.startOffsetMs), range);
+      const mine = rows.filter((r) => r.name === name);
+      const ok = new Histogram();
+      const ko = new Histogram();
+      for (const row of mine) {
+        if (row.histogramOk) ok.merge(row.histogramOk);
+        if (row.histogramKo) ko.merge(row.histogramKo);
+      }
+      // Absent, not empty: a name with no rows in this scope never existed,
+      // which is the same 404 the unwindowed path gives.
+      h = mine.length === 0 ? null : { ok, ko };
+    }
+
     if (!h) throw new NotFoundException(`No ${family} histogram for ${scope} "${name}" in run ${id}.`);
     const d = distribution(h.ok, h.ko);
     return {
       runId: run.id,
+      window,
       scope: scope as DistributionResponse['scope'],
       name,
       family: family as DistributionResponse['family'],
@@ -55,11 +84,15 @@ export class ParityController {
   async users(
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<UsersResponse> {
     const run = await this.#run(req, id);
-    const rows = await this.reader.users(
+    const range = await resolveRange(this.reader, run, from, to);
+    const all = await this.reader.users(
       { orgId: run.orgId, projectId: run.projectId }, run.id, run.startedOn,
     );
+    const rows = all.filter((r) => inRange(r.startOffsetMs, range));
 
     const byScenario = new Map<string, UsersResponse['scenarios'][number]['buckets']>();
     const total = new Map<number, { startOffsetMs: number; started: number; ended: number; maxConcurrent: number }>();
@@ -85,6 +118,9 @@ export class ParityController {
 
     return {
       runId: run.id,
+      // Snapped from the WHOLE series, so the reported width is the run's own
+      // resolution rather than whatever gap a narrow window happens to leave.
+      window: range === null ? null : snapWindow(all.map((r) => r.startOffsetMs), range),
       scenarios: [...byScenario].map(([scenario, buckets]) => ({ scenario, buckets }))
         .sort((a, b) => a.scenario.localeCompare(b.scenario)),
       total: [...total.values()].sort((a, b) => a.startOffsetMs - b.startOffsetMs),
@@ -97,9 +133,12 @@ export class ParityController {
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
     @Query('name') name = '',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<ScatterResponse> {
     const run = await this.#run(req, id);
     const tenant = { orgId: run.orgId, projectId: run.projectId };
+    const range = await resolveRange(this.reader, run, from, to);
     const [global, own] = await Promise.all([
       this.reader.series(tenant, run.id, run.startedOn, { scope: 'run', name: '', family: 'response_time' }),
       this.reader.series(tenant, run.id, run.startedOn, { scope: 'request', name, family: 'response_time' }),
@@ -161,6 +200,11 @@ export class ParityController {
     const ok: [number, number][] = [];
     const ko: [number, number][] = [];
     for (const b of own) {
+      // Filtered on the OWN bucket's offset, which is the point each drawn
+      // marker sits at. `rateForOwnBucket` still reads the whole global series
+      // — the x is a rate at that instant, and clipping the global series
+      // would leave the boundary markers without one.
+      if (!inRange(b.startOffsetMs, range)) continue;
       const x = rateForOwnBucket(b.startOffsetMs);
       if (x === undefined) continue;
       const pOk = b.percentilesOk.p95;
@@ -170,6 +214,12 @@ export class ParityController {
     }
     ok.sort((a, b) => a[0] - b[0]);
     ko.sort((a, b) => a[0] - b[0]);
-    return { runId: run.id, name, ok, ko };
+    return {
+      runId: run.id,
+      name,
+      window: range === null ? null : snapWindow(own.map((b) => b.startOffsetMs), range),
+      ok,
+      ko,
+    };
   }
 }

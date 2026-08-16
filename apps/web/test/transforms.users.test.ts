@@ -286,6 +286,7 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
    */
   const wide = (): UsersResponse => ({
     runId: users.runId,
+    window: null,
     scenarios: [
       {
         scenario: 'Browse',
@@ -362,6 +363,7 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
 describe('a run with more scenarios than the palette has hues', () => {
   const many: UsersResponse = {
     runId: users.runId,
+    window: null,
     scenarios: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].map((scenario, i) => ({
       scenario,
       buckets: [{ startOffsetMs: 0, started: i + 1, ended: 0, maxConcurrent: i + 1 }],
@@ -416,7 +418,7 @@ describe('a run with more scenarios than the palette has hues', () => {
  * ------------------------------------------------------------------ */
 
 describe('a run with no recorded users', () => {
-  const nothing: UsersResponse = { runId: users.runId, scenarios: [], total: [] };
+  const nothing: UsersResponse = { runId: users.runId, window: null, scenarios: [], total: [] };
 
   it.each([
     ['concurrent users', toConcurrentUsers],
