@@ -87,7 +87,13 @@ model Run {
   idempotencyKey String?   @map("idempotency_key")
   /// When the platform received this run's bundle (accept time), NOT when
   /// the load test itself ran. Deliberately ingest time: see startedOn.
-  startedAt      DateTime  @map("started_at")
+  /// TIMESTAMPTZ, like every instant in this model should be. As a bare
+  /// `timestamp` it held UTC only by convention, and node-postgres decodes
+  /// such a column in the process's LOCAL zone while Prisma decodes it as UTC
+  /// — so the raw-pool trends query and the Prisma run query reported two
+  /// different start times for one row on any non-UTC host. See the
+  /// 20260817000000_run_timestamps_are_timestamptz migration.
+  startedAt      DateTime  @map("started_at") @db.Timestamptz(3)
   /// The DATE of startedAt — the run_series_bucket partition key, carried
   /// here so it can be written at insert time. Deliberately an ingest date,
   /// not the load test's own start date: the worker only learns the real
@@ -104,8 +110,8 @@ model Run {
   /// when the platform found out about it. Never used as a partition key
   /// (see startedOn) and never backdates run_series_bucket rows already
   /// written under the ingest-date partition.
-  toolStartedAt  DateTime? @map("tool_started_at")
-  ingestedAt     DateTime? @map("ingested_at")
+  toolStartedAt  DateTime? @map("tool_started_at") @db.Timestamptz(3)
+  ingestedAt     DateTime? @map("ingested_at") @db.Timestamptz(3)
   /// Row creation time — used by the sweeper (apps/worker/src/sweeper.ts) to
   /// detect a run stuck at 'pending' or 'parsing' for too long. This
   /// coincides with startedAt today because both are `now()` at the same
@@ -116,7 +122,7 @@ model Run {
   /// merged: a future change to either (e.g. startedAt one day reflecting a
   /// backfill-adjusted accept time) must not silently perturb the sweeper's
   /// unrelated staleness window.
-  createdAt      DateTime  @default(now()) @map("created_at")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   /// Frozen at accept time. Statistics are meaningless without the options
   /// that produced them, and a project changing its warm-up must not
   /// silently reinterpret its own history.

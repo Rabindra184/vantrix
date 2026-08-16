@@ -344,6 +344,32 @@ describe('Chart — the tooltip formats an array-valued (scatter) point', () => 
   });
 });
 
+describe('Chart — the numeric x axis', () => {
+  /**
+   * A VALUE AXIS' LABELS ARE WIDE, and it is the only axis here whose tick
+   * count is chosen by the renderer rather than by the data. Elapsed
+   * milliseconds print as `10,000`…`60,000`, and at a phone's width ECharts
+   * lays out more of them than fit: they run together into
+   * `10,00020,00030,000` — unreadable, and worse than the category axis it
+   * replaced on the time-window strip, whose labels were single digits.
+   *
+   * The renderer knows what collides and this asks it to drop those, which no
+   * jsdom test can measure — hence an assertion on what is HANDED to it, the
+   * boundary this file keeps.
+   */
+  it('asks the renderer to drop tick labels that would collide', () => {
+    render(
+      <Chart
+        id="numeric"
+        title="Numeric"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value', name: 'Elapsed (ms)' }}
+      />,
+    );
+    expect(lastOption()['xAxis']).toMatchObject({ axisLabel: { hideOverlap: true } });
+  });
+});
+
 describe('Chart — the brush is opt-in', () => {
   /**
    * THE ASSERTION THAT PROTECTS THE OTHER EIGHT CHARTS. A slider quietly
@@ -411,6 +437,49 @@ describe('Chart — the brush is opt-in', () => {
     // Fire the handler the component registered.
     (onSpy.mock.calls.at(-1)![1] as () => void)();
     expect(onChange).toHaveBeenCalledWith(1200, 3801);
+  });
+
+  it('leaves the axis its name back, below the slider rather than behind it', () => {
+    // The slider is laid out from the BOTTOM of the container (`bottom` +
+    // `height`) and the axis name is drawn `nameGap` below the axis line,
+    // which sits at `grid.bottom`. With the grid making room for a name only,
+    // the two occupy the same band: "Elapsed (ms)" was drawn across the middle
+    // of the scrubber on every run page.
+    render(
+      <Chart
+        id="brushed"
+        title="Brushed"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value', name: 'Elapsed (ms)' }}
+        brush={{ value: null, onChange: () => undefined }}
+      />,
+    );
+    const grid = lastOption()['grid'] as { bottom: number };
+    const [zoom] = lastOption()['dataZoom'] as { bottom: number; height: number }[];
+    const { name: axisName, nameGap } = lastOption()['xAxis'] as { name: string; nameGap: number };
+
+    expect(axisName).toBe('Elapsed (ms)');
+    // The name's own band has to clear the top of the slider.
+    expect(grid.bottom - nameGap).toBeGreaterThan(zoom!.bottom + zoom!.height);
+  });
+
+  it('does not pay for that room on a brushed chart with no axis name', () => {
+    // The eight charts that name no axis must not gain a gutter for a name
+    // they do not draw.
+    render(
+      <Chart
+        id="brushed"
+        title="Brushed"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value' }}
+        brush={{ value: null, onChange: () => undefined }}
+      />,
+    );
+    const grid = lastOption()['grid'] as { bottom: number };
+    const [zoom] = lastOption()['dataZoom'] as { bottom: number; height: number }[];
+    // Still clears the slider — the plot must not sit on top of it either.
+    expect(grid.bottom).toBeGreaterThanOrEqual(zoom!.bottom + zoom!.height);
+    expect(grid.bottom).toBeLessThan(88);
   });
 
   it('says nothing when the slider reports no range', () => {

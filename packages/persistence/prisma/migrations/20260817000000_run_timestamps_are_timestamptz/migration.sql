@@ -1,0 +1,51 @@
+-- run's four instant columns become timestamptz.
+--
+-- THEY ALWAYS HELD UTC; THE TYPE JUST DID NOT SAY SO. `timestamp(3)` carries
+-- no zone, so every reader had to agree, by convention, that the naive value
+-- meant UTC. Two readers did not:
+--
+--   * Prisma decodes a `timestamp without time zone` as UTC — correct.
+--   * node-postgres decodes it in the NODE PROCESS's local zone — so every
+--     raw-pool read returned an instant shifted by the host's UTC offset.
+--
+-- `GET /v1/runs/:id/trends` goes through the pool (TRENDS_SQL, metrics/read.ts)
+-- and `GET /v1/runs/:id` goes through Prisma, so the same run reported two
+-- different start times: on an Asia/Kolkata machine the Trends page labelled
+-- every run `08-07 00:00` while the run header above it read `11:00 AM`, both
+-- off one row. It is invisible wherever the API runs in UTC — CI, most
+-- containers — which is exactly why it survived: no test asserting these
+-- timestamps could fail there, whatever it asserted.
+--
+-- The write side had already met this bug from the other direction and worked
+-- around it in place: apps/worker/src/pipeline/pipeline.service.ts passes
+-- tool_started_at as an ISO STRING, because node-postgres serializes a JS Date
+-- parameter in local time too and this column would have stored that verbatim.
+-- That workaround is why the stored values really are UTC, and therefore why
+-- `AT TIME ZONE 'UTC'` below is the correct reading of every existing row and
+-- not a guess.
+--
+-- AT TIME ZONE 'UTC' on a `timestamp without time zone` means "this naive
+-- value IS UTC" and yields the instant. It does not shift anything: the rows
+-- come out of this migration denoting exactly what they denoted going in.
+--
+-- Precision stays 3, matching the columns as they were.
+--
+-- WHY THE TYPE AND NOT A DRIVER SETTING. A pg type parser for OID 1114, or
+-- forcing TZ=UTC in the process, would fix today's readers and would have to
+-- be re-applied in every entrypoint — API, worker, scripts, tests, anything
+-- future — forever, while the schema went on misrepresenting what it stores.
+-- The column type is the one place that cannot be forgotten by the next raw
+-- query. It is also the direction this schema had already taken: telemetry_
+-- sample.sampled_at/received_at, the newest instant columns here, are timestamptz
+-- already, and run's are simply older than that decision.
+--
+-- `run` is a plain table (not partitioned), so this is one rewrite with no
+-- partition machinery. created_at is included even though only Prisma reads it
+-- today: it is the same kind of value in the same table, and the sweeper's
+-- `created_at < now() - interval` comparison (apps/worker/src/sweeper.ts) stops
+-- depending on the DATABASE session's TimeZone as a side effect.
+ALTER TABLE "run"
+  ALTER COLUMN "started_at"      TYPE timestamptz(3) USING "started_at"      AT TIME ZONE 'UTC',
+  ALTER COLUMN "tool_started_at" TYPE timestamptz(3) USING "tool_started_at" AT TIME ZONE 'UTC',
+  ALTER COLUMN "ingested_at"     TYPE timestamptz(3) USING "ingested_at"     AT TIME ZONE 'UTC',
+  ALTER COLUMN "created_at"      TYPE timestamptz(3) USING "created_at"      AT TIME ZONE 'UTC';

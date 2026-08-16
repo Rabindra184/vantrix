@@ -68,6 +68,36 @@ describe('the trend transforms, in general', () => {
     }
   });
 
+  /**
+   * THE AXIS LABEL IS A CLOCK THE READER RECOGNISES.
+   *
+   * These labels sit directly under a run header that renders the same
+   * instant through `Intl.DateTimeFormat` in the viewer's zone, so a UTC axis
+   * put two different readings of one moment on one page — `08-07 05:30`
+   * beneath `Aug 7, 2026, 11:00 AM`. Nothing here asserted the label's TEXT
+   * before, only its count, which is how the two drifted apart.
+   *
+   * Zone-pinned for the reason `transforms.compare.test.ts` explains at
+   * length: on a UTC runner a local-vs-UTC assertion cannot fail.
+   */
+  it('label the axis in the reader’s zone, not UTC', () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Kolkata';
+      expect(new Date('2026-08-07T00:00:00Z').getHours()).toBe(5);
+
+      const one = response([run({ id: 'a', startedAt: '2026-08-07T19:00:00.000Z' })]);
+      for (const transform of ALL) {
+        // 19:00Z is 00:30 the NEXT day at +05:30 — so this pins the date as
+        // well as the clock.
+        expect(transform(one).axisLabels).toEqual(['08-08 00:30']);
+      }
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+
   it('draw a cohort of one rather than falling back to the empty state', () => {
     // One datum is not no data.
     const one = response([run({ id: 'a', startedAt: '2026-08-01T10:00:00.000Z' })]);

@@ -53,16 +53,16 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **82 files / 936 tests**, it
+`nvm use` first, and if a run reports fewer than **83 files / 954 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on
-`feat/token-minting`; the floor sat at 81 / 931 through `feat/telemetry-agent`
-before this — this sub-project's own unit addition is just one file,
-`packages/contracts/test/tokens.test.ts` (5 tests); the rest of the branch's
-new coverage (`apps/api/test/tokens.integration.test.ts`,
-`packages/persistence/test/tokens.integration.test.ts`) is integration, which
-`pnpm test:unit` does not run.)
+silently-skipped run looks like a pass. Last measured on the run-timestamp
+fix, which added 3 zone-pinned label cases across `transforms.compare` and
+`transforms.trends`; the time-brush fix before it added
+`apps/web/test/TimeBrush.test.tsx` (4 tests) and 11 more across
+`transforms.rates` and `Chart`, from a floor of 82 / 936 — 81 / 931 through
+`feat/telemetry-agent`. Neither fix's e2e or integration cases are in this
+count: `pnpm test:unit` runs neither.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A
@@ -122,6 +122,54 @@ on the next re-capture for a reason that is not a defect. Derive it.
 `name` to `''` when `scope` is absent, so a scoped call missing `scope` returns
 the whole run's data with a 200. Both parameters, always. Test the omission,
 not just the correct call.
+
+**An instant column must be `timestamptz`, because Prisma and node-postgres
+disagree about a bare `timestamp`.** Prisma decodes `timestamp without time
+zone` as UTC; node-postgres decodes it in the NODE PROCESS's local zone, and
+serializes a JS Date PARAMETER in local time too. A column holding UTC by
+convention therefore reads back differently depending on which client asked,
+and both halves of that have already shipped here: the worker passes
+`tool_started_at` as an ISO string to survive the write side
+(`pipeline.service.ts`), and `GET /v1/runs/:id/trends` — the one read that goes
+through the raw pool (`TRENDS_SQL`) — reported a start time 5h30m off the
+`GET /v1/runs/:id` value for the same row on an Asia/Kolkata machine. **It is
+invisible in UTC**, so CI can never catch it: a test comparing the two
+endpoints passes on every runner regardless. `run`'s columns are timestamptz as
+of `20260817000000_run_timestamps_are_timestamptz`; `telemetry_sample`'s always
+were. The remaining bare-`timestamp` columns (`org`, `project`, `api_token`,
+`org_member`, Better Auth's own tables) are read only through Prisma today —
+put a raw-pool read on one and it is the same bug again.
+
+**A test for a timezone bug must SET the timezone, and prove it took.** Node
+honours `process.env.TZ` changed after startup, so the case can flip to
+`Asia/Kolkata` mid-test — but on a UTC runner the offset is zero and a case
+that merely compares two endpoints passes whether or not the bug is there.
+`trends.integration.test.ts`'s zone case asserts the flip landed
+(`new Date('…T00:00:00Z').getHours() === 5`) before asserting anything else, and
+restores the old value in a `finally` — integration files share a worker
+process (`fileParallelism: false`), so a leaked `TZ` becomes someone else's
+mystery failure.
+
+**A `type: 'value'` x-axis needs PAIR-shaped series, and scalars on one fail
+silently.** `ChartData.series[].data` has two forms — one value per
+`axisLabels` entry, or explicit `[x, y]` pairs — and `Chart` hands whichever it
+is straight to ECharts. Give a value axis the scalar form and ECharts maps each
+number onto BOTH axes: the chart plots the measure against itself, a straight
+45° line, with both axes carrying the same range. It throws nothing and logs
+nothing. `TimeBrush` did this for its whole life, and because the dataZoom
+slider reports its handles in the AXIS' units, every drag committed a window in
+rate values read as milliseconds — a drag over a third of a 63 s run produced
+`?from=0&to=7`. When adding `xAxis={{ type: 'value' }}`, check the transform
+emits pairs (`toErrorSeries`, `toPercentileDistribution` and
+`toRequestRate(_, { x: 'ms' })` do).
+
+**A mocked renderer cannot see it either, and neither can a green unit suite on
+both sides.** `Chart.test.tsx` proved the brush reports its handles in the
+axis' own units; `transforms.rates.test.ts` proved the transform's numbers.
+Both stayed green while the two disagreed about what those units WERE, because
+nothing asserted the join. That is what `apps/web/test/TimeBrush.test.tsx` is
+for — assert the numbers a component hands the renderer for x, not just that
+each side is internally consistent.
 
 **A jsdom test cannot see an accessible-name defect.** `dom-accessibility-api`
 does not consult a descendant's `aria-label`; Chromium does. A `<button

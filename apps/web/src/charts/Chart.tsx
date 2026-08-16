@@ -169,6 +169,15 @@ export interface ChartProps {
  * what it drew is theatre. The table is plain React and tests cleanly here;
  * the drawing is proven in a real browser.
  */
+/**
+ * The slider's own footprint, bottom edge to top edge — the two numbers it is
+ * laid out with, named once so the grid that has to clear it cannot drift from
+ * the slider that has to fit in it.
+ */
+const BRUSH_INSET = 4;
+const BRUSH_HEIGHT = 28;
+const BRUSH_BAND = BRUSH_INSET + BRUSH_HEIGHT;
+
 export default function Chart({
   id,
   title,
@@ -393,7 +402,12 @@ export default function Chart({
       nameLocation: 'middle' as const,
       nameGap: 28,
       nameTextStyle: axisText,
-      axisLabel: axisText,
+      // THE ONLY AXIS HERE WHOSE TICK COUNT THE RENDERER CHOOSES, and its
+      // labels are the widest: elapsed milliseconds print as `10,000`…
+      // `60,000`, and at a phone's width ECharts lays out more of them than
+      // fit — `10,00020,00030,000`, run together. Dropping the ones that
+      // collide is a measurement only the renderer can make.
+      axisLabel: { ...axisText, hideOverlap: true },
       axisLine: { lineStyle: { color: theme.gridline } },
       splitLine: { show: false },
     };
@@ -428,8 +442,8 @@ export default function Chart({
                   // extent to convert and would drift as the extent changed.
                   startValue: brushFrom ?? undefined,
                   endValue: brushTo ?? undefined,
-                  height: 28,
-                  bottom: 4,
+                  height: BRUSH_HEIGHT,
+                  bottom: BRUSH_INSET,
                   borderColor: theme.gridline,
                   fillerColor: 'transparent',
                   handleStyle: { color: theme.ink },
@@ -476,8 +490,14 @@ export default function Chart({
                 // and are words, not axis ticks, so they need the room.
                 left: horizontal ? 104 : 56,
                 right: 16,
-                // A named category axis needs the room its name is drawn in.
-                bottom: xAxisName === undefined ? 32 : 56,
+                // A named category axis needs the room its name is drawn in,
+                // PLUS the slider's own footprint when there is one. The
+                // slider is laid out from the bottom of the container
+                // (`bottom` + `height` below) and the axis name is drawn
+                // `nameGap` under the axis line at `grid.bottom`; without this
+                // term the two share a band, and "Elapsed (ms)" was drawn
+                // across the middle of the scrubber on every run page.
+                bottom: (xAxisName === undefined ? 32 : 56) + (hasBrush ? BRUSH_BAND : 0),
               },
               ...(horizontal
                 ? { xAxis: valueAxis, yAxis: categoryAxis }

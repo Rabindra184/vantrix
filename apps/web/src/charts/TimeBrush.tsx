@@ -99,7 +99,13 @@ export default function TimeBrush({
 
   // Requests/s: the densest, most continuous view of a run's shape, which
   // is what a reader is aiming at when they drag.
-  const rates = series.data ? toRequestRate(series.data) : null;
+  //
+  // `{ x: 'ms' }` IS LOAD-BEARING, not a formatting choice. The slider below
+  // reports its handles in the x axis' own units and `commit` writes those
+  // straight to the URL as milliseconds; the category form's scalars made
+  // those units RATES, so the strip drew requests/s against requests/s and a
+  // drag across the first third of this run committed `?from=0&to=7`.
+  const rates = series.data ? toRequestRate(series.data, { x: 'ms' }) : null;
 
   return (
     <section

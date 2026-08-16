@@ -408,4 +408,61 @@ describe('GET /v1/runs/:id/trends', () => {
       .set(auth());
     expect(res.status).toBe(400);
   });
+
+  /**
+   * THE ZONE THE API PROCESS HAPPENS TO RUN IN MUST NOT MOVE A RUN'S CLOCK.
+   *
+   * `run.started_at`/`tool_started_at` were `timestamp WITHOUT time zone`
+   * holding UTC instants by convention. Prisma reads such a column back as
+   * UTC; node-postgres parses it in the PROCESS's local zone. This endpoint
+   * is the one that goes through the raw pool (`TRENDS_SQL`), so it reported
+   * a different instant for the same run than `GET /v1/runs/:id` did —
+   * 5h30m early on an Asia/Kolkata machine, and correct on a UTC one.
+   *
+   * Which is why this case sets TZ itself. Every CI runner is UTC, where the
+   * offset is zero and a bug of exactly this shape is invisible: a test that
+   * merely compared the two endpoints would have passed throughout. The
+   * PRECONDITION below is therefore load-bearing — it fails loudly if the
+   * zone did not actually take, rather than letting the case pass vacuously.
+   */
+  it('reports one instant for a run whatever zone the API process runs in', async () => {
+    ctx = await createTestApp();
+
+    // 05:30:02Z is 11:00 the same morning in Asia/Kolkata, and — the reason
+    // for this exact value — the buggy read lands at 00:00:02Z, which is a
+    // different WALL-CLOCK DAY boundary and so is impossible to confuse with
+    // a rounding difference.
+    const startedAt = new Date('2026-08-07T05:30:02.171Z');
+    const id = await seedRun({ simulation: 'tz.Sim', startedAt });
+
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Kolkata';
+      // Node honours a TZ change made after startup; if that ever stops being
+      // true this assertion says so instead of the case quietly proving
+      // nothing. +05:30 puts midnight UTC at 05:30 local.
+      expect(new Date('2026-08-07T00:00:00Z').getHours()).toBe(5);
+
+      const body = TrendsResponseSchema.parse((await trends(id)).body);
+      const row = body.runs.find((r) => r.id === id);
+      expect(row).toBeDefined();
+
+      // The instant that was stored, not the wall clock it reads as here.
+      expect(row!.toolStartedAt).toBe(startedAt.toISOString());
+      expect(row!.startedAt).toBe(startedAt.toISOString());
+
+      // AND THE TWO ENDPOINTS AGREE, which is how the defect surfaced: the
+      // Trends page labelled every run 00:00 while the run header directly
+      // above it read 11:00 AM, both from the same row.
+      const single = await request(ctx.app.getHttpServer()).get(`/v1/runs/${id}`).set(auth());
+      expect(single.body.toolStartedAt).toBe(row!.toolStartedAt);
+      expect(single.body.startedAt).toBe(row!.startedAt);
+    } finally {
+      // Restored whatever happened: files share a worker process here
+      // (`fileParallelism: false`), so a leaked TZ would be someone else's
+      // mystery failure.
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
 });

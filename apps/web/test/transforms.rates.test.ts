@@ -315,6 +315,106 @@ describe('the data table', () => {
   });
 });
 
+describe('the millisecond form, which is what the time brush draws', () => {
+  /**
+   * WHY THIS FORM EXISTS AT ALL.
+   *
+   * `TimeBrush` draws this chart on a VALUE x-axis, because the dataZoom
+   * slider it carries reports its handles in the axis' own units and the
+   * window it commits is milliseconds (`Chart`'s `brush` contract). A category
+   * axis indexes points by position, so handing it the category form made
+   * ECharts map each scalar onto BOTH axes: the strip plotted requests/s
+   * against requests/s — a straight 45° line — and a drag over the first third
+   * of a 63 s run committed `?from=0&to=7`, seven MILLISECONDS, because the
+   * handles were reporting rate values.
+   *
+   * So the pair form is not a second way to draw the same chart. It is the
+   * only shape on which the brush's arithmetic is true.
+   */
+  const ms = toRequestRate(series, { x: 'ms' });
+
+  /** One drawn series' [x, y] pairs, by name. */
+  function pairs(chart: ChartData, name: string): readonly (readonly [number, number | null])[] {
+    const found = chart.series.find((s) => s.name === name);
+    expect(found, `expected a series named ${name}`).toBeDefined();
+    return found!.data as readonly (readonly [number, number | null])[];
+  }
+
+  it('carries each point’s own elapsed MILLISECONDS, not one value per label', () => {
+    // Computed from the payload, never written down: a re-capture moves these.
+    expect(pairs(ms, 'All')).toEqual(
+      series.buckets.map((b) => [b.startOffsetMs, b.startedCount / (series.bucketWidthMs / 1000)]),
+    );
+  });
+
+  it('puts x in MILLISECONDS and not the seconds the table column speaks', () => {
+    // The distinction the axis name got wrong for the whole of this chart's
+    // life. A pair form built from `startOffsetMs / 1000` would satisfy the
+    // test above's shape and be off by three orders of magnitude here.
+    const last = series.buckets.at(-1)!;
+    expect(pairs(ms, 'All').at(-1)![0]).toBe(last.startOffsetMs);
+    expect(pairs(ms, 'All').at(-1)![0]).toBeGreaterThan(1000);
+  });
+
+  it('leaves axisLabels empty, because each point carries its own x', () => {
+    // Same reason `toErrorSeries` does. A category axis fed alongside pairs is
+    // the ambiguity this whole form exists to remove.
+    expect(ms.axisLabels).toEqual([]);
+  });
+
+  it('splits on the START edge, exactly as the category form does', () => {
+    // The pair form must not become a second, drifting definition of which
+    // counters this chart reads.
+    const w = series.bucketWidthMs / 1000;
+    expect(pairs(ms, 'OK')).toEqual(
+      series.buckets.map((b) => [b.startOffsetMs, (b.startedOkCount ?? 0) / w]),
+    );
+    expect(pairs(ms, 'KO')).toEqual(
+      series.buckets.map((b) => [b.startOffsetMs, (b.startedKoCount ?? 0) / w]),
+    );
+  });
+
+  it('keeps a missing count a GAP, which a pair form can lose silently', () => {
+    // Dropping the point entirely would let the line join its neighbours
+    // straight across the hole — drawing a measurement nobody took, which is
+    // the failure `rate()`'s null exists to prevent. The point keeps its x and
+    // carries a null y.
+    const holed: SeriesResponse = {
+      ...series,
+      buckets: series.buckets.map((b, i) =>
+        i === 3 ? { ...b, startedOkCount: null, startedKoCount: null } : b,
+      ),
+    };
+    const drawn = pairs(toRequestRate(holed, { x: 'ms' }), 'OK');
+    expect(drawn).toHaveLength(series.buckets.length);
+    expect(drawn[3]).toEqual([series.buckets[3]!.startOffsetMs, null]);
+    expect(drawn[4]![1]).toBe(series.buckets[4]!.startedOkCount);
+  });
+
+  it('tabulates in SECONDS, the same table the category form builds', () => {
+    // The reader-facing surface does not move with the drawing's axis units.
+    // `Elapsed (s)` heads it in both forms and the rows carry the same rates.
+    expect(ms.columns).toEqual(toRequestRate(series).columns);
+    expect(ms.rows).toEqual(toRequestRate(series).rows);
+    expect(ms.rows[0]!.label).toBe(String(series.buckets[0]!.startOffsetMs / 1000));
+  });
+
+  it('still explains an unavailable split and a widened bucket', () => {
+    const wide: SeriesResponse = { ...series, bucketWidthMs: 2000 };
+    expect(toRequestRate(wide, { x: 'ms' }).limitation).toMatch(/2000 ms/);
+  });
+
+  it('leaves the category form scalar, which is what RatesChart draws', () => {
+    // The regression guard in the other direction: ⑩ on the Charts tab renders
+    // this same transform on a CATEGORY axis and breaks in the mirror-image way
+    // if the default ever becomes pairs.
+    expect(toRequestRate(series).series[0]!.data).toEqual(
+      series.buckets.map((b) => b.startedCount),
+    );
+    expect(toRequestRate(series).axisLabels).toHaveLength(series.buckets.length);
+  });
+});
+
 describe('nothing to draw', () => {
   const none: SeriesResponse = { ...series, buckets: [] };
 
