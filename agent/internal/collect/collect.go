@@ -49,7 +49,8 @@ type Sample struct {
 	// Second" (InSegs/OutSegs/RetransSegs/InErrs) and "TCP Connections Events
 	// per Second" (ActiveOpens/PassiveOpens) series, one-to-one — which is
 	// what turns a CPU chart into parity with a section. LINUX ONLY: zero
-	// everywhere else, see errProtoUnavailable below.
+	// everywhere else — see the protoUnavailable field on Collector and its
+	// ProtoUnavailable accessor below.
 	TCPInSegs       int64 `json:"tcpInSegs"`
 	TCPOutSegs      int64 `json:"tcpOutSegs"`
 	TCPRetransSegs  int64 `json:"tcpRetransSegs"`

@@ -116,6 +116,18 @@ jobs:
       # `go-version-file: agent/go.mod` rather than a literal: the `go`
       # directive in that file is the single source of truth for the toolchain,
       # exactly as .nvmrc is for Node. A literal here drifts silently.
+      #
+      # That directive reads `go 1.24.0`, not the bare `go 1.24` Task 1
+      # shipped — Task 3's `go get github.com/shirou/gopsutil/v4` pulled in
+      # v4.26.7, which itself declares `go 1.24.0`, and a module's directive
+      # must be at least its dependencies'. `go 1.24` is therefore not
+      # restorable; `go mod tidy` rewrites it back every time. The version is
+      # no longer ours to choose. The `toolchain` directive `go get` also
+      # wanted to add is deliberately absent, though — that would pin CI to
+      # whichever patch release happened to be installed on the developer's
+      # laptop the day the dependency was added, and every other developer's
+      # `go mod tidy` would either silently download that exact patch or
+      # churn the file back and forth against their own local toolchain.
       - uses: actions/setup-go@v5
         with:
           go-version-file: agent/go.mod

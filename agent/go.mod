@@ -2,8 +2,6 @@ module github.com/Rabindra184/vantrix/agent
 
 go 1.24.0
 
-toolchain go1.24.3
-
 require github.com/shirou/gopsutil/v4 v4.26.7
 
 require (
