@@ -132,8 +132,16 @@ describe('the contract and the API agree about scopes', () => {
   it("TOKEN_SCOPES matches the API's TokenScope union", () => {
     // The duplication is deliberate (contracts must not import from apps/api,
     // which the browser also loads), so this is what stops it drifting.
-    const fromApi: TokenScope[] = ['ingest', 'read', 'telemetry'];
-    expect([...TOKEN_SCOPES].sort()).toEqual([...fromApi].sort());
+    //
+    // A `Record<TokenScope, true>` (not a `TokenScope[]` annotation) is what
+    // makes this exhaustive: a plain array-typed literal only constrains each
+    // ELEMENT to the union, so adding a fourth member to TokenScope leaves
+    // `['ingest', 'read', 'telemetry']` perfectly valid and this test green
+    // while TOKEN_SCOPES silently falls behind. The mapped type instead
+    // requires a property for every member of the union, so an unlisted
+    // scope is a compile error here, not a silent gap.
+    const fromApi: Record<TokenScope, true> = { ingest: true, read: true, telemetry: true };
+    expect([...TOKEN_SCOPES].sort()).toEqual(Object.keys(fromApi).sort());
   });
 });
 

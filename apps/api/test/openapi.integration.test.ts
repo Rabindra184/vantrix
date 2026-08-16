@@ -75,7 +75,13 @@ describe('OpenAPI document', () => {
   it('never declares a 201 response on any operation except token minting, which really does create synchronously', async () => {
     const doc = await fetchDoc();
     for (const { path, method, op } of operations(doc)) {
-      if (path === '/v1/projects/{slug}/tokens' && method === 'post') continue;
+      if (path === '/v1/projects/{slug}/tokens' && method === 'post') {
+        // The carve-out itself must be live: if the mint operation ever
+        // stops declaring 201 while the handler keeps @HttpCode(201), this
+        // is the assertion that notices instead of the loop just skipping it.
+        expect(Object.keys(op.responses ?? {})).toContain('201');
+        continue;
+      }
       expect(Object.keys(op.responses ?? {}), `${method.toUpperCase()} ${path}`).not.toContain('201');
     }
   });
@@ -176,6 +182,26 @@ describe('OpenAPI document', () => {
       expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
       expect(op?.security, `${method.toUpperCase()} ${path} must override security`).toBeTruthy();
       expect(op?.security).toEqual([{ bearerAuth: [] }]);
+    }
+  });
+
+  // The mirror image of the bearer-only test above: the three token
+  // operations override to cookieAuth-only (SessionOnlyGuard refuses every
+  // bearer credential). Without this, dropping `security: [{ cookieAuth: [] }]`
+  // from a token path makes the document advertise `bearerAuth` on a route
+  // that always answers 403 to it, with nothing here turning red.
+  it('keeps the three token operations cookieAuth-only — SessionOnlyGuard refuses every bearer credential', async () => {
+    const doc = await fetchDoc();
+
+    for (const [path, method] of [
+      ['/v1/projects/{slug}/tokens', 'post'],
+      ['/v1/projects/{slug}/tokens', 'get'],
+      ['/v1/projects/{slug}/tokens/{prefix}', 'delete'],
+    ] as const) {
+      const op = doc.paths?.[path]?.[method] as { security?: Record<string, unknown>[] } | undefined;
+      expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
+      expect(op?.security, `${method.toUpperCase()} ${path} must override security`).toBeTruthy();
+      expect(op?.security).toEqual([{ cookieAuth: [] }]);
     }
   });
 

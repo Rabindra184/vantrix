@@ -70,12 +70,19 @@ describe('TokenRepository writes', () => {
     await tokens.create({ orgId: org.id, projectId: project.id, name: 'x', prefix: 'pp_rev', tokenHash: 'H', scopes: ['read'] });
 
     const first = await tokens.revokeByPrefix(org.id, project.id, 'pp_rev');
-    expect(first?.revokedAt).not.toBeNull();
+    // Assert non-null FIRST, then compare non-optionally. `expect(x?.y).not
+    // .toBeNull()` is vacuous when `x` itself is null: optional chaining
+    // makes `x?.y` evaluate to `undefined`, and `undefined` is `.not.toBeNull()`
+    // too — so that assertion passed even against a `revokeByPrefix` that
+    // never wrote anything and always returned `null`.
+    expect(first).not.toBeNull();
+    expect(first!.revokedAt).toBeInstanceOf(Date);
 
     // A retried revoke returns the same answer rather than 404-ing, so a
     // caller retrying after a timeout is not told the token vanished.
     const second = await tokens.revokeByPrefix(org.id, project.id, 'pp_rev');
-    expect(second?.revokedAt?.getTime()).toBe(first?.revokedAt?.getTime());
+    expect(second).not.toBeNull();
+    expect(second!.revokedAt!.getTime()).toBe(first!.revokedAt!.getTime());
   });
 
   it('will not revoke another project\'s token', async () => {
