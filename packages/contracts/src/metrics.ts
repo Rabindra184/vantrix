@@ -455,3 +455,65 @@ export const TelemetryBatchSchema = z
   })
   .strict();
 export type TelemetryBatch = z.infer<typeof TelemetryBatchSchema>;
+
+/** GET /v1/runs/:id/telemetry — one bucket for one host, on the run's own
+ *  elapsed axis. See toTelemetrySeries (@perfportal/statistics) for how a
+ *  wall-clock sample becomes one of these. */
+export const TelemetryPointSchema = z.object({
+  startOffsetMs: z.number().int(),
+  /**
+   * `null` means THIS INTERVAL CANNOT BE MEASURED — the first sample of a
+   * host, or an interval spanning a counter reset. Never zero for that: zero
+   * would claim the generator did nothing.
+   */
+  cpuTotalPct: z.number().nullable(),
+  cpuUserPct: z.number().nullable(),
+  cpuSystemPct: z.number().nullable(),
+  /** Gauges. Not nullable — instantaneous readings survive a restart. */
+  memUsedBytes: z.number(),
+  memTotalBytes: z.number(),
+  rxBytesPerSec: z.number().nullable(),
+  txBytesPerSec: z.number().nullable(),
+  inSegsPerSec: z.number().nullable(),
+  outSegsPerSec: z.number().nullable(),
+  retransSegsPerSec: z.number().nullable(),
+  inErrsPerSec: z.number().nullable(),
+  activeOpensPerSec: z.number().nullable(),
+  passiveOpensPerSec: z.number().nullable(),
+  tcpStates: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type TelemetryPoint = z.infer<typeof TelemetryPointSchema>;
+
+export const TelemetryResponseSchema = z.object({
+  runId: z.string().uuid(),
+  /**
+   * False when no agent reported for this run's window — either because
+   * `toolStartedAt` is null (the run never finished parsing, so it HAS no
+   * window) or because nothing overlapped it.
+   *
+   * There is no "the generator was idle" state to confuse this with: an agent
+   * that ran produced samples. The UI must say "no telemetry was recorded"
+   * rather than draw empty axes, which would read as a quiet machine.
+   */
+  available: z.boolean(),
+  /** The run's own width, so these buckets line up with every other chart. */
+  bucketWidthMs: z.number().int().positive(),
+  /** The window this payload was computed over, or null for the whole run.
+   *  Non-null values are SNAPPED to bucket boundaries — see WindowSchema. */
+  window: WindowSchema.nullable(),
+  hosts: z.array(
+    z.object({
+      host: z.string(),
+      /**
+       * `receivedAt - sampledAt` where that gap was largest, SIGNED. A large
+       * negative value means this generator's clock is AHEAD of the server's,
+       * and every point below is misaligned on the run's axis by roughly that
+       * much — with nothing about the chart looking wrong. The UI warns above
+       * CLOCK_SKEW_WARN_MS rather than quietly misaligning.
+       */
+      clockSkewMs: z.number().int(),
+      points: z.array(TelemetryPointSchema),
+    }),
+  ),
+});
+export type TelemetryResponse = z.infer<typeof TelemetryResponseSchema>;

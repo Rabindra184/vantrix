@@ -252,6 +252,26 @@ const parameters: Record<string, ParameterObject> = {
       'idle". A bearer token naming a project other than its own gets a 400 PROJECT_MISMATCH.',
     schema: { type: 'string' },
   },
+  TelemetryFrom: {
+    name: 'from',
+    in: 'query',
+    description:
+      'Elapsed ms from this run\'s own "toolStartedAt" (inclusive) — the same axis "series" ' +
+      'buckets are on. Independently meaningful from "to": "from" alone narrows to "the rest ' +
+      'of the run", never silently ignored. Omitting both "from" and "to" returns the whole ' +
+      'run with "window: null". Rejected with 400 WINDOW_UNAVAILABLE for a run ingested before ' +
+      'per-bucket histograms existed — unreachable in practice for telemetry, since a run old ' +
+      'enough to predate that migration predates this feature too.',
+    schema: { type: 'integer', minimum: 0 },
+  },
+  TelemetryTo: {
+    name: 'to',
+    in: 'query',
+    description:
+      'Elapsed ms from this run\'s own "toolStartedAt" (exclusive). See "from" above for how ' +
+      'the two bounds combine.',
+    schema: { type: 'integer', minimum: 0 },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -613,6 +633,36 @@ const paths: Record<string, PathItemObject> = {
       parameters: [parameters['RunId']!, parameters['ScatterName']!],
       responses: {
         '200': { description: 'OK and KO (x=throughput, y=p95) point series.', content: json(schemaRef('ScatterResponse')) },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/telemetry': {
+    get: {
+      operationId: 'getRunTelemetry',
+      summary: "Host telemetry for this run, on the run's own elapsed axis",
+      tags: ['metrics'],
+      description:
+        'Requires the "read" scope. Every point\'s "startOffsetMs" is elapsed ms from this ' +
+        'run\'s own "toolStartedAt", bucketed at this run\'s own "bucketWidthMs" — the same ' +
+        'axis GET /v1/runs/{id}/series uses, which is what lets "from"/"to" here mean exactly ' +
+        'what they mean there. Takes no "scope" or "name": telemetry is a property of the ' +
+        'MACHINE, not of a request or a group — the one dimension is "host", one entry per ' +
+        'host that reported. "available" is false when this run has no telemetry at all — ' +
+        'either "toolStartedAt" is null (the run never finished parsing, so it has no elapsed ' +
+        'axis to place a sample on) or no agent ever reported inside its window. It is computed ' +
+        'BEFORE "from"/"to" narrows the response, so a window over a quiet stretch of a run ' +
+        'that WAS recorded still reports "available": true with an empty "hosts" for that ' +
+        'slice — never "this run was never recorded".',
+      parameters: [parameters['RunId']!, parameters['TelemetryFrom']!, parameters['TelemetryTo']!],
+      responses: {
+        '200': {
+          description: 'Per-host telemetry series, or "available: false" with an empty "hosts".',
+          content: json(schemaRef('TelemetryResponse')),
+        },
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
