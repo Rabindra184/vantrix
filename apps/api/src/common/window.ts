@@ -56,11 +56,25 @@ export async function resolveRange(
 export function snapWindow(
   offsets: readonly number[],
   range: { fromMs: number; toMs: number },
+  // Optional override for the width that would otherwise be INFERRED from
+  // `offsets`. Every caller but one has offsets that are a faithful proxy for
+  // the run's real bucket width, so they omit this and let inference run as
+  // before. GET /v1/runs/:id/telemetry is the exception: its offsets come
+  // from whichever samples an AGENT happened to send, and when the agent's
+  // sampling interval is coarser than the run's own bucket width (say a 5s
+  // interval on a 1000ms-bucket run), consecutive telemetry points are 5000ms
+  // apart — inferring from them would report `window.bucketWidthMs: 5000`
+  // beside a top-level `bucketWidthMs: 1000` computed correctly from the
+  // run's own response-time series. Passing that already-known width here
+  // keeps the two fields in the one response agreeing.
+  knownBucketWidthMs?: number,
 ): Window {
   // The width comes from the OFFSETS THEMSELVES, never a 1000ms constant: the
   // engine halves resolution on a long run, and assuming 1000 would scale
-  // every rate by a power of two with nothing looking wrong.
-  const bucketWidthMs = inferBucketWidthMs([...offsets].sort((a, b) => a - b));
+  // every rate by a power of two with nothing looking wrong. (Unless the
+  // caller already knows the real width — see knownBucketWidthMs above.)
+  const bucketWidthMs =
+    knownBucketWidthMs ?? inferBucketWidthMs([...offsets].sort((a, b) => a - b));
   const fromMs = Math.floor(range.fromMs / bucketWidthMs) * bucketWidthMs;
   const last = offsets.length === 0 ? fromMs : Math.max(...offsets);
   const toMs = Math.min(

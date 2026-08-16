@@ -7,6 +7,7 @@ import NoOrg from './routes/NoOrg';
 import ProjectRuns from './routes/ProjectRuns';
 import RequestDetail from './routes/RequestDetail';
 import RunCompare from './routes/RunCompare';
+import RunTelemetry from './routes/RunTelemetry';
 import RunTrends from './routes/RunTrends';
 import RunDetail, { RunChartsTab, RunErrorsTab, RunOverviewTab } from './routes/RunDetail';
 import RunList from './routes/RunList';
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/runs/:runId" element={<RunDetail />}>
             <Route index element={<RunOverviewTab />} />
             <Route path="charts" element={<RunChartsTab />} />
+            <Route path="load-generators" element={<RunTelemetry />} />
             <Route path="errors" element={<RunErrorsTab />} />
             <Route path="trends" element={<RunTrends />} />
             <Route path="compare" element={<RunCompare />} />

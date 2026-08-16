@@ -4,11 +4,24 @@ import type {
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
+  TelemetryResponse,
   TrendsResponse,
 } from '@perfportal/contracts';
 import { parseProjectSettings } from '@perfportal/contracts';
-import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
-import { Histogram, bandsFrom, inferBucketWidthMs, rollupFromHistograms } from '@perfportal/statistics';
+import {
+  MetricReader,
+  ProjectRepository,
+  RunRepository,
+  TelemetryStore,
+  TELEMETRY_LOOKBACK_MS,
+} from '@perfportal/persistence';
+import {
+  Histogram,
+  bandsFrom,
+  inferBucketWidthMs,
+  rollupFromHistograms,
+  toTelemetrySeries,
+} from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
@@ -23,6 +36,12 @@ export class MetricsController {
     private readonly runs: RunRepository,
     private readonly reader: MetricReader,
     private readonly projects: ProjectRepository,
+    // Named `telemetrySamples`, not `telemetry_` — a trailing underscore is a
+    // workaround dressed as a name for dodging the collision with the
+    // `telemetry()` handler method below, and this project's convention
+    // (`runs`/`reader`/`projects` above) is to name the field for what it
+    // holds instead.
+    private readonly telemetrySamples: TelemetryStore,
   ) {}
 
   /**
@@ -466,6 +485,96 @@ export class MetricsController {
       available,
       window: range === null ? null : snapWindow(all.map((r) => r.startOffsetMs), range),
       series: [...byMessage.entries()].map(([message, entry]) => ({ message, ...entry })),
+    };
+  }
+
+  /**
+   * Host telemetry for this run, on this run's own elapsed axis.
+   *
+   * TAKES NO `scope`/`name`. Telemetry is a property of the MACHINE, not of a
+   * request or a group, so the `?name=X` without `?scope=` trap the sibling
+   * endpoints carry cannot arise here: there is nothing to forget to send. The
+   * one dimension is `host`, and the client filters on it — six charts for one
+   * host at a time, because an aggregate across a fleet would hide the single
+   * saturated generator this whole feature exists to find.
+   */
+  @Get('telemetry')
+  @Scopes('read')
+  async telemetry(
+    @Param('id', uuidParam('id')) id: string,
+    @Req() req: Request,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<TelemetryResponse> {
+    const run = await this.#run(req, id);
+    const range = await resolveRange(this.reader, run, from, to);
+    const scope = { orgId: run.orgId, projectId: run.projectId };
+
+    // The run's OWN bucket width, from its own series — never a 1000ms
+    // constant. The engine halves resolution on a long run, and assuming 1000
+    // would put telemetry on a different x-grid from every chart beside it.
+    const series = await this.reader.series(scope, run.id, run.startedOn, {
+      scope: 'run', name: '', family: 'response_time',
+    });
+    const offsets = series.map((b) => b.startOffsetMs);
+    const bucketWidthMs = offsets.length > 0 ? inferBucketWidthMs([...offsets].sort((a, b) => a - b)) : 1000;
+
+    // A run that never finished parsing has no toolStartedAt, so it has no
+    // window at all — and therefore no telemetry. Reported as unavailable
+    // rather than as an empty chart, which would read as an idle generator.
+    if (run.toolStartedAt === null) {
+      return { runId: run.id, available: false, bucketWidthMs, window: null, hosts: [] };
+    }
+
+    const startMs = run.toolStartedAt.getTime();
+    const durationMs = run.durationMs ?? 0;
+    const samples = await this.telemetrySamples.forRun(
+      scope,
+      // The lookback is what gives the first in-run bucket a predecessor to
+      // difference against; toTelemetrySeries drops the negative offsets.
+      startMs - TELEMETRY_LOOKBACK_MS,
+      startMs + durationMs,
+    );
+
+    /**
+     * `available` IS COMPUTED FROM THE SERIES, NOT FROM `samples.length`.
+     *
+     * A run whose `durationMs` is null (worker-unset) or zero has EVERY
+     * sample dropped by `toTelemetrySeries` as lookback-only: its window is
+     * `[0, durationMs)`, so a sample that arrived moments before the run
+     * started — the ordinary shape of a real agent report — resolves to a
+     * negative offset and is skipped. `samples.length > 0` would report
+     * `available: true` with `hosts: []`, a state TelemetryResponseSchema's
+     * own doc comment says cannot happen.
+     *
+     * Computed BEFORE the range filter below, for the same reason
+     * errors/series asks it before filtering: a window over a quiet stretch
+     * of a run that WAS recorded must read as "nothing here", never as "this
+     * run was never recorded".
+     */
+    const all = toTelemetrySeries(samples, startMs, bucketWidthMs, durationMs);
+    const available = all.some((h) => h.points.length > 0);
+
+    const hosts = all
+      .map((h) => ({ ...h, points: h.points.filter((p) => inRange(p.startOffsetMs, range)) }))
+      .filter((h) => h.points.length > 0);
+
+    // From the WHOLE (unfiltered) series, exactly like snapWindow's other
+    // callers — a narrow window must not mistake its own span for the run's
+    // resolution. `bucketWidthMs` is passed explicitly rather than left for
+    // snapWindow to infer from `everyOffset`: when the agent's sampling
+    // interval is coarser than the run's own bucket width, consecutive
+    // telemetry points are spaced by the INTERVAL, not the width, and
+    // inference would report a `window.bucketWidthMs` that disagrees with
+    // the top-level `bucketWidthMs` above — two bucket widths in one
+    // response describing the same run.
+    const everyOffset = all.flatMap((h) => h.points.map((p) => p.startOffsetMs));
+    return {
+      runId: run.id,
+      available,
+      bucketWidthMs,
+      window: range === null ? null : snapWindow(everyOffset, range, bucketWidthMs),
+      hosts,
     };
   }
 }

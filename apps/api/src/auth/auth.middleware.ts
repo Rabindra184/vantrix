@@ -37,6 +37,8 @@ async function authenticateSession(req: Request, members: OrgMemberRepository): 
   return {
     orgId: membership.orgId,
     tokenId: `session:${session.session.id}`,
+    // NOT 'telemetry'. A browser session has no reason to post host counters,
+    // and widening this would make the scope's whole purpose decorative.
     scopes: ['read', 'ingest'],
   };
 }

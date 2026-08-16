@@ -11,7 +11,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashToken, mintToken } from '@perfportal/core';
-import { createAuth, createPool, createPrisma, OrgMemberRepository } from '@perfportal/persistence';
+import {
+  createAuth, createPool, createPrisma, OrgMemberRepository, TelemetryStore,
+  type InboundTelemetrySample,
+} from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 // Reached into apps/worker's BUILT output, not its TypeScript source: the
 // production webServer command (playwright.config.ts) already builds
@@ -215,6 +218,158 @@ export async function seedRunWithData(orgId: string): Promise<string> {
   const projectId = await projectFor(orgId);
   const token = await mintIngestToken(orgId, projectId);
   return ingestAndProcess(token);
+}
+
+/**
+ * One telemetry sample, `n` steps into its host's own climb — every cumulative
+ * counter and the memory gauge scaled by a distinct multiplier (mirrors
+ * packages/persistence/test/telemetry.integration.test.ts's own `sampleAt`, so
+ * a transposed field is unlikely to compare equal by coincidence), all
+ * strictly increasing in `n` so consecutive samples never trip
+ * `toTelemetrySeries`'s reset detection (`packages/statistics/src/telemetry.ts`)
+ * by accident — only `seedRunWithTelemetry`'s deliberate restart does that.
+ *
+ * `n = 0` is the LOOKBACK convention that function uses for the sample one
+ * second before a host's window opens: it is simply the first rung of the
+ * same ladder, not a special case this builder has to know about.
+ */
+function telemetrySampleAt(baseMs: number, offsetMs: number, n: number): InboundTelemetrySample {
+  return {
+    sampledAtMs: baseMs + offsetMs,
+    cpuUserMs: 1_000 + n * 97,
+    cpuSystemMs: 500 + n * 53,
+    cpuIdleMs: 8_000 + n * 701,
+    cpuIowaitMs: 50 + n * 7,
+    memUsedBytes: 1_000_000 + n * 131_072,
+    memTotalBytes: 8_000_000,
+    netRxBytes: 10_000 + n * 4_099,
+    netTxBytes: 20_000 + n * 6_151,
+    tcpInSegs: 100 + n * 47,
+    tcpOutSegs: 120 + n * 59,
+    tcpRetransSegs: n,
+    tcpInErrs: 0,
+    tcpActiveOpens: 5 + n * 3,
+    tcpPassiveOpens: 3 + n * 2,
+    tcpStates: { ESTABLISHED: 10 + n, TIME_WAIT: n % 5 },
+  };
+}
+
+/**
+ * A real, fully-ingested run — via `seedRunWithData` above — with telemetry
+ * inserted for TWO load generators afterwards: Task 10's six-chart tab, proven
+ * for real by Task 11's `run-telemetry.spec.ts`.
+ *
+ * SEEDED AFTER INGESTION, DELIBERATELY, not folded into `seedRunWithData`
+ * itself or raced against it. `toTelemetrySeries` (`@perfportal/statistics`,
+ * consulted by `GET /v1/runs/:id/telemetry`) selects samples by
+ * `[toolStartedAt, toolStartedAt + durationMs)`, and `toolStartedAt` is `null`
+ * until the WORKER finishes parsing the bundle — `ingestAndProcess` above
+ * already waits for that (its own post-condition asserts `status === 'complete'`)
+ * before this function ever reads the row, so there is nothing left to race.
+ * Seeding telemetry before that point would put every sample outside the run's
+ * window: the tab would render `available: false`, EXACTLY the state a plain
+ * `seedRunWithData` run (no telemetry ever inserted) already produces for the
+ * "no telemetry" e2e case — so a mis-ordered seed would not error, it would
+ * silently make this run indistinguishable from that one, and the spec
+ * pointed at THIS run would pass for having tested the wrong fixture.
+ *
+ * Host names `lg-alpha`/`lg-bravo`, not anything resembling a project, run or
+ * request name in this suite: `ProjectRail` renders on every authenticated
+ * page — "All runs" plus one link per project — and Playwright's `name` match
+ * is a case-insensitive SUBSTRING, so a host called (say) `checkout` would be
+ * satisfied by a rail row instead of the `<select>` option a spec means to
+ * find.
+ *
+ * COUNTERS CLIMB MONOTONICALLY on both hosts across every sample —
+ * `toTelemetrySeries` reads any decrease in a cumulative counter as a process
+ * restart and drops the WHOLE interval's rate rather than risk drawing a
+ * spike — so an accidental decrease anywhere in this sequence would silently
+ * null a rate this fixture means to be real. `lg-bravo` carries exactly ONE
+ * DELIBERATE reset partway through (`RESET_INDEX`, restarting its own counters
+ * from a low baseline rather than resuming the pre-reset scale) precisely so
+ * the browser has one genuine gap to see — a hole in an otherwise-continuous
+ * line, not a fabricated spike and not a series that quietly stops.
+ *
+ * A LOOKBACK SAMPLE per host, one second before the run's own start, gives the
+ * FIRST in-run bucket (offset 0) something to difference against —
+ * `TELEMETRY_LOOKBACK_MS` is sixty seconds, so one second comfortably fits.
+ * Without it, offset 0 would be the very first sample in sorted order for that
+ * host and would come back with every rate null (no `prev` to difference
+ * against) — correct behaviour, but a confusing coincidence to debug next to
+ * the ONE deliberate gap this fixture also seeds.
+ *
+ * `STEP_MS` (3s) is deliberately coarser than the run's own bucket width
+ * (1000ms — `BucketSeries` never coalesces a run this short past its
+ * 1200-bucket cap, so `MetricsController.telemetry`'s inferred `bucketWidthMs`
+ * stays at its 1000ms floor): every sample lands in its OWN bucket, so a
+ * host's point count equals its sample count exactly, and the e2e suite's
+ * `?from=0&to=4000` sub-window (2 of roughly twenty points) is guaranteed
+ * strictly narrower than the whole run without depending on where a
+ * coalescing threshold happens to sit.
+ */
+export async function seedRunWithTelemetry(orgId: string): Promise<string> {
+  const runId = await seedRunWithData(orgId);
+
+  const run = await prisma.run.findUnique({ where: { id: runId } });
+  if (!run || run.toolStartedAt === null) {
+    throw new Error(
+      `seedRunWithTelemetry: run ${runId} has no toolStartedAt after ingestAndProcess — ` +
+        'toTelemetrySeries selects samples by [toolStartedAt, toolStartedAt + durationMs), so ' +
+        'seeding telemetry against a null window would silently land every sample outside it ' +
+        "(see RunTelemetry.tsx's available: false branch).",
+    );
+  }
+  if (run.durationMs === null || run.durationMs <= 0) {
+    throw new Error(
+      `seedRunWithTelemetry: run ${runId} has durationMs ${String(run.durationMs)} — ` +
+        "toTelemetrySeries's window is [0, durationMs), so no non-negative offset could ever " +
+        'land inside it.',
+    );
+  }
+
+  const toolStartedAtMs = run.toolStartedAt.getTime();
+  const durationMs = run.durationMs;
+  const STEP_MS = 3_000;
+  const offsets: number[] = [];
+  for (let ms = 0; ms < durationMs; ms += STEP_MS) offsets.push(ms);
+  // The reference bundle runs well over a minute
+  // (apps/api/test/read.integration.test.ts pins its durationMs above 60_000),
+  // so this floor is a guard against a FUTURE fixture swap silently shrinking
+  // the run underneath this seeder, not a live concern today.
+  if (offsets.length < 10) {
+    throw new Error(
+      `seedRunWithTelemetry: run ${runId}'s durationMs (${durationMs}) yields only ` +
+        `${offsets.length} telemetry offsets at a ${STEP_MS}ms step — too few to give the ` +
+        "e2e suite's ?from=0&to=4000 sub-window a smaller-but-nonzero row count against the " +
+        "whole run's.",
+    );
+  }
+  const RESET_INDEX = Math.floor(offsets.length / 2);
+
+  const store = new TelemetryStore(pool);
+  const scope = { orgId, projectId: run.projectId };
+
+  const alpha = [
+    telemetrySampleAt(toolStartedAtMs, -1_000, 0),
+    ...offsets.map((ms, i) => telemetrySampleAt(toolStartedAtMs, ms, i + 1)),
+  ];
+  await store.insert(scope, 'lg-alpha', alpha);
+
+  const bravo = [
+    telemetrySampleAt(toolStartedAtMs, -1_000, 0),
+    ...offsets.map((ms, i) =>
+      // Before RESET_INDEX: the same unbroken climb as lg-alpha. From
+      // RESET_INDEX on: a fresh climb from n=1, so the sample AT RESET_INDEX
+      // is deliberately smaller than the one before it (n=1 versus
+      // n=RESET_INDEX) — the counter decrease toTelemetrySeries reads as a
+      // restart — while every interval after it climbs normally again from
+      // the new, lower baseline.
+      telemetrySampleAt(toolStartedAtMs, ms, i < RESET_INDEX ? i + 1 : i - RESET_INDEX + 1),
+    ),
+  ];
+  await store.insert(scope, 'lg-bravo', bravo);
+
+  return runId;
 }
 
 /**

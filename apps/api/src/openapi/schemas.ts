@@ -14,6 +14,8 @@ import {
   SeriesResponseSchema,
   StatRowSchema,
   StatsResponseSchema,
+  TelemetryBatchSchema,
+  TelemetryResponseSchema,
   TrendRunSchema,
   TrendsResponseSchema,
   UsersResponseSchema,
@@ -54,6 +56,8 @@ const SOURCE: Record<string, ZodTypeAny> = {
   TrendsResponse: TrendsResponseSchema,
   TrendRun: TrendRunSchema,
   IndicatorBands: IndicatorBandsSchema,
+  TelemetryBatch: TelemetryBatchSchema,
+  TelemetryResponse: TelemetryResponseSchema,
 };
 
 /**

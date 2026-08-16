@@ -6,3 +6,7 @@ dist/
 test-results/
 playwright-report/
 blob-report/
+# Editor-tooling cache (a hook.cache.json per directory), created wherever a
+# file gets touched — six had accumulated across apps/ and packages/ before
+# anyone noticed. No leading slash, so this matches at any depth.
+.impeccable/

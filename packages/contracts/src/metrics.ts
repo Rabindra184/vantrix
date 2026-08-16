@@ -384,3 +384,136 @@ export const TrendsResponseSchema = z.object({
   runs: z.array(TrendRunSchema),
 });
 export type TrendsResponse = z.infer<typeof TrendsResponseSchema>;
+
+/**
+ * One sample as an agent sends it. Field names match the Go struct tags in
+ * `agent/internal/collect/collect.go` exactly — the two are one wire format,
+ * and a rename on either side must be a rename on both.
+ *
+ * EVERY CUMULATIVE FIELD IS THE RAW COUNTER. There is deliberately no
+ * `cpuPercent` and no `rxBytesPerSec`: the sampling interval is the agent's and
+ * it drifts, so a rate computed against an assumed interval is wrong by exactly
+ * that drift — and a counter reset is detectable in raw values
+ * (`current < previous`) and invisible in a rate, where it arrives as a
+ * plausible enormous spike that is indistinguishable from a real traffic burst.
+ *
+ * `.int().nonnegative()` on every counter: a negative since-boot counter is not
+ * a reading, and rejecting it at the edge means the delta arithmetic downstream
+ * only ever has to consider a RESET, never a negative.
+ */
+const counter = () => z.number().int().nonnegative();
+
+export const TelemetrySampleSchema = z.object({
+  /** ISO 8601, the AGENT's clock. The server stamps its own separately. */
+  sampledAt: z.string().datetime(),
+  cpuUserMs: counter(),
+  cpuSystemMs: counter(),
+  cpuIdleMs: counter(),
+  cpuIowaitMs: counter(),
+  memUsedBytes: counter(),
+  memTotalBytes: counter(),
+  netRxBytes: counter(),
+  netTxBytes: counter(),
+  tcpInSegs: counter(),
+  tcpOutSegs: counter(),
+  tcpRetransSegs: counter(),
+  tcpInErrs: counter(),
+  tcpActiveOpens: counter(),
+  tcpPassiveOpens: counter(),
+  /** Kernel TCP state → count, absent when zero. The state set is the OS's. */
+  tcpStates: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type TelemetrySample = z.infer<typeof TelemetrySampleSchema>;
+
+/**
+ * The body of POST /v1/telemetry.
+ *
+ * ═══ THERE IS NO orgId AND NO projectId, ON PURPOSE ═══
+ *
+ * Both come from the bearer token. An agent runs on a load generator — a
+ * machine an attacker is far likelier to reach than the API — and a
+ * payload-supplied tenant would let a token minted for one project write
+ * telemetry into another, which the read path would then serve without a
+ * murmur. `.strict()` is what makes that a REJECTION rather than a silently
+ * ignored field, so a future agent that starts sending one fails loudly on its
+ * first request instead of appearing to work.
+ */
+export const TelemetryBatchSchema = z
+  .object({
+    /**
+     * The generator's label. Free text, NOT a foreign key: hostnames collide
+     * and change on ephemeral generators, which is why the agent takes
+     * `--host-label`. It is the dimension every telemetry chart groups by.
+     */
+    host: z.string().min(1).max(255),
+    /**
+     * Bounded so one request cannot pin the event loop. The agent batches at
+     * 30; 500 leaves generous headroom for a backlog flush after an outage
+     * while keeping the worst-case body small.
+     */
+    samples: z.array(TelemetrySampleSchema).min(1).max(500),
+  })
+  .strict();
+export type TelemetryBatch = z.infer<typeof TelemetryBatchSchema>;
+
+/** GET /v1/runs/:id/telemetry — one bucket for one host, on the run's own
+ *  elapsed axis. See toTelemetrySeries (@perfportal/statistics) for how a
+ *  wall-clock sample becomes one of these. */
+export const TelemetryPointSchema = z.object({
+  startOffsetMs: z.number().int(),
+  /**
+   * `null` means THIS INTERVAL CANNOT BE MEASURED — the first sample of a
+   * host, or an interval spanning a counter reset. Never zero for that: zero
+   * would claim the generator did nothing.
+   */
+  cpuTotalPct: z.number().nullable(),
+  cpuUserPct: z.number().nullable(),
+  cpuSystemPct: z.number().nullable(),
+  /** Gauges. Not nullable — instantaneous readings survive a restart. */
+  memUsedBytes: z.number(),
+  memTotalBytes: z.number(),
+  rxBytesPerSec: z.number().nullable(),
+  txBytesPerSec: z.number().nullable(),
+  inSegsPerSec: z.number().nullable(),
+  outSegsPerSec: z.number().nullable(),
+  retransSegsPerSec: z.number().nullable(),
+  inErrsPerSec: z.number().nullable(),
+  activeOpensPerSec: z.number().nullable(),
+  passiveOpensPerSec: z.number().nullable(),
+  tcpStates: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type TelemetryPoint = z.infer<typeof TelemetryPointSchema>;
+
+export const TelemetryResponseSchema = z.object({
+  runId: z.string().uuid(),
+  /**
+   * False when no agent reported for this run's window — either because
+   * `toolStartedAt` is null (the run never finished parsing, so it HAS no
+   * window) or because nothing overlapped it.
+   *
+   * There is no "the generator was idle" state to confuse this with: an agent
+   * that ran produced samples. The UI must say "no telemetry was recorded"
+   * rather than draw empty axes, which would read as a quiet machine.
+   */
+  available: z.boolean(),
+  /** The run's own width, so these buckets line up with every other chart. */
+  bucketWidthMs: z.number().int().positive(),
+  /** The window this payload was computed over, or null for the whole run.
+   *  Non-null values are SNAPPED to bucket boundaries — see WindowSchema. */
+  window: WindowSchema.nullable(),
+  hosts: z.array(
+    z.object({
+      host: z.string(),
+      /**
+       * `receivedAt - sampledAt` where that gap was largest, SIGNED. A large
+       * negative value means this generator's clock is AHEAD of the server's,
+       * and every point below is misaligned on the run's axis by roughly that
+       * much — with nothing about the chart looking wrong. The UI warns above
+       * CLOCK_SKEW_WARN_MS rather than quietly misaligning.
+       */
+      clockSkewMs: z.number().int(),
+      points: z.array(TelemetryPointSchema),
+    }),
+  ),
+});
+export type TelemetryResponse = z.infer<typeof TelemetryResponseSchema>;

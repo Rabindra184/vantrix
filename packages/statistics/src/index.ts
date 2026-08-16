@@ -10,3 +10,4 @@ export * from './window.js';
 export * from './engine.js';
 export * from './engine-async.js';
 export * from './users.js';
+export * from './telemetry.js';

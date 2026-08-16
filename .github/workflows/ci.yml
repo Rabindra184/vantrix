@@ -99,3 +99,58 @@ jobs:
       # AFTER test:integration, never beside it: createTestApp() TRUNCATEs
       # every table, and these two suites share one database.
       - run: pnpm test:e2e
+
+  # The load-generator telemetry agent (agent/) is a Go module outside the
+  # pnpm workspace (pnpm-workspace.yaml globs only packages/* and apps/*), so
+  # it gets its own job rather than a step bolted onto `build`. It needs no
+  # Postgres, Redis or MinIO, so as its own job it runs in parallel and a Go
+  # failure reports in under a minute instead of behind the whole Node gate.
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+
+    steps:
+      - uses: actions/checkout@v4
+      # `go-version-file: agent/go.mod` rather than a literal: the `go`
+      # directive in that file is the single source of truth for the toolchain,
+      # exactly as .nvmrc is for Node. A literal here drifts silently.
+      #
+      # That directive reads `go 1.24.0`, not the bare `go 1.24` Task 1
+      # shipped — Task 3's `go get github.com/shirou/gopsutil/v4` pulled in
+      # v4.26.7, which itself declares `go 1.24.0`, and a module's directive
+      # must be at least its dependencies'. `go 1.24` is therefore not
+      # restorable; `go mod tidy` rewrites it back every time. The version is
+      # no longer ours to choose. The `toolchain` directive `go get` also
+      # wanted to add is deliberately absent, though — that would pin CI to
+      # whichever patch release happened to be installed on the developer's
+      # laptop the day the dependency was added, and every other developer's
+      # `go mod tidy` would either silently download that exact patch or
+      # churn the file back and forth against their own local toolchain.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - run: go vet ./...
+      # footprint_test.go carries a `//go:build !race` tag, so it is not even
+      # compiled into this run — see that file for why.
+      - run: go test ./... -race
+      # WITHOUT -race. The detector multiplies CPU by 5-10x, so a budget
+      # measured under it is measuring the detector; the build tag above is
+      # what makes this the only step that ever runs it.
+      - run: go test -run TestFootprintBudget -v ./...
+
+      # Cross-compiled for the platforms load generators actually run on
+      # (spec §9). linux/amd64 and linux/arm64 at minimum; CGO_ENABLED=0 so the
+      # result is a single static binary with no glibc floor, which is what
+      # makes "copy it onto the box" a real distribution story.
+      - run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o dist/perfportal-agent-linux-amd64 ./cmd/perfportal-agent
+      - run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o dist/perfportal-agent-linux-arm64 ./cmd/perfportal-agent
+      - run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perfportal-agent
+          path: agent/dist/
