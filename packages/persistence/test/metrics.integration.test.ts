@@ -1,7 +1,7 @@
 import { bandsFrom, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, USER_SERIES_SQL } from '../src/index.js';
+import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
 import { requireDatabaseUrl, resetDatabase } from './support/db.js';
 
 const url = requireDatabaseUrl();
@@ -487,5 +487,119 @@ describe('flat errors — the folded remainder', () => {
     );
     // The default fixture has one distinct message and never folds.
     expect(rows.every((r) => r.message !== null)).toBe(true);
+  });
+});
+
+describe('windowed buckets', () => {
+  const runScope = { scope: 'run', family: 'response_time' };
+  // MAX_OFFSET_MS, not Number.MAX_SAFE_INTEGER: start_offset_ms is int4 and
+  // an unclamped bound throws rather than matching everything.
+  const FULL = { fromMs: 0, toMs: MAX_OFFSET_MS };
+
+  it('round-trips a bucket histogram and matches the start-edge split', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+
+    const engine = [...result.series.values()].find((v) => v.scope === 'run');
+    const rows = await reader.windowedBuckets(tenant, ctx.runId, STARTED_ON, runScope, FULL);
+
+    expect(rows).toHaveLength(engine!.buckets.length);
+    // Derived from the engine's own buckets, never written down — and against
+    // startedOkCount specifically, the column the histograms are fed alongside.
+    for (const row of rows) {
+      const b = engine!.buckets.find((x) => x.startOffsetMs === row.startOffsetMs);
+      expect(row.histogramOk!.total).toBe(b!.startedOkCount);
+      expect(row.histogramKo!.total).toBe(b!.startedKoCount);
+    }
+  });
+
+  it('answers the same percentile the engine\'s own bucket does', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const engine = [...result.series.values()].find((v) => v.scope === 'run');
+    const busiest = [...engine!.buckets].sort((a, b) => b.startedOkCount - a.startedOkCount)[0];
+
+    const rows = await reader.windowedBuckets(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON, runScope, FULL);
+    const stored = rows.find((r) => r.startOffsetMs === busiest!.startOffsetMs);
+
+    expect(busiest!.startedOkCount).toBeGreaterThan(0);
+    expect(stored!.histogramOk!.quantile(0.95)).toBe(busiest!.histogramOk.quantile(0.95));
+  });
+
+  it('returns only the buckets inside the range, half-open at the top', async () => {
+    const ctx = await seedRun();
+    const result = await persist(ctx);
+    const reader = new MetricReader(pool);
+    const tenant = { orgId: ctx.orgId, projectId: ctx.projectId };
+    const engine = [...result.series.values()].find((v) => v.scope === 'run');
+
+    const offsets = engine!.buckets.map((b) => b.startOffsetMs).sort((a, b) => a - b);
+    const cut = offsets[Math.floor(offsets.length / 2)] as number;
+    const rows = await reader.windowedBuckets(
+      tenant, ctx.runId, STARTED_ON, runScope, { fromMs: 0, toMs: cut });
+
+    expect(rows.every((r) => r.startOffsetMs < cut)).toBe(true);
+    expect(rows).toHaveLength(offsets.filter((o) => o < cut).length);
+    // The boundary bucket belongs to the NEXT window, so two adjacent ranges
+    // never both claim it and no observation is counted twice.
+    expect(rows.some((r) => r.startOffsetMs === cut)).toBe(false);
+  });
+
+  it('reports a freshly ingested run as windowable', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    expect(await reader.isWindowable(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON)).toBe(true);
+  });
+
+  it('reports a run whose buckets predate the columns as not windowable', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    await pool.query(
+      'UPDATE run_series_bucket SET histogram_ok = NULL, histogram_ko = NULL WHERE run_id = $1',
+      [ctx.runId],
+    );
+    const reader = new MetricReader(pool);
+    expect(await reader.isWindowable(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON)).toBe(false);
+    // And the rows still read — the run is readable, just not brushable.
+    const rows = await reader.windowedBuckets(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON, runScope, FULL);
+    expect(rows.every((r) => r.histogramOk === null)).toBe(true);
+  });
+
+  it('prunes partitions on the windowed query', async () => {
+    // EXPLAINs the exported constant, not a copy — a test against a copy keeps
+    // passing after the real query loses its partition predicate.
+    const ctx = await seedRun();
+    await persist(ctx);
+    const { rows } = await pool.query(
+      `EXPLAIN (FORMAT JSON) ${WINDOWED_BUCKETS_SQL}`,
+      [STARTED_ON, ctx.runId, ctx.orgId, ctx.projectId, 'run', 'response_time', 0, 999_999_999],
+    );
+    expect(JSON.stringify(rows)).not.toMatch(/run_series_bucket_2026_(0[1-7]|09|1[0-2])/);
+  });
+});
+
+describe('windowed buckets — the int4 ceiling', () => {
+  it('does not throw when asked for an unbounded upper range', async () => {
+    // start_offset_ms is INTEGER. Number.MAX_SAFE_INTEGER as an open-ended
+    // bound fails the query outright with "out of range for type integer" —
+    // a runtime error, not an empty result, and only on the "everything from
+    // here on" call. Clamped in the reader, which is the layer that knows.
+    const ctx = await seedRun();
+    await persist(ctx);
+    const reader = new MetricReader(pool);
+    const rows = await reader.windowedBuckets(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId, STARTED_ON,
+      { scope: 'run', family: 'response_time' },
+      { fromMs: 0, toMs: Number.MAX_SAFE_INTEGER },
+    );
+    expect(rows.length).toBeGreaterThan(0);
   });
 });

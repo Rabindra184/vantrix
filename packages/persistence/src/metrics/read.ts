@@ -37,6 +37,18 @@ export interface StoredUserBucket {
   maxConcurrent: number;
 }
 
+export interface StoredWindowBucket {
+  name: string;
+  startOffsetMs: number;
+  /**
+   * `null` for a run ingested before migration 20260816120000 — NOT an empty
+   * histogram. "Not recorded" and "recorded nothing" are different answers,
+   * and only the caller knows which one it can tolerate.
+   */
+  histogramOk: Histogram | null;
+  histogramKo: Histogram | null;
+}
+
 export interface StoredErrorBucket {
   startOffsetMs: number;
   /**
@@ -126,6 +138,48 @@ export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended
  * group by message in first-seen order and get the most frequent series first
  * without re-sorting.
  */
+/**
+ * Shared verbatim with the "prunes partitions" integration test, for the same
+ * reason as SERIES_SQL: `run_started_on = $1` is the partition-key predicate,
+ * and a test asserting the plan of a COPY of this string would keep passing
+ * after the real one lost it.
+ *
+ * `name` is deliberately NOT a parameter. A windowed statistics table needs
+ * every row at once, so this returns all names for a scope and the caller
+ * groups — one query rather than one per endpoint.
+ *
+ * The range is HALF-OPEN, `>= from AND < to`, so two adjacent windows never
+ * both claim the boundary bucket and no observation is counted twice.
+ */
+export const WINDOWED_BUCKETS_SQL = `SELECT name, start_offset_ms, histogram_ok, histogram_ko
+         FROM run_series_bucket
+        WHERE run_started_on = $1 AND run_id = $2
+          AND org_id = $3 AND project_id = $4
+          AND scope = $5 AND family = $6
+          AND start_offset_ms >= $7 AND start_offset_ms < $8
+        ORDER BY name, start_offset_ms`;
+
+/**
+ * The largest value `start_offset_ms` can hold: it is an INTEGER column, so
+ * Postgres int4, so 2^31 − 1.
+ *
+ * NOT `Number.MAX_SAFE_INTEGER`. Passing that as an open-ended upper bound
+ * fails the query outright with `value "9007199254740991" is out of range for
+ * type integer` — a runtime error rather than an empty result, and one that
+ * only appears once a caller asks for "everything from here on". About 24.8
+ * days of elapsed time, well past any run this system ingests.
+ */
+export const MAX_OFFSET_MS = 2_147_483_647;
+
+/** Whether this run's buckets carry histograms at all, i.e. whether it can be
+ *  windowed. Partition-pruned like every other bucket query. */
+export const IS_WINDOWABLE_SQL = `SELECT EXISTS (
+         SELECT 1 FROM run_series_bucket
+          WHERE run_started_on = $1 AND run_id = $2
+            AND org_id = $3 AND project_id = $4
+            AND histogram_ok IS NOT NULL
+       ) AS present`;
+
 export const ERROR_SERIES_SQL = `SELECT start_offset_ms, message, is_other, count, bucket_width_ms
          FROM run_error_bucket
         WHERE run_started_on = $1 AND run_id = $2
@@ -314,6 +368,48 @@ export class MetricReader {
       ended: r.ended,
       maxConcurrent: r.max_concurrent,
     }));
+  }
+
+  /**
+   * The bucket histograms inside a time range, for every name in one scope.
+   *
+   * runStartedOn is REQUIRED for the same partition-pruning reason as series():
+   * it is the partition key, and a query filtering on run_id alone cannot prune
+   * and scans every partition.
+   */
+  async windowedBuckets(
+    scope: ProjectScope,
+    runId: string,
+    runStartedOn: Date,
+    sel: { scope: string; family: string },
+    range: { fromMs: number; toMs: number },
+  ): Promise<StoredWindowBucket[]> {
+    const { rows } = await this.pool.query(
+      WINDOWED_BUCKETS_SQL,
+      [
+        runStartedOn, runId, scope.orgId, scope.projectId, sel.scope, sel.family,
+        // Clamped HERE rather than trusting every caller: this is the layer
+        // that knows the column is int4, and an unclamped upper bound throws
+        // instead of returning everything.
+        Math.min(range.fromMs, MAX_OFFSET_MS),
+        Math.min(range.toMs, MAX_OFFSET_MS),
+      ],
+    );
+    return rows.map((r) => ({
+      name: r.name,
+      startOffsetMs: r.start_offset_ms,
+      histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,
+      histogramKo: r.histogram_ko ? Histogram.deserialize(new Uint8Array(r.histogram_ko)) : null,
+    }));
+  }
+
+  /** Whether this run's buckets carry histograms, i.e. whether it can be windowed. */
+  async isWindowable(scope: ProjectScope, runId: string, runStartedOn: Date): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      IS_WINDOWABLE_SQL,
+      [runStartedOn, runId, scope.orgId, scope.projectId],
+    );
+    return rows[0]?.present === true;
   }
 
   /**

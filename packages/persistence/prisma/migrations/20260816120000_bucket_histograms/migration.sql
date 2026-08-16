@@ -1,0 +1,34 @@
+-- Exact 1ms histograms per bucket, so a time window can be re-aggregated from
+-- what is stored rather than by re-parsing the bundle.
+--
+-- ═══ WHY HISTOGRAMS AND NOT THE SKETCH ═══
+--
+-- Measured on this repo's own classes. A DDSketch protobuf costs 1068 bytes for
+-- a SINGLE observation, and 4139 for 20 values spread over 1-10000ms, because
+-- its store is dense: it writes every bin across the occupied index range as a
+-- double, zeros included. Its size therefore tracks value SPREAD, not count —
+-- 20 values cost the same as 200 over the same range.
+--
+-- The same data as a Histogram costs 12 and 72 bytes: a sparse map of 1ms bins
+-- with uvarint encoding, so it costs what the data actually occupies. Its
+-- quantiles are also EXACT rather than within RELATIVE_ACCURACY, and merging is
+-- map addition, so a window merged from these is exact too.
+--
+-- ═══ WHY NULLABLE, WITH NO DEFAULT ═══
+--
+-- Metadata-only on a partitioned table that already has rows, and it keeps a
+-- run ingested before this migration distinguishable from one that recorded no
+-- traffic. That distinction is what `windowable` reports, and it is what stops
+-- a brush being offered on a run it cannot be honoured for. Backfilling a zero
+-- histogram instead would make an un-windowable run look like an empty one.
+--
+-- histogram_kind is deliberately not repeated per bucket: run_stat.histogram_kind
+-- already records the format for the run, and a second copy per bucket row
+-- could only ever disagree with it.
+--
+-- COST, measured at ingest of 1M events over 100 endpoints: heap delta 252 MB
+-- -> 525 MB, and 616 MB at 3M events. A step change rather than a slope —
+-- distinct millisecond bins per bucket saturate once the latency range is
+-- covered — against the throughput benchmark's own 1024 MB guard.
+ALTER TABLE "run_series_bucket" ADD COLUMN "histogram_ok" BYTEA;
+ALTER TABLE "run_series_bucket" ADD COLUMN "histogram_ko" BYTEA;

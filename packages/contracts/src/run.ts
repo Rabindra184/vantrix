@@ -65,6 +65,17 @@ export const RunResponseSchema = z.object({
   description: z.string().nullable().optional(),
   /** The load test's own span. Gatling's header renders this to whole seconds (G-04). */
   durationMs: z.number().int().nullable().optional(),
+  /**
+   * Whether this run's buckets carry the per-bucket histograms a time window is
+   * re-aggregated from.
+   *
+   * False for a run ingested before that migration. The UI must not offer a
+   * brush for such a run: every windowed metric call would return 400
+   * WINDOW_UNAVAILABLE, which is correct of the API and useless to a reader who
+   * was invited to drag something. Optional so a client written before this
+   * field existed still parses.
+   */
+  windowable: z.boolean().optional(),
   /** When the platform received this run's bundle — ingest time, not tool start. */
   startedAt: z.string().datetime(),
   /**

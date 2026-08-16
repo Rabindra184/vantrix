@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Histogram, HISTOGRAM_KIND } from '../src/histogram.js';
+import { RELATIVE_ACCURACY, Sketch } from '../src/sketch.js';
 
 describe('Histogram', () => {
   it('counts exact integer-millisecond observations', () => {
@@ -83,5 +84,114 @@ describe('Histogram', () => {
 
   it('declares its wire format', () => {
     expect(HISTOGRAM_KIND).toBe('sparse-ms-v1');
+  });
+});
+
+describe('Histogram#quantile', () => {
+  /** Ground truth, the nearest-rank convention this repo uses everywhere. */
+  const trueQuantile = (sorted: number[], q: number): number =>
+    sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)] as number;
+
+  const sample = (): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < 1_000; i += 1) out.push(1 + ((i * 37) % 900));
+    return out;
+  };
+
+  it('is exact, unlike the sketch it replaces in a window', () => {
+    const values = sample();
+    const h = new Histogram();
+    for (const v of values) h.accept(v);
+    const sorted = [...values].sort((a, b) => a - b);
+
+    for (const q of [0.5, 0.75, 0.95, 0.99]) {
+      // EXACT, not within RELATIVE_ACCURACY. 1ms bins and integer inputs mean
+      // there is no error term at all to allow for.
+      expect(h.quantile(q)).toBe(trueQuantile(sorted, q));
+    }
+  });
+
+  it('uses the same rank convention as Sketch#quantile', () => {
+    // A histogram quantile on the linear-interpolation convention would land
+    // one rank away from the full-run value on identical data — a discrepancy
+    // that looks like a windowing bug and is not one.
+    const values = sample();
+    const h = new Histogram();
+    const s = new Sketch();
+    for (const v of values) { h.accept(v); s.accept(v); }
+
+    for (const q of [0.5, 0.95, 0.99]) {
+      const relative = Math.abs(h.quantile(q) - s.quantile(q)) / h.quantile(q);
+      expect(relative).toBeLessThanOrEqual(RELATIVE_ACCURACY);
+    }
+  });
+
+  it('answers the boundary ranks with min and max', () => {
+    const h = new Histogram();
+    for (const v of [5, 10, 20, 40]) h.accept(v);
+    expect(h.quantile(0)).toBe(h.min);
+    expect(h.quantile(1)).toBe(h.max);
+  });
+
+  it('returns NaN for an empty histogram rather than a fabricated 0', () => {
+    expect(Number.isNaN(new Histogram().quantile(0.95))).toBe(true);
+  });
+
+  it('throws rather than guess when the rank lands in the overflow bin', () => {
+    // Same stance as countBelow: an unrecoverable answer is refused, never
+    // approximated. At the 120s default cap this is theoretical, which is
+    // exactly why it must not be silent.
+    const h = new Histogram({ capMs: 100 });
+    for (let i = 0; i < 10; i += 1) h.accept(10);
+    for (let i = 0; i < 90; i += 1) h.accept(5_000);   // all overflow
+    expect(() => h.quantile(0.95)).toThrow(/overflow/i);
+  });
+
+  it('still answers a rank below the overflow bin', () => {
+    // Overflow poisons only the ranks it actually covers. Refusing every
+    // quantile because the tail is unrecoverable would throw away answers we
+    // genuinely have.
+    const h = new Histogram({ capMs: 100 });
+    for (let i = 0; i < 90; i += 1) h.accept(10);
+    for (let i = 0; i < 10; i += 1) h.accept(5_000);
+    expect(h.quantile(0.5)).toBe(10);
+  });
+
+  it('survives a serialize round trip', () => {
+    const h = new Histogram();
+    for (const v of sample()) h.accept(v);
+    const back = Histogram.deserialize(h.serialize());
+    for (const q of [0.5, 0.95, 0.99]) expect(back.quantile(q)).toBe(h.quantile(q));
+  });
+});
+
+describe('Histogram#sumOfSquares', () => {
+  it('gives an exact standard deviation over a merged set', () => {
+    const values = [3, 5, 5, 9, 11, 20, 20, 20];
+    const h = new Histogram();
+    for (const v of values) h.accept(v);
+
+    const n = values.length;
+    const mean = values.reduce((a, b) => a + b, 0) / n;
+    const expected = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+
+    const variance = h.sumOfSquares() / h.total - (h.sum / h.total) ** 2;
+    expect(Math.sqrt(variance)).toBeCloseTo(expected, 9);
+  });
+
+  it('is additive across a merge, which is what a window needs', () => {
+    const a = new Histogram();
+    const b = new Histogram();
+    for (const v of [1, 2, 3]) a.accept(v);
+    for (const v of [4, 5, 6]) b.accept(v);
+    const both = new Histogram();
+    for (const v of [1, 2, 3, 4, 5, 6]) both.accept(v);
+
+    a.merge(b);
+    expect(a.sumOfSquares()).toBe(both.sumOfSquares());
+  });
+
+  it('is zero for an empty histogram', () => {
+    expect(new Histogram().sumOfSquares()).toBe(0);
   });
 });

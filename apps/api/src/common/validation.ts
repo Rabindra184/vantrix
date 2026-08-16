@@ -1,4 +1,5 @@
 import { BadRequestException, ParseUUIDPipe } from '@nestjs/common';
+import { MAX_OFFSET_MS } from '@perfportal/persistence';
 import { z } from 'zod';
 
 const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
@@ -12,6 +13,53 @@ const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
  */
 export function badRequest(code: string, message: string, remediation: string): BadRequestException {
   return Object.assign(new BadRequestException(message), { code, remediation });
+}
+
+/**
+ * `?from=&to=` as elapsed ms from run start.
+ *
+ * ═══ EACH BOUND IS INDEPENDENTLY OPTIONAL AND MEANINGFUL ALONE ═══
+ *
+ * `from` with no `to` means "to the end"; `to` with no `from` means "from the
+ * start". NEITHER is ever silently ignored — that is the trap the metrics
+ * endpoints already carry for `?name=` without `scope`, where the parameter
+ * looks honoured and is not.
+ *
+ * Returns null when neither is present, which means the whole run.
+ *
+ * The open upper bound is MAX_OFFSET_MS, not Number.MAX_SAFE_INTEGER:
+ * `start_offset_ms` is an int4 column and an unclamped bound fails the query
+ * outright rather than matching everything.
+ */
+export function parseRange(
+  from: string | undefined,
+  to: string | undefined,
+): { fromMs: number; toMs: number } | null {
+  if (from === undefined && to === undefined) return null;
+
+  const bound = (raw: string | undefined, fallback: number, label: string): number => {
+    if (raw === undefined) return fallback;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0) {
+      throw badRequest(
+        'RANGE_INVALID',
+        `"${label}" must be a non-negative integer number of milliseconds, not "${raw}".`,
+        'Pass elapsed milliseconds from the run start, for example ?from=0&to=60000.',
+      );
+    }
+    return n;
+  };
+
+  const fromMs = bound(from, 0, 'from');
+  const toMs = Math.min(bound(to, MAX_OFFSET_MS, 'to'), MAX_OFFSET_MS);
+  if (fromMs >= toMs) {
+    throw badRequest(
+      'RANGE_INVALID',
+      `"from" (${fromMs}) must be strictly before "to" (${toMs}).`,
+      'An empty window has no statistics to report; widen the range.',
+    );
+  }
+  return { fromMs, toMs };
 }
 
 /**

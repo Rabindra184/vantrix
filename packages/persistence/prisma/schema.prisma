@@ -189,6 +189,13 @@ model RunSeriesBucket {
   percentiles   Json
   percentilesOk Json? @map("percentiles_ok")
   percentilesKo Json? @map("percentiles_ko")
+  /// Exact 1ms histograms of the same observations the bucket sketches hold,
+  /// in a form a TIME WINDOW can merge — the frozen `percentiles` above cannot
+  /// be re-aggregated, because the 95th of a union is not a function of two
+  /// buckets' 95ths. Null for runs ingested before migration
+  /// 20260816120000; that is what `windowable` reports.
+  histogramOk   Bytes? @map("histogram_ok")
+  histogramKo   Bytes? @map("histogram_ko")
 
   @@id([runStartedOn, runId, scope, name, family, startOffsetMs])
   @@map("run_series_bucket")

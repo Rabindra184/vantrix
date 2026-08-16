@@ -88,6 +88,11 @@ export class MetricWriter {
           JSON.stringify(percentilesOf(b.sketch)),
           JSON.stringify(percentilesOf(b.sketchOk)),
           JSON.stringify(percentilesOf(b.sketchKo)),
+          // Beside the frozen percentiles above, not instead of them: those
+          // answer the chart's fixed bands cheaply, these are what a sub-range
+          // is re-aggregated from.
+          Buffer.from(b.histogramOk.serialize()),
+          Buffer.from(b.histogramKo.serialize()),
         ]);
       }
     }
@@ -100,6 +105,7 @@ export class MetricWriter {
         'started_count', 'ended_count', 'ok_count', 'ko_count',
         'started_ok_count', 'started_ko_count',
         'min_ms', 'max_ms', 'mean_ms', 'percentiles', 'percentiles_ok', 'percentiles_ko',
+        'histogram_ok', 'histogram_ko',
       ],
       bucketRows,
     );

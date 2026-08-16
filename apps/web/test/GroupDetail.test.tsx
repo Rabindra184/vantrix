@@ -112,6 +112,7 @@ it('gives each distribution its own figure identity', async () => {
             scope: 'group',
             name: 'Cart',
             family,
+            window: null,
             labels: [0],
             okCount: [1],
             koCount: [0],

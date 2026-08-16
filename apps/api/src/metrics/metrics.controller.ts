@@ -8,10 +8,11 @@ import type {
 } from '@perfportal/contracts';
 import { parseProjectSettings } from '@perfportal/contracts';
 import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
-import { bandsFrom, inferBucketWidthMs } from '@perfportal/statistics';
+import { Histogram, bandsFrom, inferBucketWidthMs, rollupFromHistograms } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
+import { inRange, resolveRange, snapWindow } from '../common/window.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -155,6 +156,8 @@ export class MetricsController {
     @Query('scope') scope?: string,
     @Query('name') name?: string,
     @Query('family') family?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<StatsResponse> {
     const run = await this.#run(req, id);
 
@@ -177,6 +180,12 @@ export class MetricsController {
         `This project's settings are invalid, so indicator bands cannot be computed: ${message(err)}`,
         'Ask a project admin to fix the "indicators" setting (lowerMs must be below higherMs) and retry.',
       );
+    }
+
+    const range = await resolveRange(this.reader, run, from, to);
+    const tenant = { orgId: run.orgId, projectId: run.projectId };
+    if (range !== null) {
+      return this.#windowedStats(run, tenant, range, settings, scope, name, family);
     }
 
     const all = await this.reader.stats({ orgId: run.orgId, projectId: run.projectId }, run.id);
@@ -242,6 +251,7 @@ export class MetricsController {
       indicators: runRow?.indicators ?? { under: 0, between: 0, over: 0, failed: 0 },
       configurable,
       bounds: settings.indicators,
+      window: null,
     };
   }
 
@@ -253,20 +263,28 @@ export class MetricsController {
     @Query('scope') scope = 'run',
     @Query('name') name = '',
     @Query('family') family = 'response_time',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<SeriesResponse> {
     const run = await this.#run(req, id);
-    const buckets = await this.reader.series(
+    const range = await resolveRange(this.reader, run, from, to);
+    const all = await this.reader.series(
       { orgId: run.orgId, projectId: run.projectId },
       run.id,
       run.startedOn,
       { scope, name, family },
     );
+    // Filtered here rather than in SQL: the width has to be inferred from the
+    // WHOLE series, or a narrow window over a coalesced run would infer its
+    // own gap as the bucket width and scale every rate wrongly.
+    const bucketWidthMs = inferBucketWidthMs(all.map((b) => b.startOffsetMs));
+    const buckets = all.filter((b) => inRange(b.startOffsetMs, range));
     return {
       runId: run.id,
       scope: scope as SeriesResponse['scope'],
       name,
       family: family as SeriesResponse['family'],
-      bucketWidthMs: inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)),
+      bucketWidthMs,
       // Derived from the rows themselves, not from a run-level flag: the
       // columns are nullable and only rows written after the migration carry
       // the split. `every` over an empty array is vacuously true, hence the
@@ -286,7 +304,71 @@ export class MetricsController {
               { orgId: run.orgId, projectId: run.projectId }, run.id, run.startedOn,
             )
           : false,
+      window: range === null ? null : snapWindow(all.map((b) => b.startOffsetMs), range),
       buckets,
+    };
+  }
+
+
+
+  /**
+   * The statistics table re-aggregated over a time window.
+   *
+   * Every column comes from the merged histograms — see `rollupFromHistograms`
+   * for why mixing them with the stored end-edge counts would describe two
+   * different sets of requests in one row.
+   */
+  async #windowedStats(
+    run: { id: string; orgId: string; projectId: string; startedOn: Date },
+    tenant: { orgId: string; projectId: string },
+    range: { fromMs: number; toMs: number },
+    settings: { percentiles: number[]; indicators: { lowerMs: number; higherMs: number } },
+    scope: string | undefined,
+    name: string | undefined,
+    family: string | undefined,
+  ): Promise<StatsResponse> {
+    const wanted = scope ?? 'run';
+    const wantedFamily = family ?? 'response_time';
+    const rows = await this.reader.windowedBuckets(
+      tenant, run.id, run.startedOn, { scope: wanted, family: wantedFamily }, range,
+    );
+
+    const window = snapWindow(rows.map((r) => r.startOffsetMs), range);
+
+    const byName = new Map<string, { ok: Histogram; ko: Histogram }>();
+    for (const row of rows) {
+      let entry = byName.get(row.name);
+      if (!entry) {
+        entry = { ok: new Histogram(), ko: new Histogram() };
+        byName.set(row.name, entry);
+      }
+      if (row.histogramOk) entry.ok.merge(row.histogramOk);
+      if (row.histogramKo) entry.ko.merge(row.histogramKo);
+    }
+
+    const stats: StatsResponse['stats'] = [...byName.entries()]
+      .filter(([rowName]) => (name !== undefined ? rowName === name : true))
+      .map(([rowName, h]) => ({
+        scope: wanted as StatsResponse['stats'][number]['scope'],
+        name: rowName,
+        family: wantedFamily as StatsResponse['stats'][number]['family'],
+        ...rollupFromHistograms(h.ok, h.ko, window.toMs - window.fromMs, settings.percentiles),
+        // From the WINDOW's own OK histogram, so the bands describe the same
+        // requests as every other column in the row.
+        indicators: bandsFrom(h.ok, h.ko.total, settings.indicators),
+      }));
+
+    const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+    return {
+      runId: run.id,
+      stats,
+      indicators: runRow?.indicators ?? { under: 0, between: 0, over: 0, failed: 0 },
+      // Histograms are what a window is computed from, so a windowed response
+      // is configurable by construction — there is no frozen-value fallback
+      // here for `configurable: false` to warn about.
+      configurable: true,
+      bounds: settings.indicators,
+      window,
     };
   }
 
@@ -326,11 +408,14 @@ export class MetricsController {
   async errorSeries(
     @Param('id', uuidParam('id')) id: string,
     @Req() req: Request,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<ErrorSeriesResponse> {
     const run = await this.#run(req, id);
+    const range = await resolveRange(this.reader, run, from, to);
     const scope = { orgId: run.orgId, projectId: run.projectId };
 
-    const [rows, flat] = await Promise.all([
+    const [all, flat] = await Promise.all([
       this.reader.errorSeries(scope, run.id, run.startedOn),
       this.reader.errors(scope, run.id),
     ]);
@@ -348,7 +433,11 @@ export class MetricsController {
      *   some / some  → recorded                              → available
      *   none / some  → warm-up-only failures                 → available
      */
-    const available = rows.length > 0 || flat.length === 0;
+    const available = all.length > 0 || flat.length === 0;
+    // Availability is a property of the RUN, not of the window — asked before
+    // filtering, so a window over a quiet stretch reports "no failures here"
+    // rather than "this run was never recorded".
+    const rows = all.filter((r) => inRange(r.startOffsetMs, range));
 
     // Grouped in first-seen order, which ERROR_SERIES_SQL's ORDER BY makes the
     // global rank order the engine emitted — most frequent first, so the
@@ -373,8 +462,9 @@ export class MetricsController {
       // reads the smallest gap between offsets and is systematically wrong on
       // a sparse series. `?? 1000` only for a run with no rows at all, where
       // nothing is drawn at any width.
-      bucketWidthMs: rows[0]?.bucketWidthMs ?? 1000,
+      bucketWidthMs: all[0]?.bucketWidthMs ?? 1000,
       available,
+      window: range === null ? null : snapWindow(all.map((r) => r.startOffsetMs), range),
       series: [...byMessage.entries()].map(([message, entry]) => ({ message, ...entry })),
     };
   }

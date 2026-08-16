@@ -42,9 +42,32 @@ export const StatRowSchema = z.object({
 });
 export type StatRow = z.infer<typeof StatRowSchema>;
 
+export const WindowSchema = z.object({
+  /** Elapsed ms from run start, inclusive. */
+  fromMs: z.number().int().nonnegative(),
+  /** Elapsed ms from run start, EXCLUSIVE — adjacent windows never overlap. */
+  toMs: z.number().int().positive(),
+  /**
+   * The bucket width the window was snapped to.
+   *
+   * A brush that cuts a bucket in half cannot be answered exactly at any
+   * storage cost — the bucket is the finest thing stored — so the range is
+   * widened OUTWARD to bucket boundaries and reported here. A page header must
+   * state this range, not the one the reader dragged, or it claims a precision
+   * the numbers underneath do not have.
+   */
+  bucketWidthMs: z.number().int().positive(),
+});
+export type Window = z.infer<typeof WindowSchema>;
+
 export const StatsResponseSchema = z.object({
   runId: z.string().uuid(),
   stats: z.array(StatRowSchema),
+  /**
+   * The window these statistics were computed over, or `null` when the whole
+   * run was used. Non-null values are SNAPPED — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   indicators: z.object({
     under: z.number().int(),
     between: z.number().int(),
@@ -121,6 +144,11 @@ export const SeriesResponseSchema = z.object({
    * fixed default rather than a real answer to a question it never asked.
    */
   groupSeriesAvailable: z.boolean(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   buckets: z.array(SeriesBucketSchema),
 });
 export type SeriesResponse = z.infer<typeof SeriesResponseSchema>;
@@ -173,6 +201,11 @@ export const ErrorSeriesResponseSchema = z.object({
    */
   available: z.boolean(),
   /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
+  /**
    * At most six in practice: the five most frequent messages plus the folded
    * remainder, which is what the categorical palette can draw without leaving
    * a series undrawn. Most frequent first.
@@ -204,6 +237,11 @@ export type ErrorSeriesResponse = z.infer<typeof ErrorSeriesResponseSchema>;
 
 export const DistributionResponseSchema = z.object({
   runId: z.string().uuid(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   scope: MetricScopeSchema,
   name: z.string(),
   family: MetricFamilySchema,
@@ -223,6 +261,11 @@ export type DistributionResponse = z.infer<typeof DistributionResponseSchema>;
 
 export const UsersResponseSchema = z.object({
   runId: z.string().uuid(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   scenarios: z.array(
     z.object({
       scenario: z.string(),
@@ -256,6 +299,11 @@ export type UsersResponse = z.infer<typeof UsersResponseSchema>;
 export const ScatterResponseSchema = z.object({
   runId: z.string().uuid(),
   name: z.string(),
+  /**
+   * The window this payload was computed over, or `null` for the whole run.
+   * Non-null values are SNAPPED to bucket boundaries — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   /** [global requests/s, this request's truncated p95 in that bucket]. */
   ok: z.array(z.tuple([z.number().int(), z.number().int()])),
   ko: z.array(z.tuple([z.number().int(), z.number().int()])),

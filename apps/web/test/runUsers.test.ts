@@ -21,6 +21,7 @@ describe('peakConcurrentUsers', () => {
   it('is not the sum of per-scenario maxima', () => {
     const staggered: UsersResponse = {
       runId: users.runId,
+      window: null,
       scenarios: [
         { scenario: 'a', buckets: [bucket(0, 10), bucket(1000, 0)] },
         { scenario: 'b', buckets: [bucket(0, 0), bucket(1000, 10)] },
@@ -32,7 +33,7 @@ describe('peakConcurrentUsers', () => {
   });
 
   it('is null when the run recorded no users at all', () => {
-    expect(peakConcurrentUsers({ runId: users.runId, scenarios: [], total: [] })).toBeNull();
+    expect(peakConcurrentUsers({ runId: users.runId, window: null, scenarios: [], total: [] })).toBeNull();
   });
 });
 

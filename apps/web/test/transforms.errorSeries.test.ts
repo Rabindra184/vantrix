@@ -6,6 +6,7 @@ import { ERROR_SERIES_KEEP } from './support/errorSeriesKeep';
 
 const response = (over: Partial<ErrorSeriesResponse> = {}): ErrorSeriesResponse => ({
   runId: '00000000-0000-4000-8000-000000000000',
+  window: null,
   bucketWidthMs: 1000,
   available: true,
   series: [],

@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import type { RunResponse } from '@perfportal/contracts';
-import { RunRepository, type RunRecord } from '@perfportal/persistence';
+import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
 import { statusForCode } from '../common/problem.js';
 
 @Injectable()
 export class RunsService {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly reader: MetricReader,
+  ) {}
 
   /**
    * One status per state, used by BOTH the POST response and the GET response.
@@ -44,6 +47,13 @@ export class RunsService {
       simulation: run.simulation ?? null,
       description: run.description ?? null,
       durationMs: run.durationMs ?? null,
+      // One EXISTS against this run's own partition, issued on the run fetch —
+      // the one reader that needs it, the same way hasGroupSeries is only asked
+      // for the group page. Derived from the ROWS, never from a date comparison
+      // against the migration.
+      windowable: await this.reader.isWindowable(
+        { orgId: run.orgId, projectId: run.projectId }, run.id, run.startedOn,
+      ),
       startedAt: run.startedAt.toISOString(),
       toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
       ingestedAt: run.ingestedAt ? run.ingestedAt.toISOString() : null,
