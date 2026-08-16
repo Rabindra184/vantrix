@@ -18,6 +18,8 @@ import {
   StatsResponseSchema,
   TelemetryBatchSchema,
   TelemetryResponseSchema,
+  TokenListResponseSchema,
+  TokenSummarySchema,
   TrendRunSchema,
   TrendsResponseSchema,
   UsersResponseSchema,
@@ -62,6 +64,8 @@ const SOURCE: Record<string, ZodTypeAny> = {
   TelemetryResponse: TelemetryResponseSchema,
   MintTokenRequest: MintTokenRequestSchema,
   MintedToken: MintedTokenSchema,
+  TokenSummary: TokenSummarySchema,
+  TokenListResponse: TokenListResponseSchema,
 };
 
 /**

@@ -66,6 +66,7 @@ interface OperationObject {
 interface PathItemObject {
   get?: OperationObject;
   post?: OperationObject;
+  delete?: OperationObject;
 }
 
 export interface OpenApiDocument {
@@ -282,6 +283,16 @@ const parameters: Record<string, ParameterObject> = {
       'credential at all (see SessionOnlyGuard), so there is no "the token\'s own project" to ' +
       'match against. A slug outside the caller\'s org 404s rather than 403, so the response ' +
       'never confirms that another organisation\'s project exists.',
+    schema: { type: 'string' },
+  },
+  TokenPrefix: {
+    name: 'prefix',
+    in: 'path',
+    required: true,
+    description:
+      'The "prefix" a mint or list response returned — the middle segment of ' +
+      '"pp_<prefix>_<secret>". Never the full token: revocation does not need the secret, which ' +
+      'is why an operator can act on a leaked token from the list alone.',
     schema: { type: 'string' },
   },
 };
@@ -781,6 +792,64 @@ const paths: Record<string, PathItemObject> = {
           content: json(schemaRef('MintedToken')),
         },
         '400': ref('InvalidTokenRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+    get: {
+      operationId: 'listProjectTokens',
+      summary: "List a project's API tokens",
+      tags: ['tokens'],
+      // Same override and the same reason as the POST above: this route
+      // accepts no bearer credential at all (SessionOnlyGuard), so
+      // advertising bearerAuth here would document an authentication the
+      // handler always rejects.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). Newest first. Each entry is a ' +
+        'TokenSummary: "token" and the stored hash never appear here — the plaintext existed ' +
+        'once, in the 201 response the mint returned, and cannot be recovered. "lastUsedAt" is ' +
+        'what makes the list actionable: it is how an operator finds the credential nothing has ' +
+        'used since March.',
+      parameters: [parameters['TokenProjectSlug']!],
+      responses: {
+        '200': {
+          description: 'This project\'s tokens, newest first.',
+          content: json(schemaRef('TokenListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/tokens/{prefix}': {
+    delete: {
+      operationId: 'revokeProjectToken',
+      summary: 'Revoke a project API token',
+      tags: ['tokens'],
+      // Same override and the same reason as POST /v1/projects/{slug}/tokens:
+      // this route accepts no bearer credential at all, no matter its
+      // scopes — SessionOnlyGuard refuses it before the handler runs.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). Sets "revokedAt"; every subsequent ' +
+        'authentication attempt with this token then fails with 401 (see cookieAuth and ' +
+        'bearerAuth). IDEMPOTENT: revoking an already-revoked token still returns 200 with the ' +
+        'ORIGINAL "revokedAt", not a newer one, so the record keeps saying when the credential ' +
+        'actually stopped working. 404 (code NOT_FOUND) when "prefix" does not name a token in ' +
+        'this project — including a prefix that belongs to a different project or org, which ' +
+        'answers the same 404 rather than confirming that the token exists elsewhere.',
+      parameters: [parameters['TokenProjectSlug']!, parameters['TokenPrefix']!],
+      responses: {
+        '200': {
+          description: 'Revoked (or already was). The token\'s current summary, "revokedAt" now set.',
+          content: json(schemaRef('TokenSummary')),
+        },
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
