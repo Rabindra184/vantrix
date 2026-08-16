@@ -99,12 +99,20 @@ describe('toTelemetrySeries', () => {
     expect(series!.points.every((p) => p.startOffsetMs < 5000)).toBe(true);
   });
 
-  it('buckets to the run width and separates hosts', () => {
-    const a = [at(1), at(2), at(3)];
+  it('buckets to the run width and separates hosts, in a STABLE alphabetical order', () => {
+    const a = [at(1), at(2), at(3)]; // host 'gen-1' (the `at()` default)
     const b = a.map((s) => ({ ...s, host: 'gen-2' }));
-    const series = toTelemetrySeries([...a, ...b], T0, 2000);
+    // 'gen-2' is fed FIRST. `byHost` is a Map keyed by first-seen host, so
+    // its iteration order here is ['gen-2', 'gen-1'] — the opposite of the
+    // alphabetical order the chart legend needs. Only an implementation that
+    // actually sorts hosts before returning produces ['gen-1', 'gen-2'] from
+    // THIS input; one that returned Map-iteration order (or simply deleted
+    // the `out.sort(...)` line) would report ['gen-2', 'gen-1'] instead, and
+    // the assertion below does not re-sort the actual value, so it would
+    // catch that.
+    const series = toTelemetrySeries([...b, ...a], T0, 2000);
 
-    expect(series.map((s) => s.host).sort()).toEqual(['gen-1', 'gen-2']);
+    expect(series.map((s) => s.host)).toEqual(['gen-1', 'gen-2']);
     // Offsets are multiples of the bucket width, ascending, unique.
     for (const s of series) {
       const offsets = s.points.map((p) => p.startOffsetMs);
@@ -114,13 +122,41 @@ describe('toTelemetrySeries', () => {
     }
   });
 
-  it('reports the largest clock gap, signed', () => {
-    const ahead = at(1, { sampledAtMs: T0 + 1000, receivedAtMs: T0 + 1000 - 30_000 });
-    const [series] = toTelemetrySeries([at(0), ahead], T0, 1000);
+  it('averages multiple pair-rates landing in the same bucket, rather than summing them', () => {
+    // Three samples, one bucket (width 10 000 ms): s0→s1 and s1→s2 are two
+    // SEPARATE deltas whose `cur` (s1 and s2 respectively) both fall in
+    // bucket [0, 10000). Their time AND byte gaps are deliberately unequal —
+    // with the rest of this file's linearly-climbing `at()` series, two
+    // deltas landing in one bucket would happen to be numerically identical,
+    // and sum/mean of two equal numbers cannot be told apart by inspecting
+    // just one of them. Here rate1 (36 000 B/s) and rate2 (6 000 B/s) differ,
+    // so `sums / n` (mean) and plain `sums` (sum) diverge to 21 000 vs 42 000
+    // — an implementation that dropped the division would fail this.
+    const s0 = at(1, { sampledAtMs: T0 + 500 });
+    const s1 = at(2, { sampledAtMs: T0 + 3000, netRxBytes: 100_000 });
+    const s2 = at(3, { sampledAtMs: T0 + 8000, netRxBytes: 130_000 });
+
+    const [series] = toTelemetrySeries([s0, s1, s2], T0, 10_000);
+    const bucket = series!.points.find((p) => p.startOffsetMs === 0)!;
+
+    const rate1 = (s1.netRxBytes - s0.netRxBytes) / ((s1.sampledAtMs - s0.sampledAtMs) / 1000);
+    const rate2 = (s2.netRxBytes - s1.netRxBytes) / ((s2.sampledAtMs - s1.sampledAtMs) / 1000);
+    expect(bucket.rxBytesPerSec).toBeCloseTo((rate1 + rate2) / 2, 6);
+  });
+
+  it('reports the largest ABSOLUTE clock gap, signed — not merely the last sample seen', () => {
+    // The LARGE-magnitude skew sits on the EARLIER sample; a much smaller one
+    // follows it chronologically. An implementation that dropped the running
+    // `Math.abs(...) > Math.abs(...)` maximum and simply kept whichever
+    // sample it processed last would report the SECOND (small, positive)
+    // skew here instead of the first (large, negative) one.
+    const early = at(0, { receivedAtMs: T0 - 30_000 });
+    const later = at(5);
+    const [series] = toTelemetrySeries([early, later], T0, 1000);
     // received BEFORE sampled means the agent's clock is AHEAD of the
     // server's. Negative, and large — a generator thirty seconds fast would
     // otherwise misalign every chart with nothing looking wrong.
-    expect(series!.clockSkewMs).toBe(ahead.receivedAtMs - ahead.sampledAtMs);
+    expect(series!.clockSkewMs).toBe(early.receivedAtMs - early.sampledAtMs);
   });
 
   it('returns nothing for no samples', () => {
