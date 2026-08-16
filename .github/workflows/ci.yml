@@ -119,18 +119,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: agent/go.mod
-          # No `cache-dependency-path: agent/go.sum` yet, and `cache: false`
-          # is deliberate, not an oversight: agent/go.sum does not exist until
-          # Task 3 adds gopsutil, and actions/setup-go's cache step hard-fails
-          # without one. That's true even with cache-dependency-path omitted
-          # entirely — `cache` defaults to true, and its fallback lookup
-          # checks only the literal repo root for a file named `go.sum`
-          # (never `agent/go.sum`, never recursively), so it throws
-          # "Dependencies file is not found" just the same (see
-          # actions/setup-go#427, filed by a project with no go.sum at all).
-          # Once Task 3 lands agent/go.sum, restore
-          # `cache-dependency-path: agent/go.sum` and drop this line.
-          cache: false
+          cache-dependency-path: agent/go.sum
 
       - run: go vet ./...
       - run: go test ./... -race
