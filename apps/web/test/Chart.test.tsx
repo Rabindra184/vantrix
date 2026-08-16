@@ -35,13 +35,18 @@ import type { ChartData } from '../src/charts/types.js';
  * moved, that the log axis is legible — is Task 10's, in a real browser.
  */
 
-const { initSpy, connectSpy, setOptionSpy, disposeSpy, resizeSpy } = vi.hoisted(() => ({
-  initSpy: vi.fn(),
-  connectSpy: vi.fn(),
-  setOptionSpy: vi.fn(),
-  disposeSpy: vi.fn(),
-  resizeSpy: vi.fn(),
-}));
+const { initSpy, connectSpy, setOptionSpy, disposeSpy, resizeSpy, onSpy, getOptionSpy } =
+  vi.hoisted(() => ({
+    initSpy: vi.fn(),
+    connectSpy: vi.fn(),
+    setOptionSpy: vi.fn(),
+    disposeSpy: vi.fn(),
+    resizeSpy: vi.fn(),
+    // The brush subscribes to `datazoom` and reads the handles back off the
+    // live option; both only exist on a chart that asked for a brush.
+    onSpy: vi.fn(),
+    getOptionSpy: vi.fn(),
+  }));
 
 vi.mock('../src/charts/echarts.js', () => ({
   echarts: {
@@ -71,6 +76,8 @@ beforeEach(() => {
   setOptionSpy.mockReset();
   disposeSpy.mockReset();
   resizeSpy.mockReset();
+  onSpy.mockReset();
+  getOptionSpy.mockReset();
   initSpy.mockImplementation(() => ({
     // `group` is ASSIGNED by the component before connect, so the stub must
     // tolerate the write.
@@ -78,6 +85,8 @@ beforeEach(() => {
     setOption: setOptionSpy,
     dispose: disposeSpy,
     resize: resizeSpy,
+    on: onSpy,
+    getOption: getOptionSpy,
   }));
 });
 
@@ -332,5 +341,91 @@ describe('Chart — the tooltip formats an array-valued (scatter) point', () => 
     const { formatter } = lastOption().tooltip as { formatter: (params: unknown) => string };
     expect(formatter(params(122.74516052680153, 'All'))).toContain('122.75');
     expect(formatter(params(null, 'All'))).toContain('—');
+  });
+});
+
+describe('Chart — the brush is opt-in', () => {
+  /**
+   * THE ASSERTION THAT PROTECTS THE OTHER EIGHT CHARTS. A slider quietly
+   * appearing under every figure is the kind of change that looks fine in a
+   * diff and wrong on screen, and no existing test would have caught it —
+   * they assert what a chart draws, not what it does not.
+   */
+  it('emits no dataZoom at all when no brush was asked for', () => {
+    render(<Chart id="plain" title="Plain" data={seriesData(['a'])} />);
+    expect('dataZoom' in lastOption()).toBe(false);
+    // And it never subscribes, so a chart without a brush cannot move a window.
+    expect(onSpy).not.toHaveBeenCalled();
+  });
+
+  it('adds one slider, positioned at the requested range', () => {
+    render(
+      <Chart
+        id="brushed"
+        title="Brushed"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value' }}
+        brush={{ value: { fromMs: 1000, toMs: 4000 }, onChange: () => undefined }}
+      />,
+    );
+    const zoom = lastOption()['dataZoom'] as { type: string; startValue?: number; endValue?: number }[];
+    expect(zoom).toHaveLength(1);
+    expect(zoom[0]!.type).toBe('slider');
+    // IN AXIS UNITS, not percentages: the axis is elapsed milliseconds and the
+    // caller writes milliseconds to the URL, so a percentage would need the
+    // extent to convert and would drift as the extent changed.
+    expect(zoom[0]!.startValue).toBe(1000);
+    expect(zoom[0]!.endValue).toBe(4000);
+  });
+
+  it('leaves the handles at the extent when no window is selected', () => {
+    render(
+      <Chart
+        id="brushed"
+        title="Brushed"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value' }}
+        brush={{ value: null, onChange: () => undefined }}
+      />,
+    );
+    const zoom = lastOption()['dataZoom'] as { startValue?: number; endValue?: number }[];
+    expect(zoom[0]!.startValue).toBeUndefined();
+    expect(zoom[0]!.endValue).toBeUndefined();
+  });
+
+  it('reports the dragged range in axis units, rounded', () => {
+    const onChange = vi.fn();
+    getOptionSpy.mockReturnValue({ dataZoom: [{ startValue: 1200.4, endValue: 3800.6 }] });
+
+    render(
+      <Chart
+        id="brushed"
+        title="Brushed"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value' }}
+        brush={{ value: null, onChange }}
+      />,
+    );
+
+    expect(onSpy).toHaveBeenCalledWith('datazoom', expect.any(Function));
+    // Fire the handler the component registered.
+    (onSpy.mock.calls.at(-1)![1] as () => void)();
+    expect(onChange).toHaveBeenCalledWith(1200, 3801);
+  });
+
+  it('says nothing when the slider reports no range', () => {
+    const onChange = vi.fn();
+    getOptionSpy.mockReturnValue({ dataZoom: [{}] });
+    render(
+      <Chart
+        id="brushed"
+        title="Brushed"
+        data={seriesData(['a'])}
+        xAxis={{ type: 'value' }}
+        brush={{ value: null, onChange }}
+      />,
+    );
+    (onSpy.mock.calls.at(-1)![1] as () => void)();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

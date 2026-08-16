@@ -122,6 +122,37 @@ export interface ChartProps {
   readonly unit?: string;
   readonly yAxis?: ChartYAxis;
   readonly xAxis?: ChartXAxis;
+  /**
+   * Turns this chart into a RANGE SELECTOR: a `dataZoom` slider under the
+   * plot, reporting the elapsed range a reader drags out.
+   *
+   * ═══ OPT-IN, SO THE OTHER EIGHT ARE UNTOUCHED ═══
+   *
+   * Absent on every other chart, and `Chart` emits no `dataZoom` at all when
+   * it is absent — a unit test asserts exactly that, because a slider quietly
+   * appearing under all eight figures would be the kind of change that looks
+   * fine in review and wrong on screen.
+   *
+   * ═══ IT DOES NOT VIOLATE THE ONE-SVG INVARIANT ═══
+   *
+   * Nine specs prove a chart drew by asserting exactly one `<svg>` inside its
+   * `<figure>`. ECharts' SVG renderer emits ONE `<svg>` root per instance and
+   * draws the slider inside it as `<g>`/`<rect>` children, so the count is
+   * unchanged. The rule those specs encode is about a SEPARATE decorative
+   * `<svg>` — an icon — not about anything ECharts itself draws.
+   *
+   * ═══ IT IS NOT A KEYBOARD PATH ═══
+   *
+   * ECharts' dataZoom is pointer-only. A chart carrying this must offer the
+   * same selection some other way, or the window becomes mouse-exclusive.
+   * `TimeBrush` keeps its numeric fields for exactly that reason.
+   */
+  readonly brush?: {
+    /** Called with the dragged range, in the x-axis' own units. */
+    readonly onChange: (fromMs: number, toMs: number) => void;
+    /** Where the handles sit, or `null` for the full extent. */
+    readonly value: { readonly fromMs: number; readonly toMs: number } | null;
+  };
 }
 
 /**
@@ -150,6 +181,7 @@ export default function Chart({
   yAxis,
   xAxis,
   roles,
+  brush,
 }: ChartProps) {
   const container = useRef<HTMLDivElement | null>(null);
   // Held across renders so the option can be updated without the instance
@@ -165,6 +197,17 @@ export default function Chart({
   // to a primitive here for the same reason the other three are — see the
   // option effect's closing comment about identity-compared object props.
   const xAxisNumeric = kind === 'scatter' || xAxis?.type === 'value';
+
+  // PRIMITIVES, for the same reason `yAxisType`/`xAxisName` are: `brush` is an
+  // object a call site rebuilds on every render, and listing it in the option
+  // effect's dependencies would re-run that effect continuously.
+  const brushFrom = brush?.value?.fromMs ?? null;
+  const brushTo = brush?.value?.toMs ?? null;
+  const hasBrush = brush !== undefined;
+  // Held in a ref so the handler stays current without being a dependency —
+  // otherwise a fresh `onChange` closure per render would re-run the effect.
+  const onBrush = useRef(brush?.onChange);
+  onBrush.current = brush?.onChange;
 
   // Follow the active colour scheme while the page is open, so a chart drawn
   // in light mode is not left with light-mode hues on a dark surface.
@@ -251,6 +294,18 @@ export default function Chart({
     const instance = echarts.init(element, undefined, { renderer: 'svg' });
     instanceRef.current = instance;
 
+    // The slider reports its range on every frame of a drag. Reported here as
+    // it happens; the CALLER decides when a drag has settled, because only the
+    // caller knows what the range costs — for `TimeBrush` it is a navigation
+    // and six refetches.
+    if (hasBrush) {
+      instance.on('datazoom', () => {
+        const [zoom] = instance.getOption().dataZoom as { startValue?: number; endValue?: number }[];
+        if (zoom?.startValue === undefined || zoom.endValue === undefined) return;
+        onBrush.current?.(Math.round(zoom.startValue), Math.round(zoom.endValue));
+      });
+    }
+
     // `group` must be set on the instance BEFORE connect; `connect` links
     // every live instance carrying the same group string. Calling it once per
     // mounted chart is intended — it is idempotent for a group that is
@@ -277,7 +332,10 @@ export default function Chart({
       instance.dispose();
       instanceRef.current = null;
     };
-  }, [isEmpty, group]);
+    // `hasBrush` joins the identity list because the datazoom handler is
+    // bound at init; a chart that gained or lost a brush without a rebuild
+    // would keep the old subscription.
+  }, [isEmpty, group, hasBrush]);
 
   // WHAT IS DRAWN. Runs after the effect above on mount (effects fire in
   // declaration order), and on its own whenever the data or the theme moves.
@@ -357,6 +415,32 @@ export default function Chart({
         backgroundColor: 'transparent',
         // A legend only from two series up. One series is named by the title,
         // and a one-entry legend is a label pretending to be a control.
+        // ONLY when asked for. Absent entirely otherwise, so the eight charts
+        // that pass no `brush` emit no dataZoom key at all.
+        ...(hasBrush
+          ? {
+              dataZoom: [
+                {
+                  type: 'slider',
+                  // The range is in the x-axis' own units, not percentages:
+                  // this axis is elapsed milliseconds and the caller writes
+                  // milliseconds to the URL, so a percentage would need the
+                  // extent to convert and would drift as the extent changed.
+                  startValue: brushFrom ?? undefined,
+                  endValue: brushTo ?? undefined,
+                  height: 28,
+                  bottom: 4,
+                  borderColor: theme.gridline,
+                  fillerColor: 'transparent',
+                  handleStyle: { color: theme.ink },
+                  textStyle: { color: theme.inkMuted },
+                  // The slider is the control; wheel-zooming the plot above it
+                  // would give the same window two gestures that disagree.
+                  zoomLock: false,
+                },
+              ],
+            }
+          : {}),
         legend:
           drawn.length >= 2
             ? { top: 0, textStyle: { color: theme.ink }, icon: 'roundRect' }
@@ -455,6 +539,9 @@ export default function Chart({
     xAxisNumeric,
     mode,
     assignment,
+    hasBrush,
+    brushFrom,
+    brushTo,
   ]);
 
   return (
