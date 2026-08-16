@@ -1,3 +1,13 @@
+// The budget below is meaningless under the race detector, which inflates
+// CPU 5-10x (see the comment on the non-`-race` step in
+// .github/workflows/ci.yml that runs this test). The tag excludes this whole
+// file from race builds, so `go test ./... -race` does not even COMPILE it —
+// Task 1's `-race` step genuinely cannot fail on a budget it was never meant
+// to police. `go test -run TestFootprintBudget -v ./...`, run without
+// `-race`, is the only place this test executes.
+
+//go:build !race
+
 package agent_test
 
 import (
@@ -21,10 +31,17 @@ const (
 	footprintInterval = time.Second
 )
 
-func cpuUsed() time.Duration {
+// cpuUsed fails the test on a Getrusage error rather than returning 0.
+// Getrusage's arguments here are hardcoded and valid, so an error is
+// unlikely — but a silent 0 on the SECOND call only would make cpuDelta go
+// negative, and a negative delta clears budgetCPUFraction vacuously. That is
+// exactly the failure this test exists to catch, so a swallowed error here
+// must not be allowed to manufacture a pass.
+func cpuUsed(t *testing.T) time.Duration {
+	t.Helper()
 	var ru syscall.Rusage
 	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
-		return 0
+		t.Fatalf("Getrusage(RUSAGE_SELF) error = %v", err)
 	}
 	return time.Duration(ru.Utime.Nano()) + time.Duration(ru.Stime.Nano())
 }
@@ -54,7 +71,7 @@ func TestFootprintBudgetAtTheDefaultInterval(t *testing.T) {
 	var before runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	cpuBefore := cpuUsed()
+	cpuBefore := cpuUsed(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), footprintWindow)
 	defer cancel()
@@ -77,7 +94,7 @@ loop:
 		}
 	}
 
-	cpuDelta := cpuUsed() - cpuBefore
+	cpuDelta := cpuUsed(t) - cpuBefore
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 
@@ -85,10 +102,17 @@ loop:
 		t.Fatal("no samples taken; the measurement proves nothing")
 	}
 
-	// Fraction of ONE core over the window.
+	// Fraction of ONE core over the window. The budget (§5, and the plan's
+	// note above) is against the absolute runtime Sys, not a delta — Sys is
+	// the OS memory the runtime holds at all, and that is what a host cares
+	// about, not how much of it this one window added. sysDelta is logged
+	// only as a diagnostic, signed so a same-or-shrinking Sys (GC returning
+	// pages) prints as 0 or a small negative number instead of silently
+	// wrapping through a huge uint64.
 	used := float64(cpuDelta) / float64(footprintWindow)
-	t.Logf("%d samples · CPU %s (%.3f%% of one core) · Sys %d MiB",
-		samples, cpuDelta, used*100, after.Sys>>20)
+	sysDelta := int64(after.Sys) - int64(before.Sys)
+	t.Logf("%d samples · CPU %s (%.3f%% of one core) · Sys %d MiB (Δ%d MiB over the window)",
+		samples, cpuDelta, used*100, after.Sys>>20, sysDelta>>20)
 
 	if used > budgetCPUFraction {
 		t.Fatalf("CPU %.3f%% of one core over %s, budget %.3f%% (spec §5). "+
@@ -96,7 +120,8 @@ loop:
 			used*100, footprintWindow, budgetCPUFraction*100)
 	}
 	if after.Sys > budgetMemBytes {
-		t.Fatalf("runtime Sys = %d MiB, budget %d MiB (spec §5)",
+		t.Fatalf("runtime Sys = %d MiB, budget %d MiB (spec §5). "+
+			"Lower the sampling interval before raising this bound.",
 			after.Sys>>20, budgetMemBytes>>20)
 	}
 	// The buffer is bounded and this window cannot have filled it, so it must
