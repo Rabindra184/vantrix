@@ -62,9 +62,20 @@ describe('OpenAPI document', () => {
     expect(schemas['ProblemDetails']).toBeTruthy();
   });
 
-  it('never declares a 201 response on any operation — POST /v1/runs does not create synchronously', async () => {
+  // The blanket loop below carves out exactly one exception:
+  // POST /v1/projects/{slug}/tokens (Task 3), which really does create
+  // synchronously — the row exists and the plaintext token is returned
+  // before the response is sent, the ordinary case 201 exists for. Every
+  // other operation keeps the original reasoning: POST /v1/runs ingests
+  // asynchronously and shares its run's own state machine (200/202/400/413/422)
+  // with GET /v1/runs/{id} — there is no "created, still processing" state
+  // distinct from 202 — and nothing else in this document creates a resource
+  // at all. A future operation that starts returning 201 without being this
+  // one legitimate exception should still fail here.
+  it('never declares a 201 response on any operation except token minting, which really does create synchronously', async () => {
     const doc = await fetchDoc();
     for (const { path, method, op } of operations(doc)) {
+      if (path === '/v1/projects/{slug}/tokens' && method === 'post') continue;
       expect(Object.keys(op.responses ?? {}), `${method.toUpperCase()} ${path}`).not.toContain('201');
     }
   });

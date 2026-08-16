@@ -5,6 +5,8 @@ import {
   ErrorsResponseSchema,
   IndicatorBandsSchema,
   IngestMetadataSchema,
+  MintedTokenSchema,
+  MintTokenRequestSchema,
   ProblemDetailsSchema,
   ProjectListResponseSchema,
   RunListResponseSchema,
@@ -58,6 +60,8 @@ const SOURCE: Record<string, ZodTypeAny> = {
   IndicatorBands: IndicatorBandsSchema,
   TelemetryBatch: TelemetryBatchSchema,
   TelemetryResponse: TelemetryResponseSchema,
+  MintTokenRequest: MintTokenRequestSchema,
+  MintedToken: MintedTokenSchema,
 };
 
 /**

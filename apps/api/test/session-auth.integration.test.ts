@@ -3,14 +3,13 @@ import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { INestApplication } from '@nestjs/common';
 import { hashToken, mintToken } from '@perfportal/core';
-import { OrgMemberRepository } from '@perfportal/persistence';
 import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
+import { signUpAndLogin, signUpAsOrgMember } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -55,50 +54,6 @@ describe('/auth/*', () => {
     expect(res.headers['set-cookie']).toBeTruthy();
   });
 });
-
-/**
- * Signs up a brand-new user and returns the session cookie Better Auth
- * issues on sign-up (emailAndPassword defaults to auto-sign-in — see the
- * '/auth/*' test above, which already proves sign-up alone sets a cookie).
- * The user this creates has NO org_member row: use this directly only for
- * the no-membership case. Every other test needs signUpAsOrgMember below.
- */
-async function signUpAndLogin(app: INestApplication, email: string): Promise<string> {
-  const { cookie } = await signUp(app, email);
-  return cookie;
-}
-
-async function signUp(app: INestApplication, email: string): Promise<{ cookie: string; userId: string }> {
-  const res = await request(app.getHttpServer())
-    .post('/auth/sign-up/email')
-    .send({ email, password: 'correct-horse-battery', name: email });
-
-  const setCookie = res.headers['set-cookie'] as unknown;
-  const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
-  if (typeof raw !== 'string') {
-    throw new Error(
-      `sign-up for ${email} did not set a session cookie (status ${res.status}): ${JSON.stringify(res.body)}`,
-    );
-  }
-  const userId = (res.body as { user?: { id?: string } }).user?.id;
-  if (!userId) {
-    throw new Error(`sign-up for ${email} did not return a user id: ${JSON.stringify(res.body)}`);
-  }
-
-  return { cookie: raw.split(';')[0] ?? raw, userId };
-}
-
-/**
- * signUpAndLogin, plus the org_member row a real member has and a fresh
- * sign-up never gets. createTestApp()'s ctx.orgId is the org every other
- * fixture (tokens, projects) in this test file already belongs to, so
- * joining it is what makes the session's tenant match the bearer token's.
- */
-async function signUpAsOrgMember(ctx: TestContext, email: string, role = 'member'): Promise<string> {
-  const { cookie, userId } = await signUp(ctx.app, email);
-  await ctx.app.get(OrgMemberRepository).add(userId, ctx.orgId, role);
-  return cookie;
-}
 
 /** A 'complete', passing run in ctx's org — statusFor() only returns 200 for this. */
 async function seedCompleteRun(ctx: TestContext): Promise<string> {

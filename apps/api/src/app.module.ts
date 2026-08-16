@@ -7,9 +7,10 @@ import { MetricsModule } from './metrics/metrics.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { RunsModule } from './runs/runs.module.js';
 import { TelemetryModule } from './telemetry/telemetry.module.js';
+import { TokensModule } from './tokens/tokens.module.js';
 
 @Module({
-  imports: [AuthModule, RunsModule, IngestModule, MetricsModule, ProjectsModule, TelemetryModule],
+  imports: [AuthModule, RunsModule, IngestModule, MetricsModule, ProjectsModule, TelemetryModule, TokensModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

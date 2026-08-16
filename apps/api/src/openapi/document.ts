@@ -272,6 +272,18 @@ const parameters: Record<string, ParameterObject> = {
       'the two bounds combine.',
     schema: { type: 'integer', minimum: 0 },
   },
+  TokenProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'A project slug within the caller\'s own organisation. Resolved by the session\'s org ' +
+      'membership, unlike "slug" on GET /v1/projects/{slug}/runs — this route accepts no bearer ' +
+      'credential at all (see SessionOnlyGuard), so there is no "the token\'s own project" to ' +
+      'match against. A slug outside the caller\'s org 404s rather than 403, so the response ' +
+      'never confirms that another organisation\'s project exists.',
+    schema: { type: 'string' },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -382,6 +394,25 @@ const responses: Record<string, ResponseObject> = {
   },
   NotFound: {
     description: 'No such resource in a project this token can access.',
+    content: problem(),
+  },
+  SessionRequired: {
+    description:
+      'The credential is a valid bearer API token, not a signed-in session (code FORBIDDEN). ' +
+      'Refused unconditionally, regardless of which scopes the token carries — token minting is ' +
+      'checked by SessionOnlyGuard, never by @Scopes(), because a scope check would let any ' +
+      'credential holding that scope mint itself a broader one. Sign in at ' +
+      'POST /auth/sign-in/email and retry with the session cookie.',
+    content: problem(),
+  },
+  InvalidTokenRequest: {
+    description:
+      'The request body failed MintTokenRequestSchema (code INVALID_TOKEN_REQUEST): "name" is ' +
+      'blank or missing, "scopes" is empty or missing, an entry in "scopes" is not one of ' +
+      '"ingest"/"read"/"telemetry", or the body names a field the schema does not — ' +
+      'MintTokenRequestSchema is `.strict()`, so an extra field (e.g. a caller-supplied ' +
+      '"projectId") lands here rather than being silently ignored. ' +
+      'application/problem+json with a required "remediation".',
     content: problem(),
   },
 };
@@ -711,6 +742,48 @@ const paths: Record<string, PathItemObject> = {
         '400': ref('ProjectRunsBadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/tokens': {
+    post: {
+      operationId: 'mintProjectToken',
+      summary: 'Mint a new API token for a project',
+      tags: ['tokens'],
+      // The MIRROR of POST /v1/runs's bearer-only override, for the OPPOSITE
+      // reason: that route needs a project-scoped bearer identity a session
+      // cannot supply. Here a bearer credential must never be accepted at
+      // all, no matter its scopes — SessionOnlyGuard refuses it before the
+      // handler runs, because a scope check would let any credential holding
+      // that scope mint itself a broader one. Without this override the
+      // document would advertise an authentication scheme (bearerAuth) the
+      // handler always rejects.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). "token" in the 201 response is the ONLY ' +
+        'moment the plaintext credential is ever returned: only its hash is persisted, so it ' +
+        'cannot be recovered later — a caller who loses it mints a replacement.',
+      parameters: [parameters['TokenProjectSlug']!],
+      requestBody: {
+        required: true,
+        description:
+          'A non-empty "name" for the credential (what an operator sees on a revocation list ' +
+          'later) and at least one scope from ["ingest", "read", "telemetry"].',
+        content: json(schemaRef('MintTokenRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Minted. "scopes" echoes back exactly what was requested — this route grants no ' +
+            'scope the caller did not ask for.',
+          content: json(schemaRef('MintedToken')),
+        },
+        '400': ref('InvalidTokenRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
       },
     },
   },
