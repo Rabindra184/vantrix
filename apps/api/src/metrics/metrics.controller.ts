@@ -1,6 +1,7 @@
 import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
 import type {
   ErrorSeriesResponse,
+  Window,
   ErrorsResponse,
   SeriesResponse,
   StatsResponse,
@@ -8,10 +9,10 @@ import type {
 } from '@perfportal/contracts';
 import { parseProjectSettings } from '@perfportal/contracts';
 import { MetricReader, ProjectRepository, RunRepository } from '@perfportal/persistence';
-import { bandsFrom, inferBucketWidthMs } from '@perfportal/statistics';
+import { Histogram, bandsFrom, inferBucketWidthMs, rollupFromHistograms } from '@perfportal/statistics';
 import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
+import { badRequest, parseLimit, parseRange, uuidParam } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -155,6 +156,8 @@ export class MetricsController {
     @Query('scope') scope?: string,
     @Query('name') name?: string,
     @Query('family') family?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<StatsResponse> {
     const run = await this.#run(req, id);
 
@@ -177,6 +180,23 @@ export class MetricsController {
         `This project's settings are invalid, so indicator bands cannot be computed: ${message(err)}`,
         'Ask a project admin to fix the "indicators" setting (lowerMs must be below higherMs) and retry.',
       );
+    }
+
+    const range = parseRange(from, to);
+    const tenant = { orgId: run.orgId, projectId: run.projectId };
+
+    if (range !== null) {
+      if (!(await this.reader.isWindowable(tenant, run.id, run.startedOn))) {
+        // 400 rather than whole-run numbers under a windowed request. Serving
+        // the full run here would be the silently-ignored-parameter failure in
+        // its most damaging form: a table that looks brushed and is not.
+        throw badRequest(
+          'WINDOW_UNAVAILABLE',
+          'This run was ingested before per-bucket histograms were recorded, so it cannot be re-aggregated over a time window.',
+          'Re-ingest the run to enable time-window analysis, or request the whole run by omitting "from" and "to".',
+        );
+      }
+      return this.#windowedStats(run, tenant, range, settings, scope, name, family);
     }
 
     const all = await this.reader.stats({ orgId: run.orgId, projectId: run.projectId }, run.id);
@@ -242,6 +262,7 @@ export class MetricsController {
       indicators: runRow?.indicators ?? { under: 0, between: 0, over: 0, failed: 0 },
       configurable,
       bounds: settings.indicators,
+      window: null,
     };
   }
 
@@ -287,6 +308,92 @@ export class MetricsController {
             )
           : false,
       buckets,
+    };
+  }
+
+
+  /**
+   * Snaps a requested range OUTWARD to bucket boundaries.
+   *
+   * Outward, never inward: nothing the reader selected may fall outside the
+   * answer. The upper edge also stops at the last bucket that exists, so a
+   * window dragged past the end of a run reports the run's extent rather than
+   * a range with no data behind half of it.
+   */
+  #snap(offsets: readonly number[], range: { fromMs: number; toMs: number }): Window {
+    // The width comes from the OFFSETS THEMSELVES, never a 1000ms constant:
+    // the engine halves resolution on a long run, and assuming 1000 would
+    // scale every rate by a power of two with nothing looking wrong.
+    const bucketWidthMs = inferBucketWidthMs([...offsets].sort((a, b) => a - b));
+    const fromMs = Math.floor(range.fromMs / bucketWidthMs) * bucketWidthMs;
+    const last = offsets.length === 0 ? fromMs : Math.max(...offsets);
+    const toMs = Math.min(
+      Math.ceil(range.toMs / bucketWidthMs) * bucketWidthMs,
+      last + bucketWidthMs,
+    );
+    // A range entirely past the end of the run still has to describe a
+    // non-empty span, or WindowSchema's positive `toMs` rejects it.
+    return { fromMs, toMs: Math.max(toMs, fromMs + bucketWidthMs), bucketWidthMs };
+  }
+
+  /**
+   * The statistics table re-aggregated over a time window.
+   *
+   * Every column comes from the merged histograms — see `rollupFromHistograms`
+   * for why mixing them with the stored end-edge counts would describe two
+   * different sets of requests in one row.
+   */
+  async #windowedStats(
+    run: { id: string; orgId: string; projectId: string; startedOn: Date },
+    tenant: { orgId: string; projectId: string },
+    range: { fromMs: number; toMs: number },
+    settings: { percentiles: number[]; indicators: { lowerMs: number; higherMs: number } },
+    scope: string | undefined,
+    name: string | undefined,
+    family: string | undefined,
+  ): Promise<StatsResponse> {
+    const wanted = scope ?? 'run';
+    const wantedFamily = family ?? 'response_time';
+    const rows = await this.reader.windowedBuckets(
+      tenant, run.id, run.startedOn, { scope: wanted, family: wantedFamily }, range,
+    );
+
+    const window = this.#snap(rows.map((r) => r.startOffsetMs), range);
+
+    const byName = new Map<string, { ok: Histogram; ko: Histogram }>();
+    for (const row of rows) {
+      let entry = byName.get(row.name);
+      if (!entry) {
+        entry = { ok: new Histogram(), ko: new Histogram() };
+        byName.set(row.name, entry);
+      }
+      if (row.histogramOk) entry.ok.merge(row.histogramOk);
+      if (row.histogramKo) entry.ko.merge(row.histogramKo);
+    }
+
+    const stats: StatsResponse['stats'] = [...byName.entries()]
+      .filter(([rowName]) => (name !== undefined ? rowName === name : true))
+      .map(([rowName, h]) => ({
+        scope: wanted as StatsResponse['stats'][number]['scope'],
+        name: rowName,
+        family: wantedFamily as StatsResponse['stats'][number]['family'],
+        ...rollupFromHistograms(h.ok, h.ko, window.toMs - window.fromMs, settings.percentiles),
+        // From the WINDOW's own OK histogram, so the bands describe the same
+        // requests as every other column in the row.
+        indicators: bandsFrom(h.ok, h.ko.total, settings.indicators),
+      }));
+
+    const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+    return {
+      runId: run.id,
+      stats,
+      indicators: runRow?.indicators ?? { under: 0, between: 0, over: 0, failed: 0 },
+      // Histograms are what a window is computed from, so a windowed response
+      // is configurable by construction — there is no frozen-value fallback
+      // here for `configurable: false` to warn about.
+      configurable: true,
+      bounds: settings.indicators,
+      window,
     };
   }
 

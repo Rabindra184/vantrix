@@ -405,7 +405,8 @@
     "bounds": {
       "lowerMs": 800,
       "higherMs": 1200
-    }
+    },
+    "window": null
   },
   "series": {
     "runId": "4518cd74-f245-452a-a9db-937d9853c1c5",

@@ -42,9 +42,32 @@ export const StatRowSchema = z.object({
 });
 export type StatRow = z.infer<typeof StatRowSchema>;
 
+export const WindowSchema = z.object({
+  /** Elapsed ms from run start, inclusive. */
+  fromMs: z.number().int().nonnegative(),
+  /** Elapsed ms from run start, EXCLUSIVE — adjacent windows never overlap. */
+  toMs: z.number().int().positive(),
+  /**
+   * The bucket width the window was snapped to.
+   *
+   * A brush that cuts a bucket in half cannot be answered exactly at any
+   * storage cost — the bucket is the finest thing stored — so the range is
+   * widened OUTWARD to bucket boundaries and reported here. A page header must
+   * state this range, not the one the reader dragged, or it claims a precision
+   * the numbers underneath do not have.
+   */
+  bucketWidthMs: z.number().int().positive(),
+});
+export type Window = z.infer<typeof WindowSchema>;
+
 export const StatsResponseSchema = z.object({
   runId: z.string().uuid(),
   stats: z.array(StatRowSchema),
+  /**
+   * The window these statistics were computed over, or `null` when the whole
+   * run was used. Non-null values are SNAPPED — see WindowSchema.
+   */
+  window: WindowSchema.nullable(),
   indicators: z.object({
     under: z.number().int(),
     between: z.number().int(),
