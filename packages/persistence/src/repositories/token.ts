@@ -90,16 +90,24 @@ export class TokenRepository {
    * that into a 404.
    */
   async revokeByPrefix(orgId: string, projectId: string, prefix: string): Promise<TokenSummaryRow | null> {
-    const existing = await this.prisma.apiToken.findFirst({
-      where: { orgId, projectId, prefix },
-      select: SUMMARY_SELECT,
-    });
-    if (!existing) return null;
-    if (existing.revokedAt) return existing;
-
-    return this.prisma.apiToken.update({
-      where: { prefix },
+    // `revokedAt: null` belongs in the WHERE, not in a preceding read. Read
+    // first and update second and two concurrent revocations both see an
+    // active row, both update, and the later timestamp overwrites the
+    // earlier — which breaks the idempotency promised just above, since the
+    // first caller's answer stops matching what the record says. With the
+    // condition in the statement the database settles it: exactly one update
+    // matches, and a loser matches zero rows and writes nothing.
+    await this.prisma.apiToken.updateMany({
+      where: { orgId, projectId, prefix, revokedAt: null },
       data: { revokedAt: new Date() },
+    });
+
+    // Then read back whatever now stands. One query covers all three
+    // outcomes — won the race, lost it (and so returns the winner's
+    // timestamp, not a second one), or was revoked long ago — and null still
+    // means no such token in this project, which the caller turns into a 404.
+    return this.prisma.apiToken.findFirst({
+      where: { orgId, projectId, prefix },
       select: SUMMARY_SELECT,
     });
   }

@@ -117,7 +117,13 @@ export async function createTestApp(
   // repeat; pool.end() does not, and throws "Called end on pool more than
   // once". Idempotence is what lets disposal be added without rewriting
   // every caller's lifecycle.
-  let closed = false;
+  //
+  // A boolean set before the awaits would be worse than none: it is already
+  // true while cleanup runs, so a failure part-way leaves the remaining
+  // resources undisposed AND every retry a no-op. Holding the in-flight
+  // promise instead means callers share one cleanup and each disposer runs
+  // even when an earlier one throws, with the failure surfacing afterwards.
+  let closing: Promise<void> | undefined;
 
   return {
     app,
@@ -142,11 +148,18 @@ export async function createTestApp(
       // was the sole thing reclaiming them. It stayed under max_connections
       // (100) because vitest forks per file, so the count resets at each file
       // boundary — the leak was bounded by luck, not by design.
-      if (closed) return;
-      closed = true;
-      await app.close();
-      await pool.end();
-      await prisma.$disconnect();
+      closing ??= (async () => {
+        try {
+          await app.close();
+        } finally {
+          try {
+            await pool.end();
+          } finally {
+            await prisma.$disconnect();
+          }
+        }
+      })();
+      await closing;
     },
   };
 }

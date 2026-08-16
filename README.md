@@ -79,7 +79,7 @@ A signed-in human (session cookie only — **a bearer token cannot mint another
 token**, even one holding every scope the caller already has; see
 `SessionOnlyGuard`) manages a project's API tokens through three routes:
 
-```
+```text
 POST   /v1/projects/{slug}/tokens          mint  — { name, scopes } → { token, prefix, name, scopes, createdAt }
 GET    /v1/projects/{slug}/tokens          list  — never returns the secret or the hash
 DELETE /v1/projects/{slug}/tokens/{prefix} revoke — idempotent; a retry returns the original revokedAt
@@ -98,7 +98,7 @@ not already have, except `telemetry`, which no session ever holds:
 | Scope       | Grants |
 |-------------|--------|
 | `ingest`    | `POST /v1/runs` — upload a result bundle. |
-| `read`      | Every `GET` under `/v1`. |
+| `read`      | Every bearer-reachable `GET` under `/v1`. Not the token list above: these three routes are session-only and reject a bearer token whatever scopes it carries. |
 | `telemetry` | `POST /v1/telemetry` only — host counters from a load generator, and nothing else. Deliberately its own scope rather than a reuse of `ingest`, so a token living on a shared, often-ephemeral load generator can do exactly one thing. |
 
 Because a session names no project, **ingest requires a token**:

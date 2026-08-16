@@ -4,7 +4,7 @@
 
 **Goal:** let a signed-in human create, list and revoke a project's API tokens, so the `telemetry` scope shipped in PR #29 has a credential path and the agent can be run by someone who is not this repository's test suite.
 
-**Architecture:** three routes on one resource — `POST`, `GET` and `DELETE /v1/projects/:slug/tokens` — guarded by a new `@SessionOnly()` that rejects bearer credentials. `TokenRepository` gains `create`, `listForProject` and `revokeByPrefix`. **No migration:** `ApiToken` already carries every column needed, including a `revokedAt` that has been checked on every authentication since it was created and never written by anything.
+**Architecture:** three routes on one resource — `POST` and `GET /v1/projects/:slug/tokens`, plus `DELETE /v1/projects/:slug/tokens/:prefix` — guarded by a new `@SessionOnly()` that rejects bearer credentials. `TokenRepository` gains `create`, `listForProject` and `revokeByPrefix`. **No migration:** `ApiToken` already carries every column needed, including a `revokedAt` that has been checked on every authentication since it was created and never written by anything.
 
 **Tech Stack:** NestJS, Zod contracts shared API↔web, Prisma, vitest integration tests.
 
@@ -18,7 +18,7 @@
 - **Expectations are computed from the payload, never written down.**
 - **Run test commands in the FOREGROUND and wait.** Several tasks in the previous sub-project stalled by backgrounding a suite and ending the turn.
 - **To run one integration file** (this form genuinely filters):
-  ```
+  ```bash
   pnpm exec vitest run --config vitest.integration.config.ts apps/api/test/tokens.integration.test.ts
   ```
   `pnpm test:integration -- tokens` does **NOT** filter — it runs the whole ~5-minute suite.
@@ -466,8 +466,13 @@ describe('the contract and the API agree about scopes', () => {
   it('TOKEN_SCOPES matches the API's TokenScope union', () => {
     // The duplication is deliberate (contracts must not import from apps/api,
     // which the browser also loads), so this is what stops it drifting.
-    const fromApi: TokenScope[] = ['ingest', 'read', 'telemetry'];
-    expect([...TOKEN_SCOPES].sort()).toEqual([...fromApi].sort());
+    // A `TokenScope[]` annotation would NOT catch drift: adding a member to
+    // the union leaves `['ingest', 'read', 'telemetry']` perfectly valid and
+    // this assertion green. The mapped type requires a property for every
+    // member, so an unlisted scope is a compile error — and
+    // apps/api/test/tsconfig.json is what puts that error in front of CI.
+    const fromApi: Record<TokenScope, true> = { ingest: true, read: true, telemetry: true };
+    expect([...TOKEN_SCOPES].sort()).toEqual(Object.keys(fromApi).sort());
   });
 });
 ```

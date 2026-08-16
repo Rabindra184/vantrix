@@ -31,7 +31,7 @@ credentials the same supported path.
 
 Three routes on one resource, in a new `apps/api/src/tokens/`:
 
-```
+```text
 POST   /v1/projects/:slug/tokens
 GET    /v1/projects/:slug/tokens
 DELETE /v1/projects/:slug/tokens/:prefix

@@ -85,6 +85,20 @@ describe('TokenRepository writes', () => {
     expect(second!.revokedAt!.getTime()).toBe(first!.revokedAt!.getTime());
   });
 
+  // NO CONCURRENT-REVOCATION TEST HERE, DELIBERATELY.
+  //
+  // One was written for the race that `revokeByPrefix`'s conditional update
+  // closes, firing five overlapping revocations and asserting they agree on a
+  // single `revokedAt`. It passed against the RACY implementation too, so it
+  // was removed rather than kept as a false guarantee.
+  //
+  // It cannot reproduce the interleaving it targets: Promise.all over one
+  // PrismaClient serialises the calls across the connection pool, so callers
+  // 2..N observe an already-revoked row and return early on the read, never
+  // reaching the second write. Genuine overlap needs separate clients and a
+  // pause held open between the read and the update — which the fixed code no
+  // longer has, there being only one statement. The invariant is enforced by
+  // `revokedAt: null` living in the WHERE clause; see the comment there.
   it('will not revoke another project\'s token', async () => {
     const { org, project } = await seedOrg();
     const other = await seedOtherOrg();
