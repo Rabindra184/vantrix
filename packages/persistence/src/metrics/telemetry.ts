@@ -94,6 +94,23 @@ const sampledOn = (ms: number): string => new Date(ms).toISOString().slice(0, 10
  * Year 9999 sidesteps both: comfortably inside `Date`'s range, comfortably
  * past any run this system will ever ingest, and its ISO year is ordinary
  * four-digit width, so `sampledOn`'s fixed-width slice stays correct.
+ *
+ * ONE-SIDED ON PURPOSE. There is no matching floor constant, and `forRun`
+ * only ever `Math.min`s `toMs` against this — it must never symmetric-clamp
+ * `fromMs` the same way. A negative extended year breaks `sampledOn`
+ * identically: `new Date(-MAX_SAFE_DATE_MS).toISOString().slice(0, 10)` is
+ * `'-006060-01'`, a seven-character signed year sliced to a malformed DATE
+ * literal — the exact bug this constant exists to prevent, reintroduced by
+ * "restoring the symmetry" on the other bound. `Math.max(fromMs,
+ * -MAX_SAFE_DATE_MS)` was tried and removed for exactly this reason.
+ *
+ * The floor clamp is not just unwritten, it is unneeded: unlike
+ * `Number.MAX_SAFE_INTEGER`, which is a real idiom in this codebase for "no
+ * upper bound" (this constant exists because of it; so does `MAX_OFFSET_MS`
+ * in read.ts), nobody passes `-Number.MAX_SAFE_INTEGER` to mean "since the
+ * beginning of time". Every real caller's `fromMs` is an ordinary timestamp,
+ * `toolStartedAt - TELEMETRY_LOOKBACK_MS`. Do not add a floor clamp back
+ * without a caller that actually needs one.
  */
 const MAX_SAFE_DATE_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
 
@@ -165,17 +182,13 @@ export class TelemetryStore {
    * silently prune away the partition holding half the answer.
    */
   async forRun(scope: ProjectScope, fromMs: number, toMs: number): Promise<StoredTelemetrySample[]> {
-    // Clamped to what Date can hold, not what the caller passed — see
-    // MAX_SAFE_DATE_MS. fromMs never approaches the floor in practice, but
-    // it is clamped for the same reason toMs is: symmetry costs nothing and
-    // an asymmetric guard is the kind of thing that looks intentional until
-    // someone hits the other edge.
-    const from = Math.max(fromMs, -MAX_SAFE_DATE_MS);
+    // toMs only — see MAX_SAFE_DATE_MS for why there is deliberately no
+    // matching clamp on fromMs.
     const to = Math.min(toMs, MAX_SAFE_DATE_MS);
     const { rows } = await this.pool.query(TELEMETRY_WINDOW_SQL, [
-      sampledOn(from), sampledOn(to),
+      sampledOn(fromMs), sampledOn(to),
       scope.orgId, scope.projectId,
-      new Date(from), new Date(to),
+      new Date(fromMs), new Date(to),
     ]);
     return rows.map((r) => ({
       host: r.host,

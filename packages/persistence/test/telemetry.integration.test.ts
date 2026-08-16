@@ -11,13 +11,22 @@ const prisma = createPrisma(url);
 
 // A sample builder, so every test states only what it is about. Counters climb
 // with `n` so a delta is always positive unless a test deliberately resets one.
+//
+// Every numeric field carries its OWN prime multiplier (or offset, for the
+// two gauges), all pairwise distinct — not a coincidence that happens to
+// hold for the two `n` values the tests below use, but true for any `n`.
+// A transposed column in forRun()'s row mapping (say, cpuIdleMs and
+// cpuIowaitMs swapped) therefore always changes a value, so the whole-object
+// round-trip comparison in "round-trips every counter and the state map"
+// below is guaranteed to catch it rather than depending on which fields that
+// test happens to spot-check.
 const sampleAt = (n: number, over: Partial<InboundTelemetrySample> = {}): InboundTelemetrySample => ({
   sampledAtMs: Date.UTC(2026, 7, 17, 10, 0, n),
-  cpuUserMs: 1000 * n, cpuSystemMs: 500 * n, cpuIdleMs: 8000 * n, cpuIowaitMs: 10 * n,
-  memUsedBytes: 1_000_000 + n, memTotalBytes: 8_000_000,
-  netRxBytes: 10_000 * n, netTxBytes: 20_000 * n,
-  tcpInSegs: 100 * n, tcpOutSegs: 120 * n, tcpRetransSegs: n, tcpInErrs: 0,
-  tcpActiveOpens: 5 * n, tcpPassiveOpens: 3 * n,
+  cpuUserMs: 101 * n, cpuSystemMs: 103 * n, cpuIdleMs: 107 * n, cpuIowaitMs: 109 * n,
+  memUsedBytes: 1_000_000 + 113 * n, memTotalBytes: 8_000_000 + 127 * n,
+  netRxBytes: 131 * n, netTxBytes: 137 * n,
+  tcpInSegs: 139 * n, tcpOutSegs: 149 * n, tcpRetransSegs: 151 * n, tcpInErrs: 157 * n,
+  tcpActiveOpens: 163 * n, tcpPassiveOpens: 167 * n,
   tcpStates: { ESTABLISHED: 10 + n, TIME_WAIT: n },
   ...over,
 });
@@ -56,12 +65,16 @@ describe('TelemetryStore', () => {
 
     const read = await store.forRun(scope, written[0]!.sampledAtMs, written[1]!.sampledAtMs + 1);
 
-    // DERIVED FROM WHAT WAS WRITTEN, never a literal — the builder above is
-    // free to change.
-    expect(read.map((r) => r.sampledAtMs)).toEqual(written.map((w) => w.sampledAtMs));
-    expect(read.map((r) => r.tcpInSegs)).toEqual(written.map((w) => w.tcpInSegs));
-    expect(read.map((r) => r.netRxBytes)).toEqual(written.map((w) => w.netRxBytes));
-    expect(read.map((r) => r.tcpStates)).toEqual(written.map((w) => w.tcpStates));
+    // EVERY field, DERIVED FROM WHAT WAS WRITTEN, never a literal — the
+    // builder above is free to change. StoredTelemetrySample is exactly
+    // InboundTelemetrySample plus the two server-owned fields (host,
+    // receivedAtMs); stripping those and comparing what remains against
+    // `written` whole checks all fourteen counters/gauges and tcpStates in
+    // one assertion, rather than the handful a spot check would name — a
+    // transposed column in forRun()'s mapping fails this even if the field
+    // it landed in was never separately asserted.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    expect(read.map(({ host: _host, receivedAtMs: _receivedAtMs, ...rest }) => rest)).toEqual(written);
     expect(read.every((r) => r.host === 'gen-1')).toBe(true);
   });
 
