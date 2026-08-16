@@ -34,12 +34,13 @@ const (
 	// One warning per interval at most, so a long outage does not turn the
 	// agent into the thing generating load on the generator.
 	logEvery = time.Minute
+	// telemetryTokenEnvVar is the ONLY way to supply the API token — see the
+	// comment where it is read in main for why there is no --token flag.
+	telemetryTokenEnvVar = "PERFPORTAL_TELEMETRY_TOKEN"
 )
 
 func main() {
 	endpoint := flag.String("endpoint", "", "PerfPortal API root, e.g. https://perf.example (required)")
-	token := flag.String("token", os.Getenv("PERFPORTAL_TELEMETRY_TOKEN"),
-		`API token with the "telemetry" scope; defaults to $PERFPORTAL_TELEMETRY_TOKEN`)
 	hostLabel := flag.String("host-label", "", "label this generator reports as; defaults to the OS hostname")
 	interval := flag.Duration("interval", defaultInterval, "sampling interval")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -50,8 +51,18 @@ func main() {
 		log.Println(agent.UserAgent())
 		return
 	}
-	if *endpoint == "" || *token == "" {
-		log.Fatal("both --endpoint and --token (or $PERFPORTAL_TELEMETRY_TOKEN) are required")
+	// NO --token FLAG, DELIBERATELY. /proc/<pid>/cmdline is world-readable on
+	// Linux, so a flag would let any local user on the load generator — a
+	// machine that is often shared, often ephemeral, and less carefully
+	// managed than CI — read a "telemetry"-scoped API token straight off the
+	// command line; it would also land in shell history and `ps` output.
+	// /proc/<pid>/environ is readable only by the process owner, so the
+	// environment variable is materially safer, not merely different — see
+	// §5 of docs/superpowers/specs/2026-08-16-load-generator-telemetry-agent-design.md.
+	token := os.Getenv(telemetryTokenEnvVar)
+	if *endpoint == "" || token == "" {
+		log.Fatalf(`--endpoint and $%s (an API token with the "telemetry" scope) are both required; `+
+			"there is no --token flag, by design — see the comment above this check", telemetryTokenEnvVar)
 	}
 	// time.NewTicker panics on a non-positive duration, and the sampler runs
 	// in its own goroutine — an unrecovered panic there takes the whole
@@ -79,7 +90,7 @@ func main() {
 	ring := buffer.New[collect.Sample](bufferSamples)
 	// A timeout well under batchWindow, so a hung server cannot stall the
 	// sender past its own next flush.
-	client := send.New(*endpoint, *token, label, &http.Client{Timeout: 5 * time.Second})
+	client := send.New(*endpoint, token, label, &http.Client{Timeout: 5 * time.Second})
 
 	log.Printf("%s sampling every %s as %q → %s", agent.UserAgent(), *interval, label, *endpoint)
 

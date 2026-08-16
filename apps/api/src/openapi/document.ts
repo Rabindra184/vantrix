@@ -720,10 +720,13 @@ const paths: Record<string, PathItemObject> = {
       operationId: 'postTelemetry',
       summary: "Ingest a batch of an agent's host-counter samples",
       tags: ['telemetry'],
-      // A session names no project (see the 400 PROJECT_REQUIRED response
-      // below), so it can never satisfy this route — bearer-only, overriding
-      // the document-level "either credential" default, exactly as
-      // POST /v1/runs does and for the same reason.
+      // A session names no project, so it can never satisfy this route —
+      // bearer-only, overriding the document-level "either credential"
+      // default, exactly as POST /v1/runs does and for the same reason.
+      // (Here a session is refused even earlier, by the "telemetry" scope
+      // check itself, since no session carries that scope — see
+      // TelemetryRejected's description below. There is no reachable 400
+      // PROJECT_REQUIRED case for this operation.)
       security: [{ bearerAuth: [] }],
       description:
         'Requires the "telemetry" scope — deliberately not "ingest": an agent token lives on a ' +

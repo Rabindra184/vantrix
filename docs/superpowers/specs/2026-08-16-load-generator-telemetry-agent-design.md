@@ -266,6 +266,21 @@ these are requirements rather than niceties:
 ephemeral generators, so the label is configurable and is the dimension every
 chart is grouped by. It is not a foreign key to anything.
 
+> **Correction, 2026-08-16.** The agent originally accepted its API token as a
+> `--token` command-line flag alongside `--host-label` above, defaulting to
+> `$PERFPORTAL_TELEMETRY_TOKEN` when absent. That flag has been removed:
+> `/proc/<pid>/cmdline` is world-readable on Linux, so any local user on the
+> load generator running it — a machine that, per §6 below, is already
+> "often shared, often ephemeral, and often less carefully managed than CI" —
+> could read the token straight off the command line, and it would also land
+> in shell history and `ps` output. That is precisely the threat model the
+> `telemetry` scope exists to be narrow against, so leaking the credential
+> through argv undid the reasoning for having the scope at all. The token is
+> now read ONLY from `$PERFPORTAL_TELEMETRY_TOKEN`: `/proc/<pid>/environ` is
+> readable solely by the process owner, which is materially safer rather than
+> merely different. Nothing outside this repo minted or passed `--token` yet
+> — no token-minting path exists — so removing it cost nothing.
+
 ---
 
 ## 6. Ingest and read
