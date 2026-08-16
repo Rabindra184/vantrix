@@ -50,7 +50,13 @@ function controllerWith(
       })),
   } as never;
   const projects = {} as never;
-  return new MetricsController(runs, reader, projects);
+  // MetricsController's fourth dependency. These bucket-width cases never
+  // reach a telemetry handler, so an unpopulated stub is enough — but it has
+  // to be PASSED: the constructor has taken four arguments since the
+  // telemetry sub-project, and this call site kept compiling on three only
+  // because nothing typechecked apps/api/test (see test/tsconfig.json).
+  const telemetrySamples = {} as never;
+  return new MetricsController(runs, reader, projects, telemetrySamples);
 }
 
 const req = { tenant: { orgId: RUN.orgId, projectId: RUN.projectId } } as unknown as Request;

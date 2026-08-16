@@ -32,11 +32,11 @@ const telemetrySample = (secondsFromNow = 0) => ({
   tcpStates: { ESTABLISHED: 10 },
 });
 
-function post(path: string, token: string, body: unknown) {
+function post(path: string, token: string, body: object) {
   return request(ctx.app.getHttpServer()).post(path).set('Authorization', `Bearer ${token}`).send(body);
 }
 
-function postAsSession(path: string, body: unknown) {
+function postAsSession(path: string, body: object) {
   return request(ctx.app.getHttpServer()).post(path).set('Cookie', cookie).send(body);
 }
 
@@ -140,6 +140,11 @@ describe('the contract and the API agree about scopes', () => {
     // while TOKEN_SCOPES silently falls behind. The mapped type instead
     // requires a property for every member of the union, so an unlisted
     // scope is a compile error here, not a silent gap.
+    //
+    // That compile error only reaches CI because test/tsconfig.json exists
+    // and `pnpm typecheck` runs it. Until it did, apps/api/test was checked
+    // by nothing, the annotation below was erased before the test ever ran,
+    // and this guarded exactly as much as a comment would have.
     const fromApi: Record<TokenScope, true> = { ingest: true, read: true, telemetry: true };
     expect([...TOKEN_SCOPES].sort()).toEqual(Object.keys(fromApi).sort());
   });

@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -247,7 +248,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
    * the same "settings active at ingest" behavior via a plain Prisma insert -
    * no truncate, no second bootstrap.
    */
-  const createSiblingProject = async (settings: Record<string, unknown>) => {
+  const createSiblingProject = async (settings: Prisma.InputJsonObject) => {
     const project = await ctx.prisma.project.create({
       data: { orgId: ctx.orgId, slug: `parity-sibling-${randomUUID().slice(0, 8)}`, name: 'Parity Sibling', settings },
     });
@@ -447,7 +448,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // controller's own rate helper: computing x via the SAME function under
       // test would stay green even if that function's formula were wrong.
       const ownWidthMs = inferWidthMs(series.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
-      const pinnedBucket = okBuckets[0] as { startOffsetMs: number; percentilesOk: Record<string, number> };
+      const pinnedBucket = okBuckets[0] as { startOffsetMs: number; percentilesOk: { p95: number } };
       const expectedX = expectedRate(pinnedBucket.startOffsetMs, ownWidthMs, globalSeries.body.buckets);
       expect(scatter.body.ok).toContainEqual([expectedX, Math.trunc(pinnedBucket.percentilesOk.p95)]);
 
@@ -462,7 +463,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // leaves this loop (and the pre-existing sibling check in
       // parity-endpoints.integration.test.ts) GREEN - proven by actually
       // doing it. The block below is what actually catches that mutation.
-      for (const b of okBuckets as { percentilesOk: Record<string, number> }[]) {
+      for (const b of okBuckets as { percentilesOk: { p95: number } }[]) {
         expect(scatter.body.ok.some(([, y]: [number, number]) => y === Math.trunc(b.percentilesOk.p95))).toBe(true);
       }
 

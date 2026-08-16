@@ -155,7 +155,8 @@ describe('OpenAPI document', () => {
   it('declares both bearerAuth and cookieAuth as document-level "either credential" security', async () => {
     const doc = await fetchDoc();
 
-    const schemes = doc.components?.securitySchemes as
+    const schemes = (doc.components as { securitySchemes?: unknown } | undefined)
+      ?.securitySchemes as
       | Record<string, { type?: string; in?: string; name?: string }>
       | undefined;
     expect(schemes?.['bearerAuth']).toBeTruthy();
