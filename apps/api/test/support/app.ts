@@ -31,6 +31,7 @@ export interface TestContext {
   projectId: string;
   ingestToken: string;
   readToken: string;
+  telemetryToken: string;
   close(): Promise<void>;
 }
 
@@ -101,6 +102,15 @@ export async function createTestApp(
     },
   });
 
+  const tel = mintToken();
+  await prisma.apiToken.create({
+    data: {
+      orgId: org.id, projectId: project.id, name: 'agent',
+      prefix: tel.prefix, tokenHash: await hashToken(splitSecret(tel.token)),
+      scopes: ['telemetry'],
+    },
+  });
+
   return {
     app,
     prisma,
@@ -109,6 +119,7 @@ export async function createTestApp(
     projectId: project.id,
     ingestToken: ing.token,
     readToken: rd.token,
+    telemetryToken: tel.token,
     async close() {
       await app.close();
     },

@@ -384,3 +384,74 @@ export const TrendsResponseSchema = z.object({
   runs: z.array(TrendRunSchema),
 });
 export type TrendsResponse = z.infer<typeof TrendsResponseSchema>;
+
+/**
+ * One sample as an agent sends it. Field names match the Go struct tags in
+ * `agent/internal/collect/collect.go` exactly — the two are one wire format,
+ * and a rename on either side must be a rename on both.
+ *
+ * EVERY CUMULATIVE FIELD IS THE RAW COUNTER. There is deliberately no
+ * `cpuPercent` and no `rxBytesPerSec`: the sampling interval is the agent's and
+ * it drifts, so a rate computed against an assumed interval is wrong by exactly
+ * that drift — and a counter reset is detectable in raw values
+ * (`current < previous`) and invisible in a rate, where it arrives as a
+ * plausible enormous spike that is indistinguishable from a real traffic burst.
+ *
+ * `.int().nonnegative()` on every counter: a negative since-boot counter is not
+ * a reading, and rejecting it at the edge means the delta arithmetic downstream
+ * only ever has to consider a RESET, never a negative.
+ */
+const counter = () => z.number().int().nonnegative();
+
+export const TelemetrySampleSchema = z.object({
+  /** ISO 8601, the AGENT's clock. The server stamps its own separately. */
+  sampledAt: z.string().datetime(),
+  cpuUserMs: counter(),
+  cpuSystemMs: counter(),
+  cpuIdleMs: counter(),
+  cpuIowaitMs: counter(),
+  memUsedBytes: counter(),
+  memTotalBytes: counter(),
+  netRxBytes: counter(),
+  netTxBytes: counter(),
+  tcpInSegs: counter(),
+  tcpOutSegs: counter(),
+  tcpRetransSegs: counter(),
+  tcpInErrs: counter(),
+  tcpActiveOpens: counter(),
+  tcpPassiveOpens: counter(),
+  /** Kernel TCP state → count, absent when zero. The state set is the OS's. */
+  tcpStates: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type TelemetrySample = z.infer<typeof TelemetrySampleSchema>;
+
+/**
+ * The body of POST /v1/telemetry.
+ *
+ * ═══ THERE IS NO orgId AND NO projectId, ON PURPOSE ═══
+ *
+ * Both come from the bearer token. An agent runs on a load generator — a
+ * machine an attacker is far likelier to reach than the API — and a
+ * payload-supplied tenant would let a token minted for one project write
+ * telemetry into another, which the read path would then serve without a
+ * murmur. `.strict()` is what makes that a REJECTION rather than a silently
+ * ignored field, so a future agent that starts sending one fails loudly on its
+ * first request instead of appearing to work.
+ */
+export const TelemetryBatchSchema = z
+  .object({
+    /**
+     * The generator's label. Free text, NOT a foreign key: hostnames collide
+     * and change on ephemeral generators, which is why the agent takes
+     * `--host-label`. It is the dimension every telemetry chart groups by.
+     */
+    host: z.string().min(1).max(255),
+    /**
+     * Bounded so one request cannot pin the event loop. The agent batches at
+     * 30; 500 leaves generous headroom for a backlog flush after an outage
+     * while keeping the worst-case body small.
+     */
+    samples: z.array(TelemetrySampleSchema).min(1).max(500),
+  })
+  .strict();
+export type TelemetryBatch = z.infer<typeof TelemetryBatchSchema>;

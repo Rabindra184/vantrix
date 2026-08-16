@@ -340,6 +340,17 @@ const responses: Record<string, ResponseObject> = {
       'run, not a request error. The same 422 that GET /v1/runs/{id} returns for this state.',
     content: json(schemaRef('RunResponse')),
   },
+  TelemetryRejected: {
+    description:
+      'Either the batch failed validation (code INVALID_TELEMETRY — a counter is negative, ' +
+      '"sampledAt" is not a valid ISO 8601 timestamp, "samples" is empty or exceeds 500, or the ' +
+      'body names a field this schema does not — TelemetryBatchSchema is `.strict()`, so a ' +
+      'payload-supplied "orgId"/"projectId" lands here rather than being silently ignored), or ' +
+      '(code PROJECT_REQUIRED) the caller authenticated with a session, which names no ' +
+      'project — only a project-scoped token carrying the "telemetry" scope can post samples. ' +
+      'Always application/problem+json with a required "remediation".',
+    content: problem(),
+  },
   Unauthorized: {
     description: 'The bearer token is missing, malformed, unknown, or revoked.',
     content: problem(),
@@ -653,6 +664,49 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/telemetry': {
+    post: {
+      operationId: 'postTelemetry',
+      summary: "Ingest a batch of an agent's host-counter samples",
+      tags: ['telemetry'],
+      // A session names no project (see the 400 PROJECT_REQUIRED response
+      // below), so it can never satisfy this route — bearer-only, overriding
+      // the document-level "either credential" default, exactly as
+      // POST /v1/runs does and for the same reason.
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "telemetry" scope — deliberately not "ingest": an agent token lives on a ' +
+        'load generator, a machine an attacker is far likelier to reach than the API or a CI ' +
+        'runner, and this scope can do exactly one thing. "orgId" and "projectId" come from the ' +
+        'token, never the body — TelemetryBatchSchema is `.strict()`, so a payload naming ' +
+        'either is a 400, not a silently-ignored field. Every counter is the agent\'s RAW ' +
+        'cumulative reading, not a rate: the sampling interval is the agent\'s and it drifts, so ' +
+        'a rate computed server-side against an assumed interval would be wrong by exactly that ' +
+        'drift. Idempotent under retry — a batch resent after a timeout that actually succeeded ' +
+        'inserts nothing twice, so "accepted" on a retried batch may be smaller than the batch ' +
+        'size without that being an error.',
+      requestBody: {
+        required: true,
+        description: 'The generator\'s label plus 1–500 raw samples.',
+        content: json(schemaRef('TelemetryBatch')),
+      },
+      responses: {
+        '202': {
+          description: 'Stored. "accepted" is the number of rows actually inserted — smaller ' +
+            'than "samples.length" only when this batch was already partly stored by a prior ' +
+            'attempt.',
+          content: json({
+            type: 'object',
+            required: ['accepted'],
+            properties: { accepted: { type: 'integer' } },
+          }),
+        },
+        '400': ref('TelemetryRejected'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
   '/healthz': {
     get: {
       operationId: 'healthz',
@@ -717,9 +771,12 @@ export function buildOpenApiDocument(): OpenApiDocument {
           description:
             'API tokens have the shape "pp_<prefix>_<secret>" — an opaque token, not a JWT. ' +
             'Send as "Authorization: Bearer pp_<prefix>_<secret>". POST /v1/runs requires a ' +
-            'token with the "ingest" scope; every GET requires "read". Scoped to an org AND a ' +
-            'project, and the only credential POST /v1/runs and GET /v1/projects/{slug}/runs ' +
-            'accept — see cookieAuth for the session alternative everywhere else.',
+            'token with the "ingest" scope; every GET requires "read"; POST /v1/telemetry ' +
+            'requires "telemetry" — a THIRD scope, deliberately not a reuse of "ingest", so a ' +
+            'token minted for a load generator can post host counters and do nothing else. ' +
+            'Scoped to an org AND a project, and the only credential POST /v1/runs, ' +
+            'POST /v1/telemetry, and GET /v1/projects/{slug}/runs accept — see cookieAuth for ' +
+            'the session alternative everywhere else.',
         },
         cookieAuth: {
           type: 'apiKey',
@@ -729,10 +786,14 @@ export function buildOpenApiDocument(): OpenApiDocument {
             'A Better Auth session cookie, obtained via POST /auth/sign-up/email or ' +
             '/auth/sign-in/email (see the root README\'s Authentication section — /auth/* is ' +
             'Better Auth\'s own surface, not this document). Scoped to an org only, no ' +
-            'project, so it cannot satisfy POST /v1/runs or GET /v1/projects/{slug}/runs ' +
-            '(both require a project); GET /v1/runs is the org-wide equivalent a session can ' +
-            'use instead. Minted with the Secure attribute unconditionally, so it requires an ' +
-            'HTTPS origin — see the root README\'s Authentication section.',
+            'project, so it cannot satisfy POST /v1/runs, POST /v1/telemetry, or ' +
+            'GET /v1/projects/{slug}/runs (all three require a project); GET /v1/runs is the ' +
+            'org-wide equivalent a session can use instead. Its scopes are ["read", "ingest"] ' +
+            '— NOT "telemetry": a browser session has no reason to post host counters, and ' +
+            'widening it would make the scope\'s whole purpose decorative, so it is refused by ' +
+            '@Scopes(\'telemetry\') even before the missing-project check above applies. Minted ' +
+            'with the Secure attribute unconditionally, so it requires an HTTPS origin — see the ' +
+            'root README\'s Authentication section.',
         },
       },
       parameters,

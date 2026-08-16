@@ -1,6 +1,14 @@
 import { SetMetadata } from '@nestjs/common';
 
-export type TokenScope = 'ingest' | 'read';
+/**
+ * `telemetry` is deliberately a THIRD scope rather than a reuse of `ingest`.
+ *
+ * An agent token lives on a load generator: often shared, often ephemeral,
+ * often less carefully managed than CI. A token that could post host counters
+ * AND upload bundles AND read results would make every generator in the fleet a
+ * full-privilege credential store. This one can do exactly one thing.
+ */
+export type TokenScope = 'ingest' | 'read' | 'telemetry';
 export const SCOPES_KEY = 'perfportal:scopes';
 export const Scopes = (...scopes: TokenScope[]) => SetMetadata(SCOPES_KEY, scopes);
 
