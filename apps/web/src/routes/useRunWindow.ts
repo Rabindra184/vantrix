@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import type { Window } from '@perfportal/contracts';
 import { parseWindow, serialiseWindow } from './window';
 
@@ -43,3 +43,19 @@ export function useRunWindow(runDurationMs: number): {
 
   return { window, setWindow };
 }
+
+/**
+ * What `RunShell` passes down through its `<Outlet>`.
+ *
+ * The window is parsed ONCE, in the shell, where the run's real duration is
+ * known. A tab that re-parsed it would need that duration too, and the only
+ * value available there is a sentinel — which is how the two came to disagree
+ * for a URL carrying just `?from=`.
+ */
+export interface RunWindowContext {
+  readonly window: Window | null;
+}
+
+/** The window the shell parsed. Every tab reads it; none re-derives it. */
+export const useWindowFromShell = (): Window | null =>
+  useOutletContext<RunWindowContext>().window;

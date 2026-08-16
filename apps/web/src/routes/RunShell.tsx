@@ -1,7 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
-import { useRunWindow } from './useRunWindow';
+import { useRunWindow, type RunWindowContext } from './useRunWindow';
 import type { RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -91,7 +91,13 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
         />
       )}
 
-      <Outlet />
+      {/* THE WINDOW TRAVELS DOWN, it is not re-parsed per tab.
+          Each tab used to call `useRunWindow` with its own duration, and a URL
+          carrying only `?from=` then produced a DIFFERENT window object there
+          than here — different query keys, so `/users` was fetched twice and
+          the "one window for the whole page" this shell promises was not true.
+          One parse, one object, one key. */}
+      <Outlet context={{ window } satisfies RunWindowContext} />
     </div>
   );
 }

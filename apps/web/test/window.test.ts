@@ -112,3 +112,32 @@ describe('query keys', () => {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+describe('the duration argument is not decorative', () => {
+  /**
+   * THE BUG THIS PINS. `parseWindow` was called with the run's real duration
+   * in `RunShell` and with `Number.MAX_SAFE_INTEGER` in each tab. For a URL
+   * carrying BOTH bounds the two agree, which is why every existing test and
+   * the whole e2e suite stayed green — but for a URL carrying only `?from=`
+   * the open upper bound is the duration, so they produced different windows,
+   * different query keys, and a duplicate fetch of the same data under a
+   * heading promising one window for the page.
+   *
+   * The window is now parsed once in the shell and passed down, so there is
+   * only one duration in play. This asserts the sensitivity that made the
+   * divergence possible, so a future re-parse cannot reintroduce it quietly.
+   */
+  it('changes the open upper bound, so two callers with different durations disagree', () => {
+    const short = parseWindow('1000', null, 60_000);
+    const long = parseWindow('1000', null, Number.MAX_SAFE_INTEGER);
+    expect(short).not.toEqual(long);
+    expect(short?.toMs).toBe(60_000);
+  });
+
+  it('agrees regardless of duration when BOTH bounds are given', () => {
+    // Which is why the e2e suite never caught it: the brush always writes both.
+    const short = parseWindow('1000', '5000', 60_000);
+    const long = parseWindow('1000', '5000', Number.MAX_SAFE_INTEGER);
+    expect(short).toEqual(long);
+  });
+});
