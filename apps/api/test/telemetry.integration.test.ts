@@ -274,6 +274,7 @@ describe('GET /v1/runs/:id/telemetry', () => {
     const res = await get(`/v1/runs/${runWithNoTelemetryId}/telemetry`);
     expect(res.status).toBe(200);
     expect(res.body.available).toBe(false);
+    expect(res.body.hosts).toEqual([]);
   });
 
   it('narrows to ?from=&to= exactly as /series does', async () => {
@@ -293,6 +294,25 @@ describe('GET /v1/runs/:id/telemetry', () => {
     // filtering, so a window over a quiet stretch does not read as "never
     // recorded".
     expect(windowed.body.available).toBe(whole.body.available);
+  });
+
+  it('reports available: true with empty hosts for a window after every posted sample', async () => {
+    // The test above (`?from=0&to=${width * 2}`) cannot actually catch a
+    // regression that computes `available` from the FILTERED `hosts` array
+    // instead of the whole run: that window still contains real data (posted
+    // offsets 0–3000ms), so `available` reads `true` under EITHER the
+    // correct implementation or the regressed one. This window sits entirely
+    // past every offset any posted sample can produce, so `hosts` must come
+    // back empty while `available` stays `true` — the only combination a
+    // filtered-array computation cannot produce (it would report `false`
+    // once `hosts` is empty).
+    const whole = await get(`/v1/runs/${runId}/telemetry`);
+    const width = whole.body.bucketWidthMs;
+    const res = await get(`/v1/runs/${runId}/telemetry?from=${width * 20}&to=${width * 21}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.hosts).toEqual([]);
+    expect(res.body.available).toBe(true);
   });
 
   it('separates hosts', async () => {
