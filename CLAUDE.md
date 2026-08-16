@@ -94,6 +94,19 @@ reported failing test, then two clean 814-test runs in a row. If integration
 fails right after an e2e run and the tail shows no failing assertion, re-run it
 alone before believing it.
 
+**There is now a second gate, and `pnpm` does not run it.** The load-generator
+telemetry agent is Go, lives at `agent/`, and is outside the pnpm workspace —
+so `pnpm lint`, `pnpm typecheck` and every `pnpm test:*` are all blind to it:
+
+```
+cd agent && go vet ./... && go test ./... -race
+```
+
+`-race` is not optional here. The agent's whole design is a sampler goroutine
+writing to a bounded buffer a sender goroutine drains; a data race in that pair
+is the one defect class its tests exist to catch, and the race detector is what
+makes those tests able to catch it.
+
 
 ## Conventions that bite
 

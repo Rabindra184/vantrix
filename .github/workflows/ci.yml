@@ -99,3 +99,42 @@ jobs:
       # AFTER test:integration, never beside it: createTestApp() TRUNCATEs
       # every table, and these two suites share one database.
       - run: pnpm test:e2e
+
+  # The load-generator telemetry agent (agent/) is a Go module outside the
+  # pnpm workspace (pnpm-workspace.yaml globs only packages/* and apps/*), so
+  # it gets its own job rather than a step bolted onto `build`. It needs no
+  # Postgres, Redis or MinIO, so as its own job it runs in parallel and a Go
+  # failure reports in under a minute instead of behind the whole Node gate.
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+
+    steps:
+      - uses: actions/checkout@v4
+      # `go-version-file: agent/go.mod` rather than a literal: the `go`
+      # directive in that file is the single source of truth for the toolchain,
+      # exactly as .nvmrc is for Node. A literal here drifts silently.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          # No `cache-dependency-path: agent/go.sum` yet, and `cache: false`
+          # is deliberate, not an oversight: agent/go.sum does not exist until
+          # Task 3 adds gopsutil, and actions/setup-go's cache step hard-fails
+          # without one. That's true even with cache-dependency-path omitted
+          # entirely — `cache` defaults to true, and its fallback lookup
+          # checks only the literal repo root for a file named `go.sum`
+          # (never `agent/go.sum`, never recursively), so it throws
+          # "Dependencies file is not found" just the same (see
+          # actions/setup-go#427, filed by a project with no go.sum at all).
+          # Once Task 3 lands agent/go.sum, restore
+          # `cache-dependency-path: agent/go.sum` and drop this line.
+          cache: false
+
+      - run: go vet ./...
+      - run: go test ./... -race
+
+      # Cross-compiled build/checksum/upload steps land in Task 4, once
+      # ./cmd/perfportal-agent exists. Adding them here now would leave this
+      # job red for three tasks, which teaches everyone to ignore it.
