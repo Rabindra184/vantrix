@@ -1,5 +1,6 @@
 import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { runMinuteLabel } from './runLabel';
 
 /**
  * `TrendsResponse` → the three trend figures.
@@ -27,19 +28,18 @@ function ordered(t: TrendsResponse): readonly TrendRun[] {
 }
 
 /**
- * The x-axis label for a run: `MM-DD HH:MM` in UTC.
+ * The x-axis label for a run: `MM-DD HH:mm` in the reader's own zone.
  *
- * SHORT ON PURPOSE — twenty of these sit side by side, and a full ISO string
- * at that density is unreadable. The whole timestamp goes in the data table,
- * which is where a reader goes to identify a specific point, and the table is
- * also the screen-reader route to the same information.
+ * `runMinuteLabel` owns the shape and the zone, and is shared with the compare
+ * legend — the two used to hold a copy each of the same ISO slicing, on pages
+ * one link apart. See that file.
  *
  * `toolStartedAt` when the worker has parsed the run header, `startedAt`
  * otherwise — the same effective key the endpoint sorts by, so the label
  * cannot disagree with the position.
  */
 function axisLabel(run: TrendRun): string {
-  return new Date(run.toolStartedAt ?? run.startedAt).toISOString().slice(5, 16).replace('T', ' ');
+  return runMinuteLabel(run.toolStartedAt ?? run.startedAt);
 }
 
 /** The full timestamp, for the table. */

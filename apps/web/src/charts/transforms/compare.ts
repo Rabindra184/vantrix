@@ -1,5 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { runMinuteLabel } from './runLabel';
 
 /**
  * Two to five runs of one simulation, overlaid on a single metric.
@@ -192,11 +193,20 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
  * So a colliding label gains a short id suffix, and only a colliding one — the
  * common case stays a clean timestamp, and the suffix appears exactly where it
  * is needed to disambiguate.
+ *
+ * ═══ IN THE READER'S ZONE ═══
+ *
+ * `runMinuteLabel` owns the shape and the zone, and the trends axis draws its
+ * ticks with the same function — the two held a copy each of the same ISO
+ * slicing until they had to stop reading in UTC. See that file for why the
+ * local reading, and why not `Intl`.
+ *
+ * The collision arithmetic below is unaffected by the zone: every UTC offset
+ * is a whole number of minutes, so two runs sharing a minute in UTC share one
+ * locally too.
  */
 export function compareLabels(runs: readonly { id: string; at: string }[]): string[] {
-  const base = runs.map((run) =>
-    new Date(run.at).toISOString().slice(5, 16).replace('T', ' '),
-  );
+  const base = runs.map((run) => runMinuteLabel(run.at));
 
   const seen = new Map<string, number>();
   for (const label of base) seen.set(label, (seen.get(label) ?? 0) + 1);

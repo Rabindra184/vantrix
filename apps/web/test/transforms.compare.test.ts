@@ -1,5 +1,5 @@
 import type { SeriesResponse } from '@perfportal/contracts';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   COMPARE_METRICS,
   compareLabels,
@@ -136,25 +136,80 @@ describe('toCompare', () => {
   });
 });
 
+/**
+ * ═══ PINNED TO A ZONE, BECAUSE THE LABEL IS NOW IN THE READER'S ═══
+ *
+ * These labels used to be sliced out of `toISOString()`, so they read in UTC
+ * while every other time in the app — the run header, the run list — goes
+ * through `Intl.DateTimeFormat` in the viewer's zone. On an Asia/Kolkata
+ * machine the Trends page therefore labelled a run `08-07 05:30` directly
+ * under a header reading `Aug 7, 2026, 11:00 AM`: one instant, two clocks,
+ * and no way for a reader to know which was theirs.
+ *
+ * Which means the expectations below are only meaningful against a KNOWN
+ * zone. Left to the runner's own, they would assert one thing on a UTC CI box
+ * and another on the machine this was written on — the exact asymmetry that
+ * let the underlying timestamp bug survive. `+05:30` is chosen because it
+ * moves both the clock and, in one case below, the DATE.
+ *
+ * Safe to set here: Vitest 2 runs each file in a forked worker PROCESS
+ * (`pool: 'forks'`, the default this repo does not override), so `process.env`
+ * is this file's alone, and files inside one worker run sequentially.
+ */
 describe('compareLabels', () => {
+  const original = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'Asia/Kolkata';
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  });
+
+  it('reads in the reader’s zone, like every other time in the app', () => {
+    // The precondition, asserted rather than assumed: Node honours a TZ set
+    // after startup, and if it ever stops doing so every expectation in this
+    // describe silently becomes a UTC assertion again. +05:30 puts midnight
+    // UTC at 05:30 local.
+    expect(new Date('2026-08-07T00:00:00Z').getHours()).toBe(5);
+
+    // 05:30Z is 11:00 local — the very reading the run header shows beside it.
+    expect(compareLabels([{ id: 'aaaaaaaa-1111', at: '2026-08-07T05:30:02.171Z' }])).toEqual([
+      '08-07 11:00',
+    ]);
+  });
+
+  it('carries the local DATE too, not merely the local clock', () => {
+    // 19:00Z is half past midnight the NEXT day at +05:30. A label that took
+    // its time locally and its date from the ISO string would read `08-07
+    // 00:30` here — right clock, wrong day, and wrong in the direction that
+    // makes a run look like it happened before it did.
+    expect(compareLabels([{ id: 'aaaaaaaa-1111', at: '2026-08-07T19:00:00.000Z' }])).toEqual([
+      '08-08 00:30',
+    ]);
+  });
+
   it('is a short timestamp when nothing collides', () => {
     const labels = compareLabels([
       { id: 'aaaaaaaa-1111', at: '2026-08-14T09:30:00.000Z' },
       { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:00.000Z' },
     ]);
-    expect(labels).toEqual(['08-14 09:30', '08-15 16:45']);
+    expect(labels).toEqual(['08-14 15:00', '08-15 22:15']);
   });
 
   it('disambiguates runs that share a minute', () => {
     // ECharts DEDUPES SERIES BY NAME, so two identically-labelled runs draw
     // one legend entry and the matrix grows two columns with the same header
     // — a comparison whose columns cannot be told apart.
+    //
+    // Still true in a local zone: every UTC offset is a whole number of
+    // minutes, so two runs sharing a minute in UTC share one locally.
     const labels = compareLabels([
       { id: 'aaaaaaaa-1111', at: '2026-08-15T16:45:00.000Z' },
       { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:30.000Z' },
     ]);
     expect(new Set(labels).size).toBe(2);
-    for (const label of labels) expect(label).toContain('08-15 16:45');
+    for (const label of labels) expect(label).toContain('08-15 22:15');
   });
 
   it('suffixes only the colliding labels, leaving the rest clean', () => {
@@ -163,12 +218,21 @@ describe('compareLabels', () => {
       { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:10.000Z' },
       { id: 'cccccccc-3333', at: '2026-08-14T09:30:00.000Z' },
     ]);
-    expect(labels[2]).toBe('08-14 09:30');
+    expect(labels[2]).toBe('08-14 15:00');
     expect(labels[0]).not.toBe(labels[1]);
   });
 });
 
 describe('compareLabels — ids that share a prefix', () => {
+  const original = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'Asia/Kolkata';
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  });
+
   it('grows the suffix until the labels really are distinct', () => {
     // Six characters is usually enough and occasionally is not. Two runs whose
     // ids share a prefix AND a minute would get identical labels again, which
@@ -186,6 +250,6 @@ describe('compareLabels — ids that share a prefix', () => {
       { id: 'aaaaaaaa-1111', at: '2026-08-15T16:45:00.000Z' },
       { id: 'bbbbbbbb-2222', at: '2026-08-15T16:45:30.000Z' },
     ]);
-    for (const label of labels) expect(label).toHaveLength('08-15 16:45 · aaaaaa'.length);
+    for (const label of labels) expect(label).toHaveLength('08-15 22:15 · aaaaaa'.length);
   });
 });
