@@ -16,6 +16,13 @@ import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { selectPlugin } from './plugins.js';
 
+/**
+ * Namespace for the per-run ingest advisory lock. Arbitrary but fixed, and
+ * paired with `hashtext(run_id)` as the second key so this lock can never
+ * collide with an advisory lock taken elsewhere for another purpose.
+ */
+const RUN_INGEST_LOCK_NAMESPACE = 8_531_001;
+
 @Injectable()
 export class PipelineService {
   constructor(
@@ -25,7 +32,52 @@ export class PipelineService {
     private readonly blobs: BlobStore,
   ) {}
 
+  /**
+   * ONE PROCESSOR PER RUN, enforced by a Postgres advisory lock rather than by
+   * the status check below.
+   *
+   * That check is check-then-act: two processors both read a non-terminal
+   * status, both pass, and both go on to write `run_stat`, where the loser
+   * dies on `run_stat_run_id_scope_name_family_key` having already done the
+   * entire parse. Its transaction rolls back, so nothing is corrupted and the
+   * winner's result stands — but the rejection propagates to the consumer as
+   * an ingest failure that no bundle caused.
+   *
+   * The claim CANNOT be made by narrowing `markParsing` to non-`parsing`
+   * rows: the Sweeper's whole purpose is re-queuing runs stranded in
+   * `parsing`, and that would strand them permanently. A lock has the
+   * lifetime this needs instead — held only while a processor is alive, so a
+   * worker that dies mid-parse releases it and the sweeper's retry can claim
+   * it, while a live processor keeps every rival out.
+   *
+   * `pg_try_advisory_lock` and not its blocking form: a rival should return
+   * immediately, not queue up to redo work that is already being done.
+   */
   async process(runId: string): Promise<void> {
+    // The lock lives on ONE connection and is released on it, so it cannot be
+    // taken on one pooled connection and orphaned on another.
+    const client = await this.pool.connect();
+    try {
+      const { rows } = await client.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, runId],
+      );
+      if (!rows[0]?.got) return;                        // another processor owns this run
+
+      try {
+        await this.#processHoldingLock(runId);
+      } finally {
+        await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+          RUN_INGEST_LOCK_NAMESPACE,
+          runId,
+        ]);
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  async #processHoldingLock(runId: string): Promise<void> {
     const runs = new RunRepository(this.prisma);
     const run = await runs.findByIdUnscoped(runId);
     if (!run) return;                                   // swept away or deleted
