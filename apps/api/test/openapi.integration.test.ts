@@ -62,9 +62,26 @@ describe('OpenAPI document', () => {
     expect(schemas['ProblemDetails']).toBeTruthy();
   });
 
-  it('never declares a 201 response on any operation — POST /v1/runs does not create synchronously', async () => {
+  // The blanket loop below carves out exactly one exception:
+  // POST /v1/projects/{slug}/tokens (Task 3), which really does create
+  // synchronously — the row exists and the plaintext token is returned
+  // before the response is sent, the ordinary case 201 exists for. Every
+  // other operation keeps the original reasoning: POST /v1/runs ingests
+  // asynchronously and shares its run's own state machine (200/202/400/413/422)
+  // with GET /v1/runs/{id} — there is no "created, still processing" state
+  // distinct from 202 — and nothing else in this document creates a resource
+  // at all. A future operation that starts returning 201 without being this
+  // one legitimate exception should still fail here.
+  it('never declares a 201 response on any operation except token minting, which really does create synchronously', async () => {
     const doc = await fetchDoc();
     for (const { path, method, op } of operations(doc)) {
+      if (path === '/v1/projects/{slug}/tokens' && method === 'post') {
+        // The carve-out itself must be live: if the mint operation ever
+        // stops declaring 201 while the handler keeps @HttpCode(201), this
+        // is the assertion that notices instead of the loop just skipping it.
+        expect(Object.keys(op.responses ?? {})).toContain('201');
+        continue;
+      }
       expect(Object.keys(op.responses ?? {}), `${method.toUpperCase()} ${path}`).not.toContain('201');
     }
   });
@@ -138,7 +155,8 @@ describe('OpenAPI document', () => {
   it('declares both bearerAuth and cookieAuth as document-level "either credential" security', async () => {
     const doc = await fetchDoc();
 
-    const schemes = doc.components?.securitySchemes as
+    const schemes = (doc.components as { securitySchemes?: unknown } | undefined)
+      ?.securitySchemes as
       | Record<string, { type?: string; in?: string; name?: string }>
       | undefined;
     expect(schemes?.['bearerAuth']).toBeTruthy();
@@ -165,6 +183,26 @@ describe('OpenAPI document', () => {
       expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
       expect(op?.security, `${method.toUpperCase()} ${path} must override security`).toBeTruthy();
       expect(op?.security).toEqual([{ bearerAuth: [] }]);
+    }
+  });
+
+  // The mirror image of the bearer-only test above: the three token
+  // operations override to cookieAuth-only (SessionOnlyGuard refuses every
+  // bearer credential). Without this, dropping `security: [{ cookieAuth: [] }]`
+  // from a token path makes the document advertise `bearerAuth` on a route
+  // that always answers 403 to it, with nothing here turning red.
+  it('keeps the three token operations cookieAuth-only — SessionOnlyGuard refuses every bearer credential', async () => {
+    const doc = await fetchDoc();
+
+    for (const [path, method] of [
+      ['/v1/projects/{slug}/tokens', 'post'],
+      ['/v1/projects/{slug}/tokens', 'get'],
+      ['/v1/projects/{slug}/tokens/{prefix}', 'delete'],
+    ] as const) {
+      const op = doc.paths?.[path]?.[method] as { security?: Record<string, unknown>[] } | undefined;
+      expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
+      expect(op?.security, `${method.toUpperCase()} ${path} must override security`).toBeTruthy();
+      expect(op?.security).toEqual([{ cookieAuth: [] }]);
     }
   });
 

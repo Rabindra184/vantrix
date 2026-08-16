@@ -111,6 +111,20 @@ export async function createTestApp(
     },
   });
 
+  // close() has always been safe to call twice and several suites rely on
+  // that: auth.integration.test.ts closes `ctx` in an afterEach that also
+  // runs after tests which never replaced it. app.close() tolerates the
+  // repeat; pool.end() does not, and throws "Called end on pool more than
+  // once". Idempotence is what lets disposal be added without rewriting
+  // every caller's lifecycle.
+  //
+  // A boolean set before the awaits would be worse than none: it is already
+  // true while cleanup runs, so a failure part-way leaves the remaining
+  // resources undisposed AND every retry a no-op. Holding the in-flight
+  // promise instead means callers share one cleanup and each disposer runs
+  // even when an earlier one throws, with the failure surfacing afterwards.
+  let closing: Promise<void> | undefined;
+
   return {
     app,
     prisma,
@@ -121,7 +135,31 @@ export async function createTestApp(
     readToken: rd.token,
     telemetryToken: tel.token,
     async close() {
-      await app.close();
+      // app.close() disposes what Nest owns the lifecycle of — providers
+      // implementing OnModuleDestroy, like IngestQueue and TerminalWaiter.
+      // It CANNOT dispose these two: both are supplied by a useFactory that
+      // returns a raw instance, so Nest holds no lifecycle hook for either,
+      // and every createTestApp() call builds a fresh DI container and
+      // therefore a fresh pool (max: 10) and a fresh PrismaClient.
+      //
+      // Closing only the app leaked both. Measured on read.integration.test.ts
+      // (28 calls): backend connections climbed 13 -> 33 monotonically across
+      // the file and dropped to 1 only when the worker process exited, which
+      // was the sole thing reclaiming them. It stayed under max_connections
+      // (100) because vitest forks per file, so the count resets at each file
+      // boundary — the leak was bounded by luck, not by design.
+      closing ??= (async () => {
+        try {
+          await app.close();
+        } finally {
+          try {
+            await pool.end();
+          } finally {
+            await prisma.$disconnect();
+          }
+        }
+      })();
+      await closing;
     },
   };
 }

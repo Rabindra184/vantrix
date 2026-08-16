@@ -172,7 +172,10 @@ describe('GET /v1/runs/:id/stats', () => {
       .get(`/v1/runs/${id}/stats`).set(auth()).expect(200);
     const afterPercentiles = pick(after.body);
     expect(Object.keys(afterPercentiles).sort()).toEqual(['p90', 'p99.9']);
-    expect(afterPercentiles['p99.9']).toBeGreaterThanOrEqual(afterPercentiles['p90']);
+    // Both keys are guaranteed present by the assertion immediately above,
+    // which pins the key set exactly; the assertions carry that through to
+    // the types rather than restating it.
+    expect(afterPercentiles['p99.9']!).toBeGreaterThanOrEqual(afterPercentiles['p90']!);
 
     // Restore: settings are shared state for the rest of this file.
     await ctx.pool.query(

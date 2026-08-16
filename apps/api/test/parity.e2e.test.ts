@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -70,7 +71,21 @@ beforeAll(() => {
   bundle = readFileSync(out);
 });
 
+// Only a context a TEST built is this hook's to close. The Appendix A block
+// below builds ONE in beforeAll, shares it across every PT-* row, and closes
+// it in its own afterAll — closing that one here would dispose it after the
+// first row and leave every remaining row without a database.
+//
+// This was invisible while close() disposed nothing that mattered: it called
+// app.close() and left the pool and PrismaClient open, and supertest binds
+// its own ephemeral server rather than the app's, so a "closed" app kept
+// answering and every row still passed. It stopped being invisible the moment
+// close() began ending the pool, which failed 18 rows here.
+let ctxOwnedByTest = false;
+
 afterEach(async () => {
+  if (!ctxOwnedByTest) return;
+  ctxOwnedByTest = false;
   await ctx?.close();
 });
 
@@ -81,6 +96,7 @@ describe('end-to-end parity with the Gatling reference report', () => {
     await q.close();
 
     ctx = await createTestApp();
+    ctxOwnedByTest = true;
 
     // 1. Ingest, asking for no synchronous wait.
     const accepted = await request(ctx.app.getHttpServer())
@@ -161,6 +177,7 @@ describe('end-to-end parity with the Gatling reference report', () => {
 
   it('is idempotent end to end — re-posting the same key yields one run', async () => {
     ctx = await createTestApp();
+    ctxOwnedByTest = true;
     const post = () =>
       request(ctx.app.getHttpServer())
         .post('/v1/runs')
@@ -247,7 +264,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
    * the same "settings active at ingest" behavior via a plain Prisma insert -
    * no truncate, no second bootstrap.
    */
-  const createSiblingProject = async (settings: Record<string, unknown>) => {
+  const createSiblingProject = async (settings: Prisma.InputJsonObject) => {
     const project = await ctx.prisma.project.create({
       data: { orgId: ctx.orgId, slug: `parity-sibling-${randomUUID().slice(0, 8)}`, name: 'Parity Sibling', settings },
     });
@@ -447,7 +464,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // controller's own rate helper: computing x via the SAME function under
       // test would stay green even if that function's formula were wrong.
       const ownWidthMs = inferWidthMs(series.body.buckets.map((b: { startOffsetMs: number }) => b.startOffsetMs));
-      const pinnedBucket = okBuckets[0] as { startOffsetMs: number; percentilesOk: Record<string, number> };
+      const pinnedBucket = okBuckets[0] as { startOffsetMs: number; percentilesOk: { p95: number } };
       const expectedX = expectedRate(pinnedBucket.startOffsetMs, ownWidthMs, globalSeries.body.buckets);
       expect(scatter.body.ok).toContainEqual([expectedX, Math.trunc(pinnedBucket.percentilesOk.p95)]);
 
@@ -462,7 +479,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // leaves this loop (and the pre-existing sibling check in
       // parity-endpoints.integration.test.ts) GREEN - proven by actually
       // doing it. The block below is what actually catches that mutation.
-      for (const b of okBuckets as { percentilesOk: Record<string, number> }[]) {
+      for (const b of okBuckets as { percentilesOk: { p95: number } }[]) {
         expect(scatter.body.ok.some(([, y]: [number, number]) => y === Math.trunc(b.percentilesOk.p95))).toBe(true);
       }
 

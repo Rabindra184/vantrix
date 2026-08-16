@@ -1,0 +1,29 @@
+{
+  // apps/api/tsconfig.json includes only `src`, so until this file existed
+  // NOTHING typechecked apps/api/test — the same gap apps/web/test/tsconfig.json
+  // was created to close, left open on the API side.
+  //
+  // It bites hardest on tests whose whole point is a compile-time check.
+  // tokens.integration.test.ts pins the API's scope list against
+  // TokenScope with a `Record<TokenScope, true>` literal, so that adding a
+  // scope without updating the endpoint fails to compile. Outside a
+  // tsconfig that includes this directory, that annotation is erased before
+  // the test ever runs and the drift it exists to catch passes silently.
+  //
+  // Mirrors apps/web/test/tsconfig.json and apps/web/e2e/tsconfig.json, and
+  // like them is wired into the root `typecheck` script.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "noEmit": true
+  },
+  "include": ["."]
+}
