@@ -27,11 +27,11 @@ import { useWindowFromShell } from './useRunWindow';
  * jsdom does not. A heading or label queried by name must not carry it.
  *
  * ═══ THE `run-time` GROUP IS THE WHOLE POINT ═══
- * Hovering a response-time chart moves the pointer on generator CPU at the
- * same instant. That is the reason this lives on the run's page rather than in
- * Grafana, and it works only because the endpoint returns the run's own
- * offsets at the run's own bucket width — see `TelemetryCharts.tsx`, which
- * actually assigns the group.
+ * Hovering any one of the six telemetry charts moves the pointer on the
+ * other five at the same instant — the reason this tab exists rather than a
+ * link out to Grafana. It works only because the endpoint returns the run's
+ * own offsets at the run's own bucket width — see `TelemetryCharts.tsx`,
+ * which actually assigns the group.
  *
  * ═══ THREE DIFFERENT "NOTHING TO SHOW", NOT ONE ═══
  * `available: false` means the agent never reported for this run's window at

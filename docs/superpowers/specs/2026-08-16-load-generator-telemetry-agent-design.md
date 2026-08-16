@@ -281,6 +281,17 @@ Every one is a `Chart` on the shared `run-time` crosshair group, so hovering a
 response-time chart moves the pointer on generator CPU at the same instant —
 which is the whole reason to have this on the same page rather than in Grafana.
 
+> **Correction, 2026-08-16.** The claim above was tested and found false.
+> `RunChartsTab` and `RunTelemetry` are siblings under one `<Outlet/>` in
+> `RunShell` (final-review fix wave) — navigating between them unmounts one
+> and mounts the other, so they are never on screen together, and a
+> response-time chart's crosshair cannot move a generator-CPU chart's
+> pointer. What the shared `run-time` group actually delivers is sync among
+> the six TELEMETRY charts WITH EACH OTHER: hovering any one of them moves
+> the pointer on the other five at the same instant, which is still the
+> reason this tab exists rather than a link out to Grafana — see
+> `apps/web/src/charts/TelemetryCharts.tsx`, which states it correctly.
+
 ---
 
 ## 8. Testing

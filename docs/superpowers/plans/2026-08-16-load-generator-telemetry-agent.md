@@ -3118,10 +3118,10 @@ Rules that bite, restated in the file's header comment:
  * jsdom does not. A heading queried by name must not carry it.
  *
  * ═══ THE `run-time` GROUP IS THE WHOLE POINT ═══
- * Hovering a response-time chart moves the pointer on generator CPU at the
- * same instant. That is the reason this lives on the run's page rather than in
- * Grafana, and it works only because the endpoint returns the run's own
- * offsets at the run's own bucket width.
+ * Hovering any one of the six telemetry charts moves the pointer on the
+ * other five at the same instant — the reason this tab exists rather than a
+ * link out to Grafana. It works only because the endpoint returns the run's
+ * own offsets at the run's own bucket width.
  */
 ```
 
