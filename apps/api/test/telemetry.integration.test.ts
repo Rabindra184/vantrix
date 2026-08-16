@@ -80,13 +80,18 @@ describe('POST /v1/telemetry', () => {
     expect(res.status).toBe(400);
   });
 
-  it('refuses an org-scoped credential', async () => {
-    // A session names no project, and a telemetry row must belong to one.
-    // Refuse and say what to use instead, exactly as ingest does.
+  it('refuses a request with no credential', async () => {
+    // No Authorization header at all — a missing bearer token, not an
+    // org-scoped session (this app has no way to mint a test session cookie;
+    // see support/app.ts). That is a materially different case from "a
+    // session was refused": it fails in AuthMiddleware before any scope or
+    // tenancy check runs, so the only correct status is 401, never a 400.
+    // Asserting `[401, 400]` here used to hide which of those two very
+    // different things happened.
     const res = await request(ctx.app.getHttpServer())
       .post('/v1/telemetry')
       .send({ host: 'gen-1', samples: [sample()] });
-    expect([401, 400]).toContain(res.status);
+    expect(res.status).toBe(401);
   });
 });
 
@@ -283,6 +288,14 @@ describe('GET /v1/runs/:id/telemetry', () => {
     const windowed = await get(`/v1/runs/${runId}/telemetry?from=0&to=${width * 2}`);
 
     expect(windowed.body.window).not.toBeNull();
+    // Non-emptiness asserted FIRST: the nested loops below assert nothing at
+    // all when `hosts` (or every host's `points`) is empty, so an
+    // implementation that dropped every sample would pass them vacuously.
+    expect(windowed.body.hosts.length).toBeGreaterThan(0);
+    const totalPoints = windowed.body.hosts.reduce(
+      (n: number, h: { points: unknown[] }) => n + h.points.length, 0,
+    );
+    expect(totalPoints).toBeGreaterThan(0);
     // Half-open, matching every other windowed endpoint: >= from AND < to.
     for (const h of windowed.body.hosts) {
       for (const p of h.points) {
@@ -313,6 +326,39 @@ describe('GET /v1/runs/:id/telemetry', () => {
     expect(res.status).toBe(200);
     expect(res.body.hosts).toEqual([]);
     expect(res.body.available).toBe(true);
+  });
+
+  // FIX 6. `bucketWidthMs` (top level) is inferred from the run's own
+  // response_time series; `window.bucketWidthMs` used to be re-inferred by
+  // snapWindow from the telemetry points' own offsets. Those two agree only
+  // when the agent's sampling interval is <= the run's bucket width — a
+  // generator sampling COARSER than the run produces points spaced by its
+  // own interval, not by the run's width, and re-inferring from them reports
+  // a different number.
+  it('agrees with itself on bucketWidthMs even when the agent samples coarser than the run', async () => {
+    const whole = await get(`/v1/runs/${runId}/telemetry`);
+    const width = whole.body.bucketWidthMs;
+
+    // A generator sampling every five bucket-widths — coarser than the run's
+    // own resolution, so consecutive telemetry POINTS end up that far apart
+    // too, which is exactly the shape that made snapWindow infer the wrong
+    // width from the points alone before this fix.
+    const coarseIntervalMs = width * 5;
+    await request(ctx.app.getHttpServer())
+      .post('/v1/telemetry')
+      .set('Authorization', `Bearer ${ctx.telemetryToken}`)
+      .send({
+        host: 'gen-coarse',
+        samples: [0, 1, 2, 3].map((n) => sampleAt(toolStartedAt, (n * coarseIntervalMs) / 1000)),
+      });
+
+    const res = await get(`/v1/runs/${runId}/telemetry?from=0&to=${coarseIntervalMs * 4}`);
+    expect(res.status).toBe(200);
+    expect(res.body.window).not.toBeNull();
+    // Internally consistent: one run, one bucket width, reported the same
+    // way at both places a client might read it from.
+    expect(res.body.window.bucketWidthMs).toBe(res.body.bucketWidthMs);
+    expect(res.body.window.bucketWidthMs).toBe(width);
   });
 
   it('separates hosts', async () => {

@@ -96,6 +96,10 @@ describe('toTelemetrySeries', () => {
     const inside = at(1, { sampledAtMs: T0 + 1000 });
     const outside = at(2, { sampledAtMs: T0 + 9000 });
     const [series] = toTelemetrySeries([inside, outside], T0, 1000, 5000);
+    // Asserted first: `.every(...)` is vacuously true on an empty array, so
+    // an implementation that dropped EVERY sample (including the in-window
+    // one) would otherwise pass this test too.
+    expect(series!.points.length).toBeGreaterThan(0);
     expect(series!.points.every((p) => p.startOffsetMs < 5000)).toBe(true);
   });
 

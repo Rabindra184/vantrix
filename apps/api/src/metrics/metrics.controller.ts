@@ -561,13 +561,19 @@ export class MetricsController {
 
     // From the WHOLE (unfiltered) series, exactly like snapWindow's other
     // callers — a narrow window must not mistake its own span for the run's
-    // resolution.
+    // resolution. `bucketWidthMs` is passed explicitly rather than left for
+    // snapWindow to infer from `everyOffset`: when the agent's sampling
+    // interval is coarser than the run's own bucket width, consecutive
+    // telemetry points are spaced by the INTERVAL, not the width, and
+    // inference would report a `window.bucketWidthMs` that disagrees with
+    // the top-level `bucketWidthMs` above — two bucket widths in one
+    // response describing the same run.
     const everyOffset = all.flatMap((h) => h.points.map((p) => p.startOffsetMs));
     return {
       runId: run.id,
       available,
       bucketWidthMs,
-      window: range === null ? null : snapWindow(everyOffset, range),
+      window: range === null ? null : snapWindow(everyOffset, range, bucketWidthMs),
       hosts,
     };
   }

@@ -24,11 +24,21 @@ export class TelemetryController {
     const tenant = req.tenant!;
     const projectId = tenant.projectId;
     if (!projectId) {
-      // A session is org-scoped and names no project, but a sample must belong
-      // to one. Rather than guess, refuse and say what to use instead — the
-      // same shape IngestController uses for the same reason. Extracting
-      // projectId into its own const is also what narrows the tenant object
-      // below; a property check alone does not narrow the object it came from.
+      // UNREACHABLE IN PRACTICE, unlike IngestController's identical-looking
+      // branch. @Scopes('telemetry') above already refused any caller
+      // without the "telemetry" scope before this handler runs, and a
+      // session's scopes are always exactly ['read', 'ingest']
+      // (auth.middleware.ts) — no session has ever been minted with
+      // "telemetry", so one can never reach here. Every credential that DOES
+      // reach here is therefore a bearer token, and ApiToken.projectId is
+      // non-nullable, so `projectId` is always set too. Kept anyway as
+      // defence-in-depth: it costs nothing at runtime, and it stops a future
+      // change that widens session scopes to include "telemetry" from
+      // silently shipping a payload-adjacent tenant bug instead of this
+      // clean 400. See auth.guard.ts (scope check runs before the handler)
+      // and auth.middleware.ts (session scopes) for the reachability
+      // argument; no test exercises this branch, since there is no
+      // credential that can reach it.
       throw badRequest(
         'PROJECT_REQUIRED',
         'Telemetry requires a project-scoped credential.',

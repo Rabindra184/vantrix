@@ -362,12 +362,13 @@ const responses: Record<string, ResponseObject> = {
   },
   TelemetryRejected: {
     description:
-      'Either the batch failed validation (code INVALID_TELEMETRY — a counter is negative, ' +
+      'The batch failed validation (code INVALID_TELEMETRY — a counter is negative, ' +
       '"sampledAt" is not a valid ISO 8601 timestamp, "samples" is empty or exceeds 500, or the ' +
       'body names a field this schema does not — TelemetryBatchSchema is `.strict()`, so a ' +
-      'payload-supplied "orgId"/"projectId" lands here rather than being silently ignored), or ' +
-      '(code PROJECT_REQUIRED) the caller authenticated with a session, which names no ' +
-      'project — only a project-scoped token carrying the "telemetry" scope can post samples. ' +
+      'payload-supplied "orgId"/"projectId" lands here rather than being silently ignored). ' +
+      'A session credential is refused earlier and differently: it is rejected with 403 by the ' +
+      '"telemetry" scope check (see cookieAuth) before this handler — and this code path\'s own ' +
+      'missing-project check — ever runs, since no session carries that scope. ' +
       'Always application/problem+json with a required "remediation".',
     content: problem(),
   },

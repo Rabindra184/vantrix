@@ -94,7 +94,15 @@ describe('TelemetryStore', () => {
 
   it('is scoped to the tenant', async () => {
     const store = new TelemetryStore(pool);
-    await store.insert(otherScope, 'gen-1', [sampleAt(1)]);
+    // Asserted BOTH ways: the insert actually happened (read back under its
+    // OWN scope) as well as being invisible under `scope`. Without the first
+    // half, this test cannot tell "the read is correctly scoped" apart from
+    // "the insert silently did nothing" — both produce an empty `mine`.
+    const inserted = await store.insert(otherScope, 'gen-1', [sampleAt(1)]);
+    expect(inserted).toBe(1);
+    const theirs = await store.forRun(otherScope, 0, Number.MAX_SAFE_INTEGER);
+    expect(theirs).toHaveLength(1);
+
     const mine = await store.forRun(scope, 0, Number.MAX_SAFE_INTEGER);
     expect(mine).toEqual([]);
   });
