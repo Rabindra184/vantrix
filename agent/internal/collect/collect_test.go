@@ -96,6 +96,64 @@ func TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable(t *testing.T)
 	}
 }
 
+// FIX 1. A collector reading a transient failure (source read successfully
+// before, fails now) must be told to skip the tick rather than degrade —
+// degrading here is exactly what turns a five-sample series like
+//
+//	[1000, null] [2000, 2000] [3000, null] [4000, 1006000] [5000, 2000]
+//
+// into a false 503x spike on recovery (the reset at offset 3 is correctly
+// null, but the zero-filled sample sent FOR it means offset 4's delta is
+// measured from 0 against a since-boot counter). This cannot be exercised
+// through Sample() itself without faking a gopsutil failure on demand, which
+// the package does not support — so the "have we ever succeeded" decision
+// is extracted into counterSource and tested here in isolation. Without the
+// fix (i.e. shouldDegrade() unconditionally returning true, which is what
+// Sample() effectively did before it consulted counterSource at all), the
+// "succeeded once, now failing" case below goes red: it wants false and a
+// pre-fix implementation returns true.
+func TestCounterSourceShouldDegrade(t *testing.T) {
+	tests := []struct {
+		name         string
+		succeedFirst bool
+		want         bool
+	}{
+		{
+			name:         "never succeeded, still failing -> degrade (permanently unavailable, zero is safe)",
+			succeedFirst: false,
+			want:         true,
+		},
+		{
+			name:         "succeeded before, now failing -> do NOT degrade (transient; zero would manufacture a spike)",
+			succeedFirst: true,
+			want:         false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var c counterSource
+			if tt.succeedFirst {
+				c.recordSuccess()
+			}
+			if got := c.shouldDegrade(); got != tt.want {
+				t.Fatalf("shouldDegrade() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// A source that keeps failing without ever having succeeded must keep
+// degrading on every subsequent read, not just the first — recordSuccess is
+// never called, so nothing should flip shouldDegrade() to false on its own.
+func TestCounterSourceKeepsDegradingAcrossRepeatedFailures(t *testing.T) {
+	var c counterSource
+	for i := 0; i < 3; i++ {
+		if !c.shouldDegrade() {
+			t.Fatalf("shouldDegrade() = false on attempt %d with no recorded success", i)
+		}
+	}
+}
+
 // SAMPLING MUST NOT SLEEP. cpu.Percent(d, …) blocks for d, which would make
 // the agent pause inside the measurement it is taking (spec §4). Nothing in
 // Sample may do that. The budget is generous because net.Connections walks the

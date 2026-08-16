@@ -56,6 +56,23 @@ func TestDrainUpToTakesAtMostNAndLeavesTheRest(t *testing.T) {
 	}
 }
 
+// Unreachable today (the only call site passes the constant batchSamples),
+// but the same asymmetry New's capacity clamp exists to fix: a negative n
+// must not loop backward or panic.
+func TestDrainUpToClampsANegativeNToZero(t *testing.T) {
+	r := New[int](4)
+	r.Push(1)
+	r.Push(2)
+
+	got := r.DrainUpTo(-1)
+	if len(got) != 0 {
+		t.Fatalf("DrainUpTo(-1) = %v, want empty", got)
+	}
+	if l := r.Len(); l != 2 {
+		t.Fatalf("Len() = %d after DrainUpTo(-1), want 2 (nothing drained)", l)
+	}
+}
+
 func TestDrainOnEmptyReturnsEmptyRatherThanBlocking(t *testing.T) {
 	r := New[int](4)
 	if got := r.DrainUpTo(10); len(got) != 0 {

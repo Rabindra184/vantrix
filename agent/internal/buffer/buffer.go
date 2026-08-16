@@ -53,11 +53,17 @@ func (r *Ring[T]) Push(v T) {
 
 // DrainUpTo removes and returns at most n elements, oldest first. Returns an
 // empty (non-nil) slice when the ring is empty — the sender treats "nothing to
-// send" as an ordinary tick, not an error.
+// send" as an ordinary tick, not an error. A negative n is clamped up to 0
+// rather than looping backward or panicking — unreachable today (the only
+// call site passes a constant), but the same asymmetry New's capacity clamp
+// exists to fix, so both are handled the same way.
 func (r *Ring[T]) DrainUpTo(n int) []T {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if n < 0 {
+		n = 0
+	}
 	if n > r.len {
 		n = r.len
 	}

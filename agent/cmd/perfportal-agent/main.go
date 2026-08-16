@@ -53,6 +53,14 @@ func main() {
 	if *endpoint == "" || *token == "" {
 		log.Fatal("both --endpoint and --token (or $PERFPORTAL_TELEMETRY_TOKEN) are required")
 	}
+	// time.NewTicker panics on a non-positive duration, and the sampler runs
+	// in its own goroutine — an unrecovered panic there takes the whole
+	// process down on a load generator. Same principle as buffer.New's
+	// capacity clamp: a misconfigured value must fail cleanly at startup,
+	// not crash something already running.
+	if *interval <= 0 {
+		log.Fatalf("--interval must be positive, got %s", *interval)
+	}
 	label := *hostLabel
 	if label == "" {
 		// Hostnames collide and change on ephemeral generators, which is why

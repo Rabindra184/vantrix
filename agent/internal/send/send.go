@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -74,6 +75,11 @@ func (c *Client) Post(ctx context.Context, samples []collect.Sample) error {
 	if err != nil {
 		return err
 	}
+	// Drained before closing so http.Transport can return the connection to
+	// its pool — an unread body on a closed response forces a fresh
+	// TCP/TLS handshake on every request, on a machine whose entire purpose
+	// is not perturbing itself.
+	_, _ = io.Copy(io.Discard, res.Body)
 	defer res.Body.Close()
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
