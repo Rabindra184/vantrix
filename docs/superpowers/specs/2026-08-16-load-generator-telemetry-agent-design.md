@@ -266,9 +266,13 @@ these are requirements rather than niceties:
 ephemeral generators, so the label is configurable and is the dimension every
 chart is grouped by. It is not a foreign key to anything.
 
-> **Correction, 2026-08-16.** The agent originally accepted its API token as a
-> `--token` command-line flag alongside `--host-label` above, defaulting to
-> `$PERFPORTAL_TELEMETRY_TOKEN` when absent. That flag has been removed:
+> **Correction, 2026-08-16.** This section named `--host-label` and nothing
+> else; the `--token` command-line flag came from the implementation plan and
+> the code, not from here, and defaulted to `$PERFPORTAL_TELEMETRY_TOKEN` when
+> absent. (Recorded in the spec rather than only in the plan because how the
+> agent is credentialed belongs in the design, and its absence here is part of
+> why the flag went unexamined until an external review caught it.) That flag
+> has been removed:
 > `/proc/<pid>/cmdline` is world-readable on Linux, so any local user on the
 > load generator running it — a machine that, per §6 below, is already
 > "often shared, often ephemeral, and often less carefully managed than CI" —
