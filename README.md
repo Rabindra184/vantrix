@@ -70,8 +70,36 @@ credential types are accepted on `/v1`, for different callers:
 
 | Credential          | For           | Names           | Obtained via |
 |----------------------|----------------|------------------|--------------|
-| API token (bearer)  | CI / machines  | An org *and* a project | `pnpm bootstrap` — see `infra/README.md` |
+| API token (bearer)  | CI / machines  | An org *and* a project | `pnpm bootstrap` (see `infra/README.md`) for the first token, or, once signed in, `POST /v1/projects/{slug}/tokens` — see below |
 | Session cookie       | Humans         | An org only, no project | `POST /auth/sign-up/email` / `/auth/sign-in/email`, or `pnpm bootstrap --admin-email <email>` |
+
+### Minting, listing and revoking API tokens
+
+A signed-in human (session cookie only — **a bearer token cannot mint another
+token**, even one holding every scope the caller already has; see
+`SessionOnlyGuard`) manages a project's API tokens through three routes:
+
+```
+POST   /v1/projects/{slug}/tokens          mint  — { name, scopes } → { token, prefix, name, scopes, createdAt }
+GET    /v1/projects/{slug}/tokens          list  — never returns the secret or the hash
+DELETE /v1/projects/{slug}/tokens/{prefix} revoke — idempotent; a retry returns the original revokedAt
+```
+
+`token` is returned **once**, at mint — only its hash is persisted, so a lost
+token means minting a replacement, not recovering the old one. `prefix` is the
+value to use for `DELETE`: it is everything up to the last underscore of
+`pp_<hex>_<secret>` (i.e. `pp_<hex>` itself, including the `pp_`), not the
+segment between the two underscores.
+
+A token may carry any of three scopes, and a caller can request any
+combination it wants — this grants nothing a signed-in session in that org did
+not already have, except `telemetry`, which no session ever holds:
+
+| Scope       | Grants |
+|-------------|--------|
+| `ingest`    | `POST /v1/runs` — upload a result bundle. |
+| `read`      | Every `GET` under `/v1`. |
+| `telemetry` | `POST /v1/telemetry` only — host counters from a load generator, and nothing else. Deliberately its own scope rather than a reuse of `ingest`, so a token living on a shared, often-ephemeral load generator can do exactly one thing. |
 
 Because a session names no project, **ingest requires a token**:
 `POST /v1/runs` and `GET /v1/projects/{slug}/runs` both reject a session with

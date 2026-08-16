@@ -134,6 +134,24 @@ directly actionable during an incident; revoking by id would require a lookup
 first. The prefix is already unique-indexed, because verification depends on
 it.
 
+> **Correction, 2026-08-16.** The line above is wrong about which part of the
+> token the prefix is. `packages/core/src/tokens.ts`'s `mintToken` builds the
+> token as `` `${prefix}_${secret}` `` where `prefix` is already
+> `` `pp_${randomBytes(PREFIX_BYTES).toString('hex')}` `` — so `prefix` is
+> `pp_<hex>`, **including the leading `pp_`**, i.e. everything up to the LAST
+> underscore of `pp_<hex>_<secret>`. It is not "the middle" of anything; there
+> is no third segment for it to sit between.
+>
+> This is not academic: the OpenAPI description for the `prefix` path
+> parameter and this repository's own `TokenRepository.revokeByPrefix`
+> docstring both repeated the same "middle segment" claim (now fixed) before
+> this correction was written. An operator who trusted the published
+> OpenAPI description during an incident, holding a leaked
+> `pp_ab12cd34ef56_<secret>`, would extract only the hex segment and send
+> `DELETE .../tokens/ab12cd34ef56` — which 404s, reading as "already revoked,
+> nothing to do" on the one route that exists for incidents. The correct
+> value to send is the whole `pp_ab12cd34ef56`.
+
 ### Repository
 
 `TokenRepository` gains `create`, `listForProject` and `revokeByPrefix`. It is
@@ -211,6 +229,16 @@ Expectations derived from the payload, never written down.
   first would fix its shape before anything has used it.
 - **Rotation.** Mint-new-then-revoke-old is rotation, expressed with the two
   routes that exist.
+- **Who minted this token.** `ApiToken` carries `name`, `createdAt`,
+  `lastUsedAt` and `revokedAt`, and no `createdByUserId`. The controller has
+  the minting session's user in hand (the same session `SessionOnlyGuard`
+  requires) and discards it. This is the first code path that issues
+  credentials outside the test harness, and "who issued this" is normally
+  the first question asked of a credential during an incident — after which
+  the answer is permanently unavailable, because nothing wrote it down at
+  mint time. Recording it needs a `createdByUserId` column, which is a
+  migration; out of scope for this sub-project, but it should be near the
+  top of whichever one comes next.
 
 ---
 

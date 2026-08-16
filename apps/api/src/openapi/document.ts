@@ -290,9 +290,10 @@ const parameters: Record<string, ParameterObject> = {
     in: 'path',
     required: true,
     description:
-      'The "prefix" a mint or list response returned — the middle segment of ' +
-      '"pp_<prefix>_<secret>". Never the full token: revocation does not need the secret, which ' +
-      'is why an operator can act on a leaked token from the list alone.',
+      'The "prefix" a mint or list response returned — everything up to the last underscore of ' +
+      '"pp_<hex>_<secret>" (i.e. the "pp_<hex>" value itself, not merely the middle segment). ' +
+      'Never the full token: revocation does not need the secret, which is why an operator can ' +
+      'act on a leaked token from the list alone.',
     schema: { type: 'string' },
   },
 };

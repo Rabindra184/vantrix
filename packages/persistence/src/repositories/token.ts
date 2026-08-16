@@ -77,8 +77,11 @@ export class TokenRepository {
    * Revokes by PREFIX, scoped to the project.
    *
    * By prefix rather than id because of what an operator holds during an
-   * incident: the leaked token string, whose middle segment IS the prefix
-   * (`pp_<prefix>_<secret>`). An id would need a lookup first.
+   * incident: the leaked token string. `mintToken` (`@perfportal/core`)
+   * builds the token as `${prefix}_${secret}` where `prefix` is already
+   * `pp_<hex>` — so the prefix is everything up to the LAST underscore of
+   * `pp_<hex>_<secret>`, not merely the middle segment between two
+   * underscores. An id would need a lookup first.
    *
    * IDEMPOTENT: an already-revoked token keeps its original `revokedAt` rather
    * than having it moved, so a retry after a timeout returns the same answer
