@@ -117,6 +117,62 @@ export class Histogram {
     return n;
   }
 
+  /**
+   * The value at quantile `q`, EXACTLY — nearest-rank, `sorted[ceil(q·n) − 1]`.
+   *
+   * ═══ THE CONVENTION IS NOT A DETAIL ═══
+   *
+   * `Sketch#quantile` goes to considerable trouble to re-express its query so
+   * DDSketch's internal `q * (count - 1)` arithmetic resolves to this same
+   * index, because every ground-truth computation in this repo's tests uses it.
+   * A histogram quantile on the linear-interpolation convention would differ by
+   * one rank position on identical data — and since a windowed statistics row
+   * reads histograms while the unwindowed row reads sketches, that difference
+   * would surface as a percentile that shifts when a reader brushes to the
+   * whole run. It would look like a windowing bug and would not be one.
+   *
+   * ═══ THE OVERFLOW BIN ═══
+   *
+   * Throws when the rank lands beyond the cap, matching `countBelow`: the value
+   * is genuinely unrecoverable there, and a percentile that silently guesses is
+   * the defect this class exists to avoid. Only the ranks the overflow actually
+   * covers are refused — a p50 below the cap is still answered when the p99 is
+   * not, because refusing every quantile would throw away answers we have.
+   */
+  quantile(q: number): number {
+    if (this.#total === 0) return NaN;
+    const index = Math.min(this.#total - 1, Math.max(0, Math.ceil(q * this.#total) - 1));
+
+    // Every counted observation sits below the cap; the overflow is the tail.
+    const counted = this.#total - this.#overflowCount;
+    if (index >= counted) {
+      throw new Error(
+        `Histogram: quantile(${q}) lands in the ${this.#capMs}ms overflow bin ` +
+          `(${this.#overflowCount} observations); the exact value is unrecoverable.`,
+      );
+    }
+
+    let seen = 0;
+    for (const [value, count] of this.entries()) {
+      seen += count;
+      if (seen > index) return value;
+    }
+    return this.max;
+  }
+
+  /**
+   * `Σ(value² × count)`, for an exact standard deviation over any merged set.
+   *
+   * A walk rather than a running total, so it stays correct through `merge` and
+   * `deserialize` without a third field to keep in step. The bins are the
+   * state; everything else is derived from them.
+   */
+  sumOfSquares(): number {
+    let total = 0;
+    for (const [value, count] of this.entries()) total += value * value * count;
+    return total;
+  }
+
   snapshot(): HistogramSnapshot {
     return {
       total: this.total, min: this.min, max: this.max,
