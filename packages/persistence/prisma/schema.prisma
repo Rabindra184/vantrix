@@ -287,6 +287,43 @@ model RunErrorBucket {
   @@map("run_error_bucket")
 }
 
+/// Partitioned by range on sampled_on — see migration
+/// 20260816140000_telemetry_sample, hand-edited. Prisma cannot express
+/// partitioning.
+///
+/// NO run_id: a run does not exist in PerfPortal until its bundle is POSTed,
+/// which happens after the test finishes, so telemetry can never carry one.
+/// A run instead selects whatever samples overlap its own window. sampledAt
+/// is the AGENT's clock and receivedAt is the SERVER's — kept apart so a
+/// skewed agent clock is diagnosable rather than silently wrong.
+model TelemetrySample {
+  sampledOn       DateTime @map("sampled_on") @db.Date
+  orgId           String   @map("org_id") @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  host            String
+  sampledAt       DateTime @map("sampled_at") @db.Timestamptz
+  receivedAt      DateTime @map("received_at") @db.Timestamptz
+  cpuUserMs       BigInt   @map("cpu_user_ms")
+  cpuSystemMs     BigInt   @map("cpu_system_ms")
+  cpuIdleMs       BigInt   @map("cpu_idle_ms")
+  cpuIowaitMs     BigInt   @map("cpu_iowait_ms")
+  netRxBytes      BigInt   @map("net_rx_bytes")
+  netTxBytes      BigInt   @map("net_tx_bytes")
+  tcpInSegs       BigInt   @map("tcp_in_segs")
+  tcpOutSegs      BigInt   @map("tcp_out_segs")
+  tcpRetransSegs  BigInt   @map("tcp_retrans_segs")
+  tcpInErrs       BigInt   @map("tcp_in_errs")
+  tcpActiveOpens  BigInt   @map("tcp_active_opens")
+  tcpPassiveOpens BigInt   @map("tcp_passive_opens")
+  memUsedBytes    BigInt   @map("mem_used_bytes")
+  memTotalBytes   BigInt   @map("mem_total_bytes")
+  /// Connection counts by TCP state, keyed by the KERNEL's state names.
+  tcpStates       Json     @map("tcp_states")
+
+  @@id([sampledOn, orgId, projectId, host, sampledAt])
+  @@map("telemetry_sample")
+}
+
 model RunAssertion {
   id           String  @id @default(uuid()) @db.Uuid
   runId        String  @map("run_id") @db.Uuid

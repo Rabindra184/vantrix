@@ -25,6 +25,7 @@ export const SCHEMA_TABLES = [
   'run_user_bucket',
   'run_error',
   'run_error_bucket',
+  'telemetry_sample',
   'sla_rule',
   'run_assertion',
   'user',
