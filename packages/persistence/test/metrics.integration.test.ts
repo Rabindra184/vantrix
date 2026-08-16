@@ -434,3 +434,58 @@ describe('error series', () => {
     expect(JSON.stringify(rows)).not.toMatch(/run_error_bucket_2026_(0[1-7]|09|1[0-2])/);
   });
 });
+
+describe('flat errors — the folded remainder', () => {
+  const BASE = STARTED_AT.getTime();
+  const start: CanonicalEvent = {
+    type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: BASE,
+  };
+  const fail = (i: number, message: string): CanonicalEvent => ({
+    type: 'request', name: 'GET /a', groups: [], userId: String(i),
+    startMs: BASE + i * 10, endMs: BASE + i * 10 + 5, ok: false, message,
+  });
+
+  /**
+   * Persisting a rollup that folded, WITH a real message called "other" kept
+   * by name. This is the case that used to abort the transaction: the old
+   * `top()` appended a second row messaged 'other', and
+   * UNIQUE (run_id, scope, name, message) rejected the INSERT — losing the
+   * whole run rather than one row.
+   */
+  it('persists a real "other" beside the remainder instead of failing the ingest', async () => {
+    const ctx = await seedRun();
+    const COLLIDING = 'other';
+    const evts: CanonicalEvent[] = [start];
+    // Frequent enough to be kept by name...
+    for (let n = 0; n < 300; n += 1) evts.push(fail(n, COLLIDING));
+    // ...and enough one-offs to push the rollup past its 200 cap so something
+    // really folds. Derived below rather than written down.
+    for (let i = 0; i < 250; i += 1) evts.push(fail(1_000 + i, `msg-${i}`));
+
+    // The assertion that matters most is that this does not throw.
+    const result = await persist(ctx, evts);
+
+    const rows = await new MetricReader(pool).errors(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId,
+    );
+    expect(rows.filter((r) => r.message === COLLIDING)).toHaveLength(1);
+    expect(rows.filter((r) => r.message === null)).toHaveLength(1);
+
+    // Round-tripped exactly, and the run's failures all still accounted for.
+    const runScope = result.errors.filter((e) => e.scope === 'run');
+    expect(rows).toHaveLength(runScope.length);
+    expect(rows.reduce((n, r) => n + r.count, 0)).toBe(
+      runScope.reduce((n, e) => n + e.count, 0),
+    );
+  });
+
+  it('leaves message null only for the remainder, never for a real failure', async () => {
+    const ctx = await seedRun();
+    await persist(ctx);
+    const rows = await new MetricReader(pool).errors(
+      { orgId: ctx.orgId, projectId: ctx.projectId }, ctx.runId,
+    );
+    // The default fixture has one distinct message and never folds.
+    expect(rows.every((r) => r.message !== null)).toBe(true);
+  });
+});

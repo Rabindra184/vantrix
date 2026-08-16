@@ -355,14 +355,16 @@ export class MetricReader {
     scope: ProjectScope,
     runId: string,
     sel: { scope: string; name: string } = { scope: 'run', name: '' },
-  ): Promise<{ message: string; count: number }[]> {
+  ): Promise<{ message: string | null; count: number }[]> {
     const { rows } = await this.pool.query(
-      `SELECT message, count FROM run_error
+      `SELECT message, is_other, count FROM run_error
         WHERE run_id = $1 AND org_id = $2 AND project_id = $3
           AND scope = $4 AND name = $5
         ORDER BY count DESC, message ASC`,
       [runId, scope.orgId, scope.projectId, sel.scope, sel.name],
     );
-    return rows.map((r) => ({ message: r.message, count: r.count }));
+    // The column pair collapses back to one nullable field, so no caller has
+    // to know that '' plus a boolean means "everything else".
+    return rows.map((r) => ({ message: r.is_other ? null : r.message, count: r.count }));
   }
 }

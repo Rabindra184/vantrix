@@ -126,10 +126,14 @@ export class MetricWriter {
     await insertBatched(
       client,
       'run_error',
-      ['id', 'run_id', 'org_id', 'project_id', 'scope', 'name', 'message', 'count'],
+      ['id', 'run_id', 'org_id', 'project_id', 'scope', 'name', 'message', 'is_other', 'count'],
       result.errors.map((e) => [
         crypto.randomUUID(), ctx.runId, ctx.orgId, ctx.projectId,
-        e.scope, e.name, e.message, e.count,
+        e.scope, e.name,
+        // Same split as run_error_bucket: the remainder is carried by the
+        // column pair, never by a message value a real error could also have.
+        e.message ?? '', e.message === null,
+        e.count,
       ]),
     );
 

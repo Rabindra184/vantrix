@@ -127,7 +127,21 @@ export type SeriesResponse = z.infer<typeof SeriesResponseSchema>;
 
 export const ErrorsResponseSchema = z.object({
   runId: z.string().uuid(),
-  errors: z.array(z.object({ message: z.string(), count: z.number().int() })),
+  errors: z.array(
+    z.object({
+      /**
+       * `null` is the folded remainder — every message outside the top 200,
+       * summed — and is rendered as "Other errors", the same words the
+       * errors-over-time chart uses for the same thing.
+       *
+       * Deliberately not the string `'other'`. That was a reserved word inside
+       * the data, it collided with a genuine error message of that name, and
+       * `run_error`'s unique key turned the collision into a failed ingest.
+       */
+      message: z.string().nullable(),
+      count: z.number().int(),
+    }),
+  ),
 });
 export type ErrorsResponse = z.infer<typeof ErrorsResponseSchema>;
 

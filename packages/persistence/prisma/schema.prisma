@@ -201,10 +201,18 @@ model RunError {
   projectId String @map("project_id") @db.Uuid
   scope     String
   name      String
+  /// '' when isOther. A real message is never empty — the engine maps a
+  /// missing one to '(no message)'.
   message   String
+  /// The folded remainder — every message outside the top 200, summed. A
+  /// column rather than a reserved `message` value, which collided with a
+  /// genuine error of that name and failed the whole ingest. False on every
+  /// row written before migration 20260816090000, including any that was the
+  /// old sentinel: the two are indistinguishable, which was the defect.
+  isOther   Boolean @map("is_other")
   count     Int
 
-  @@unique([runId, scope, name, message])
+  @@unique([runId, scope, name, message, isOther])
   @@index([runId])
   @@map("run_error")
 }

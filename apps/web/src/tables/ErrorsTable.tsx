@@ -4,6 +4,11 @@ import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
+// The chart directly above this table on the same tab folds its own remainder
+// and names it. IMPORTED RATHER THAN RETYPED so the two cannot drift: a reader
+// seeing "Other errors" on the chart and something else in the table would
+// reasonably conclude they are different things.
+import { OTHER_LABEL } from '../charts/transforms/errorSeries';
 
 /**
  * §13.2 ⑥ the errors table — Appendix A G-17.
@@ -178,14 +183,22 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
               return (
                 // Keyed by the message, which is what makes a row distinct:
                 // the engine's `ErrorRollup` counts into a Map KEYED BY
-                // MESSAGE, so a scope's rows cannot repeat one.
-                <tr key={row.message} data-testid="error-row" className={ROW}>
+                // MESSAGE, so a scope's rows cannot repeat one. The folded
+                // remainder is `null` — a value no message can take, and at
+                // most one row carries it — so it keys itself.
+                <tr key={row.message ?? ' other'} data-testid="error-row" className={ROW}>
                   {/* `<th scope="row">`: the message is what makes "15" mean
                       something when a screen reader announces it out of
                       context. `break-words` because these are raw assertion
-                      strings and some of them are long. */}
+                      strings and some of them are long.
+
+                      THE REMAINDER IS NAMED, not left blank. `null` means
+                      "every message past the top 200, summed", and an empty
+                      header cell would read as a failure with no message —
+                      which is a different thing the engine spells
+                      "(no message)". Same words as the chart on this tab. */}
                   <th scope="row" data-column="message" className={`${TH_ROW} break-words`}>
-                    {row.message}
+                    {row.message ?? OTHER_LABEL}
                   </th>
                   <td data-column="count" data-value={String(row.count)} className={TD_NUM}>
                     {row.count}
