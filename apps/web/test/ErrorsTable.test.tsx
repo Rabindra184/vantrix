@@ -2,6 +2,7 @@ import type { ErrorsResponse } from '@perfportal/contracts';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import ErrorsTable from '../src/tables/ErrorsTable.js';
+import { OTHER_LABEL } from '../src/charts/transforms/errorSeries.js';
 import fixture from './fixtures/reference-run.json';
 
 /**
@@ -59,6 +60,15 @@ import fixture from './fixtures/reference-run.json';
  */
 
 const errors = fixture.errors as ErrorsResponse;
+
+/**
+ * What a row's header cell reads.
+ *
+ * `null` is the folded remainder — every message past the top 200, summed —
+ * and the table names it rather than leaving the cell blank. The label is
+ * imported from the chart on the same tab so the two cannot drift.
+ */
+const labelOf = (message: string | null): string => message ?? OTHER_LABEL;
 const RUN_ID = errors.runId;
 
 /** The denominator every share is taken against — computed here, not imported. */
@@ -152,7 +162,7 @@ describe('ErrorsTable — the shares (§9 checkpoint 5)', () => {
   it('gives each message its own share of the run total, not a share of anything else', () => {
     render(<ErrorsTable errors={errors} />);
     expect(renderedShares()).toEqual(
-      errors.errors.map((e) => `${e.message} → ${((e.count * 100) / TOTAL).toFixed(4)}`),
+      errors.errors.map((e) => `${labelOf(e.message)} → ${((e.count * 100) / TOTAL).toFixed(4)}`),
     );
   });
 
@@ -219,7 +229,7 @@ describe('ErrorsTable — the messages and their counts (G-17)', () => {
   it('shows every distinct message with its count', () => {
     render(<ErrorsTable errors={errors} />);
     for (const e of errors.errors) {
-      expect(screen.getByText(e.message)).toBeTruthy();
+      expect(screen.getByText(labelOf(e.message))).toBeTruthy();
     }
   });
 
@@ -232,7 +242,7 @@ describe('ErrorsTable — the messages and their counts (G-17)', () => {
    */
   it('pairs every message with its own count, in the count column', () => {
     render(<ErrorsTable errors={errors} />);
-    expect(renderedCounts()).toEqual(errors.errors.map((e) => `${e.message} → ${e.count}`));
+    expect(renderedCounts()).toEqual(errors.errors.map((e) => `${labelOf(e.message)} → ${e.count}`));
     expect(rows()).toHaveLength(errors.errors.length);
   });
 
@@ -253,7 +263,7 @@ describe('ErrorsTable — the messages and their counts (G-17)', () => {
     expect(new Set(counts).size).toBe(counts.length);
 
     render(<ErrorsTable errors={errors} />);
-    expect(rows().map((row) => textIn(row, 'message'))).toEqual(errors.errors.map((e) => e.message));
+    expect(rows().map((row) => textIn(row, 'message'))).toEqual(errors.errors.map((e) => labelOf(e.message)));
   });
 });
 
@@ -352,5 +362,60 @@ describe('ErrorsTable — the table itself', () => {
     render(<ErrorsTable errors={payloadOf([1])} />);
     expect(screen.getByRole('table').querySelector('caption')?.textContent).toMatch(/1 error\b/);
     expect(rows().map((row) => textIn(row, 'share'))).toEqual(['100%']);
+  });
+});
+
+describe('ErrorsTable — the folded remainder', () => {
+  /**
+   * `message: null` means "every message past the top 200, summed". It is the
+   * shape that replaced a row literally messaged `'other'`, which collided with
+   * a genuine error of that name and — against `run_error`'s unique key — took
+   * the whole ingest down with it.
+   *
+   * The table has to name it. An empty header cell would read as a failure
+   * that carried no message, which is a DIFFERENT thing the engine already
+   * spells `(no message)`.
+   */
+  const withRemainder: ErrorsResponse = {
+    runId: RUN_ID,
+    errors: [
+      { message: 'status.find.is(200), found 500', count: 15 },
+      { message: null, count: 9 },
+    ],
+  };
+
+  it('names the remainder instead of rendering a blank row header', () => {
+    render(<ErrorsTable errors={withRemainder} />);
+    expect(rows().map((row) => textIn(row, 'message'))).toEqual([
+      'status.find.is(200), found 500',
+      OTHER_LABEL,
+    ]);
+  });
+
+  it('uses the same words the chart on this tab uses', () => {
+    // Imported, not retyped. A reader seeing one label on the chart and
+    // another in the table would reasonably conclude they are different things.
+    expect(OTHER_LABEL).toBeTruthy();
+    render(<ErrorsTable errors={withRemainder} />);
+    expect(screen.getByText(OTHER_LABEL)).toBeTruthy();
+  });
+
+  it('counts the remainder toward the shares like any other row', () => {
+    render(<ErrorsTable errors={withRemainder} />);
+    const total = withRemainder.errors.reduce((n, e) => n + e.count, 0);
+    expect(renderedShares()).toEqual(
+      withRemainder.errors.map((e) => `${labelOf(e.message)} → ${((e.count * 100) / total).toFixed(4)}`),
+    );
+  });
+
+  it('renders a real message called "other" as itself, beside the remainder', () => {
+    // The exact collision this shape exists to prevent, now representable:
+    // two rows, distinguishable, neither pretending to be the other.
+    render(
+      <ErrorsTable
+        errors={{ runId: RUN_ID, errors: [{ message: 'other', count: 5 }, { message: null, count: 3 }] }}
+      />,
+    );
+    expect(rows().map((row) => textIn(row, 'message'))).toEqual(['other', OTHER_LABEL]);
   });
 });

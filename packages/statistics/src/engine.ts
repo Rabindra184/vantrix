@@ -52,7 +52,8 @@ export interface EngineResult {
   stats: StatRollup[];
   series: Map<string, { scope: MetricScope; name: string; family: MetricFamily; buckets: Bucket[] }>;
   users: { scenario: string; buckets: UserBucket[] }[];
-  errors: { scope: MetricScope; name: string; message: string; count: number }[];
+  /** `message: null` is the folded remainder — see `ErrorTally`. */
+  errors: { scope: MetricScope; name: string; message: string | null; count: number }[];
   /**
    * Failures over time, run scope. Coalesced to the run-scope response-time
    * series' width so both charts share one resolution — see `errors-series.ts`.
