@@ -80,6 +80,7 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
           so a server that predates the field is treated as unable. */}
       {run.windowable === true && run.durationMs != null && (
         <TimeBrush
+          runId={run.id}
           runDurationMs={run.durationMs}
           window={window}
           // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was

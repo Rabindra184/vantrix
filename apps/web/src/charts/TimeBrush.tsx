@@ -1,37 +1,46 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { Window } from '@perfportal/contracts';
+import Chart from './Chart';
+import { seriesQuery } from '../api/metrics';
+import { toRequestRate } from './transforms/rates';
 
 /**
- * The run's time window, as a control above every figure on the page.
+ * The run's time window: a scrubber over the whole run, plus exact fields.
  *
- * ═══ WHAT THIS IS NOT, YET ═══
+ * ═══ THE STRIP ALWAYS SHOWS THE WHOLE RUN ═══
  *
- * Gatling's is a DRAG SCRUBBER over the request timeline. This is a pair of
- * bounds and two buttons. The difference is deliberate rather than an
- * oversight: `Chart` has no `dataZoom` support, so a drag brush means
- * extending the chart core — and the one place a brush must never live is
- * inside a chart's `<figure>`, where nine specs count SVG elements to prove a
- * chart drew. The scrubber is the remaining polish; the window it selects, and
- * everything downstream of it, is complete.
+ * `seriesQuery(..., null)` — never the current window. If the strip narrowed
+ * with the selection, a reader would be brushing the very thing they brush
+ * with: each drag would shrink the axis under the handles and there would be
+ * no gesture that widens it again. The strip is the map, not the territory.
  *
- * ═══ SECONDS IN, MILLISECONDS OUT ═══
+ * It also means this fetch shares its cache key with the unwindowed series the
+ * rest of the page may already hold, so the strip usually costs nothing.
  *
- * A reader thinks in seconds — the axes are labelled in them — and the API
- * frame is milliseconds. Converting here keeps every URL and every request in
- * one unit.
+ * ═══ THE FIELDS ARE NOT A FALLBACK, THEY ARE THE KEYBOARD PATH ═══
  *
- * ═══ IT REPORTS WHAT THE SERVER COMPUTED, NOT WHAT WAS TYPED ═══
+ * ECharts' dataZoom is pointer-only: no focus, no arrow keys, nothing a screen
+ * reader can operate. A scrubber alone would make the window mouse-exclusive,
+ * so the two fields below select the same thing precisely and are the reason
+ * this control is usable without a mouse at all.
  *
- * The window snaps outward to bucket boundaries, so `applied` (from the
- * response) can be wider than the request. Showing the typed range would claim
- * a precision the numbers underneath do not have.
+ * ═══ ONE DRAG IS ONE NAVIGATION ═══
+ *
+ * `datazoom` fires on every frame of a drag. Committing each frame would mean
+ * a URL entry and six refetches per pixel; the range is held and written once
+ * the drag settles.
  */
+const SETTLE_MS = 250;
+
 export default function TimeBrush({
+  runId,
   runDurationMs,
   window,
   applied,
   onChange,
 }: {
+  readonly runId: string;
   readonly runDurationMs: number;
   readonly window: Window | null;
   /** The snapped window a response reported, when one has arrived. */
@@ -41,17 +50,35 @@ export default function TimeBrush({
   const fromId = useId();
   const toId = useId();
 
+  // THE WHOLE RUN, deliberately unwindowed — see the docstring.
+  const series = useQuery(seriesQuery(runId, 'run', '', 'response_time', null));
+
   const asSeconds = (ms: number): string => String(Math.round(ms / 1000));
   const [from, setFrom] = useState(() => (window ? asSeconds(window.fromMs) : ''));
   const [to, setTo] = useState(() => (window ? asSeconds(window.toMs) : ''));
 
-  // The URL is the source of truth, so a back button or a pasted link moves
-  // the inputs rather than leaving them describing a window that is no longer
-  // selected.
+  // The URL is the source of truth, so a back button or a pasted link moves the
+  // fields rather than leaving them describing a window no longer selected.
   useEffect(() => {
     setFrom(window ? asSeconds(window.fromMs) : '');
     setTo(window ? asSeconds(window.toMs) : '');
   }, [window]);
+
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (settle.current !== null) clearTimeout(settle.current);
+  }, []);
+
+  const commit = (fromMs: number, toMs: number): void => {
+    if (settle.current !== null) clearTimeout(settle.current);
+    settle.current = setTimeout(() => {
+      // A drag covering the whole extent is a request for the whole run, not a
+      // window that happens to match it — so the URL loses its parameters
+      // rather than pinning a range that would then not follow a re-ingest.
+      if (fromMs <= 0 && toMs >= runDurationMs) onChange(null);
+      else onChange({ fromMs, toMs: Math.min(toMs, runDurationMs), bucketWidthMs: 0 });
+    }, SETTLE_MS);
+  };
 
   const apply = (): void => {
     const parse = (raw: string, fallback: number): number | null => {
@@ -61,7 +88,7 @@ export default function TimeBrush({
     };
     const fromMs = parse(from, 0);
     const toMs = parse(to, runDurationMs);
-    // A range that makes no sense clears the window instead of sending
+    // A range that makes no sense clears the window rather than sending
     // something the API would reject — the page stays readable either way.
     if (fromMs === null || toMs === null || fromMs >= toMs) {
       onChange(null);
@@ -70,71 +97,95 @@ export default function TimeBrush({
     onChange({ fromMs, toMs: Math.min(toMs, runDurationMs), bucketWidthMs: 0 });
   };
 
+  // Requests/s: the densest, most continuous view of a run's shape, which
+  // is what a reader is aiming at when they drag.
+  const rates = series.data ? toRequestRate(series.data) : null;
+
   return (
     <section
       aria-label="Time window"
       data-testid="time-brush"
-      className="flex flex-wrap items-end gap-3 rounded border border-default bg-surface p-3"
+      className="flex flex-col gap-3 rounded border border-default bg-surface p-3"
     >
-      <div className="flex flex-col gap-1">
-        <label htmlFor={fromId} className="text-[12px] text-muted">
-          From (s)
-        </label>
-        <input
-          id={fromId}
-          data-testid="window-from"
-          inputMode="numeric"
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
-          placeholder="0"
-          className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+      {rates !== null && (
+        <Chart
+          id="time-window"
+          title="Time window"
+          data={rates}
+          kind="line"
+          // A VALUE AXIS: the slider reports its handles in the axis' own
+          // units, and this axis is elapsed milliseconds — which is what the
+          // URL and every metric endpoint speak.
+          xAxis={{ type: 'value', name: 'Elapsed (ms)' }}
+          unit="/s"
+          brush={{
+            value: window,
+            onChange: commit,
+          }}
         />
-      </div>
+      )}
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor={toId} className="text-[12px] text-muted">
-          To (s)
-        </label>
-        <input
-          id={toId}
-          data-testid="window-to"
-          inputMode="numeric"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-          placeholder={asSeconds(runDurationMs)}
-          className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
-        />
-      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor={fromId} className="text-[12px] text-muted">
+            From (s)
+          </label>
+          <input
+            id={fromId}
+            data-testid="window-from"
+            inputMode="numeric"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            placeholder="0"
+            className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+          />
+        </div>
 
-      <button
-        type="button"
-        onClick={apply}
-        data-testid="window-apply"
-        className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
-      >
-        Apply window
-      </button>
+        <div className="flex flex-col gap-1">
+          <label htmlFor={toId} className="text-[12px] text-muted">
+            To (s)
+          </label>
+          <input
+            id={toId}
+            data-testid="window-to"
+            inputMode="numeric"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            placeholder={asSeconds(runDurationMs)}
+            className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+          />
+        </div>
 
-      {window !== null && (
         <button
           type="button"
-          onClick={() => onChange(null)}
-          data-testid="window-clear"
+          onClick={apply}
+          data-testid="window-apply"
           className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
         >
-          Whole run
+          Apply window
         </button>
-      )}
 
-      {/* THE SNAPPED RANGE, not the typed one. `role="status"` so a screen
-          reader is told the figures now describe a different stretch — the
-          numbers change without anything moving on screen otherwise. */}
-      {applied != null && (
-        <p role="status" data-testid="window-applied" className="text-[12px] text-muted">
-          Showing {Math.round(applied.fromMs / 1000)}s–{Math.round(applied.toMs / 1000)}s,
-          snapped to {applied.bucketWidthMs}ms buckets
-        </p>
-      )}
+        {window !== null && (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            data-testid="window-clear"
+            className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
+          >
+            Whole run
+          </button>
+        )}
+
+        {/* THE SNAPPED RANGE, not the dragged one. `role="status"` so a screen
+            reader is told the figures now describe a different stretch — the
+            numbers change without anything else moving on screen. */}
+        {applied != null && (
+          <p role="status" data-testid="window-applied" className="text-[12px] text-muted">
+            Showing {Math.round(applied.fromMs / 1000)}s–{Math.round(applied.toMs / 1000)}s,
+            snapped to {applied.bucketWidthMs}ms buckets
+          </p>
+        )}
+      </div>
     </section>
   );
 }

@@ -59,8 +59,17 @@ const CHART_IDS = [
 ] as const;
 
 /** Every chart figure on the page, in document order. */
+/**
+ * The §13.2 overview figures — the eight this tab is about.
+ *
+ * EXCLUDING THE TIME-WINDOW STRIP, which is a `Chart` too and therefore shares
+ * this testid namespace, but is a CONTROL rendered by `RunShell` above the
+ * tabs rather than one of the numbered figures. Without the exclusion every
+ * count and ordering assertion here would silently be about nine charts, and
+ * §13.2's numbering is itself information.
+ */
 function figures(page: Page): Locator {
-  return page.locator('figure[data-testid^="chart-"]');
+  return page.locator('figure[data-testid^="chart-"]:not([data-testid="chart-time-window"])');
 }
 
 interface Cell {
@@ -881,6 +890,61 @@ test('the brush writes the window into the URL and states what it computed', asy
   await expect(page).not.toHaveURL(/[?&]from=/);
 });
 
+test('the scrubber is a real chart, and it really draws a slider', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  // ONE `<svg>` in the strip's figure, exactly like every other chart. This is
+  // the assertion that settles the question the design turned on: an ECharts
+  // dataZoom draws INSIDE the single svg root its instance emits, so the
+  // invariant nine other specs rest on is untouched by adding a slider.
+  const strip = page.getByTestId('chart-time-window');
+  await expect(strip.locator('svg')).toHaveCount(1);
+
+  /**
+   * AND THE SLIDER IS ACTUALLY THERE.
+   *
+   * This is not decoration: `DataZoomSliderComponent` was unregistered at
+   * first, and ECharts DISCARDS an option for a component it does not know —
+   * silently, with nothing in the console at the point of use. The strip
+   * rendered as a perfectly ordinary chart. Asserting the option is a unit
+   * test's job; asserting the registration takes a browser.
+   *
+   * Counted RELATIVE to a chart with no brush rather than against a magic
+   * number, so it stays true as ECharts' internals change: the strip's bottom
+   * band carries the slider's track, handles and range labels, and a plain
+   * chart's carries only its axis.
+   */
+  const bottomBandCount = (testId: string) =>
+    page.getByTestId(testId).locator('svg').evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return Array.from(el.querySelectorAll('*')).filter((node) => {
+        const r = node.getBoundingClientRect();
+        return r.height > 0 && r.top > box.bottom - 45;
+      }).length;
+    });
+
+  const withSlider = await bottomBandCount('chart-time-window');
+  const withoutSlider = await bottomBandCount('chart-requests-per-second');
+  expect(withSlider).toBeGreaterThan(withoutSlider);
+});
+
+/**
+ * THE DRAG GESTURE ITSELF IS NOT ASSERTED, deliberately.
+ *
+ * ECharts renders its handles as anonymous `<path>` nodes inside a `<g>` with
+ * no stable hook, so driving them means hard-coded pixel offsets into a chart
+ * whose layout shifts with viewport, font metrics and data extent — the shape
+ * of test that passes on one machine and flakes on the next.
+ *
+ * What IS covered, and where: `Chart.test.tsx` pins the option the slider is
+ * built from and the `datazoom` handler's mapping from event to axis units and
+ * on to `onChange`; the case above pins that the component is registered and
+ * drawn; and the case below pins the whole path from a selected window to
+ * recomputed numbers, through the fields that are also the keyboard route.
+ */
 test('a run with no metrics is offered no brush at all', async ({ page }) => {
   // Its buckets carry no histograms, so every windowed call would 400. An
   // invitation to drag something that cannot work is worse than no invitation.

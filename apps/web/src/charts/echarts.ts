@@ -13,6 +13,7 @@
 import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts';
 import {
   AxisPointerComponent,
+  DataZoomSliderComponent,
   GridComponent,
   LegendComponent,
   TooltipComponent,
@@ -49,6 +50,18 @@ echarts.use([
   // axis as the rest, takes the same `group`, and `run-charts.spec.ts` pins
   // all five.)
   AxisPointerComponent,
+
+  // The time-window scrubber (`Chart`'s `brush` prop). SLIDER ONLY — the
+  // `inside` variant would add wheel-and-pinch zoom on the plot itself, giving
+  // one window two gestures that can disagree, and the full `DataZoomComponent`
+  // barrel pulls in both.
+  //
+  // This one cost an afternoon to the exact failure the note above describes:
+  // an unregistered component makes ECharts DISCARD the option silently, so the
+  // strip rendered as a perfectly ordinary chart with no slider under it and
+  // nothing in the console at the point of use. The probe that found it counted
+  // `<rect>` elements in the drawn SVG and got 1.
+  DataZoomSliderComponent,
 
   // SVG, NOT canvas. Marks become real DOM nodes, which is what lets a
   // Playwright spec assert on what was actually drawn (Task 10's crosshair
