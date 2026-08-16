@@ -28,10 +28,17 @@ export interface ChartTableRow {
  * is not the same as zero and must not be drawn as one — or explicit
  * `[x, y]` pairs for the charts whose x is a measured quantity rather than a
  * category.
+ *
+ * A PAIR'S y IS NULLABLE FOR THE SAME REASON A SCALAR IS. The gap rule is a
+ * property of the measurement, not of the axis it is drawn against: a bucket
+ * whose count was never recorded is a hole in both forms. Omitting the point
+ * instead would let a line join its neighbours straight across the hole, which
+ * draws a measurement nobody took — so the point keeps its x and carries a
+ * null y.
  */
 export interface ChartSeries {
   readonly name: string;
-  readonly data: readonly (number | null)[] | readonly (readonly [number, number])[];
+  readonly data: readonly (number | null)[] | readonly (readonly [number, number | null])[];
   /**
    * "Draw this one even if the palette runs out."
    *

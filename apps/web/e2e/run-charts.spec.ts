@@ -932,18 +932,98 @@ test('the scrubber is a real chart, and it really draws a slider', async ({ page
 });
 
 /**
- * THE DRAG GESTURE ITSELF IS NOT ASSERTED, deliberately.
+ * THE DRAG GESTURE, WHICH THIS SUITE ONCE ARGUED ITSELF OUT OF ASSERTING.
  *
- * ECharts renders its handles as anonymous `<path>` nodes inside a `<g>` with
- * no stable hook, so driving them means hard-coded pixel offsets into a chart
- * whose layout shifts with viewport, font metrics and data extent — the shape
- * of test that passes on one machine and flakes on the next.
+ * The argument was that `Chart.test.tsx` pins the `datazoom` handler's mapping
+ * from event to AXIS UNITS and on to `onChange`, so only pixels were left. It
+ * was true and it was not enough: it establishes what the handler does with
+ * the axis' units and says nothing about what those units ARE. `TimeBrush`
+ * drew the category form — scalars, one per label — on a value axis, so
+ * ECharts mapped each point onto both axes, the strip plotted requests/s
+ * against requests/s as a straight 45° line, and the handles reported RATES.
+ * Every unit test on both sides stayed green while a drag across the first
+ * third of a 63 s run committed `?from=0&to=7` — seven milliseconds.
  *
- * What IS covered, and where: `Chart.test.tsx` pins the option the slider is
- * built from and the `datazoom` handler's mapping from event to axis units and
- * on to `onChange`; the case above pins that the component is registered and
- * drawn; and the case below pins the whole path from a selected window to
- * recomputed numbers, through the fields that are also the keyboard route.
+ * Nothing that mocks the renderer can see that, because the mistake is in what
+ * the renderer was asked to do. So the gesture is driven here, and the two
+ * flakiness concerns above are answered rather than dismissed: the coordinates
+ * are computed from the slider's OWN measured geometry (never written down),
+ * and the assertion is about the SCALE of what came back — milliseconds, not
+ * rate values — which no plausible imprecision in the drag can satisfy by
+ * accident.
+ */
+test('dragging the scrubber commits a window in milliseconds, not axis noise', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  const strip = page.getByTestId('chart-time-window').locator('svg');
+  await expect(strip).toHaveCount(1);
+
+  // The run's real extent, from the run itself — the reference bundle's
+  // duration moves on re-capture.
+  const series = await apiJson<{ buckets: { startOffsetMs: number }[] }>(
+    page, `/v1/runs/${runId}/series?scope=run&name=&family=response_time`);
+  const endMs = Math.max(...series.buckets.map((b) => b.startOffsetMs));
+
+  /**
+   * THE HANDLE IS FOUND, NOT GUESSED — which is what answers the flakiness
+   * objection this suite recorded against driving the gesture at all.
+   *
+   * zrender emits the slider with no class names and no stable hook, but it
+   * emits it in a KNOWN BAND: the bottom of the strip's own box, inset from
+   * the left by the grid's gutter (so `box.x + a few pixels` lands on nothing,
+   * which is how this test first failed). The handles are the narrow nodes in
+   * that band. Taking the leftmost narrow one gets the left handle wherever
+   * the layout puts it, at any viewport and any font metrics.
+   */
+  const box = (await strip.boundingBox())!;
+  const handle = await strip.evaluate((el, band) => {
+    const root = el.getBoundingClientRect();
+    const narrow = Array.from(el.querySelectorAll('path, rect'))
+      .map((node) => node.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0 && r.width < 20 && r.top > root.bottom - band)
+      .sort((a, b) => a.left - b.left);
+    const first = narrow[0];
+    return first ? { x: first.left + first.width / 2, y: first.top + first.height / 2 } : null;
+  }, 40);
+  expect(handle, 'expected to find the slider’s left handle in the strip').not.toBeNull();
+
+  // Pull it about a third of the way into the run.
+  await page.mouse.move(handle!.x, handle!.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.35, handle!.y, { steps: 12 });
+  await page.mouse.up();
+
+  // The window settles (SETTLE_MS) and is written once, to the URL.
+  await expect(page).toHaveURL(/[?&]from=\d+/, { timeout: 5_000 });
+
+  const params = new URL(page.url()).searchParams;
+  const from = Number(params.get('from'));
+  const to = Number(params.get('to'));
+
+  // THE SCALE IS THE ASSERTION. On the rate-valued axis this replaced, a drag
+  // of any distance produced single- or double-digit values: `from=0&to=7`.
+  // The right handle was never touched, so `to` is still the run's end.
+  expect(to).toBeGreaterThan(endMs * 0.9);
+  // And the left handle moved a real distance into the run, in milliseconds.
+  expect(from).toBeGreaterThan(1_000);
+  expect(from).toBeLessThan(to);
+
+  // The page states the snapped range it computed, in seconds — the failure
+  // this replaces reported "Showing 0s–1s" for every drag.
+  await expect(page.getByTestId('window-applied')).toBeVisible();
+});
+
+/**
+ * WHAT REMAINS COVERED ELSEWHERE: `Chart.test.tsx` pins the option the slider
+ * is built from and the `datazoom` handler's mapping on to `onChange`;
+ * `TimeBrush.test.tsx` pins that the numbers handed to that axis are elapsed
+ * milliseconds spanning the run; the case above pins that the component is
+ * registered and drawn; and the case below pins the whole path from a selected
+ * window to recomputed numbers, through the fields that are also the keyboard
+ * route.
  */
 test('a run with no metrics is offered no brush at all', async ({ page }) => {
   // Its buckets carry no histograms, so every windowed call would 400. An

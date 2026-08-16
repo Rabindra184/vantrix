@@ -131,10 +131,36 @@ const SPLIT_UNAVAILABLE =
   'for the outcome split, which is recorded for every run.';
 
 /**
+ * WHICH SHAPE THE X AXIS TAKES — the one thing about these charts that is a
+ * property of the CALLER rather than of the data.
+ *
+ * `'category'` is what §13.2 ⑩ and ⑪ draw: one value per label, the labels
+ * being elapsed seconds, so the crosshair `Chart`'s `group` shares with
+ * concurrent users and the percentile bands reads the same on all of them.
+ *
+ * `'ms'` is what `TimeBrush` draws, and it is not a matter of taste. That
+ * component carries the dataZoom slider, which reports its handles in the x
+ * axis' OWN UNITS and whose committed window is milliseconds (`Chart`'s
+ * `brush` contract, and the URL's). Handed the category form on a value axis,
+ * ECharts maps each scalar onto both axes: the strip plotted requests/s
+ * against requests/s — a straight 45° line, both axes reading 0..21 — and a
+ * drag across the first third of a 63 s run committed `?from=0&to=7`, seven
+ * MILLISECONDS, because the handles were reporting rate values.
+ *
+ * Only the DRAWN series change. The data table is the parity surface and stays
+ * in seconds in both forms, because what a reader quotes does not move with
+ * the renderer's arithmetic.
+ */
+export interface RateOptions {
+  readonly x?: 'category' | 'ms';
+}
+
+/**
  * Both charts, from one builder: same axis, same three series, same table,
  * differing only in which pair of counters is read.
  */
-function rateChart(series: SeriesResponse, edge: Edge): ChartData {
+function rateChart(series: SeriesResponse, edge: Edge, options: RateOptions = {}): ChartData {
+  const pairs = options.x === 'ms';
   /**
    * THE DIVISOR IS THE PAYLOAD'S, and this is the single most important line in
    * the file. `BucketSeries` halves its resolution in place once a run exceeds
@@ -186,22 +212,39 @@ function rateChart(series: SeriesResponse, edge: Edge): ChartData {
   const rate = (count: number | null): number | null =>
     count === null ? null : count / perSecond;
 
-  const drawn: ChartSeries[] = [
-    { name: ALL, data: series.buckets.map((b) => rate(edge.all(b))) },
-    ...(split
-      ? [
-          { name: OK, data: series.buckets.map((b) => rate(edge.ok(b))) },
-          { name: KO, data: series.buckets.map((b) => rate(edge.ko(b))) },
-        ]
-      : []),
-  ];
+  /**
+   * The values, before either axis shape is chosen — so the drawing and the
+   * table are built from ONE array of numbers rather than the table reading
+   * them back out of whatever the drawing happened to be shaped into. That
+   * read-back is what made the row builder below depend on the series being
+   * scalar, and it is exactly the coupling a second shape would break.
+   */
+  const measured: readonly { readonly name: string; readonly data: readonly (number | null)[] }[] =
+    [
+      { name: ALL, data: series.buckets.map((b) => rate(edge.all(b))) },
+      ...(split
+        ? [
+            { name: OK, data: series.buckets.map((b) => rate(edge.ok(b))) },
+            { name: KO, data: series.buckets.map((b) => rate(edge.ko(b))) },
+          ]
+        : []),
+    ];
+
+  const drawn: ChartSeries[] = measured.map(({ name, data }) => ({
+    name,
+    // A null y is preserved, never dropped: see `ChartSeries.data`. A point
+    // omitted from a value axis is not a gap, it is a line drawn across one.
+    data: pairs
+      ? series.buckets.map((b, i) => [b.startOffsetMs, data[i] ?? null] as [number, number | null])
+      : data,
+  }));
 
   const rows: ChartTableRow[] = series.buckets.map((bucket, i) => ({
     label: String(bucket.startOffsetMs / 1000),
-    // Straight off the drawn series, so the table cannot show a count where the
-    // chart shows a rate. A gap is a dash, never a zero — same reason as above,
-    // and the table is the more quotable of the two surfaces.
-    values: drawn.map((s) => (s.data as readonly (number | null)[])[i] ?? '—'),
+    // The same numbers the chart draws, so the table cannot show a count where
+    // the chart shows a rate. A gap is a dash, never a zero — same reason as
+    // above, and the table is the more quotable of the two surfaces.
+    values: measured.map((s) => s.data[i] ?? '—'),
   }));
 
   const notes: string[] = [];
@@ -213,7 +256,12 @@ function rateChart(series: SeriesResponse, edge: Edge): ChartData {
     // Elapsed SECONDS, from the bucket's own offset — what Gatling's axis shows,
     // and what makes the crosshair these charts share with concurrent users and
     // the percentile bands (`Chart`'s `group`) read the same on all of them.
-    axisLabels: series.buckets.map((b) => b.startOffsetMs / 1000),
+    //
+    // EMPTY in the pair form, on purpose and for the reason `toErrorSeries`
+    // gives: x is a measured quantity there and each point carries its own, so
+    // a category axis alongside is a second, disagreeing answer to where a
+    // point sits.
+    axisLabels: pairs ? [] : series.buckets.map((b) => b.startOffsetMs / 1000),
     columns,
     rows,
     limitation: notes.length > 0 ? notes.join(' ') : undefined,
@@ -232,8 +280,8 @@ function rateChart(series: SeriesResponse, edge: Edge): ChartData {
  * feeding it were added by Task 2 for exactly that. Where a run predates them
  * the All series is drawn alone and `SPLIT_UNAVAILABLE` says why.
  */
-export function toRequestRate(series: SeriesResponse): ChartData {
-  return rateChart(series, START_EDGE);
+export function toRequestRate(series: SeriesResponse, options?: RateOptions): ChartData {
+  return rateChart(series, START_EDGE, options);
 }
 
 /**
