@@ -71,9 +71,24 @@ func TestFootprintBudgetAtTheDefaultInterval(t *testing.T) {
 
 	// Warm up: the first Sample() faults in gopsutil's lazily-initialised
 	// platform state, and charging that one-off to a steady-state budget would
-	// make the gate depend on how long the window is.
-	if _, err := c.Sample(context.Background()); err != nil {
-		t.Fatalf("Sample() error = %v", err)
+	// make the gate depend on how long the window is. Retried a few times
+	// rather than a single call: on a platform where a counter source is
+	// genuinely unimplemented (e.g. ProtoCounters on darwin), Sample now
+	// legitimately errors on the first few consecutive failures before
+	// concluding that and degrading to zero, rather than assuming permanent
+	// unavailability from a single tick — see counterSourceDegradeAfterFailures
+	// in internal/collect/collect.go. The container footprint check itself
+	// runs on Linux, where ProtoCounters succeeds immediately and this loop
+	// exits on its first iteration either way.
+	warmedUp := false
+	for i := 0; i < 5; i++ {
+		if _, err := c.Sample(context.Background()); err == nil {
+			warmedUp = true
+			break
+		}
+	}
+	if !warmedUp {
+		t.Fatal("Sample() kept erroring during warm-up")
 	}
 
 	var before runtime.MemStats

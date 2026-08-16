@@ -8,8 +8,26 @@ import (
 	"time"
 )
 
+// warmUp advances c past FIX A's startup grace period (see
+// counterSourceDegradeAfterFailures) by sampling it up to K-1 times and
+// discarding both results and errors. On a platform where a counter source
+// is genuinely unimplemented for the whole process lifetime (e.g.
+// ProtoCounters on darwin), Sample now legitimately errors on the first K-1
+// calls from a fresh Collector — see that constant's doc comment — so tests
+// that only care about a Sample's steady-state shape or timing, and are not
+// themselves about the startup behavior, call this first. The startup
+// behavior itself is covered by
+// TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable.
+func warmUp(c *Collector) {
+	for i := 0; i < counterSourceDegradeAfterFailures-1; i++ {
+		_, _ = c.Sample(context.Background())
+	}
+}
+
 func TestSampleReadsGaugesAndCumulativeCounters(t *testing.T) {
-	s, err := New().Sample(context.Background())
+	c := New()
+	warmUp(c)
+	s, err := c.Sample(context.Background())
 	if err != nil {
 		t.Fatalf("Sample() error = %v", err)
 	}
@@ -68,17 +86,39 @@ func TestProtoCountersPopulateTheTCPSegmentSeriesOnLinux(t *testing.T) {
 	}
 }
 
+// FIX A. A source that has never succeeded must fail
+// counterSourceDegradeAfterFailures times IN A ROW before Sample degrades it
+// to zero — see counterSourceDegradeAfterFailures's doc comment in
+// collect.go for why tick 1 alone cannot tell "not implemented on this
+// platform" from "not ready yet". So the first K-1 calls on a platform that
+// genuinely lacks ProtoCounters (darwin) must return an error and skip the
+// tick, and only the Kth call may degrade cleanly.
 func TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		t.Skip("this asserts the DEGRADED path, which linux does not take")
 	}
-	// The whole point: on a platform with no ProtoCounters, Sample still
-	// returns a usable sample rather than an error, so a developer on macOS
-	// gets CPU, memory, bandwidth and connection states.
 	c := New()
+
+	for i := 1; i < counterSourceDegradeAfterFailures; i++ {
+		if _, err := c.Sample(context.Background()); err == nil {
+			t.Fatalf("Sample() call %d: error = nil, want an error — fewer than "+
+				"counterSourceDegradeAfterFailures (%d) consecutive failures is too soon to "+
+				"presume ProtoCounters is permanently unavailable", i, counterSourceDegradeAfterFailures)
+		}
+		if c.ProtoUnavailable() {
+			t.Fatalf("Sample() call %d: ProtoUnavailable() = true, want false — must not degrade before "+
+				"counterSourceDegradeAfterFailures (%d) consecutive failures", i, counterSourceDegradeAfterFailures)
+		}
+	}
+
+	// The whole point: on a platform with no ProtoCounters, once the
+	// consecutive-failure threshold is reached Sample still returns a usable
+	// sample rather than an error, so a developer on macOS gets CPU, memory,
+	// bandwidth and connection states.
 	s, err := c.Sample(context.Background())
 	if err != nil {
-		t.Fatalf("Sample() error = %v, want a degraded sample and no error", err)
+		t.Fatalf("Sample() call %d (the Kth): error = %v, want a degraded sample and no error",
+			counterSourceDegradeAfterFailures, err)
 	}
 	if s.MemTotalBytes <= 0 {
 		t.Fatal("the degraded path dropped the gauges too")
@@ -97,7 +137,7 @@ func TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable(t *testing.T)
 	}
 }
 
-// FIX 1. A collector reading a transient failure (source read successfully
+// FIX A. A collector reading a transient failure (source read successfully
 // before, fails now) must be told to skip the tick rather than degrade —
 // degrading here is exactly what turns a five-sample series like
 //
@@ -105,52 +145,79 @@ func TestDegradesRatherThanFailingWhereProtoCountersAreUnavailable(t *testing.T)
 //
 // into a false 503x spike on recovery (the reset at offset 3 is correctly
 // null, but the zero-filled sample sent FOR it means offset 4's delta is
-// measured from 0 against a since-boot counter). This cannot be exercised
-// through Sample() itself without faking a gopsutil failure on demand, which
-// the package does not support — so the "have we ever succeeded" decision
-// is extracted into counterSource and tested here in isolation. Without the
-// fix (i.e. shouldDegrade() unconditionally returning true, which is what
-// Sample() effectively did before it consulted counterSource at all), the
-// "succeeded once, now failing" case below goes red: it wants false and a
-// pre-fix implementation returns true.
+// measured from 0 against a since-boot counter). And a source that has NEVER
+// succeeded must not be assumed permanently unavailable from a single
+// failure either — tick 1 of a source that is merely not ready yet (a /proc
+// permission hiccup at startup, a container still initialising) looks
+// identical to tick 1 of a source truly absent from the platform. Sending
+// zeros for the former is the SAME false-spike bug through the mirror door:
+// zeros now, a real since-boot counter the moment it recovers. Both cases
+// are exercised here in isolation, without faking a gopsutil failure on
+// demand, which the package does not support.
 func TestCounterSourceShouldDegrade(t *testing.T) {
-	tests := []struct {
-		name         string
-		succeedFirst bool
-		want         bool
-	}{
-		{
-			name:         "never succeeded, still failing -> degrade (permanently unavailable, zero is safe)",
-			succeedFirst: false,
-			want:         true,
-		},
-		{
-			name:         "succeeded before, now failing -> do NOT degrade (transient; zero would manufacture a spike)",
-			succeedFirst: true,
-			want:         false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var c counterSource
-			if tt.succeedFirst {
-				c.recordSuccess()
+	t.Run("never succeeded, fewer than K consecutive failures -> do NOT degrade (too soon to tell not-ready-yet from not-implemented-here)", func(t *testing.T) {
+		var c counterSource
+		for i := 1; i < counterSourceDegradeAfterFailures; i++ {
+			if c.shouldDegrade() {
+				t.Fatalf("shouldDegrade() = true on consecutive failure %d, want false (K = %d)", i, counterSourceDegradeAfterFailures)
 			}
-			if got := c.shouldDegrade(); got != tt.want {
-				t.Fatalf("shouldDegrade() = %v, want %v", got, tt.want)
+		}
+	})
+
+	t.Run("never succeeded, K consecutive failures -> degrade (permanently unavailable, zero is safe)", func(t *testing.T) {
+		var c counterSource
+		for i := 1; i < counterSourceDegradeAfterFailures; i++ {
+			c.shouldDegrade()
+		}
+		if !c.shouldDegrade() {
+			t.Fatalf("shouldDegrade() = false on the Kth (%d) consecutive failure, want true", counterSourceDegradeAfterFailures)
+		}
+	})
+
+	t.Run("succeeded before, now failing -> do NOT degrade no matter how many times (transient; zero would manufacture a spike)", func(t *testing.T) {
+		var c counterSource
+		c.recordSuccess()
+		for i := 0; i < counterSourceDegradeAfterFailures+2; i++ {
+			if c.shouldDegrade() {
+				t.Fatalf("shouldDegrade() = true on failure %d after a prior success, want false — always transient once it has ever succeeded", i)
 			}
-		})
-	}
+		}
+	})
+
+	// recordSuccess's effect on shouldDegrade()'s return value is already
+	// covered above (once ever succeeded, always false) — this checks the
+	// state it is documented to change, consecutiveFailures itself, directly:
+	// a later success must not leave a stale count sitting behind the
+	// permanently-transient everSucceeded flag.
+	t.Run("recordSuccess resets the consecutive-failure count", func(t *testing.T) {
+		var c counterSource
+		for i := 0; i < counterSourceDegradeAfterFailures-1; i++ {
+			c.shouldDegrade()
+		}
+		if got := c.consecutiveFailures.Load(); got != int64(counterSourceDegradeAfterFailures-1) {
+			t.Fatalf("consecutiveFailures = %d before recordSuccess, want %d", got, counterSourceDegradeAfterFailures-1)
+		}
+		c.recordSuccess()
+		if got := c.consecutiveFailures.Load(); got != 0 {
+			t.Fatalf("consecutiveFailures = %d after recordSuccess, want 0 — the count must reset on success", got)
+		}
+	})
 }
 
 // A source that keeps failing without ever having succeeded must keep
-// degrading on every subsequent read, not just the first — recordSuccess is
-// never called, so nothing should flip shouldDegrade() to false on its own.
+// degrading on every read once it has reached counterSourceDegradeAfterFailures
+// consecutive failures, not just on the Kth — recordSuccess is never called,
+// so nothing should flip shouldDegrade() back to false on its own.
 func TestCounterSourceKeepsDegradingAcrossRepeatedFailures(t *testing.T) {
 	var c counterSource
+	for i := 1; i < counterSourceDegradeAfterFailures; i++ {
+		if c.shouldDegrade() {
+			t.Fatalf("shouldDegrade() = true on consecutive failure %d, want false (K = %d)", i, counterSourceDegradeAfterFailures)
+		}
+	}
 	for i := 0; i < 3; i++ {
 		if !c.shouldDegrade() {
-			t.Fatalf("shouldDegrade() = false on attempt %d with no recorded success", i)
+			t.Fatalf("shouldDegrade() = false on attempt %d past the threshold, want true", i)
 		}
 	}
 }
@@ -220,8 +287,13 @@ func TestShouldReadConnections(t *testing.T) {
 // lastConnRead field at all; this test (and the field it depends on) is part
 // of the fix, so reverting the implementation change alone makes it fail to
 // even compile, let alone pass.
+//
+// warmUp first because FIX A can make a fresh Collector's earliest calls
+// return an error before ever reaching connectionStates (see that helper's
+// doc comment) — that is a different test's concern, not this one's.
 func TestSampleReadsConnectionsAtMostOncePerMinInterval(t *testing.T) {
 	c := New()
+	warmUp(c)
 	if _, err := c.Sample(context.Background()); err != nil {
 		t.Fatalf("Sample() error = %v", err)
 	}
@@ -230,7 +302,7 @@ func TestSampleReadsConnectionsAtMostOncePerMinInterval(t *testing.T) {
 	firstRead := c.lastConnRead
 	c.connMu.Unlock()
 	if firstRead.IsZero() {
-		t.Fatal("lastConnRead is still zero after the first Sample() — the first tick must always read connections")
+		t.Fatal("lastConnRead is still zero after the first completing Sample() — the first tick that completes must always read connections")
 	}
 
 	for i := 0; i < 3; i++ {
@@ -327,8 +399,14 @@ func TestConnectionStatesCarriesForwardOnASkippedTick(t *testing.T) {
 // most one every 5s regardless of --interval (see connectionsMinInterval's
 // doc comment in collect.go). If this ever fails again, the lever is to
 // raise that constant further, not this bound.
+//
+// warmUp first so the timed call below is one that actually reaches
+// connectionStates — the call this test exists to bound — rather than one of
+// FIX A's startup-grace-period calls, which return early with an error
+// before ever getting there (see warmUp's doc comment).
 func TestSampleDoesNotBlockForAnInterval(t *testing.T) {
 	c := New()
+	warmUp(c)
 	start := time.Now()
 	if _, err := c.Sample(context.Background()); err != nil {
 		t.Fatalf("Sample() error = %v", err)

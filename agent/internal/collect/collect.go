@@ -84,39 +84,73 @@ type Sample struct {
 	TCPStates map[string]int `json:"tcpStates"`
 }
 
+// counterSourceDegradeAfterFailures (K) is how many CONSECUTIVE failures a
+// source that has NEVER succeeded must accumulate before Sample concludes it
+// is permanently unavailable on this host and degrades to a zero-filled
+// value. At tick 1, "not implemented on this platform" (net.ProtoCounters on
+// darwin) and "not ready yet" (a /proc permission hiccup at startup, a
+// container still initialising) are indistinguishable — everSucceeded is
+// false in both cases. Below K, Sample returns an error and the sampler
+// skips the tick rather than guessing; only once a source has failed K times
+// in a row with no success anywhere in between does Sample treat it as
+// permanently absent. The price is K-1 skipped ticks at startup on a
+// platform that genuinely lacks the source (two skipped outright, the third
+// the one where it finally degrades) — cheap, next to the alternative: a
+// zero-filled sample that a later success would measure its delta from,
+// manufacturing a spike orders of magnitude too large. See
+// counterSource.shouldDegrade.
+const counterSourceDegradeAfterFailures = 3
+
 // counterSource tracks whether a CUMULATIVE-counter read has EVER succeeded
-// on this host, which is the fact that decides what a failed read means:
+// on this host, and how many times in a row it has failed since, which
+// together decide what a failed read means:
 //
-//   - never succeeded, still failing → permanently unavailable on this
-//     platform (e.g. net.ProtoCounters on darwin). Degrading to a
-//     zero-filled value is safe here because the counter is ALWAYS zero, so
-//     every delta computed against it is 0 - 0 = 0. No spike is possible.
-//   - succeeded before, now failing → transient. A zero-filled sample here
-//     is exactly what manufactures a false spike: downstream correctly reads
-//     THIS sample as a counter reset (current < previous), but the RECOVERY
-//     is then measured from 0 against a since-boot counter — a delta many
-//     orders of magnitude too large, drawn as a real traffic burst. The
-//     caller must skip the tick instead of degrading.
+//   - never succeeded, fewer than counterSourceDegradeAfterFailures
+//     consecutive failures → too soon to tell "not implemented on this
+//     platform" from "not ready yet". The caller must skip the tick.
+//   - never succeeded, counterSourceDegradeAfterFailures or more consecutive
+//     failures → permanently unavailable on this platform (e.g.
+//     net.ProtoCounters on darwin). Degrading to a zero-filled value is safe
+//     here because the counter is ALWAYS zero, so every delta computed
+//     against it is 0 - 0 = 0. No spike is possible.
+//   - succeeded before, now failing → transient, regardless of how many
+//     times. A zero-filled sample here is exactly what manufactures a false
+//     spike: downstream correctly reads THIS sample as a counter reset
+//     (current < previous), but the RECOVERY is then measured from 0
+//     against a since-boot counter — a delta many orders of magnitude too
+//     large, drawn as a real traffic burst. The caller must skip the tick
+//     instead of degrading.
 //
-// Extracted so the decision is testable without faking a gopsutil failure —
-// see TestCounterSourceShouldDegrade.
+// Safe for concurrent use — both fields are atomics, matching Collector's own
+// contract. Extracted so the decision is testable without faking a gopsutil
+// failure — see TestCounterSourceShouldDegrade.
 type counterSource struct {
-	everSucceeded atomic.Bool
+	everSucceeded       atomic.Bool
+	consecutiveFailures atomic.Int64
 }
 
 // recordSuccess marks this source as having produced at least one real
-// reading. Idempotent; call it every time a read succeeds.
+// reading, and resets the consecutive-failure count. Idempotent; call it
+// every time a read succeeds.
 func (c *counterSource) recordSuccess() {
 	c.everSucceeded.Store(true)
+	c.consecutiveFailures.Store(0)
 }
 
-// shouldDegrade reports how a FAILED read of this source should be handled:
-// true means degrade to a zero-filled value and carry on (this source has
-// never worked, so zero is safe); false means the caller must abort the
-// whole sample instead (this source worked before, so zero would read as a
-// counter reset it is not).
+// shouldDegrade records ONE failed read of this source and reports how it
+// should be handled: true means degrade to a zero-filled value and carry on;
+// false means the caller must abort the whole sample instead (return an
+// error so the sampler skips the tick). Call it exactly once per failed
+// read — see counterSource's doc comment for the three cases this decides
+// between.
 func (c *counterSource) shouldDegrade() bool {
-	return !c.everSucceeded.Load()
+	if c.everSucceeded.Load() {
+		// Transient: this source has worked before, so degrading now would
+		// manufacture a spike the moment it next succeeds.
+		return false
+	}
+	failures := c.consecutiveFailures.Add(1)
+	return failures >= counterSourceDegradeAfterFailures
 }
 
 // shouldReadConnections reports whether Sample should call net.Connections
@@ -173,16 +207,19 @@ func (c *Collector) ProtoUnavailable() bool { return c.protoUnavailable.Load() }
 // Sample reads every source once.
 //
 // It returns an error when a source that exists on EVERY platform fails —
-// CPU times or memory — and ALSO when a source that has read successfully
-// before on THIS host (bandwidth or TCP protocol counters) fails now. The
-// latter is deliberate: this host's own history is what tells a transient
-// failure apart from permanent unavailability, and only the transient case
-// can manufacture a false spike downstream (see counterSource's doc
-// comment). A source that has NEVER succeeded on this host — e.g.
-// net.ProtoCounters on darwin, windows — instead degrades: those six
-// counters stay zero and protoUnavailable is set, because a developer on
-// macOS should still get CPU, memory, bandwidth and connection states rather
-// than nothing at all.
+// CPU times or memory — and ALSO when bandwidth or TCP protocol counters
+// fail without yet having earned a degrade: either the source has read
+// successfully before on THIS host (a transient failure), or it never has
+// but has failed fewer than counterSourceDegradeAfterFailures times in a
+// row (too soon to tell "not ready yet" from "not implemented here"). This
+// host's own history — success ever, and consecutive failures since — is
+// what tells those apart from permanent unavailability, and only they can
+// manufacture a false spike downstream (see counterSource's doc comment). A
+// source that has NEVER succeeded on this host AND has now failed that many
+// times in a row — e.g. net.ProtoCounters on darwin, windows — instead
+// degrades: those six counters stay zero and protoUnavailable is set,
+// because a developer on macOS should still get CPU, memory, bandwidth and
+// connection states rather than nothing at all.
 func (c *Collector) Sample(ctx context.Context) (Sample, error) {
 	now := time.Now().UTC()
 
@@ -220,19 +257,24 @@ func (c *Collector) Sample(ctx context.Context) (Sample, error) {
 		s.NetRxBytes = int64(io[0].BytesRecv)
 		s.NetTxBytes = int64(io[0].BytesSent)
 	} else if !c.io.shouldDegrade() {
-		// Bandwidth has read successfully before on this host: a zero here
-		// would be sent as this sample's counters, correctly read downstream
-		// as a reset, and then manufacture a false spike the moment the NEXT
-		// sample succeeds and measures its delta from zero. Skip the whole
-		// tick instead of degrading — see counterSource's doc comment.
+		// Either bandwidth has read successfully before on this host (a zero
+		// here would be sent as this sample's counters, correctly read
+		// downstream as a reset, and then manufacture a false spike the
+		// moment the NEXT sample succeeds and measures its delta from zero),
+		// or it has never succeeded but hasn't yet failed
+		// counterSourceDegradeAfterFailures times in a row, so it is too
+		// soon to tell "not ready yet" from "not implemented here". Either
+		// way: skip the whole tick instead of degrading — see
+		// counterSource's doc comment.
 		if err == nil {
 			err = errNoIOCounters
 		}
-		return Sample{}, fmt.Errorf("net.IOCounters regressed after previously succeeding: %w", err)
+		return Sample{}, fmt.Errorf("net.IOCounters unavailable, not yet presumed permanently absent: %w", err)
 	}
-	// else: net.IOCounters has never succeeded on this host. Degrade rather
-	// than fail — NetRxBytes/NetTxBytes stay zero like every other interval
-	// on a source that is always zero, so every delta is 0 - 0 = 0.
+	// else: net.IOCounters has never succeeded on this host and has now
+	// failed counterSourceDegradeAfterFailures times in a row. Degrade
+	// rather than fail — NetRxBytes/NetTxBytes stay zero like every other
+	// interval on a source that is always zero, so every delta is 0 - 0 = 0.
 
 	if protos, err := net.ProtoCountersWithContext(ctx, []string{"tcp"}); err == nil && len(protos) > 0 {
 		c.proto.recordSuccess()
@@ -246,13 +288,16 @@ func (c *Collector) Sample(ctx context.Context) (Sample, error) {
 	} else if c.proto.shouldDegrade() {
 		c.protoUnavailable.Store(true)
 	} else {
-		// Same transient-vs-permanent distinction as IOCounters above: this
-		// host's protocol counters have worked before, so a zero-filled
-		// sample now would manufacture a spike on the next successful read.
+		// Same transient-vs-not-yet-proven distinction as IOCounters above:
+		// either this host's protocol counters have worked before, so a
+		// zero-filled sample now would manufacture a spike on the next
+		// successful read, or they haven't failed
+		// counterSourceDegradeAfterFailures times in a row yet, so it is too
+		// soon to presume they're unimplemented on this platform.
 		if err == nil {
 			err = errNoProtoCounters
 		}
-		return Sample{}, fmt.Errorf("net.ProtoCounters regressed after previously succeeding: %w", err)
+		return Sample{}, fmt.Errorf("net.ProtoCounters unavailable, not yet presumed permanently absent: %w", err)
 	}
 
 	s.TCPStates = c.connectionStates(ctx, now)
