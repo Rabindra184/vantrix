@@ -71,7 +71,21 @@ beforeAll(() => {
   bundle = readFileSync(out);
 });
 
+// Only a context a TEST built is this hook's to close. The Appendix A block
+// below builds ONE in beforeAll, shares it across every PT-* row, and closes
+// it in its own afterAll — closing that one here would dispose it after the
+// first row and leave every remaining row without a database.
+//
+// This was invisible while close() disposed nothing that mattered: it called
+// app.close() and left the pool and PrismaClient open, and supertest binds
+// its own ephemeral server rather than the app's, so a "closed" app kept
+// answering and every row still passed. It stopped being invisible the moment
+// close() began ending the pool, which failed 18 rows here.
+let ctxOwnedByTest = false;
+
 afterEach(async () => {
+  if (!ctxOwnedByTest) return;
+  ctxOwnedByTest = false;
   await ctx?.close();
 });
 
@@ -82,6 +96,7 @@ describe('end-to-end parity with the Gatling reference report', () => {
     await q.close();
 
     ctx = await createTestApp();
+    ctxOwnedByTest = true;
 
     // 1. Ingest, asking for no synchronous wait.
     const accepted = await request(ctx.app.getHttpServer())
@@ -162,6 +177,7 @@ describe('end-to-end parity with the Gatling reference report', () => {
 
   it('is idempotent end to end — re-posting the same key yields one run', async () => {
     ctx = await createTestApp();
+    ctxOwnedByTest = true;
     const post = () =>
       request(ctx.app.getHttpServer())
         .post('/v1/runs')
