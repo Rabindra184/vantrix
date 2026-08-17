@@ -35,7 +35,7 @@ import StatisticsTable from '../tables/StatisticsTable';
 import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
-import { useWindowFromShell } from './useRunWindow';
+import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
 import RunShell from './RunShell';
 import RunStats from './RunStats';
 
@@ -380,6 +380,8 @@ export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
   const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: runId !== undefined });
   const window = useWindowFromShell();
+  // One time axis across the page (§22.5) — see `useTimeDomainFromShell`.
+  const domainMs = useTimeDomainFromShell();
   const series = useQuery({
     ...errorSeriesQuery(runId ?? '', window),
     enabled: runId !== undefined,
@@ -398,7 +400,7 @@ export function RunErrorsTab() {
           down. `Payload` keeps a failed chart visible and saying why, rather
           than leaving a gap the reader cannot see is missing. */}
       <Payload query={series} slots={[{ id: 'errors-over-time', title: 'Errors per second' }]}>
-        {(data) => <ErrorsChart data={data} />}
+        {(data) => <ErrorsChart data={data} domainMs={domainMs} />}
       </Payload>
 
       <TableSection title="Errors" query={errors}>
@@ -493,6 +495,10 @@ export function RunChartsTab() {
   // describes the same stretch of the run, and so the shell's own fetches
   // share their cache keys with these rather than quietly duplicating them.
   const window = useWindowFromShell();
+  // ONE TIME AXIS, for the same reason there is one window: the six figures
+  // below share a crosshair, and a pointer means one instant only if they all
+  // draw the same span. See `useTimeDomainFromShell`.
+  const domainMs = useTimeDomainFromShell();
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
   const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: runId !== undefined });
   const distribution = useQuery({
@@ -536,8 +542,8 @@ export function RunChartsTab() {
           <>
             {/* Its OWN chart, sharing the crosshair — never an overlay on
                 requests/s. See RUN_TIME above. */}
-            <ConcurrentUsersChart users={data} group={RUN_TIME} />
-            <UserStartRateChart users={data} group={RUN_TIME} />
+            <ConcurrentUsersChart users={data} group={RUN_TIME} domainMs={domainMs} />
+            <UserStartRateChart users={data} group={RUN_TIME} domainMs={domainMs} />
           </>
         )}
       </Payload>
@@ -554,9 +560,9 @@ export function RunChartsTab() {
       <Payload query={series} slots={[PERCENTILES, REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>
         {(data) => (
           <>
-            <PercentilesChart series={data} />
-            <RequestRateChart series={data} />
-            <ResponseRateChart series={data} />
+            <PercentilesChart series={data} domainMs={domainMs} />
+            <RequestRateChart series={data} domainMs={domainMs} />
+            <ResponseRateChart series={data} domainMs={domainMs} />
           </>
         )}
       </Payload>

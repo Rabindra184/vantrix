@@ -8,7 +8,7 @@ import TelemetryCharts from '../charts/TelemetryCharts';
 import { CLOCK_SKEW_WARN_MS } from './clockSkew';
 import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
-import { useWindowFromShell } from './useRunWindow';
+import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
 
 /**
  * `/runs/:runId/load-generators`, a child under `RunShell` (design §3, §6) —
@@ -63,6 +63,9 @@ const NO_SAMPLES_IN_WINDOW =
 export default function RunTelemetry() {
   const { runId } = useParams<{ runId: string }>();
   const window = useWindowFromShell();
+  // The same time domain the run's other tabs draw on (§22.5) — these six
+  // charts share `run-time` with the shell's own brush.
+  const domainMs = useTimeDomainFromShell();
   const telemetry = useQuery({
     ...telemetryQuery(runId ?? '', window),
     enabled: runId !== undefined,
@@ -149,7 +152,7 @@ export default function RunTelemetry() {
               </p>
             )}
 
-            <TelemetryCharts host={host} />
+            <TelemetryCharts host={host} domainMs={domainMs} />
           </div>
         );
       }}

@@ -53,22 +53,19 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **85 files / 979 tests**, it
+`nvm use` first, and if a run reports fewer than **86 files / 993 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the G-05 assertion
-decoder and evaluator, which added `packages/plugin-gatling/test/assertions.test.ts`
-(6) and `packages/statistics/test/tool-assertions.test.ts` (12), from a floor of
-83 / 961. That floor came from the standalone-errors fix (G-17), which added 4
-cases to `packages/statistics/test/engine.test.ts`, from 83 / 957; and that one from the chart-controls pass, which
-added 2 legend-placement cases to `Chart` and 1 colour-role case to
-`TimeBrush`, from 83 / 954; and that one from the
-run-timestamp fix, which added 3 zone-pinned label cases across
-`transforms.compare` and `transforms.trends`; the time-brush fix before it
-added `apps/web/test/TimeBrush.test.tsx` (4 tests) and 11 more across
-`transforms.rates` and `Chart`, from a floor of 82 / 936 — 81 / 931 through
-`feat/telemetry-agent`. No fix's e2e or integration cases are in this
-count: `pnpm test:unit` runs neither.)
+silently-skipped run looks like a pass. Last measured on the shared time axis,
+which added `apps/web/test/timeAxis.test.ts` (8) plus 3 axis cases to `Chart`
+and 3 pair cases to `tooltip`, from a floor of 85 / 979 — and that one from the
+G-05 assertion decoder and evaluator, which added
+`packages/plugin-gatling/test/assertions.test.ts` (6) and
+`packages/statistics/test/tool-assertions.test.ts` (12), from 83 / 961. Earlier
+floors: the standalone-errors fix (G-17) 83 / 957, the chart-controls pass
+83 / 954, the run-timestamp fix 83 / 954, the time-brush fix 82 / 936, and
+81 / 931 through `feat/telemetry-agent`. No fix's e2e or integration cases are
+in this count: `pnpm test:unit` runs neither.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
 `vitest.config.ts` excludes `*.integration.test.ts` and `*.e2e.test.ts`. A
@@ -168,6 +165,25 @@ rate values read as milliseconds — a drag over a third of a 63 s run produced
 `?from=0&to=7`. When adding `xAxis={{ type: 'value' }}`, check the transform
 emits pairs (`toErrorSeries`, `toPercentileDistribution` and
 `toRequestRate(_, { x: 'ms' })` do).
+
+**A CONNECTED `axisPointer` ON A CATEGORY AXIS SYNCS BY INDEX, not by time.**
+So charts sharing a crosshair (`Chart`'s `group`) point at the same INSTANT only
+if their category lists are identical — and on a run page they are not:
+`/series` is sparse (a second with no request produces no bucket at all), so the
+reference run carries 62 response-time buckets against 63 user buckets, spanning
+the same start and the same end. One payload has a hole in the middle, and every
+index past it is a second out. The fix is that every time chart is now a VALUE
+axis in milliseconds, pinned to one `[0, durationMs]` domain
+(`useTimeDomainFromShell`) and labelled in seconds via `tickUnit`. **Adding a
+time chart means pairs plus that domain, never a category axis** —
+`timeAxis.test.ts` is the guard, and the failure it prevents is silent.
+
+**Two things follow a value axis that are easy to miss.** A pair-shaped series
+makes the tooltip print BOTH components (`"42000, 127.75 ms"`) unless the chart
+declares `pairValue="y"` — right for a scatter, whose x is a measurement, wrong
+for a time series, whose x is already the tooltip's title. And the axis
+POINTER's label IS that title, so it needs the same unit formatting as the
+ticks or the tooltip announces `49,000.00` above an axis reading `0..100`.
 
 **A `<caption>`'s WORDS become the table's accessible name, and Playwright
 matches names as a case-insensitive SUBSTRING.** So adding a table whose caption

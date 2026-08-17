@@ -31,7 +31,7 @@ function renderRunTelemetry(response: TelemetryResponse) {
         <Routes>
           <Route
             path="/runs/:runId"
-            element={<Outlet context={{ window: null } satisfies RunWindowContext} />}
+            element={<Outlet context={{ window: null, durationMs: null } satisfies RunWindowContext} />}
           >
             <Route path="load-generators" element={<RunTelemetry />} />
           </Route>

@@ -9,6 +9,22 @@ import {
   toTcpStateChart,
 } from '../src/charts/transforms/telemetry';
 
+/**
+ * The y of a series' nth point.
+ *
+ * These transforms emit PAIR-shaped data — `[elapsedMs, value]` — because the
+ * telemetry charts share the run page's crosshair and a connected pointer on a
+ * category axis syncs by INDEX, which is wrong the moment two payloads have
+ * different bucket counts (§22.5, `ChartXAxis.min`). The assertions below are
+ * about the VALUE, unchanged; this is the one place that knows the shape.
+ */
+function y(series: { data: unknown }, i: number): number | null {
+  const point = (series.data as readonly (readonly [number, number | null])[])[i];
+  if (point === undefined) throw new Error(`no point at index ${i}`);
+  return point[1];
+}
+
+
 type TelemetryHost = TelemetryResponse['hosts'][number];
 
 /**
@@ -71,13 +87,13 @@ describe('telemetry transforms', () => {
     const total = chart.series.find((s) => /total/i.test(s.name))!;
     // ECharts draws a GAP for null and a point on the floor for 0. Zero here
     // would claim the generator was idle across a counter reset.
-    expect(total.data[1]).toBeNull();
+    expect(y(total, 1)).toBeNull();
   });
 
   it('converts memory to MB, as Gatling labels it', () => {
     const chart = toMemoryChart(host);
     const used = chart.series.find((s) => /used/i.test(s.name))!;
-    expect(used.data[0]).toBeCloseTo(host.points[0]!.memUsedBytes / (1024 * 1024), 6);
+    expect(y(used, 0)).toBeCloseTo(host.points[0]!.memUsedBytes / (1024 * 1024), 6);
   });
 
   it('gives every state seen anywhere its own series, zero-filled where absent', () => {
@@ -86,7 +102,7 @@ describe('telemetry transforms', () => {
     // TIME_WAIT is absent from the second point — absent means zero (the
     // migration's "absent when zero"), NOT a gap in the line.
     const timeWait = chart.series.find((s) => s.name === 'TIME_WAIT')!;
-    expect(timeWait.data[1]).toBe(0);
+    expect(y(timeWait, 1)).toBe(0);
   });
 
   it("uses the payload's own offsets as the x axis", () => {
@@ -105,14 +121,14 @@ describe('telemetry transforms', () => {
   it('passes bandwidth counters straight through in bytes per second', () => {
     const chart = toBandwidthChart(host);
     const received = chart.series.find((s) => /received/i.test(s.name))!;
-    expect(received.data[0]).toBe(host.points[0]!.rxBytesPerSec);
-    expect(received.data[1]).toBeNull();
+    expect(y(received, 0)).toBe(host.points[0]!.rxBytesPerSec);
+    expect(y(received, 1)).toBeNull();
   });
 
   it('names the TCP connection-event series Active opens / Passive opens', () => {
     const chart = toConnectionEventsChart(host);
     expect(chart.series.map((s) => s.name)).toEqual(['Active opens', 'Passive opens']);
-    expect(chart.series[0]!.data[0]).toBe(host.points[0]!.activeOpensPerSec);
+    expect(y(chart.series[0]!, 0)).toBe(host.points[0]!.activeOpensPerSec);
   });
 
   it('names the four segment-event series and maps "Received bad" to inErrsPerSec', () => {
@@ -124,7 +140,7 @@ describe('telemetry transforms', () => {
       'Received bad',
     ]);
     const receivedBad = chart.series.find((s) => s.name === 'Received bad')!;
-    expect(receivedBad.data[0]).toBe(host.points[0]!.inErrsPerSec);
+    expect(y(receivedBad, 0)).toBe(host.points[0]!.inErrsPerSec);
   });
 
   it('keeps a measured zero as zero, not as a gap — the opposite defect from null coercion', () => {
@@ -133,7 +149,7 @@ describe('telemetry transforms', () => {
     // would turn this specific zero into a gap.
     const chart = toSegmentEventsChart(host);
     const retransmitted = chart.series.find((s) => s.name === 'Retransmitted')!;
-    expect(retransmitted.data[0]).toBe(0);
+    expect(y(retransmitted, 0)).toBe(0);
   });
 
   it('explains rather than draws empty axes when a host reports no points', () => {

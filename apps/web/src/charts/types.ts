@@ -82,3 +82,13 @@ export interface ChartData {
    */
   readonly limitation?: string;
 }
+
+/**
+ * The shared time domain, in elapsed milliseconds — see `ChartXAxis.min`.
+ *
+ * Optional so a chart rendered outside the run page (the request and group
+ * detail pages, which each show one run's slice) still auto-scales. Supplied on
+ * the run page so every time chart draws the same span and the crosshair they
+ * share means ONE instant.
+ */
+export type TimeDomainMs = readonly [number, number];

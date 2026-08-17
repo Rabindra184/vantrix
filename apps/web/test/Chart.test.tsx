@@ -559,3 +559,52 @@ describe('Chart — the brush is opt-in', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * ═══ ONE TIME AXIS (§22.5) ═══
+ *
+ * The run page's time charts share a crosshair. A connected pointer on a
+ * CATEGORY axis syncs by INDEX, and the payloads behind those charts do not
+ * carry the same bucket count — `/series` is sparse, a second with no request
+ * produces no bucket — so the pointer lined up on screen while pointing at two
+ * different instants. `timeAxis.test.ts` pins the transforms' side of the fix;
+ * this pins the axis'.
+ */
+describe('Chart — the shared time axis', () => {
+  it('pins the value axis to the domain it is given', () => {
+    render(
+      <Chart
+        id="a"
+        title="Requests per second"
+        data={seriesData(['All'])}
+        xAxis={{ type: 'value', name: 'Elapsed (s)', min: 0, max: 100_000 }}
+      />,
+    );
+    expect(lastOption()['xAxis']).toMatchObject({ min: 0, max: 100_000 });
+  });
+
+  it('leaves an unpinned axis to auto-scale, as every other chart still does', () => {
+    render(<Chart id="a" title="Scatter" data={seriesData(['All'])} xAxis={{ type: 'value' }} />);
+    const axis = lastOption()['xAxis'] as { min?: number; max?: number };
+    expect(axis.min).toBeUndefined();
+    expect(axis.max).toBeUndefined();
+  });
+
+  it('labels the POINTER in the same units as the ticks', () => {
+    // The pointer's label is the tooltip's title. Without this the percentile
+    // chart's ticks read 0..100 in seconds while the tooltip above them
+    // announced "49,000.00" — the raw millisecond value, to two decimals.
+    render(
+      <Chart
+        id="a"
+        title="Requests per second"
+        data={seriesData(['All'])}
+        xAxis={{ type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' }}
+      />,
+    );
+    const axis = lastOption()['xAxis'] as {
+      axisPointer?: { label?: { formatter?: (p: { value: number }) => string } };
+    };
+    expect(axis.axisPointer?.label?.formatter?.({ value: 49_000 })).toBe('49 s');
+  });
+});

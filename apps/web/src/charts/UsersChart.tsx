@@ -1,6 +1,7 @@
 import type { UsersResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import type { TimeDomainMs } from './types';
 import { toConcurrentUsers, toUserStartRate } from './transforms/users';
 
 /**
@@ -35,11 +36,12 @@ export interface UsersChartProps {
    * deliberate encoding change).
    */
   readonly group?: string;
+  readonly domainMs?: TimeDomainMs;
 }
 
 /** ⑦ — the concurrency curve. Plots `maxConcurrent`; see `toConcurrentUsers`. */
-export function ConcurrentUsersChart({ users, group }: UsersChartProps) {
-  const data = useMemo(() => toConcurrentUsers(users), [users]);
+export function ConcurrentUsersChart({ users, group, domainMs }: UsersChartProps) {
+  const data = useMemo(() => toConcurrentUsers(users, { x: 'ms' }), [users]);
 
   return (
     <Chart
@@ -52,6 +54,19 @@ export function ConcurrentUsersChart({ users, group }: UsersChartProps) {
       // labels on two lines of similar shape is how a reader ends up believing
       // they are the same measurement.
       yAxis={{ name: 'Users' }}
+      // A VALUE AXIS IN MILLISECONDS, labelled in seconds. This chart shares
+      // `run-time` with requests/s, and a connected pointer on a CATEGORY axis
+      // syncs by INDEX — which is wrong here by construction: `/users` and
+      // `/series` do not carry the same bucket count (see `timeAxis.test.ts`).
+      // Its x is an INSTANT, not a measurement — the tooltip title names it.
+      pairValue="y"
+      xAxis={{
+        type: 'value',
+        name: 'Elapsed (s)',
+        tickUnit: 'ms-as-s',
+        min: domainMs?.[0],
+        max: domainMs?.[1],
+      }}
       // Matching the axis above it, for the same reason that axis is named
       // apart from the arrival rate's: the tooltip is where the two charts are
       // most easily confused, since it is read without the axis in view.
@@ -61,8 +76,8 @@ export function ConcurrentUsersChart({ users, group }: UsersChartProps) {
 }
 
 /** ⑦ᵇ — the arrival rate. Plots `started` per second; see `toUserStartRate`. */
-export function UserStartRateChart({ users, group }: UsersChartProps) {
-  const data = useMemo(() => toUserStartRate(users), [users]);
+export function UserStartRateChart({ users, group, domainMs }: UsersChartProps) {
+  const data = useMemo(() => toUserStartRate(users, { x: 'ms' }), [users]);
 
   return (
     <Chart
@@ -71,6 +86,19 @@ export function UserStartRateChart({ users, group }: UsersChartProps) {
       data={data}
       group={group}
       yAxis={{ name: 'Users/s' }}
+      // A VALUE AXIS IN MILLISECONDS, labelled in seconds. This chart shares
+      // `run-time` with requests/s, and a connected pointer on a CATEGORY axis
+      // syncs by INDEX — which is wrong here by construction: `/users` and
+      // `/series` do not carry the same bucket count (see `timeAxis.test.ts`).
+      // Its x is an INSTANT, not a measurement — the tooltip title names it.
+      pairValue="y"
+      xAxis={{
+        type: 'value',
+        name: 'Elapsed (s)',
+        tickUnit: 'ms-as-s',
+        min: domainMs?.[0],
+        max: domainMs?.[1],
+      }}
       unit="users/s"
     />
   );

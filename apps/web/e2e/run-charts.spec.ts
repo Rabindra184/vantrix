@@ -692,12 +692,27 @@ test('the tooltip reads at the same precision the data table does', async ({ pag
   // finds a false eight-digit number. ECharts renders each value in its own
   // element; reading them individually is the only honest way to ask how
   // precise they are.
+  /*
+   * THE UNIT COMES WITH THE NUMBER, and this used to ignore that.
+   *
+   * The old pattern was `/^-?\d+(\.\d+)?$/` — a BARE number, no suffix. Every
+   * value row here renders as "284.33 ms", so no value ever matched it. The
+   * one element that did was the tooltip's TITLE, which on a category axis was
+   * the bare category label ("49"). So a test named for the precision of the
+   * VALUES was in fact only ever asserting the precision of the title, and it
+   * only came to light when the time axes became value axes and the title
+   * stopped being a bare number.
+   *
+   * Matching the number at the START of an element and ignoring whatever unit
+   * follows is what makes this assert the thing it is named for.
+   */
   const values = (await tooltip.locator('span, div').allTextContents())
     .map((text) => text.trim())
-    .filter((text) => /^-?\d+(\.\d+)?$/.test(text));
+    .map((text) => /^(-?[\d,]+(?:\.\d+)?)(?:\s|$)/.exec(text)?.[1])
+    .filter((n): n is string => n !== undefined);
 
   // The premise: if the tooltip's structure ever changes so that no element
-  // holds a bare number, this says so rather than passing over an empty list.
+  // holds a number, this says so rather than passing over an empty list.
   expect(values.length, 'no numeric element found in the tooltip').toBeGreaterThan(0);
 
   for (const value of values) {

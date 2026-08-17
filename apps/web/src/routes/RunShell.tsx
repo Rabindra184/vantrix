@@ -98,7 +98,7 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
           than here — different query keys, so `/users` was fetched twice and
           the "one window for the whole page" this shell promises was not true.
           One parse, one object, one key. */}
-      <Outlet context={{ window } satisfies RunWindowContext} />
+      <Outlet context={{ window, durationMs: run.durationMs ?? null } satisfies RunWindowContext} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import type { TelemetryResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import type { TimeDomainMs } from './types';
 import {
   toBandwidthChart,
   toConnectionEventsChart,
@@ -37,8 +38,11 @@ import {
  */
 export default function TelemetryCharts({
   host,
+  domainMs,
 }: {
   readonly host: TelemetryResponse['hosts'][number];
+  /** The run page's shared time domain — see `ChartXAxis.min`. */
+  readonly domainMs?: TimeDomainMs;
 }) {
   // One `useMemo` per transform, not a loop over a table of them: `Chart`'s
   // option effect depends on `data` by identity, and this repo's other
@@ -73,7 +77,15 @@ export default function TelemetryCharts({
         data={cpu}
         kind="line"
         group="run-time"
-        xAxis={{ name: 'Elapsed (ms)' }}
+        // Its x is an INSTANT, not a measurement — the tooltip title names it.
+        pairValue="y"
+        xAxis={{
+          type: 'value',
+          name: 'Elapsed (s)',
+          tickUnit: 'ms-as-s',
+          min: domainMs?.[0],
+          max: domainMs?.[1],
+        }}
         yAxis={{ name: 'CPU' }}
         unit="%"
       />
@@ -83,7 +95,15 @@ export default function TelemetryCharts({
         data={memory}
         kind="line"
         group="run-time"
-        xAxis={{ name: 'Elapsed (ms)' }}
+        // Its x is an INSTANT, not a measurement — the tooltip title names it.
+        pairValue="y"
+        xAxis={{
+          type: 'value',
+          name: 'Elapsed (s)',
+          tickUnit: 'ms-as-s',
+          min: domainMs?.[0],
+          max: domainMs?.[1],
+        }}
         yAxis={{ name: 'Memory' }}
         unit="MB"
       />
@@ -93,7 +113,15 @@ export default function TelemetryCharts({
         data={bandwidth}
         kind="line"
         group="run-time"
-        xAxis={{ name: 'Elapsed (ms)' }}
+        // Its x is an INSTANT, not a measurement — the tooltip title names it.
+        pairValue="y"
+        xAxis={{
+          type: 'value',
+          name: 'Elapsed (s)',
+          tickUnit: 'ms-as-s',
+          min: domainMs?.[0],
+          max: domainMs?.[1],
+        }}
         yAxis={{ name: 'Bytes/s' }}
         unit="B/s"
       />
@@ -103,7 +131,15 @@ export default function TelemetryCharts({
         data={connectionEvents}
         kind="line"
         group="run-time"
-        xAxis={{ name: 'Elapsed (ms)' }}
+        // Its x is an INSTANT, not a measurement — the tooltip title names it.
+        pairValue="y"
+        xAxis={{
+          type: 'value',
+          name: 'Elapsed (s)',
+          tickUnit: 'ms-as-s',
+          min: domainMs?.[0],
+          max: domainMs?.[1],
+        }}
         yAxis={{ name: 'Events/s' }}
         unit="/s"
       />
@@ -113,7 +149,15 @@ export default function TelemetryCharts({
         data={segmentEvents}
         kind="line"
         group="run-time"
-        xAxis={{ name: 'Elapsed (ms)' }}
+        // Its x is an INSTANT, not a measurement — the tooltip title names it.
+        pairValue="y"
+        xAxis={{
+          type: 'value',
+          name: 'Elapsed (s)',
+          tickUnit: 'ms-as-s',
+          min: domainMs?.[0],
+          max: domainMs?.[1],
+        }}
         yAxis={{ name: 'Segments/s' }}
         unit="/s"
       />
@@ -123,7 +167,15 @@ export default function TelemetryCharts({
         data={tcpStates}
         kind="line"
         group="run-time"
-        xAxis={{ name: 'Elapsed (ms)' }}
+        // Its x is an INSTANT, not a measurement — the tooltip title names it.
+        pairValue="y"
+        xAxis={{
+          type: 'value',
+          name: 'Elapsed (s)',
+          tickUnit: 'ms-as-s',
+          min: domainMs?.[0],
+          max: domainMs?.[1],
+        }}
         yAxis={{ name: 'Connections' }}
         unit="connections"
       />

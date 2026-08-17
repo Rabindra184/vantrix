@@ -1,6 +1,7 @@
 import type { ErrorSeriesResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import type { TimeDomainMs } from './types';
 import { toErrorSeries } from './transforms/errorSeries';
 
 /**
@@ -23,7 +24,9 @@ import { toErrorSeries } from './transforms/errorSeries';
  * they are deliberately kept out of `@theme`, so the utility that looks right
  * does not exist: `text-status-failed` emits no CSS at all, silently.
  */
-export default function ErrorsChart({ data }: { readonly data: ErrorSeriesResponse }) {
+export default function ErrorsChart(
+  { data, domainMs }: { readonly data: ErrorSeriesResponse; readonly domainMs?: TimeDomainMs },
+) {
   const chart = useMemo(() => toErrorSeries(data), [data]);
 
   return (
@@ -37,7 +40,17 @@ export default function ErrorsChart({ data }: { readonly data: ErrorSeriesRespon
       // deliberately opts out, but only because its x is elapsed time within
       // several different runs.)
       group="run-time"
-      xAxis={{ type: 'value', name: 'Elapsed (ms)' }}
+      // Already a value axis; now labelled in SECONDS like every other time
+      // chart, and pinned to the same domain so the shared pointer lines up.
+      // Its x is an INSTANT, not a measurement — the tooltip title names it.
+      pairValue="y"
+      xAxis={{
+        type: 'value',
+        name: 'Elapsed (s)',
+        tickUnit: 'ms-as-s',
+        min: domainMs?.[0],
+        max: domainMs?.[1],
+      }}
       yAxis={{ name: 'Errors/s' }}
       unit="/s"
     />
