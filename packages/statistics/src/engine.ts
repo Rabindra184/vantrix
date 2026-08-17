@@ -91,44 +91,45 @@ export interface EngineResult {
   toolAssertions: EvaluatedToolAssertion[];
 }
 
-export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions = {}): EngineResult {
-  const warmupMs = opts.warmupMs ?? 0;
-  const percentiles = opts.percentiles ?? [50, 75, 95, 99];
-  const maxEndpoints = opts.maxEndpoints ?? 2000;
-  const maxBucketsRun = opts.maxBucketsRun ?? 1200;
-  const maxBucketsEndpoint = opts.maxBucketsEndpoint ?? 300;
-  const maxBucketsGroup = opts.maxBucketsGroup ?? 300;
+export class LiveEngine {
+  readonly #warmupMs: number;
+  readonly #percentiles: number[];
+  readonly #maxEndpoints: number;
+  readonly #maxBucketsRun: number;
+  readonly #maxBucketsEndpoint: number;
+  readonly #maxBucketsGroup: number;
+  readonly #maxBucketsUsers: number;
 
-  let runStartMs = 0;
-  let sawMeta = false;
-  let firstMs = Number.POSITIVE_INFINITY;
-  let lastMs = 0;
+  #runStartMs = 0;
+  #sawMeta = false;
+  #firstMs = Number.POSITIVE_INFINITY;
+  #lastMs = 0;
 
   // Keyed by (scope, name, family) so the same group name can hold a group_cumulated
   // AND a group_duration entry at once. The key is an opaque lookup token only — scope,
   // name and family are always read back from the stored fields, never recovered by
   // parsing the key, so a name containing the delimiter can never be truncated or
   // collide with another entry (see the "map delimiter" regression test).
-  const rollups = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; builder: RollupBuilder }>();
+  #rollups = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; builder: RollupBuilder }>();
   // Keyed by (scope, name, family) the same way `rollups` is: the key is an
   // opaque lookup token only, never parsed back — scope, name and family are
   // always read from the stored entry fields, so a name containing a space can
   // never truncate or collide.
-  const series = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; series: BucketSeries }>();
+  #series = new Map<string, { scope: MetricScope; name: string; family: MetricFamily; series: BucketSeries }>();
   // Buffered, then built after the loop: runStartMs is 0 until the meta event
   // is handled below, and a UserSeries constructed against 0 reports absolute
   // epoch offsets while every request bucket is run-relative. UserSeries
   // computes nothing until scenarios(), so deferring costs only this array.
-  const userEvents: { scenario: string; kind: 'start' | 'end'; tsMs: number }[] = [];
+  #userEvents: { scenario: string; kind: 'start' | 'end'; tsMs: number }[] = [];
   // One rollup per (scope, name), keyed the same opaque way as `rollups`: the
   // key is never parsed back, so a request name containing a space is safe.
-  const errorsByKey = new Map<string, { scope: MetricScope; name: string; rollup: ErrorRollup }>();
-  const errorsFor = (scope: MetricScope, name: string): ErrorRollup => {
+  #errorsByKey = new Map<string, { scope: MetricScope; name: string; rollup: ErrorRollup }>();
+  #errorsFor(scope: MetricScope, name: string): ErrorRollup {
     const key = `${scope} ${name}`;
-    let entry = errorsByKey.get(key);
-    if (!entry) { entry = { scope, name, rollup: new ErrorRollup() }; errorsByKey.set(key, entry); }
+    let entry = this.#errorsByKey.get(key);
+    if (!entry) { entry = { scope, name, rollup: new ErrorRollup() }; this.#errorsByKey.set(key, entry); }
     return entry.rollup;
-  };
+  }
   // LAZY, exactly like `seriesFor`'s BucketSeries instances and for the reason
   // `userEvents` is buffered: `runStartMs` is 0 until the meta event is handled
   // below, and a series constructed against 0 files every failure at an
@@ -142,53 +143,64 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   // `seriesFor`-style closure: a `let` assigned only inside a nested function
   // is not narrowed by control-flow analysis, so `errorSeries.finish()` after
   // the loop would not typecheck.
-  let errorSeries: ErrorSeries | null = null;
+  #errorSeries: ErrorSeries | null = null;
   // Captured rather than looked up by key after the loop: `series` is keyed by
   // `${scope} ${name} ${family}`, so the run-scope entry's key contains a
   // DOUBLE SPACE, and a lookup that got the spacing wrong would silently fall
   // back to 1000ms and misalign the chart it exists to align.
-  let runResponseSeries: BucketSeries | null = null;
-  let simulation: string | null = null;
-  let description: string | null = null;
-  let declaredAssertions: readonly ToolAssertion[] = [];
-  const endpoints = new Set<string>();
+  #runResponseSeries: BucketSeries | null = null;
+  #simulation: string | null = null;
+  #description: string | null = null;
+  #declaredAssertions: readonly ToolAssertion[] = [];
+  #endpoints = new Set<string>();
 
-  const seriesFor = (
+  constructor(opts: EngineOptions = {}) {
+    this.#warmupMs = opts.warmupMs ?? 0;
+    this.#percentiles = opts.percentiles ?? [50, 75, 95, 99];
+    this.#maxEndpoints = opts.maxEndpoints ?? 2000;
+    this.#maxBucketsRun = opts.maxBucketsRun ?? 1200;
+    this.#maxBucketsEndpoint = opts.maxBucketsEndpoint ?? 300;
+    this.#maxBucketsGroup = opts.maxBucketsGroup ?? 300;
+    this.#maxBucketsUsers = opts.maxBucketsUsers ?? 1200;
+  }
+
+  #seriesFor(
     scope: MetricScope, name: string, family: MetricFamily, max: number,
-  ): BucketSeries => {
+  ): BucketSeries {
     const key = `${scope} ${name} ${family}`;
-    let entry = series.get(key);
+    let entry = this.#series.get(key);
     if (!entry) {
-      entry = { scope, name, family, series: new BucketSeries({ startMs: runStartMs, maxBuckets: max }) };
-      series.set(key, entry);
+      entry = { scope, name, family, series: new BucketSeries({ startMs: this.#runStartMs, maxBuckets: max }) };
+      this.#series.set(key, entry);
     }
     return entry.series;
-  };
+  }
   // Space-joined lookup token. A group/request name may itself contain spaces, but
   // that can never fold two distinct (scope, name, family) triples onto one key:
   // scope and family are always drawn from a few fixed literals, and no MetricFamily
   // literal is a suffix of another, so the trailing " <family>" segment is always
   // unambiguous. finish() reads scope/name/family back from the stored entry fields
   // below, never by parsing this key.
-  const rollupKey = (scope: MetricScope, name: string, family: MetricFamily): string =>
-    `${scope} ${name} ${family}`;
-  const rollupFor = (scope: MetricScope, name: string, family: MetricFamily): RollupBuilder => {
-    const key = rollupKey(scope, name, family);
-    let entry = rollups.get(key);
-    if (!entry) { entry = { scope, name, family, builder: new RollupBuilder() }; rollups.set(key, entry); }
+  #rollupKey(scope: MetricScope, name: string, family: MetricFamily): string {
+    return `${scope} ${name} ${family}`;
+  }
+  #rollupFor(scope: MetricScope, name: string, family: MetricFamily): RollupBuilder {
+    const key = this.#rollupKey(scope, name, family);
+    let entry = this.#rollups.get(key);
+    if (!entry) { entry = { scope, name, family, builder: new RollupBuilder() }; this.#rollups.set(key, entry); }
     return entry.builder;
-  };
+  }
 
-  for (const e of events) {
+  add(e: CanonicalEvent): void {
     if (e.type === 'meta') {
-      runStartMs = e.startedAtMs;
-      sawMeta = true;
-      simulation = e.simulation;
-      description = e.description ?? null;
+      this.#runStartMs = e.startedAtMs;
+      this.#sawMeta = true;
+      this.#simulation = e.simulation;
+      this.#description = e.description ?? null;
       // Definitions only. Evaluated after the loop, because judging them needs
       // the rollups this loop is still building.
-      declaredAssertions = e.assertions ?? [];
-      continue;
+      this.#declaredAssertions = e.assertions ?? [];
+      return;
     }
     if (e.type === 'group') {
       // Group name is the hierarchy joined with '/' (e.g. 'Catalog/Recommendations').
@@ -208,23 +220,23 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       // Series always includes warm-up (PRD 7.4), so these run BEFORE the
       // warm-up `continue` below, mirroring the request branch's split between
       // series (:172-177) and summary stats (:180-182).
-      const cumulated = seriesFor('group', name, 'group_cumulated', maxBucketsGroup);
+      const cumulated = this.#seriesFor('group', name, 'group_cumulated', this.#maxBucketsGroup);
       cumulated.add(e.startMs, e.cumulatedResponseTimeMs, e.ok, 'start');
       cumulated.add(e.endMs, e.cumulatedResponseTimeMs, e.ok, 'end');
-      const duration = seriesFor('group', name, 'group_duration', maxBucketsGroup);
+      const duration = this.#seriesFor('group', name, 'group_duration', this.#maxBucketsGroup);
       duration.add(e.startMs, e.endMs - e.startMs, e.ok, 'start');
       duration.add(e.endMs, e.endMs - e.startMs, e.ok, 'end');
 
       // Summary stats exclude warm-up, same as the request path (PRD 7.4).
-      if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
-      rollupFor('group', name, 'group_cumulated').add(e.cumulatedResponseTimeMs, e.ok);
-      rollupFor('group', name, 'group_duration').add(e.endMs - e.startMs, e.ok);
-      continue;
+      if (isWarmup(e.startMs, this.#runStartMs, this.#warmupMs)) return;
+      this.#rollupFor('group', name, 'group_cumulated').add(e.cumulatedResponseTimeMs, e.ok);
+      this.#rollupFor('group', name, 'group_duration').add(e.endMs - e.startMs, e.ok);
+      return;
     }
     if (e.type === 'user') {
       // Always recorded, warm-up included: the user charts show the ramp.
-      userEvents.push({ scenario: e.scenario, kind: e.kind, tsMs: e.tsMs });
-      continue;
+      this.#userEvents.push({ scenario: e.scenario, kind: e.kind, tsMs: e.tsMs });
+      return;
     }
     if (e.type === 'error') {
       // ═══ THE FLAT TABLE ONLY, AND RUN SCOPE ONLY ═══
@@ -245,11 +257,11 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       //
       // Warm-up is excluded on the same terms as a request's error below, so
       // one run cannot count two kinds of failure by two different rules.
-      if (isWarmup(e.tsMs, runStartMs, warmupMs)) continue;
-      errorsFor('run', '').add(errorMessageOf(e.message));
-      continue;
+      if (isWarmup(e.tsMs, this.#runStartMs, this.#warmupMs)) return;
+      this.#errorsFor('run', '').add(errorMessageOf(e.message));
+      return;
     }
-    if (e.type !== 'request') continue;
+    if (e.type !== 'request') return;
 
     // D-10. A request's identity is its FULL PATH, joined exactly as :133 joins
     // a group's — `Catalog/Recommendations/List Products`. Without this the
@@ -262,25 +274,25 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     // it exists for.
     const name = [...e.groups, e.name].join('/');
 
-    endpoints.add(name);
-    if (endpoints.size > maxEndpoints) {
+    this.#endpoints.add(name);
+    if (this.#endpoints.size > this.#maxEndpoints) {
       throw ingestError('ENDPOINT_CARDINALITY_EXCEEDED', {
-        message: `Run exceeds the endpoint cardinality cap: more than ${maxEndpoints} distinct request paths.`,
+        message: `Run exceeds the endpoint cardinality cap: more than ${this.#maxEndpoints} distinct request paths.`,
         remediation: 'Request names appear to contain dynamic values such as IDs. Parameterize them in the simulation, or raise the limit in project settings.',
-        detail: { limit: maxEndpoints, samples: [...endpoints].slice(0, 5) },
+        detail: { limit: this.#maxEndpoints, samples: [...this.#endpoints].slice(0, 5) },
       });
     }
 
     const duration = e.endMs - e.startMs;
-    firstMs = Math.min(firstMs, e.startMs);
-    lastMs = Math.max(lastMs, e.endMs);
+    this.#firstMs = Math.min(this.#firstMs, e.startMs);
+    this.#lastMs = Math.max(this.#lastMs, e.endMs);
 
     // Series always includes warm-up (PRD 7.4).
-    const runSeries = seriesFor('run', '', 'response_time', maxBucketsRun);
-    runResponseSeries = runSeries;
+    const runSeries = this.#seriesFor('run', '', 'response_time', this.#maxBucketsRun);
+    this.#runResponseSeries = runSeries;
     runSeries.add(e.startMs, duration, e.ok, 'start');
     runSeries.add(e.endMs, duration, e.ok, 'end');
-    const epSeries = seriesFor('request', name, 'response_time', maxBucketsEndpoint);
+    const epSeries = this.#seriesFor('request', name, 'response_time', this.#maxBucketsEndpoint);
     epSeries.add(e.startMs, duration, e.ok, 'start');
     epSeries.add(e.endMs, duration, e.ok, 'end');
 
@@ -292,59 +304,67 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     // `startMs` a request beginning at 10.9s and failing at 11.2s would sit in
     // a different bucket from its own KO.
     if (!e.ok) {
-      errorSeries ??= new ErrorSeries({ startMs: runStartMs, maxBuckets: maxBucketsRun });
-      errorSeries.add(e.endMs, errorMessageOf(e.message));
+      this.#errorSeries ??= new ErrorSeries({ startMs: this.#runStartMs, maxBuckets: this.#maxBucketsRun });
+      this.#errorSeries.add(e.endMs, errorMessageOf(e.message));
     }
 
     // Summary stats exclude warm-up.
-    if (isWarmup(e.startMs, runStartMs, warmupMs)) continue;
-    rollupFor('run', '', 'response_time').add(duration, e.ok);
-    rollupFor('request', name, 'response_time').add(duration, e.ok);
+    if (isWarmup(e.startMs, this.#runStartMs, this.#warmupMs)) return;
+    this.#rollupFor('run', '', 'response_time').add(duration, e.ok);
+    this.#rollupFor('request', name, 'response_time').add(duration, e.ok);
     // A message-less failure still contributes to the KO count; route it into an
     // explicit bucket so sum(errors[].count) always reconciles instead of
     // silently undercounting.
     if (!e.ok) {
       const message = errorMessageOf(e.message);
-      errorsFor('run', '').add(message);
-      errorsFor('request', name).add(message);
+      this.#errorsFor('run', '').add(message);
+      this.#errorsFor('request', name).add(message);
     }
   }
 
-  const windowMs = Math.max(0, lastMs - Math.max(firstMs, runStartMs + warmupMs));
-  const stats: StatRollup[] = [];
-  for (const { scope, name, family, builder } of rollups.values()) {
-    stats.push(builder.finish({ scope, name, family, windowMs, percentiles }));
+  snapshot(): EngineResult {
+    const windowMs = Math.max(0, this.#lastMs - Math.max(this.#firstMs, this.#runStartMs + this.#warmupMs));
+    const stats: StatRollup[] = [];
+    for (const { scope, name, family, builder } of this.#rollups.values()) {
+      stats.push(builder.finish({ scope, name, family, windowMs, percentiles: this.#percentiles }));
+    }
+
+    const errors: EngineResult['errors'] = [];
+    for (const { scope, name, rollup } of this.#errorsByKey.values()) {
+      for (const e of rollup.top(200)) errors.push({ scope, name, message: e.message, count: e.count });
+    }
+
+    // The run series' final width, which the error series is lifted to match.
+    // 1000 when there is no run series at all, which implies no requests and so
+    // no failures either — nothing is drawn at any width.
+    const runWidthMs = this.#runResponseSeries?.widthMs ?? 1000;
+    const errorSeriesResult: ErrorSeriesResult =
+      this.#errorSeries === null ? { bucketWidthMs: runWidthMs, rows: [] } : this.#errorSeries.finish(runWidthMs);
+
+    const users = new UserSeries({ startMs: this.#runStartMs, maxBuckets: this.#maxBucketsUsers });
+    for (const u of this.#userEvents) users.add(u.scenario, u.kind, u.tsMs);
+
+    return {
+      stats,
+      series: new Map([...this.#series].map(([k, v]) => [k, { scope: v.scope, name: v.name, family: v.family, buckets: v.series.buckets() }])),
+      users: users.scenarios(),
+      errors,
+      errorSeries: errorSeriesResult,
+      endpointCount: this.#endpoints.size,
+      runStartedAtMs: this.#sawMeta ? this.#runStartMs : null,
+      simulation: this.#simulation,
+      description: this.#description,
+      durationMs: this.#lastMs === 0 ? 0 : Math.max(0, this.#lastMs - this.#runStartMs),
+      // AFTER `stats`, necessarily: an assertion is judged against the very
+      // rollups this call produced, so it cannot be evaluated while they are
+      // still being accumulated.
+      toolAssertions: evaluateToolAssertions(this.#declaredAssertions, stats),
+    };
   }
+}
 
-  const errors: EngineResult['errors'] = [];
-  for (const { scope, name, rollup } of errorsByKey.values()) {
-    for (const e of rollup.top(200)) errors.push({ scope, name, message: e.message, count: e.count });
-  }
-
-  // The run series' final width, which the error series is lifted to match.
-  // 1000 when there is no run series at all, which implies no requests and so
-  // no failures either — nothing is drawn at any width.
-  const runWidthMs = runResponseSeries?.widthMs ?? 1000;
-  const errorSeriesResult: ErrorSeriesResult =
-    errorSeries === null ? { bucketWidthMs: runWidthMs, rows: [] } : errorSeries.finish(runWidthMs);
-
-  const users = new UserSeries({ startMs: runStartMs, maxBuckets: opts.maxBucketsUsers ?? 1200 });
-  for (const u of userEvents) users.add(u.scenario, u.kind, u.tsMs);
-
-  return {
-    stats,
-    series: new Map([...series].map(([k, v]) => [k, { scope: v.scope, name: v.name, family: v.family, buckets: v.series.buckets() }])),
-    users: users.scenarios(),
-    errors,
-    errorSeries: errorSeriesResult,
-    endpointCount: endpoints.size,
-    runStartedAtMs: sawMeta ? runStartMs : null,
-    simulation,
-    description,
-    durationMs: lastMs === 0 ? 0 : Math.max(0, lastMs - runStartMs),
-    // AFTER `stats`, necessarily: an assertion is judged against the very
-    // rollups this call produced, so it cannot be evaluated while they are
-    // still being accumulated.
-    toolAssertions: evaluateToolAssertions(declaredAssertions, stats),
-  };
+export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions = {}): EngineResult {
+  const engine = new LiveEngine(opts);
+  for (const e of events) engine.add(e);
+  return engine.snapshot();
 }
