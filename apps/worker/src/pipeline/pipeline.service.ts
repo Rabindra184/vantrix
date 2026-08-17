@@ -49,7 +49,12 @@ function rawLogBundleSource(buf: Buffer): BundleSource {
     },
     read: async (path) => {
       if (path !== SIMULATION_LOG) throw new Error(`no such entry: ${path}`);
-      return new Uint8Array(buf);
+      // `buf` (unlike head()'s small slice above) can be the whole
+      // 150-250 MB log, so this returns the SAME buffer rather than
+      // `new Uint8Array(buf)` -- that constructor form copies every byte,
+      // doubling peak memory for no reason: Buffer already IS a Uint8Array
+      // (Node's own subclass), so no conversion is needed at all.
+      return buf;
     },
   };
 }

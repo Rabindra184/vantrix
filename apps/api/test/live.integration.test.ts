@@ -1,5 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, copyFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -267,66 +270,79 @@ describe('live streaming', () => {
   });
 
   it('a streamed run finalizes to the same figures as an uploaded one', async () => {
-    // close() waits up to config.defaultWaitMs (INGEST_WAIT_MS) for a
-    // terminal notification before answering — exactly what
-    // IngestController.post does for a bundle upload. Nothing drains the
-    // BullMQ queue in this test process (Global Constraint #4), so that
-    // wait would otherwise always run out the full default (25s) before
-    // falling back to its own re-read. Shortening it here, the same
-    // env-var-plus-finally-restore technique CLAUDE.md's timezone
-    // convention already documents, keeps this test's own answer fast;
-    // the REAL answer comes from runPipelineFor below regardless of what
-    // close() itself reported, exactly like read.integration.test.ts's
-    // ingested() helper (metadata.waitMs: 0, then runPipelineFor) does for
-    // the upload path. Integration files share one worker process
-    // (fileParallelism: false), so the restore in `finally` matters here
-    // for the same reason it does there.
-    const previousWaitMs = process.env.INGEST_WAIT_MS;
-    process.env.INGEST_WAIT_MS = '50';
-    try {
+    await withFastCloseWait(async () => {
       ctx = await createTestApp();
       const buf = readFileSync(LOG);
 
+      // The live path: open, stream the whole fixture in 64 KB chunks, close.
       const opened = await open(ctx.streamToken);
       expect(opened.status).toBe(201);
-      const runId = opened.body.runId;
+      const liveRunId = opened.body.runId;
 
       let offset = 0;
       while (offset < buf.length) {
         const n = Math.min(CHUNK_BYTES, buf.length - offset);
-        const res = await stream(ctx.streamToken, runId, offset, buf.subarray(offset, offset + n));
+        const res = await stream(ctx.streamToken, liveRunId, offset, buf.subarray(offset, offset + n));
         expect(res.status).toBe(202);
         offset = res.body.nextOffset;
       }
       expect(offset).toBe(buf.length);
 
-      await close(ctx.streamToken, runId);
+      await close(ctx.streamToken, liveRunId);
       // The real finalization: constructs a PipelineService and processes
       // the run synchronously, exactly like every other integration suite
       // that needs a completed run without a live worker (support/pipeline.ts).
-      await runPipelineFor(ctx, runId);
+      await runPipelineFor(ctx, liveRunId);
 
-      const run = await request(ctx.app.getHttpServer())
-        .get(`/v1/runs/${runId}`)
-        .set('Authorization', `Bearer ${ctx.readToken}`);
-      expect(run.status).toBe(200);
-      expect(run.body.status).toBe('complete');
-      // Same figures an uploaded bundle of this exact fixture produces
-      // (parity.e2e.test.ts, pipeline.integration.test.ts) — derived from
-      // the response, never written down here.
-      expect(run.body.durationMs).toBeGreaterThan(0);
+      // The SAME fixture, through the ordinary bundle-upload path, so the
+      // claim in this test's title is actually checked against a second,
+      // independent run rather than merely asserted plausible of the live
+      // one alone. Nothing here is hardcoded: both sides are read back from
+      // whatever the two pipelines actually produced.
+      const dir = mkdtempSync(join(tmpdir(), 'live-parity-'));
+      const resultsDir = join(dir, 'uploaded-run');
+      mkdirSync(resultsDir, { recursive: true });
+      copyFileSync(LOG, join(resultsDir, 'simulation.log'));
+      const tarball = join(dir, 'bundle.tgz');
+      execFileSync('tar', ['-czf', tarball, '-C', dir, 'uploaded-run']);
 
-      const stats = await request(ctx.app.getHttpServer())
-        .get(`/v1/runs/${runId}/stats`)
-        .set('Authorization', `Bearer ${ctx.readToken}`);
-      expect(stats.status).toBe(200);
-      const runRow = (stats.body.stats as { scope: string; family: string; count: number; okCount: number; koCount: number }[])
-        .find((s) => s.scope === 'run' && s.family === 'response_time');
-      expect(runRow?.count).toBeGreaterThan(0);
-      expect((runRow?.okCount ?? 0) + (runRow?.koCount ?? 0)).toBe(runRow?.count);
-    } finally {
-      if (previousWaitMs === undefined) delete process.env.INGEST_WAIT_MS;
-      else process.env.INGEST_WAIT_MS = previousWaitMs;
-    }
+      const uploaded = await request(ctx.app.getHttpServer())
+        .post('/v1/runs')
+        .set('Authorization', `Bearer ${ctx.ingestToken}`)
+        .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+        .attach('bundle', readFileSync(tarball), 'bundle.tgz');
+      await runPipelineFor(ctx, uploaded.body.id);
+
+      const [liveStats, uploadedStats] = await Promise.all([
+        request(ctx.app.getHttpServer())
+          .get(`/v1/runs/${liveRunId}/stats`)
+          .set('Authorization', `Bearer ${ctx.readToken}`),
+        request(ctx.app.getHttpServer())
+          .get(`/v1/runs/${uploaded.body.id}/stats`)
+          .set('Authorization', `Bearer ${ctx.readToken}`),
+      ]);
+      expect(liveStats.status).toBe(200);
+      expect(uploadedStats.status).toBe(200);
+
+      type Row = { scope: string; family: string; count: number; okCount: number; koCount: number; meanMs: number; minMs: number; maxMs: number };
+      const liveRow = (liveStats.body.stats as Row[]).find((s) => s.scope === 'run' && s.family === 'response_time');
+      const uploadedRow = (uploadedStats.body.stats as Row[]).find((s) => s.scope === 'run' && s.family === 'response_time');
+
+      expect(liveRow?.count).toBeGreaterThan(0);
+      expect(liveRow?.count).toBe(uploadedRow?.count);
+      expect(liveRow?.okCount).toBe(uploadedRow?.okCount);
+      expect(liveRow?.koCount).toBe(uploadedRow?.koCount);
+      expect((liveRow?.okCount ?? 0) + (liveRow?.koCount ?? 0)).toBe(liveRow?.count);
+      expect(liveRow?.minMs).toBe(uploadedRow?.minMs);
+      expect(liveRow?.maxMs).toBe(uploadedRow?.maxMs);
+      expect(liveRow?.meanMs).toBeCloseTo(uploadedRow?.meanMs ?? NaN, 6);
+
+      const [liveRun, uploadedRun] = await Promise.all([
+        request(ctx.app.getHttpServer()).get(`/v1/runs/${liveRunId}`).set('Authorization', `Bearer ${ctx.readToken}`),
+        request(ctx.app.getHttpServer()).get(`/v1/runs/${uploaded.body.id}`).set('Authorization', `Bearer ${ctx.readToken}`),
+      ]);
+      expect(liveRun.body.status).toBe('complete');
+      expect(liveRun.body.durationMs).toBe(uploadedRun.body.durationMs);
+    });
   });
 });

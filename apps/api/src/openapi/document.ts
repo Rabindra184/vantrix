@@ -436,7 +436,7 @@ const responses: Record<string, ResponseObject> = {
     description:
       'The request body failed MintTokenRequestSchema (code INVALID_TOKEN_REQUEST): "name" is ' +
       'blank or missing, "scopes" is empty or missing, an entry in "scopes" is not one of ' +
-      '"ingest"/"read"/"telemetry", or the body names a field the schema does not — ' +
+      '"ingest"/"read"/"telemetry"/"stream", or the body names a field the schema does not — ' +
       'MintTokenRequestSchema is `.strict()`, so an extra field (e.g. a caller-supplied ' +
       '"projectId") lands here rather than being silently ignored. ' +
       'application/problem+json with a required "remediation".',
