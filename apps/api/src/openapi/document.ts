@@ -642,7 +642,9 @@ const paths: Record<string, PathItemObject> = {
         'the run\'s expected offset: a match appends and answers 202; an offset behind the ' +
         'cursor is a no-op 202 (a replay — this is what makes the agent\'s own retries ' +
         'idempotent); an offset ahead of the cursor, or a run that is no longer "running", is a ' +
-        '409 naming the offset to resume from.',
+        '409 naming the offset to resume from. Rejected with 413 if this single chunk, or the ' +
+        'run\'s total accepted bytes including it, would exceed the project\'s bundle size limit ' +
+        '— the same limit and the same code POST /v1/runs enforces.',
       parameters: [parameters['RunId']!, parameters['StreamOffset']!],
       requestBody: {
         required: true,
@@ -654,6 +656,7 @@ const paths: Record<string, PathItemObject> = {
         '400': ref('BadRequest'),
         '404': ref('NotFound'),
         '409': ref('StreamRejected'),
+        '413': ref('BundleTooLarge'),
         ...authFailureResponses,
       },
     },

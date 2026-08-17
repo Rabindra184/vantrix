@@ -219,7 +219,7 @@ describe('live streaming', () => {
     expect(res.body.remediation).toBeTruthy();
   });
 
-  it('rejects a chunk that would push the run past the configured size limit', async () => {
+  it('rejects a single chunk larger than the configured size limit', async () => {
     // MAX_BUNDLE_BYTES, not a project setting: LiveService reuses
     // config.maxBundleBytes directly (the same flat default IngestService
     // falls back to), rather than re-deriving the upload path's
@@ -232,12 +232,39 @@ describe('live streaming', () => {
       ctx = await createTestApp();
       const opened = await open(ctx.streamToken);
 
+      // A single body already past the limit -- readRawBody's PER-REQUEST
+      // cap is what fires here, before LiveService.stream ever sees it.
       const res = await stream(
         ctx.streamToken, opened.body.runId, 0,
         Buffer.from('this is way more than sixteen bytes'),
       );
       expect(res.status).toBe(413);
       expect(res.body.remediation).toBeTruthy();
+    } finally {
+      if (previous === undefined) delete process.env.MAX_BUNDLE_BYTES;
+      else process.env.MAX_BUNDLE_BYTES = previous;
+    }
+  });
+
+  it("rejects a chunk that would push the run's cumulative total past the configured size limit", async () => {
+    // Two chunks, each individually well under the 16-byte cap, so
+    // readRawBody's per-request check never fires -- only
+    // LiveService.stream's cumulative (offset + bytes.length) check can
+    // reject the second one.
+    const previous = process.env.MAX_BUNDLE_BYTES;
+    process.env.MAX_BUNDLE_BYTES = '16';
+    try {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+
+      const first = await stream(ctx.streamToken, runId, 0, Buffer.from('0123456789'));
+      expect(first.status).toBe(202);
+      expect(first.body.nextOffset).toBe(10);
+
+      const second = await stream(ctx.streamToken, runId, 10, Buffer.from('0123456789'));
+      expect(second.status).toBe(413);
+      expect(second.body.remediation).toBeTruthy();
     } finally {
       if (previous === undefined) delete process.env.MAX_BUNDLE_BYTES;
       else process.env.MAX_BUNDLE_BYTES = previous;
