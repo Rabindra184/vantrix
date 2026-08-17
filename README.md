@@ -142,7 +142,7 @@ for the same run state, so a CI poll loop is identical to the initial post:
 | Code       | Run state              | Meaning to CI |
 |------------|-------------------------|---------------|
 | `200`      | complete · pass         | Ingested; all SLA rules held. |
-| `200`      | incomplete              | Closed without completing a normal ingest — today, a live run whose `close` received zero bytes. Verdict is always `not_evaluated`: this never passes a gate, because a partial run could otherwise satisfy every SLA rule purely by having stopped early. |
+| `200`      | incomplete              | Closed without completing a normal ingest: a live run whose `close` received zero bytes, or one whose producer went silent long enough for the sweeper to finalize it (see "Streaming a run live"). Verdict is always `not_evaluated`: this never passes a gate, because a partial run could otherwise satisfy every SLA rule purely by having stopped early. |
 | `422`      | complete · breach       | Ingested successfully — the gate failed. Body lists every breached rule with actual vs. threshold. |
 | `202`      | pending / parsing / running | Still working. `Retry-After` header and a `statusUrl` body field are returned (no `Location` header) — identical whether the run is queued, being parsed, or still being streamed to. |
 | `400`      | failed                  | Bundle could not be parsed — including an unrecognised archive (`BUNDLE_NOT_ARCHIVE`). Body names likely cause and fix. |
@@ -188,7 +188,24 @@ resume) streaming at. `idempotencyKey` makes a retried `open` (say, after a
 lost response) rejoin the run it already created instead of starting a
 second one.
 
-Every `stream` call carries `X-Stream-Offset`, a required request header
+**Exactly one process may stream a given run.** The offset protocol below
+makes an agent's own retries safe, and it makes two *sequential* writers
+safe, but it does not serialize two writers that overlap: both can read the
+same cursor, both can then write their own bytes to the object keyed by that
+one offset, and only one of them wins the compare-and-set that advances the
+cursor. The stored bytes are then whichever `put` landed last while the
+cursor describes whichever advance won — a run whose assembled log does not
+match its own byte count, with nothing downstream able to tell. Hand the
+`runId` to one agent. If a producer is restarted, it resumes from
+`nextOffset`; it does not run alongside the old one.
+
+Every `stream` call carries the chunk as **raw bytes under a Content-Type
+the server does not parse** — send `application/octet-stream`. A body sent as
+`application/json` or `application/x-www-form-urlencoded` is consumed by the
+framework's own body parser before the route sees it, and is rejected with
+`400 STREAM_BODY_CONSUMED`.
+
+Every `stream` call also carries `X-Stream-Offset`, a required request header
 naming the byte offset this chunk's body begins at. The server holds the
 run's own byte cursor and judges the header against it **before writing
 anything**:
@@ -212,6 +229,14 @@ checksum taken of that already-corrupted assembly still passes — nothing
 downstream ever notices. Reading the cursor before any write, for both the
 gap and the replay case, is what keeps that unconstructible.
 
+Two separate limits answer `413`, and they bound different things: a single
+chunk body over `MAX_STREAM_CHUNK_BYTES` (8 MiB by default — the API buffers
+a chunk in memory to judge it, so this is deliberately far below a whole
+run), and a chunk that would carry the run's cumulative accepted bytes past
+`MAX_BUNDLE_BYTES`, the same limit `POST /v1/runs` enforces. Both use the
+`BUNDLE_TOO_LARGE` code; the problem+json says which one was hit, because
+the first is fixed by re-chunking and the second is not.
+
 `close` finalizes the run. A run that received at least one byte is
 assembled and queued through the same pipeline a bundle upload runs through,
 so its response shares `POST /v1/runs`'s 200/202/400/413/422 state machine
@@ -219,6 +244,12 @@ above. A run closed having received zero bytes finalizes immediately as
 `incomplete` instead (`200`, `verdict: not_evaluated`; see the verdict
 contract above). Closing a run that is not currently `running` — already
 closed, or never a live run — is a `409`.
+
+**A run whose producer never calls `close` does not stay open.** The worker's
+sweeper finalizes a `running` run as `incomplete` once its byte cursor has not
+moved for `RUNNING_STALE_AFTER_MS` (10 minutes by default). That threshold is
+on silence, not on run length: a live run streams for as long as the load test
+does, and only the time since its last accepted chunk counts against it.
 
 ## Proving it end to end
 

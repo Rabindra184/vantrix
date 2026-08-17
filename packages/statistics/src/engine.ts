@@ -218,8 +218,14 @@ export class LiveEngine {
       // a rate chart without a re-ingest.
       //
       // Series always includes warm-up (PRD 7.4), so these run BEFORE the
-      // warm-up `continue` below, mirroring the request branch's split between
-      // series (:172-177) and summary stats (:180-182).
+      // warm-up `return` below, mirroring the request branch's own split
+      // between its series calls and its summary-stat calls.
+      //
+      // `return`, not `continue`: this was a `for` loop's body before the
+      // LiveEngine extraction and every `continue` became a `return` from
+      // `add`. The line numbers this used to cite (":172-177", ":180-182")
+      // went stale in the same move, which is the argument for naming the
+      // branch rather than its position.
       const cumulated = this.#seriesFor('group', name, 'group_cumulated', this.#maxBucketsGroup);
       cumulated.add(e.startMs, e.cumulatedResponseTimeMs, e.ok, 'start');
       cumulated.add(e.endMs, e.cumulatedResponseTimeMs, e.ok, 'end');
@@ -263,8 +269,9 @@ export class LiveEngine {
     }
     if (e.type !== 'request') return;
 
-    // D-10. A request's identity is its FULL PATH, joined exactly as :133 joins
-    // a group's — `Catalog/Recommendations/List Products`. Without this the
+    // D-10. A request's identity is its FULL PATH, joined exactly as the
+    // group branch above joins a group's — `Catalog/Recommendations/List
+    // Products`. Without this the
     // statistics tree cannot nest requests under their groups: `buildTree`
     // parents by '/'-prefix, and a bare name has no prefix to parent by.
     //
@@ -337,6 +344,25 @@ export class LiveEngine {
     // The run series' final width, which the error series is lifted to match.
     // 1000 when there is no run series at all, which implies no requests and so
     // no failures either — nothing is drawn at any width.
+    //
+    // ═══ THE ONE ACCUMULATOR WHOSE READ IS NOT NON-DESTRUCTIVE ═══
+    //
+    // `ErrorSeries.finish()` coalesces IN PLACE (errors-series.ts, `#halve`),
+    // unlike every other read here: `RollupBuilder.finish()` is pure,
+    // `BucketSeries.buckets()` only reads, and `snapshot({ clone: true })`
+    // exists precisely so the sketches and histograms are copied. This one
+    // mutates, so calling it twice is not calling it once.
+    //
+    // It is nonetheless SAFE to snapshot a live run repeatedly, which is
+    // what Part 2 does on a timer, and the reason is arithmetic rather than
+    // luck. Widths only ever DOUBLE, and
+    // `floor(floor(x / w) / 2) === floor(x / (2w))` — so a bucket coalesced
+    // early and one coalesced late land in the same place. A snapshot taken
+    // mid-run therefore leaves the accumulator in a state indistinguishable
+    // from one that had simply seen a coarser width all along, and the final
+    // `finish` produces the same rows either way. What is NOT safe is ever
+    // asking for a NARROWER width than the accumulator already holds;
+    // `finish` clamps rather than throws for exactly that reason.
     const runWidthMs = this.#runResponseSeries?.widthMs ?? 1000;
     const errorSeriesResult: ErrorSeriesResult =
       this.#errorSeries === null ? { bucketWidthMs: runWidthMs, rows: [] } : this.#errorSeries.finish(runWidthMs);
