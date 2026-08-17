@@ -19,6 +19,7 @@ import {
   StatRowSchema,
   StatsResponseSchema,
   StreamAcceptedSchema,
+  StreamRejectedSchema,
   TelemetryBatchSchema,
   TelemetryResponseSchema,
   TokenListResponseSchema,
@@ -72,6 +73,7 @@ const SOURCE: Record<string, ZodTypeAny> = {
   OpenLiveRunRequest: OpenLiveRunRequestSchema,
   OpenLiveRunResponse: OpenLiveRunResponseSchema,
   StreamAccepted: StreamAcceptedSchema,
+  StreamRejected: StreamRejectedSchema,
 };
 
 /**

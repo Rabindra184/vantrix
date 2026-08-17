@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   OpenLiveRunRequestSchema, OpenLiveRunResponseSchema,
-  RunProcessingSchema, RunStatusSchema, TokenScopeSchema,
+  ProblemDetailsSchema, RunProcessingSchema, RunStatusSchema,
+  StreamRejectedSchema, TokenScopeSchema,
 } from '../src/index.js';
 
 describe('live contracts', () => {
@@ -61,5 +62,32 @@ describe('live contracts', () => {
       nextOffset: 0,
     });
     expect(r.nextOffset).toBe(0);
+  });
+
+  const PROBLEM_FIELDS = {
+    type: 'https://perfportal.dev/errors/STREAM_OFFSET_REJECTED',
+    title: 'stream offset rejected',
+    status: 409,
+    code: 'STREAM_OFFSET_REJECTED',
+    detail: 'gap',
+    remediation: 'resume from nextOffset',
+  };
+
+  it('a stream rejection carries nextOffset alongside every ProblemDetails field', () => {
+    // The bug this schema exists to prevent: ProblemDetailsSchema is a
+    // plain z.object with no .passthrough(), so zodToJsonSchema (which the
+    // OpenAPI document derives components.schemas from) emits
+    // "additionalProperties: false" for it -- a document pointing this
+    // response at THAT schema would describe itself as forbidding the one
+    // field its own prose says the response carries.
+    const parsed = StreamRejectedSchema.parse({ ...PROBLEM_FIELDS, nextOffset: 4096 });
+    expect(parsed.nextOffset).toBe(4096);
+    // Still a real ProblemDetails underneath -- every required field there
+    // is still required here too, not loosened by the extension.
+    expect(() => ProblemDetailsSchema.parse(parsed)).not.toThrow();
+  });
+
+  it('a stream rejection without nextOffset is invalid -- the field the resume loop depends on', () => {
+    expect(() => StreamRejectedSchema.parse(PROBLEM_FIELDS)).toThrow();
   });
 });

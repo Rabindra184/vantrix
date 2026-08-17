@@ -470,16 +470,16 @@ const responses: Record<string, ResponseObject> = {
   },
   StreamRejected: {
     description:
-      'The declared "X-Stream-Offset" does not match this run\'s current byte cursor — a gap ' +
-      '(ahead of the cursor) or a replay (behind it; a no-op, which is what makes the agent\'s ' +
-      'own retries idempotent) — or the run is no longer "running" (already closed). All three ' +
-      'share one cause from the caller\'s point of view: "the byte cursor did not move from ' +
-      'where you think it is." A required "remediation", plus — ADDITIONALLY to the ' +
-      'ProblemDetails shape proper, since it is specific to this operation rather than a ' +
-      'general problem+json member — a top-level "nextOffset", the exact field the 202 case ' +
-      'carries, so a caller\'s resume loop reads the same field regardless of which status code ' +
-      'it got back.',
-    content: problem(),
+      'The declared "X-Stream-Offset" is AHEAD of this run\'s current byte cursor (a gap), or ' +
+      'the run is no longer "running" (already closed). An offset BEHIND the cursor is a ' +
+      'different case entirely — a replay, answered 202 as a no-op, which is what makes the ' +
+      'agent\'s own retries idempotent; see StreamAccepted. A required "remediation", plus — a ' +
+      'field this response carries that plain ProblemDetails does not, which is why this is its ' +
+      'own schema rather than a $ref to ProblemDetails (a bare object schema like that one\'s ' +
+      'implies "no other properties") — a top-level "nextOffset", the exact field the 202 case ' +
+      'carries too, so a caller\'s resume loop reads the same field regardless of which status ' +
+      'code it got back.',
+    content: { 'application/problem+json': { schema: schemaRef('StreamRejected') } },
   },
   RunNotRunning: {
     description:

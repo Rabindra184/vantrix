@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TOOL_IDS } from './ingest.js';
+import { ProblemDetailsSchema } from './problem.js';
 import { TOKEN_SCOPES } from './tokens.js';
 
 /**
@@ -92,3 +93,22 @@ export const StreamAcceptedSchema = z.object({
   nextOffset: z.number().int().min(0),
 });
 export type StreamAccepted = z.infer<typeof StreamAcceptedSchema>;
+
+/**
+ * The 409 body POST /v1/runs/:id/stream answers with for a gap, or a run
+ * that is no longer `running` -- every `ProblemDetails` field (so it is
+ * still `application/problem+json` with a `remediation`), PLUS `nextOffset`,
+ * the exact field the 202 case carries, so a caller's resume loop reads one
+ * field regardless of which status code it got back.
+ *
+ * A bare `ProblemDetailsSchema` reference would not do here: it is a plain
+ * `z.object` with no `.passthrough()`, so the JSON Schema the OpenAPI
+ * document derives from it comes out `additionalProperties: false` --
+ * meaning the document would describe this response as FORBIDDING the one
+ * field its own prose says the response carries. This schema exists so the
+ * document does not contradict the protocol it documents.
+ */
+export const StreamRejectedSchema = ProblemDetailsSchema.extend({
+  nextOffset: z.number().int().min(0),
+});
+export type StreamRejected = z.infer<typeof StreamRejectedSchema>;
