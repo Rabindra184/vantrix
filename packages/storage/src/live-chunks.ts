@@ -89,18 +89,20 @@ export class LiveChunkStore {
    * The fold owner's read: it holds a byte position and wants everything
    * after it, without re-reading a run's whole history on every tick.
    *
-   * Filters on the offset PARSED OUT of the key rather than on the key
-   * string, even though the padding makes the two orders agree. A string
-   * comparison would silently start behaving differently the day an offset
-   * needs 17 digits, and the parse is what the caller's units actually are.
+   * `offset` is a FETCH FRONTIER — the highest byte the caller has already
+   * retrieved. Callers MUST NOT pass a decode position (e.g. the byte offset
+   * of the last whole record decoded, or `StreamingLogDecoder.consumedBytes`).
+   * A decoder's `consumedBytes` sits behind its unconsumed tail: a record can
+   * straddle chunk boundaries, leaving a partial tail the decoder buffers.
+   * Passing `consumedBytes` re-selects chunks already fetched whose start is
+   * still >= that position, duplicating them in the fold and corrupting every
+   * byte offset thereafter. The decoder's tail retention solves a different
+   * problem — the partial record — and does not make re-delivery safe.
    *
-   * A chunk that starts before `offset` is deliberately NOT returned, even if
-   * it extends past `offset`. The only caller (`StreamingLogDecoder`) retains
-   * its own unconsumed tail from precisely that position; re-feeding it would
-   * duplicate bytes already folded into the decoder's record stream. A future
-   * caller that does not retain its tail would get a gap, and this contract
-   * would need to change -- that decision point is documented here so it is
-   * caught by review rather than shipped silently.
+   * Filters on the offset PARSED OUT of the key rather than on the key string,
+   * even though the padding makes the two orders agree. A string comparison
+   * would silently start behaving differently the day an offset needs 17 digits.
+   * The parse is what the caller's units actually are.
    */
   async readFrom(runId: string, offset: number): Promise<Buffer> {
     const keys = await this.#listChunkKeys(runId);
