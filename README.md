@@ -91,15 +91,17 @@ value to use for `DELETE`: it is everything up to the last underscore of
 `pp_<hex>_<secret>` (i.e. `pp_<hex>` itself, including the `pp_`), not the
 segment between the two underscores.
 
-A token may carry any of three scopes, and a caller can request any
+A token may carry any of four scopes, and a caller can request any
 combination it wants — this grants nothing a signed-in session in that org did
-not already have, except `telemetry`, which no session ever holds:
+not already have, except `telemetry` and `stream`, neither of which any
+session ever holds:
 
 | Scope       | Grants |
 |-------------|--------|
 | `ingest`    | `POST /v1/runs` — upload a result bundle. |
 | `read`      | Every bearer-reachable `GET` under `/v1`. Not the token list above: these three routes are session-only and reject a bearer token whatever scopes it carries. |
 | `telemetry` | `POST /v1/telemetry` only — host counters from a load generator, and nothing else. Deliberately its own scope rather than a reuse of `ingest`, so a token living on a shared, often-ephemeral load generator can do exactly one thing. |
+| `stream`    | `POST /v1/runs/live`, `POST /v1/runs/{id}/stream`, `POST /v1/runs/{id}/close` — nothing else. Deliberately its own scope rather than a reuse of `ingest`, for the same reason `telemetry` is: the token lives on a load generator — the least-trusted, most disposable host in a deployment, often shared across a fleet — and `ingest` would let it upload a finished bundle for the whole project. |
 
 Because a session names no project, **ingest requires a token**:
 `POST /v1/runs` and `GET /v1/projects/{slug}/runs` both reject a session with
@@ -137,14 +139,15 @@ the auth code.
 `POST /v1/runs` and `GET /v1/runs/{id}` return the same status code
 for the same run state, so a CI poll loop is identical to the initial post:
 
-| Code       | Run state          | Meaning to CI |
-|------------|---------------------|---------------|
-| `200`      | complete · pass     | Ingested; all SLA rules held. |
-| `422`      | complete · breach    | Ingested successfully — the gate failed. Body lists every breached rule with actual vs. threshold. |
-| `202`      | pending / parsing    | Still working. `Retry-After` header and a `statusUrl` body field are returned (no `Location` header). |
-| `400`      | failed               | Bundle could not be parsed — including an unrecognised archive (`BUNDLE_NOT_ARCHIVE`). Body names likely cause and fix. |
-| `401`/`403`| —                    | Invalid or revoked token / token not scoped to this project. |
-| `413`      | —                    | Bundle over the decompressed-size cap. |
+| Code       | Run state              | Meaning to CI |
+|------------|-------------------------|---------------|
+| `200`      | complete · pass         | Ingested; all SLA rules held. |
+| `200`      | incomplete              | Closed without completing a normal ingest — today, a live run whose `close` received zero bytes. Verdict is always `not_evaluated`: this never passes a gate, because a partial run could otherwise satisfy every SLA rule purely by having stopped early. |
+| `422`      | complete · breach       | Ingested successfully — the gate failed. Body lists every breached rule with actual vs. threshold. |
+| `202`      | pending / parsing / running | Still working. `Retry-After` header and a `statusUrl` body field are returned (no `Location` header) — identical whether the run is queued, being parsed, or still being streamed to. |
+| `400`      | failed                  | Bundle could not be parsed — including an unrecognised archive (`BUNDLE_NOT_ARCHIVE`). Body names likely cause and fix. |
+| `401`/`403`| —                       | Invalid or revoked token / token not scoped to this project. |
+| `413`      | —                       | Bundle over the decompressed-size cap. |
 
 **On 422:** this is a deliberate abuse of the status code — the run ingested
 perfectly and the gate failed, whereas 422 semantically means the request
@@ -153,7 +156,69 @@ extra scripting; 422 is the least-wrong code available. **422 means the
 performance gate failed, not that the upload was bad.**
 
 A run with no SLA rules configured completes with verdict `not_evaluated`,
-which is not a failure state.
+which is not a failure state. `incomplete` reaches the same verdict for a
+different reason: it is not that no rule applied, but that no rule ever got
+the chance to, because the run never reached a finished pipeline run at all.
+
+Every row above is produced by one function, `RunsService.statusFor`, used by
+both `POST /v1/runs` and `GET /v1/runs/{id}` — that sharing is the "same code
+for the same state" guarantee this table describes, made structural rather
+than aspirational.
+
+## Streaming a run live
+
+A load generator that already writes `simulation.log` incrementally can skip
+the upload-a-finished-bundle path (`POST /v1/runs`) and stream bytes as they
+are produced, through three routes that require the `stream` scope (see
+above) and, like ingest, accept only a bearer token — a session names no
+project, so it can never satisfy any of them:
+
+```text
+POST /v1/runs/live         open    { tool, environment?, branch?, commitSha?, idempotencyKey? }
+                                    → 201 { runId, streamUrl, nextOffset }
+POST /v1/runs/{id}/stream  stream  raw chunk bytes, "X-Stream-Offset" header required
+                                    → 202 { nextOffset }  or  409 { …, nextOffset }
+POST /v1/runs/{id}/close   close   no body
+                                    → shares POST /v1/runs's 200/202/400/413/422 table above
+```
+
+`open` puts the run into the `running` state immediately — there is nothing
+to wait for yet — and returns `nextOffset`, the byte offset to start (or
+resume) streaming at. `idempotencyKey` makes a retried `open` (say, after a
+lost response) rejoin the run it already created instead of starting a
+second one.
+
+Every `stream` call carries `X-Stream-Offset`, a required request header
+naming the byte offset this chunk's body begins at. The server holds the
+run's own byte cursor and judges the header against it **before writing
+anything**:
+
+- **Offset equals the cursor.** The expected next chunk: it is appended, the
+  cursor advances, and the response is `202 { nextOffset: <new cursor> }`.
+- **Offset is BEHIND the cursor — a replay.** Nothing is written. The
+  response is still `202 { nextOffset: <cursor> }`, the same shape as a
+  fresh accept. This is what makes an agent's own retries idempotent:
+  resending a chunk whose response was lost, or that already landed, is
+  always safe, because it is a pure acknowledgment, never a rewrite.
+- **Offset is AHEAD of the cursor — a gap** — or the run is no longer
+  `running` (already closed): `409`, `application/problem+json`, naming
+  `nextOffset` (the real cursor) to resume from. The two cases share one
+  response because the caller cannot act on them any differently.
+
+Getting this backwards is the one mistake that corrupts a run silently: a
+gap accepted and written anyway becomes an orphan chunk that `close`'s
+assembly step folds into the log at the wrong position regardless, and the
+checksum taken of that already-corrupted assembly still passes — nothing
+downstream ever notices. Reading the cursor before any write, for both the
+gap and the replay case, is what keeps that unconstructible.
+
+`close` finalizes the run. A run that received at least one byte is
+assembled and queued through the same pipeline a bundle upload runs through,
+so its response shares `POST /v1/runs`'s 200/202/400/413/422 state machine
+above. A run closed having received zero bytes finalizes immediately as
+`incomplete` instead (`200`, `verdict: not_evaluated`; see the verdict
+contract above). Closing a run that is not currently `running` — already
+closed, or never a live run — is a `409`.
 
 ## Proving it end to end
 
