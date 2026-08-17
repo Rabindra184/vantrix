@@ -188,8 +188,19 @@ is free. In live use it is a bug: a snapshot handed to an async publisher would
 watch its own sketches mutate as the next batch folds in, and would serialize
 a state that never existed at any instant.
 
-`snapshot()` therefore serializes sketches through the existing
-`Sketch.serialize()` rather than passing the object across the boundary.
+`snapshot({ clone: true })` therefore hands back **copies** of the sketch and
+histograms rather than the live accumulators.
+
+**Cloned, not serialized.** Serializing through `Sketch.serialize()` would
+change `StatRollup.sketch` from a `Sketch` to a `Uint8Array` and break
+`MetricWriter.persist()`, which consumes `EngineResult` directly. Cloning into
+a fresh instance preserves the type, so every existing consumer is untouched,
+and it is lossless for the same reason coalescing is: DDSketch and Histogram
+merges are exact (`buckets.ts:117`).
+
+`clone` defaults to **false**, so `runEngine`'s batch path allocates nothing
+new — it finishes once and never touches the builder again. Only the live
+caller pays.
 
 ---
 
@@ -241,10 +252,20 @@ beyond the cap gets a full snapshot instead (FR-LIVE-8).
 
 ### 3.5 The raw byte log is the checkpoint
 
-Bytes append to `BlobStore` as they arrive. A worker that dies mid-run needs no
+Bytes reach blob storage as they arrive. A worker that dies mid-run needs no
 serialized engine state: the next lock holder re-folds from offset 0. At the
 worst-case 250 MB that is seconds of CPU on a rare path, and it deletes an
 entire class of checkpoint-format-versioning bugs.
+
+**As per-chunk objects, because there is no append.** `BlobStore` offers
+`putStream`, `get` and `delete` (`packages/storage/src/blob.ts`), and S3 has no
+append operation at all. Chunks are written to
+`live/{runId}/{offset padded to 16 digits}.bin` and concatenated at close.
+
+The padding is load-bearing: assembly reads chunks in key order, and that is
+only the byte order if lexicographic sorting matches numeric sorting.
+Unpadded, `1000.bin` sorts before `999.bin`, silently reordering the stream —
+and §3's opening sentence is that a reordering corrupts every record after it.
 
 It also means that at `close`, the complete `simulation.log` is already in blob
 storage where `bundleKey` expects it — so a live run finalizes into a row
