@@ -62,4 +62,31 @@ describe('LiveEngine', () => {
     expect(runCount(end)).toBeGreaterThan(runCount(mid));
     expect(comparable(end)).toEqual(comparable(runEngine(events)));
   });
+
+  it('a cloned snapshot does not move when more events are folded in', () => {
+    const events = [...parseSimulationLog(readFileSync(LOG))];
+    const half = Math.floor(events.length / 2);
+
+    const engine = new LiveEngine();
+    for (const e of events.slice(0, half)) engine.add(e);
+
+    const snap = engine.snapshot({ clone: true });
+    const runStat = snap.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+    if (!runStat) throw new Error('fixture produced no run-scope response_time rollup');
+
+    // Read the sketch and histogram BEFORE folding the rest in.
+    const p95Before = runStat.sketch.quantile(0.95);
+    const okTotalBefore = runStat.histogramOk.total;
+
+    for (const e of events.slice(half)) engine.add(e);
+
+    // The snapshot is a value, not a view: nothing about it may have changed.
+    expect(runStat.sketch.quantile(0.95)).toBe(p95Before);
+    expect(runStat.histogramOk.total).toBe(okTotalBefore);
+
+    // And the engine really did keep going, so the test is not vacuously true.
+    const after = engine.snapshot({ clone: true })
+      .stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+    expect(after?.histogramOk.total).toBeGreaterThan(okTotalBefore);
+  });
 });

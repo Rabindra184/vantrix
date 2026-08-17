@@ -322,11 +322,11 @@ export class LiveEngine {
     }
   }
 
-  snapshot(): EngineResult {
+  snapshot(opts: { clone?: boolean } = {}): EngineResult {
     const windowMs = Math.max(0, this.#lastMs - Math.max(this.#firstMs, this.#runStartMs + this.#warmupMs));
     const stats: StatRollup[] = [];
     for (const { scope, name, family, builder } of this.#rollups.values()) {
-      stats.push(builder.finish({ scope, name, family, windowMs, percentiles: this.#percentiles }));
+      stats.push(builder.finish({ scope, name, family, windowMs, percentiles: this.#percentiles, clone: opts.clone }));
     }
 
     const errors: EngineResult['errors'] = [];
