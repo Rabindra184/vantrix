@@ -29,8 +29,19 @@ export class StreamingLogDecoder {
 
   get consumedBytes(): number { return this.#consumed; }
 
+  /** Bytes the decoder is still holding. See `BinaryReader.append`. */
+  get bufferedBytes(): number { return this.#reader.bufferedBytes; }
+
   push(chunk: Buffer): CanonicalEvent[] {
-    this.#reader.append(chunk);
+    // `#consumed` doubles as the compaction boundary: it is the end of the
+    // last WHOLE record, and the loop below rewinds no further than the
+    // record it is currently inside, so nothing before it can ever be read
+    // again. Without this the reader kept every byte of the run and paid a
+    // full copy of the accumulated buffer per push -- quadratic in total
+    // bytes (see BinaryReader.append). It is also why `#consumed` and
+    // `BinaryReader.pos` are absolute file offsets rather than indices:
+    // they have to survive the bytes underneath them being dropped.
+    this.#reader.append(chunk, this.#consumed);
     const out: CanonicalEvent[] = [];
 
     if (this.#header === null) {
