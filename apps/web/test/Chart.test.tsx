@@ -282,6 +282,67 @@ describe('Chart — a legend only from two series up', () => {
     render(<Chart id="a" title="Requests per second" data={seriesData(['OK', 'KO'])} />);
     expect(lastOption().legend).not.toEqual({ show: false });
   });
+
+  /**
+   * ═══ THE LEGEND AND THE VALUE AXIS' NAME MUST NOT SHARE A BAND ═══
+   *
+   * A value axis draws its `name` one `nameGap` ABOVE the axis line — the band
+   * directly above `grid.top`, which is where a top-anchored legend also sits.
+   * On the percentile chart the two collided at every width: at 1568px the
+   * `min` swatch was drawn over `Response time (ms)`, and at 390px a wrapped
+   * legend covered the axis name AND the topmost tick label.
+   *
+   * Asserted as LAYOUT NUMBERS rather than through a rendered pixel, because
+   * jsdom lays every chart out at 0×0 (see the file header) and could not see
+   * the overlap that motivated this even in principle.
+   */
+  it('draws the legend below the plot, leaving the top band to the axis name', () => {
+    render(
+      <Chart
+        id="a"
+        title="Response time percentiles over time"
+        data={seriesData(['min', '50%', 'max'])}
+        yAxis={{ name: 'Response time (ms)' }}
+      />,
+    );
+
+    const legend = lastOption()['legend'] as { top?: number; bottom?: number; type?: string };
+    const grid = lastOption()['grid'] as { top: number; bottom: number };
+
+    // Anchored to the bottom, and to the bottom ONLY: a legend carrying both
+    // offsets is still partly a top legend.
+    expect(legend.bottom).toBeGreaterThanOrEqual(0);
+    expect(legend.top).toBeUndefined();
+    // One row, always. A wrapping legend has no bounded height, so no
+    // reservation in `grid.bottom` could be correct at every width.
+    expect(legend.type).toBe('scroll');
+    // The top band is the axis name's alone — it must not have grown to make
+    // room for a legend that is no longer there.
+    expect(grid.top).toBeLessThanOrEqual(12);
+    // And the bottom band has to actually contain the legend.
+    expect(grid.bottom).toBeGreaterThan(legend.bottom!);
+  });
+
+  it('keeps the legend clear of the slider on a brushed chart', () => {
+    render(
+      <Chart
+        id="a"
+        title="Requests per second"
+        data={seriesData(['All', 'OK', 'KO'])}
+        xAxis={{ type: 'value', name: 'Elapsed (s)' }}
+        brush={{ value: null, onChange: () => undefined }}
+      />,
+    );
+
+    const legend = lastOption()['legend'] as { bottom: number };
+    const grid = lastOption()['grid'] as { bottom: number };
+    const [zoom] = lastOption()['dataZoom'] as { bottom: number; height: number }[];
+    const { nameGap } = lastOption()['xAxis'] as { nameGap: number };
+
+    // Bottom-up, the band holds: slider, then legend, then the axis name.
+    expect(legend.bottom).toBeGreaterThanOrEqual(zoom!.bottom + zoom!.height);
+    expect(grid.bottom - nameGap).toBeGreaterThan(legend.bottom);
+  });
 });
 
 /**

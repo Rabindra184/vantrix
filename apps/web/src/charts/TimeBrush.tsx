@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Window } from '@perfportal/contracts';
 import Chart from './Chart';
 import { seriesQuery } from '../api/metrics';
-import { toRequestRate } from './transforms/rates';
+import { RATE_ROLES, toRequestRate } from './transforms/rates';
 
 /**
  * The run's time window: a scrubber over the whole run, plus exact fields.
@@ -116,13 +116,31 @@ export default function TimeBrush({
       {rates !== null && (
         <Chart
           id="time-window"
-          title="Time window"
+          // NAMES THE MEASURE, not the control. "Time window" is what the
+          // surrounding section does; this figure draws requests per second,
+          // and a title that described the interaction left the strip as the
+          // one chart on the page whose y values were unexplained. "whole run"
+          // because it deliberately never narrows with the selection (see the
+          // docstring) — without that, the strip and the windowed
+          // requests-per-second chart below it look like the same measure
+          // disagreeing.
+          title="Requests per second, whole run"
           data={rates}
           kind="line"
+          // The app-wide status colours — see `RATE_ROLES`. WITHOUT THIS the
+          // strip fell back to the categorical palette and drew All/OK/KO as
+          // indigo/teal/violet, while `RatesChart` drew the very same three
+          // series as neutral/green/red directly below it: one page, one set
+          // of series, two colour languages, and a KO line in a hue that
+          // `rates.ts` explicitly reserves for "not an outcome".
+          roles={RATE_ROLES}
           // A VALUE AXIS: the slider reports its handles in the axis' own
           // units, and this axis is elapsed milliseconds — which is what the
-          // URL and every metric endpoint speak.
-          xAxis={{ type: 'value', name: 'Elapsed (ms)' }}
+          // URL and every metric endpoint speak. `tickUnit` relabels those
+          // ticks in seconds WITHOUT touching the units underneath, so the
+          // strip agrees with its own From/To fields and with every other
+          // chart on the page.
+          xAxis={{ type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' }}
           unit="/s"
           brush={{
             value: window,

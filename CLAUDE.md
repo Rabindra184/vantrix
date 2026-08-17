@@ -53,15 +53,17 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **83 files / 954 tests**, it
+`nvm use` first, and if a run reports fewer than **83 files / 957 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the run-timestamp
-fix, which added 3 zone-pinned label cases across `transforms.compare` and
-`transforms.trends`; the time-brush fix before it added
-`apps/web/test/TimeBrush.test.tsx` (4 tests) and 11 more across
+silently-skipped run looks like a pass. Last measured on the chart-controls
+pass, which added 2 legend-placement cases to `Chart` and 1 colour-role case
+to `TimeBrush`, from a floor of 83 / 954. That floor came from the
+run-timestamp fix, which added 3 zone-pinned label cases across
+`transforms.compare` and `transforms.trends`; the time-brush fix before it
+added `apps/web/test/TimeBrush.test.tsx` (4 tests) and 11 more across
 `transforms.rates` and `Chart`, from a floor of 82 / 936 — 81 / 931 through
-`feat/telemetry-agent`. Neither fix's e2e or integration cases are in this
+`feat/telemetry-agent`. No fix's e2e or integration cases are in this
 count: `pnpm test:unit` runs neither.)
 
 `pnpm test:unit` does **not** run the integration or e2e suites —
@@ -162,6 +164,33 @@ rate values read as milliseconds — a drag over a third of a 63 s run produced
 `?from=0&to=7`. When adding `xAxis={{ type: 'value' }}`, check the transform
 emits pairs (`toErrorSeries`, `toPercentileDistribution` and
 `toRequestRate(_, { x: 'ms' })` do).
+
+**Sharing a transform does NOT share its colours — `roles` is a separate,
+silently-optional prop.** `Chart` falls back to the six-hue categorical palette
+whenever `roles` is absent, so a chart can consume the right numbers and draw
+them in the wrong language with nothing failing. `TimeBrush` and `RatesChart`
+both call `toRequestRate`, but only `RatesChart` passed `RATE_ROLES`
+(`['neutral','passed','failed']`) — so the run page drew All/OK/KO as
+grey/green/red in one figure and indigo/teal/**violet** in the figure directly
+above it, with KO in a hue `rates.ts` explicitly reserves for "neither
+outcome". Nothing threw, no test failed, and both components' own tests stayed
+green because neither asserted colour. **When a transform exports a `*_ROLES`
+constant, every chart built on that transform has to pass it**; `TimeBrush.test.tsx`
+now pins that for this pair by asserting the emitted `color` array contains no
+`CATEGORICAL` hue.
+
+**The value axis' `name` and a top-anchored legend occupy the same band.** A
+value axis draws its name one `nameGap` ABOVE the axis line — i.e. directly
+above `grid.top`, exactly where `legend: { top: 0 }` sits. They always compete,
+and on the percentile chart they collided at every width: at 1568px the `min`
+swatch was drawn over `Response time (ms)`, and at 390px the wrapped legend
+covered both the axis name and the topmost tick label. The legend is now
+bottom-anchored and `type: 'scroll'` — one row, always, because a wrapping
+legend has no bounded height and no reservation in `grid.bottom` could be right
+at every width. **jsdom cannot see any of this** (it lays every chart out at
+0×0), so the guard in `Chart.test.tsx` asserts the layout NUMBERS — that the
+legend carries `bottom` and no `top`, and that `grid.bottom` clears both it and
+the brush slider.
 
 **A mocked renderer cannot see it either, and neither can a green unit suite on
 both sides.** `Chart.test.tsx` proved the brush reports its handles in the
