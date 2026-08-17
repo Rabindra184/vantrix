@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { ProjectScope, TenantScope } from './tenant.js';
 
@@ -64,6 +65,27 @@ export interface CreateRunInput {
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: number;
+  idempotencyKey?: string;
+  startedAt: Date;
+  engineOptions: Record<string, unknown>;
+}
+
+/**
+ * No bundleKey/bundleSha256/bundleBytes: a live run has none of those at
+ * open time (see createLive). Otherwise the same frozen-at-submission fields
+ * as CreateRunInput -- `tool` and `startedAt` are still required, for the
+ * same reasons they are there: `tool` because Run.tool is non-null and the
+ * caller (the validated OpenLiveRunRequestSchema) always has one, and
+ * `startedAt` because startedOn is derived from it and cannot be derived
+ * from nothing.
+ */
+export interface CreateLiveRunInput {
+  orgId: string;
+  projectId: string;
+  tool: string;
+  environment?: string;
+  branch?: string;
+  commitSha?: string;
   idempotencyKey?: string;
   startedAt: Date;
   engineOptions: Record<string, unknown>;
@@ -174,6 +196,123 @@ export class RunRepository {
       include: { project: true },
     });
     return toRecord(row);
+  }
+
+  /**
+   * Opens a run that will be fed by a stream rather than a bundle upload.
+   *
+   * Mirrors create()'s freezing of environment/branch/commitSha/engineOptions
+   * -- they describe the run as submitted, and submission is `open` for a
+   * live run exactly as it is the POST for an uploaded one.
+   *
+   * bundleKey/bundleSha256/bundleBytes are NON-NULL columns (schema.prisma),
+   * and RunRecord/RunRow/CreateRunInput all type them non-null too, so a
+   * live run -- which has no bundle yet -- gets deterministic placeholders
+   * here rather than a nullability migration that would ripple through all
+   * three interfaces plus the raw SQL in list()/TRENDS_SQL:
+   *   - bundleKey is the key close() (Task 9) will assemble the chunks
+   *     into. Computing it needs the row's id before insert, so the id is
+   *     generated here (randomUUID()) and passed in rather than left to the
+   *     column default -- that avoids an insert-then-update.
+   *   - bundleSha256: '' and bundleBytes: 0n are sentinels, not nulls.
+   *     close() overwrites both once LiveChunkStore.finalize assembles the
+   *     real bytes. This repo already places sentinel bundle values on runs
+   *     with no real bundle (apps/web/e2e/fixtures.ts uses '0'.repeat(64) /
+   *     BigInt(1)), and the only raw-pool reader of these columns is
+   *     TRENDS_SQL, which filters status = 'complete' -- so a `running`
+   *     row's placeholder sha is never read by it. A future consumer that
+   *     treats '' as a real digest would still be misled; confined to rows
+   *     that are `running`, and the nullability migration remains available
+   *     if that ever matters enough to pay for.
+   */
+  async createLive(input: CreateLiveRunInput): Promise<RunRecord> {
+    if (input.idempotencyKey) {
+      const existing = await this.prisma.run.findUnique({
+        where: {
+          projectId_idempotencyKey: {
+            projectId: input.projectId,
+            idempotencyKey: input.idempotencyKey,
+          },
+        },
+        include: { project: true },
+      });
+      if (existing) return toRecord(existing);
+    }
+
+    const id = randomUUID();
+    const row = await this.prisma.run.create({
+      data: {
+        id,
+        orgId: input.orgId,
+        projectId: input.projectId,
+        status: 'running',
+        verdict: null,
+        tool: input.tool,
+        environment: input.environment ?? null,
+        branch: input.branch ?? null,
+        commitSha: input.commitSha ?? null,
+        bundleKey: `runs/${id}/simulation.log`,
+        bundleSha256: '',
+        bundleBytes: 0n,
+        streamOffset: 0n,
+        idempotencyKey: input.idempotencyKey ?? null,
+        startedAt: input.startedAt,
+        startedOn: startedOnFrom(input.startedAt),
+        engineOptions: input.engineOptions as object,
+      },
+      include: { project: true },
+    });
+    return toRecord(row);
+  }
+
+  /**
+   * Compare-and-set on the byte cursor -- NOT check-then-act. `from` is a
+   * WHERE-clause predicate, not a separate read, so the update and the
+   * comparison happen in one round trip the database serializes: two
+   * concurrent chunks both claiming to start at the same `from` cannot both
+   * match, because the first one to commit moves streamOffset away from
+   * `from` before the second's WHERE clause is evaluated. The loser's
+   * updateMany matches zero rows and returns false, telling the caller to
+   * resync rather than silently corrupting the stream.
+   *
+   * The same zero-match outcome is what makes a REPLAYED chunk (the agent
+   * retrying a chunk the server already advanced past) a safe no-op: its
+   * `from` no longer matches the row's current offset either, so it returns
+   * false exactly like a genuine conflict does. The caller cannot tell the
+   * two apart from the return value alone, and does not need to -- both
+   * cases mean "the byte cursor did not move from where you think it is,
+   * go find out where it really is."
+   *
+   * Also requires status: 'running' in the WHERE clause: once a run is
+   * terminal (complete/failed/incomplete) its offset is frozen, so a
+   * straggling chunk that arrives after close() must not resurrect it.
+   */
+  async advanceOffset(runId: string, from: number, to: number): Promise<boolean> {
+    const { count } = await this.prisma.run.updateMany({
+      where: { id: runId, status: 'running', streamOffset: BigInt(from) },
+      data: { streamOffset: BigInt(to) },
+    });
+    return count === 1;
+  }
+
+  /**
+   * Finalizes a live run that never reaches 'complete' -- inactivity, an
+   * explicit abort, or a close() called before the producer says done.
+   * verdict is always 'not_evaluated' (never 'passed'): a partial run can
+   * satisfy every SLA rule purely by having stopped before the load that
+   * would have broken it (design FR-LIVE-5), so reporting a pass would be a
+   * false signal, not a cautious one.
+   *
+   * Guarded the same way fail() is: only writes when the run is not already
+   * terminal, so a race with a genuine completion (or a duplicate
+   * markIncomplete call) cannot regress an already-decided run back to
+   * incomplete.
+   */
+  async markIncomplete(runId: string): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: runId, status: { notIn: ['complete', 'failed', 'incomplete'] } },
+      data: { status: 'incomplete', verdict: 'not_evaluated', ingestedAt: new Date() },
+    });
   }
 
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {

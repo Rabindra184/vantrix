@@ -84,6 +84,12 @@ model Run {
   bundleKey      String    @map("bundle_key")
   bundleSha256   String    @map("bundle_sha256")
   bundleBytes    BigInt    @map("bundle_bytes")
+  /// The byte cursor for a run fed by a stream rather than a bundle upload --
+  /// how much of the log the platform has durably accepted so far. BIGINT,
+  /// not INT: a log size cap is a product decision, not a storage one, and
+  /// widening an INT later means a table rewrite. Unrelated to bundleBytes,
+  /// which is the FINAL assembled size and stays 0 until close() sets it.
+  streamOffset   BigInt    @default(0) @map("stream_offset")
   idempotencyKey String?   @map("idempotency_key")
   /// When the platform received this run's bundle (accept time), NOT when
   /// the load test itself ran. Deliberately ingest time: see startedOn.
