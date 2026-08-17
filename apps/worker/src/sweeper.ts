@@ -16,8 +16,7 @@ import type { WorkerConfig } from './config.js';
  *     entered by POST /v1/runs/live and left by POST /v1/runs/:id/close, and
  *     an agent that is SIGKILLed, evicted, or loses the network sends no
  *     close: without this branch the run answers 202 + Retry-After forever,
- *     its live/{runId}/* objects are never reclaimed, and the only exit is
- *     an operator UPDATE.
+ *     and the only exit is an operator UPDATE.
  *
  * THE THIRD ONE DOES NOT RE-ENQUEUE, and that is the whole difference
  * between it and the other two. A run at 'pending' or 'parsing' has a
@@ -29,6 +28,14 @@ import type { WorkerConfig } from './config.js';
  * It is finalized in place as 'incomplete' instead — the terminal state
  * RunRepository.markIncomplete already existed for, and which never carries
  * a pass verdict (design §1.2).
+ *
+ * THAT WRITES THE ROW AND NOTHING ELSE. The run's live/{runId}/* chunk
+ * objects are LEFT IN PLACE: this class holds a pg.Pool and no BlobStore, and
+ * giving it one to delete a swept run's chunks would put object-store latency
+ * and failure modes inside a transaction that currently touches one database.
+ * They are storage's to expire — a bucket lifecycle rule on the live/ prefix —
+ * which is the same disposition putStream already relies on for the parts of
+ * an aborted multipart upload. Do not read "finalized" here as "cleaned up".
  *
  * FOR UPDATE SKIP LOCKED makes this safe with any number of worker replicas
  * and needs no leader election, which is why this slice has no separate

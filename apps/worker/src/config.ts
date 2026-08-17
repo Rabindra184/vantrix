@@ -29,8 +29,10 @@ export interface WorkerConfig {
    * `running` is the one state with no other exit. `POST /v1/runs/:id/close`
    * is the happy path, and an agent that is SIGKILLed, evicted, or simply
    * loses the network never sends it — the run then answers 202 +
-   * Retry-After forever and its `live/{runId}/*` objects are never
-   * reclaimed. Without this branch the only exit is an operator UPDATE.
+   * Retry-After forever, and without this branch the only exit is an
+   * operator UPDATE. It frees the RUN, not the storage: the sweep writes the
+   * row and leaves the `live/{runId}/*` chunk objects for a bucket lifecycle
+   * rule (see `Sweeper`'s own docstring).
    *
    * Measured from `stream_updated_at`, NOT `created_at`: a live run's open
    * time says nothing about whether its producer is still alive, and the
@@ -40,7 +42,7 @@ export interface WorkerConfig {
    * 10 minutes. This is a threshold on SILENCE, not on run length, so it has
    * to clear the longest gap a HEALTHY agent can leave between two accepted
    * chunks — a scenario ramping slowly, a think-time-heavy step, or an agent
-   * backing off through a network wobble — while still reclaiming an
+   * backing off through a network wobble — while still finalizing an
    * abandoned run inside a working day. Shorter than parsingStaleAfterMs
    * would be wrong in the other direction: this decision is TERMINAL
    * (markIncomplete, not a re-enqueue), so firing it early destroys a run
