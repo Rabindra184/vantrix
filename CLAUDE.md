@@ -293,9 +293,12 @@ the write.
 streaming longer than `parsingStaleAfterMs` (15 min default) was sweepable
 the instant `close()` moved it to `parsing` — the sweeper would re-enqueue
 it, the pipeline would run against an empty `bundleSha256`, and the run would
-be permanently `failed` while `close()`'s own write silently no-opped (its
-`finalizeLive`/`markIncomplete` writes are guarded on `status: 'parsing'`,
-which the pipeline's own failure has by then already moved past). The
+be permanently `failed` while `close()`'s own write silently no-opped.
+`finalizeLive` requires `status: 'parsing'` exactly (`run.ts`); `markIncomplete`
+excludes `'failed'` (among other terminal states) from the rows it will touch
+— two different guards, but both already miss once the sweeper's premature
+re-enqueue has driven the pipeline to mark the row `failed` first, which is
+what makes `close()`'s own write a silent no-op rather than a conflict. The
 sweeper reads `COALESCE(parsing_started_at, created_at)` so rows predating
 the migration stay sweepable.
 
