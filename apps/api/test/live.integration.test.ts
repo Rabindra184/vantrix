@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import { RunRepository } from '@perfportal/persistence';
+import { IngestQueue } from '../src/ingest/queue.js';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 
@@ -391,7 +393,7 @@ describe('live streaming', () => {
     expect(res.status).toBe(409);
   });
 
-  it('a close() that fails partway leaves the run retryable, not stranded at "parsing"', async () => {
+  it('a close() that fails BEFORE finalizeLive leaves the run retryable, not stranded at "parsing"', async () => {
     await withFastCloseWait(async () => {
       ctx = await createTestApp();
       const opened = await open(ctx.streamToken);
@@ -446,6 +448,99 @@ describe('live streaming', () => {
         .get(`/v1/runs/${runId}`)
         .set('Authorization', `Bearer ${ctx.readToken}`);
       expect(finalRun.body.status).toBe('complete');
+    });
+  });
+
+  it('a close() that fails only at the ENQUEUE stays at "parsing" — the release would lose bytes', async () => {
+    await withFastCloseWait(async () => {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+
+      const buf = readFileSync(LOG);
+      expect((await stream(ctx.streamToken, runId, 0, buf)).status).toBe(202);
+
+      // Redis down at exactly the wrong moment: every durable step of
+      // close() has already committed (the chunks are assembled into
+      // bundleKey, the assembly is hashed, bundleSha256/bundleBytes are
+      // written, and the per-chunk objects are deleted) and only the
+      // enqueue fails. Reverting to 'running' here -- which is what one
+      // try/catch spanning all four steps did -- is not a retry, it is
+      // data loss: with the chunks gone and the status back to 'running',
+      // advanceOffset accepts further bytes that finalize's own
+      // exists(key) guard will then refuse to re-assemble, so the retried
+      // close hashes the stale bundle and bundleBytes disagrees with
+      // stream_offset. Nothing sweeps 'running' back out either, so an
+      // agent that has already exited leaves the run stuck forever.
+      const queue = ctx.app.get(IngestQueue);
+      vi.spyOn(queue, 'add').mockRejectedValueOnce(new Error('redis is unreachable'));
+
+      const failed = await close(ctx.streamToken, runId);
+      expect(failed.status).toBe(500);
+      expect(failed.body.remediation).toBeTruthy();
+
+      // Still 'parsing' -- NOT reverted. This is the whole assertion.
+      const afterFailure = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}`)
+        .set('Authorization', `Bearer ${ctx.readToken}`);
+      expect(afterFailure.status).toBe(202);
+      expect(afterFailure.body.status).toBe('parsing');
+
+      // And the run is genuinely finished, not merely parked: the bundle
+      // it will be parsed from is committed, and parsing_started_at is set
+      // so the sweeper measures this run's 'parsing' age from the claim
+      // rather than from its (far older) open time.
+      const row = await ctx.prisma.run.findUniqueOrThrow({ where: { id: runId } });
+      expect(row.bundleSha256).toHaveLength(64);
+      expect(Number(row.bundleBytes)).toBe(buf.length);
+      expect(row.parsingStartedAt).not.toBeNull();
+
+      // Recovery is the sweeper's 'parsing' path re-enqueueing this run,
+      // and there is nothing left for it to do but run the pipeline --
+      // proven by running it directly, with no second close() involved.
+      await runPipelineFor(ctx, runId);
+      const finalRun = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}`)
+        .set('Authorization', `Bearer ${ctx.readToken}`);
+      expect(finalRun.body.status).toBe('complete');
+    });
+  });
+
+  it('a failing releaseClose does not replace the error that caused it', async () => {
+    await withFastCloseWait(async () => {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+      expect((await stream(ctx.streamToken, runId, 0, readFileSync(LOG))).status).toBe(202);
+
+      // Both halves of the recovery path fail: the object store first
+      // (the real failure), then the compensating write. An unguarded
+      // `await this.runs.releaseClose(runId)` inside the catch replaces
+      // the original rejection with its own, and the run is left at
+      // 'parsing' either way -- so the ONLY thing that changes is what the
+      // operator is told went wrong. That makes the log the surface to
+      // assert on, not the response: ProblemFilter's generic 500 body is
+      // deliberately identical for both (internalProblem leaks no
+      // message), and only logInternalError carries the distinction.
+      const blobs = ctx.app.get(BlobStore);
+      await blobs.delete(`live/${runId}/0000000000000000.bin`);
+      const runs = ctx.app.get(RunRepository);
+      vi.spyOn(runs, 'releaseClose').mockRejectedValueOnce(new Error('the compensating write also failed'));
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const failed = await close(ctx.streamToken, runId);
+        expect(failed.status).toBe(500);
+        expect(failed.body.remediation).toBeTruthy();
+
+        const unhandled = logged.mock.calls.filter((c) => c[0] === 'unhandled');
+        expect(unhandled).toHaveLength(1);
+        // The object store is what actually broke. Reporting the
+        // compensating write instead sends triage at the database.
+        expect(String(unhandled[0]?.[2])).not.toContain('the compensating write also failed');
+      } finally {
+        logged.mockRestore();
+      }
     });
   });
 

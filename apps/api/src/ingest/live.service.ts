@@ -213,14 +213,54 @@ export class LiveService {
    * existed, that kind of failure left the run `running` and a retried
    * `close()` simply worked, because `LiveChunkStore.finalize` is itself
    * idempotent (its own `exists(key)` guard). `releaseClose` restores that:
-   * on any failure here, it reverts `'parsing'` back to `'running'` so a
-   * retried `close()` can claim it again, and the original error is
-   * rethrown unchanged (a 500, same as an unhandled failure always was)
-   * rather than swallowed. `waitFor` runs AFTER the `try`, never inside it —
-   * it never throws (a timeout resolves `false`, it does not reject), and
-   * it is conditional on `hasData`: the zero-byte path has nothing to wait
-   * for, since `markIncomplete` already decided its terminal state
-   * synchronously and nothing will ever `pg_notify` for it.
+   * it reverts `'parsing'` back to `'running'` so a retried `close()` can
+   * claim it again, and the original error is rethrown unchanged (a 500,
+   * same as an unhandled failure always was) rather than swallowed.
+   *
+   * ═══ BUT ONLY UP TO `finalizeLive`. AFTER THAT, RELEASING LOSES BYTES ═══
+   *
+   * The `catch` used to span all four steps, and `queue.add` is not like the
+   * other three. Once `finalizeLive` commits, `bundleSha256`/`bundleBytes`
+   * describe a bundle that is already assembled at `bundleKey` and the
+   * per-chunk objects `finalize` consumed are already deleted. Reverting to
+   * `'running'` from there is not a retry, it is three separate injuries:
+   *
+   *   - Nothing sweeps `'running'` back out on the strength of the run being
+   *     finished — the sweeper's `running` branch finalizes an idle run as
+   *     `incomplete`, which for a run whose bytes are ALL present and
+   *     already hashed is a worse answer than the `complete` it had earned.
+   *   - `advanceOffset` accepts chunks again (its WHERE wants exactly
+   *     `'running'`), so an agent still streaming lands bytes that the
+   *     retried `close()` will then silently drop: `finalize`'s `exists(key)`
+   *     guard sees `bundleKey` already written, skips the re-assembly,
+   *     DELETES the new chunks anyway, and hashes the stale bundle.
+   *     `bundleBytes` then disagrees with `stream_offset` and nothing
+   *     downstream notices.
+   *   - It makes the design's own NFR-AV-5 deviation (§5.1) false, which
+   *     turns on Redis being exactly the component that has failed here.
+   *
+   * So a failure at `queue.add` leaves the run at `'parsing'` with the
+   * bundle committed and `parsingStartedAt` set, and recovery is the
+   * sweeper's `'parsing'` path re-enqueueing it — which is what that path
+   * is for, and which now measures staleness from `parsingStartedAt` rather
+   * than the run's open time. The error is still rethrown, so the caller
+   * learns the enqueue failed; what it does NOT do is undo work that
+   * succeeded. A retried `close()` 409s (`claimForClose` cannot re-match a
+   * non-`running` row) — correctly, because there is nothing left for it to
+   * do.
+   *
+   * `releaseClose` itself is called with its own rejection swallowed. It is
+   * a compensating write for an error that has already happened, and the
+   * run is left at `'parsing'` whether it succeeds or not — so the only
+   * thing an unguarded `await` could change is WHICH error the operator is
+   * shown, replacing the object-store failure that actually broke with the
+   * database failure that merely followed it.
+   *
+   * `waitFor` runs AFTER the `try`, never inside it — it never throws (a
+   * timeout resolves `false`, it does not reject), and it is conditional on
+   * `hasData`: the zero-byte path has nothing to wait for, since
+   * `markIncomplete` already decided its terminal state synchronously and
+   * nothing will ever `pg_notify` for it.
    */
   async close(scope: TenantScope, runId: string): Promise<CloseOutcome> {
     const run = await this.runs.findById(scope, runId);
@@ -230,6 +270,11 @@ export class LiveService {
     if (!claimed) return { kind: 'not_running' };
 
     let hasData: boolean;
+    // Flips the instant this run's terminal state is durably decided —
+    // `finalizeLive` for the normal path, `markIncomplete` for the
+    // zero-byte one. Past it, reverting the claim would discard a decision
+    // rather than retry an attempt (see the docstring above).
+    let committed = false;
     try {
       // Safe to read now without racing anything: claimForClose already
       // moved this run off 'running', so no further stream() call can touch
@@ -243,16 +288,18 @@ export class LiveService {
         // drive PipelineService into a parse failure for a run whose only
         // fault is that nothing was ever sent.
         await this.runs.markIncomplete(runId);
+        committed = true;
       } else {
         await this.chunks.finalize(runId, run.bundleKey);
         const assembled = await this.blobs.get(run.bundleKey);
         const sha256 = createHash('sha256').update(assembled).digest('hex');
         await this.runs.finalizeLive(runId, sha256, assembled.length);
+        committed = true;
 
         await this.queue.add(runId);
       }
     } catch (err) {
-      await this.runs.releaseClose(runId);
+      if (!committed) await this.runs.releaseClose(runId).catch(() => {});
       throw err;
     }
 
