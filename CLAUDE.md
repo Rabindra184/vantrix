@@ -53,10 +53,12 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **90 files / 1017 tests**, it
+`nvm use` first, and if a run reports fewer than **92 files / 1029 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on live run monitoring
+silently-skipped run looks like a pass. Last measured on §22.6's mobile
+summary, which added `DesktopOnly.test.tsx` (6) and `useIsCompact.test.tsx`
+(6), from a floor of 90 / 1017 — and that one from live run monitoring
 part 1's review fixes, which added 2 cases to
 `packages/plugin-gatling/test/stream.test.ts` — one pinning `consumedBytes`
 against the last whole-record boundary, one pinning that the decoder's
@@ -176,6 +178,19 @@ rate values read as milliseconds — a drag over a third of a 63 s run produced
 `?from=0&to=7`. When adding `xAxis={{ type: 'value' }}`, check the transform
 emits pairs (`toErrorSeries`, `toPercentileDistribution` and
 `toRequestRate(_, { x: 'ms' })` do).
+
+**§22.6's mobile rule is the app's ONE JS breakpoint, and it has to be.** Every
+other responsive decision here is a Tailwind class, and should stay that way.
+Below 768px the run page is a read-only summary because "deep analysis is
+explicitly a desktop task" — and a class can only HIDE the charts, leaving a
+phone paying for ten ECharts instances, a statistics table of every request, and
+the four payloads behind them, to display none of it. That is the "degrading
+badly" the rule exists to prevent, so `useIsCompact()` decides and the charts
+never mount. `DesktopOnly` takes its children as a FUNCTION for the same reason:
+a node would be built before the component could decline it. Its `onShow` exists
+because the withheld content usually needs data, and the caller's queries are
+`enabled` on the same flag — leaving the decision inside would fetch payloads it
+had just been told not to draw.
 
 **A CONNECTED `axisPointer` ON A CATEGORY AXIS SYNCS BY INDEX, not by time.**
 So charts sharing a crosshair (`Chart`'s `group`) point at the same INSTANT only

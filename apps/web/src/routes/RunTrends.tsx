@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { trendsQuery } from '../api/metrics';
@@ -5,6 +6,8 @@ import TrendsCharts from '../charts/TrendsCharts';
 import { MAX_COMPARE } from './compareSelection';
 import { Payload, type Slot } from './payload';
 import { runComparePath } from './paths';
+import DesktopOnly from './DesktopOnly';
+import useIsCompact from '../useIsCompact';
 
 /**
  * The Trends tab — this run in the context of every other run of the same
@@ -24,6 +27,18 @@ const THROUGHPUT: Slot = { id: 'trend-throughput', title: 'Throughput across run
 
 export default function RunTrends() {
   const { runId } = useParams<{ runId: string }>();
+  // §22.6: deep analysis is a desktop task. Gated on the QUERY as well as the
+  // render, so a phone does not fetch a payload it has been told not to draw.
+  const compact = useIsCompact();
+  const [shown, setShown] = useState(false);
+  if (compact && !shown) {
+    return (
+      <DesktopOnly compact what="Comparing a run against its history" onShow={() => setShown(true)}>
+        {() => null}
+      </DesktopOnly>
+    );
+  }
+
   const trends = useQuery({ ...trendsQuery(runId ?? ''), enabled: runId !== undefined });
 
   return (

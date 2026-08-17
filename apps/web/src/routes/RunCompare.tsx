@@ -13,6 +13,8 @@ import { EmptyState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
 import type { CompareStats } from '../tables/buildCompareMatrix';
 import { Payload, type Slot } from './payload';
+import DesktopOnly from './DesktopOnly';
+import useIsCompact from '../useIsCompact';
 import {
   MAX_COMPARE,
   parseCompareSelection,
@@ -44,6 +46,10 @@ export default function RunCompare() {
   // The cohort is the set of runs that can legitimately be compared, and the
   // only source of it — a client-supplied list would let a reader compare
   // runs of different simulations by editing a URL.
+  // §22.6: deep analysis is a desktop task. Gated on the QUERY as well as the
+  // render, so a phone does not fetch a payload it has been told not to draw.
+  const compact = useIsCompact();
+  const [shown, setShown] = useState(false);
   const cohort = useQuery({ ...trendsQuery(runId ?? ''), enabled: runId !== undefined });
 
   const cohortIds = useMemo(
@@ -127,6 +133,18 @@ export default function RunCompare() {
   );
 
   const metricLabel = COMPARE_METRICS.find((m) => m.value === metric)?.label ?? metric;
+
+  // AFTER the hooks, never before one: an early return above a `useQueries`
+  // would change the hook count between renders the moment the viewport
+  // crossed 768px. The queries here key off `selected`, which is empty until a
+  // reader picks a run, so nothing heavy is fetched merely by arriving.
+  if (compact && !shown) {
+    return (
+      <DesktopOnly compact what="Comparing runs" onShow={() => setShown(true)}>
+        {() => null}
+      </DesktopOnly>
+    );
+  }
 
   return (
     <section aria-labelledby="compare-heading" className="flex flex-col gap-6">

@@ -61,11 +61,14 @@ export default function PercentilesChart({
   id = 'percentiles',
   title = 'Response time percentiles over time',
   domainMs,
+  compact,
 }: {
   readonly series: SeriesResponse;
   readonly id?: string;
   readonly title?: string;
   readonly domainMs?: TimeDomainMs;
+  /** §22.6's sparkline — see `ChartProps.compact`. */
+  readonly compact?: boolean;
 }) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
@@ -95,11 +98,17 @@ export default function PercentilesChart({
       id={id}
       title={title}
       data={data}
+      compact={compact}
       kind="line"
       // INSIDE the figure, under its heading — see `ChartProps.controls`. These
       // three used to sit in a bare `<div>` above the card, where nothing tied
       // them to this chart rather than to the one above it.
+      // A SPARKLINE HAS NO CONTROLS. Three groups of chips above a 96px
+      // drawing is more chrome than figure, and §22.6's summary is read-only
+      // by definition — the full chart, controls and all, is one tap away on
+      // the Charts tab.
       controls={
+        compact ? undefined : (
         <ControlBar>
           {/* Each chip carries the colour of the line it draws. The chart puts
               ten ordered bands on a green-to-red ramp; without the swatch the
@@ -146,6 +155,7 @@ export default function PercentilesChart({
             />
           </ControlGroup>
         </ControlBar>
+        )
       }
       // Log by default. A log axis cannot render a zero or a null as a
       // point, which is correct here: an unmeasured second is a gap.

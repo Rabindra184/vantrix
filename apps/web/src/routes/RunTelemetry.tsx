@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { TelemetryResponse } from '@perfportal/contracts';
 import { EmptyState } from '../components/States';
@@ -9,6 +9,8 @@ import { CLOCK_SKEW_WARN_MS } from './clockSkew';
 import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
 import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import DesktopOnly from './DesktopOnly';
+import useIsCompact from '../useIsCompact';
 
 /**
  * `/runs/:runId/load-generators`, a child under `RunShell` (design §3, §6) —
@@ -66,6 +68,18 @@ export default function RunTelemetry() {
   // The same time domain the run's other tabs draw on (§22.5) — these six
   // charts share `run-time` with the shell's own brush.
   const domainMs = useTimeDomainFromShell();
+  // §22.6: deep analysis is a desktop task. Gated on the QUERY as well as the
+  // render, so a phone does not fetch a payload it has been told not to draw.
+  const compact = useIsCompact();
+  const [shown, setShown] = useState(false);
+  if (compact && !shown) {
+    return (
+      <DesktopOnly compact what="Load-generator telemetry" onShow={() => setShown(true)}>
+        {() => null}
+      </DesktopOnly>
+    );
+  }
+
   const telemetry = useQuery({
     ...telemetryQuery(runId ?? '', window),
     enabled: runId !== undefined,
