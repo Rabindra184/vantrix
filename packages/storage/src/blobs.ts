@@ -7,6 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -25,6 +26,21 @@ function isBucketMissing(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const name = (err as { name?: string }).name;
   if (name === 'NotFound' || name === 'NoSuchBucket') return true;
+  const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+  return status === 404;
+}
+
+/**
+ * Same shape as {@link isBucketMissing}, for the object-level 404
+ * `HeadObjectCommand` returns. A HEAD response carries no body to
+ * distinguish error subtypes, so the SDK reports a missing object the same
+ * generic way it reports a missing bucket (`name: 'NotFound'`, or a bare 404
+ * status) rather than `GetObjectCommand`'s more specific `NoSuchKey`.
+ */
+function isObjectMissing(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const name = (err as { name?: string }).name;
+  if (name === 'NotFound' || name === 'NoSuchKey') return true;
   const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
   return status === 404;
 }
@@ -175,6 +191,26 @@ export class BlobStore {
     } while (continuationToken);
 
     return keys;
+  }
+
+  /**
+   * True if `key` already exists in the bucket.
+   *
+   * Backed by `HeadObjectCommand`, not `get`: this exists for callers that
+   * need to know whether an object is already there before deciding whether
+   * to write it — `LiveChunkStore.finalize` is the first — and a live run's
+   * assembled log can be on the order of a couple hundred MB. Answering
+   * "does it exist" with a full `get()` would transfer the whole body just
+   * to throw it away; HEAD fetches metadata only.
+   */
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.#s3.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }));
+      return true;
+    } catch (err) {
+      if (isObjectMissing(err)) return false;
+      throw err;
+    }
   }
 
   async get(key: string): Promise<Buffer> {

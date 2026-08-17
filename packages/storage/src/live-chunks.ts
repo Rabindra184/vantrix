@@ -47,6 +47,29 @@ export class LiveChunkStore {
    * than throwing — `#listChunkKeys` returning `[]` makes `Promise.all([])`
    * and `Buffer.concat([])` both no-ops, so there is no empty-run special
    * case to fall out of sync with the real one.
+   *
+   * Whole-log-in-memory, by the same design choice `bundle.ts`'s
+   * `openTarGzBundle` documents for a completed bundle ("In memory by
+   * design"): the live-run design doc (§3.5) puts the worst case at
+   * ~150-250 MB for the 5M-event target it sizes against, so this buffer
+   * and the `Promise.all` fan-out below are both bounded by that figure,
+   * not by run length — a live run cannot grow the assembled result past
+   * what a bundle upload of the same run would already have produced in
+   * one piece. Unlike `openTarGzBundle`, there is no enforced budget
+   * constant here: `openTarGzBundle` reads a bundle a caller can make
+   * arbitrarily large by uploading a hostile archive, so its cap defends
+   * against that input; `assemble` only ever reads back bytes this same
+   * run already wrote through `put`, so there is nothing external to
+   * bound against — the 250 MB figure is what a real run costs, not a
+   * ceiling being enforced. The `get()` fan-out is similarly unbounded in
+   * concurrency — at 64 KB chunks, ~250 MB is ~3900 chunk keys, so ~3900
+   * concurrent `GetObjectCommand`s in the worst case — but the AWS SDK
+   * v3's default Node HTTP handler caps a client at 50 concurrent sockets,
+   * so this is throttled by the client itself rather than actually opening
+   * thousands of connections. (NFR-SC-4 allows 50 *concurrent live runs*,
+   * each with its own `BlobStore`/client — multiplying this per-run figure
+   * across all of them is a real capacity question, just not one this one
+   * run's `assemble` call can see or bound from in here.)
    */
   async assemble(runId: string): Promise<Buffer> {
     const keys = await this.#listChunkKeys(runId);
@@ -56,28 +79,59 @@ export class LiveChunkStore {
 
   /**
    * Writes the assembled log to `key` and removes the chunk objects.
+   * See `assemble`'s doc comment for the memory/concurrency shape of the
+   * assembly this performs.
    *
-   * A no-op when the run has no chunks left under its prefix. That state
-   * means one of two things — this run never received a byte, or a
-   * previous `finalize` call already assembled and deleted them — and
-   * `finalize` cannot tell those apart from here (nothing records "already
-   * finalized" independently of the chunks themselves). Both are handled
-   * the same way: skip the write. That is required for the second case —
-   * without the guard, a redelivered close event or a caller retry would
-   * re-run `assemble` against an empty prefix, `putStream` an EMPTY buffer
-   * to `key`, and silently overwrite the real log the first call already
-   * made durable. Whether or not `finalize` gets called twice in practice
-   * is up to the caller (§ Task 9's close()); this primitive does not
-   * assume it won't.
+   * "Already finalized" is judged by whether `key` already holds
+   * content, not by whether any chunks remain — those are NOT
+   * interchangeable, and keying the guard on the chunk list is a data-loss
+   * bug: a `finalize` call that wrote `key` successfully but was
+   * interrupted before finishing chunk cleanup (killed mid-loop, OOM, one
+   * `delete` in a settle batch failing while others land) leaves stale
+   * chunks behind even though `key` already holds the complete, correct
+   * log. A retry keyed on "chunks gone" would not recognize that as done —
+   * it would re-assemble only the survivors and overwrite the correct log
+   * with a truncated one. Checking `exists(key)` first is what actually
+   * recovers from that state: once the destination is written, this method
+   * is done writing, regardless of how far its own cleanup got.
+   *
+   * A run with no chunks AND no `key` yet is the "never received a byte"
+   * case — intentionally a no-op that writes nothing. Task 9's `close()`
+   * is responsible for detecting a zero-byte run and finalizing it as
+   * `incomplete` without a `key` to parse; this primitive does not invent
+   * an empty log to paper over that.
+   *
+   * Chunk cleanup runs every time this method finds chunks under the
+   * prefix, whether or not it just wrote `key` — so a retry after a
+   * partial cleanup failure still finishes deleting the survivors, it just
+   * never touches `key` again once that part is done. `Promise.allSettled`
+   * (not `Promise.all`) is deliberate: one delete failing must not abort
+   * the batch and must not throw past the correctly-written log, mirroring
+   * `putStream`'s own "leave debris for a lifecycle rule to reap" stance on
+   * best-effort cleanup after the durable part has already succeeded.
    */
   async finalize(runId: string, key: string): Promise<void> {
+    const alreadyWritten = await this.#blobs.exists(key);
     const keys = await this.#listChunkKeys(runId);
-    if (keys.length === 0) return;
 
-    const parts = await Promise.all(keys.map((k) => this.#blobs.get(k)));
-    const assembled = Buffer.concat(parts);
-    await this.#blobs.putStream(key, Readable.from([assembled]), assembled.length);
-    await Promise.all(keys.map((k) => this.#blobs.delete(k)));
+    if (!alreadyWritten) {
+      if (keys.length === 0) return;
+      const parts = await Promise.all(keys.map((k) => this.#blobs.get(k)));
+      const assembled = Buffer.concat(parts);
+      await this.#blobs.putStream(key, Readable.from([assembled]), assembled.length);
+    }
+
+    const deletions = await Promise.allSettled(keys.map((k) => this.#blobs.delete(k)));
+    const failures = deletions.filter(
+      (d): d is PromiseRejectedResult => d.status === 'rejected',
+    );
+    if (failures.length > 0) {
+      console.error(
+        `LiveChunkStore.finalize(${runId}): wrote ${key} but failed to delete ` +
+          `${failures.length}/${keys.length} chunk object(s); left for a lifecycle rule to reap`,
+        failures.map((f) => f.reason),
+      );
+    }
   }
 
   /** Chunk keys for `runId`, sorted — lexicographic order over the

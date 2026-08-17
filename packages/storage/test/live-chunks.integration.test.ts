@@ -60,6 +60,33 @@ describe('LiveChunkStore', () => {
     expect((await blobs.get(key)).toString('latin1')).toBe('hello world');
   });
 
+  it('finalize is correct when the destination is already complete and a chunk survives a previous partial cleanup', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = 'partial-cleanup-probe';
+    const key = 'runs/partial-cleanup-probe/simulation.log';
+    await store.put(runId, 0, Buffer.from('hello ', 'latin1'));
+    await store.put(runId, 6, Buffer.from('world', 'latin1'));
+
+    await store.finalize(runId, key);
+    expect((await blobs.get(key)).toString('latin1')).toBe('hello world');
+
+    // Simulate a finalize whose write succeeded but whose chunk cleanup
+    // only partially completed (killed mid-loop, one delete failing while
+    // others land): one chunk object survives, re-created at the exact key
+    // it originally had. A guard keyed on "no chunks remain" would not
+    // recognize this as already finalized, and would re-assemble just the
+    // survivor on retry -- silently overwriting the correct 'hello world'
+    // log with the truncated 'hello '.
+    await store.put(runId, 0, Buffer.from('hello ', 'latin1'));
+
+    await store.finalize(runId, key); // e.g. a retry after the partial cleanup
+
+    expect((await blobs.get(key)).toString('latin1')).toBe('hello world');
+    // The retry also finishes the interrupted cleanup: the straggler is gone.
+    await expect(store.assemble(runId)).resolves.toHaveLength(0);
+  });
+
   it('assemble returns an empty buffer for a run with no chunks, rather than throwing', async () => {
     await blobs.ensureBucket();
     const store = new LiveChunkStore(blobs);
