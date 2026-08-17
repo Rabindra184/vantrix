@@ -109,14 +109,14 @@ interface FoldState {
   decoder: StreamingLogDecoder;   // packages/plugin-gatling
   engine: LiveEngine;             // packages/statistics
   client: pg.PoolClient;          // holds the advisory lock
-  foldedBytes: number;            // absolute offset consumed into whole records
+  fetchedBytes: number;           // absolute offset of the FETCH FRONTIER (§2.2.1)
   lastSeq: number;                // monotonic, per run
   lastPublishedOffsetMs: number;  // series high-water mark (§3.2)
   lastBucketWidthMs: number;      // coalesce detector (§3.3)
 }
 ```
 
-`foldedBytes` is **not persisted and starts at 0 on claim.** The owner re-folds
+`fetchedBytes` is **not persisted and starts at 0 on claim.** The owner re-folds
 the run's existing chunks from the beginning. That is §3.5's checkpoint property
 doing its job: no serialized engine state, no checkpoint format to version, and
 a worker dying mid-run costs seconds of CPU rather than correctness.
@@ -129,11 +129,45 @@ same 250 MB the design sizes everything else against.
 ### 2.2 Reading the bytes
 
 On a `live:advance` ping or on the tick, the owner reads chunk objects at or
-past `foldedBytes`, in ascending offset order, feeds each to
-`decoder.push(chunk)`, and folds every emitted event into `engine.add(event)`.
-`foldedBytes` then advances to `decoder.consumedBytes` — the last **whole
-record** boundary, not the last byte received, which is exactly what that
-accessor exists to report and why Part 1's review insisted it be tested.
+past `fetchedBytes`, in ascending offset order, feeds them to
+`decoder.push(bytes)`, and folds every emitted event into `engine.add(event)`.
+`fetchedBytes` then advances by the **length of the bytes it just received**.
+
+### 2.2.1 The cursor is the fetch frontier, NOT the decode position
+
+An earlier draft of this section advanced the cursor to `decoder.consumedBytes`.
+**That is wrong, and it corrupts the fold.**
+
+`consumedBytes` is the last **whole record** boundary, which routinely sits
+*before* the last byte fetched — a record straddling a chunk boundary leaves a
+partial tail the decoder buffers. Feeding that value back to `readFrom`, whose
+filter selects every chunk whose START is at or past it, re-selects chunks
+already delivered. The decoder then receives those bytes a second time, splices
+them after the tail it correctly retained, and every absolute position from
+there on is wrong — silently, for the rest of the run.
+
+The trigger is ordinary, not exotic: `POST /v1/runs/:id/stream` caps a chunk's
+size but sets **no minimum** (`live.controller.ts`), so a client may send chunks
+smaller than a single Gatling record, and then `consumedBytes` sits behind
+several delivered chunks' start offsets at once.
+
+**So the owner tracks two independent positions:**
+
+| Position | Owned by | Meaning |
+|---|---|---|
+| `fetchedBytes` | `FoldState` | the highest byte fetched from storage — what `readFrom` is given |
+| `consumedBytes` | the decoder | the last whole-record boundary — what the decoder retains from |
+
+`fetchedBytes += bytes.length` is exact, and does not need per-chunk lengths:
+offset negotiation only accepts a chunk when `offset === cursor` (Part 1's
+`LiveService.stream`), so a run's chunks tile `[0, stream_offset)` with no gap
+and no overlap. The first chunk `readFrom` returns therefore starts exactly at
+`fetchedBytes`.
+
+The decoder needs no help with the remainder: `push` calls
+`append(chunk, this.#consumed)`, which retains everything from its own consumed
+position. The two cursors do not need to agree — they need to not be confused
+for each other.
 
 **`LiveChunkStore` needs one new method.** It has `assemble()` (everything) and
 `finalize()`. This needs *"chunks at or past offset N"*, built on the

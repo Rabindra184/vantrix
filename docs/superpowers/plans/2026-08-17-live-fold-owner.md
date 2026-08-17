@@ -605,7 +605,13 @@ Create `apps/worker/src/live/fold-owner.ts`. Requirements, each of which the tes
 - **The lock is `pg_try_advisory_lock(RUN_INGEST_LOCK_NAMESPACE, hashtext(runId))`**, the same constant `pipeline.service.ts:67` declares (`8_531_001`). **Export it from `pipeline.service.ts` rather than re-declaring the number** — two copies of a lock namespace that must agree is exactly the drift this codebase keeps getting bitten by.
 - **The lock is held on a dedicated `pg.PoolClient` for the run's whole ownership**, taken and released on that same client (`pipeline.service.ts:99-119` is the pattern and its comment says why). Store the client in the fold state; release it on release and in `close()`.
 - **Discovery:** `SELECT id FROM run WHERE status = 'running'`, skipping already-owned ids, stopping at `maxOwnedRuns`.
-- **Folding:** `chunks.readFrom(runId, state.foldedBytes)` → `decoder.push(bytes)` → `engine.add(event)` for each → `state.foldedBytes = decoder.consumedBytes`.
+- **Folding:** `chunks.readFrom(runId, state.fetchedBytes)` → `decoder.push(bytes)` → `engine.add(event)` for each → **`state.fetchedBytes += bytes.length`**.
+
+  **The cursor is the fetch frontier, NOT `decoder.consumedBytes`** — see spec §2.2.1. `consumedBytes` is the last whole-record boundary and routinely sits *before* the last byte fetched, so feeding it back to `readFrom` re-selects chunks already delivered; the decoder splices them after the tail it correctly retained and every absolute position after that is wrong, silently, for the rest of the run. The trigger is ordinary: the stream endpoint caps chunk size but sets **no minimum**, so a chunk can be smaller than one Gatling record.
+
+  `+= bytes.length` is exact because offset negotiation only accepts `offset === cursor`, so a run's chunks tile `[0, stream_offset)` with no gap and no overlap.
+
+  **Add a test for exactly this:** deliver a run in chunks small enough that records span them (e.g. 4 bytes each), fold across several ticks, and assert the resulting statistics equal a batch parse of the same log. With the cursor set to `consumedBytes` this fails; with the frontier it passes.
 - **Release:** when a run's status is no longer `running`, drop the state, `pg_advisory_unlock`, release the client.
 - **`close()` releases every owned run**, or a test that constructs two owners leaks connections and the pool exhausts.
 
