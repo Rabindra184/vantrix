@@ -84,7 +84,7 @@ export class LiveChunkStore {
   }
 
   /**
-   * The chunks at or past `offset`, concatenated in offset order.
+   * Chunks whose **start** offset is >= `offset`, concatenated in offset order.
    *
    * The fold owner's read: it holds a byte position and wants everything
    * after it, without re-reading a run's whole history on every tick.
@@ -94,15 +94,17 @@ export class LiveChunkStore {
    * comparison would silently start behaving differently the day an offset
    * needs 17 digits, and the parse is what the caller's units actually are.
    *
-   * A chunk that STRADDLES `offset` (starts before it, ends after) is
-   * returned whole. The caller is a decoder that tracks its own position in
-   * whole records, so it can be handed bytes it has already seen -- what it
-   * must never be handed is a gap.
+   * A chunk that starts before `offset` is deliberately NOT returned, even if
+   * it extends past `offset`. The only caller (`StreamingLogDecoder`) retains
+   * its own unconsumed tail from precisely that position; re-feeding it would
+   * duplicate bytes already folded into the decoder's record stream. A future
+   * caller that does not retain its tail would get a gap, and this contract
+   * would need to change -- that decision point is documented here so it is
+   * caught by review rather than shipped silently.
    */
   async readFrom(runId: string, offset: number): Promise<Buffer> {
     const keys = await this.#listChunkKeys(runId);
     const wanted = keys.filter((k) => offsetOf(k) >= offset);
-    if (wanted.length === 0) return Buffer.alloc(0);
     return Buffer.concat(await Promise.all(wanted.map((k) => this.#blobs.get(k))));
   }
 

@@ -118,15 +118,32 @@ describe('LiveChunkStore', () => {
     expect(await store.readFrom(`never-${randomUUID()}`, 0)).toHaveLength(0);
   });
 
-  it('readFrom orders numerically, not lexicographically', async () => {
+  it('readFrom uses numeric threshold comparison, not string comparison, when filtering chunks', async () => {
     await blobs.ensureBucket();
     const store = new LiveChunkStore(blobs);
     const runId = `readfrom-order-${randomUUID()}`;
-    // 999 vs 1000: naive string sort puts 1000 first.
+    // Chunks at offsets 0, 999, 1000. A string comparison of the padded
+    // keys would agree with numeric comparison at this scale, but the filter
+    // explicitly parses to Number to remain correct when offsets reach 17 digits.
     await store.put(runId, 0, Buffer.from('x'.repeat(999), 'latin1'));
     await store.put(runId, 999, Buffer.from('y', 'latin1'));
     await store.put(runId, 1000, Buffer.from('z', 'latin1'));
 
     expect((await store.readFrom(runId, 999)).toString('latin1')).toBe('yz');
+  });
+
+  it('readFrom does not return chunks that straddle the offset', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `readfrom-straddle-${randomUUID()}`;
+    // Chunks at offsets 0 (length 10) and 10 (length 10).
+    // Read from offset 5 -- it is inside the first chunk.
+    // The first chunk starts before 5, so it is not returned.
+    // The decoder already retains its own unconsumed tail from exactly offset 5,
+    // so re-feeding the straddling chunk would duplicate bytes in the fold.
+    await store.put(runId, 0, Buffer.from('0123456789', 'latin1'));
+    await store.put(runId, 10, Buffer.from('abcdefghij', 'latin1'));
+
+    expect((await store.readFrom(runId, 5)).toString('latin1')).toBe('abcdefghij');
   });
 });
