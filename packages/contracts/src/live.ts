@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TOOL_IDS } from './ingest.js';
 import { TOKEN_SCOPES } from './tokens.js';
 
 /**
@@ -19,15 +20,33 @@ export type TokenScope = z.infer<typeof TokenScopeSchema>;
  * retried open does not mint two runs for one execution): a live run and a
  * bundle upload are the same kind of thing to every downstream reader --
  * project, filters, trend charts -- and should not diverge in what they can
- * be labelled with just because one arrives one batch at a time. All four
+ * be labelled with just because one arrives one batch at a time. Those four
  * fields are optional for the same reason they are on ingest: a load
  * generator that sends none of them still gets a run, just an unlabelled one.
+ *
+ * The bounds on all four are copied VERBATIM from `IngestMetadataSchema`
+ * (`ingest.ts`), not reinvented, because the comment above claims this is the
+ * same metadata a bundle upload takes -- a claim of sameness that used
+ * different bounds would be worse than no claim at all. `idempotencyKey`'s
+ * `.min(1)` is the one that matters most: `run` carries
+ * `@@unique([projectId, idempotencyKey])`, so an ungated empty string is a
+ * distinct, real key rather than "no key supplied" -- two live opens that
+ * both send `idempotencyKey: ''` would collide on that index instead of each
+ * getting their own run.
+ *
+ * `tool` is the exception: REQUIRED, same as it is on `IngestMetadataSchema`
+ * (its first field, and the only one with no `.optional()`), built from the
+ * same `TOOL_IDS` constant so the two lists of tool ids can't disagree. A run
+ * cannot exist without one -- `CreateRunInput.tool` is a required, non-null
+ * column (`packages/persistence/src/repositories/run.ts`) -- and it names
+ * which plugin decodes the stream, so there is no default worth guessing.
  */
 export const OpenLiveRunRequestSchema = z.object({
-  environment: z.string().optional(),
-  branch: z.string().optional(),
-  commitSha: z.string().optional(),
-  idempotencyKey: z.string().optional(),
+  tool: z.enum(TOOL_IDS),
+  environment: z.string().min(1).max(100).optional(),
+  branch: z.string().min(1).max(200).optional(),
+  commitSha: z.string().min(7).max(64).optional(),
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 export type OpenLiveRunRequest = z.infer<typeof OpenLiveRunRequestSchema>;
 
@@ -41,11 +60,20 @@ export type OpenLiveRunRequest = z.infer<typeof OpenLiveRunRequestSchema>;
  * the caller cannot know how many bytes the first attempt's response
  * delivered without being told. `0` for a genuinely new run is just this
  * field's first value, not a special case.
+ *
+ * `int().min(0)`, no upper bound: it is a byte offset into a run's log, and a
+ * run's log length is not something this schema should cap. But it is not a
+ * free-floating number either -- offset negotiation is the entire mechanism
+ * that keeps a gap or a reorder from reaching the streaming decoder, whose
+ * string-cache back-references mean a single misplaced byte corrupts every
+ * record after it. A negative or fractional offset is never a valid resume
+ * point, so both are rejected here rather than left for the decoder to fail
+ * on less clearly.
  */
 export const OpenLiveRunResponseSchema = z.object({
   runId: z.string().uuid(),
   streamUrl: z.string(),
-  nextOffset: z.number(),
+  nextOffset: z.number().int().min(0),
 });
 export type OpenLiveRunResponse = z.infer<typeof OpenLiveRunResponseSchema>;
 
@@ -55,8 +83,12 @@ export type OpenLiveRunResponse = z.infer<typeof OpenLiveRunResponseSchema>;
  * just posted a chunk needs one fact back, the byte offset to resume from on
  * its NEXT batch (or after a reconnect), and nothing else it would have to
  * parse and discard on every call in a loop that may run for hours.
+ *
+ * `int().min(0)`, same reasoning and same bound as `OpenLiveRunResponseSchema`
+ * above -- this is the same offset, acknowledged again after each batch
+ * rather than only at open.
  */
 export const StreamAcceptedSchema = z.object({
-  nextOffset: z.number(),
+  nextOffset: z.number().int().min(0),
 });
 export type StreamAccepted = z.infer<typeof StreamAcceptedSchema>;

@@ -20,20 +20,38 @@ describe('live contracts', () => {
     })).not.toThrow();
   });
 
+  it('rejects incomplete as a processing status, because incomplete is terminal', () => {
+    // The exclusion this task cares most about: an aborted run must not be
+    // reportable as "still working" forever. It currently holds only by what
+    // this enum literally lists, so pin it directly rather than relying on
+    // the positive case above to imply it.
+    expect(() => RunProcessingSchema.parse({
+      id: '0f9b1d4e-1111-2222-3333-444455556666',
+      status: 'incomplete', statusUrl: 'https://example.test/v1/runs/abc',
+    })).toThrow();
+  });
+
   it('knows the stream scope', () => {
     expect(TokenScopeSchema.parse('stream')).toBe('stream');
   });
 
   it('open takes the same frozen metadata a bundle upload takes', () => {
     const parsed = OpenLiveRunRequestSchema.parse({
+      tool: 'gatling',
       environment: 'staging', branch: 'main',
       commitSha: 'deadbeef', idempotencyKey: 'run-42',
     });
     expect(parsed.branch).toBe('main');
   });
 
-  it('open with no metadata is valid', () => {
-    expect(() => OpenLiveRunRequestSchema.parse({})).not.toThrow();
+  it('open with no OPTIONAL metadata is valid', () => {
+    // tool is still required -- see the next case -- but everything else may
+    // be omitted, same as on a bundle upload.
+    expect(() => OpenLiveRunRequestSchema.parse({ tool: 'gatling' })).not.toThrow();
+  });
+
+  it('open requires tool, because a run cannot exist without knowing which plugin decodes it', () => {
+    expect(() => OpenLiveRunRequestSchema.parse({})).toThrow();
   });
 
   it('open returns where to stream and from which byte', () => {
