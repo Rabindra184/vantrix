@@ -101,9 +101,19 @@ export class LiveService {
    * A REPLAY (`offset` behind the cursor) is the opposite case and must
    * stay a 202, not an error: it is what makes the agent's own retries
    * idempotent (send the same chunk again after a timeout that actually
-   * succeeded). It still writes — rewriting the same key with the same
-   * bytes is a harmless overwrite of real, already-accepted data, never
-   * something to clean up the way a gap's orphan is.
+   * succeeded). It does NOT write. Everything up to `cursor` is already
+   * durably stored — `put` only ever runs before `advanceOffset` moves the
+   * cursor past the bytes it just wrote (below), so a replay's bytes are
+   * guaranteed to already sit at their real key. Writing again anyway was
+   * the second half of this method's own bug: nothing here validates that
+   * a replayed `offset` is a real chunk boundary, or that `bytes.length`
+   * matches what is actually stored there — an agent replaying at a
+   * different offset, or re-chunking at a different size after a restart,
+   * would `put` under a key that never legitimately existed (or overwrite
+   * a real one with the WRONG bytes), and `finalize` concatenates the
+   * prefix with no way to tell. That is Critical 1's corruption again,
+   * this time answered 202 instead of 409. A pure no-op is what actually
+   * keeps this idempotent.
    *
    * Only the exact-match case (`offset === cursor`) reaches `advanceOffset`
    * at all, and there the original ordering argument still holds: `put`
@@ -125,8 +135,9 @@ export class LiveService {
     }
 
     if (offset < cursor) {
-      // Replay.
-      await this.chunks.put(runId, offset, bytes);
+      // Replay: a no-op, deliberately not calling chunks.put at all — see
+      // the docstring above for why writing here (even to the "same" key)
+      // is exactly the bug this method exists to not have.
       return { kind: 'accepted', nextOffset: cursor };
     }
 

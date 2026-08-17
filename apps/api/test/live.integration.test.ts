@@ -154,6 +154,38 @@ describe('live streaming', () => {
     });
   });
 
+  it('a replay with different bytes and a different length never touches the assembled log', async () => {
+    await withFastCloseWait(async () => {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+
+      const first = await stream(ctx.streamToken, runId, 0, Buffer.from('hello '));
+      expect(first.status).toBe(202);
+      const second = await stream(ctx.streamToken, runId, 6, Buffer.from('world'));
+      expect(second.status).toBe(202);
+      expect(second.body.nextOffset).toBe(11);
+
+      // Same offset a REAL chunk already landed at (0), but neither the
+      // same bytes nor the same length -- an agent that restarted and
+      // re-chunked differently, replaying a byte range the run already
+      // has. If this were written (the bug this test guards against), it
+      // would overwrite the real "hello " object with 32 junk bytes at the
+      // same key, or -- had it declared a boundary that was never a real
+      // chunk in the first place -- spliced an extra object into the
+      // middle of the assembled log the same way a gap's orphan would.
+      const replay = await stream(ctx.streamToken, runId, 0, Buffer.from('this replay has completely different bytes'));
+      expect(replay.status).toBe(202);
+      expect(replay.body.nextOffset).toBe(11);
+
+      await close(ctx.streamToken, runId);
+
+      const blobs = ctx.app.get(BlobStore);
+      const assembled = await blobs.get(`runs/${runId}/simulation.log`);
+      expect(assembled.toString('latin1')).toBe('hello world');
+    });
+  });
+
   it('404s a stream chunk for a run that does not exist', async () => {
     ctx = await createTestApp();
     const res = await stream(ctx.streamToken, randomUUID(), 0, Buffer.from('x'));
