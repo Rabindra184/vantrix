@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Card from '../components/Card';
 import DataTable from './DataTable';
 import { echarts } from './echarts';
-import { tooltipFormatter } from './tooltip';
+import { tooltipFormatter, type PairValue } from './tooltip';
 import {
   assignPalette,
   chartTheme,
@@ -82,6 +82,25 @@ export interface ChartXAxis {
    * was showing a reader two different time units for one run.
    */
   readonly tickUnit?: 'ms-as-s';
+  /**
+   * An EXPLICIT domain for a value axis, in the axis' own units.
+   *
+   * ═══ THIS IS WHAT "ONE TIME AXIS" (§22.5) ACTUALLY REQUIRES ═══
+   *
+   * Left to itself, each chart scales its axis to its own data, and the charts
+   * on a run page do not cover the same span: `/series` is SPARSE — a second
+   * with no request produces no bucket at all — so the response-time charts
+   * ended at 100,000 ms across 97 buckets while the users charts ran to 99,000
+   * across 100. Two axes of different extents drawn one above the other put the
+   * same instant at two different x positions, and a crosshair joining them
+   * points at two different moments.
+   *
+   * Pinning every time chart to the same `[min, max]` is what makes the shared
+   * pointer mean one instant. Omit both and the axis auto-scales as before —
+   * every non-time chart still does.
+   */
+  readonly min?: number;
+  readonly max?: number;
 }
 
 export interface ChartProps {
@@ -158,6 +177,14 @@ export interface ChartProps {
    * with the axis title already on screen.
    */
   readonly unit?: string;
+  /**
+   * How this chart's `[x, y]` points read in a tooltip — see `PairValue`.
+   *
+   * `'xy'` by default, which is what a scatter needs and what every pair-shaped
+   * chart did before the time axes moved to a value axis. A time series passes
+   * `'y'`: its x is the instant, and the tooltip's title already names it.
+   */
+  readonly pairValue?: PairValue;
   readonly yAxis?: ChartYAxis;
   readonly xAxis?: ChartXAxis;
   /**
@@ -249,6 +276,7 @@ export default function Chart({
   horizontal = false,
   group,
   unit,
+  pairValue,
   yAxis,
   xAxis,
   roles,
@@ -267,6 +295,9 @@ export default function Chart({
   // A primitive, for the same reason the three around it are — see
   // `ChartXAxis.tickUnit`.
   const xAxisTickUnit = xAxis?.tickUnit;
+  // Primitives, like every other axis field here — see `ChartXAxis.tickUnit`.
+  const xAxisMin = xAxis?.min;
+  const xAxisMax = xAxis?.max;
   // A scatter's x is numeric by definition; any other chart has to ask. Folded
   // to a primitive here for the same reason the other three are — see the
   // option effect's closing comment about identity-compared object props.
@@ -485,6 +516,25 @@ export default function Chart({
       },
       axisLine: { lineStyle: { color: theme.gridline } },
       splitLine: { show: false },
+      // THE POINTER'S LABEL IS THE TOOLTIP'S TITLE, so it has to speak the same
+      // units as the ticks under it. Without this the percentile chart's ticks
+      // read 0..100 in seconds while the tooltip above them announced
+      // "49,000.00" — the raw millisecond value, to two decimals, for an axis
+      // labelled in seconds.
+      ...(xAxisTickUnit === 'ms-as-s'
+        ? {
+            axisPointer: {
+              label: {
+                formatter: (params: { value: number | string }) =>
+                  `${Math.round(Number(params.value) / 1000)} s`,
+              },
+            },
+          }
+        : {}),
+      // Absent unless the caller pinned one — see `ChartXAxis.min`. `undefined`
+      // is ECharts' own "auto", so an unpinned axis behaves exactly as before.
+      min: xAxisMin,
+      max: xAxisMax,
     };
 
     instance.setOption(
@@ -566,7 +616,7 @@ export default function Chart({
           // charts and adding a custom `formatter` for wide ones would have put
           // two code paths on the same value — the exact bug that sharing
           // `formatCell` with the data table exists to prevent.
-          formatter: (params: unknown) => tooltipFormatter(params, unit),
+          formatter: (params: unknown) => tooltipFormatter(params, unit, pairValue),
           // The crosshair `connect` propagates between grouped charts.
           axisPointer: { type: 'line', lineStyle: { color: theme.inkMuted } },
         },
@@ -649,11 +699,14 @@ export default function Chart({
     horizontal,
     roles,
     unit,
+    pairValue,
     yAxisType,
     yAxisName,
     xAxisName,
     xAxisNumeric,
     xAxisTickUnit,
+    xAxisMin,
+    xAxisMax,
     mode,
     assignment,
     hasBrush,

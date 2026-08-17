@@ -74,7 +74,9 @@ function telemetryChart(
     };
   }
 
-  const series: ChartSeries[] = measures.map((m) => ({
+  // SCALARS FIRST, so the rows below index numbers rather than `[x, y]`
+  // tuples — the same split `toRequestRate` and `usersChart` make.
+  const measured = measures.map((m) => ({
     name: m.name,
     data: host.points.map((p) => m.read(p)),
   }));
@@ -83,7 +85,14 @@ function telemetryChart(
     label: String(point.startOffsetMs),
     // A gap is a dash, never a zero — same rule as the chart itself, and the
     // table is the more quotable of the two surfaces.
-    values: series.map((s) => (s.data as readonly (number | null)[])[i] ?? '—'),
+    values: measured.map((s) => s.data[i] ?? '—'),
+  }));
+
+  // PAIRS, always: these charts share the run page's crosshair, and a
+  // connected pointer on a category axis syncs by index. See `ChartXAxis.min`.
+  const series: ChartSeries[] = measured.map((m) => ({
+    name: m.name,
+    data: host.points.map((p, i) => [p.startOffsetMs, m.data[i] ?? null] as [number, number | null]),
   }));
 
   return {
@@ -192,7 +201,7 @@ export function toTcpStateChart(host: TelemetryHost): ChartData {
     };
   }
 
-  const series: ChartSeries[] = states.map((state) => ({
+  const measured = states.map((state) => ({
     name: state,
     data: host.points.map((p) => p.tcpStates[state] ?? 0),
   }));
@@ -201,7 +210,13 @@ export function toTcpStateChart(host: TelemetryHost): ChartData {
     label: String(point.startOffsetMs),
     // Never a dash here: absence means zero for this chart alone, so every
     // cell is a real number.
-    values: series.map((s) => (s.data as readonly number[])[i]!),
+    values: measured.map((s) => s.data[i]!),
+  }));
+
+  // Pairs, for the same reason as the builder above.
+  const series: ChartSeries[] = measured.map((m) => ({
+    name: m.name,
+    data: host.points.map((p, i) => [p.startOffsetMs, m.data[i]!] as [number, number]),
   }));
 
   return {

@@ -54,8 +54,34 @@ export function useRunWindow(runDurationMs: number): {
  */
 export interface RunWindowContext {
   readonly window: Window | null;
+  /**
+   * The run's own span, so a tab can pin every time chart to one domain.
+   *
+   * Here rather than re-read per tab for the same reason `window` is: the shell
+   * is where the run object lives, and a tab that fetched it again would be a
+   * second source for a number the two must agree on.
+   */
+  readonly durationMs: number | null;
 }
 
 /** The window the shell parsed. Every tab reads it; none re-derives it. */
 export const useWindowFromShell = (): Window | null =>
   useOutletContext<RunWindowContext>().window;
+
+/**
+ * The domain every time chart on the page shares, in elapsed milliseconds —
+ * §22.5's "one time axis".
+ *
+ * THE WINDOW WINS WHEN THERE IS ONE. A narrowed page shows only the selected
+ * span, and pinning those charts to the whole run instead would draw every one
+ * of them as a sliver against 90% empty axis.
+ *
+ * `undefined` when the run reports no duration — a run still parsing, or one
+ * that never completed. Each chart then auto-scales as it did before, which is
+ * the honest fallback: there is no known span to share.
+ */
+export function useTimeDomainFromShell(): readonly [number, number] | undefined {
+  const { window, durationMs } = useOutletContext<RunWindowContext>();
+  if (window !== null) return [window.fromMs, window.toMs];
+  return durationMs === null ? undefined : [0, durationMs];
+}

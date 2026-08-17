@@ -104,7 +104,12 @@ interface Spec {
  * `null` would make the scenario lines stop summing to the total line drawn
  * directly above them.
  */
-function usersChart(u: UsersResponse, spec: Spec): ChartData {
+function usersChart(
+  u: UsersResponse,
+  spec: Spec,
+  opts: { readonly x?: 'index' | 'ms' } = {},
+): ChartData {
+  const pairs = opts.x === 'ms';
   const offsets = u.total.map((b) => b.startOffsetMs);
   const widthMs = inferBucketWidthMs(offsets);
   const divisor = spec.perSecond ? widthMs / 1000 : 1;
@@ -158,11 +163,28 @@ function usersChart(u: UsersResponse, spec: Spec): ChartData {
     essential: true,
   };
 
-  const series: ChartSeries[] = [...perScenario, totalSeries];
+  /**
+   * THE SCALAR FORM, built once and kept — the rows below read it, and the
+   * drawn series are derived from it.
+   *
+   * Split this way for the same reason `toRequestRate` splits it: the row
+   * builder indexed `s.data` as `readonly number[]`, which is true of the
+   * category form and false of the pair form. Deriving both from one array of
+   * numbers is what stops a value axis from silently turning the data table
+   * into a list of `[x, y]` tuples.
+   */
+  const measured: readonly ChartSeries[] = [...perScenario, totalSeries];
 
   const rows: ChartTableRow[] = offsets.map((offset, i) => ({
     label: String(offset / 1000),
-    values: series.map((s) => (s.data as readonly number[])[i]!),
+    values: measured.map((s) => (s.data as readonly number[])[i]!),
+  }));
+
+  const series: ChartSeries[] = measured.map((s) => ({
+    ...s,
+    data: pairs
+      ? offsets.map((offset, i) => [offset, (s.data as readonly number[])[i]!] as [number, number])
+      : s.data,
   }));
 
   return {
@@ -209,12 +231,15 @@ function widthNote(widthMs: number): string {
  * guessed — a badge asserting "sessions" would be a claim about the ingest path
  * that nothing in the payload supports.
  */
-export function toConcurrentUsers(u: UsersResponse): ChartData {
+export function toConcurrentUsers(
+  u: UsersResponse,
+  opts: { readonly x?: 'index' | 'ms' } = {},
+): ChartData {
   return usersChart(u, {
     measure: 'maxConcurrent',
     perSecond: false,
     empty: 'No user activity was recorded for this run, so there are no concurrent users to show.',
-  });
+  }, opts);
 }
 
 /**
@@ -227,10 +252,13 @@ export function toConcurrentUsers(u: UsersResponse): ChartData {
  * saying it — arrival rate and concurrency diverge exactly when the system
  * under test starts to struggle.
  */
-export function toUserStartRate(u: UsersResponse): ChartData {
+export function toUserStartRate(
+  u: UsersResponse,
+  opts: { readonly x?: 'index' | 'ms' } = {},
+): ChartData {
   return usersChart(u, {
     measure: 'started',
     perSecond: true,
     empty: 'No user activity was recorded for this run, so there is no arrival rate to show.',
-  });
+  }, opts);
 }

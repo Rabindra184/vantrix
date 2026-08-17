@@ -2,7 +2,7 @@ import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
 import { RATE_ROLES, toRequestRate, toResponseRate } from './transforms/rates';
-import type { ChartData } from './types';
+import type { ChartData, TimeDomainMs } from './types';
 
 /**
  * §13.2 ⑩ requests per second (Appendix A G-23) and ⑪ responses per second
@@ -26,11 +26,12 @@ import type { ChartData } from './types';
  * render, including on every React Query background refetch.
  */
 
-function RateChart({ id, title, yName, data }: {
+function RateChart({ id, title, yName, data, domainMs }: {
   readonly id: string;
   readonly title: string;
   readonly yName: string;
   readonly data: ChartData;
+  readonly domainMs?: TimeDomainMs;
 }) {
   return (
     <Chart
@@ -45,7 +46,20 @@ function RateChart({ id, title, yName, data }: {
       // they mean on the donut ④ and the distribution ⑧.
       roles={RATE_ROLES}
       yAxis={{ name: yName }}
-      xAxis={{ name: 'Elapsed (s)' }}
+      // A VALUE AXIS IN MILLISECONDS, labelled in seconds. The connected
+      // pointer on a CATEGORY axis syncs by index, and `/series` is sparse —
+      // a second with no request produces no bucket — so index 40 here was a
+      // different instant from index 40 on the users chart. Value axes sync by
+      // the number itself.
+      // Its x is an INSTANT, not a measurement — the tooltip title names it.
+      pairValue="y"
+      xAxis={{
+        type: 'value',
+        name: 'Elapsed (s)',
+        tickUnit: 'ms-as-s',
+        min: domainMs?.[0],
+        max: domainMs?.[1],
+      }}
       unit="/s"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
       // This is the linkage that replaces Gatling's dual axis: active users is
@@ -67,22 +81,26 @@ function RateChart({ id, title, yName, data }: {
 export function RequestRateChart({
   series,
   title = 'Requests per second over time',
+  domainMs,
 }: {
   readonly series: SeriesResponse;
   readonly title?: string;
+  readonly domainMs?: TimeDomainMs;
 }) {
-  const data = useMemo(() => toRequestRate(series), [series]);
-  return <RateChart id="requests-per-second" title={title} yName="Requests per second" data={data} />;
+  const data = useMemo(() => toRequestRate(series, { x: 'ms' }), [series]);
+  return <RateChart id="requests-per-second" title={title} yName="Requests per second" data={data} domainMs={domainMs} />;
 }
 
 /** ⑪ — responses per second over time, bucketed by END time (G-24). */
 export function ResponseRateChart({
   series,
   title = 'Responses per second over time',
+  domainMs,
 }: {
   readonly series: SeriesResponse;
   readonly title?: string;
+  readonly domainMs?: TimeDomainMs;
 }) {
-  const data = useMemo(() => toResponseRate(series), [series]);
-  return <RateChart id="responses-per-second" title={title} yName="Responses per second" data={data} />;
+  const data = useMemo(() => toResponseRate(series, { x: 'ms' }), [series]);
+  return <RateChart id="responses-per-second" title={title} yName="Responses per second" data={data} domainMs={domainMs} />;
 }

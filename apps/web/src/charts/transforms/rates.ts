@@ -289,6 +289,6 @@ export function toRequestRate(series: SeriesResponse, options?: RateOptions): Ch
  *
  * READS THE END-EDGE COUNTERS ONLY, and its split is never unavailable.
  */
-export function toResponseRate(series: SeriesResponse): ChartData {
-  return rateChart(series, END_EDGE);
+export function toResponseRate(series: SeriesResponse, options?: RateOptions): ChartData {
+  return rateChart(series, END_EDGE, options);
 }

@@ -188,11 +188,28 @@ const NOTHING_MEASURED: Record<Outcome, string> = {
   all: 'no response',
 };
 
+/**
+ * `{ x: 'ms' }` emits PAIR-shaped series — `[elapsedMs, value]` — for a value
+ * x-axis, exactly as `toRequestRate` does and for the same reason: the run
+ * page's charts share one crosshair (§22.5), and a category axis syncs a
+ * connected pointer BY INDEX. `/series` is sparse — a second with no request
+ * produces no bucket — so index 40 here and index 40 on the users chart are
+ * different instants, and the shared pointer was pointing at two moments at
+ * once. A value axis syncs by the number itself, which is correct however many
+ * buckets are missing.
+ *
+ * Scalars are still the default, for any caller that genuinely wants a category
+ * axis. GIVING A VALUE AXIS THE SCALAR FORM FAILS SILENTLY — ECharts maps each
+ * number onto both axes and draws a 45° line — so the two must be chosen
+ * together; `percentiles.pairs.test.ts` is the guard.
+ */
 export function toPercentiles(
   series: SeriesResponse,
   bands: readonly Band[] = BANDS,
   outcome: Outcome = 'ok',
+  opts: { readonly x?: 'index' | 'ms' } = {},
 ): ChartData {
+  const pairs = opts.x === 'ms';
   const selected = BANDS.filter((b) => bands.includes(b));
   // ALL TEN. Not `selected` — see the docstring above.
   const columns = ['Elapsed (s)', ...BANDS.map((b) => BAND_LABEL[b])];
@@ -211,7 +228,15 @@ export function toPercentiles(
 
   const drawn: ChartSeries[] = selected.map((band) => ({
     name: BAND_LABEL[band],
-    data: series.buckets.map((bucket) => bandValue(bucket, band, outcome)),
+    // A null y is preserved either way — an unmeasured second is a GAP, and a
+    // point omitted from a value axis is not a gap, it is a line drawn across
+    // one.
+    data: pairs
+      ? series.buckets.map(
+          (bucket) =>
+            [bucket.startOffsetMs, bandValue(bucket, band, outcome)] as [number, number | null],
+        )
+      : series.buckets.map((bucket) => bandValue(bucket, band, outcome)),
   }));
 
   const rows: ChartTableRow[] = series.buckets.map((bucket, i) => ({

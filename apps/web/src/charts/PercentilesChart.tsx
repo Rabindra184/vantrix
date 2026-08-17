@@ -1,6 +1,7 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
+import type { TimeDomainMs } from './types';
 import { Chip, ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
 import { BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
@@ -59,17 +60,19 @@ export default function PercentilesChart({
   series,
   id = 'percentiles',
   title = 'Response time percentiles over time',
+  domainMs,
 }: {
   readonly series: SeriesResponse;
   readonly id?: string;
   readonly title?: string;
+  readonly domainMs?: TimeDomainMs;
 }) {
   const [scale, setScale] = useState<'log' | 'value'>('log');
   const [bands, setBands] = useState<readonly Band[]>(DEFAULT_BANDS);
   const [outcome, setOutcome] = useState<Outcome>('ok');
 
   const data = useMemo(
-    () => toPercentiles(series, bands, outcome),
+    () => toPercentiles(series, bands, outcome, { x: 'ms' }),
     [series, bands, outcome],
   );
 
@@ -147,7 +150,18 @@ export default function PercentilesChart({
       // Log by default. A log axis cannot render a zero or a null as a
       // point, which is correct here: an unmeasured second is a gap.
       yAxis={{ type: scale, name: 'Response time (ms)' }}
-      xAxis={{ name: 'Elapsed (s)' }}
+      // A VALUE AXIS IN MILLISECONDS, labelled in seconds — see `RatesChart`.
+      // A connected pointer on a category axis syncs by INDEX, and the run
+      // page's payloads do not share a bucket count.
+      // Its x is an INSTANT, not a measurement — the tooltip title names it.
+      pairValue="y"
+      xAxis={{
+        type: 'value',
+        name: 'Elapsed (s)',
+        tickUnit: 'ms-as-s',
+        min: domainMs?.[0],
+        max: domainMs?.[1],
+      }}
       unit="ms"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
       group="run-time"
