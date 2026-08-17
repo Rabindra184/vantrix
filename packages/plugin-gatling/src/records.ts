@@ -53,9 +53,16 @@ export function* parseSimulationLog(buf: Buffer): Generator<CanonicalEvent> {
         break;
       }
       case RECORD.ERROR: {
-        r.readCachedString();
-        r.readInt();
-        break;                        // standalone error records carry no request context
+        // A failure with no request context — see `ErrorEvent`. It USED TO BE
+        // discarded here, on the reasoning that carrying no request meant
+        // carrying nothing; that silently cost Appendix A G-17 two rows and 42
+        // of 399 errors on the reference run, because Gatling's own errors
+        // table counts these beside request failures. It is emitted rather
+        // than attributed: `koCount` stays a count of failed REQUESTS.
+        const message = r.readCachedString();
+        const tsMs = base + r.readInt();
+        yield { type: 'error', message, tsMs };
+        break;
       }
       default:
         throw new Error(`unknown record type ${type} at byte ${r.pos - 1}`);

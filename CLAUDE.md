@@ -53,12 +53,14 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **83 files / 957 tests**, it
+`nvm use` first, and if a run reports fewer than **83 files / 961 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the chart-controls
-pass, which added 2 legend-placement cases to `Chart` and 1 colour-role case
-to `TimeBrush`, from a floor of 83 / 954. That floor came from the
+silently-skipped run looks like a pass. Last measured on the standalone-errors
+fix (G-17), which added 4 cases to `packages/statistics/test/engine.test.ts`,
+from a floor of 83 / 957. That floor came from the chart-controls pass, which
+added 2 legend-placement cases to `Chart` and 1 colour-role case to
+`TimeBrush`, from 83 / 954; and that one from the
 run-timestamp fix, which added 3 zone-pinned label cases across
 `transforms.compare` and `transforms.trends`; the time-brush fix before it
 added `apps/web/test/TimeBrush.test.tsx` (4 tests) and 11 more across

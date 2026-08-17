@@ -209,6 +209,29 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       userEvents.push({ scenario: e.scenario, kind: e.kind, tsMs: e.tsMs });
       continue;
     }
+    if (e.type === 'error') {
+      // ═══ THE FLAT TABLE ONLY, AND RUN SCOPE ONLY ═══
+      //
+      // Run scope, because there is no request to attribute it to — that is
+      // what makes it an `ErrorEvent` rather than a failed `RequestEvent`. It
+      // is also what Gatling does: these appear in the global errors table and
+      // on no request page, which is the same rule RQ-11 states from the other
+      // side ("a request page shows only its own errors").
+      //
+      // NOT into `errorSeries`, deliberately. That series is documented to
+      // reconcile against `koCount` — the drawn series plus the folded
+      // remainder sum to each bucket's KO total — and these are not request
+      // failures, so feeding them in would make a stated invariant false. The
+      // errors-over-time chart is beyond parity (there is no such chart in the
+      // Gatling report) so nothing is owed there; the flat table is the G-17
+      // surface and it is the one that has to be exact.
+      //
+      // Warm-up is excluded on the same terms as a request's error below, so
+      // one run cannot count two kinds of failure by two different rules.
+      if (isWarmup(e.tsMs, runStartMs, warmupMs)) continue;
+      errorsFor('run', '').add(errorMessageOf(e.message));
+      continue;
+    }
     if (e.type !== 'request') continue;
 
     // D-10. A request's identity is its FULL PATH, joined exactly as :133 joins

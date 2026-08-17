@@ -2655,8 +2655,37 @@ Recovered from the shipped jars (`io.gatling.core.stats.writer.{RecordHeader,*Me
 ```
 byte 0x00 · string gatlingVersion · string simulationClassName · long runStartEpochMs
 string runDescription · int scenarioCount · string × scenarioCount
-int assertionCount · (int len + bytes) × assertionCount     // protobuf, opaque
+int assertionCount · (int len + bytes) × assertionCount     // see "Assertion payload"
 ```
+
+**Assertion payload — NOT protobuf.** This was recorded as "protobuf, opaque" through two verification passes and both words were wrong. Decoding the bytes as protobuf yields a field-number-0 key, which protobuf forbids — the first sign the claim had never been tested. It is Gatling's own tagged encoding, and it is fully recovered below.
+
+> **VERIFIED — 2026-08-17, Gatling 3.15.1.2, by corpus.** Derived by declaring one assertion per Path × Target × Condition in a single simulation, running it with `atOnceUsers(1)` (assertions are written to the header at start, so the traffic is irrelevant), and reading the emitted bytes back against known meanings. Every value below is observed, none inferred.
+
+```
+assertion  =  byte 0x00 · path · target · condition
+path       =  0x01                                  global
+              0x02                                  forAll
+              0x03 · int16 partCount · part × N     details;  part = byte len · UTF-8 bytes
+target     =  0x01 · int16 status                   count
+              0x02 · int16 status                   percent      status: 1=all, 2=ok, 3=ko
+              0x03 · int16 0x0001 · byte stat       response time
+              0x04                                  requests/sec
+              stat: 1=min 2=max 3=mean 4=stdDev 5=percentile(+ double rank)
+condition  =  0x01 · double                         lte
+              0x02 · double                         gte
+              0x03 · double                         lt
+              0x04 · double                         gt
+              0x05 · double                         is
+              0x06 · double lo · double hi · bool   between (inclusive flag)
+              0x07 · int16 n · double × n           in
+```
+
+**All values are little-endian IEEE-754 doubles** — the one place in this format that is not big-endian, and the reason a big-endian read of the tail yields plausible-looking denormals (`2.4887944e-317`) instead of an obvious error.
+
+**`around` and `deviatesAround` do not survive as distinct conditions.** Both are compiled to `between` with the bounds already evaluated: `around(36, 37)` is written as `between(-1.0, 73.0)`, and `deviatesAround(38, 0.5)` as `between(19.0, 57.0)`. A reader cannot recover which DSL call produced a `between`, and must not claim to.
+
+**The log carries DEFINITIONS, never results.** There is no actual value and no pass/fail in the header — Gatling's report computes both at render time from the same log. So G-05 is not a decoding task alone: the verdict must be recomputed against this platform's own statistics, which is also what makes it *better* than the report, since those statistics are exact where Gatling's percentiles are estimates (F-6).
 
 **Body** — records until EOF, each prefixed by its type byte:
 

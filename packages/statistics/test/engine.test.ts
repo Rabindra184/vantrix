@@ -36,6 +36,77 @@ describe('engine — parity additions', () => {
     expect(r.errors).toContainEqual({ scope: 'request', name: 'Checkout/buy', message: 'boom', count: 1 });
   });
 
+  /**
+   * ═══ APPENDIX A G-17: A FAILURE THAT IS NOT A REQUEST'S FAILURE ═══
+   *
+   * Gatling records a check that could not run, or an expression referencing a
+   * value the session never had, as its own record — and counts it in the
+   * global errors table beside request failures. The plugin used to drop those
+   * records, which on the reference run left the table two rows short and 42
+   * errors light against Gatling's 399.
+   *
+   * The three claims below are what make counting them safe, and each is a
+   * thing that would otherwise silently break something already verified:
+   */
+  describe('standalone errors (G-17)', () => {
+    const withStandalone = (): CanonicalEvent[] => [
+      ...events(),
+      { type: 'error', message: 'No attribute named ‘sessionId’ is defined', tsMs: 1_800 },
+      { type: 'error', message: 'No attribute named ‘sessionId’ is defined', tsMs: 1_900 },
+    ];
+
+    it('counts them in the run-scope errors table', () => {
+      const r = runEngine(withStandalone());
+      expect(r.errors).toContainEqual({
+        scope: 'run',
+        name: '',
+        message: 'No attribute named ‘sessionId’ is defined',
+        count: 2,
+      });
+    });
+
+    it('attributes them to NO request, because there is none', () => {
+      // The mirror of RQ-11 ("a request page shows only its own errors"): an
+      // error with no request must not appear on any request page, and must
+      // not invent a scope to live in either.
+      const r = runEngine(withStandalone());
+      // `message` is nullable — that is the folded remainder `ErrorTally`
+      // emits, and it is not what this is about.
+      const scoped = r.errors.filter((e) => e.message?.includes('sessionId') === true);
+      expect(scoped.map((e) => e.scope)).toEqual(['run']);
+    });
+
+    it('leaves koCount, and therefore every exact §A.5 row, untouched', () => {
+      // THE LOAD-BEARING ONE. Folding these into request failures would move
+      // koCount — 357 on the reference run, and exact against Gatling — and
+      // take the OK/KO counts, the %KO column and the failed indicator band
+      // with it. The errors TABLE grows; the request counts do not.
+      const before = runEngine(events());
+      const after = runEngine(withStandalone());
+      const runRow = (r: ReturnType<typeof runEngine>) =>
+        r.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+
+      expect(runRow(after)?.count).toBe(runRow(before)?.count);
+      expect(runRow(after)?.okCount).toBe(runRow(before)?.okCount);
+      expect(runRow(after)?.koCount).toBe(runRow(before)?.koCount);
+      // §A.5 C-04, and the column that would move first if a standalone error
+      // were ever miscounted as a request failure. The indicator bands are
+      // computed downstream from these same counts and the histogram, so they
+      // follow from this rather than needing their own assertion here.
+      expect(runRow(after)?.errorRate).toBe(runRow(before)?.errorRate);
+    });
+
+    it('stays out of the error SERIES, which reconciles against koCount', () => {
+      // `errorSeries` is documented to sum, per bucket, to that bucket's KO
+      // total. These are not request failures, so admitting them would make a
+      // stated invariant false — and the errors-over-time chart is beyond
+      // parity anyway, so nothing is owed there.
+      const before = runEngine(events());
+      const after = runEngine(withStandalone());
+      expect(after.errorSeries).toEqual(before.errorSeries);
+    });
+  });
+
   it('stores a FIXED per-bucket percentile band set, not the project’s columns', () => {
     // Buckets persist numbers, not sketches, so a configurable per-bucket set
     // would make history depend on ingest-day configuration. p95 in particular

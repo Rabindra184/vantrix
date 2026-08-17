@@ -44,4 +44,34 @@ export interface GroupEvent {
   ok: boolean;
 }
 
-export type CanonicalEvent = MetaEvent | RequestEvent | UserEvent | GroupEvent;
+/**
+ * A failure that is NOT a request's failure — Appendix A G-17.
+ *
+ * ═══ WHY THIS IS ITS OWN EVENT AND NOT A FAILED REQUEST ═══
+ *
+ * A tool can record a failure that never belonged to a completed request: a
+ * check that could not run, an expression that referenced a value the session
+ * never had, an exception that aborted a virtual user mid-scenario. Gatling
+ * writes these as their own record type and counts them in the global errors
+ * table alongside request failures.
+ *
+ * They are NOT request KOs and must never be folded into one. On the reference
+ * run the distinction is exactly measurable: 357 requests failed, and the
+ * errors table totals 399 — the 42 difference is two classes of
+ * `No attribute named 'sessionId' is defined`, raised when a `/session` call
+ * had already failed so the next request never ran at all. Counting those as
+ * request failures would move `koCount` off 357 and break every exact-value
+ * parity row in §A.5 at once; dropping them, which is what this model did
+ * before, leaves the errors table short by 42 and two rows narrower than the
+ * report it claims parity with.
+ *
+ * So it carries no `name` and no `groups`: there is no request to attribute it
+ * to, which is the entire point. `tsMs` is when the tool recorded it.
+ */
+export interface ErrorEvent {
+  type: 'error';
+  message: string;
+  tsMs: number;
+}
+
+export type CanonicalEvent = MetaEvent | RequestEvent | UserEvent | GroupEvent | ErrorEvent;
