@@ -205,6 +205,46 @@ describe('live streaming', () => {
     expect(res.body.remediation).toBeTruthy();
   });
 
+  it('rejects a chunk sent under a Content-Type a body parser consumes, instead of hanging forever', async () => {
+    // Nest's NestFactory.create/createNestApplication registers Express's
+    // global json() and urlencoded({ extended: true }) middleware, and each
+    // consumes a request whose Content-Type matches its own BEFORE any
+    // handler runs. readRawBody then attaches 'data'/'end' to a stream that
+    // has already ended: 'end' never fires again, the promise never settles,
+    // and no response is ever written — the socket and the promise leak, per
+    // request, with no timeout anywhere on this path.
+    //
+    // THE DEADLINE IS THE ASSERTION'S TEETH. Without one this case does not
+    // fail, it hangs, and takes the file's whole 120s testTimeout with it
+    // before reporting something that looks like a slow test rather than a
+    // leak. Five seconds is two orders of magnitude past what a 400 costs
+    // here (every other case in this file answers in well under a second).
+    ctx = await createTestApp();
+    const opened = await open(ctx.streamToken);
+
+    const form = await request(ctx.app.getHttpServer())
+      .post(`/v1/runs/${opened.body.runId}/stream`)
+      .set('Authorization', `Bearer ${ctx.streamToken}`)
+      .set('X-Stream-Offset', '0')
+      .type('form')
+      .send('offset=0')
+      .timeout({ deadline: 5_000 });
+    expect(form.status).toBe(400);
+    expect(form.body.remediation).toBeTruthy();
+
+    // application/json is the same defect through the other default parser,
+    // and the likelier mistake in practice: an agent that already speaks
+    // JSON to `open` reusing its own client for `stream`.
+    const json = await request(ctx.app.getHttpServer())
+      .post(`/v1/runs/${opened.body.runId}/stream`)
+      .set('Authorization', `Bearer ${ctx.streamToken}`)
+      .set('X-Stream-Offset', '0')
+      .send({ bytes: 'not how this works' })
+      .timeout({ deadline: 5_000 });
+    expect(json.status).toBe(400);
+    expect(json.body.remediation).toBeTruthy();
+  });
+
   it('rejects a non-numeric X-Stream-Offset header', async () => {
     ctx = await createTestApp();
     const opened = await open(ctx.streamToken);
@@ -219,15 +259,19 @@ describe('live streaming', () => {
     expect(res.body.remediation).toBeTruthy();
   });
 
-  it('rejects a single chunk larger than the configured size limit', async () => {
-    // MAX_BUNDLE_BYTES, not a project setting: LiveService reuses
-    // config.maxBundleBytes directly (the same flat default IngestService
-    // falls back to), rather than re-deriving the upload path's
-    // per-project override for a value nothing here has asked to
-    // configure per-project yet. Read by loadConfig() at createTestApp()
-    // time, so it has to be set before that call, same as INGEST_WAIT_MS.
-    const previous = process.env.MAX_BUNDLE_BYTES;
-    process.env.MAX_BUNDLE_BYTES = '16';
+  it('rejects a single chunk larger than the PER-CHUNK limit, which is not the bundle limit', async () => {
+    // MAX_STREAM_CHUNK_BYTES, and MAX_BUNDLE_BYTES left at its default on
+    // purpose: this asserts the per-request cap in its own right, so the
+    // case would still be honest if the cumulative check were deleted.
+    // Setting MAX_BUNDLE_BYTES here instead (as this test used to) proves
+    // nothing about which of the two limits fired — LiveService.stream's
+    // cumulative check would reject the same body a moment later, from a
+    // 413 that had already buffered every byte of it.
+    //
+    // Read by loadConfig() at createTestApp() time, so it has to be set
+    // before that call, same as INGEST_WAIT_MS.
+    const previous = process.env.MAX_STREAM_CHUNK_BYTES;
+    process.env.MAX_STREAM_CHUNK_BYTES = '16';
     try {
       ctx = await createTestApp();
       const opened = await open(ctx.streamToken);
@@ -240,10 +284,29 @@ describe('live streaming', () => {
       );
       expect(res.status).toBe(413);
       expect(res.body.remediation).toBeTruthy();
+      // Names the per-chunk limit, not the run's total: the two 413s are
+      // otherwise indistinguishable to an agent deciding whether to
+      // re-chunk (fixable) or give up on the run (not).
+      expect(res.body.detail).toContain('per-chunk');
     } finally {
-      if (previous === undefined) delete process.env.MAX_BUNDLE_BYTES;
-      else process.env.MAX_BUNDLE_BYTES = previous;
+      if (previous === undefined) delete process.env.MAX_STREAM_CHUNK_BYTES;
+      else process.env.MAX_STREAM_CHUNK_BYTES = previous;
     }
+  });
+
+  it('does not buffer a whole bundle-sized body for one chunk: the per-chunk default is far below it', async () => {
+    // The defect this pins is invisible from the outside — an oversized
+    // chunk 413s either way — so assert the CONFIGURED NUMBERS instead.
+    // readRawBody buffers a chunk in memory before LiveService.stream can
+    // judge its offset, so a per-chunk cap equal to maxBundleBytes let one
+    // in-flight request pin 512 MB, and N requests N × that, even for a
+    // chunk about to be refused as a gap.
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig({ DATABASE_URL: 'postgresql://unused/unused' });
+    expect(config.maxStreamChunkBytes).toBeLessThan(config.maxBundleBytes);
+    // Comfortably above the 64 KiB this file itself streams at, so the cap
+    // bounds memory without ever constraining a real agent.
+    expect(config.maxStreamChunkBytes).toBeGreaterThan(CHUNK_BYTES * 16);
   });
 
   it("rejects a chunk that would push the run's cumulative total past the configured size limit", async () => {

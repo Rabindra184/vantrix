@@ -642,9 +642,17 @@ const paths: Record<string, PathItemObject> = {
         'the run\'s expected offset: a match appends and answers 202; an offset behind the ' +
         'cursor is a no-op 202 (a replay — this is what makes the agent\'s own retries ' +
         'idempotent); an offset ahead of the cursor, or a run that is no longer "running", is a ' +
-        '409 naming the offset to resume from. Rejected with 413 if this single chunk, or the ' +
-        'run\'s total accepted bytes including it, would exceed the project\'s bundle size limit ' +
-        '— the same limit and the same code POST /v1/runs enforces.',
+        '409 naming the offset to resume from. ' +
+        'TWO SEPARATE LIMITS ANSWER 413 here, and they bound different things: a single chunk ' +
+        'body larger than MAX_STREAM_CHUNK_BYTES (8 MiB by default — the API buffers a chunk in ' +
+        'memory to judge it, so this is deliberately far smaller than a whole run), and a chunk ' +
+        'that would carry the run\'s cumulative accepted bytes past the bundle size limit POST ' +
+        '/v1/runs enforces. Both use the same "BUNDLE_TOO_LARGE" code; the problem+json ' +
+        '"detail" and "remediation" name which one was hit. ' +
+        'The body must be raw bytes under a Content-Type the server does not parse — send ' +
+        '"application/octet-stream". A chunk sent as "application/json" or ' +
+        '"application/x-www-form-urlencoded" is consumed by the framework\'s own body parser ' +
+        'before this route sees it and is rejected with 400 "STREAM_BODY_CONSUMED".',
       parameters: [parameters['RunId']!, parameters['StreamOffset']!],
       requestBody: {
         required: true,

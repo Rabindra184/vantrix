@@ -21,15 +21,47 @@ import { LiveService } from './live.service.js';
  * application/octet-stream), so those parsers skip it and leave the stream
  * untouched for this to read.
  *
+ * ═══ AN ALREADY-CONSUMED STREAM IS A 400, NOT A WAIT ═══
+ *
+ * That "so those parsers skip it" is a property of the CALLER's headers, not
+ * something this route can enforce, and getting it wrong used to hang the
+ * request forever. Send a chunk as `application/json` or
+ * `application/x-www-form-urlencoded` and Express's global parser drains the
+ * whole body before this handler is entered; the listeners below then attach
+ * to a stream that has already ended, 'end' never fires a second time, and
+ * this promise never settles — no response written, and the socket plus the
+ * promise leaked, per request, with no timeout anywhere on this path.
+ * `readableEnded` is the precise test for that state: it is set only once
+ * 'end' has actually been emitted, so a body nobody has read yet (including
+ * a legitimate zero-byte chunk, whose 'end' fires as soon as this attaches)
+ * still reads `false` here.
+ *
+ * The sibling `readMultipart` never had this problem, which is why the
+ * asymmetry is easy to miss: `req.pipe(bb)` on an ended stream fires 'close'
+ * and rejects on its own.
+ *
  * `maxBytes` bounds a SINGLE request, independent of `LiveService.stream`'s
  * cumulative per-run check (which needs the run's current cursor and so can
  * only run once this whole body is in hand). Without it, buffering a
  * request has no upper bound at all: `LiveChunkStore.put` passes
  * `bytes.length` as `BlobStore.putStream`'s own `maxBytes`, which makes
  * that guard a no-op (a value can never exceed its own length), and
- * nothing else bounds a single POST — reusing the project's bundle-size
- * config here, the same number the upload path already enforces, rather
- * than inventing a second limit.
+ * nothing else bounds a single POST.
+ *
+ * ═══ AND IT IS ITS OWN LIMIT, NOT THE BUNDLE LIMIT ═══
+ *
+ * This used to pass `config.maxBundleBytes` — "the same number the upload
+ * path already enforces, rather than inventing a second limit". That was
+ * the wrong call, because the two numbers bound different things.
+ * `maxBundleBytes` bounds a WHOLE RUN (512 MB by default); a chunk is by
+ * construction a fraction of one, and `LiveService.stream` enforces the
+ * cumulative per-run bound separately and correctly. Sharing the number
+ * meant one request could pin 512 MB of heap — and, because this buffering
+ * completes before `LiveService.stream` ever inspects the offset, it pinned
+ * it even for a chunk that was about to be refused as a gap. N in-flight
+ * requests held N × that. `readMultipart`'s own docstring already states
+ * the rule this violated: the API "must not hold a multi-hundred-megabyte
+ * body in memory while the worker is the component sized for that".
  *
  * Once over the limit, this stops RETAINING bytes (bounding memory) but
  * deliberately does not `req.destroy()` the connection: `IncomingMessage
@@ -44,6 +76,19 @@ import { LiveService } from './live.service.js';
  */
 function readRawBody(req: Request, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    if (req.readableEnded) {
+      reject(
+        badRequest(
+          'STREAM_BODY_CONSUMED',
+          `This chunk's body was already consumed by a body parser before it reached the ` +
+            `stream handler, which happens when Content-Type is one Express parses ` +
+            `("${req.headers['content-type'] ?? '(none)'}" here) rather than raw bytes.`,
+          'Send the chunk with "Content-Type: application/octet-stream" and the raw bytes as the body.',
+        ),
+      );
+      return;
+    }
+
     const chunks: Buffer[] = [];
     let total = 0;
     let overLimit = false;
@@ -59,8 +104,10 @@ function readRawBody(req: Request, maxBytes: number): Promise<Buffer> {
       if (overLimit) {
         reject(
           ingestError('BUNDLE_TOO_LARGE', {
-            message: `This chunk exceeds the ${maxBytes}-byte limit.`,
-            remediation: 'Send smaller chunks, or raise the configured bundle size limit.',
+            message: `This chunk exceeds the ${maxBytes}-byte per-chunk limit.`,
+            remediation:
+              'Split the run into smaller chunks, or raise MAX_STREAM_CHUNK_BYTES. This is the ' +
+              "per-chunk limit, not the run's cumulative size limit.",
             detail: { maxBytes },
           }),
         );
@@ -148,8 +195,16 @@ export class LiveController {
     @Res() res: Response,
   ): Promise<void> {
     const tenant = req.tenant!;
+    // Body BEFORE header validation, deliberately. Throwing out of
+    // parseOffsetHeader with the request stream still unread means Node
+    // answers while the client is mid-upload, and a 400 written onto a
+    // socket with an undrained body reaches the caller as a connection
+    // reset rather than as the problem+json explaining what was wrong with
+    // their header. Draining first costs receiving (and discarding) a body
+    // this request was never going to use — the same tradeoff readRawBody
+    // already makes for its own 413, and for the same reason.
+    const bytes = await readRawBody(req, this.config.maxStreamChunkBytes);
     const offset = parseOffsetHeader(req.headers['x-stream-offset']);
-    const bytes = await readRawBody(req, this.config.maxBundleBytes);
 
     const outcome = await this.live.stream(
       { orgId: tenant.orgId, projectId: tenant.projectId },
