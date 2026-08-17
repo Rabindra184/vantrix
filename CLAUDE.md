@@ -53,12 +53,14 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **83 files / 961 tests**, it
+`nvm use` first, and if a run reports fewer than **85 files / 979 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the standalone-errors
-fix (G-17), which added 4 cases to `packages/statistics/test/engine.test.ts`,
-from a floor of 83 / 957. That floor came from the chart-controls pass, which
+silently-skipped run looks like a pass. Last measured on the G-05 assertion
+decoder and evaluator, which added `packages/plugin-gatling/test/assertions.test.ts`
+(6) and `packages/statistics/test/tool-assertions.test.ts` (12), from a floor of
+83 / 961. That floor came from the standalone-errors fix (G-17), which added 4
+cases to `packages/statistics/test/engine.test.ts`, from 83 / 957; and that one from the chart-controls pass, which
 added 2 legend-placement cases to `Chart` and 1 colour-role case to
 `TimeBrush`, from 83 / 954; and that one from the
 run-timestamp fix, which added 3 zone-pinned label cases across

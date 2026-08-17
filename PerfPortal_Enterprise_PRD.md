@@ -2671,17 +2671,19 @@ target     =  0x01 · int16 status                   count
               0x02 · int16 status                   percent      status: 1=all, 2=ok, 3=ko
               0x03 · int16 0x0001 · byte stat       response time
               0x04                                  requests/sec
-              stat: 1=min 2=max 3=mean 4=stdDev 5=percentile(+ double rank)
-condition  =  0x01 · double                         lte
-              0x02 · double                         gte
-              0x03 · double                         lt
-              0x04 · double                         gt
-              0x05 · double                         is
-              0x06 · double lo · double hi · bool   between (inclusive flag)
-              0x07 · int16 n · double × n           in
+              stat: 1=min 2=max 3=mean 4=stdDev 5=percentile · PAD · double rank
+condition  =  0x01 · PAD · double                          lte
+              0x02 · PAD · double                          gte
+              0x03 · PAD · double                          lt
+              0x04 · PAD · double                          gt
+              0x05 · PAD · double                          is
+              0x06 · PAD · double lo · double hi · bool     between (inclusive)
+              0x07 · PAD · byte n · double × n              in
 ```
 
-**All values are little-endian IEEE-754 doubles** — the one place in this format that is not big-endian, and the reason a big-endian read of the tail yields plausible-looking denormals (`2.4887944e-317`) instead of an obvious error.
+**`PAD` is a single `0x00` introducing a block of doubles** — once per block, not once per value, which is why `between` carries two doubles behind one pad. What it means is not known and this specification does not guess: every other small integer here is written `00 XX`, so it looks like the high half of a big-endian int16, but `lt` has no integer to carry and `in`'s count follows the pad rather than being it. Both readings fit the corpus and nothing in it separates them. The decoder consumes it and requires it to be zero, because reading one byte early does not fail — `30000.0` comes back as `2.4887944e-317`, a denormal that reads as an odd number rather than an error.
+
+**All values are little-endian IEEE-754 doubles** — the one place in this format that is not big-endian, and the other half of the same trap.
 
 **`around` and `deviatesAround` do not survive as distinct conditions.** Both are compiled to `between` with the bounds already evaluated: `around(36, 37)` is written as `between(-1.0, 73.0)`, and `deviatesAround(38, 0.5)` as `between(19.0, 57.0)`. A reader cannot recover which DSL call produced a `between`, and must not claim to.
 
