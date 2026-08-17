@@ -96,6 +96,27 @@ describe('RunRepository live runs', () => {
     expect(rows).toHaveLength(1);
   });
 
+  // The sequential test above cannot prove the race guard: both calls there
+  // run one after the other, so the second always finds the first's row via
+  // the plain findByIdempotencyKey check and never reaches create() at all.
+  // Firing both requests concurrently is what can drive two callers past
+  // that check before either has committed, so the loser's create() hits
+  // the (projectId, idempotencyKey) unique index instead -- exactly the
+  // P2002 the catch in createLive() exists to turn back into "same run".
+  it('two concurrent opens with the same idempotency key still agree on one run', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+
+    const [a, b] = await Promise.all([
+      repo.createLive(liveInput(orgId, projectId, { idempotencyKey: 'concurrent-open' })),
+      repo.createLive(liveInput(orgId, projectId, { idempotencyKey: 'concurrent-open' })),
+    ]);
+
+    expect(a.id).toBe(b.id);
+    const rows = await prisma.run.findMany({ where: { projectId } });
+    expect(rows).toHaveLength(1);
+  });
+
   it('markIncomplete is terminal and leaves the verdict unevaluated', async () => {
     const { orgId, projectId } = await seedProject();
     const repo = new RunRepository(prisma);

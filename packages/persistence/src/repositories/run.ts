@@ -171,6 +171,18 @@ function startedOnFrom(startedAt: Date): Date {
   );
 }
 
+/**
+ * Robust to message-text changes in Prisma: keys on the stable error code.
+ *
+ * Replicated from apps/api/src/ingest/ingest.service.ts's private helper of
+ * the same name rather than imported: apps/api depends on
+ * packages/persistence, never the reverse, so importing it across that
+ * boundary is not available. Same one-line check, kept in sync by hand.
+ */
+function isUniqueConstraintViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
 export class RunRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -224,45 +236,64 @@ export class RunRepository {
    *     treats '' as a real digest would still be misled; confined to rows
    *     that are `running`, and the nullability migration remains available
    *     if that ever matters enough to pay for.
+   *
+   * The idempotency check below is check-THEN-create, not a transaction, so
+   * it is not by itself a race guard -- it only short-circuits the common
+   * sequential case (a genuine retry, well after the original committed).
+   * Two callers racing with the SAME key can both pass the check and both
+   * reach create(): the (projectId, idempotencyKey) unique index still lets
+   * only one of those inserts land, but the loser's create() throws P2002
+   * instead of quietly losing. The catch below is what makes the whole
+   * method idempotent under that concurrency rather than only under
+   * sequential retries -- mirrors apps/api/src/ingest/ingest.service.ts's
+   * accept(), which has the identical race on the bundle-upload path.
    */
   async createLive(input: CreateLiveRunInput): Promise<RunRecord> {
+    const scope = { orgId: input.orgId, projectId: input.projectId };
     if (input.idempotencyKey) {
-      const existing = await this.prisma.run.findUnique({
-        where: {
-          projectId_idempotencyKey: {
-            projectId: input.projectId,
-            idempotencyKey: input.idempotencyKey,
-          },
-        },
-        include: { project: true },
-      });
-      if (existing) return toRecord(existing);
+      const existing = await this.findByIdempotencyKey(scope, input.idempotencyKey);
+      if (existing) return existing;
     }
 
     const id = randomUUID();
-    const row = await this.prisma.run.create({
-      data: {
-        id,
-        orgId: input.orgId,
-        projectId: input.projectId,
-        status: 'running',
-        verdict: null,
-        tool: input.tool,
-        environment: input.environment ?? null,
-        branch: input.branch ?? null,
-        commitSha: input.commitSha ?? null,
-        bundleKey: `runs/${id}/simulation.log`,
-        bundleSha256: '',
-        bundleBytes: 0n,
-        streamOffset: 0n,
-        idempotencyKey: input.idempotencyKey ?? null,
-        startedAt: input.startedAt,
-        startedOn: startedOnFrom(input.startedAt),
-        engineOptions: input.engineOptions as object,
-      },
-      include: { project: true },
-    });
-    return toRecord(row);
+    try {
+      const row = await this.prisma.run.create({
+        data: {
+          id,
+          orgId: input.orgId,
+          projectId: input.projectId,
+          status: 'running',
+          verdict: null,
+          tool: input.tool,
+          environment: input.environment ?? null,
+          branch: input.branch ?? null,
+          commitSha: input.commitSha ?? null,
+          bundleKey: `runs/${id}/simulation.log`,
+          bundleSha256: '',
+          bundleBytes: 0n,
+          streamOffset: 0n,
+          idempotencyKey: input.idempotencyKey ?? null,
+          startedAt: input.startedAt,
+          startedOn: startedOnFrom(input.startedAt),
+          engineOptions: input.engineOptions as object,
+        },
+        include: { project: true },
+      });
+      return toRecord(row);
+    } catch (err) {
+      // Lost a concurrent race against another createLive() call sharing
+      // this idempotency key: the unique index rejected our insert after we
+      // had already passed the sequential check above. The winner's row is
+      // the one true answer -- behave exactly like the sequential-duplicate
+      // path and hand it back rather than a 500. If the re-fetch somehow
+      // finds nothing, this was not actually an idempotency-key race;
+      // rethrow the original error rather than invent a result.
+      if (input.idempotencyKey && isUniqueConstraintViolation(err)) {
+        const winner = await this.findByIdempotencyKey(scope, input.idempotencyKey);
+        if (winner) return winner;
+      }
+      throw err;
+    }
   }
 
   /**
