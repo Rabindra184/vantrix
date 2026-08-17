@@ -241,16 +241,29 @@ test('a completed run shows every request and group in one table', async ({ page
   // into their sum of the rows.
   await expect(page.locator('[data-testid="stat-row"][data-scope="run"]')).toHaveCount(0);
 
-  /* ---- the Overview tab holds exactly Assertions and Statistics (design §6) ----
+  /* ---- the Overview tab's sections, in order (design §6, Appendix A G-05) ----
    *
    * Through the section headings rather than pixel positions, so this survives
    * any layout change that keeps the order. Errors and the eight charts moved
    * to their own tabs; `Overview`'s own `<h2>` went with the split, deleted
    * rather than left behind, since a tab named Overview directly above a
    * heading that said Overview would say it twice.
+   *
+   * `Simulation assertions` joined the list with G-05. It is a SEPARATE section
+   * from `Assertions` on purpose and the two must not be collapsed: the first
+   * is this platform's SLA rules, which a project configures and the 200/422
+   * verdict gates on; the second is what the load test itself declared, fixed
+   * at run time and able to express comparisons (`between`, `in`) the SLA
+   * comparator set has no member for.
+   *
+   * It appears here because this run was ingested through the real pipeline, so
+   * the plugin decoded the reference simulation's own assertions. A run seeded
+   * without that path carries `null` and draws no section at all — which is
+   * deliberately distinct from `[]`, "the simulation declared none".
    */
   expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
     'Assertions',
+    'Simulation assertions',
     'Statistics',
   ]);
 

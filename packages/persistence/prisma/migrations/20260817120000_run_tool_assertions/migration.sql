@@ -1,0 +1,15 @@
+-- The tool's own assertions (Appendix A G-05), decoded from the result file and
+-- re-evaluated against this run's statistics.
+--
+-- NULLABLE, and deliberately not backfilled. Every run ingested before this
+-- migration was parsed by a plugin that discarded the assertion payload, so
+-- there is nothing to backfill FROM — the definitions live in the raw bundle,
+-- not in any table. NULL therefore means "this run predates the decoder", which
+-- is a different fact from `[]` ("this simulation declared none"), and the read
+-- path is expected to tell them apart rather than collapse both to an empty
+-- table.
+--
+-- A column rather than a table: these are immutable run metadata, never
+-- filtered, aggregated or joined. `run_assertion` stays what it is — SLA rule
+-- results, which reference a rule and are queried on their own.
+ALTER TABLE "run" ADD COLUMN "tool_assertions" JSONB;

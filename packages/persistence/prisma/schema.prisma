@@ -128,6 +128,18 @@ model Run {
   /// silently reinterpret its own history.
   engineOptions  Json      @map("engine_options")
   error          Json?
+  /// The TOOL'S OWN assertions, decoded from the result file and re-evaluated
+  /// against this run's statistics — Appendix A G-05. Null until the worker
+  /// parses, and forever for a run that never reaches 'complete'; `[]` for a
+  /// run whose simulation declared none.
+  ///
+  /// A COLUMN, NOT A TABLE, unlike `assertions` below. Those are SLA rule
+  /// results: they reference a `rule_id`, outlive the rule's own edits through
+  /// a snapshot, and are queried on their own. These are immutable run
+  /// metadata written once by the tool — never filtered, never aggregated,
+  /// never joined — so they belong beside `engine_options` for the same reason
+  /// it is a column: they describe the run, they are not entities of their own.
+  toolAssertions Json?     @map("tool_assertions")
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assertions RunAssertion[]

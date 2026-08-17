@@ -18,6 +18,9 @@ export function* parseSimulationLog(buf: Buffer): Generator<CanonicalEvent> {
     toolVersion: h.gatlingVersion,
     startedAtMs: base,
     description: h.description || undefined,
+    // Decoded, not skipped — see `header.ts`. Definitions only; the verdict is
+    // the engine's to recompute.
+    assertions: h.assertions,
   };
 
   let userSeq = 0;

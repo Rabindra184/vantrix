@@ -1,9 +1,13 @@
-import { ingestError, type CanonicalEvent, type MetricFamily, type MetricScope } from '@perfportal/core';
+import {
+  ingestError,
+  type CanonicalEvent, type MetricFamily, type MetricScope, type ToolAssertion,
+} from '@perfportal/core';
 import { BucketSeries, type Bucket } from './buckets.js';
 import { ErrorRollup } from './errors-rollup.js';
 import { ErrorSeries, type ErrorSeriesResult } from './errors-series.js';
 import { isWarmup } from './indicators.js';
 import { RollupBuilder, type StatRollup } from './rollup.js';
+import { evaluateToolAssertions, type EvaluatedToolAssertion } from './tool-assertions.js';
 import { UserSeries, type UserBucket } from './users.js';
 
 /**
@@ -76,6 +80,15 @@ export interface EngineResult {
   description: string | null;
   /** Run start to last response. Gatling's header renders this to whole seconds. */
   durationMs: number;
+  /**
+   * The tool's OWN assertions, re-evaluated against the rollups above —
+   * Appendix A G-05. Empty for a tool that declares none, and for a tool with
+   * no such concept.
+   *
+   * Distinct from this platform's SLA rules, which are evaluated elsewhere,
+   * carry a rule id, and drive the 200/422 verdict. See `ToolAssertion`.
+   */
+  toolAssertions: EvaluatedToolAssertion[];
 }
 
 export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions = {}): EngineResult {
@@ -137,6 +150,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   let runResponseSeries: BucketSeries | null = null;
   let simulation: string | null = null;
   let description: string | null = null;
+  let declaredAssertions: readonly ToolAssertion[] = [];
   const endpoints = new Set<string>();
 
   const seriesFor = (
@@ -171,6 +185,9 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       sawMeta = true;
       simulation = e.simulation;
       description = e.description ?? null;
+      // Definitions only. Evaluated after the loop, because judging them needs
+      // the rollups this loop is still building.
+      declaredAssertions = e.assertions ?? [];
       continue;
     }
     if (e.type === 'group') {
@@ -325,5 +342,9 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     simulation,
     description,
     durationMs: lastMs === 0 ? 0 : Math.max(0, lastMs - runStartMs),
+    // AFTER `stats`, necessarily: an assertion is judged against the very
+    // rollups this call produced, so it cannot be evaluated while they are
+    // still being accumulated.
+    toolAssertions: evaluateToolAssertions(declaredAssertions, stats),
   };
 }

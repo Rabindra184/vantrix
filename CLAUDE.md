@@ -169,6 +169,18 @@ rate values read as milliseconds — a drag over a third of a 63 s run produced
 emits pairs (`toErrorSeries`, `toPercentileDistribution` and
 `toRequestRate(_, { x: 'ms' })` do).
 
+**A `<caption>`'s WORDS become the table's accessible name, and Playwright
+matches names as a case-insensitive SUBSTRING.** So adding a table whose caption
+merely mentions an existing table's subject breaks that table's query, in a file
+you did not touch. `run-tables.spec.ts` reaches the statistics table with
+`getByRole('table', { name: /statistics/i })`; the G-05 assertions table shipped
+with a caption reading "…re-checked against this run's statistics", and five
+specs failed at once on a strict-mode violation resolving two elements. Same
+class as the `ProjectRail` collision below — the query was never wrong, the new
+name simply collided with it. **Before adding a table, grep the e2e suite for
+`getByRole('table'` and make sure your caption shares no distinctive word with
+an existing one.**
+
 **Sharing a transform does NOT share its colours — `roles` is a separate,
 silently-optional prop.** `Chart` falls back to the six-hue categorical palette
 whenever `roles` is absent, so a chart can consume the right numbers and draw

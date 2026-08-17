@@ -1,3 +1,4 @@
+import type { ToolAssertion } from './assertions.js';
 export type ToolId = 'gatling' | 'k6' | 'jmeter' | 'locust' | 'artillery' | (string & {});
 export type MetricScope = 'run' | 'scenario' | 'group' | 'request';
 export type MetricFamily = 'response_time' | 'latency' | 'group_cumulated' | 'group_duration';
@@ -8,6 +9,22 @@ export interface MetaEvent {
   toolVersion: string;
   startedAtMs: number;
   description?: string;
+  /**
+   * The assertions the load test itself declared — Appendix A G-05.
+   *
+   * ON THE META EVENT, not an event of their own, because they are not
+   * something that HAPPENED during the run: a tool writes them once, in its
+   * result file's header, before any traffic. They describe the run the same
+   * way `simulation` and `startedAtMs` do.
+   *
+   * DEFINITIONS ONLY — no outcome and no actual value, because the result file
+   * carries neither. The engine recomputes both against its own statistics; see
+   * `evaluateToolAssertions`.
+   *
+   * Optional: a tool that has no such concept omits it, and a run that declared
+   * none yields an empty array from one that does.
+   */
+  assertions?: readonly ToolAssertion[];
 }
 
 /** startMs and endMs are both retained: FR-STAT-7 needs each edge independently. */
