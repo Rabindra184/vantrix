@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { IngestError, ingestError } from '@perfportal/core';
+import { IngestError, ingestError, type BundleSource } from '@perfportal/core';
 import {
   MetricWriter,
   ProjectRepository,
@@ -8,6 +8,7 @@ import {
   RuleRepository,
   type RunRecord,
 } from '@perfportal/persistence';
+import { SIMULATION_LOG } from '@perfportal/plugin-gatling';
 import { evaluateRules, type EvaluableRule, type EvaluableStat } from '@perfportal/sla';
 import { runEngineAsync, type EngineOptions } from '@perfportal/statistics';
 import { BlobStore, openTarGzBundle } from '@perfportal/storage';
@@ -15,6 +16,43 @@ import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { selectPlugin } from './plugins.js';
+
+/**
+ * A live run's `bundleKey` (Task 9, apps/api/src/ingest/live.service.ts)
+ * holds the assembled `simulation.log` AS ITS OWN RAW BYTES —
+ * `LiveChunkStore.finalize` (packages/storage/src/live-chunks.ts) writes
+ * exactly the concatenated chunk stream, with no tar/gzip wrapping: a live
+ * run was never an archive, so there is nothing to wrap. An uploaded run's
+ * `bundleKey` (IngestService.accept's `runs/{projectId}/{uuid}.tgz`) is
+ * always a real gzipped tar.
+ *
+ * `openTarGzBundle` assumes the latter unconditionally: it gunzips whatever
+ * bytes it is given and throws `BUNDLE_NOT_ARCHIVE` the instant they are not
+ * a gzip stream, which every live run's raw log always is. Presenting the
+ * raw buffer as a one-file `BundleSource` here — rather than teaching
+ * `openTarGzBundle` to detect and skip the unwrap — keeps that function
+ * single-purpose (it opens archives; this is not one) and leaves every
+ * downstream consumer untouched: `GatlingPlugin.detect`/`parse` only ever
+ * call `source.index.files`/`head`/`read`, never anything archive-specific,
+ * so a live run's finalized log parses through the exact same plugin code a
+ * bundle upload does.
+ */
+function rawLogBundleSource(buf: Buffer): BundleSource {
+  const files = [SIMULATION_LOG];
+  return {
+    index: {
+      files,
+      head: async (path, bytes) => {
+        if (path !== SIMULATION_LOG) throw new Error(`no such entry: ${path}`);
+        return new Uint8Array(buf.subarray(0, bytes));
+      },
+    },
+    read: async (path) => {
+      if (path !== SIMULATION_LOG) throw new Error(`no such entry: ${path}`);
+      return new Uint8Array(buf);
+    },
+  };
+}
 
 /**
  * Namespace for the per-run ingest advisory lock. Arbitrary but fixed, and
@@ -141,7 +179,16 @@ export class PipelineService {
     const maxTotalBytes =
       (project?.settings.maxDecompressedBundleBytes as number | undefined) ??
       this.config.maxDecompressedBundleBytes;
-    const source = await openTarGzBundle(archive, { maxTotalBytes });
+    // See rawLogBundleSource's docstring: a live run's bundleKey always ends
+    // in `/simulation.log` (createLive's convention) and is never a gzip
+    // stream; an uploaded run's always ends in `.tgz` and always is one.
+    // maxTotalBytes/maxEntryBytes (decompression-bomb guards) do not apply
+    // to the live path — there is no compression to bound in the first
+    // place, since these are exactly the bytes the platform already
+    // received and stored one stream chunk at a time.
+    const source = run.bundleKey.endsWith(`/${SIMULATION_LOG}`)
+      ? rawLogBundleSource(archive)
+      : await openTarGzBundle(archive, { maxTotalBytes });
     const { plugin, toolVersion } = await selectPlugin(source.index);
 
     const result = await runEngineAsync(plugin.parse(source), run.engineOptions as EngineOptions);

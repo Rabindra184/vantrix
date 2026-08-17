@@ -86,7 +86,62 @@ function pipeline(): PipelineService {
   return new PipelineService(config, prisma, pool, blobs);
 }
 
+/**
+ * Mirrors seedRun, but shaped like Task 9's live path rather than an
+ * upload: `bundleKey` ends in `/simulation.log` (never `.tgz`) and holds the
+ * RAW log bytes directly — no tar, no gzip — exactly what
+ * `LiveChunkStore.finalize` writes for a real streamed run. `status:
+ * 'running'` and a non-zero `streamOffset` match what `close()` would see
+ * for a run that actually received bytes, though `process()` itself never
+ * reads either column.
+ */
+async function seedLiveRun(rawLog: Buffer) {
+  await pool.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
+  const org = await prisma.org.create({ data: { slug: 'acme', name: 'Acme' } });
+  const project = await prisma.project.create({
+    data: { orgId: org.id, slug: 'checkout', name: 'Checkout', settings: {} },
+  });
+  const key = `runs/test/${Date.now()}/simulation.log`;
+  await blobs.putStream(key, Readable.from([rawLog]), 100_000_000);
+  const startedAt = new Date('2026-08-07T10:00:00Z');
+  const run = await prisma.run.create({
+    data: {
+      orgId: org.id, projectId: project.id, status: 'running', tool: 'gatling',
+      bundleKey: key, bundleSha256: createHash('sha256').update(rawLog).digest('hex'),
+      bundleBytes: BigInt(rawLog.length), streamOffset: BigInt(rawLog.length),
+      startedAt, startedOn: new Date('2026-08-07T00:00:00Z'),
+      engineOptions: {},
+    },
+  });
+  return { orgId: org.id, projectId: project.id, runId: run.id };
+}
+
 describe('PipelineService', () => {
+  // Task 9 (apps/api/src/ingest/live.service.ts): a live run's finalized
+  // bundleKey holds simulation.log's raw bytes, never a tar.gz — before
+  // pipeline.service.ts's rawLogBundleSource branch existed, this fell
+  // straight into openTarGzBundle, which gunzips unconditionally and threw
+  // BUNDLE_NOT_ARCHIVE on every single streamed run. This is the regression
+  // guard for that branch, independent of the fuller apps/api
+  // live.integration.test.ts end-to-end case, which exercises the same code
+  // path through the real open/stream/close endpoints.
+  it('processes a live run\'s raw simulation.log directly, with no tar.gz wrapper', async () => {
+    const rawLog = readFileSync(FIXTURE_LOG);
+    const ctx = await seedLiveRun(rawLog);
+    await pipeline().process(ctx.runId);
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('complete');
+
+    const stats = await new MetricReader(pool).stats(
+      { orgId: ctx.orgId, projectId: ctx.projectId },
+      ctx.runId,
+    );
+    const runStat = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+    expect(runStat?.count).toBeGreaterThan(0);
+    expect((runStat?.okCount ?? 0) + (runStat?.koCount ?? 0)).toBe(runStat?.count);
+  });
+
   it('reproduces the fixture statistics end to end', async () => {
     const ctx = await seedRun(bundle);
     await pipeline().process(ctx.runId);
