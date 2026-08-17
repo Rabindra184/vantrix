@@ -184,6 +184,31 @@ describe('live streaming', () => {
     expect(res.body.remediation).toBeTruthy();
   });
 
+  it('rejects a chunk that would push the run past the configured size limit', async () => {
+    // MAX_BUNDLE_BYTES, not a project setting: LiveService reuses
+    // config.maxBundleBytes directly (the same flat default IngestService
+    // falls back to), rather than re-deriving the upload path's
+    // per-project override for a value nothing here has asked to
+    // configure per-project yet. Read by loadConfig() at createTestApp()
+    // time, so it has to be set before that call, same as INGEST_WAIT_MS.
+    const previous = process.env.MAX_BUNDLE_BYTES;
+    process.env.MAX_BUNDLE_BYTES = '16';
+    try {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+
+      const res = await stream(
+        ctx.streamToken, opened.body.runId, 0,
+        Buffer.from('this is way more than sixteen bytes'),
+      );
+      expect(res.status).toBe(413);
+      expect(res.body.remediation).toBeTruthy();
+    } finally {
+      if (previous === undefined) delete process.env.MAX_BUNDLE_BYTES;
+      else process.env.MAX_BUNDLE_BYTES = previous;
+    }
+  });
+
   it('rejects opening a run with no "tool"', async () => {
     ctx = await createTestApp();
     const res = await open(ctx.streamToken, { environment: 'staging' });

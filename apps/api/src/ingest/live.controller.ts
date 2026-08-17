@@ -1,6 +1,9 @@
-import { Controller, NotFoundException, Param, Post, Req, Res } from '@nestjs/common';
+import { Controller, Inject, NotFoundException, Param, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { ingestError } from '@perfportal/core';
 import { OpenLiveRunRequestSchema } from '@perfportal/contracts';
+import { CONFIG } from '../auth/auth.module.js';
+import type { AppConfig } from '../config.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { problem } from '../common/problem.js';
 import { badRequest, uuidParam } from '../common/validation.js';
@@ -17,12 +20,54 @@ import { LiveService } from './live.service.js';
  * POST is sent as raw bytes under a different Content-Type (e.g.
  * application/octet-stream), so those parsers skip it and leave the stream
  * untouched for this to read.
+ *
+ * `maxBytes` bounds a SINGLE request, independent of `LiveService.stream`'s
+ * cumulative per-run check (which needs the run's current cursor and so can
+ * only run once this whole body is in hand). Without it, buffering a
+ * request has no upper bound at all: `LiveChunkStore.put` passes
+ * `bytes.length` as `BlobStore.putStream`'s own `maxBytes`, which makes
+ * that guard a no-op (a value can never exceed its own length), and
+ * nothing else bounds a single POST — reusing the project's bundle-size
+ * config here, the same number the upload path already enforces, rather
+ * than inventing a second limit.
+ *
+ * Once over the limit, this stops RETAINING bytes (bounding memory) but
+ * deliberately does not `req.destroy()` the connection: `IncomingMessage
+ * .destroy()` tears down the underlying socket, which on a keep-alive
+ * connection is the SAME socket the 413 response needs to be written back
+ * on — killing it here would mean the caller never sees why it failed,
+ * only a broken connection. Draining to a natural 'end' before rejecting
+ * costs receiving (and discarding) the oversized tail, the same tradeoff
+ * the metering Transform in BlobStore.putStream already makes for the
+ * upload path, which errors its pipeline rather than reaching into the
+ * request socket either.
  */
-function readRawBody(req: Request): Promise<Buffer> {
+function readRawBody(req: Request, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    let total = 0;
+    let overLimit = false;
+    req.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        overLimit = true;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (overLimit) {
+        reject(
+          ingestError('BUNDLE_TOO_LARGE', {
+            message: `This chunk exceeds the ${maxBytes}-byte limit.`,
+            remediation: 'Send smaller chunks, or raise the configured bundle size limit.',
+            detail: { maxBytes },
+          }),
+        );
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
     req.on('error', reject);
   });
 }
@@ -58,6 +103,7 @@ function parseOffsetHeader(raw: string | string[] | undefined): number {
 @Controller('/v1/runs')
 export class LiveController {
   constructor(
+    @Inject(CONFIG) private readonly config: AppConfig,
     private readonly live: LiveService,
     private readonly runs: RunsService,
   ) {}
@@ -103,7 +149,7 @@ export class LiveController {
   ): Promise<void> {
     const tenant = req.tenant!;
     const offset = parseOffsetHeader(req.headers['x-stream-offset']);
-    const bytes = await readRawBody(req);
+    const bytes = await readRawBody(req, this.config.maxBundleBytes);
 
     const outcome = await this.live.stream(
       { orgId: tenant.orgId, projectId: tenant.projectId },

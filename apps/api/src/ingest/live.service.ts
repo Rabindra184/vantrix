@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { ingestError } from '@perfportal/core';
 import {
   ProjectRepository,
   RunRepository,
@@ -129,11 +130,30 @@ export class LiveService {
       return { kind: 'accepted', nextOffset: cursor };
     }
 
-    // offset === cursor: the expected next chunk. Write BEFORE advancing --
-    // a crash between the two leaves a duplicate object at the same key
-    // (chunkKey is a pure function of runId+offset), which assembly simply
-    // overwrites -- safe. The reverse order could report success for bytes
-    // that never actually landed, which is a gap.
+    // offset === cursor: the expected next chunk.
+    if (offset + bytes.length > this.config.maxBundleBytes) {
+      // Reuses the upload path's own cap (config.maxBundleBytes) rather
+      // than inventing a second number: nothing here bounds a live run's
+      // total size otherwise. LiveChunkStore.assemble's own docstring
+      // explicitly declines to bound itself, on the grounds that it "only
+      // ever reads back bytes this same run already wrote through put" —
+      // that delegates the bound to the caller that decides what gets
+      // written in the first place, which is here.
+      throw ingestError('BUNDLE_TOO_LARGE', {
+        message:
+          `Streaming this chunk would carry run ${runId} past the ` +
+          `${this.config.maxBundleBytes}-byte limit.`,
+        remediation:
+          'This live run has reached its size limit. Close it, or raise the configured bundle ' +
+          'size limit.',
+        detail: { maxBytes: this.config.maxBundleBytes },
+      });
+    }
+
+    // Write BEFORE advancing -- a crash between the two leaves a duplicate
+    // object at the same key (chunkKey is a pure function of runId+offset),
+    // which assembly simply overwrites -- safe. The reverse order could
+    // report success for bytes that never actually landed, which is a gap.
     await this.chunks.put(runId, offset, bytes);
     const advanced = await this.runs.advanceOffset(runId, offset, offset + bytes.length);
     if (advanced) return { kind: 'accepted', nextOffset: offset + bytes.length };
