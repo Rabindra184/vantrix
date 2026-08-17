@@ -53,15 +53,26 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **88 files / 1005 tests**, it
+`nvm use` first, and if a run reports fewer than **92 files / 1029 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. Last measured on §22.6's mobile
 summary, which added `DesktopOnly.test.tsx` (6) and `useIsCompact.test.tsx`
-(6), from a floor of 86 / 993 — and that one from the shared time axis,
-which added `apps/web/test/timeAxis.test.ts` (8) plus 3 axis cases to `Chart`
-and 3 pair cases to `tooltip`, from a floor of 85 / 979 — and that one from the
-G-05 assertion decoder and evaluator, which added
+(6), from a floor of 90 / 1017 — and that one from live run monitoring
+part 1's review fixes, which added 2 cases to
+`packages/plugin-gatling/test/stream.test.ts` — one pinning `consumedBytes`
+against the last whole-record boundary, one pinning that the decoder's
+retained buffer is bounded by the chunk rather than by the run — from a
+floor of 90 / 1015. That sub-project's own additions were
+`packages/statistics/test/live-engine.test.ts` (3),
+`packages/statistics/test/chunk-invariance.test.ts` (2),
+`packages/plugin-gatling/test/stream.test.ts` (3), and
+`packages/contracts/test/live.test.ts` (10), plus 4 truncation-bounds cases
+added to `packages/plugin-gatling/test/reader.test.ts`, from a floor of
+86 / 993 — and that one from the shared time axis, which added
+`apps/web/test/timeAxis.test.ts` (8) plus 3 axis cases to `Chart` and 3 pair
+cases to `tooltip`, from a floor of 85 / 979 — and that one from the G-05
+assertion decoder and evaluator, which added
 `packages/plugin-gatling/test/assertions.test.ts` (6) and
 `packages/statistics/test/tool-assertions.test.ts` (12), from 83 / 961. Earlier
 floors: the standalone-errors fix (G-17) 83 / 957, the chart-controls pass
@@ -273,6 +284,109 @@ only because no seeded project name collides with a page's own link text;
 that is a standing constraint on fixture naming from here on, not a one-off
 check to pass once. (The brand link moved to `AppShell`'s header in the
 design pass, but it is still in the document on every page — same rule.)
+
+**A truncated read does not throw — `subarray` returns a short buffer.**
+`BinaryReader.readString` reads a length then slices, and slicing past the
+end yields fewer bytes with nothing raised, so a truncated string decoded to
+a plausible wrong value. Every primitive now bounds-checks explicitly and
+throws `TruncatedError`, which a streaming caller distinguishes from
+corruption: it rewinds and waits on the first, gives up on the second.
+
+**There is exactly ONE record decoder, and that is deliberate.**
+`packages/plugin-gatling/src/record-decoder.ts` is shared by
+`parseSimulationLog` (pull, finished buffer) and `StreamingLogDecoder` (push,
+live feed). A second copy was written and removed during this work: drift
+between two decoders surfaces as the live chart contradicting the final
+report, which is the worst failure this product can produce. Do not
+re-duplicate it.
+
+**A replay must be acknowledged, never re-written.** `POST
+/v1/runs/:id/stream` with an offset behind the cursor returns 202 and writes
+nothing. Writing it re-creates an orphan chunk object at an unvalidated key,
+which `LiveChunkStore.finalize` then splices into the assembled log — and
+`close()` hashes the corrupt assembly, so the checksum passes and the decoder
+eats it. The bytes are already stored, because the cursor only advances after
+the write.
+
+**A raw-body handler must reject an ALREADY-CONSUMED request, not wait on
+it.** Nest registers Express's global `json()` and `urlencoded()`, and either
+one fully drains a body whose Content-Type matches its own before any handler
+runs. A handler that then attaches `'data'`/`'end'` to that stream waits for
+an `'end'` that has already happened and will never fire again: no response,
+one leaked socket and one leaked promise per request, and no timeout on the
+path. `readRawBody` (`live.controller.ts`) guards on `req.readableEnded` —
+true only once `'end'` has actually been emitted, so a body nobody has read
+yet, including a legitimate zero-byte one, still reads `false`. The sibling
+`readMultipart` never had the bug (`req.pipe(bb)` on an ended stream fires
+`'close'` and rejects), which is exactly why it is easy to reintroduce.
+**Test the wrong Content-Type with a request DEADLINE** — without one the
+case does not fail, it hangs, and takes the file's whole `testTimeout` with
+it.
+
+**A per-request memory cap is not a per-run size cap.** `MAX_BUNDLE_BYTES`
+(512 MB) bounds a whole run; `MAX_STREAM_CHUNK_BYTES` (8 MiB) bounds one
+`POST /v1/runs/:id/stream` body, which the API buffers in memory before it
+can judge the offset — so sharing the first number let one in-flight request
+pin 512 MB and N requests pin N × that, even for a chunk about to be refused
+as a gap. Both answer 413 under `BUNDLE_TOO_LARGE`; the message says which,
+because re-chunking fixes one and not the other. Whenever a limit's number
+looks reusable, check the two limits bound the same THING first.
+
+**`close()` releases its claim only up to `finalizeLive`.** The claim
+(`claimForClose`) is reverted by `releaseClose` when an object-store step
+fails, which is right — those are retryable. `queue.add` is not: past
+`finalizeLive` the bundle is assembled, hashed and recorded, and the
+per-chunk objects are deleted, so reverting to `running` re-opens
+`advanceOffset` to bytes that a retried `close()` will silently drop
+(`finalize`'s `exists(key)` guard skips the re-assembly, deletes the new
+chunks anyway, and hashes the stale bundle). Recovery past that point is the
+sweeper's `parsing` branch, not a client retry. `releaseClose` is called with
+its own rejection swallowed, so a failing compensating write cannot replace
+the error that caused it.
+
+**The sweeper measures `parsing` staleness from `parsing_started_at`, and
+`running` staleness from `stream_updated_at` — never `created_at` for
+either.** A live run's `created_at` is its OPEN time, so any run
+streaming longer than `parsingStaleAfterMs` (15 min default) was sweepable
+the instant `close()` moved it to `parsing` — the sweeper would re-enqueue
+it, the pipeline would run against an empty `bundleSha256`, and the run would
+be permanently `failed` while `close()`'s own write silently no-opped.
+`finalizeLive` requires `status: 'parsing'` exactly (`run.ts`); `markIncomplete`
+excludes `'failed'` (among other terminal states) from the rows it will touch
+— two different guards, but both already miss once the sweeper's premature
+re-enqueue has driven the pipeline to mark the row `failed` first, which is
+what makes `close()`'s own write a silent no-op rather than a conflict. The
+sweeper reads `COALESCE(parsing_started_at, created_at)` so rows predating
+the migration stay sweepable. `running` is the same trap one state over and
+needed its own column: a soak run streams for hours, so ageing it from
+`created_at` would finalize a healthy mid-stream run as `incomplete` purely
+for being long. What "stale" means there is that the PRODUCER stopped, so
+`advanceOffset` stamps `stream_updated_at` on every ACCEPTED chunk — not on
+a replay, which proves the agent is alive but not that it is progressing.
+That branch finalizes in place via `markIncomplete`; it must never
+re-enqueue, because nothing is assembled at `bundleKey` until `close()` runs.
+
+**A raw SQL write inside the sweeper's transaction cannot be a Prisma call.**
+`sweep()` holds its rows under `FOR UPDATE` in its own transaction, so
+reaching for `RunRepository` would open a SECOND connection and block on the
+lock this transaction holds — a self-deadlock that resolves only when the
+pool times out. `Sweeper` is constructed with a `pg.Pool` and no Prisma
+client for that reason; a new terminal transition there is hand-written SQL
+on the sweep's own client, carrying the repository method's guard verbatim.
+
+**A run status absent from `statusFor` inherits the `202` fallthrough,
+silently.** `RunsService.statusFor` is the one function `POST /v1/runs` and
+`GET /v1/runs/{id}` both call through `respondWithRun` — that sharing is the
+entire "same code for the same state" guarantee. It has explicit branches for
+`failed`, `incomplete`, and `complete`; everything else falls through to
+`202`, which is correct for `pending`/`parsing`/`running` but wrong for any
+future terminal status that forgets to add its own branch. This is not
+hypothetical: `incomplete` shipped with exactly that bug first — before
+`statusFor` gained its `run.status === 'incomplete'` line, a closed,
+zero-byte run answered `202` with a `Retry-After` header and no `verdict`
+field, forever, because an aborted live run has no worker left to ever move
+it past 202. Add a status to `statusFor` in the same change that adds it to
+`RunStatusSchema`.
 
 ## Conventions the design pass added
 

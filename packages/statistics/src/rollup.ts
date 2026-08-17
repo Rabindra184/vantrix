@@ -53,9 +53,28 @@ export class RollupBuilder {
   finish(opts: {
     scope: MetricScope; name: string; family: MetricFamily;
     windowMs: number; percentiles: number[];
+    /**
+     * Hand back COPIES of the sketch and histograms rather than the live
+     * accumulators.
+     *
+     * Off by default: a batch fold finishes once and never touches the builder
+     * again, so copying would be pure cost. A LIVE fold keeps going after the
+     * snapshot, and a snapshot that aliases the accumulator would mutate under
+     * whoever is serializing it — a state that existed at no instant.
+     *
+     * Lossless: DDSketch and Histogram merges are exact, which is the same
+     * property that makes BucketSeries coalescing lossless.
+     */
+    clone?: boolean;
   }): StatRollup {
     const percentiles: Record<string, number> = {};
     for (const p of opts.percentiles) percentiles[`p${p}`] = this.#sketch.quantile(p / 100);
+
+    const copyOf = <T extends { merge(other: T): void }>(src: T, empty: T): T => {
+      empty.merge(src);
+      return empty;
+    };
+
     return {
       scope: opts.scope,
       name: opts.name,
@@ -70,9 +89,9 @@ export class RollupBuilder {
       stddevMs: this.#count === 0 ? 0 : Math.sqrt(this.#m2 / this.#count),
       percentiles,
       throughputRps: opts.windowMs === 0 ? 0 : (this.#count / opts.windowMs) * 1000,
-      sketch: this.#sketch,
-      histogramOk: this.#histOk,
-      histogramKo: this.#histKo,
+      sketch: opts.clone ? copyOf(this.#sketch, new Sketch()) : this.#sketch,
+      histogramOk: opts.clone ? copyOf(this.#histOk, new Histogram()) : this.#histOk,
+      histogramKo: opts.clone ? copyOf(this.#histKo, new Histogram()) : this.#histKo,
     };
   }
 }

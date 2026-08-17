@@ -37,8 +37,22 @@ export function Marked({ mark }: { mark: Mark }) {
 export const STATUS: Record<RunStatus, Mark> = {
   pending: { glyph: '○', label: 'pending', colour: 'var(--color-status-pending)' },
   parsing: { glyph: '◐', label: 'parsing', colour: 'var(--color-status-pending)' },
+  // Pending-shaped, not terminal (RunStatusSchema, packages/contracts/src/run.ts)
+  // -- same 202-poll family as pending/parsing, so it shares their colour. The
+  // glyph continues the fill sequence pending/parsing already started (empty,
+  // half) rather than reusing either: a live run streaming in is further along
+  // than a bundle still being parsed, and the two states must read as visibly
+  // different while a reader is watching one tick over into the other.
+  running: { glyph: '◕', label: 'running', colour: 'var(--color-status-pending)' },
   complete: { glyph: '●', label: 'complete', colour: 'var(--color-status-passed)' },
   failed: { glyph: '✕', label: 'failed', colour: 'var(--color-status-failed)' },
+  // Terminal (its data is retained, nothing further will happen to it), but
+  // neither `complete`'s success nor `failed`'s error -- it stopped without
+  // its producer saying why. Its verdict is always not_evaluated (run.ts), so
+  // this borrows THAT verdict's colour rather than passed/failed's, and a
+  // dotted, gapped circle rather than a solid one: the run has holes in it,
+  // literally the reason its own SLA verdict cannot be trusted.
+  incomplete: { glyph: '◌', label: 'incomplete', colour: 'var(--color-status-not-applicable)' },
 };
 
 /**
