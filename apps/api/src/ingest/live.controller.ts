@@ -123,8 +123,9 @@ export class LiveController {
           ...problem(
             'STREAM_OFFSET_REJECTED',
             409,
-            `This chunk's declared offset does not match run ${id}'s current cursor, or the ` +
-              'run is no longer accepting chunks.',
+            `This chunk's declared offset is ahead of run ${id}'s current cursor (a gap), or ` +
+              'the run is no longer accepting chunks. A replay (an offset behind the cursor) ' +
+              'is not an error and answers 202 instead.',
             `Resume streaming from byte offset ${outcome.nextOffset}.`,
           ),
           nextOffset: outcome.nextOffset,

@@ -346,6 +346,25 @@ export class RunRepository {
     });
   }
 
+  /**
+   * A live run's status and byte cursor, read together -- not part of
+   * RunRecord (no existing reader needs stream_offset, so it was never
+   * added to that shape; see toRecord()/RunRow above). stream() reads both
+   * to tell a gap from a replay from a not-running run BEFORE it writes
+   * anything. Read in ONE query rather than two separate ones: status and
+   * streamOffset are two columns on the same row, and reading them apart
+   * would let one change land between the reads, making the pair
+   * inconsistent with itself at the exact moment the caller most needs
+   * them to agree.
+   */
+  async liveState(runId: string): Promise<{ status: string; streamOffset: number } | null> {
+    const row = await this.prisma.run.findUnique({
+      where: { id: runId },
+      select: { status: true, streamOffset: true },
+    });
+    return row ? { status: row.status, streamOffset: Number(row.streamOffset) } : null;
+  }
+
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: {

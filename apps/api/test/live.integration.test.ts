@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { BlobStore } from '@perfportal/storage';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 
@@ -40,6 +41,28 @@ function close(token: string, runId: string) {
   return request(ctx.app.getHttpServer())
     .post(`/v1/runs/${runId}/close`)
     .set('Authorization', `Bearer ${token}`);
+}
+
+/**
+ * close() waits up to config.defaultWaitMs (INGEST_WAIT_MS) for a terminal
+ * notification before answering. Nothing drains the BullMQ queue in this
+ * test process, so that wait would otherwise run out the full default
+ * (25s). Shortening it here, the same env-var-plus-finally-restore
+ * technique CLAUDE.md's timezone convention documents, keeps tests that
+ * only need close() to have durably finalized the blob (not to have fully
+ * processed) fast. INGEST_WAIT_MS is read by loadConfig() at
+ * createTestApp() time, so the env var must already be set before that
+ * call -- this wraps the whole body, not just the close() call.
+ */
+async function withFastCloseWait<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.env.INGEST_WAIT_MS;
+  process.env.INGEST_WAIT_MS = '50';
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.INGEST_WAIT_MS;
+    else process.env.INGEST_WAIT_MS = previous;
+  }
 }
 
 describe('live streaming', () => {
@@ -90,14 +113,42 @@ describe('live streaming', () => {
     expect(first.status).toBe(202);
 
     // Same chunk, same offset, sent again -- e.g. the agent retried after a
-    // timeout that actually succeeded. advanceOffset's CAS no longer
-    // matches (the cursor already moved), so this is the identical 409 a
-    // genuine gap gets -- the caller cannot tell the two apart, and does
-    // not need to: "resume from nextOffset" is the same instruction either
-    // way, and nextOffset here already reflects the earlier chunk landing.
+    // timeout that actually succeeded. This offset is now BEHIND the
+    // cursor, which is a replay, not a gap: a 202 no-op is what makes the
+    // agent's own retries idempotent, and nextOffset still reports the
+    // cursor the earlier chunk already advanced to.
     const replay = await stream(ctx.streamToken, opened.body.runId, 0, bytes);
-    expect(replay.status).toBe(409);
+    expect(replay.status).toBe(202);
     expect(replay.body.nextOffset).toBe(bytes.length);
+  });
+
+  it('a rejected gap is never written to blob storage, so it cannot corrupt the assembled log', async () => {
+    await withFastCloseWait(async () => {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+
+      const good = Buffer.from('hello world');
+      // Far ahead of the cursor (still 0) -- a genuine gap. If the chunk
+      // store were written to before offset validation, this would land at
+      // live/{runId}/0000000000999999.bin regardless of the 409 the caller
+      // sees, and LiveChunkStore.finalize concatenates every key under the
+      // prefix in sorted order with no concept of "this one was never
+      // accepted" -- so it would appear in the assembled log, sorted after
+      // the legitimately accepted bytes.
+      const gap = await stream(ctx.streamToken, runId, 999999, Buffer.from('CORRUPTION'));
+      expect(gap.status).toBe(409);
+
+      const accepted = await stream(ctx.streamToken, runId, 0, good);
+      expect(accepted.status).toBe(202);
+      expect(accepted.body.nextOffset).toBe(good.length);
+
+      await close(ctx.streamToken, runId);
+
+      const blobs = ctx.app.get(BlobStore);
+      const assembled = await blobs.get(`runs/${runId}/simulation.log`);
+      expect(assembled.toString('latin1')).toBe('hello world');
+    });
   });
 
   it('404s a stream chunk for a run that does not exist', async () => {

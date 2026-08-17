@@ -23,10 +23,9 @@ export interface OpenLiveRunResult {
 
 export type StreamOutcome =
   | { kind: 'not_found' }
-  /** advanceOffset's CAS lost — either a gap/replay mismatch or the run is
-   *  no longer 'running'. See advanceOffset's own docstring: the two are
-   *  indistinguishable from its return value alone, and the caller does not
-   *  need to tell them apart — both mean "resync to nextOffset". */
+  /** A gap (ahead of the cursor), or the run is no longer `running` — the
+   *  two cases the caller cannot and need not tell apart (see `stream()`'s
+   *  own docstring). Never reached for a replay; that is `accepted`. */
   | { kind: 'rejected'; nextOffset: number }
   | { kind: 'accepted'; nextOffset: number };
 
@@ -79,32 +78,75 @@ export class LiveService {
     // retried open can rejoin a run that already accepted bytes. Reading the
     // real cursor back is what makes that rejoin resumable rather than
     // silently restarting the run — see OpenLiveRunResponseSchema's docstring.
-    const nextOffset = (await this.#currentOffset(run.id)) ?? 0;
+    const state = await this.runs.liveState(run.id);
 
-    return { runId: run.id, streamUrl: `/v1/runs/${run.id}/stream`, nextOffset };
+    return { runId: run.id, streamUrl: `/v1/runs/${run.id}/stream`, nextOffset: state?.streamOffset ?? 0 };
   }
 
   /**
-   * Lands one chunk. The write happens BEFORE the offset advances
-   * deliberately: a crash between the two leaves a duplicate object at the
-   * same key (chunkKey is a pure function of runId+offset), which assembly
-   * simply overwrites — safe. The reverse order (advance, then write) could
-   * report success for bytes that never actually landed, which is a gap.
+   * Lands one chunk, discriminating gap / replay / accept from the cursor
+   * READ BEFORE ANY WRITE — the fix this method exists to get right.
    *
-   * advanceOffset's WHERE clause requires BOTH the offset match AND
-   * status = 'running' in one round trip, so a run that closed between the
-   * request arriving and this call running rejects a straggling chunk the
-   * same way a genuine gap does — see advanceOffset's own docstring.
+   * A GAP (`offset` ahead of the cursor) is refused WITHOUT calling
+   * `chunks.put`. Writing first and validating after (an earlier version of
+   * this did exactly that) leaves an orphan object at the gap's own
+   * (wrong, future) key even though the chunk was rejected: `finalize`
+   * concatenates every key under the run's prefix in sorted order with no
+   * concept of "this one was never accepted", so that orphan lands in the
+   * assembled log at its sorted position regardless. That is silent wrong
+   * data reaching the decoder — checksummed correctly, because the
+   * checksum is taken of the corrupted assembly, so nothing downstream
+   * notices. Refusing before writing is what makes the orphan
+   * unconstructible in the first place.
+   *
+   * A REPLAY (`offset` behind the cursor) is the opposite case and must
+   * stay a 202, not an error: it is what makes the agent's own retries
+   * idempotent (send the same chunk again after a timeout that actually
+   * succeeded). It still writes — rewriting the same key with the same
+   * bytes is a harmless overwrite of real, already-accepted data, never
+   * something to clean up the way a gap's orphan is.
+   *
+   * Only the exact-match case (`offset === cursor`) reaches `advanceOffset`
+   * at all, and there the original ordering argument still holds: `put`
+   * happens BEFORE the offset advances, so a crash between the two leaves a
+   * duplicate object at the same key (assembly overwrites it — safe)
+   * rather than a gap (not safe).
    */
   async stream(scope: TenantScope, runId: string, offset: number, bytes: Buffer): Promise<StreamOutcome> {
     const run = await this.runs.findById(scope, runId);
     if (!run) return { kind: 'not_found' };
 
+    const state = await this.runs.liveState(runId);
+    const cursor = state?.streamOffset ?? 0;
+
+    if (state?.status !== 'running' || offset > cursor) {
+      // Not running (already closed, or somehow never opened live) or a
+      // genuine gap: refuse, and never touch blob storage for either.
+      return { kind: 'rejected', nextOffset: cursor };
+    }
+
+    if (offset < cursor) {
+      // Replay.
+      await this.chunks.put(runId, offset, bytes);
+      return { kind: 'accepted', nextOffset: cursor };
+    }
+
+    // offset === cursor: the expected next chunk. Write BEFORE advancing --
+    // a crash between the two leaves a duplicate object at the same key
+    // (chunkKey is a pure function of runId+offset), which assembly simply
+    // overwrites -- safe. The reverse order could report success for bytes
+    // that never actually landed, which is a gap.
     await this.chunks.put(runId, offset, bytes);
     const advanced = await this.runs.advanceOffset(runId, offset, offset + bytes.length);
     if (advanced) return { kind: 'accepted', nextOffset: offset + bytes.length };
 
-    const current = (await this.#currentOffset(runId)) ?? 0;
+    // Lost a race between the reads above and this CAS: a concurrent chunk
+    // at this exact offset landed first, or the run closed in the interim.
+    // Re-read rather than assume which — if the cursor has since moved
+    // PAST our offset, a rival's write already accepted these same bytes
+    // and this is a replay now too; otherwise the run stopped running.
+    const current = (await this.runs.liveState(runId))?.streamOffset ?? cursor;
+    if (offset < current) return { kind: 'accepted', nextOffset: current };
     return { kind: 'rejected', nextOffset: current };
   }
 
@@ -127,7 +169,7 @@ export class LiveService {
     if (!run) return { kind: 'not_found' };
     if (run.status !== 'running') return { kind: 'not_running' };
 
-    const offset = (await this.#currentOffset(runId)) ?? 0;
+    const offset = (await this.runs.liveState(runId))?.streamOffset ?? 0;
 
     if (offset === 0) {
       await this.runs.markIncomplete(runId);
@@ -159,18 +201,5 @@ export class LiveService {
 
     const finalRun = (await this.runs.findById(scope, runId)) ?? run;
     return { kind: 'closed', run: finalRun };
-  }
-
-  /**
-   * RunRecord (packages/persistence) does not expose stream_offset — no
-   * existing reader needs it, so it was never added to that shape. Read
-   * directly rather than widening a shared record for two callers here.
-   */
-  async #currentOffset(runId: string): Promise<number | null> {
-    const row = await this.prisma.run.findUnique({
-      where: { id: runId },
-      select: { streamOffset: true },
-    });
-    return row ? Number(row.streamOffset) : null;
   }
 }
