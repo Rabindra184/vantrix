@@ -1,6 +1,7 @@
 import type { DistributionResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
+import { ControlBar, ControlGroup, Segmented } from './ChartControls';
 import type { MarkRole } from './theme';
 import { toPercentileDistribution } from './transforms/percentileDistribution';
 import type { Outcome } from './transforms/percentiles';
@@ -57,32 +58,28 @@ export default function PercentileDistributionChart({
   const roles = ROLE[outcome];
 
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <fieldset className="flex items-center gap-1">
-          <legend className="sr-only">Response outcome</legend>
-          {OUTCOMES.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={outcome === value}
-              data-testid={`outcome-${value}-${id}`}
-              onClick={() => setOutcome(value)}
-              className={`rounded border px-2 py-0.5 text-sm ${
-                outcome === value ? 'border-primary text-primary' : 'border-default text-muted'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </fieldset>
-      </div>
-
       <Chart
         id={id}
         title={title}
         data={data}
         kind="line"
+        // INSIDE the figure — see `ChartProps.controls`. This was the second of
+        // the two floating control clusters on the run page, and being one
+        // lone group made it the more ambiguous of the pair: three bare
+        // buttons above a card, with the card above them ending in a legend
+        // that also read as a row of small labels.
+        controls={
+          <ControlBar>
+            <ControlGroup label="Response outcome">
+              <Segmented
+                options={OUTCOMES}
+                value={outcome}
+                testId={(value) => `outcome-${value}-${id}`}
+                onChange={(value) => setOutcome(value as Outcome)}
+              />
+            </ControlGroup>
+          </ControlBar>
+        }
         // A VALUE AXIS, not a category one. The percentiles come from a
         // cumulative sum over bin counts, so they arrive unevenly spaced;
         // drawn as categories they would be spread at equal intervals, which
@@ -97,6 +94,5 @@ export default function PercentileDistributionChart({
         // and, worse, invite reading the two as aligned. Gatling's own
         // distribution charts sit outside their sync group for this reason.
       />
-    </div>
   );
 }

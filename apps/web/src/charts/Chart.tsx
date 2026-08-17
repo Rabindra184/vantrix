@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Card from '../components/Card';
 import DataTable from './DataTable';
 import { echarts } from './echarts';
@@ -89,6 +89,21 @@ export interface ChartProps {
   readonly id: string;
   readonly title: string;
   readonly data: ChartData;
+  /**
+   * This chart's own controls — band selection, outcome, scale — drawn INSIDE
+   * the figure, between the heading and the drawing.
+   *
+   * The slot exists because the alternative had them outside it. A chart that
+   * owns controls used to render `<div><controls/><Chart/></div>`, which put
+   * them in the page background above the card: on the run page that left two
+   * unlabelled clusters of chips floating between figures, each equally close
+   * to the chart above it and the chart below it. Nothing on screen said which
+   * chart either one drove.
+   *
+   * Build them from `ChartControls`, which is where the three shapes and the
+   * selected-state styling live.
+   */
+  readonly controls?: ReactNode;
   /** `'line'` unless stated — the shape six of the eight overview charts take. */
   readonly kind?: 'line' | 'bar' | 'pie' | 'scatter';
   /** Stacked bars, for the indicator bands. Ignored by lines and pies. */
@@ -228,6 +243,7 @@ export default function Chart({
   id,
   title,
   data,
+  controls,
   kind = 'line',
   stacked = false,
   horizontal = false,
@@ -652,6 +668,13 @@ export default function Chart({
           drew a heading would give every figure two, and the figure's
           accessible name would become whichever won. */}
       <h3 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
+
+      {/* Between the name of the figure and the figure itself, which is the
+          only place a control bar reads as belonging to this chart and not to
+          its neighbour. Rendered even when there is nothing to draw: a reader
+          who has filtered a chart down to nothing needs the control that got
+          them there in order to get back. */}
+      {controls}
 
       {isEmpty ? (
         // An explanation, never empty axes. A grid with no marks reads as "this
