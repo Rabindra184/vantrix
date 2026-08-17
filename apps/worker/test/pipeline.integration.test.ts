@@ -86,7 +86,62 @@ function pipeline(): PipelineService {
   return new PipelineService(config, prisma, pool, blobs);
 }
 
+/**
+ * Mirrors seedRun, but shaped like Task 9's live path rather than an
+ * upload: `bundleKey` ends in `/simulation.log` (never `.tgz`) and holds the
+ * RAW log bytes directly — no tar, no gzip — exactly what
+ * `LiveChunkStore.finalize` writes for a real streamed run. `status:
+ * 'running'` and a non-zero `streamOffset` match what `close()` would see
+ * for a run that actually received bytes, though `process()` itself never
+ * reads either column.
+ */
+async function seedLiveRun(rawLog: Buffer) {
+  await pool.query(`TRUNCATE TABLE ${TABLES.map((t) => `"${t}"`).join(', ')} CASCADE`);
+  const org = await prisma.org.create({ data: { slug: 'acme', name: 'Acme' } });
+  const project = await prisma.project.create({
+    data: { orgId: org.id, slug: 'checkout', name: 'Checkout', settings: {} },
+  });
+  const key = `runs/test/${Date.now()}/simulation.log`;
+  await blobs.putStream(key, Readable.from([rawLog]), 100_000_000);
+  const startedAt = new Date('2026-08-07T10:00:00Z');
+  const run = await prisma.run.create({
+    data: {
+      orgId: org.id, projectId: project.id, status: 'running', tool: 'gatling',
+      bundleKey: key, bundleSha256: createHash('sha256').update(rawLog).digest('hex'),
+      bundleBytes: BigInt(rawLog.length), streamOffset: BigInt(rawLog.length),
+      startedAt, startedOn: new Date('2026-08-07T00:00:00Z'),
+      engineOptions: {},
+    },
+  });
+  return { orgId: org.id, projectId: project.id, runId: run.id };
+}
+
 describe('PipelineService', () => {
+  // Task 9 (apps/api/src/ingest/live.service.ts): a live run's finalized
+  // bundleKey holds simulation.log's raw bytes, never a tar.gz — before
+  // pipeline.service.ts's rawLogBundleSource branch existed, this fell
+  // straight into openTarGzBundle, which gunzips unconditionally and threw
+  // BUNDLE_NOT_ARCHIVE on every single streamed run. This is the regression
+  // guard for that branch, independent of the fuller apps/api
+  // live.integration.test.ts end-to-end case, which exercises the same code
+  // path through the real open/stream/close endpoints.
+  it('processes a live run\'s raw simulation.log directly, with no tar.gz wrapper', async () => {
+    const rawLog = readFileSync(FIXTURE_LOG);
+    const ctx = await seedLiveRun(rawLog);
+    await pipeline().process(ctx.runId);
+
+    const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(run?.status).toBe('complete');
+
+    const stats = await new MetricReader(pool).stats(
+      { orgId: ctx.orgId, projectId: ctx.projectId },
+      ctx.runId,
+    );
+    const runStat = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+    expect(runStat?.count).toBeGreaterThan(0);
+    expect((runStat?.okCount ?? 0) + (runStat?.koCount ?? 0)).toBe(runStat?.count);
+  });
+
   it('reproduces the fixture statistics end to end', async () => {
     const ctx = await seedRun(bundle);
     await pipeline().process(ctx.runId);
@@ -368,6 +423,180 @@ describe('Sweeper', () => {
       expect(swept).toBe(0);
     } finally {
       await sweeper.close();
+    }
+  });
+
+  it('does not re-select a "parsing" run whose parsing_started_at is fresh, even though created_at is stale — the live-close race (Task 9 fix round 2)', async () => {
+    // Reproduces exactly the state RunRepository.claimForClose leaves a
+    // long-running live run in: opened (created_at) far longer ago than
+    // parsingStaleAfterMs — the ordinary case for the soak tests live
+    // streaming exists for — then close() claims it (parsing_started_at
+    // set to now). Before this fix, the sweeper's 'parsing' predicate read
+    // created_at alone, so this exact row was already "stale" the instant
+    // it entered 'parsing' and would have been re-enqueued while close()
+    // was still assembling the log — racing PipelineService against a
+    // bundleSha256 close() had not finished writing yet.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run
+          SET status = 'parsing',
+              created_at = now() - interval '20 minutes',
+              parsing_started_at = now()
+        WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    try {
+      const swept = await sweeper.sweep();
+      expect(swept).toBe(0);
+    } finally {
+      await sweeper.close();
+    }
+  });
+
+  it('finalizes a "running" run whose producer vanished as incomplete — the state has no other exit', async () => {
+    // `running` is entered by POST /v1/runs/live and left by
+    // POST /v1/runs/:id/close, and an agent that is SIGKILLed, evicted, or
+    // simply loses the network sends no close: the run then answers 202 +
+    // Retry-After forever, its live/{runId}/* objects are never reclaimed,
+    // and the only exit is an operator UPDATE. markIncomplete existed for
+    // this transition with no caller anywhere outside its own test.
+    //
+    // NOT a re-enqueue, unlike every other branch of this sweep: there is
+    // nothing to parse until close() assembles the per-chunk objects into
+    // bundleKey, so handing this run to PipelineService would only fail it.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run
+          SET status = 'running',
+              stream_updated_at = now() - interval '30 minutes'
+        WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+    );
+    try {
+      const swept = await sweeper.sweep();
+      expect(swept).toBe(1);
+    } finally {
+      await sweeper.close();
+    }
+
+    const { rows } = await pool.query<{ status: string; verdict: string | null; ingested_at: Date | null }>(
+      'SELECT status, verdict, ingested_at FROM run WHERE id = $1',
+      [ctx.runId],
+    );
+    expect(rows[0]?.status).toBe('incomplete');
+    // Never 'passed': design §1.2 — a partial run can satisfy every SLA
+    // rule purely by having stopped before the load that would have broken
+    // it, so this must never green a pipeline.
+    expect(rows[0]?.verdict).toBe('not_evaluated');
+    expect(rows[0]?.ingested_at).not.toBeNull();
+  });
+
+  it('leaves a "running" run alone while its cursor is still moving, however long ago it was opened', async () => {
+    // The trap this exists to prove is closed: created_at is a live run's
+    // OPEN time, and the soak tests live streaming exists for stream for
+    // hours. Measuring 'running' staleness from created_at would kill this
+    // run — healthy, mid-stream, a chunk accepted seconds ago — for the
+    // sole offence of being long, which is the same defect parsing_started_at
+    // was added to fix one state over.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run
+          SET status = 'running',
+              created_at = now() - interval '6 hours',
+              stream_updated_at = now()
+        WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+    );
+    try {
+      expect(await sweeper.sweep()).toBe(0);
+    } finally {
+      await sweeper.close();
+    }
+
+    const { rows } = await pool.query<{ status: string }>('SELECT status FROM run WHERE id = $1', [
+      ctx.runId,
+    ]);
+    expect(rows[0]?.status).toBe('running');
+  });
+
+  it('ages a "running" run that never received a byte from its open time, since it has no cursor to measure', async () => {
+    // stream_updated_at is null until the first chunk lands, so an agent
+    // that opened a run and died before sending anything would otherwise
+    // never age at all. COALESCE to created_at, the same fallback the
+    // 'parsing' predicate makes for parsing_started_at.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run
+          SET status = 'running',
+              created_at = now() - interval '30 minutes',
+              stream_updated_at = NULL
+        WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+    );
+    try {
+      expect(await sweeper.sweep()).toBe(1);
+    } finally {
+      await sweeper.close();
+    }
+
+    const { rows } = await pool.query<{ status: string }>('SELECT status FROM run WHERE id = $1', [
+      ctx.runId,
+    ]);
+    expect(rows[0]?.status).toBe('incomplete');
+  });
+
+  it('never enqueues a job for the "running" run it finalizes', async () => {
+    // The routing is per-row, not per-sweep: a stale 'running' run and a
+    // stale 'pending' run selected by the SAME sweep must take different
+    // branches. Reading the batch's status off anything but each row would
+    // hand the live run to PipelineService, which would fail it — bundleKey
+    // holds nothing until close() assembles it.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const { Queue } = await import('bullmq');
+    const live = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run SET status = 'running', stream_updated_at = now() - interval '30 minutes' WHERE id = $1`,
+      [live.runId],
+    );
+    const queued = await seedRunKeepingExisting();
+    await pool.query(`UPDATE run SET created_at = now() - interval '10 minutes' WHERE id = $1`, [
+      queued.id,
+    ]);
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+    );
+    const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
+    try {
+      expect(await sweeper.sweep()).toBe(2);
+      expect(await queue.getJob(live.runId)).toBeUndefined();
+      expect(await queue.getJob(queued.id)).toBeDefined();
+    } finally {
+      await sweeper.close();
+      await queue.obliterate({ force: true });
+      await queue.close();
     }
   });
 

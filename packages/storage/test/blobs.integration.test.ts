@@ -77,4 +77,42 @@ describe('BlobStore', () => {
     },
     30_000,
   );
+
+  // ListObjectsV2 caps a single page at 1000 keys. A `list()` that trusted
+  // the first page would pass every test that writes only a handful of
+  // objects and still silently truncate the one caller that matters
+  // (LiveChunkStore.assemble reading back a real live run's chunks) — so the
+  // only way to prove pagination actually happens is to cross that boundary
+  // for real and check nothing on either side of the cut went missing.
+  // Deliberately slow: it puts 1200 objects (in bounded-concurrency batches,
+  // or this would take minutes against a local MinIO) to guarantee at least
+  // two ListObjectsV2 pages.
+  it(
+    "list() paginates past ListObjectsV2's 1000-key page limit",
+    async () => {
+      await store.ensureBucket();
+      const prefix = `list-pagination-probe/${randomUUID()}/`;
+      const total = 1200;
+      const concurrency = 40;
+
+      for (let start = 0; start < total; start += concurrency) {
+        const batch: Promise<unknown>[] = [];
+        for (let i = start; i < Math.min(start + concurrency, total); i++) {
+          const key = `${prefix}${String(i).padStart(6, '0')}.bin`;
+          batch.push(store.putStream(key, Readable.from([Buffer.from('x')]), 10));
+        }
+        await Promise.all(batch);
+      }
+
+      const keys = await store.list(prefix);
+      const expected = Array.from(
+        { length: total },
+        (_, i) => `${prefix}${String(i).padStart(6, '0')}.bin`,
+      );
+
+      expect(keys).toHaveLength(total);
+      expect(new Set(keys)).toEqual(new Set(expected));
+    },
+    180_000,
+  );
 });

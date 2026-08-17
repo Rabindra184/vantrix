@@ -62,24 +62,29 @@ describe('OpenAPI document', () => {
     expect(schemas['ProblemDetails']).toBeTruthy();
   });
 
-  // The blanket loop below carves out exactly one exception:
-  // POST /v1/projects/{slug}/tokens (Task 3), which really does create
-  // synchronously — the row exists and the plaintext token is returned
-  // before the response is sent, the ordinary case 201 exists for. Every
-  // other operation keeps the original reasoning: POST /v1/runs ingests
+  // The blanket loop below carves out exactly two exceptions:
+  // POST /v1/projects/{slug}/tokens (Task 3) and POST /v1/runs/live
+  // (Task 9), both of which really do create synchronously — the row
+  // exists (and, for token minting, the plaintext token is returned) before
+  // the response is sent, the ordinary case 201 exists for. Every other
+  // operation keeps the original reasoning: POST /v1/runs ingests
   // asynchronously and shares its run's own state machine (200/202/400/413/422)
   // with GET /v1/runs/{id} — there is no "created, still processing" state
   // distinct from 202 — and nothing else in this document creates a resource
-  // at all. A future operation that starts returning 201 without being this
-  // one legitimate exception should still fail here.
-  it('never declares a 201 response on any operation except token minting, which really does create synchronously', async () => {
+  // at all. A future operation that starts returning 201 without being one
+  // of these two legitimate exceptions should still fail here.
+  it('never declares a 201 response on any operation except token minting and opening a live run, which really do create synchronously', async () => {
     const doc = await fetchDoc();
+    const CREATES_SYNCHRONOUSLY = [
+      { path: '/v1/projects/{slug}/tokens', method: 'post' },
+      { path: '/v1/runs/live', method: 'post' },
+    ];
     for (const { path, method, op } of operations(doc)) {
-      if (path === '/v1/projects/{slug}/tokens' && method === 'post') {
-        // The carve-out itself must be live: if the mint operation ever
-        // stops declaring 201 while the handler keeps @HttpCode(201), this
-        // is the assertion that notices instead of the loop just skipping it.
-        expect(Object.keys(op.responses ?? {})).toContain('201');
+      if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
+        // The carve-out itself must be live: if either operation ever stops
+        // declaring 201 while its handler keeps returning 201, this is the
+        // assertion that notices instead of the loop just skipping it.
+        expect(Object.keys(op.responses ?? {}), `${method.toUpperCase()} ${path}`).toContain('201');
         continue;
       }
       expect(Object.keys(op.responses ?? {}), `${method.toUpperCase()} ${path}`).not.toContain('201');

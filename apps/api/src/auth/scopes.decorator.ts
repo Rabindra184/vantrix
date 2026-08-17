@@ -7,8 +7,16 @@ import { SetMetadata } from '@nestjs/common';
  * often less carefully managed than CI. A token that could post host counters
  * AND upload bundles AND read results would make every generator in the fleet a
  * full-privilege credential store. This one can do exactly one thing.
+ *
+ * `stream` is the same reasoning applied to a live run: the token that opens
+ * one and posts its batches lives on that same generator, and `ingest` would
+ * let it upload a finished bundle for the whole project instead of feeding
+ * only the one run it opened. It stays out of `authenticateSession`'s granted
+ * scopes (auth.middleware.ts) for the same reason `telemetry` does -- a
+ * browser session has no reason to stream a run, and widening it there would
+ * make the scope decorative.
  */
-export type TokenScope = 'ingest' | 'read' | 'telemetry';
+export type TokenScope = 'ingest' | 'read' | 'telemetry' | 'stream';
 export const SCOPES_KEY = 'perfportal:scopes';
 export const Scopes = (...scopes: TokenScope[]) => SetMetadata(SCOPES_KEY, scopes);
 

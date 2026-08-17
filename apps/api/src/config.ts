@@ -11,6 +11,26 @@ export interface AppConfig {
   };
   defaultWaitMs: number;
   maxBundleBytes: number;
+  /**
+   * The cap on a SINGLE `POST /v1/runs/:id/stream` body, distinct from
+   * maxBundleBytes above and much smaller.
+   *
+   * These bound different things. maxBundleBytes bounds a whole run — one
+   * upload, or a live run's cumulative accepted bytes, which
+   * LiveService.stream checks against the run's own cursor. A chunk is by
+   * construction a fraction of one, and the API buffers it in memory before
+   * anything about it can be judged (including whether it will be refused as
+   * a gap), so sharing maxBundleBytes' 512 MB let one in-flight request pin
+   * 512 MB of heap and N requests pin N × that. The upload path deliberately
+   * streams a multi-hundred-megabyte body to blob storage rather than
+   * holding it (see readMultipart), and this is the same rule.
+   *
+   * 8 MiB by default: two orders of magnitude above the 64 KiB the protocol
+   * is chunked at, so no plausible agent — including one that batches hard
+   * after a reconnect — ever meets it, while a burst of concurrent streams
+   * stays bounded at a few MB apiece rather than half a gigabyte.
+   */
+  maxStreamChunkBytes: number;
   betterAuthUrl: string;
 }
 
@@ -34,6 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     defaultWaitMs: Number(env.INGEST_WAIT_MS ?? 25_000),
     maxBundleBytes: Number(env.MAX_BUNDLE_BYTES ?? 512 * 1024 * 1024),
+    maxStreamChunkBytes: Number(env.MAX_STREAM_CHUNK_BYTES ?? 8 * 1024 * 1024),
     // Optional with a default, never required(): a new mandatory environment
     // variable would break M0's "a stranger deploys a running instance and
     // authenticates". Better Auth derives trustedOrigins (its CSRF origin

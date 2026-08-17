@@ -7,6 +7,8 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -24,6 +26,21 @@ function isBucketMissing(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const name = (err as { name?: string }).name;
   if (name === 'NotFound' || name === 'NoSuchBucket') return true;
+  const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+  return status === 404;
+}
+
+/**
+ * Same shape as {@link isBucketMissing}, for the object-level 404
+ * `HeadObjectCommand` returns. A HEAD response carries no body to
+ * distinguish error subtypes, so the SDK reports a missing object the same
+ * generic way it reports a missing bucket (`name: 'NotFound'`, or a bare 404
+ * status) rather than `GetObjectCommand`'s more specific `NoSuchKey`.
+ */
+function isObjectMissing(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const name = (err as { name?: string }).name;
+  if (name === 'NotFound' || name === 'NoSuchKey') return true;
   const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
   return status === 404;
 }
@@ -128,6 +145,72 @@ export class BlobStore {
     }
 
     return { sha256: hash.digest('hex'), bytes };
+  }
+
+  /**
+   * Enumerates every object key under `prefix`, in the lexicographic order
+   * S3 (and MinIO) returns for a general-purpose bucket.
+   *
+   * This exists for one caller: `LiveChunkStore.assemble`, which must read
+   * back every chunk a live run wrote, in the order their zero-padded
+   * offsets sort. `ListObjectsV2` — the only S3 operation that can discover
+   * those keys without a second source of truth for where each chunk
+   * landed — hands back at most 1000 keys per call and says so only through
+   * `IsTruncated` / `NextContinuationToken`; nothing about a single call
+   * signals that more exist. At 64 KB chunks a live run crosses that
+   * boundary at roughly 64 MB, well inside an ordinary soak test, so
+   * treating page one as the whole prefix is not a rare-edge-case bug, it is
+   * the common case for any run of real length.
+   *
+   * The consequence of getting this wrong is worse than a short list: the
+   * assembled log would be silently truncated mid-stream, and the plugin's
+   * decoder keeps a back-referencing string cache built while replaying the
+   * log — so every record after the cut point decodes as garbage or throws,
+   * arbitrarily far (in bytes and in wall-clock debugging time) from the
+   * object that was actually dropped. There is no way to detect the
+   * truncation from the assembled bytes alone. So: loop until `IsTruncated`
+   * is false. Never return after the first page on the assumption that 1000
+   * keys is "probably enough".
+   */
+  async list(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const res = await this.#s3.send(
+        new ListObjectsV2Command({
+          Bucket: this.#bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const obj of res.Contents ?? []) {
+        if (obj.Key) keys.push(obj.Key);
+      }
+      continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    return keys;
+  }
+
+  /**
+   * True if `key` already exists in the bucket.
+   *
+   * Backed by `HeadObjectCommand`, not `get`: this exists for callers that
+   * need to know whether an object is already there before deciding whether
+   * to write it — `LiveChunkStore.finalize` is the first — and a live run's
+   * assembled log can be on the order of a couple hundred MB. Answering
+   * "does it exist" with a full `get()` would transfer the whole body just
+   * to throw it away; HEAD fetches metadata only.
+   */
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.#s3.send(new HeadObjectCommand({ Bucket: this.#bucket, Key: key }));
+      return true;
+    } catch (err) {
+      if (isObjectMissing(err)) return false;
+      throw err;
+    }
   }
 
   async get(key: string): Promise<Buffer> {

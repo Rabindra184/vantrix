@@ -7,8 +7,14 @@ import { z } from 'zod';
  * in `apps/api/src/auth/scopes.decorator.ts` and this package is consumed by
  * the browser. Task 3 asserts the two lists agree, so the duplication cannot
  * drift silently.
+ *
+ * `stream` is its OWN scope, not a reuse of `ingest`, for the same reason
+ * `telemetry` is: this token lives on a load generator -- the least-trusted,
+ * most disposable host in a deployment, often shared across a fleet -- and
+ * `ingest` would let it upload a finished bundle for the whole project. A
+ * token scoped to `stream` can open and feed exactly one live run.
  */
-export const TOKEN_SCOPES = ['ingest', 'read', 'telemetry'] as const;
+export const TOKEN_SCOPES = ['ingest', 'read', 'telemetry', 'stream'] as const;
 export type TokenScopeName = (typeof TOKEN_SCOPES)[number];
 
 /**

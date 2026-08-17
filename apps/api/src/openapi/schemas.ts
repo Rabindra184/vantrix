@@ -7,6 +7,8 @@ import {
   IngestMetadataSchema,
   MintedTokenSchema,
   MintTokenRequestSchema,
+  OpenLiveRunRequestSchema,
+  OpenLiveRunResponseSchema,
   ProblemDetailsSchema,
   ProjectListResponseSchema,
   RunListResponseSchema,
@@ -16,6 +18,8 @@ import {
   SeriesResponseSchema,
   StatRowSchema,
   StatsResponseSchema,
+  StreamAcceptedSchema,
+  StreamRejectedSchema,
   TelemetryBatchSchema,
   TelemetryResponseSchema,
   TokenListResponseSchema,
@@ -66,6 +70,10 @@ const SOURCE: Record<string, ZodTypeAny> = {
   MintedToken: MintedTokenSchema,
   TokenSummary: TokenSummarySchema,
   TokenListResponse: TokenListResponseSchema,
+  OpenLiveRunRequest: OpenLiveRunRequestSchema,
+  OpenLiveRunResponse: OpenLiveRunResponseSchema,
+  StreamAccepted: StreamAcceptedSchema,
+  StreamRejected: StreamRejectedSchema,
 };
 
 /**

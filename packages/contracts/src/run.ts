@@ -1,6 +1,17 @@
 import { z } from 'zod';
 
-export const RunStatusSchema = z.enum(['pending', 'parsing', 'complete', 'failed']);
+export const RunStatusSchema = z.enum([
+  'pending', 'parsing',
+  // Opened for streaming, accepting batches. Reported as 202 exactly like
+  // pending/parsing, so a CI poll loop needs no change.
+  'running',
+  'complete', 'failed',
+  // Closed without its producer saying so -- inactivity or abort. All received
+  // data is retained and the run is labelled; its verdict is always
+  // not_evaluated, because a partial run can satisfy every SLA rule purely by
+  // having stopped before the load that would have broken it (FR-LIVE-5).
+  'incomplete',
+]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
 export const RunVerdictSchema = z.enum(['passed', 'failed', 'not_evaluated']);
@@ -142,10 +153,21 @@ export type RunResponse = z.infer<typeof RunResponseSchema>;
  * is excluded because a failed run is handled by that function's own
  * `run.status === 'failed'` branch before this shape would ever apply, and
  * `complete` never reaches 202 at all (it resolves to 200 or 422 instead).
+ *
+ * `incomplete` is excluded for the same reason `complete` is: it is terminal
+ * (see RunStatusSchema above), so it is never reported as 202 either.
+ *
+ * This enum is declared INDEPENDENTLY of RunStatusSchema rather than derived
+ * from it (e.g. `RunStatusSchema.exclude([...])`), so widening one is not
+ * enough to widen the other -- and nothing typechecks that gap, which is
+ * exactly why `running` needs its own line here. `running` belongs: an
+ * in-progress live run is still pending-shaped from a poller's point of
+ * view, so it gets the same 202 treatment as pending/parsing and a CI script
+ * needs no new branch to keep working once streaming exists.
  */
 export const RunProcessingSchema = z.object({
   id: z.string().uuid(),
-  status: z.enum(['pending', 'parsing']),
+  status: z.enum(['pending', 'parsing', 'running']),
   statusUrl: z.string(),
 });
 export type RunProcessing = z.infer<typeof RunProcessingSchema>;
