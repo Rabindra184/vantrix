@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Card from '../components/Card';
 import DataTable from './DataTable';
 import { echarts } from './echarts';
@@ -59,6 +59,29 @@ export interface ChartXAxis {
    * curvature the chart exists to show.
    */
   readonly type?: 'category' | 'value';
+  /**
+   * Renders a MILLISECOND value axis with SECOND tick labels.
+   *
+   * ═══ IT CHANGES THE LABELS AND NOTHING ELSE ═══
+   *
+   * The axis stays in milliseconds, because on the time-window strip the axis'
+   * units ARE the contract: the `dataZoom` slider reports its handles in them
+   * and `TimeBrush` writes those numbers straight to the URL. Converting the
+   * axis itself to seconds would silently re-denominate every committed window
+   * — the same class of bug as drawing the scalar form on a value axis, which
+   * once turned a drag over a third of a 63 s run into `?from=0&to=7`.
+   *
+   * So this is a display concern only, and deliberately a STRING rather than a
+   * formatter function: this prop lands in the option effect's dependency list,
+   * and a caller-built closure would be a fresh identity every render and
+   * re-run that effect continuously.
+   *
+   * Why it exists: unformatted, the strip's ticks read `20,000` `40,000`
+   * `60,000` while every other chart on the same page is labelled in elapsed
+   * seconds, and the strip's own From/To fields are in seconds too. One page
+   * was showing a reader two different time units for one run.
+   */
+  readonly tickUnit?: 'ms-as-s';
 }
 
 export interface ChartProps {
@@ -66,6 +89,21 @@ export interface ChartProps {
   readonly id: string;
   readonly title: string;
   readonly data: ChartData;
+  /**
+   * This chart's own controls — band selection, outcome, scale — drawn INSIDE
+   * the figure, between the heading and the drawing.
+   *
+   * The slot exists because the alternative had them outside it. A chart that
+   * owns controls used to render `<div><controls/><Chart/></div>`, which put
+   * them in the page background above the card: on the run page that left two
+   * unlabelled clusters of chips floating between figures, each equally close
+   * to the chart above it and the chart below it. Nothing on screen said which
+   * chart either one drove.
+   *
+   * Build them from `ChartControls`, which is where the three shapes and the
+   * selected-state styling live.
+   */
+  readonly controls?: ReactNode;
   /** `'line'` unless stated — the shape six of the eight overview charts take. */
   readonly kind?: 'line' | 'bar' | 'pie' | 'scatter';
   /** Stacked bars, for the indicator bands. Ignored by lines and pies. */
@@ -178,10 +216,34 @@ const BRUSH_INSET = 4;
 const BRUSH_HEIGHT = 28;
 const BRUSH_BAND = BRUSH_INSET + BRUSH_HEIGHT;
 
+/**
+ * The legend's own footprint, and the gap it keeps from whatever is under it.
+ *
+ * THE LEGEND IS DRAWN AT THE BOTTOM, and that is a correctness fix rather than
+ * a preference. A value axis draws its `name` one `nameGap` ABOVE the axis
+ * line, i.e. in the band immediately above `grid.top` — the same band a
+ * top-anchored legend occupies. The two therefore always compete, and on the
+ * percentile chart they collided visibly at every width: `Response time (ms)`
+ * was overprinted by the `min` swatch at 1568px, and at 390px the wrapped
+ * legend covered both the axis name and the topmost tick label (`100,000`),
+ * leaving neither readable. Moving the legend below the plot is the only
+ * placement where the two cannot share a band, whatever the series count.
+ *
+ * `type: 'scroll'` is load-bearing for the same reason: a wrapping legend has
+ * no bounded height, so no reservation here could be right for every width. A
+ * scrolling legend is exactly one row tall, always, and pages the overflow
+ * behind arrows. Nothing is lost by that — the data table below carries every
+ * series unconditionally (design §7).
+ */
+const LEGEND_HEIGHT = 24;
+const LEGEND_GAP = 2;
+const LEGEND_BAND = LEGEND_HEIGHT + LEGEND_GAP;
+
 export default function Chart({
   id,
   title,
   data,
+  controls,
   kind = 'line',
   stacked = false,
   horizontal = false,
@@ -202,6 +264,9 @@ export default function Chart({
   const yAxisType = yAxis?.type ?? 'value';
   const yAxisName = yAxis?.name;
   const xAxisName = xAxis?.name;
+  // A primitive, for the same reason the three around it are — see
+  // `ChartXAxis.tickUnit`.
+  const xAxisTickUnit = xAxis?.tickUnit;
   // A scatter's x is numeric by definition; any other chart has to ask. Folded
   // to a primitive here for the same reason the other three are — see the
   // option effect's closing comment about identity-compared object props.
@@ -407,7 +472,17 @@ export default function Chart({
       // `60,000`, and at a phone's width ECharts lays out more of them than
       // fit — `10,00020,00030,000`, run together. Dropping the ones that
       // collide is a measurement only the renderer can make.
-      axisLabel: { ...axisText, hideOverlap: true },
+      axisLabel: {
+        ...axisText,
+        hideOverlap: true,
+        // Milliseconds on the axis, seconds on the label — see
+        // `ChartXAxis.tickUnit`. `Math.round`, not a fixed precision: the
+        // strip's ticks land on whole seconds and `20` reads as a time where
+        // `20.0` reads as a measurement.
+        ...(xAxisTickUnit === 'ms-as-s'
+          ? { formatter: (value: number) => String(Math.round(value / 1000)) }
+          : {}),
+      },
       axisLine: { lineStyle: { color: theme.gridline } },
       splitLine: { show: false },
     };
@@ -457,7 +532,21 @@ export default function Chart({
           : {}),
         legend:
           drawn.length >= 2
-            ? { top: 0, textStyle: { color: theme.ink }, icon: 'roundRect' }
+            ? {
+                // Under the plot, and above the slider when there is one, so
+                // the three never share a band. See `LEGEND_BAND`.
+                bottom: (hasBrush ? BRUSH_BAND : 0) + LEGEND_GAP,
+                height: LEGEND_HEIGHT,
+                type: 'scroll',
+                textStyle: { color: theme.ink },
+                // The pager only appears when the row overflows, but when it
+                // does it must not arrive in ECharts' default near-black on a
+                // dark card.
+                pageTextStyle: { color: theme.inkMuted },
+                pageIconColor: theme.inkMuted,
+                pageIconInactiveColor: theme.gridline,
+                icon: 'roundRect',
+              }
             : { show: false },
         tooltip: {
           trigger: kind === 'pie' ? 'item' : 'axis',
@@ -485,7 +574,11 @@ export default function Chart({
           ? {}
           : {
               grid: {
-                top: drawn.length >= 2 ? 36 : 12,
+                // The legend no longer sits above the plot, so the only thing
+                // this band still has to clear is the value axis' own name —
+                // which is exactly what it was competing with. See
+                // `LEGEND_BAND`.
+                top: 12,
                 // A horizontal chart's category labels sit in the left gutter
                 // and are words, not axis ticks, so they need the room.
                 left: horizontal ? 104 : 56,
@@ -497,7 +590,10 @@ export default function Chart({
                 // `nameGap` under the axis line at `grid.bottom`; without this
                 // term the two share a band, and "Elapsed (ms)" was drawn
                 // across the middle of the scrubber on every run page.
-                bottom: (xAxisName === undefined ? 32 : 56) + (hasBrush ? BRUSH_BAND : 0),
+                bottom:
+                  (xAxisName === undefined ? 32 : 56) +
+                  (hasBrush ? BRUSH_BAND : 0) +
+                  (drawn.length >= 2 ? LEGEND_BAND : 0),
               },
               ...(horizontal
                 ? { xAxis: valueAxis, yAxis: categoryAxis }
@@ -557,6 +653,7 @@ export default function Chart({
     yAxisName,
     xAxisName,
     xAxisNumeric,
+    xAxisTickUnit,
     mode,
     assignment,
     hasBrush,
@@ -571,6 +668,13 @@ export default function Chart({
           drew a heading would give every figure two, and the figure's
           accessible name would become whichever won. */}
       <h3 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
+
+      {/* Between the name of the figure and the figure itself, which is the
+          only place a control bar reads as belonging to this chart and not to
+          its neighbour. Rendered even when there is nothing to draw: a reader
+          who has filtered a chart down to nothing needs the control that got
+          them there in order to get back. */}
+      {controls}
 
       {isEmpty ? (
         // An explanation, never empty axes. A grid with no marks reads as "this

@@ -1,6 +1,7 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
+import { Chip, ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
 import { BANDS, type Band, type Outcome, toPercentiles } from './transforms/percentiles';
 
@@ -87,78 +88,70 @@ export default function PercentilesChart({
   }
 
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <fieldset className="flex flex-wrap items-center gap-1">
-          <legend className="sr-only">Percentile bands</legend>
-          {BANDS.map((band) => {
-            const on = bands.includes(band);
-            return (
-              <button
+    <Chart
+      id={id}
+      title={title}
+      data={data}
+      kind="line"
+      // INSIDE the figure, under its heading — see `ChartProps.controls`. These
+      // three used to sit in a bare `<div>` above the card, where nothing tied
+      // them to this chart rather than to the one above it.
+      controls={
+        <ControlBar>
+          {/* Each chip carries the colour of the line it draws. The chart puts
+              ten ordered bands on a green-to-red ramp; without the swatch the
+              only way to find out which line `95%` was, was to switch it off
+              and see what vanished. */}
+          <ControlGroup label="Percentile bands">
+            {BANDS.map((band) => (
+              <Chip
                 key={band}
-                type="button"
-                aria-pressed={on}
-                data-testid={`band-${band}-${id}`}
+                pressed={bands.includes(band)}
+                swatch={`--chart-pct-${band}`}
+                testId={`band-${band}-${id}`}
                 onClick={() => toggle(band)}
-                className={`rounded border px-2 py-0.5 text-sm ${
-                  on
-                    ? 'border-primary text-primary'
-                    : 'border-default text-muted'
-                }`}
               >
                 {BAND_LABEL[band]}
-              </button>
-            );
-          })}
-        </fieldset>
+              </Chip>
+            ))}
+          </ControlGroup>
 
-        {/* `aria-pressed` rather than a radio group, to match the band
-            selector this sits beside — one interaction idiom on one toolbar.
-            The legend names it "Response outcome", not "Outcome", because a
-            screen-reader user meets it with no chart context. */}
-        <fieldset className="flex items-center gap-1">
-          <legend className="sr-only">Response outcome</legend>
-          {OUTCOMES.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={outcome === value}
-              data-testid={`outcome-${value}-${id}`}
-              onClick={() => setOutcome(value)}
-              className={`rounded border px-2 py-0.5 text-sm ${
-                outcome === value ? 'border-primary text-primary' : 'border-default text-muted'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </fieldset>
+          {/* Segments, not chips: these REPLACE each other, and drawn as chips
+              they were indistinguishable from the bands beside them, which
+              combine. The label says "Response outcome", not "Outcome",
+              because a screen-reader user meets it with no chart context. */}
+          <ControlGroup label="Response outcome">
+            <Segmented
+              options={OUTCOMES}
+              value={outcome}
+              testId={(value) => `outcome-${value}-${id}`}
+              onChange={(value) => setOutcome(value as Outcome)}
+            />
+          </ControlGroup>
 
-        <button
-          type="button"
-          data-testid={`scale-toggle-${id}`}
-          aria-pressed={scale === 'log'}
-          onClick={() => setScale((s) => (s === 'log' ? 'value' : 'log'))}
-          className="rounded border border-default px-2 py-0.5 text-sm text-muted"
-        >
-          {scale === 'log' ? 'Log scale' : 'Linear scale'}
-        </button>
-      </div>
-
-      <Chart
-        id={id}
-        title={title}
-        data={data}
-        kind="line"
-        // Log by default. A log axis cannot render a zero or a null as a
-        // point, which is correct here: an unmeasured second is a gap.
-        yAxis={{ type: scale, name: 'Response time (ms)' }}
-        xAxis={{ name: 'Elapsed (s)' }}
-        unit="ms"
-        // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
-        group="run-time"
-        roles={roles}
-      />
-    </div>
+          {/* A switch, because it is the one binary control here. Its label is
+              fixed and the knob carries the state: the old button was labelled
+              with the CURRENT scale while the buttons beside it were labelled
+              with the state they would select, so the same row of controls
+              read two ways at once. */}
+          <ControlGroup label="Scale">
+            <Switch
+              pressed={scale === 'log'}
+              label="Logarithmic"
+              testId={`scale-toggle-${id}`}
+              onClick={() => setScale((s) => (s === 'log' ? 'value' : 'log'))}
+            />
+          </ControlGroup>
+        </ControlBar>
+      }
+      // Log by default. A log axis cannot render a zero or a null as a
+      // point, which is correct here: an unmeasured second is a gap.
+      yAxis={{ type: scale, name: 'Response time (ms)' }}
+      xAxis={{ name: 'Elapsed (s)' }}
+      unit="ms"
+      // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
+      group="run-time"
+      roles={roles}
+    />
   );
 }

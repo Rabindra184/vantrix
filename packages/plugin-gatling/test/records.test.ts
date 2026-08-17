@@ -137,16 +137,30 @@ describe('parseSimulationLog', () => {
 
     const parsed = [...parseSimulationLog(buf)];
 
-    // Verify we got meta + 1 request (error is silently consumed)
-    expect(parsed.length).toBe(2);
+    // meta + THE ERROR ITSELF + the request. The error used to be consumed and
+    // dropped, and this asserted `length === 2`; it is now emitted, because
+    // Gatling's own errors table counts these beside request failures and
+    // dropping them cost Appendix A G-17 two rows and 42 of 399 errors on the
+    // reference run (see `ErrorEvent`).
+    expect(parsed.length).toBe(3);
     expect(parsed[0]).toMatchObject({ type: 'meta' });
 
     const meta = parsed[0] as MetaEvent;
     expect(meta.startedAtMs).toBe(runStartMs);
 
-    // The key assertion: the Request record must be intact and correctly positioned.
-    // If Error skip consumed wrong bytes, this would fail or crash.
-    const req = parsed[1] as RequestEvent;
+    // Its message and its instant, the latter rebased on the header's start —
+    // the same base every other record uses.
+    expect(parsed[1]).toEqual({
+      type: 'error',
+      message: 'Connection timeout',
+      tsMs: runStartMs + 100,
+    });
+
+    // The key assertion, unchanged in intent: the Request record must be intact
+    // and correctly positioned. If the Error branch consumed the wrong number
+    // of bytes, this would fail or crash — which is now a claim about a branch
+    // that READS a message rather than one that skipped past it.
+    const req = parsed[2] as RequestEvent;
     expect(req).toMatchObject({
       type: 'request',
       name: 'GET /api/users',

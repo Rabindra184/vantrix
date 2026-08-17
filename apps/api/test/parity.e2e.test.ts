@@ -341,6 +341,61 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       expect(r.body.description).toBeNull();
     });
 
+    /**
+     * ═══ PT-G-05 — THE ASSERTIONS TABLE ═══
+     *
+     * The row this appendix carried for two verification passes with nothing
+     * asserting it, while the plugin discarded the payload it needed. Ground
+     * truth is `fixtures/gatling-3.15.1.2/simulation/ParitySimulation.kt`,
+     * which declares exactly three:
+     *
+     *   global().responseTime().max().lt(10000)            expect PASS
+     *   global().successfulRequests().percent().gt(80.0)   expect PASS
+     *   details("Search").responseTime().percentile3().lt(100)  expect FAIL
+     *
+     * THE VERDICTS ARE RECOMPUTED, NOT READ. The log carries no outcome and no
+     * actual value — Gatling's report derives both at render time, and so does
+     * this platform, against its own statistics. That is why the third one is
+     * the interesting case: `Search` is the fixture's deliberately slow
+     * endpoint, so a p95 under 100ms is false, and it has to come back false
+     * from OUR numbers rather than from anything the file told us.
+     */
+    it('PT-G-05 the tool’s own assertions are decoded, re-evaluated and reported', async () => {
+      const r = await get(`/v1/runs/${runId}`);
+      const assertions = r.body.toolAssertions as {
+        expression: string; actualValue: number | null; outcome: string;
+      }[];
+
+      // Three, and NOT null: null would mean the run predates the decoder.
+      expect(Array.isArray(assertions)).toBe(true);
+      expect(assertions).toHaveLength(3);
+
+      // The tool's own wording, which G-05's "exact" tolerance covers as much
+      // as the numbers — a reader is comparing these strings to a report.
+      expect(assertions.map((a) => a.expression)).toEqual([
+        'Global: max of response time is less than 10000.0',
+        'Global: percentage of successful events is greater than 80.0',
+        'Search: 95th percentile of response time is less than 100.0',
+      ]);
+
+      expect(assertions.map((a) => a.outcome)).toEqual(['passed', 'passed', 'failed']);
+
+      // And the actual values are this run's real ones, derived from the same
+      // payload the rest of this suite asserts against rather than written
+      // down: max is the decoded log's own maximum, and the success percentage
+      // is its OK count over its total.
+      const durations = simulationLogEvents.map((e) => e.endMs - e.startMs);
+      const okCount = simulationLogEvents.filter((e) => e.ok).length;
+
+      expect(assertions[0]!.actualValue).toBe(Math.max(...durations));
+      expect(assertions[1]!.actualValue).toBeCloseTo(
+        (okCount / simulationLogEvents.length) * 100, 6,
+      );
+      // The failing one still reports what it measured — a verdict with no
+      // number is not actionable.
+      expect(assertions[2]!.actualValue).toBeGreaterThan(100);
+    });
+
     it('PT-G-04 header duration matches the report’s whole-second rendering', async () => {
       const r = await get(`/v1/runs/${runId}`);
       // Ground truth from the fixture header: runStartEpochMs 1786080602171,

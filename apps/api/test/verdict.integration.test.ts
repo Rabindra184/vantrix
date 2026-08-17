@@ -233,7 +233,7 @@ describe('the adaptive verdict', () => {
       bundleKey: 'k',
       bundleSha256: 'x'.repeat(64), bundleBytes: 1, idempotencyKey: null,
       startedAt: new Date(), startedOn: new Date(), toolStartedAt: null,
-      ingestedAt: new Date(), engineOptions: {},
+      ingestedAt: new Date(), engineOptions: {}, toolAssertions: null,
       error: { code: 'BUNDLE_TOO_LARGE', message: 'too big', remediation: 'shrink it' },
     };
 

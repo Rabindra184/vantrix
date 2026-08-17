@@ -27,6 +27,32 @@ export const AssertionSchema = z.object({
 export type Assertion = z.infer<typeof AssertionSchema>;
 
 /**
+ * One of the tool's own assertions, as a reader sees it — Appendix A G-05's
+ * four columns.
+ *
+ * `expression` carries the expected value inside it ("… is less than 30000.0"),
+ * because that is how the tool renders it and G-05's tolerance is exact on the
+ * wording, not just the number. Splitting the threshold back out would produce
+ * a row that reads differently from the report it claims parity with.
+ */
+export const ToolAssertionOutcomeSchema = z.enum(['passed', 'failed', 'not_applicable']);
+export type ToolAssertionOutcome = z.infer<typeof ToolAssertionOutcomeSchema>;
+
+export const ToolAssertionSchema = z.object({
+  expression: z.string(),
+  /** Null when nothing could be measured — see `not_applicable`. */
+  actualValue: z.number().nullable(),
+  /**
+   * `not_applicable` where the assertion named a path this run has no
+   * statistics for. The tool calls that a failure; this platform does not,
+   * because "the endpoint you named does not exist" and "the endpoint is too
+   * slow" are different facts a reader acts on differently (§22.1 tenet 6).
+   */
+  outcome: ToolAssertionOutcomeSchema,
+});
+export type ToolAssertion = z.infer<typeof ToolAssertionSchema>;
+
+/**
  * A run's owning project, as every run response carries it. Its own schema
  * rather than an inline object so RunResponse and RunListResponse cannot
  * describe the same thing two ways.
@@ -86,6 +112,23 @@ export const RunResponseSchema = z.object({
   toolStartedAt: z.string().datetime().nullable().optional(),
   ingestedAt: z.string().datetime().nullable().optional(),
   assertions: z.array(AssertionSchema),
+  /**
+   * The assertions the LOAD TEST declared, re-evaluated against this
+   * platform's statistics — Appendix A G-05.
+   *
+   * A SECOND FIELD, not merged into `assertions` above. Those are SLA rule
+   * results: they carry a `ruleId`, they are configured per project, and their
+   * outcome drives the 200/422 verdict a CI job gates on. These are owned by
+   * whoever wrote the simulation, are immutable, and can express comparisons
+   * (`between`, `in`) that the SLA comparator set has no member for. Merging
+   * them would mean inventing a rule id or widening a contract CI depends on.
+   *
+   * NULL means the run predates the assertion decoder — its definitions were
+   * discarded at ingest and live only in the raw bundle. `[]` means the
+   * simulation declared none. Optional so a client written before this field
+   * existed still parses.
+   */
+  toolAssertions: z.array(ToolAssertionSchema).nullable().optional(),
   error: z
     .object({ code: z.string(), message: z.string(), remediation: z.string() })
     .nullable()

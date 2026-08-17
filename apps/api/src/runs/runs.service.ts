@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { RunResponse } from '@perfportal/contracts';
+import type { RunResponse, ToolAssertionOutcome } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
 import { statusForCode } from '../common/problem.js';
@@ -57,6 +57,18 @@ export class RunsService {
       startedAt: run.startedAt.toISOString(),
       toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
       ingestedAt: run.ingestedAt ? run.ingestedAt.toISOString() : null,
+      // Appendix A G-05. Already evaluated at ingest against the rollups the
+      // engine had in hand, so this is a projection, not a computation — and
+      // `null` is preserved rather than defaulted to `[]`, because "this run
+      // predates the decoder" is not the same fact as "this simulation
+      // declared no assertions".
+      toolAssertions: run.toolAssertions === null
+        ? null
+        : run.toolAssertions.map((a) => ({
+            expression: a.expression,
+            actualValue: a.actualValue,
+            outcome: a.outcome as ToolAssertionOutcome,
+          })),
       error: run.error,
       assertions: assertions.map((a) => {
         const snap = a.ruleSnapshot as {

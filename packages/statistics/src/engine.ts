@@ -1,9 +1,13 @@
-import { ingestError, type CanonicalEvent, type MetricFamily, type MetricScope } from '@perfportal/core';
+import {
+  ingestError,
+  type CanonicalEvent, type MetricFamily, type MetricScope, type ToolAssertion,
+} from '@perfportal/core';
 import { BucketSeries, type Bucket } from './buckets.js';
 import { ErrorRollup } from './errors-rollup.js';
 import { ErrorSeries, type ErrorSeriesResult } from './errors-series.js';
 import { isWarmup } from './indicators.js';
 import { RollupBuilder, type StatRollup } from './rollup.js';
+import { evaluateToolAssertions, type EvaluatedToolAssertion } from './tool-assertions.js';
 import { UserSeries, type UserBucket } from './users.js';
 
 /**
@@ -76,6 +80,15 @@ export interface EngineResult {
   description: string | null;
   /** Run start to last response. Gatling's header renders this to whole seconds. */
   durationMs: number;
+  /**
+   * The tool's OWN assertions, re-evaluated against the rollups above —
+   * Appendix A G-05. Empty for a tool that declares none, and for a tool with
+   * no such concept.
+   *
+   * Distinct from this platform's SLA rules, which are evaluated elsewhere,
+   * carry a rule id, and drive the 200/422 verdict. See `ToolAssertion`.
+   */
+  toolAssertions: EvaluatedToolAssertion[];
 }
 
 export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions = {}): EngineResult {
@@ -137,6 +150,7 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
   let runResponseSeries: BucketSeries | null = null;
   let simulation: string | null = null;
   let description: string | null = null;
+  let declaredAssertions: readonly ToolAssertion[] = [];
   const endpoints = new Set<string>();
 
   const seriesFor = (
@@ -171,6 +185,9 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
       sawMeta = true;
       simulation = e.simulation;
       description = e.description ?? null;
+      // Definitions only. Evaluated after the loop, because judging them needs
+      // the rollups this loop is still building.
+      declaredAssertions = e.assertions ?? [];
       continue;
     }
     if (e.type === 'group') {
@@ -207,6 +224,29 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     if (e.type === 'user') {
       // Always recorded, warm-up included: the user charts show the ramp.
       userEvents.push({ scenario: e.scenario, kind: e.kind, tsMs: e.tsMs });
+      continue;
+    }
+    if (e.type === 'error') {
+      // ═══ THE FLAT TABLE ONLY, AND RUN SCOPE ONLY ═══
+      //
+      // Run scope, because there is no request to attribute it to — that is
+      // what makes it an `ErrorEvent` rather than a failed `RequestEvent`. It
+      // is also what Gatling does: these appear in the global errors table and
+      // on no request page, which is the same rule RQ-11 states from the other
+      // side ("a request page shows only its own errors").
+      //
+      // NOT into `errorSeries`, deliberately. That series is documented to
+      // reconcile against `koCount` — the drawn series plus the folded
+      // remainder sum to each bucket's KO total — and these are not request
+      // failures, so feeding them in would make a stated invariant false. The
+      // errors-over-time chart is beyond parity (there is no such chart in the
+      // Gatling report) so nothing is owed there; the flat table is the G-17
+      // surface and it is the one that has to be exact.
+      //
+      // Warm-up is excluded on the same terms as a request's error below, so
+      // one run cannot count two kinds of failure by two different rules.
+      if (isWarmup(e.tsMs, runStartMs, warmupMs)) continue;
+      errorsFor('run', '').add(errorMessageOf(e.message));
       continue;
     }
     if (e.type !== 'request') continue;
@@ -302,5 +342,9 @@ export function runEngine(events: Iterable<CanonicalEvent>, opts: EngineOptions 
     simulation,
     description,
     durationMs: lastMs === 0 ? 0 : Math.max(0, lastMs - runStartMs),
+    // AFTER `stats`, necessarily: an assertion is judged against the very
+    // rollups this call produced, so it cannot be evaluated while they are
+    // still being accumulated.
+    toolAssertions: evaluateToolAssertions(declaredAssertions, stats),
   };
 }

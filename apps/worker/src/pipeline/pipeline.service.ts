@@ -231,11 +231,18 @@ export class PipelineService {
       // path — status is 'parsing' here, never already terminal.
       await client.query(
         `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now(),
-                tool_started_at = $4, simulation = $5, description = $6, duration_ms = $7
+                tool_started_at = $4, simulation = $5, description = $6, duration_ms = $7,
+                tool_assertions = $8
           WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
         [
           run.id, verdict, toolVersion, toolStartedAt,
           result.simulation, result.description, result.durationMs,
+          // Appendix A G-05. Written here rather than evaluated on read because
+          // the engine has just judged them against the very rollups it built —
+          // recomputing later would mean reloading sketches to re-answer a
+          // question already answered. `[]` for a simulation that declared none,
+          // which is a different fact from the NULL a pre-decoder run carries.
+          JSON.stringify(result.toolAssertions),
         ],
       );
 

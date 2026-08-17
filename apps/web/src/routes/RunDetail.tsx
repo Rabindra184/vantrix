@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
+import type {
+  Assertion, RunProcessing, RunResponse, ToolAssertion,
+} from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
@@ -19,6 +21,7 @@ import {
   usersQuery,
 } from '../api/metrics';
 import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
+import { formatCell } from '../charts/DataTable';
 import DistributionChart from '../charts/DistributionChart';
 import ErrorsChart from '../charts/ErrorsChart';
 import PercentileDistributionChart from '../charts/PercentileDistributionChart';
@@ -341,6 +344,7 @@ export function RunOverviewTab() {
   return (
     <>
       <Assertions assertions={run.data.run.assertions} />
+      <ToolAssertions assertions={run.data.run.toolAssertions} />
 
       {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
           from the SAME `data` the statistics table reads below it, rather
@@ -627,6 +631,119 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
     </section>
   );
 }
+
+/**
+ * The assertions the SIMULATION declared — Appendix A G-05.
+ *
+ * ═══ ITS OWN SECTION, BESIDE THE SLA TABLE, NEVER MERGED WITH IT ═══
+ *
+ * `Assertions` above is this platform's SLA rules: configured per project,
+ * edited over time, and the thing the 200/422 verdict gates on. These belong to
+ * whoever wrote the simulation, are fixed at run time, and can express
+ * comparisons (`between`, `in`) the SLA comparator set has no member for.
+ * Showing them in one table would mean either inventing a rule id or implying a
+ * threshold edit could change what the load test asserted.
+ *
+ * ═══ THE EXPRESSION IS THE TOOL'S OWN SENTENCE ═══
+ *
+ * Rendered verbatim, in mono, because G-05's tolerance is exact on the WORDING
+ * as well as the numbers — a reader holding the two reports side by side is
+ * comparing strings. The threshold is inside it ("… is less than 30000.0"),
+ * which is why there is no separate Expected column.
+ *
+ * ═══ NULL AND [] ARE DIFFERENT, AND ONLY ONE OF THEM DRAWS ═══
+ *
+ * `[]` is a fact: the simulation declared none, and the empty state says so.
+ * `null` is the absence of one — the run was ingested before the decoder
+ * existed, so its definitions were discarded and survive only in the raw
+ * bundle. Nothing true can be said about it, so the section is omitted rather
+ * than showing an empty table that would read as "this simulation had none".
+ */
+function ToolAssertions({
+  assertions,
+}: {
+  readonly assertions: readonly ToolAssertion[] | null | undefined;
+}) {
+  if (assertions === null || assertions === undefined) return null;
+
+  if (assertions.length === 0) {
+    return (
+      <section className="flex flex-col gap-3">
+        <SectionHeading>Simulation assertions</SectionHeading>
+        <EmptyState
+          title="This simulation declared no assertions"
+          body="Assertions are written in the simulation itself and are read from the result file. This run's tool reported none."
+        />
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-3">
+      <SectionHeading>Simulation assertions</SectionHeading>
+      <TableFrame caption={TOOL_ASSERTIONS_CAPTION} label="Simulation assertions table">
+        <table className={TABLE}>
+          <caption className="sr-only">{TOOL_ASSERTIONS_CAPTION}</caption>
+          <thead className={THEAD}>
+            <tr>
+              <th scope="col" className={TH}>
+                Status
+              </th>
+              <th scope="col" className={TH}>
+                Assertion
+              </th>
+              <th scope="col" className={TH}>
+                Actual
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {assertions.map((assertion, i) => (
+              <tr
+                // The expression is not unique — a simulation may assert the
+                // same thing twice, and `forAll` expands to one row per request
+                // with only the name differing. Index is the row's identity
+                // here because the list is a fixed, ordered projection that is
+                // never sorted or filtered in the client.
+                key={`${assertion.expression}-${i}`}
+                data-testid="tool-assertion-row"
+                className={ROW}
+              >
+                <td data-testid="tool-assertion-outcome" className={`${TD} whitespace-nowrap`}>
+                  <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
+                </td>
+                <td className={`${TD} font-mono text-[12px]`}>{assertion.expression}</td>
+                {/* A dash, never `0` — see the SLA table's own note. */}
+                <td className={TD_NUM}>
+                  {assertion.actualValue === null ? '—' : formatCell(assertion.actualValue)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableFrame>
+    </section>
+  );
+}
+
+/**
+ * NO OCCURRENCE OF THE WORD "STATISTICS" HERE, deliberately.
+ *
+ * A `<table>`'s accessible name comes from its `<caption>`, and the e2e suite
+ * reaches the statistics table with `getByRole('table', { name: /statistics/i })`
+ * — a Playwright name match, which is a case-insensitive SUBSTRING. A caption
+ * reading "…re-evaluated against this run's statistics" made that query resolve
+ * to two tables and broke five specs on a strict-mode violation. Same class of
+ * trap as the rail links CLAUDE.md records: the query was never wrong, the new
+ * name simply collided with it.
+ */
+const TOOL_ASSERTIONS_CAPTION = (
+  <>
+    Every assertion the simulation itself declared, re-checked against this run&rsquo;s own
+    measurements. <em>Not applicable</em> means the assertion named a request or group this run
+    has no data for.
+  </>
+);
 
 /** One node, rendered visibly by `TableFrame` and again as the table's own
  *  `sr-only` `<caption>`, so the two cannot drift. */

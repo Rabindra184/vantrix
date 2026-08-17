@@ -41,6 +41,17 @@ export interface RunRecord {
   ingestedAt: Date | null;
   engineOptions: Record<string, unknown>;
   error: { code: string; message: string; remediation: string } | null;
+  /**
+   * The TOOL'S own assertions, decoded and re-evaluated — Appendix A G-05.
+   *
+   * NULL means the run predates the decoder: its definitions were discarded at
+   * ingest and survive only inside the raw bundle. `[]` means the simulation
+   * declared none. The two are different facts and the read path keeps them
+   * apart rather than collapsing both to an empty table.
+   */
+  toolAssertions:
+    | { expression: string; actualValue: number | null; outcome: string }[]
+    | null;
 }
 
 export interface CreateRunInput {
@@ -83,6 +94,7 @@ interface RunRow {
   ingestedAt: Date | null;
   engineOptions: unknown;
   error: unknown;
+  toolAssertions: unknown;
 }
 
 function toRecord(row: RunRow): RunRecord {
@@ -111,6 +123,7 @@ function toRecord(row: RunRow): RunRecord {
     ingestedAt: row.ingestedAt,
     engineOptions: (row.engineOptions ?? {}) as Record<string, unknown>,
     error: (row.error ?? null) as RunRecord['error'],
+    toolAssertions: (row.toolAssertions ?? null) as RunRecord['toolAssertions'],
   };
 }
 
@@ -261,6 +274,7 @@ export class RunRepository {
         r.idempotency_key AS "idempotencyKey", r.started_at AS "startedAt",
         r.started_on AS "startedOn", r.tool_started_at AS "toolStartedAt",
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
+        r.tool_assertions AS "toolAssertions",
         p.slug AS "projectSlug", p.name AS "projectName"
       FROM run r
       JOIN project p ON p.id = r.project_id

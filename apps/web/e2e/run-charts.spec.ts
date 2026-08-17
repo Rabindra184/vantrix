@@ -636,7 +636,17 @@ test('the percentile chart draws on a log axis by default, and the toggle really
   // every band below the 95th into a strip a few pixels tall, and the chart
   // becomes a picture of its own outliers.
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  await expect(toggle).toHaveText('Log scale');
+  // THE LABEL NAMES THE SCALE, NOT THE NEXT ACTION, and it does not move.
+  //
+  // It used to read "Log scale" when log was on and "Linear scale" when it was
+  // off — the current state — while the outcome buttons drawn identically
+  // beside it were labelled with the state they would SELECT. One row of
+  // controls therefore read two ways at once, and there was no way to tell
+  // from the label alone which convention any given button followed. The
+  // control is now a switch: a fixed label, and the knob plus `aria-pressed`
+  // carry the state. So this asserts the label is STABLE across the toggle,
+  // which is the property that makes it unambiguous.
+  await expect(toggle).toHaveText('Logarithmic');
   const logTicks = await valueAxisTicks(chart);
   expect(logTicks.length).toBeGreaterThan(1);
 
@@ -645,7 +655,8 @@ test('the percentile chart draws on a log axis by default, and the toggle really
   // is not this app's to pin: the tick labels must change when the scale does.
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-  await expect(toggle).toHaveText('Linear scale');
+  // Same label, opposite state — see above.
+  await expect(toggle).toHaveText('Logarithmic');
   await expect
     .poll(async () => (await valueAxisTicks(chart)).join('|') !== logTicks.join('|'))
     .toBe(true);
