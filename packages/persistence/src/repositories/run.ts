@@ -428,6 +428,34 @@ export class RunRepository {
     });
   }
 
+  /**
+   * Undoes claimForClose after a close() attempt fails partway through --
+   * the only way a 'parsing' row claimForClose created can move back to
+   * 'running'. Without this, a transient failure in the middle of
+   * LiveChunkStore.finalize's multi-thousand-object assembly (or the
+   * blobs.get that reads the result back to hash it) would strand the run
+   * at 'parsing' with bundleSha256 still '' forever: every retried close()
+   * would 409 RUN_NOT_RUNNING, since claimForClose can never re-match a row
+   * that is not 'running'. Pre-claimForClose, the same failure left the run
+   * 'running' and a retry worked, because LiveChunkStore.finalize is itself
+   * idempotent (its own exists(key) guard) -- this restores that property.
+   *
+   * Guarded on status: 'parsing' so this can never resurrect a run a
+   * DIFFERENT process has already moved past that point (a real ingest job
+   * that raced in and completed or failed it first) -- releaseClose then
+   * does nothing, and whatever actually decided the run's fate stands.
+   *
+   * Clears parsingStartedAt back to null: the parsing attempt it described
+   * did not survive, so it must not linger as a stale reading against
+   * whatever happens next (another close() attempt, or nothing at all).
+   */
+  async releaseClose(runId: string): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: runId, status: 'parsing' },
+      data: { status: 'running', parsingStartedAt: null },
+    });
+  }
+
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: {

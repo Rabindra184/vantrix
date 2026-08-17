@@ -197,6 +197,30 @@ export class LiveService {
    * It also makes two concurrent `close()` calls for the same run resolve
    * safely on its own: only one caller's claim can win, so this method
    * needs no separate "is someone else already closing this" check.
+   *
+   * `claimForClose` also sets `parsingStartedAt`, which is what stops the
+   * sweeper's 'parsing' staleness check (`apps/worker/src/sweeper.ts`) from
+   * measuring a live run's time in `parsing` against its OPEN time — see
+   * that column's own docstring (schema.prisma) for why `created_at` was
+   * wrong for this specific case, and would otherwise let the sweeper
+   * re-enqueue a run this method is still assembling.
+   *
+   * The body from here is wrapped in `try`/`catch` so a failure UNDOES the
+   * claim rather than stranding the run: `LiveChunkStore.finalize` runs a
+   * `Promise.all` over every chunk a long live run wrote, `blobs.get` reads
+   * the assembled result back to hash it, and either is real network I/O a
+   * transient object-store error can interrupt. Before `claimForClose`
+   * existed, that kind of failure left the run `running` and a retried
+   * `close()` simply worked, because `LiveChunkStore.finalize` is itself
+   * idempotent (its own `exists(key)` guard). `releaseClose` restores that:
+   * on any failure here, it reverts `'parsing'` back to `'running'` so a
+   * retried `close()` can claim it again, and the original error is
+   * rethrown unchanged (a 500, same as an unhandled failure always was)
+   * rather than swallowed. `waitFor` runs AFTER the `try`, never inside it —
+   * it never throws (a timeout resolves `false`, it does not reject), and
+   * it is conditional on `hasData`: the zero-byte path has nothing to wait
+   * for, since `markIncomplete` already decided its terminal state
+   * synchronously and nothing will ever `pg_notify` for it.
    */
   async close(scope: TenantScope, runId: string): Promise<CloseOutcome> {
     const run = await this.runs.findById(scope, runId);
@@ -205,24 +229,34 @@ export class LiveService {
     const claimed = await this.runs.claimForClose(runId);
     if (!claimed) return { kind: 'not_running' };
 
-    // Safe to read now without racing anything: claimForClose already
-    // moved this run off 'running', so no further stream() call can touch
-    // stream_offset (advanceOffset's own WHERE requires status: 'running').
-    const offset = (await this.runs.liveState(runId))?.streamOffset ?? 0;
+    let hasData: boolean;
+    try {
+      // Safe to read now without racing anything: claimForClose already
+      // moved this run off 'running', so no further stream() call can touch
+      // stream_offset (advanceOffset's own WHERE requires status: 'running').
+      const offset = (await this.runs.liveState(runId))?.streamOffset ?? 0;
+      hasData = offset > 0;
 
-    if (offset === 0) {
-      // A run that never received a byte has no bundleKey object to parse
-      // (LiveChunkStore.finalize would write nothing) — enqueuing it would
-      // drive PipelineService into a parse failure for a run whose only
-      // fault is that nothing was ever sent.
-      await this.runs.markIncomplete(runId);
-    } else {
-      await this.chunks.finalize(runId, run.bundleKey);
-      const assembled = await this.blobs.get(run.bundleKey);
-      const sha256 = createHash('sha256').update(assembled).digest('hex');
-      await this.runs.finalizeLive(runId, sha256, assembled.length);
+      if (!hasData) {
+        // A run that never received a byte has no bundleKey object to parse
+        // (LiveChunkStore.finalize would write nothing) — enqueuing it would
+        // drive PipelineService into a parse failure for a run whose only
+        // fault is that nothing was ever sent.
+        await this.runs.markIncomplete(runId);
+      } else {
+        await this.chunks.finalize(runId, run.bundleKey);
+        const assembled = await this.blobs.get(run.bundleKey);
+        const sha256 = createHash('sha256').update(assembled).digest('hex');
+        await this.runs.finalizeLive(runId, sha256, assembled.length);
 
-      await this.queue.add(runId);
+        await this.queue.add(runId);
+      }
+    } catch (err) {
+      await this.runs.releaseClose(runId);
+      throw err;
+    }
+
+    if (hasData) {
       // Same wait/re-read shape as IngestController.post: the row is the
       // source of truth, never the notification, so a timeout here still
       // answers correctly off whatever the row says.

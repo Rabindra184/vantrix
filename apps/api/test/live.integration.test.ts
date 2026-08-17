@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BlobStore } from '@perfportal/storage';
+import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 
@@ -299,6 +299,64 @@ describe('live streaming', () => {
 
     const res = await stream(ctx.streamToken, opened.body.runId, 0, Buffer.from('too late'));
     expect(res.status).toBe(409);
+  });
+
+  it('a close() that fails partway leaves the run retryable, not stranded at "parsing"', async () => {
+    await withFastCloseWait(async () => {
+      ctx = await createTestApp();
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+
+      // Real fixture bytes, not placeholder text: the end of this test
+      // drives the run all the way to 'complete' through the real
+      // PipelineService, which a made-up byte string could never do (it
+      // would fail to parse and land on 'failed' instead, muddying what
+      // this test is actually trying to show).
+      const buf = readFileSync(LOG);
+      const accepted = await stream(ctx.streamToken, runId, 0, buf);
+      expect(accepted.status).toBe(202);
+
+      const blobs = ctx.app.get(BlobStore);
+      const chunks = ctx.app.get(LiveChunkStore);
+      // Simulate a transient object-store failure: the chunk this run's
+      // only byte range lives at disappears before close() runs.
+      // LiveChunkStore.finalize then finds nothing under the run's prefix
+      // -- a legitimate no-op by its own contract, since it cannot tell
+      // that from "never received a byte" -- so bundleKey is never
+      // written, and the SUBSEQUENT blobs.get(bundleKey) throws (no such
+      // key). Neither is an IngestError, so this reaches ProblemFilter's
+      // generic catch-all: 500, with the generic-but-still-required
+      // "remediation".
+      await blobs.delete(`live/${runId}/0000000000000000.bin`);
+
+      const failed = await close(ctx.streamToken, runId);
+      expect(failed.status).toBe(500);
+      expect(failed.body.remediation).toBeTruthy();
+
+      // Not stranded: a GET shows the run reverted to 'running' (202,
+      // exactly like it was before this close() attempt), not stuck at
+      // 'parsing' with an empty bundleSha256 forever.
+      const afterFailure = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}`)
+        .set('Authorization', `Bearer ${ctx.readToken}`);
+      expect(afterFailure.status).toBe(202);
+      expect(afterFailure.body.status).toBe('running');
+
+      // Prove the retry can actually SUCCEED, not merely be attempted:
+      // restore the "transiently unavailable" chunk (what a real transient
+      // object-store failure would look like once it resolves), then close
+      // again.
+      await chunks.put(runId, 0, buf);
+      const retried = await close(ctx.streamToken, runId);
+      expect(retried.status).not.toBe(409);
+      expect(retried.status).not.toBe(500);
+
+      await runPipelineFor(ctx, runId);
+      const finalRun = await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${runId}`)
+        .set('Authorization', `Bearer ${ctx.readToken}`);
+      expect(finalRun.body.status).toBe('complete');
+    });
   });
 
   it('a streamed run finalizes to the same figures as an uploaded one', async () => {

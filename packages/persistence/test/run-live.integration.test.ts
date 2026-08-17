@@ -147,4 +147,65 @@ describe('RunRepository live runs', () => {
     expect(row.status).toBe('complete');
     expect(row.verdict).toBe('passed');
   });
+
+  it('claimForClose moves running to parsing and stamps parsingStartedAt, once', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const run = await repo.createLive(liveInput(orgId, projectId));
+
+    expect(await repo.claimForClose(run.id)).toBe(true);
+    const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(row.status).toBe('parsing');
+    expect(row.parsingStartedAt).not.toBeNull();
+
+    // A second claim on the same (now 'parsing') row must not match --
+    // this is what makes two concurrent close() calls resolve to exactly
+    // one winner.
+    expect(await repo.claimForClose(run.id)).toBe(false);
+  });
+
+  it('releaseClose undoes claimForClose, and only claimForClose can then re-claim it', async () => {
+    // Fix round 2, Important C: a close() that fails partway through
+    // (LiveChunkStore.finalize, or the blobs.get that reads the assembly
+    // back to hash it) must not strand the run at 'parsing' forever --
+    // releaseClose is the mechanism LiveService.close() relies on to make
+    // that failure retryable.
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const run = await repo.createLive(liveInput(orgId, projectId));
+    await repo.advanceOffset(run.id, 0, 2048);
+
+    expect(await repo.claimForClose(run.id)).toBe(true);
+    await repo.releaseClose(run.id);
+
+    const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(row.status).toBe('running');
+    expect(row.parsingStartedAt).toBeNull();
+    // The byte cursor survives the round trip untouched -- releaseClose
+    // undoes the CLAIM, not the data the run already has.
+    expect(row.streamOffset).toBe(2048n);
+
+    // The actual proof of retryability: claimForClose can win again.
+    expect(await repo.claimForClose(run.id)).toBe(true);
+  });
+
+  it('releaseClose cannot resurrect a run a real ingest job already decided', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const run = await repo.createLive(liveInput(orgId, projectId));
+    await repo.claimForClose(run.id);
+    // A real ingest job raced in and completed the run while it was still
+    // 'parsing' -- releaseClose must not undo a decision that already
+    // happened through a different path.
+    await prisma.run.update({
+      where: { id: run.id },
+      data: { status: 'complete', verdict: 'passed' },
+    });
+
+    await repo.releaseClose(run.id);
+
+    const row = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(row.status).toBe('complete');
+    expect(row.verdict).toBe('passed');
+  });
 });
