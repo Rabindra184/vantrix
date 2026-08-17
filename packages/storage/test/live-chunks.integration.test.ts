@@ -93,4 +93,40 @@ describe('LiveChunkStore', () => {
 
     await expect(store.assemble('never-received-a-byte')).resolves.toHaveLength(0);
   });
+
+  it('readFrom returns only the chunks at or past an offset, in order', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `readfrom-${randomUUID()}`;
+
+    await store.put(runId, 0, Buffer.from('aaaa', 'latin1'));      // [0,4)
+    await store.put(runId, 4, Buffer.from('bbbb', 'latin1'));      // [4,8)
+    await store.put(runId, 8, Buffer.from('cccc', 'latin1'));      // [8,12)
+
+    expect((await store.readFrom(runId, 0)).toString('latin1')).toBe('aaaabbbbcccc');
+    expect((await store.readFrom(runId, 4)).toString('latin1')).toBe('bbbbcccc');
+    expect((await store.readFrom(runId, 8)).toString('latin1')).toBe('cccc');
+  });
+
+  it('readFrom past the end is an empty buffer, not a throw', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `readfrom-end-${randomUUID()}`;
+    await store.put(runId, 0, Buffer.from('aaaa', 'latin1'));
+
+    expect(await store.readFrom(runId, 4)).toHaveLength(0);
+    expect(await store.readFrom(`never-${randomUUID()}`, 0)).toHaveLength(0);
+  });
+
+  it('readFrom orders numerically, not lexicographically', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `readfrom-order-${randomUUID()}`;
+    // 999 vs 1000: naive string sort puts 1000 first.
+    await store.put(runId, 0, Buffer.from('x'.repeat(999), 'latin1'));
+    await store.put(runId, 999, Buffer.from('y', 'latin1'));
+    await store.put(runId, 1000, Buffer.from('z', 'latin1'));
+
+    expect((await store.readFrom(runId, 999)).toString('latin1')).toBe('yz');
+  });
 });

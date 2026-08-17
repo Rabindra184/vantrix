@@ -21,6 +21,12 @@ function chunkKey(runId: string, offset: number): string {
   return `${chunkPrefix(runId)}${String(offset).padStart(16, '0')}.bin`;
 }
 
+/** The offset a chunk key encodes. Inverse of `chunkKey`. */
+function offsetOf(key: string): number {
+  const base = key.slice(key.lastIndexOf('/') + 1).replace(/\.bin$/, '');
+  return Number(base);
+}
+
 /**
  * Reassembles a live run's byte stream from the per-chunk objects S3 has no
  * append to avoid. `put` lands one object per chunk as it arrives; `assemble`
@@ -75,6 +81,29 @@ export class LiveChunkStore {
     const keys = await this.#listChunkKeys(runId);
     const parts = await Promise.all(keys.map((key) => this.#blobs.get(key)));
     return Buffer.concat(parts);
+  }
+
+  /**
+   * The chunks at or past `offset`, concatenated in offset order.
+   *
+   * The fold owner's read: it holds a byte position and wants everything
+   * after it, without re-reading a run's whole history on every tick.
+   *
+   * Filters on the offset PARSED OUT of the key rather than on the key
+   * string, even though the padding makes the two orders agree. A string
+   * comparison would silently start behaving differently the day an offset
+   * needs 17 digits, and the parse is what the caller's units actually are.
+   *
+   * A chunk that STRADDLES `offset` (starts before it, ends after) is
+   * returned whole. The caller is a decoder that tracks its own position in
+   * whole records, so it can be handed bytes it has already seen -- what it
+   * must never be handed is a gap.
+   */
+  async readFrom(runId: string, offset: number): Promise<Buffer> {
+    const keys = await this.#listChunkKeys(runId);
+    const wanted = keys.filter((k) => offsetOf(k) >= offset);
+    if (wanted.length === 0) return Buffer.alloc(0);
+    return Buffer.concat(await Promise.all(wanted.map((k) => this.#blobs.get(k))));
   }
 
   /**
