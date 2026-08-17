@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
-  Assertion, RunProcessing, RunResponse, ToolAssertion,
+  Assertion, RunProcessing, RunResponse, SeriesResponse, ToolAssertion,
 } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
@@ -36,7 +36,9 @@ import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
 import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import DesktopOnly from './DesktopOnly';
 import RunShell from './RunShell';
+import useIsCompact from '../useIsCompact';
 import RunStats from './RunStats';
 
 /**
@@ -332,7 +334,14 @@ export function RunOverviewTab() {
     enabled: runId !== undefined,
   });
   const window = useWindowFromShell();
+  const compact = useIsCompact();
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
+  // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
+  // tab uses, so a reader who widens the window pays for it once.
+  const series = useQuery({
+    ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
+    enabled: runId !== undefined && compact,
+  });
 
   // Not reachable through the router: `RunShell` mounts this tab only once
   // `RunDetail` has already resolved a `ready` run for this `runId`, and the
@@ -352,15 +361,50 @@ export function RunOverviewTab() {
           `/stats` then explains itself once, in the one place this page
           already says so, instead of the stat row silently rendering six
           dashes above an error the reader has to notice separately. */}
+      {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
+          from the SAME `data` the statistics table reads below it, rather
+          than behind a `TableSection` of its own: a failed or still-pending
+          `/stats` then explains itself once, in the one place this page
+          already says so, instead of the stat row silently rendering six
+          dashes above an error the reader has to notice separately. */}
       <TableSection title="Statistics" query={stats}>
         {(data) => (
           <>
             <RunStats stats={data} />
-            <StatisticsTable stats={data} runId={runId} />
+            {/* THE TILES ARE NEVER WITHHELD. They are the whole point of the
+                mobile summary — §22.6 names "key tiles, sparklines, verdict,
+                error summary" — and they are already responsive. It is the
+                per-request TABLE below them that a phone cannot usefully
+                render, so only that is behind the notice. */}
+            {compact && <Sparklines series={series} />}
+            <DesktopOnly compact={compact} what="The per-request statistics table">
+              {() => <StatisticsTable stats={data} runId={runId} />}
+            </DesktopOnly>
           </>
         )}
       </TableSection>
     </>
+  );
+}
+
+/**
+ * §22.6's sparklines: the shape behind two of the tiles above them.
+ *
+ * Requests per second and the response-time percentile bands, drawn short and
+ * bare — the tiles already carry the numbers, so axes and a legend would take
+ * more room than the lines and repeat what is directly above. Each keeps its
+ * data table, collapsed, so nothing is lost to a reader who cannot see them.
+ *
+ * Fetched only when compact (see the query's `enabled`), because on a desktop
+ * these two charts are already on the Charts tab at full size.
+ */
+function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse> }) {
+  if (series.data === undefined) return null;
+  return (
+    <div className="grid grid-cols-1 gap-3">
+      <RequestRateChart series={series.data} title="Requests per second" compact />
+      <PercentilesChart series={series.data} title="Response time" compact />
+    </div>
   );
 }
 
@@ -499,16 +543,32 @@ export function RunChartsTab() {
   // below share a crosshair, and a pointer means one instant only if they all
   // draw the same span. See `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
-  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
-  const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: runId !== undefined });
+  // §22.6. `enabled` carries it as well as the render below, because the point
+  // is not to DRAW less on a phone — it is not to fetch four payloads and
+  // build ten ECharts instances for a screen that cannot usefully show them.
+  // A reader who takes the override gets all four; nobody else pays.
+  const compact = useIsCompact();
+  const [shown, setShown] = useState(false);
+  const wanted = !compact || shown;
+  const on = runId !== undefined && wanted;
+  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: on });
+  const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: on });
   const distribution = useQuery({
     ...distributionQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: runId !== undefined,
+    enabled: on,
   });
   const series = useQuery({
     ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: runId !== undefined,
+    enabled: on,
   });
+
+  if (compact && !shown) {
+    return (
+      <DesktopOnly compact what="Reading eight charts" onShow={() => setShown(true)} >
+        {() => null}
+      </DesktopOnly>
+    );
+  }
 
   return (
     // TWO COLUMNS FROM `2xl`, ONE BELOW IT — and the order the charts are

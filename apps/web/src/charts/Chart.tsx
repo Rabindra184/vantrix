@@ -123,6 +123,16 @@ export interface ChartProps {
    * selected-state styling live.
    */
   readonly controls?: ReactNode;
+  /**
+   * A SPARKLINE: short, unlabelled, no legend — §22.6's mobile summary.
+   *
+   * The shape a number is making, beside the number itself. Axes and a legend
+   * would take more room than the line and say nothing a 96px-tall figure can
+   * afford to say; the stat tiles above it carry the values, and the data table
+   * below it stays exactly where it is, so nothing is lost to a reader who
+   * cannot see the drawing.
+   */
+  readonly compact?: boolean;
   /** `'line'` unless stated — the shape six of the eight overview charts take. */
   readonly kind?: 'line' | 'bar' | 'pie' | 'scatter';
   /** Stacked bars, for the indicator bands. Ignored by lines and pies. */
@@ -271,6 +281,7 @@ export default function Chart({
   title,
   data,
   controls,
+  compact = false,
   kind = 'line',
   stacked = false,
   horizontal = false,
@@ -537,6 +548,23 @@ export default function Chart({
       max: xAxisMax,
     };
 
+    /**
+     * A SPARKLINE HAS NO FURNITURE. Ticks, axis lines, gridlines and the axis
+     * name are all suppressed rather than shrunk: at 96px tall they would take
+     * more room than the line, and the stat tile beside the sparkline already
+     * carries the value they would be labelling.
+     */
+    const bare = {
+      name: undefined,
+      axisLabel: { show: false },
+      axisTick: { show: false },
+      axisLine: { show: false },
+      splitLine: { show: false },
+    };
+    const catAxis = compact ? { ...categoryAxis, ...bare } : categoryAxis;
+    const valAxis = compact ? { ...valueAxis, ...bare } : valueAxis;
+    const numAxis = compact ? { ...numericAxis, ...bare } : numericAxis;
+
     instance.setOption(
       {
         // Mark colour comes from the categorical palette, which `assignPalette`
@@ -581,7 +609,7 @@ export default function Chart({
             }
           : {}),
         legend:
-          drawn.length >= 2
+          !compact && drawn.length >= 2
             ? {
                 // Under the plot, and above the slider when there is one, so
                 // the three never share a band. See `LEGEND_BAND`.
@@ -623,7 +651,10 @@ export default function Chart({
         ...(kind === 'pie'
           ? {}
           : {
-              grid: {
+              grid: compact
+                ? // Every gutter the labels needed, given back to the line.
+                  { top: 4, left: 4, right: 4, bottom: 4 }
+                : {
                 // The legend no longer sits above the plot, so the only thing
                 // this band still has to clear is the value axis' own name —
                 // which is exactly what it was competing with. See
@@ -646,8 +677,8 @@ export default function Chart({
                   (drawn.length >= 2 ? LEGEND_BAND : 0),
               },
               ...(horizontal
-                ? { xAxis: valueAxis, yAxis: categoryAxis }
-                : { xAxis: xAxisNumeric ? numericAxis : categoryAxis, yAxis: valueAxis }),
+                ? { xAxis: valAxis, yAxis: catAxis }
+                : { xAxis: xAxisNumeric ? numAxis : catAxis, yAxis: valAxis }),
             }),
         // `index`, NOT the position in `drawn`. The two agree only while the
         // drawn set is a prefix of the series list, and an `essential` series
@@ -700,6 +731,7 @@ export default function Chart({
     roles,
     unit,
     pairValue,
+    compact,
     yAxisType,
     yAxisName,
     xAxisName,
@@ -753,7 +785,7 @@ export default function Chart({
           // reader read axis ticks and legend fragments in visual order, which
           // is noise on top of a complete alternative.
           aria-hidden="true"
-          className="h-72 w-full"
+          className={compact ? 'h-24 w-full' : 'h-72 w-full'}
         />
       )}
 

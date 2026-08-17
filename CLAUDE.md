@@ -53,10 +53,12 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **86 files / 993 tests**, it
+`nvm use` first, and if a run reports fewer than **88 files / 1005 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the shared time axis,
+silently-skipped run looks like a pass. Last measured on §22.6's mobile
+summary, which added `DesktopOnly.test.tsx` (6) and `useIsCompact.test.tsx`
+(6), from a floor of 86 / 993 — and that one from the shared time axis,
 which added `apps/web/test/timeAxis.test.ts` (8) plus 3 axis cases to `Chart`
 and 3 pair cases to `tooltip`, from a floor of 85 / 979 — and that one from the
 G-05 assertion decoder and evaluator, which added
@@ -165,6 +167,19 @@ rate values read as milliseconds — a drag over a third of a 63 s run produced
 `?from=0&to=7`. When adding `xAxis={{ type: 'value' }}`, check the transform
 emits pairs (`toErrorSeries`, `toPercentileDistribution` and
 `toRequestRate(_, { x: 'ms' })` do).
+
+**§22.6's mobile rule is the app's ONE JS breakpoint, and it has to be.** Every
+other responsive decision here is a Tailwind class, and should stay that way.
+Below 768px the run page is a read-only summary because "deep analysis is
+explicitly a desktop task" — and a class can only HIDE the charts, leaving a
+phone paying for ten ECharts instances, a statistics table of every request, and
+the four payloads behind them, to display none of it. That is the "degrading
+badly" the rule exists to prevent, so `useIsCompact()` decides and the charts
+never mount. `DesktopOnly` takes its children as a FUNCTION for the same reason:
+a node would be built before the component could decline it. Its `onShow` exists
+because the withheld content usually needs data, and the caller's queries are
+`enabled` on the same flag — leaving the decision inside would fetch payloads it
+had just been told not to draw.
 
 **A CONNECTED `axisPointer` ON A CATEGORY AXIS SYNCS BY INDEX, not by time.**
 So charts sharing a crosshair (`Chart`'s `group`) point at the same INSTANT only

@@ -26,18 +26,20 @@ import type { ChartData, TimeDomainMs } from './types';
  * render, including on every React Query background refetch.
  */
 
-function RateChart({ id, title, yName, data, domainMs }: {
+function RateChart({ id, title, yName, data, domainMs, compact }: {
   readonly id: string;
   readonly title: string;
   readonly yName: string;
   readonly data: ChartData;
   readonly domainMs?: TimeDomainMs;
+  readonly compact?: boolean;
 }) {
   return (
     <Chart
       id={id}
       title={title}
       data={data}
+      compact={compact}
       // Lines, and NOT stacked. `All` is already the sum of `OK` and `KO`, so
       // stacking would draw it at twice its own height and put the outcome
       // lines on top of the total they are part of.
@@ -82,13 +84,16 @@ export function RequestRateChart({
   series,
   title = 'Requests per second over time',
   domainMs,
+  compact,
 }: {
   readonly series: SeriesResponse;
   readonly title?: string;
   readonly domainMs?: TimeDomainMs;
+  /** §22.6's sparkline — see `ChartProps.compact`. */
+  readonly compact?: boolean;
 }) {
   const data = useMemo(() => toRequestRate(series, { x: 'ms' }), [series]);
-  return <RateChart id="requests-per-second" title={title} yName="Requests per second" data={data} domainMs={domainMs} />;
+  return <RateChart id="requests-per-second" title={title} yName="Requests per second" data={data} domainMs={domainMs} compact={compact} />;
 }
 
 /** ⑪ — responses per second over time, bucketed by END time (G-24). */
@@ -96,11 +101,14 @@ export function ResponseRateChart({
   series,
   title = 'Responses per second over time',
   domainMs,
+  compact,
 }: {
   readonly series: SeriesResponse;
   readonly title?: string;
   readonly domainMs?: TimeDomainMs;
+  /** §22.6's sparkline — see `ChartProps.compact`. */
+  readonly compact?: boolean;
 }) {
   const data = useMemo(() => toResponseRate(series, { x: 'ms' }), [series]);
-  return <RateChart id="responses-per-second" title={title} yName="Responses per second" data={data} domainMs={domainMs} />;
+  return <RateChart id="responses-per-second" title={title} yName="Responses per second" data={data} domainMs={domainMs} compact={compact} />;
 }
