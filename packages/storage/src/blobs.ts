@@ -7,6 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -128,6 +129,52 @@ export class BlobStore {
     }
 
     return { sha256: hash.digest('hex'), bytes };
+  }
+
+  /**
+   * Enumerates every object key under `prefix`, in the lexicographic order
+   * S3 (and MinIO) returns for a general-purpose bucket.
+   *
+   * This exists for one caller: `LiveChunkStore.assemble`, which must read
+   * back every chunk a live run wrote, in the order their zero-padded
+   * offsets sort. `ListObjectsV2` — the only S3 operation that can discover
+   * those keys without a second source of truth for where each chunk
+   * landed — hands back at most 1000 keys per call and says so only through
+   * `IsTruncated` / `NextContinuationToken`; nothing about a single call
+   * signals that more exist. At 64 KB chunks a live run crosses that
+   * boundary at roughly 64 MB, well inside an ordinary soak test, so
+   * treating page one as the whole prefix is not a rare-edge-case bug, it is
+   * the common case for any run of real length.
+   *
+   * The consequence of getting this wrong is worse than a short list: the
+   * assembled log would be silently truncated mid-stream, and the plugin's
+   * decoder keeps a back-referencing string cache built while replaying the
+   * log — so every record after the cut point decodes as garbage or throws,
+   * arbitrarily far (in bytes and in wall-clock debugging time) from the
+   * object that was actually dropped. There is no way to detect the
+   * truncation from the assembled bytes alone. So: loop until `IsTruncated`
+   * is false. Never return after the first page on the assumption that 1000
+   * keys is "probably enough".
+   */
+  async list(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const res = await this.#s3.send(
+        new ListObjectsV2Command({
+          Bucket: this.#bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const obj of res.Contents ?? []) {
+        if (obj.Key) keys.push(obj.Key);
+      }
+      continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    return keys;
   }
 
   async get(key: string): Promise<Buffer> {
