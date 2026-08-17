@@ -317,11 +317,22 @@ export class RunRepository {
    * Also requires status: 'running' in the WHERE clause: once a run is
    * terminal (complete/failed/incomplete) its offset is frozen, so a
    * straggling chunk that arrives after close() must not resurrect it.
+   *
+   * Stamps streamUpdatedAt in the same statement (see that field's
+   * docstring on Run). This is the ONLY writer of the column the sweeper
+   * measures 'running' staleness from -- a live producer's only observable
+   * sign of life is bytes landing, and this is where that happens. It costs
+   * nothing: this row is already being written, so the column rides along
+   * in an UPDATE that was happening anyway. Written only on the branch that
+   * actually MOVED the cursor, never on the replay/lost-race path above it
+   * in stream(), which does not reach this method at all -- a replay is
+   * proof the agent is alive but not proof it is making progress, and a
+   * stuck agent retrying one chunk forever must still age out.
    */
   async advanceOffset(runId: string, from: number, to: number): Promise<boolean> {
     const { count } = await this.prisma.run.updateMany({
       where: { id: runId, status: 'running', streamOffset: BigInt(from) },
-      data: { streamOffset: BigInt(to) },
+      data: { streamOffset: BigInt(to), streamUpdatedAt: new Date() },
     });
     return count === 1;
   }

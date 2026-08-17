@@ -3,8 +3,8 @@ import type pg from 'pg';
 import type { WorkerConfig } from './config.js';
 
 /**
- * Recovers the two inconsistencies the ingest/parse path can produce (spec
- * §6.1, §6.2):
+ * Recovers the three inconsistencies the ingest/parse/stream paths can
+ * produce (spec §6.1, §6.2; live-monitoring design §5):
  *
  *  1. A run committed whose queue enqueue never landed — stuck at 'pending'.
  *  2. A run whose worker died mid-parse (OOM, SIGKILL, node eviction) after
@@ -12,6 +12,23 @@ import type { WorkerConfig } from './config.js';
  *     once BullMQ's attempts are exhausted, since nothing else ever revisits
  *     it. The API would keep answering 202 with a statusUrl that never
  *     changes.
+ *  3. A live run whose producer vanished — stuck at 'running'. That state is
+ *     entered by POST /v1/runs/live and left by POST /v1/runs/:id/close, and
+ *     an agent that is SIGKILLed, evicted, or loses the network sends no
+ *     close: without this branch the run answers 202 + Retry-After forever,
+ *     its live/{runId}/* objects are never reclaimed, and the only exit is
+ *     an operator UPDATE.
+ *
+ * THE THIRD ONE DOES NOT RE-ENQUEUE, and that is the whole difference
+ * between it and the other two. A run at 'pending' or 'parsing' has a
+ * bundle sitting at bundleKey waiting to be parsed, so handing it back to
+ * the queue is exactly the repair. A run at 'running' does not: its bytes
+ * are still per-chunk objects under live/{runId}/, and only close()
+ * assembles them into bundleKey. Enqueueing one would drive PipelineService
+ * into a parse failure for a run whose only fault is that its agent died.
+ * It is finalized in place as 'incomplete' instead — the terminal state
+ * RunRepository.markIncomplete already existed for, and which never carries
+ * a pass verdict (design §1.2).
  *
  * FOR UPDATE SKIP LOCKED makes this safe with any number of worker replicas
  * and needs no leader election, which is why this slice has no separate
@@ -44,20 +61,38 @@ export class Sweeper {
       // against a bundleSha256 close() had not finished writing yet. See
       // Run.parsingStartedAt's own docstring (schema.prisma) and
       // RunRepository.claimForClose/markParsing, both of which set it.
-      const { rows } = await client.query<{ id: string }>(
-        `SELECT id FROM run
+      //
+      // 'running' staleness is measured from stream_updated_at, for the
+      // SAME reason and against the same trap: created_at is a live run's
+      // OPEN time, and a soak test streams for hours, so ageing a 'running'
+      // run from created_at would finalize a perfectly healthy mid-stream
+      // run as 'incomplete' purely for being long. What "stale" means here
+      // is that the PRODUCER has stopped, and the only evidence of a live
+      // producer is bytes landing -- RunRepository.advanceOffset stamps
+      // that column on every accepted chunk. COALESCE covers a run opened
+      // and abandoned before its first chunk, which has no cursor movement
+      // to measure and whose open time is then the honest reading.
+      const { rows } = await client.query<{ id: string; status: string }>(
+        `SELECT id, status FROM run
           WHERE (status = 'pending'
                  AND created_at < now() - ($1::int * interval '1 millisecond'))
              OR (status = 'parsing'
                  AND COALESCE(parsing_started_at, created_at)
                      < now() - ($2::int * interval '1 millisecond'))
+             OR (status = 'running'
+                 AND COALESCE(stream_updated_at, created_at)
+                     < now() - ($3::int * interval '1 millisecond'))
           ORDER BY created_at
           LIMIT 100
           FOR UPDATE SKIP LOCKED`,
-        [this.config.staleAfterMs, this.config.parsingStaleAfterMs],
+        [this.config.staleAfterMs, this.config.parsingStaleAfterMs, this.config.runningStaleAfterMs],
       );
       for (const row of rows) {
-        await this.#reenqueue(row.id);
+        // Routed per ROW, not per batch: one sweep can select a stale
+        // 'pending' run and a stale 'running' run together, and they need
+        // opposite treatments.
+        if (row.status === 'running') await this.#finalizeIncomplete(client, row.id);
+        else await this.#reenqueue(row.id);
       }
       await client.query('COMMIT');
       return rows.length;
@@ -67,6 +102,34 @@ export class Sweeper {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * The 'running' branch's terminal write — RunRepository.markIncomplete's
+   * statement, hand-written here rather than called.
+   *
+   * ON THIS CLIENT, INSIDE THIS TRANSACTION, AND THAT IS NOT A STYLE
+   * CHOICE. The SELECT above already holds this row under FOR UPDATE, so a
+   * Prisma call would open a SECOND connection, block on the row lock this
+   * very transaction holds, and never be released — a self-deadlock that
+   * only resolves when the pool's timeout fires. The Sweeper is also
+   * constructed with a pg.Pool alone (apps/worker/src/main.ts) and has no
+   * Prisma client to reach for.
+   *
+   * Carries markIncomplete's guard verbatim (never regress a run another
+   * process has already decided) even though this row is locked and was
+   * selected as 'running': the guard costs nothing and means the two
+   * writers of this transition cannot drift apart in what they consider
+   * safe. verdict is 'not_evaluated', never 'passed' — design §1.2, and the
+   * reason `incomplete` exists as a state at all.
+   */
+  async #finalizeIncomplete(client: pg.PoolClient, runId: string): Promise<void> {
+    await client.query(
+      `UPDATE run
+          SET status = 'incomplete', verdict = 'not_evaluated', ingested_at = now()
+        WHERE id = $1 AND status NOT IN ('complete', 'failed', 'incomplete')`,
+      [runId],
+    );
   }
 
   /**

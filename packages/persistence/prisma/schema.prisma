@@ -90,6 +90,31 @@ model Run {
   /// widening an INT later means a table rewrite. Unrelated to bundleBytes,
   /// which is the FINAL assembled size and stays 0 until close() sets it.
   streamOffset   BigInt    @default(0) @map("stream_offset")
+  /// When this run's byte cursor LAST MOVED — set by RunRepository
+  /// .advanceOffset on every accepted chunk, and null for a run that has
+  /// never accepted one (including every run that was never live at all).
+  ///
+  /// This is what the sweeper measures 'running' staleness from, and it
+  /// exists because nothing else on this row could. A `running` run is
+  /// stale when its PRODUCER has stopped, and the only evidence of a live
+  /// producer is bytes arriving; createdAt is the run's OPEN time, which for
+  /// the soak tests this feature exists for is hours older than the last
+  /// chunk and would mark every long run stale while it was still healthily
+  /// streaming — the identical trap parsingStartedAt was added to fix one
+  /// state over. parsingStartedAt itself is null throughout `running` by
+  /// construction, so it cannot serve either.
+  ///
+  /// COALESCEd to createdAt by the sweeper for the null case, exactly as
+  /// parsingStartedAt is: a run opened and then abandoned before its first
+  /// chunk has no cursor movement to measure, and its open time is then the
+  /// only honest reading of how long it has been silent.
+  ///
+  /// NOT cleared by releaseClose, unlike parsingStartedAt. That column
+  /// describes an attempt that did not survive; this one describes bytes
+  /// that did — the run really did last accept data when it says, and a
+  /// close() that failed afterwards does not make that untrue or buy the
+  /// producer a fresh silence budget.
+  streamUpdatedAt DateTime? @map("stream_updated_at") @db.Timestamptz(3)
   idempotencyKey String?   @map("idempotency_key")
   /// When the platform received this run's bundle (accept time), NOT when
   /// the load test itself ran. Deliberately ingest time: see startedOn.

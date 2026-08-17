@@ -85,6 +85,30 @@ describe('RunRepository live runs', () => {
     expect(row.streamOffset).toBe(1024n);
   });
 
+  it('stamps streamUpdatedAt only when the cursor actually moves', async () => {
+    // The sweeper's 'running' staleness predicate reads this column, and
+    // an unmoved cursor must not refresh it: a replay proves the agent is
+    // alive but not that it is making progress, and a stuck agent
+    // retrying one chunk forever has to age out. A createLive that pre-set
+    // it would break the COALESCE fallback the sweeper relies on for a run
+    // abandoned before its first chunk, so it starts null.
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+    const run = await repo.createLive(liveInput(orgId, projectId));
+    expect((await prisma.run.findUniqueOrThrow({ where: { id: run.id } })).streamUpdatedAt).toBeNull();
+
+    expect(await repo.advanceOffset(run.id, 0, 1024)).toBe(true);
+    const advanced = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(advanced.streamUpdatedAt).not.toBeNull();
+
+    // A refused advance (the replay above returns false) writes no row at
+    // all, so the stamp cannot move -- asserted by value, not by absence,
+    // since "still not null" would pass either way.
+    expect(await repo.advanceOffset(run.id, 0, 1024)).toBe(false);
+    const replayed = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+    expect(replayed.streamUpdatedAt?.getTime()).toBe(advanced.streamUpdatedAt?.getTime());
+  });
+
   it('reopening with the same idempotency key returns the same run, not a second one', async () => {
     const { orgId, projectId } = await seedProject();
     const repo = new RunRepository(prisma);
