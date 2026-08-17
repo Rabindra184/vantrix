@@ -351,11 +351,12 @@ export class RunRepository {
    * RunRecord (no existing reader needs stream_offset, so it was never
    * added to that shape; see toRecord()/RunRow above). stream() reads both
    * to tell a gap from a replay from a not-running run BEFORE it writes
-   * anything. Read in ONE query rather than two separate ones: status and
-   * streamOffset are two columns on the same row, and reading them apart
-   * would let one change land between the reads, making the pair
-   * inconsistent with itself at the exact moment the caller most needs
-   * them to agree.
+   * anything; close() reads the cursor (after claimForClose below has
+   * already made it safe to) to decide zero-byte-vs-real-data. Read in
+   * ONE query rather than two separate ones: status and streamOffset are
+   * two columns on the same row, and reading them apart would let one
+   * change land between the reads, making the pair inconsistent with
+   * itself at the exact moment the caller most needs them to agree.
    */
   async liveState(runId: string): Promise<{ status: string; streamOffset: number } | null> {
     const row = await this.prisma.run.findUnique({
@@ -363,6 +364,58 @@ export class RunRepository {
       select: { status: true, streamOffset: true },
     });
     return row ? { status: row.status, streamOffset: Number(row.streamOffset) } : null;
+  }
+
+  /**
+   * Claims a live run for closing: the FIRST write close() makes, before
+   * it decides anything else. Moving 'running' -> 'parsing' here (rather
+   * than after finalizing, as an earlier version of this did) closes the
+   * exact window a stray stream() chunk could otherwise land in between
+   * LiveChunkStore.finalize assembling the log and the write that used to
+   * record the decision: once status leaves 'running', advanceOffset's own
+   * WHERE clause rejects every further chunk -- gap, replay, or otherwise
+   * -- the same way it rejects one arriving after any other terminal
+   * state. It is also what makes two concurrent close() calls for the
+   * same run resolve safely: only one `updateMany` here can match, so only
+   * one caller proceeds past this point, and it needs no separate status
+   * read beforehand -- the attempt itself is the read.
+   *
+   * markIncomplete (above) accepts a run in 'parsing', not only 'running'
+   * (`status: { notIn: ['complete', 'failed', 'incomplete'] }`), so a
+   * zero-byte close can still land there after this claim succeeds --
+   * closing that same window for the zero-byte case too: reading the
+   * cursor used to happen before any write existed to freeze it, so a byte
+   * arriving in that gap could get marked `incomplete` out from under it.
+   *
+   * Returns whether THIS call won the claim. `false` means the run was not
+   * 'running' at the moment of the attempt -- already closed by a
+   * concurrent caller, or never a live run at all; the caller reports that
+   * as "not running", never "not found" (existence is confirmed separately,
+   * by the findById a tenant-scoped caller already had to do to reach a
+   * run id at all).
+   */
+  async claimForClose(runId: string): Promise<boolean> {
+    const { count } = await this.prisma.run.updateMany({
+      where: { id: runId, status: 'running' },
+      data: { status: 'parsing' },
+    });
+    return count > 0;
+  }
+
+  /**
+   * Fills the bundleSha256/bundleBytes placeholders createLive left blank
+   * (see that method's docstring), once close() has assembled the real
+   * bytes. Only reachable after claimForClose has already won this run's
+   * 'running' -> 'parsing' transition, so nothing else can be racing this
+   * row at this point -- the `status: 'parsing'` guard here is defensive
+   * (mirrors every other guarded write in this class), not load-bearing
+   * the way claimForClose's own guard is.
+   */
+  async finalizeLive(runId: string, bundleSha256: string, bundleBytes: number): Promise<void> {
+    await this.prisma.run.updateMany({
+      where: { id: runId, status: 'parsing' },
+      data: { bundleSha256, bundleBytes: BigInt(bundleBytes) },
+    });
   }
 
   async findById(scope: TenantScope, id: string): Promise<RunRecord | null> {

@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
 import {
   ProjectRepository,
   RunRepository,
@@ -42,7 +41,6 @@ export type CloseOutcome =
 export class LiveService {
   constructor(
     @Inject(CONFIG) private readonly config: AppConfig,
-    private readonly prisma: PrismaClient,
     private readonly projects: ProjectRepository,
     private readonly runs: RunRepository,
     private readonly blobs: BlobStore,
@@ -151,52 +149,53 @@ export class LiveService {
   }
 
   /**
-   * Closes a run. A run that never received a single byte (stream_offset
-   * still 0) finalizes as `incomplete` without touching blob storage or the
-   * ingest queue: LiveChunkStore.finalize would write nothing for it anyway
-   * (there is no bundleKey object to parse), and enqueuing it would drive
-   * PipelineService into a parse failure over a run whose only fault is
-   * that nothing was ever sent — see markIncomplete's docstring.
-   *
-   * Otherwise: finalize assembles the chunks into bundleKey, the placeholder
-   * bundleSha256/bundleBytes RunRepository.createLive left blank are filled
-   * from those exact assembled bytes, and the existing ingest job runs the
-   * result through PipelineService unchanged — a streamed run becomes a row
-   * indistinguishable from an uploaded one.
+   * Closes a run. The FIRST write is `claimForClose` — a CAS moving
+   * 'running' -> 'parsing' before anything else is decided. That single
+   * reordering (this method used to finalize first and flip status last)
+   * closes two races at once, not just one:
+   *   - A chunk arriving after `finalize` has assembled the log but before
+   *     the old code recorded that fact used to be answered 202 and land
+   *     silently outside the already-written bundle. Once status leaves
+   *     'running' up front, `advanceOffset` rejects it immediately.
+   *   - The zero-byte race: reading `stream_offset` used to happen before
+   *     any write existed to freeze it, so a byte arriving in that gap
+   *     could still be marked `incomplete` out from under it.
+   *     `claimForClose` freezes the cursor FIRST — `markIncomplete` (below)
+   *     accepts a run in 'parsing', not only 'running', so the zero-byte
+   *     path still completes correctly after the claim.
+   * It also makes two concurrent `close()` calls for the same run resolve
+   * safely on its own: only one caller's claim can win, so this method
+   * needs no separate "is someone else already closing this" check.
    */
   async close(scope: TenantScope, runId: string): Promise<CloseOutcome> {
     const run = await this.runs.findById(scope, runId);
     if (!run) return { kind: 'not_found' };
-    if (run.status !== 'running') return { kind: 'not_running' };
 
+    const claimed = await this.runs.claimForClose(runId);
+    if (!claimed) return { kind: 'not_running' };
+
+    // Safe to read now without racing anything: claimForClose already
+    // moved this run off 'running', so no further stream() call can touch
+    // stream_offset (advanceOffset's own WHERE requires status: 'running').
     const offset = (await this.runs.liveState(runId))?.streamOffset ?? 0;
 
     if (offset === 0) {
+      // A run that never received a byte has no bundleKey object to parse
+      // (LiveChunkStore.finalize would write nothing) — enqueuing it would
+      // drive PipelineService into a parse failure for a run whose only
+      // fault is that nothing was ever sent.
       await this.runs.markIncomplete(runId);
     } else {
       await this.chunks.finalize(runId, run.bundleKey);
       const assembled = await this.blobs.get(run.bundleKey);
       const sha256 = createHash('sha256').update(assembled).digest('hex');
+      await this.runs.finalizeLive(runId, sha256, assembled.length);
 
-      // Guarded exactly like advanceOffset/markIncomplete/fail: only writes
-      // while still 'running'. Without this, a second close() call racing
-      // this one (or a straggling stream() chunk landing in the narrow
-      // window between finalize() and this write) could not be told apart
-      // from the first — flipping status away from 'running' here is what
-      // makes a subsequent stream() call's advanceOffset reject it the same
-      // way it rejects any other post-close chunk.
-      const { count } = await this.prisma.run.updateMany({
-        where: { id: runId, status: 'running' },
-        data: { bundleSha256: sha256, bundleBytes: BigInt(assembled.length), status: 'parsing' },
-      });
-
-      if (count > 0) {
-        await this.queue.add(runId);
-        // Same wait/re-read shape as IngestController.post: the row is the
-        // source of truth, never the notification, so a timeout here still
-        // answers correctly off whatever the row says.
-        await this.waiter.waitFor(runId, this.config.defaultWaitMs);
-      }
+      await this.queue.add(runId);
+      // Same wait/re-read shape as IngestController.post: the row is the
+      // source of truth, never the notification, so a timeout here still
+      // answers correctly off whatever the row says.
+      await this.waiter.waitFor(runId, this.config.defaultWaitMs);
     }
 
     const finalRun = (await this.runs.findById(scope, runId)) ?? run;
