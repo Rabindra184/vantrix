@@ -460,13 +460,17 @@ describe('Sweeper', () => {
     // `running` is entered by POST /v1/runs/live and left by
     // POST /v1/runs/:id/close, and an agent that is SIGKILLed, evicted, or
     // simply loses the network sends no close: the run then answers 202 +
-    // Retry-After forever, its live/{runId}/* objects are never reclaimed,
-    // and the only exit is an operator UPDATE. markIncomplete existed for
-    // this transition with no caller anywhere outside its own test.
+    // Retry-After forever, and the only exit is an operator UPDATE.
+    // markIncomplete existed for this transition with no caller anywhere
+    // outside its own test.
     //
     // NOT a re-enqueue, unlike every other branch of this sweep: there is
     // nothing to parse until close() assembles the per-chunk objects into
     // bundleKey, so handing this run to PipelineService would only fail it.
+    //
+    // This asserts the ROW only. The run's live/{runId}/* objects survive the
+    // sweep by design and no assertion here implies otherwise — they are left
+    // for a bucket lifecycle rule (see Sweeper's docstring).
     const { Sweeper } = await import('../src/sweeper.js');
     const ctx = await seedRun(bundle);
     await pool.query(
