@@ -32,6 +32,7 @@ export interface TestContext {
   ingestToken: string;
   readToken: string;
   telemetryToken: string;
+  streamToken: string;
   close(): Promise<void>;
 }
 
@@ -111,6 +112,15 @@ export async function createTestApp(
     },
   });
 
+  const strm = mintToken();
+  await prisma.apiToken.create({
+    data: {
+      orgId: org.id, projectId: project.id, name: 'streamer',
+      prefix: strm.prefix, tokenHash: await hashToken(splitSecret(strm.token)),
+      scopes: ['stream'],
+    },
+  });
+
   // close() has always been safe to call twice and several suites rely on
   // that: auth.integration.test.ts closes `ctx` in an afterEach that also
   // runs after tests which never replaced it. app.close() tolerates the
@@ -134,6 +144,7 @@ export async function createTestApp(
     ingestToken: ing.token,
     readToken: rd.token,
     telemetryToken: tel.token,
+    streamToken: strm.token,
     async close() {
       // app.close() disposes what Nest owns the lifecycle of — providers
       // implementing OnModuleDestroy, like IngestQueue and TerminalWaiter.

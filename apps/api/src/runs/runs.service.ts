@@ -16,14 +16,20 @@ export class RunsService {
    * The identity of those two codes is the contract: a CI script handles the
    * fast and slow paths with one branch instead of two.
    *
-   *   200  ingested, verdict passed or not_evaluated
+   *   200  ingested (complete), verdict passed or not_evaluated
+   *   200  incomplete — closed without its producer saying so; verdict is
+   *        always not_evaluated (RunRepository.markIncomplete), so this is
+   *        NOT the 422 row below, and it must not fall into the 202 branch
+   *        either: an aborted live run has no worker left to ever move it
+   *        past 202, so a poller would retry it forever (design §1.2).
    *   422  ingested, verdict failed
    *   400+ bundle rejected (the ingest error's own status — usually 400,
    *        but 413 for BUNDLE_TOO_LARGE; see apps/api/src/common/problem.ts)
-   *   202  still processing
+   *   202  still processing (pending / parsing / running)
    */
   statusFor(run: RunRecord): number {
     if (run.status === 'failed') return statusForCode(run.error?.code ?? 'INTERNAL');
+    if (run.status === 'incomplete') return 200;
     if (run.status !== 'complete') return 202;
     return run.verdict === 'failed' ? 422 : 200;
   }

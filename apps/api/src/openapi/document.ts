@@ -13,7 +13,11 @@ interface Ref {
 
 interface ParameterObject {
   name: string;
-  in: 'path' | 'query';
+  /**
+   * 'header' added for POST /v1/runs/{id}/stream's "X-Stream-Offset" —
+   * every other parameter in this document is 'path' or 'query'.
+   */
+  in: 'path' | 'query' | 'header';
   required?: boolean;
   description: string;
   schema: JsonSchema;
@@ -296,6 +300,17 @@ const parameters: Record<string, ParameterObject> = {
       'act on a leaked token from the list alone.',
     schema: { type: 'string' },
   },
+  StreamOffset: {
+    name: 'X-Stream-Offset',
+    in: 'header',
+    required: true,
+    description:
+      'The byte offset this chunk\'s body begins at, within the run\'s simulation.log. Missing ' +
+      'or not a non-negative integer is a 400. The offset a genuinely new run starts at, and ' +
+      'the offset to resume from after any response, is always "nextOffset" from the most ' +
+      'recent POST /v1/runs/live or POST /v1/runs/{id}/stream response for this run.',
+    schema: { type: 'integer', minimum: 0 },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -427,6 +442,51 @@ const responses: Record<string, ResponseObject> = {
       'application/problem+json with a required "remediation".',
     content: problem(),
   },
+  LiveOpened: {
+    description:
+      'The run is open and accepting POST /v1/runs/{id}/stream chunks at byte "nextOffset" — 0 ' +
+      'for a genuinely new run, or the run\'s already-accepted byte count for an idempotent ' +
+      'retry of the same "idempotencyKey".',
+    content: json(schemaRef('OpenLiveRunResponse')),
+  },
+  LiveOpenRejected: {
+    description:
+      'Either the request body failed OpenLiveRunRequestSchema (code INVALID_LIVE_OPEN — ' +
+      '"tool" is missing or unrecognized, or an optional field is out of bounds), or (code ' +
+      'PROJECT_REQUIRED) the caller authenticated with a session, which names no project — ' +
+      'only a project-scoped token can open a live run. The latter is unreachable through the ' +
+      'credential model as it stands today: a session never carries the "stream" scope (see ' +
+      'bearerAuth\'s description below), so it is refused earlier and differently, by the scope ' +
+      'check itself. Kept for the same defensive symmetry POST /v1/runs\'s own PROJECT_REQUIRED ' +
+      'check has. application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  StreamAccepted: {
+    description:
+      'The chunk landed. "nextOffset" is the byte offset to send the NEXT chunk at (or to ' +
+      'resume from after a reconnect) — the only thing this response says, deliberately, since ' +
+      'a streaming caller may be posting in a loop for hours.',
+    content: json(schemaRef('StreamAccepted')),
+  },
+  StreamRejected: {
+    description:
+      'The declared "X-Stream-Offset" does not match this run\'s current byte cursor — a gap ' +
+      '(ahead of the cursor) or a replay (behind it; a no-op, which is what makes the agent\'s ' +
+      'own retries idempotent) — or the run is no longer "running" (already closed). All three ' +
+      'share one cause from the caller\'s point of view: "the byte cursor did not move from ' +
+      'where you think it is." A required "remediation", plus — ADDITIONALLY to the ' +
+      'ProblemDetails shape proper, since it is specific to this operation rather than a ' +
+      'general problem+json member — a top-level "nextOffset", the exact field the 202 case ' +
+      'carries, so a caller\'s resume loop reads the same field regardless of which status code ' +
+      'it got back.',
+    content: problem(),
+  },
+  RunNotRunning: {
+    description:
+      'This run is not in the "running" state — already closed, or never opened for streaming ' +
+      'in the first place. application/problem+json with a required "remediation".',
+    content: problem(),
+  },
 };
 
 /** The five response entries every "same code for the same state" operation shares. */
@@ -532,6 +592,97 @@ const paths: Record<string, PathItemObject> = {
         'This is the URL a 202 response\'s "statusUrl" points at.',
       parameters: [parameters['RunId']!],
       responses: { ...runStateResponses(), '404': ref('NotFound'), ...authFailureResponses },
+    },
+  },
+
+  '/v1/runs/live': {
+    post: {
+      operationId: 'openLiveRun',
+      summary: 'Open a run fed by POST /v1/runs/{id}/stream rather than a bundle upload',
+      tags: ['runs'],
+      // A session names no project (see openLiveRun's 400 LiveOpenRejected
+      // response), so it can never satisfy this route even before scope is
+      // considered — bearer-only, overriding the document-level "either
+      // credential" default, exactly as POST /v1/runs does and for the same
+      // reason. Here a session is refused even earlier, by the "stream"
+      // scope check itself, since no session carries that scope — see
+      // bearerAuth's description below.
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "stream" scope. Creates a "running" run immediately (unlike POST ' +
+        '/v1/runs, this never waits on a terminal state — there is nothing to wait for yet) ' +
+        'and returns where to stream its bytes. Takes the same frozen metadata a bundle ' +
+        'upload does — "environment"/"branch"/"commitSha", plus "idempotencyKey" so a retried ' +
+        'open (e.g. after a network timeout) rejoins the run it already created instead of ' +
+        'starting a second one.',
+      requestBody: {
+        required: true,
+        description: '"tool" is required; every other field is optional, exactly as on POST /v1/runs.',
+        content: json(schemaRef('OpenLiveRunRequest')),
+      },
+      responses: {
+        '201': ref('LiveOpened'),
+        '400': ref('LiveOpenRejected'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/stream': {
+    post: {
+      operationId: 'streamLiveRunChunk',
+      summary: 'Feed one chunk of simulation.log bytes into a live run',
+      tags: ['runs'],
+      // Same reasoning as POST /v1/runs/live: a session can never carry the
+      // "stream" scope, so this route is bearer-only.
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "stream" scope. The body is the raw bytes of this chunk; ' +
+        '"X-Stream-Offset" (required) names the byte offset they begin at. The server holds ' +
+        'the run\'s expected offset: a match appends and answers 202; an offset behind the ' +
+        'cursor is a no-op 202 (a replay — this is what makes the agent\'s own retries ' +
+        'idempotent); an offset ahead of the cursor, or a run that is no longer "running", is a ' +
+        '409 naming the offset to resume from.',
+      parameters: [parameters['RunId']!, parameters['StreamOffset']!],
+      requestBody: {
+        required: true,
+        description: 'Raw chunk bytes, starting at "X-Stream-Offset".',
+        content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
+      },
+      responses: {
+        '202': ref('StreamAccepted'),
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        '409': ref('StreamRejected'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/close': {
+    post: {
+      operationId: 'closeLiveRun',
+      summary: 'Close a live run and finalize it',
+      tags: ['runs'],
+      // Same reasoning as POST /v1/runs/live: a session can never carry the
+      // "stream" scope, so this route is bearer-only.
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "stream" scope. A run that received at least one byte is finalized ' +
+        'through the SAME pipeline a bundle upload is — this operation shares POST ' +
+        '/v1/runs\'s state machine (200/202/400/413/422) and description for exactly that ' +
+        'reason: a streamed run becomes a row indistinguishable from an uploaded one. A run ' +
+        'closed having received zero bytes finalizes immediately as "incomplete" instead ' +
+        '(200, "verdict": "not_evaluated") — see GET /v1/runs/{id}\'s RunResponse for that ' +
+        'shape. Closing a run that is not currently "running" (already closed, or never a live ' +
+        'run) is a 409.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        ...runStateResponses(),
+        '404': ref('NotFound'),
+        '409': ref('RunNotRunning'),
+        ...authFailureResponses,
+      },
     },
   },
 
@@ -969,11 +1120,14 @@ export function buildOpenApiDocument(): OpenApiDocument {
             'API tokens have the shape "pp_<prefix>_<secret>" — an opaque token, not a JWT. ' +
             'Send as "Authorization: Bearer pp_<prefix>_<secret>". POST /v1/runs requires a ' +
             'token with the "ingest" scope; every GET requires "read"; POST /v1/telemetry ' +
-            'requires "telemetry" — a THIRD scope, deliberately not a reuse of "ingest", so a ' +
-            'token minted for a load generator can post host counters and do nothing else. ' +
-            'Scoped to an org AND a project, and the only credential POST /v1/runs, ' +
-            'POST /v1/telemetry, and GET /v1/projects/{slug}/runs accept — see cookieAuth for ' +
-            'the session alternative everywhere else.',
+            'requires "telemetry"; POST /v1/runs/live, POST /v1/runs/{id}/stream, and POST ' +
+            '/v1/runs/{id}/close require "stream" — a FOURTH scope, deliberately not a reuse ' +
+            'of "ingest", because that token lives on the same load generator "telemetry" ' +
+            'does and should be equally narrow: it can open, feed, and close exactly one live ' +
+            'run, and do nothing else. Scoped to an org AND a project, and the only credential ' +
+            'POST /v1/runs, POST /v1/telemetry, POST /v1/runs/live, POST /v1/runs/{id}/stream, ' +
+            'POST /v1/runs/{id}/close, and GET /v1/projects/{slug}/runs accept — see cookieAuth ' +
+            'for the session alternative everywhere else.',
         },
         cookieAuth: {
           type: 'apiKey',
@@ -983,14 +1137,16 @@ export function buildOpenApiDocument(): OpenApiDocument {
             'A Better Auth session cookie, obtained via POST /auth/sign-up/email or ' +
             '/auth/sign-in/email (see the root README\'s Authentication section — /auth/* is ' +
             'Better Auth\'s own surface, not this document). Scoped to an org only, no ' +
-            'project, so it cannot satisfy POST /v1/runs, POST /v1/telemetry, or ' +
-            'GET /v1/projects/{slug}/runs (all three require a project); GET /v1/runs is the ' +
+            'project, so it cannot satisfy POST /v1/runs, POST /v1/telemetry, POST ' +
+            '/v1/runs/live, POST /v1/runs/{id}/stream, POST /v1/runs/{id}/close, or ' +
+            'GET /v1/projects/{slug}/runs (all require a project); GET /v1/runs is the ' +
             'org-wide equivalent a session can use instead. Its scopes are ["read", "ingest"] ' +
-            '— NOT "telemetry": a browser session has no reason to post host counters, and ' +
-            'widening it would make the scope\'s whole purpose decorative, so it is refused by ' +
-            '@Scopes(\'telemetry\') even before the missing-project check above applies. Minted ' +
-            'with the Secure attribute unconditionally, so it requires an HTTPS origin — see the ' +
-            'root README\'s Authentication section.',
+            '— NOT "telemetry" and NOT "stream": a browser session has no reason to post host ' +
+            'counters or stream a run, and widening it would make either scope\'s whole ' +
+            'purpose decorative, so both are refused by their own @Scopes() check even before ' +
+            'the missing-project check above applies. Minted with the Secure attribute ' +
+            'unconditionally, so it requires an HTTPS origin — see the root README\'s ' +
+            'Authentication section.',
         },
       },
       parameters,
