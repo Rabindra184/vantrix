@@ -426,6 +426,36 @@ describe('Sweeper', () => {
     }
   });
 
+  it('does not re-select a "parsing" run whose parsing_started_at is fresh, even though created_at is stale — the live-close race (Task 9 fix round 2)', async () => {
+    // Reproduces exactly the state RunRepository.claimForClose leaves a
+    // long-running live run in: opened (created_at) far longer ago than
+    // parsingStaleAfterMs — the ordinary case for the soak tests live
+    // streaming exists for — then close() claims it (parsing_started_at
+    // set to now). Before this fix, the sweeper's 'parsing' predicate read
+    // created_at alone, so this exact row was already "stale" the instant
+    // it entered 'parsing' and would have been re-enqueued while close()
+    // was still assembling the log — racing PipelineService against a
+    // bundleSha256 close() had not finished writing yet.
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    await pool.query(
+      `UPDATE run
+          SET status = 'parsing',
+              created_at = now() - interval '20 minutes',
+              parsing_started_at = now()
+        WHERE id = $1`,
+      [ctx.runId],
+    );
+
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    try {
+      const swept = await sweeper.sweep();
+      expect(swept).toBe(0);
+    } finally {
+      await sweeper.close();
+    }
+  });
+
   it('re-queues a run whose existing job is sitting in the failed set, instead of silently skipping it', async () => {
     // Queue.add with an existing jobId returns the existing job and enqueues
     // NOTHING. With removeOnFail keeping failed jobs around, a run whose job

@@ -119,16 +119,40 @@ model Run {
   toolStartedAt  DateTime? @map("tool_started_at") @db.Timestamptz(3)
   ingestedAt     DateTime? @map("ingested_at") @db.Timestamptz(3)
   /// Row creation time — used by the sweeper (apps/worker/src/sweeper.ts) to
-  /// detect a run stuck at 'pending' or 'parsing' for too long. This
-  /// coincides with startedAt today because both are `now()` at the same
-  /// insert, but the two serve different purposes: startedAt is a fact about
-  /// the run (when the platform received it) that the API exposes and the
-  /// list endpoint can fall back to; createdAt is bookkeeping for this row's
-  /// own lifecycle, internal to the sweeper's staleness query. They are not
+  /// detect a run stuck at 'pending' for too long. This coincides with
+  /// startedAt today because both are `now()` at the same insert, but the
+  /// two serve different purposes: startedAt is a fact about the run (when
+  /// the platform received it) that the API exposes and the list endpoint
+  /// can fall back to; createdAt is bookkeeping for this row's own
+  /// lifecycle, internal to the sweeper's staleness query. They are not
   /// merged: a future change to either (e.g. startedAt one day reflecting a
   /// backfill-adjusted accept time) must not silently perturb the sweeper's
   /// unrelated staleness window.
+  ///
+  /// NO LONGER what the sweeper measures 'parsing' staleness from — see
+  /// parsingStartedAt below for why createdAt was wrong for that one case.
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// When this run MOST RECENTLY entered 'parsing' — set by both
+  /// RunRepository.markParsing (the upload path) and .claimForClose (Task 9
+  /// live path). The sweeper's 'parsing' staleness check reads THIS, falling
+  /// back to createdAt only when null (a row from before this column
+  /// existed, or — should it ever happen — one that reached 'parsing'
+  /// through a path that forgot to set it).
+  ///
+  /// createdAt cannot serve this role for a live run: createdAt is OPEN
+  /// time, and close() moves a run straight from 'running' to 'parsing' —
+  /// often well past parsingStaleAfterMs (15 min default) after createdAt,
+  /// since that is the ordinary case for the soak tests this feature exists
+  /// for. Measuring from createdAt made every such run stale THE INSTANT it
+  /// entered 'parsing', so the sweeper could re-enqueue it while close() was
+  /// still assembling the log — racing PipelineService against a
+  /// bundleSha256 close() had not finished writing yet.
+  ///
+  /// Cleared back to null by RunRepository.releaseClose when a failed
+  /// close() reverts a run to 'running' — the parsing attempt that value
+  /// described did not survive, so it should not linger as a stale reading
+  /// on whatever attempt (or plain "still running") comes next.
+  parsingStartedAt DateTime? @map("parsing_started_at") @db.Timestamptz(3)
   /// Frozen at accept time. Statistics are meaningless without the options
   /// that produced them, and a project changing its warm-up must not
   /// silently reinterpret its own history.

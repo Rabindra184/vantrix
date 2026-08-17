@@ -31,12 +31,26 @@ export class Sweeper {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // 'parsing' staleness is measured from parsing_started_at, NOT
+      // created_at (the row's OPEN/upload time) -- COALESCE falls back to
+      // created_at only for a row that reached 'parsing' with the column
+      // still null (predates this migration, or some future path forgets
+      // to set it). A live run's created_at is when it was opened, often
+      // well past parsingStaleAfterMs before close() ever runs (the normal
+      // case for the soak tests live streaming exists for), so measuring
+      // from created_at made every such run look stale the INSTANT close()
+      // claimed it -- this sweep could then re-enqueue a run whose
+      // close() was still assembling the log, racing PipelineService
+      // against a bundleSha256 close() had not finished writing yet. See
+      // Run.parsingStartedAt's own docstring (schema.prisma) and
+      // RunRepository.claimForClose/markParsing, both of which set it.
       const { rows } = await client.query<{ id: string }>(
         `SELECT id FROM run
           WHERE (status = 'pending'
                  AND created_at < now() - ($1::int * interval '1 millisecond'))
              OR (status = 'parsing'
-                 AND created_at < now() - ($2::int * interval '1 millisecond'))
+                 AND COALESCE(parsing_started_at, created_at)
+                     < now() - ($2::int * interval '1 millisecond'))
           ORDER BY created_at
           LIMIT 100
           FOR UPDATE SKIP LOCKED`,

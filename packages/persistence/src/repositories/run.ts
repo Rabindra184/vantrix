@@ -393,11 +393,21 @@ export class RunRepository {
    * as "not running", never "not found" (existence is confirmed separately,
    * by the findById a tenant-scoped caller already had to do to reach a
    * run id at all).
+   *
+   * Sets parsingStartedAt (see the field's own docstring on Run above) to
+   * NOW, not left null: the sweeper's 'parsing' staleness check reads it,
+   * falling back to createdAt (this run's OPEN time) only when null.
+   * Without this, a live run streaming for longer than parsingStaleAfterMs
+   * before it is closed -- the ordinary case for the soak tests this
+   * feature exists for -- would already read as stale the instant this
+   * claim lands, and the sweeper could re-enqueue it while close() is still
+   * assembling the log, mid-`Promise.all` over a multi-thousand-object
+   * live-chunk prefix.
    */
   async claimForClose(runId: string): Promise<boolean> {
     const { count } = await this.prisma.run.updateMany({
       where: { id: runId, status: 'running' },
-      data: { status: 'parsing' },
+      data: { status: 'parsing', parsingStartedAt: new Date() },
     });
     return count > 0;
   }
@@ -444,9 +454,18 @@ export class RunRepository {
     return row ? toRecord(row) : null;
   }
 
-  /** Unscoped by design: the worker, acting on a job it has already dequeued. */
+  /**
+   * Unscoped by design: the worker, acting on a job it has already dequeued.
+   *
+   * Sets parsingStartedAt alongside status, same as claimForClose does for
+   * the live-close path -- the sweeper's staleness check reads that column
+   * for every route into 'parsing', not just this one.
+   */
   async markParsing(id: string): Promise<void> {
-    await this.prisma.run.update({ where: { id }, data: { status: 'parsing' } });
+    await this.prisma.run.update({
+      where: { id },
+      data: { status: 'parsing', parsingStartedAt: new Date() },
+    });
   }
 
   /**
