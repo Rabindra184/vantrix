@@ -25,6 +25,7 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.4",
+    "ioredis": "^5.4.1",
     "reflect-metadata": "0.2.2",
     "@tailwindcss/vite": "4.3.3",
     "@types/react": "18.3.31",

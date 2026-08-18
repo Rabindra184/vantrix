@@ -196,6 +196,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.0.5
         version: 6.0.5(vite@8.2.1(@types/node@22.20.1)(jiti@2.7.0))
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2

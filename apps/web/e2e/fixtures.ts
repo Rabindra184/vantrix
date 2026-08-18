@@ -108,6 +108,62 @@ async function mintIngestToken(orgId: string, projectId: string): Promise<string
   return minted.token;
 }
 
+/**
+ * A token scoped for `POST /v1/runs/live` -- 'stream', not 'ingest'/'read'.
+ * `LiveController.open` requires exactly this scope (`@Scopes('stream')`,
+ * `apps/api/src/ingest/live.controller.ts`); an ingest-scoped token answers
+ * 403 there.
+ */
+async function mintStreamToken(orgId: string, projectId: string): Promise<string> {
+  const minted = mintToken();
+  const secret = minted.token.split('_')[2] ?? '';
+  await prisma.apiToken.create({
+    data: {
+      orgId,
+      projectId,
+      name: 'e2e-live-fixture',
+      prefix: minted.prefix,
+      tokenHash: await hashToken(secret),
+      scopes: ['stream'],
+    },
+  });
+  return minted.token;
+}
+
+/**
+ * Opens a running run through the REAL `POST /v1/runs/live` endpoint --
+ * Task 8's own seed, for the run page's live branch (design part 2b).
+ *
+ * NO WORKER PROCESS NEEDS TO RUN, unlike `ingestAndProcess` above.
+ * `RunRepository.createLive` sets `status: 'running'` on insert
+ * (`packages/persistence/src/repositories/run.ts`), so `GET /v1/runs/:id`
+ * answers 202 with that status the instant this resolves -- there is
+ * nothing to wait or sleep on, and nothing here ever closes the run, since
+ * Task 8's e2e coverage is about the LIVE PAGE, not the parse pipeline that
+ * `ingestAndProcess` exists to drive.
+ *
+ * REUSES `orgId`'s SHARED `checkout` project (`projectFor`), unlike
+ * `seedRunWithNaAssertion` and its siblings, which mint their own dedicated
+ * one. Those seeds need isolation because `sla_rule` is scoped per-project
+ * and would otherwise attach to every later run in the shared project; this
+ * run carries no SLA rules and no other per-project state, so there is
+ * nothing for it to contaminate or be contaminated by.
+ */
+export async function openLiveRun(orgId: string): Promise<string> {
+  const projectId = await projectFor(orgId);
+  const token = await mintStreamToken(orgId, projectId);
+  const res = await fetch(`${BASE_URL}/v1/runs/live`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'gatling' }),
+  });
+  if (res.status !== 201) {
+    throw new Error(`POST /v1/runs/live expected 201, got ${res.status}: ${await res.text()}`);
+  }
+  const body = (await res.json()) as { runId: string };
+  return body.runId;
+}
+
 // Built once, lazily, and reused by every seed that ingests real data —
 // mirrors apps/api/test/session-auth.integration.test.ts's module-scope
 // `bundle`.

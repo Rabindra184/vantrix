@@ -2,16 +2,18 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
-  Assertion, RunProcessing, RunResponse, SeriesResponse, ToolAssertion,
+  Assertion, LiveDelta, RunProcessing, RunResponse, SeriesResponse, ToolAssertion,
 } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import StatTile from '../components/StatTile';
 import TableFrame from '../components/TableFrame';
 import { ChevronLeftIcon, RefreshIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
+import { useLiveRun, type LiveRunState } from '../api/live';
 import {
   distributionQuery,
   errorSeriesQuery,
@@ -31,12 +33,14 @@ import RequestCountChart from '../charts/RequestCountChart';
 import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
-import StatisticsTable from '../tables/StatisticsTable';
+import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
+import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
 import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
+import LiveNotice from './LiveNotice';
 import RunShell from './RunShell';
 import useIsCompact from '../useIsCompact';
 import RunStats from './RunStats';
@@ -58,6 +62,13 @@ import RunStats from './RunStats';
  * `fetchRun`): a readable run, a run still being processed, and a problem.
  * Collapsing the middle one into the first is what would put `0s` and "no
  * verdict yet" on screen as though they were measurements.
+ *
+ * THE MIDDLE STATE ITSELF NOW SPLITS IN TWO (Task 8, design part 2b). A
+ * `processing` run renders `Live` once `useLiveRun` has delivered at least
+ * one delta THIS SESSION — whether it is streaming right now or has just
+ * stopped (§4.4's frozen dashboard) — and the unmodified `Processing`
+ * screen otherwise: a run never live this session, or a compact viewport,
+ * which never opens the socket at all (§4.1, §22.6).
  */
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>();
@@ -95,6 +106,18 @@ export default function RunDetail() {
     // testable without waiting two real minutes in a browser.
     refetchInterval: (query) => pollIntervalFor(query.state.data, capReached),
   });
+
+  // Gated on the design's own rule (part 2b §4.1), literally:
+  // `run.status === 'running' && !useIsCompact()`. `run.data` may still be
+  // `undefined` on first paint, or already `ready` — `running` is false in
+  // both, correctly, since there is nothing to stream for a run this page
+  // is not CURRENTLY showing as running. §22.6: below 768px this page is a
+  // read-only summary, and a socket held open to receive a delta every 5s
+  // and draw none of it is exactly the "degrading badly" that rule exists
+  // to prevent.
+  const compact = useIsCompact();
+  const running = run.data?.state === 'processing' && run.data.run.status === 'running';
+  const live = useLiveRun(runId ?? '', running && !compact);
 
   // Not reachable through the router — `/runs/:runId` cannot match without a
   // segment — but `useParams` is typed as optional and silently rendering an
@@ -148,7 +171,23 @@ export default function RunDetail() {
   }
 
   if (run.data.state === 'processing') {
-    return <Processing status={run.data.run.status} capReached={capReached} onRetry={() => void run.refetch()} />;
+    const status = run.data.run.status;
+
+    // A RETAINED DELTA — from this run being live right now, or from it
+    // having been live earlier in this session — means there is a populated
+    // dashboard to show, whatever `status` currently says. `live.lastDelta`
+    // is never cleared on its own (`useLiveRun`'s own contract), so once a
+    // delta has arrived this branch keeps rendering `Live` straight through
+    // `running` -> `parsing` (design §4.4's frozen banner) -> `complete`
+    // (where the render above already stops reaching this branch at all,
+    // once `run.data.state` flips to `'ready'`). A run that never streamed
+    // in this session — `pending`/`parsing` with no socket ever opened, or a
+    // compact viewport where one never opens at all — falls straight
+    // through to the unmodified `Processing` screen below.
+    if (live.lastDelta !== null) {
+      return <Live status={status} runId={runId} live={live} compact={compact} />;
+    }
+    return <Processing status={status} capReached={capReached} onRetry={() => void run.refetch()} />;
   }
 
   return <Ready run={run.data.run} />;
@@ -273,6 +312,242 @@ export function Processing({
       <BackToRuns />
     </div>
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * The live page — design part 2b §4.1, §4.3, §4.4
+ * ------------------------------------------------------------------ */
+
+/**
+ * A run currently streaming, or one that just stopped and is still showing
+ * its last delta while REST finishes the report (design §4.3, §4.4).
+ *
+ * RENDERED ONLY ONCE A DELTA HAS ARRIVED. `RunDetail`'s own branch makes
+ * that guarantee — a run that has never delivered a delta this session
+ * (including every compact viewport, which never opens the socket at all)
+ * still renders `Processing`, completely unmodified. Once a delta HAS
+ * arrived it is never cleared (`useLiveRun`'s own contract), which is what
+ * lets this one component also cover the FROZEN case — `status !==
+ * 'running'` — with nothing more than a banner: the dashboard underneath it
+ * does not need a separate "it just ended" render, because nothing about it
+ * needs to change.
+ *
+ * NO `RunShell`, NO `RunHeader`, NO TABS. `GET /v1/runs/:id` answers 202 for
+ * anything short of `complete` (`RunsService.statusFor`), so a running run
+ * has no `RunResponse` at all — no project, no tool, no verdict — on any
+ * path, for as long as it streams. `RunShell`'s header needs exactly those
+ * fields; building it from invented placeholders would be the fabrication
+ * this codebase's "null tiles, never zeroed ones" rule exists to forbid, one
+ * level up from a stat tile.
+ */
+export function Live({
+  status,
+  runId,
+  live,
+  compact,
+}: {
+  // `RunProcessing['status']`, not `string` — see `Processing`'s own prop
+  // for the same reasoning.
+  readonly status: RunProcessing['status'];
+  readonly runId: string;
+  readonly live: LiveRunState;
+  readonly compact: boolean;
+}) {
+  const delta = live.lastDelta;
+  // Unreachable through `RunDetail`'s own guard (this component is only ever
+  // rendered once `live.lastDelta !== null`). Typed defensively rather than
+  // asserted non-null, so a future caller mistake renders nothing instead of
+  // throwing.
+  if (delta === null) return null;
+
+  const frozen = status !== 'running';
+  // THE GROWING DOMAIN, computed locally rather than through
+  // `useTimeDomainFromShell`: that hook reads `RunWindowContext` off an
+  // `<Outlet/>` this page never mounts (there is no `RunShell` here — see
+  // this component's own docstring). The rule is the same one anyway —
+  // `[0, durationMs]`, taken from the latest delta while the run has not
+  // settled — just applied directly, with no window to prefer over it: a
+  // live view is never narrowed (`useLiveRun`'s own module docstring).
+  const domainMs: readonly [number, number] = [0, delta.summary.durationMs];
+
+  // OBSERVE THE CACHE; NEVER FETCH IT. `useLiveRun` already writes every one
+  // of these three keys directly (`applyDelta`, `api/live.ts`) on every
+  // delta. A normal `enabled: true` query here would ALSO hit REST — which,
+  // for a run with no persisted rows yet (`MetricWriter` has not run this
+  // run's pipeline), answers with an emptier payload that would then win the
+  // race against whichever delta landed first, for no benefit: `staleTime:
+  // Infinity` means it would only ever fire once, and TanStack still applies
+  // whichever write — REST's or the socket's — resolves last.
+  const users = useQuery({ ...usersQuery(runId), enabled: false });
+  const series = useQuery({ ...seriesQuery(runId, 'run', '', 'response_time'), enabled: false });
+  const errors = useQuery({ ...errorsQuery(runId), enabled: false });
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+          {frozen ? 'Run finished' : 'Run in progress'}
+        </h1>
+        {/* `role="status"`, not `alert`: nothing here is a problem, the same
+            distinction `Processing`'s own sentence and `DesktopOnly`'s own
+            notice make. */}
+        <p role="status" className="text-[13px] text-muted">
+          {frozen
+            ? 'Streaming has stopped. The numbers below are its last update.'
+            : live.connected
+              ? 'Live — updating as the run streams.'
+              : 'Reconnecting — showing the last update received.'}
+        </p>
+      </div>
+
+      {/* A banner ABOVE the still-populated dashboard, not a replacement for
+          it — see `LiveNotice`'s own docstring on why falling back to
+          `Processing` here was rejected. */}
+      {frozen && <LiveNotice kind="finalizing" />}
+
+      <LiveSummary summary={delta.summary} />
+
+      {/* §22.6: mounting five ECharts instances costs real work a phone
+          should not pay for, even though the two withheld notices beside
+          them cost nothing — so the whole grid is gated together, the same
+          scope `RunChartsTab` gates its own eight figures at. No `onShow`:
+          nothing behind this content is a query this page has NOT already
+          fired (`users`/`series` above are cache reads, not fetches), so
+          there is no second flag to keep in sync. */}
+      <DesktopOnly compact={compact} what="Live charts">
+        {() => (
+          <section
+            aria-labelledby="live-charts-heading"
+            className="grid grid-cols-1 gap-6 2xl:grid-cols-2"
+          >
+            <h2 id="live-charts-heading" className="sr-only">
+              Charts
+            </h2>
+            {users.data !== undefined && (
+              <>
+                {/* Its OWN chart, sharing the crosshair — never an overlay on
+                    requests/s. Same rule `RunChartsTab` follows; see its own
+                    `RUN_TIME` docstring above. */}
+                <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+                <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+              </>
+            )}
+            {series.data !== undefined && (
+              <>
+                <PercentilesChart series={series.data} domainMs={domainMs} />
+                <RequestRateChart series={series.data} domainMs={domainMs} />
+                <ResponseRateChart series={series.data} domainMs={domainMs} />
+              </>
+            )}
+            {/* THE TWO OF THE THREE WITHHELD SECTIONS THAT ARE CHARTS. Both
+                fold the SAME `/distribution` payload on a finished run
+                (`RunChartsTab`'s own `DISTRIBUTION`/`PERCENTILE_DISTRIBUTION`
+                slots) and neither has ANY live source — §4.3: they need
+                per-request or full-sketch data no delta carries, on any
+                path, while the run streams. */}
+            <LiveNotice kind="withheld" subject="Response time distribution" />
+            <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
+          </section>
+        )}
+      </DesktopOnly>
+
+      {/* NOT desktop-gated — matching `RunErrorsTab`, which never gates the
+          errors table either. §22.6 names "error summary" as exactly the
+          kind of thing a phone's read-only view should still carry. */}
+      <TableSection title="Errors" query={errors}>
+        {(data) => <ErrorsTable errors={data} />}
+      </TableSection>
+
+      {/* THE THIRD WITHHELD SECTION. Gated the same way the REAL statistics
+          table is on a finished run (`RunOverviewTab`'s own `DesktopOnly`,
+          same `what` text) — the table itself needs per-endpoint rows §1.3
+          excludes from the live wire entirely, so there is no live version
+          of it at any viewport width. */}
+      <DesktopOnly compact={compact} what="The per-request statistics table">
+        {() => <LiveNotice kind="withheld" subject="Statistics" />}
+      </DesktopOnly>
+    </div>
+  );
+}
+
+/**
+ * The live wire's own headline numbers, read DIRECTLY from a delta's
+ * `summary` — never laundered through a `StatRow`.
+ *
+ * `RunStats`' six REST tiles read `throughputRps`/`meanMs`/`maxMs`, and
+ * `LiveSummarySchema` has no source for any of the three: not a missing
+ * field, a missing COMPUTATION (`useLiveRun`'s own module docstring). So
+ * this is not `RunStats` fed a partial payload — it is a different, honest
+ * set of six numbers, built only from what `count`/`okCount`/`koCount`/
+ * `errorRate`/`percentiles`/`maxUsers`/`durationMs` actually are. This run's
+ * Overview equivalent once it completes is `RunStats`, not this component,
+ * and the two tile sets are deliberately not shape-compatible so they can
+ * never be mistaken for one another mid-migration.
+ *
+ * NEVER WITHHELD, on any viewport — the same rule `RunOverviewTab`'s own
+ * comment states for its REST tiles: these are cheap, already-fetched (by
+ * the socket, not by this component) numbers, and it is the per-request
+ * TABLE a phone cannot usefully render, not a handful of tiles.
+ */
+function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
+  return (
+    <section aria-label="Run totals so far">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        <StatTile
+          label="Requests So Far"
+          value={formatCount(summary.count)}
+          hint={`${formatCount(summary.okCount)} OK, ${formatCount(summary.koCount)} KO`}
+          data-testid="live-stat-total-requests"
+        />
+        <StatTile
+          label="Error Rate"
+          // Same field and expression `RunStats`' own tile uses
+          // (`errorRate * 100`, two decimals) — never `koCount / count`,
+          // a second definition of the one number a few tiles away.
+          value={`${(summary.errorRate * 100).toFixed(2)}%`}
+          hint={`${formatCount(summary.koCount)} of ${formatCount(summary.count)} requests`}
+          data-testid="live-stat-error-rate"
+        />
+        <StatTile
+          label="Peak Users"
+          value={formatCount(summary.maxUsers)}
+          hint="concurrent, so far"
+          data-testid="live-stat-peak-users"
+        />
+        <StatTile
+          label="Duration So Far"
+          value={formatDuration(summary.durationMs)}
+          hint="still streaming"
+          data-testid="live-stat-duration"
+        />
+        <StatTile
+          label="95th Percentile"
+          value={livePercentileValue(summary, 'p95')}
+          hint="an estimate, so far"
+          data-testid="live-stat-p95"
+        />
+        <StatTile
+          label="99th Percentile"
+          value={livePercentileValue(summary, 'p99')}
+          hint="an estimate, so far"
+          data-testid="live-stat-p99"
+        />
+      </dl>
+    </section>
+  );
+}
+
+/**
+ * A percentile tile's value, straight off the wire — unlike `RunStats`' own
+ * `percentileValue`, this has no `clampPercentile` step: that clamp projects
+ * a raw estimate onto a `StatRow`'s own `minMs`/`maxMs`, and a live summary
+ * carries neither. `—`, never `0`, for a project configured with no such
+ * percentile: a gap in `summary.percentiles` is not a measurement of zero.
+ */
+function livePercentileValue(summary: LiveDelta['summary'], key: string): string {
+  const raw = summary.percentiles[key];
+  if (raw === undefined || !Number.isFinite(raw)) return '—';
+  return `${formatMs(raw)} ms`;
 }
 
 function Ready({ run }: { run: RunResponse }) {

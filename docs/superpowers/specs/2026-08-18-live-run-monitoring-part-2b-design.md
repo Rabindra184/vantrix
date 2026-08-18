@@ -458,6 +458,17 @@ Part 2a deferred "<2 s p95 delta latency" here, as the first point at which
 there is an end-to-end path to measure. Measured from the fold owner's publish
 to the client's receipt across a real socket.
 
+**Measured (Task 8, `apps/web/e2e/run-live.spec.ts`): 107ms**, publishing
+directly to `live:{runId}` (the same channel `LiveFoldOwner#publish` writes
+to) and timing to the browser's own `WebSocket` `framereceived` event for
+that delta — a real gateway, a real Redis round trip, a real socket, with
+the fold owner's own tick stood in for by the test's publish, which is the
+one piece a browser-only harness cannot run for itself. A single clean
+sample on a local stack, not a fleet-wide p95, but two orders of magnitude
+under the 2s target, so the target holds with margin to spare against
+render time, GC pauses and a slower network this measurement did not
+exercise.
+
 ### 5.7 Gate reminders
 
 Node 22 (`nvm use`) — on 20 roughly two thirds of the unit suite silently does
