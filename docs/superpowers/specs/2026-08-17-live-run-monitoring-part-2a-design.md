@@ -222,6 +222,20 @@ about one of them, and a single `replaces` flag derived from the response series
 would let a users-only coalesce rewrite every user offset while the message says
 nothing changed. That is §3.3's hazard, unguarded, for the second series.
 
+**One width per envelope means the users width must be the MINIMUM across
+scenarios, not the maximum.** `UserSeries` sweeps each scenario separately
+(`users.ts`), and a scenario's bucket count is decided by its active **span**
+rather than its volume, because the sweep gap-fills every index between that
+scenario's first and last event. So a run whose scenarios have staggered
+durations genuinely holds two widths at once — ordinary in a soak run.
+Bucket offsets are `idx * width` per scenario, and widths are always
+`1000 x 2^k`, so the **finest** width divides every coarser scenario's offsets
+exactly while a coarser one does not divide the finer's. Declaring the maximum
+would leave a fine scenario's offsets non-multiples of the declared width, and
+any consumer indexing by `floor(startOffsetMs / widthMs)` — what the batch path
+does — silently collides two buckets into one. Declaring the minimum only makes
+a coarse scenario render sparse, which is true rather than wrong.
+
 **Why `users` is sent whole and has no cursor.** It is bounded by
 `maxBucketsUsers` regardless of run length, it gap-fills every bucket
 (`users.ts:67-80`) so it is dense rather than sparse, and it materialises the
@@ -231,14 +245,29 @@ cursor, which silently drops the plateau. Sending it whole costs a bounded
 payload and removes an entire class of cursor bug. `maxUsers` is already
 computed from the whole snapshot beside it.
 
-**Buckets are upserted by `startOffsetMs`, not appended.** The newest bucket is
-still filling when it is first published, so a strictly-greater cursor publishes
-it at its most partial and then never corrects it — at the default 5 s tick
-against 1000 ms buckets, one bucket in five is permanently undercounted, and at
-the 1 s floor every bucket is. The response envelope therefore emits buckets at
-or past the cursor (`>=`), re-sending the newest until a newer one exists, and
-the consumer replaces by offset. Upsert costs one re-sent bucket per tick and
-removes a permanent undercount.
+**Buckets are upserted by `startOffsetMs`, not appended, and the re-send window
+is a LOOKBACK rather than the frontier alone.** The newest bucket is still
+filling when it is first published, so a strictly-greater cursor publishes it at
+its most partial and never corrects it — at the default 5 s tick against 1000 ms
+buckets, one bucket in five is permanently undercounted, and at the 1 s floor
+every bucket is.
+
+Emitting at or past the cursor (`>=`) fixes the frontier, and the frontier is
+not the only bucket still filling. A request is folded into **both** its start
+and end buckets (`engine.ts:315-316`), and Gatling's log is ordered by end time
+— so a request whose response time exceeds one bucket width increments
+`startedCount` on a bucket that is **already behind** the frontier. That bucket
+is never re-emitted, and requests/s stays permanently undercounted for it.
+
+This is reachable in this project's own fixture: the reference run's maximum
+response time is 2503 ms and its p99 exceeds 2400 ms, against 1000 ms buckets.
+
+So the response envelope emits buckets at or past `cursor - lookbackMs`, where
+`lookbackMs` covers the longest response time the run has actually shown —
+`ceil(maxMs / widthMs)` buckets, taken from the run-scope rollup the delta
+already carries. Self-scaling, bounded by the data rather than by a guess, and
+one extra bucket per 1000 ms of observed tail. The consumer replaces by offset,
+so a re-sent bucket is a correction rather than a duplicate.
 
 Per-endpoint statistics are **not** in the delta. FR-LIVE-4's list is what a
 live dashboard shows, and it is bounded; a run at the 2000-endpoint cap would
