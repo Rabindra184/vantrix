@@ -26,6 +26,9 @@ const valid = {
     widthMs: 1000,
     buckets: [{ scenario: 'checkout', startOffsetMs: 0, active: 3 }],
   },
+  errors: {
+    rows: [{ message: 'connection reset', count: 1 }],
+  },
 };
 
 /**

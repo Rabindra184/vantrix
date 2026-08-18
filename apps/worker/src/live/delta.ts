@@ -258,6 +258,12 @@ export function buildDelta(
       userBuckets.map((b) => ({ scenario, startOffsetMs: b.startOffsetMs, active: b.maxConcurrent })),
   );
 
+  // Run scope only -- see LiveErrorsSchema. `top(200)` per key is already
+  // applied by Engine.snapshot(), so this is bounded before it arrives.
+  const errorRows = result.errors
+    .filter((e) => e.scope === 'run')
+    .map((e) => ({ message: e.message, count: e.count }));
+
   const delta: LiveDelta = {
     runId,
     seq: prev.seq,
@@ -279,6 +285,7 @@ export function buildDelta(
       widthMs: usersWidthMs,
       buckets: usersBuckets,
     },
+    errors: { rows: errorRows },
   };
 
   const next: DeltaCursor = {

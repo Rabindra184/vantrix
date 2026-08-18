@@ -151,6 +151,25 @@ export const LiveUsersSchema = z.object({
 });
 export type LiveUsers = z.infer<typeof LiveUsersSchema>;
 
+export const LiveErrorRowSchema = z.object({
+  /** `null` is `ErrorTally`'s folded remainder, carried rather than dropped. */
+  message: z.string().nullable(),
+  count: z.number().int(),
+});
+export type LiveErrorRow = z.infer<typeof LiveErrorRowSchema>;
+
+/**
+ * RUN SCOPE ONLY. Per-endpoint error rows are excluded on part 2a §3.2's
+ * argument unchanged: their count tracks the run's endpoint cardinality (2000
+ * at the cap), so a live run would publish thousands of rows every tick to
+ * every subscriber. The Errors tab's per-request drill-down is a REST read on
+ * a finished run.
+ */
+export const LiveErrorsSchema = z.object({
+  rows: z.array(LiveErrorRowSchema),
+});
+export type LiveErrors = z.infer<typeof LiveErrorsSchema>;
+
 /**
  * A delta published by the fold engine to Redis on a timer, carrying the
  * incremental update to a run's statistics since the last delta.
@@ -170,5 +189,6 @@ export const LiveDeltaSchema = z.object({
   summary: LiveSummarySchema,
   responseTime: LiveResponseTimeSchema,
   users: LiveUsersSchema,
+  errors: LiveErrorsSchema,
 });
 export type LiveDelta = z.infer<typeof LiveDeltaSchema>;

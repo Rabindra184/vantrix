@@ -32,6 +32,18 @@ function engineResultFrom(requests: { startMs: number; endMs: number; ok: boolea
   return runEngine(reqEvents);
 }
 
+/**
+ * An `EngineResult` from zero requests, with `errors` overridden to the given
+ * rows -- for cases that only care about `buildDelta`'s error-row filtering
+ * and don't need a real log fixture to produce failures. Built from
+ * `runEngine([])` rather than hand-assembled, so every other field (series,
+ * users, errorSeries, ...) is a real, internally-consistent empty result
+ * instead of a second, hand-maintained shape of `EngineResult`.
+ */
+function engineResultWithErrors(errors: EngineResult['errors']): EngineResult {
+  return { ...runEngine([]), errors };
+}
+
 describe('buildDelta', () => {
   it('summarises the run from the payload, not from written-down numbers', () => {
     const all = events();
@@ -291,5 +303,26 @@ describe('buildDelta', () => {
       expect(published.startedOkCount).toBe(origin.startedOkCount);
       expect(published.startedKoCount).toBe(origin.startedKoCount);
     }
+  });
+
+  it('carries run-scope error rows, and no per-endpoint rows', () => {
+    const result = engineResultWithErrors([
+      { scope: 'run', name: '', message: 'connection reset', count: 7 },
+      { scope: 'request', name: 'GET /cart', message: 'connection reset', count: 7 },
+    ]);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    expect(delta.errors.rows).toEqual([{ message: 'connection reset', count: 7 }]);
+  });
+
+  // ErrorTally folds everything past its cap into one `message: null` row.
+  // Dropping it would make the rows fail to sum to summary.koCount, which is
+  // the one arithmetic a reader can check by eye.
+  it('keeps the folded remainder row rather than dropping it', () => {
+    const result = engineResultWithErrors([
+      { scope: 'run', name: '', message: 'timeout', count: 3 },
+      { scope: 'run', name: '', message: null, count: 11 },
+    ]);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    expect(delta.errors.rows).toContainEqual({ message: null, count: 11 });
   });
 });
