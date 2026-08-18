@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { CanonicalEvent } from '@perfportal/core';
+import { LiveDeltaSchema } from '@perfportal/contracts';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
 import { LiveEngine, runEngine } from '@perfportal/statistics';
 import { buildDelta, INITIAL_CURSOR } from '../src/live/delta.js';
@@ -236,5 +237,15 @@ describe('buildDelta', () => {
     for (const offset of changedOffsets) {
       expect(secondOffsets.has(offset)).toBe(true);
     }
+  });
+
+  it('the built delta parses through LiveDeltaSchema, proving the producer and the wire contract agree', () => {
+    const all = events();
+    // The schema requires a real UUID; the other cases' 'r1' would be
+    // rejected here, which is the point -- this proves the two actually
+    // meet, not just that each is internally consistent.
+    const { delta } = buildDelta('0f9b1d4e-1111-2222-3333-444455556666', runEngine(all), INITIAL_CURSOR);
+
+    expect(() => LiveDeltaSchema.parse(delta)).not.toThrow();
   });
 });
