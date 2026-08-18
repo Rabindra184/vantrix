@@ -60,6 +60,20 @@ export const INITIAL_CURSOR: DeltaCursor = {
  * real bucket, and a replacement is defined as "no cursor", not "the same
  * cursor filtered differently".
  *
+ * ═══ UPSERT, NOT APPEND ═══
+ * The newest bucket is still filling when it is first published: a request
+ * that lands in it one tick from now has not happened yet. Filtering
+ * STRICTLY past the cursor (`>`) publishes that bucket once, at whatever
+ * partial count it held at that instant, and then — because its offset never
+ * again exceeds the cursor — never sends it again. At the default 5s tick
+ * against 1000ms buckets that is one bucket in five, permanently
+ * undercounted; at a 1s tick it is every bucket. So the filter below is
+ * `>=`: the bucket AT the cursor is re-sent, corrected, on every tick until
+ * a strictly newer bucket exists to move the cursor past it. The consumer
+ * UPSERTS incoming buckets by `startOffsetMs` rather than appending them, so
+ * a re-sent bucket overwrites its own prior, more-partial value instead of
+ * duplicating a row.
+ *
  * ═══ WHY THE RESPONSE-TIME AND USERS SERIES EACH GET THEIR OWN WIDTH ═══
  * `UserSeries` coalesces against its own `maxBucketsUsers` cap, independent
  * of `maxBucketsRun`, and on its own per-SCENARIO schedule (see
@@ -107,7 +121,10 @@ export function buildDelta(
   const replaces = responseWidthMs !== prev.lastBucketWidthMs;
   const since = replaces ? -1 : prev.lastPublishedOffsetMs;
 
-  const freshBuckets = buckets.filter((b) => b.startOffsetMs > since);
+  // `>=`, not `>` -- see "UPSERT, NOT APPEND" above. The bucket AT `since`
+  // (the previous tick's frontier) is deliberately re-included so the
+  // consumer can correct it, not just the buckets strictly newer than it.
+  const freshBuckets = buckets.filter((b) => b.startOffsetMs >= since);
   const responseTimeBuckets: LiveDelta['responseTime']['buckets'] = freshBuckets.map((b) => ({
     startOffsetMs: b.startOffsetMs,
     startedCount: b.startedCount,
@@ -122,9 +139,10 @@ export function buildDelta(
   // received an observation (BucketSeries only materialises a bucket on its
   // first `add`). Taking the snapshot's max in that case would set the
   // cursor past a bucket that was never sent, and that bucket would then
-  // never be sent -- `> since` would keep excluding it even once it does
-  // gain observations, because its offset never changes. When nothing fresh
-  // was emitted this tick, the cursor simply does not move.
+  // never be sent -- even under upsert semantics `>= since` only reaches
+  // buckets already in the snapshot, so a cursor set past one that never
+  // existed would keep excluding it forever, exactly as under `>`. When
+  // nothing fresh was emitted this tick, the cursor simply does not move.
   const lastPublishedOffsetMs =
     freshBuckets.length > 0 ? Math.max(...freshBuckets.map((b) => b.startOffsetMs)) : since;
 

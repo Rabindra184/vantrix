@@ -24,7 +24,7 @@ describe('buildDelta', () => {
     expect(delta.responseTime.replaces).toBe(true);   // first delta always replaces
   });
 
-  it('emits only buckets past the cursor on the second call', () => {
+  it('emits buckets at or past the cursor on the second call, upserting the frontier bucket', () => {
     const all = events();
     const half = Math.floor(all.length / 2);
 
@@ -37,7 +37,14 @@ describe('buildDelta', () => {
 
     expect(second.delta.seq).toBe(1);
     const firstMax = Math.max(...first.delta.responseTime.buckets.map((b) => b.startOffsetMs));
-    for (const b of second.delta.responseTime.buckets) expect(b.startOffsetMs).toBeGreaterThan(firstMax);
+    // At or past, not strictly past: the frontier bucket is upserted, so it
+    // may legitimately reappear with a corrected count.
+    for (const b of second.delta.responseTime.buckets) expect(b.startOffsetMs).toBeGreaterThanOrEqual(firstMax);
+    // And it is not merely allowed to reappear -- it actually does, which is
+    // the whole point of upserting rather than appending. Without this
+    // assertion the test above would pass just as well under the OLD,
+    // strictly-greater filter.
+    expect(second.delta.responseTime.buckets.some((b) => b.startOffsetMs === firstMax)).toBe(true);
   });
 
   it('flags a full replacement when the bucket width changes, independently of the users series', () => {
