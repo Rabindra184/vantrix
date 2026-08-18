@@ -1071,10 +1071,13 @@ describe('LiveFoldOwner', () => {
 
   /**
    * `#ticking` releases on a throw (every other case in this file already
-   * proves that, via `#guarded`) but never on a HANG -- `BlobStore`'s
-   * `S3Client` sets no `requestTimeout` (`packages/storage/src/blobs.ts`),
-   * so a stalled `readFrom` used to leave `#ticking` true with no error, no
-   * log, and no further deltas for ANY owned run, forever.
+   * proves that, via `#guarded`) but never on a HANG -- and a hang does not
+   * need to be infinite to matter. `BlobStore` bounds each request
+   * (`socketTimeout`/`connectionTimeout`, `packages/storage/src/blobs.ts`),
+   * so a stalled `readFrom` now rejects on its own eventually; until it
+   * does, `#ticking` stays true with no error, no log, and no further
+   * deltas for ANY owned run -- and a slow-but-bounded read repeated across
+   * a run's chunks stretches that window arbitrarily far.
    * `fold-owner.ts`'s `#checkWatchdog` fixes the SILENCE, deliberately
    * without touching the STUCK-ness itself -- see its own doc comment for
    * why cancelling would risk exactly the concurrent-mutation corruption

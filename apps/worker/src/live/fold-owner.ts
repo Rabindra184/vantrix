@@ -588,9 +588,11 @@ export class LiveFoldOwner {
    * A cancel-and-move-on design (e.g. `Promise.race`ing `#fold` against a
    * timeout) was considered and rejected: the ABANDONED `#fold` call would
    * keep running in the background regardless -- there is no way to
-   * actually cancel `LiveChunkStore.readFrom`, which is exactly what stalls
-   * (`BlobStore`'s `S3Client` sets no `requestTimeout`, see
-   * `packages/storage/src/blobs.ts`). If a later tick then retried the same
+   * actually cancel `LiveChunkStore.readFrom`. `BlobStore` DOES bound each
+   * individual request now (`socketTimeout`/`connectionTimeout`, see
+   * `packages/storage/src/blobs.ts`), so an abandoned read rejects on its
+   * own eventually -- but "eventually" is the whole problem, because it is
+   * the IN-FLIGHT window that corrupts. If a later tick then retried the same
    * run (freed to do so the instant the timeout gave up), TWO `#fold` calls
    * would be mutating the SAME `state.decoder` / `state.engine` at once the
    * moment the abandoned one finally resolved -- design §2.2.1's corruption
@@ -630,8 +632,12 @@ export class LiveFoldOwner {
     console.error(
       `LiveFoldOwner: tick() has not completed in over ${stuckForMs}ms ` +
         `(over ${dueWarnings * WATCHDOG_STUCK_MULTIPLIER}x liveTickMs) -- ` +
-        `likely a stalled readFrom against blob storage (BlobStore's ` +
-        `S3Client sets no requestTimeout). No further deltas will be ` +
+        `NOT one hung blob read: BlobStore bounds every request ` +
+        `(socketTimeout/connectionTimeout, packages/storage/src/blobs.ts) ` +
+        `and the pg pool bounds connect. Suspect the Redis publish path, ` +
+        `which has NO command timeout, before suspecting storage -- or a ` +
+        `run with enough chunks that many individually-bounded reads add ` +
+        `up. No further deltas will be ` +
         'published for ANY owned run until this tick resolves. This ' +
         'warning repeats for as long as the stall lasts.',
     );

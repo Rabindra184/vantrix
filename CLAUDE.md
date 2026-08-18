@@ -115,6 +115,25 @@ export S3_ACCESS_KEY=perfportal
 export S3_SECRET_KEY=perfportal123
 ```
 
+**No compose service here has a volume, so EDITING one destroys its data.**
+`docker compose up -d` recreates a container whose service definition changed,
+and with no volume the recreated container starts empty — the edit does not
+have to be about storage, it just has to be an edit. Postgres is the one that
+hurts: you get a running server with no schema, and `test:integration` fails on
+missing relations rather than on anything you changed. This has already
+happened once, to everyone who pulled the `max_connections=200` line
+(`infra/docker-compose.yml`) that live monitoring's connection budget needed.
+After any change to that file, assume the database is gone and re-run:
+
+```
+pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
+```
+
+CI never sees this — `.github/workflows/ci.yml` declares its own service
+containers and does not read the compose file. Which also means a compose-only
+fix is invisible to CI: the `max_connections` override cannot be expressed as a
+GitHub Actions service container, so CI still runs Postgres at the stock 100.
+
 Never run `pnpm test:integration` while `scripts/capture-chart-fixture.mjs` is
 capturing: that suite truncates every table on setup and will delete the org
 the capture just seeded, mid-run.

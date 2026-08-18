@@ -164,10 +164,6 @@ export class BlobStore {
       // hands it to `NodeHttpHandler.create`, which is what keeps the
       // handler's own agent/keep-alive defaults intact instead of this file
       // having to restate them.
-      // A plain options object, not a constructed NodeHttpHandler: the SDK
-      // hands it to `NodeHttpHandler.create`, which is what keeps the
-      // handler's own agent/keep-alive defaults intact instead of this file
-      // having to restate them.
       requestHandler: {
         socketTimeout: cfg.socketTimeoutMs ?? BLOB_SOCKET_TIMEOUT_MS,
         connectionTimeout: BLOB_CONNECTION_TIMEOUT_MS,
