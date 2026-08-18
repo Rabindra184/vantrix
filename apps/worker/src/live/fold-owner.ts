@@ -218,11 +218,30 @@ export class LiveFoldOwner {
 
   /**
    * Reads every chunk at or past the fetch frontier, decodes it, folds every
-   * emitted event, then advances the frontier by the bytes just fetched --
-   * NEVER by `decoder.consumedBytes`. See `FoldState.fetchedBytes`'s doc
-   * comment for why those two are not interchangeable.
+   * emitted event. The frontier advances by the bytes just fetched --
+   * NEVER by `decoder.consumedBytes` (see `FoldState.fetchedBytes`'s doc
+   * comment for why those two are not interchangeable) -- and it advances
+   * IMMEDIATELY AFTER THE READ, before decoding, not after.
    *
-   * `readFrom` throwing here is not exotic. `LiveChunkStore.finalize`
+   * That ordering is deliberate, not incidental. `readFrom` throwing here is
+   * safe to retry: nothing below has mutated yet, so leaving `fetchedBytes`
+   * unchanged and trying again next tick is exactly correct (and IS what
+   * happens -- the advance below is never reached). But `decoder.push`
+   * mutates the decoder's own buffer before it can ever throw a decode
+   * error, and `engine.add` can throw partway through a prefix of events
+   * already folded. If the frontier stayed unchanged after either of THOSE,
+   * the next tick would call `readFrom` with the SAME argument, fetch the
+   * SAME bytes the decoder already buffered or partially consumed, and feed
+   * them to `push` a second time -- re-delivering already-received bytes is
+   * exactly design §2.2.1's corruption, just reached via the failure path
+   * instead of a wrong cursor formula, and just as silent. Advancing here
+   * trades that compounding corruption for a bounded loss (the bytes that
+   * caused THIS throw are not retried), which is what design §2.2 means by
+   * "fetchedBytes then advances by the length of the bytes it just
+   * received" -- immediately after the read is the only place that sentence
+   * can mean.
+   *
+   * `readFrom` throwing here is not exotic, either. `LiveChunkStore.finalize`
    * (`apps/api/src/ingest/live.service.ts`'s `close()` calls it) lists a
    * run's chunk keys, then DELETES them once the assembled log is written
    * durably; `readFrom` lists keys and fans out parallel `get`s over them,
@@ -235,10 +254,10 @@ export class LiveFoldOwner {
     const bytes = await this.#chunks.readFrom(runId, state.fetchedBytes);
     if (bytes.length === 0) return;
 
+    state.fetchedBytes += bytes.length;
+
     const events = state.decoder.push(bytes);
     for (const event of events) state.engine.add(event);
-
-    state.fetchedBytes += bytes.length;
   }
 
   /** Drops the fold state, unlocks on the client that took the lock, and

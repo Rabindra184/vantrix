@@ -357,4 +357,52 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     }
   });
+
+  /**
+   * Fix round 1, Important 4. `#fold` used to advance `fetchedBytes` AFTER
+   * decoding, so a throw from `decoder.push` (which mutates the decoder's
+   * buffer before it can ever throw) or `engine.add` left the frontier right
+   * where it was. The next tick would then `readFrom` the SAME argument,
+   * fetch the SAME corrupt bytes again, and feed them to the decoder a
+   * second time -- re-delivery, design §2.2.1's exact corruption, reached
+   * via the failure path instead of a wrong cursor formula.
+   *
+   * This is observed through a `console.error` spy rather than through
+   * `snapshotOf`: once a decode throws, the run's engine can never reach a
+   * comparable-to-batch state again (the decoder's own read position is left
+   * wherever the throwing record left it -- not this task's concern to fix,
+   * `plugin-gatling` is untouched here). What IS this task's concern, and
+   * what the spy makes observable, is whether the SAME error recurs on a
+   * later tick with nothing new to fold: recurrence is the fingerprint of
+   * re-delivery, and its absence is the fingerprint of the frontier having
+   * moved.
+   */
+  it('advances the frontier even when a fold throws, so a later tick does not keep re-delivering the same bytes', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+
+    const corrupted = Buffer.concat([log.subarray(0, headerLength(log)), Buffer.from([0xfe])]);
+    await chunks.put(runId, 0, corrupted);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const owner = new LiveFoldOwner(config, pool, chunks);
+    try {
+      await owner.tick();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy.mock.calls[0]?.[0]).toContain(`fold failed for run ${runId}`);
+
+      // Nothing new was put since. If the frontier had not moved, this tick
+      // re-fetches the identical corrupted bytes and throws the identical
+      // error again -- a SECOND console.error call. With the frontier
+      // advanced, readFrom(runId, fetchedBytes) now returns empty and
+      // #fold's own `if (bytes.length === 0) return;` makes this a clean
+      // no-op: the call count must stay at exactly one.
+      await owner.tick();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
+      await owner.close();
+    }
+  });
 });
