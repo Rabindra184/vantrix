@@ -98,7 +98,20 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
           than here — different query keys, so `/users` was fetched twice and
           the "one window for the whole page" this shell promises was not true.
           One parse, one object, one key. */}
-      <Outlet context={{ window, durationMs: run.durationMs ?? null } satisfies RunWindowContext} />
+      {/* `liveDurationMs: null` is an INTERIM value. This shell does not yet
+          hold a `useLiveRun()` socket — that lands in the sub-project's next
+          task, which reads `live.lastDelta?.summary.durationMs` here instead.
+          Until then every run this component renders is already `ready`
+          (`RunDetail`'s `Ready` branch is this component's only caller), so
+          `durationMs` is never null here and this field is never consulted by
+          `useTimeDomainFromShell` regardless of what it holds. */}
+      <Outlet
+        context={{
+          window,
+          durationMs: run.durationMs ?? null,
+          liveDurationMs: null,
+        } satisfies RunWindowContext}
+      />
     </div>
   );
 }
