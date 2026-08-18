@@ -44,6 +44,7 @@ describe('LiveDeltaSchema', () => {
   });
 
   it('requires responseTime.replaces rather than defaulting it', () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured only to omit it from the payload under test
     const { replaces: _omitted, ...restResponseTime } = valid.responseTime;
     expect(() =>
       LiveDeltaSchema.parse({ ...valid, responseTime: restResponseTime }),
