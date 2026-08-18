@@ -76,15 +76,21 @@ const sweeper = new Sweeper(config, pool);
 // in its constructor -- see `#sub`'s own doc comment); nothing here needs to
 // construct or pass in a second connection for that.
 const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
-// Subscribes the owner to `live:opened`/`live:advance` (design §1.2, §2.3)
-// before either timer starts below. Awaited, not fire-and-forget, so a
-// failure here (a bad REDIS_URL, the broker unreachable at boot) surfaces as
-// a boot-time rejection rather than a silently-never-subscribed owner --
-// consistent with `blobs.ensureBucket()` above, the other awaited startup
-// step this file already has. Not awaiting it would still be SAFE, only
-// less prompt: `listen()`'s own doc comment covers why the tick's poll
-// backstops every case this subscription speeds up.
-await foldOwner.listen();
+// Subscribes the owner to `live:opened`/`live:advance` (design §1.2, §2.3).
+// FIRE-AND-FORGET, not awaited -- fix round 1, Minor 3. An earlier version
+// awaited this before either timer below started, on the theory that a
+// failure "surfaces as a boot-time rejection". That undersold what actually
+// happens: ioredis defaults to `enableOfflineQueue: true`, so `subscribe()`
+// against an unreachable broker does not reject promptly at all -- it
+// queues and keeps retrying, which would hold this `await` (and therefore
+// the sweeper's and the tick's own timers just below, and the SIGTERM/SIGINT
+// handlers at the bottom of this file) for as long as the outage lasts.
+// Design §1.2's whole stance is that pub/sub is an optimisation OVER the
+// poll, never required for it -- gating the poll's own startup on the
+// optimisation's availability inverts that at the one place it matters
+// most. Same fire-and-forget shape as `sweeper.sweep()`/`foldOwner.tick()`
+// below: log a failure, do not let it block anything else.
+void foldOwner.listen().catch((err) => console.error('live fold owner failed to subscribe', err));
 
 const sweepTimer = setInterval(() => {
   void sweeper.sweep().catch((err) => console.error('sweep failed', err));
