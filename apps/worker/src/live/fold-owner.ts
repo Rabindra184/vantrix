@@ -143,13 +143,27 @@ export class LiveFoldOwner {
    * corruption, reached here across the tick/ping boundary instead of
    * across two overlapping ticks.
    *
-   * `#foldOnce` is the single gate every caller of `#fold` now goes
-   * through (`#doTick`'s own loop included) -- see its own doc comment for
-   * why skipping, rather than queuing, a fold that finds this run already
-   * in flight is safe: nothing is lost, because `fetchedBytes` only
-   * advances once a fold actually completes.
+   * `#foldOnce` is the single gate every caller of `#fold` now goes through
+   * (`#doTick`'s own loop included) -- see its own doc comment for what
+   * actually happens to a trigger that arrives while a run is already
+   * folding: it is DEFERRED, via `#foldAgain`, to a rerun immediately after
+   * the in-flight call finishes, not dropped. A run only ever leaves this
+   * set once its (possibly rerun) fold has fully settled.
    */
   readonly #folding = new Set<string>();
+  /**
+   * Run ids that need ANOTHER `#fold` pass once the one currently in flight
+   * (tracked by `#folding`) finishes. Set by `#foldOnce` when it finds a
+   * run already folding, instead of running `#fold` itself -- see that
+   * method's own doc comment for why this is what makes the guard
+   * SERIALISE a fold request rather than silently drop it.
+   *
+   * Coalescing: this is a Set of ids, not a counter, so any number of
+   * triggers arriving while one run's fold is in flight -- a `live:advance`
+   * ping that raced a tick's own fold, or several pings back to back --
+   * collapse into exactly ONE rerun each, not one rerun per trigger.
+   */
+  readonly #foldAgain = new Set<string>();
   /**
    * Guards `tick()` against overlapping with itself. `main.ts` drives it from
    * a `setInterval` in the same shape it already uses for the sweeper's
@@ -732,23 +746,42 @@ export class LiveFoldOwner {
    * already mid-`#fold` for that same run, and two concurrent `#fold` calls
    * against the same `FoldState` corrupt the decode.
    *
-   * SKIPS, does not queue, a run already folding. That is deliberately
-   * lossy in the sense that this particular trigger's bytes are not fetched
-   * by THIS call -- but nothing is actually lost: `fetchedBytes` only
-   * advances once a fold completes, so whichever fold IS in flight will
-   * pick up everything available once it reaches its own next `readFrom`
-   * (immediately, since `#fold` re-reads `state.fetchedBytes` fresh on
-   * every call), and if neither is currently in flight when new bytes
-   * arrive, the next tick or the next ping tries again. Queuing instead
-   * would mean an unbounded number of skipped triggers each waiting to run
-   * their own redundant `#fold` back to back, for bytes the run-in-flight
-   * fold is about to fetch anyway.
+   * SERIALISES, does not drop, a trigger that finds a run already folding
+   * -- fix round 1, Important 1. An earlier version returned immediately in
+   * that case, on the theory that "whichever fold IS in flight will pick up
+   * everything available once it reaches its own next `readFrom`". That is
+   * FALSE: `#fold` issues exactly ONE `readFrom` call per invocation and
+   * returns -- there is no "next `readFrom`" inside an already-in-flight
+   * call, and that call's own read was issued BEFORE the dropped trigger's
+   * bytes existed, which is precisely why the trigger arrived while it was
+   * still in flight. Dropping it meant those bytes waited for `#doTick`'s
+   * own next scheduled pass (up to `liveTickMs` later) on exactly the runs
+   * where bytes arrive fastest -- silently defeating this whole task's
+   * purpose under load, the one case where waking early matters most.
+   *
+   * So a trigger that finds `#folding.has(runId)` records the request in
+   * `#foldAgain` instead of running `#fold` itself, and the call ALREADY in
+   * flight -- see the `do`/`while` below -- checks that flag the instant it
+   * finishes and, if set, clears it and folds again immediately, before
+   * this method (and therefore `#doTick`'s own `#guarded('fold', ...)`
+   * await, or `#onAdvance`'s) returns. `#foldAgain` is a Set of ids, not a
+   * counter, so any number of triggers arriving during one in-flight fold
+   * collapse into exactly one rerun, never one rerun per trigger. Clearing
+   * it BEFORE each `#fold` call (not after) is what makes a trigger that
+   * arrives DURING the rerun itself schedule a THIRD pass rather than being
+   * silently absorbed by a flag already about to be cleared.
    */
   async #foldOnce(runId: string, state: FoldState): Promise<void> {
-    if (this.#folding.has(runId)) return;
+    if (this.#folding.has(runId)) {
+      this.#foldAgain.add(runId);
+      return;
+    }
     this.#folding.add(runId);
     try {
-      await this.#fold(runId, state);
+      do {
+        this.#foldAgain.delete(runId);
+        await this.#fold(runId, state);
+      } while (this.#foldAgain.has(runId));
     } finally {
       this.#folding.delete(runId);
     }

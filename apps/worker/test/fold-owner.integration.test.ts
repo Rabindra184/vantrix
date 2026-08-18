@@ -1184,4 +1184,98 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     }
   });
+
+  /**
+   * Fix round 1, Important 1. The previous version of `#foldOnce` DROPPED a
+   * trigger that found a run already folding, on the (false -- see
+   * `#foldOnce`'s own doc comment) theory that the in-flight call would
+   * pick up the new bytes itself. It would not: `#fold` issues exactly one
+   * `readFrom` per call and returns, and that call's own read was already
+   * issued before the dropped trigger's bytes existed. Under the drop
+   * design, this case's own bytes would not show up until `#doTick`'s NEXT
+   * scheduled tick -- silently falling back to tick cadence on exactly the
+   * runs where pings matter most.
+   *
+   * The mocked `readFrom` here does NOT delay when the underlying fetch
+   * RUNS -- it fetches immediately (before the test below ever writes the
+   * second half) and freezes that result, only delaying the RETURN to
+   * `#fold`. That is deliberate: it is what guarantees the tick's own,
+   * already-in-flight fold call can only ever see the first half, so the
+   * only way the second half's bytes can show up in the assertion below is
+   * through a SEPARATE, later `readFrom` call -- i.e. the rerun `#foldOnce`
+   * now performs, not a lucky late read by the original call.
+   *
+   * No `owner.tick()` call appears anywhere after the ping -- the whole
+   * point is that this second fold happens off the PING, not off a second
+   * scheduled tick a test could accidentally trigger instead.
+   */
+  it('a live:advance ping requested while a fold is in flight is folded once that fold completes, not on the next tick', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    const half = Math.floor(log.length / 2);
+    await chunks.put(runId, 0, log.subarray(0, half));
+
+    let releaseGate: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let readFromStarted: (() => void) | undefined;
+    const readFromStartedPromise = new Promise<void>((resolve) => {
+      readFromStarted = resolve;
+    });
+    const readFromOffsets: number[] = [];
+    const realReadFrom = chunks.readFrom.bind(chunks);
+    const readFromSpy = vi.spyOn(chunks, 'readFrom').mockImplementation(async (rid: string, offset: number) => {
+      if (rid !== runId) return realReadFrom(rid, offset);
+      readFromOffsets.push(offset);
+      if (readFromOffsets.length === 1) {
+        // Fetched NOW -- before the test writes the second half below --
+        // and only the RETURN is held back. See this case's own doc
+        // comment for why that ordering is load-bearing.
+        const firstCallResult = await realReadFrom(rid, offset);
+        readFromStarted!();
+        await gate;
+        return firstCallResult;
+      }
+      return realReadFrom(rid, offset);
+    });
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+
+      const tickPromise = owner.tick(); // claims runId, folds the first half, stalls before returning
+      await readFromStartedPromise;
+
+      // These are exactly the bytes the stalled call's own (already-issued)
+      // readFrom did NOT request -- state.fetchedBytes was 0 when it read,
+      // and this write happens strictly after that.
+      await chunks.put(runId, half, log.subarray(half));
+      await publisher.publish('live:advance', runId);
+      // Let the ping's message handler + #onAdvance -> #foldOnce register
+      // the rerun request (#foldAgain) before the gate releases below --
+      // otherwise this test would be racing its own setup.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      releaseGate!();
+      await tickPromise; // #foldOnce's own do/while reruns #fold before this resolves
+
+      // A second, separate readFrom call actually happened, at the second
+      // half's own offset -- not just "the numbers happen to match".
+      expect(readFromOffsets).toEqual([0, half]);
+
+      const live = owner.snapshotOf(runId);
+      const batch = runEngine(parseSimulationLog(log));
+      expect(live).not.toBeNull();
+      expect(runStat(live!)!.count).toBe(runStat(batch)!.count);
+      expect(runStat(live!)!.okCount).toBe(runStat(batch)!.okCount);
+      expect(runStat(live!)!.koCount).toBe(runStat(batch)!.koCount);
+    } finally {
+      readFromSpy.mockRestore();
+      await publisher.quit();
+      await owner.close();
+    }
+  });
 });
