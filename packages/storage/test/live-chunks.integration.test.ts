@@ -94,6 +94,64 @@ describe('LiveChunkStore', () => {
     await expect(store.assemble('never-received-a-byte')).resolves.toHaveLength(0);
   });
 
+  /**
+   * TASK 9 B1. `assemble` is the terminal path a `close()` finalize ends up
+   * concatenating through, and its sibling `readFrom` already asserts the
+   * contiguity it promises (design §2.2.1's amendment) -- `assemble` never
+   * did. It was safe in practice only because `claimForClose` is a
+   * compare-and-set, so exactly one `close()` (and therefore one `finalize`,
+   * which shares this same check below) ever runs for a given run at once --
+   * nothing in this file said so until this case and the guard it pins.
+   *
+   * Staged the same way `readFrom`'s own hole case is: delete a chunk out
+   * from under a set that otherwise tiles cleanly, mirroring exactly what a
+   * `finalize` racing a `readFrom` leaves behind (design §2.2.1), without the
+   * timing dependence a real race would add.
+   */
+  it('assemble refuses a chunk set with a hole in the middle, rather than producing a corrupt log', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `assemble-hole-${randomUUID()}`;
+    await store.put(runId, 0, Buffer.from('aaaa', 'latin1'));   // [0,4)
+    await store.put(runId, 4, Buffer.from('bbbb', 'latin1'));   // [4,8)
+    await store.put(runId, 8, Buffer.from('cccc', 'latin1'));   // [8,12)
+
+    await blobs.delete(`live/${runId}/${String(4).padStart(16, '0')}.bin`);
+
+    await expect(store.assemble(runId)).rejects.toMatchObject({
+      name: 'LiveChunkGapError',
+      expectedOffset: 4,
+      actualOffset: 8,
+    });
+  });
+
+  /**
+   * `finalize` is the REAL terminal path (`apps/api/src/ingest/live.service.ts`'s
+   * `close()` is its only production caller) -- this proves the guard covers
+   * it too, not merely the `assemble` probe the tests above use to reach the
+   * same concatenation logic.
+   */
+  it('finalize refuses to write a corrupt log over a chunk set with a hole in the middle', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `finalize-hole-${randomUUID()}`;
+    const key = `runs/${runId}/simulation.log`;
+    await store.put(runId, 0, Buffer.from('aaaa', 'latin1'));
+    await store.put(runId, 4, Buffer.from('bbbb', 'latin1'));
+    await store.put(runId, 8, Buffer.from('cccc', 'latin1'));
+
+    await blobs.delete(`live/${runId}/${String(4).padStart(16, '0')}.bin`);
+
+    await expect(store.finalize(runId, key)).rejects.toMatchObject({
+      name: 'LiveChunkGapError',
+      expectedOffset: 4,
+      actualOffset: 8,
+    });
+    // Nothing was written -- a refusal, not a partial or corrupt log left
+    // behind for a caller to mistake for a complete one.
+    await expect(blobs.exists(key)).resolves.toBe(false);
+  });
+
   it('readFrom returns only the chunks at or past an offset, in order', async () => {
     await blobs.ensureBucket();
     const store = new LiveChunkStore(blobs);
@@ -182,6 +240,16 @@ describe('LiveChunkStore', () => {
    * flaky, while the STATE it produces -- surviving keys with a gap -- is
    * exactly what is staged here and is the only thing `readFrom` can
    * actually see.
+   *
+   * TASK 9 B2. `expectedOffset` here (4) is NOT the argument this call
+   * passed to `readFrom` (0, above) -- it is the interior position the
+   * previous chunk's own length promised the next one would start at. The
+   * error used to phrase its message as `readFrom(runId, 4)`, which reads
+   * exactly like a claim that THIS call was made with `4` -- a caller bug --
+   * when the real cause is the finalize race this file's own docstring
+   * names. The message now says "gap at byte 4" instead, true for both this
+   * interior case and the head-mismatch case below without implying either
+   * is the call's own argument.
    */
   it('readFrom refuses a set of chunks with a hole in the middle', async () => {
     await blobs.ensureBucket();
@@ -198,6 +266,7 @@ describe('LiveChunkStore', () => {
       name: 'LiveChunkGapError',
       expectedOffset: 4,
       actualOffset: 8,
+      message: expect.stringContaining('gap at byte 4'),
     });
   });
 

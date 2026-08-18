@@ -28,35 +28,56 @@ function offsetOf(key: string): number {
 }
 
 /**
- * `readFrom` was handed an offset the surviving chunk objects cannot start
- * from, or found a hole between two of them.
+ * A concatenation was handed an offset the surviving chunk objects cannot
+ * start from, or found a hole between two of them -- raised by `readFrom`,
+ * `assemble` and `finalize` alike (Task 9 B1: all three now run the same
+ * `#concatenateChecked`, below).
  *
  * NAMED, and carrying the two offsets, because the whole point is that this
  * condition used to be INVISIBLE. `readFrom`'s contract -- and
  * `LiveFoldOwner`'s `fetchedBytes` doc comment, which derives it -- promise
- * that the first chunk returned starts exactly at the requested offset. The
- * derivation is sound (offset negotiation only accepts a chunk at
- * `offset === cursor`, so a run's chunks tile `[0, stream_offset)` with no
- * gap and no overlap), and nothing checked it. `LiveChunkStore.finalize`
- * breaks it as a matter of ordinary operation: it lists chunk keys and then
- * deletes them CONCURRENTLY, so a fold racing a close is handed whichever
- * keys happened to survive -- which may start above the frontier, or have a
- * hole punched through the middle. Those bytes went into the decoder, the
- * fold's frontier advanced by their length, and every absolute position
- * after them was wrong for the rest of the run with nothing thrown and
- * nothing logged.
+ * that the first chunk returned starts exactly at the requested offset;
+ * `assemble` and `finalize` promise a complete, gap-free log. The derivation
+ * is sound (offset negotiation only accepts a chunk at `offset === cursor`,
+ * so a run's chunks tile `[0, stream_offset)` with no gap and no overlap),
+ * and nothing checked it. `LiveChunkStore.finalize` breaks it as a matter of
+ * ordinary operation: it lists chunk keys and then deletes them CONCURRENTLY,
+ * so a read racing a close is handed whichever keys happened to survive --
+ * which may start above the requested offset, or have a hole punched through
+ * the middle. Those bytes went into the decoder, or into the assembled log,
+ * and every absolute position after them was wrong for the rest of the run
+ * with nothing thrown and nothing logged.
  *
- * Throwing is the whole fix, and it is safe to throw here specifically:
- * `LiveFoldOwner#fold` advances `fetchedBytes` only AFTER `readFrom`
- * resolves, so a rejection leaves that run's frontier exactly where it was
- * and the next tick retries the identical read. If the cause is transient
- * (a finalize mid-flight) the retry succeeds; if it is not, the run is by
- * definition no longer `running` -- only `close()` calls `finalize` -- so
- * the tick's own release pass drops it within one interval rather than
+ * `assemble`'s own such race is narrower -- design §2.2.1 does not name it
+ * the way it names `readFrom`'s, because `claimForClose` is a compare-and-set
+ * and only one `close()` (and so only one `finalize`, `assemble`'s one
+ * production caller) ever runs for a given run at once. Nothing in this file
+ * SAID so until this check existed, though, and a future second caller of
+ * `assemble` would have inherited that assumption silently.
+ *
+ * Throwing is the whole fix, and it is safe to throw from `readFrom`
+ * specifically: `LiveFoldOwner#fold` advances `fetchedBytes` only AFTER
+ * `readFrom` resolves, so a rejection leaves that run's frontier exactly
+ * where it was and the next tick retries the identical read. If the cause is
+ * transient (a finalize mid-flight) the retry succeeds; if it is not, the run
+ * is by definition no longer `running` -- only `close()` calls `finalize` --
+ * so the tick's own release pass drops it within one interval rather than
  * retrying forever.
  */
 export class LiveChunkGapError extends Error {
-  /** What the caller asked to read from -- its fetch frontier. */
+  /**
+   * The byte offset the next chunk was expected to start at.
+   *
+   * TASK 9 B2: this is NOT always "what the caller asked `readFrom` for".
+   * For the FIRST chunk it is (the caller's own `offset` argument); for an
+   * INTERIOR gap it is the position the previous chunk's own length promised
+   * the next one would start at -- a value this class computes internally,
+   * never supplied by a caller. The message below names it generically
+   * ("a gap at byte N") for exactly this reason: phrasing an interior gap as
+   * though it were a call argument reads as a caller bug, when the ordinary
+   * cause is a `finalize` race deleting a chunk out from under a read that
+   * asked for something else entirely.
+   */
   readonly expectedOffset: number;
   /** Where the surviving chunks actually resume. */
   readonly actualOffset: number;
@@ -64,10 +85,11 @@ export class LiveChunkGapError extends Error {
 
   constructor(runId: string, expectedOffset: number, actualOffset: number) {
     super(
-      `LiveChunkStore.readFrom(${runId}, ${expectedOffset}): the chunk objects ` +
-        `do not start at that offset -- the next one begins at ${actualOffset}. ` +
-        'A concurrent finalize() has deleted chunks this read needed, or the ' +
-        'caller passed a decode position rather than a fetch frontier.',
+      `LiveChunkStore(${runId}): the chunk objects have a gap at byte ${expectedOffset} -- ` +
+        `the next surviving chunk begins at ${actualOffset} instead of tiling contiguously. ` +
+        'A concurrent finalize() has likely deleted a chunk this read needed; if this is the ' +
+        'very first chunk expected, the caller may instead have passed a decode position ' +
+        'rather than a fetch frontier.',
     );
     // Set explicitly: `class X extends Error` leaves `name` as 'Error'
     // otherwise, and a named error nobody can match on by name is not one.
@@ -130,8 +152,14 @@ export class LiveChunkStore {
    */
   async assemble(runId: string): Promise<Buffer> {
     const keys = await this.#listChunkKeys(runId);
-    const parts = await Promise.all(keys.map((key) => this.#blobs.get(key)));
-    return Buffer.concat(parts);
+    // TASK 9 B1: routed through the same contiguity-checked concatenation
+    // `readFrom` already used and `finalize` now shares below, rather than a
+    // second `Promise.all`/`Buffer.concat` pair with no gap check of its own.
+    // See `LiveChunkGapError`'s doc comment for why this was safe today only
+    // by an assumption (`claimForClose`'s compare-and-set) nothing here
+    // stated, and `#concatenateChecked`'s for why `start: 0` is the right
+    // origin for a whole-run assembly.
+    return this.#concatenateChecked(runId, keys, 0);
   }
 
   /**
@@ -158,9 +186,22 @@ export class LiveChunkStore {
    * ═══ AND IT ASSERTS THE CONTIGUITY IT PROMISES ═══
    * Design §2.2.1: a return value that does not begin exactly at `offset`,
    * or that has a hole in it, throws {@link LiveChunkGapError} rather than
-   * being concatenated and handed back. See that class's own doc comment
-   * for why the invariant is sound and still needs checking, and why
-   * throwing is safe for the one caller.
+   * being concatenated and handed back -- via `#concatenateChecked` below,
+   * which see for why the invariant is sound and still needs checking, why
+   * two separate checks, and why an empty result is not itself a violation.
+   */
+  async readFrom(runId: string, offset: number): Promise<Buffer> {
+    const keys = await this.#listChunkKeys(runId);
+    const wanted = keys.filter((k) => offsetOf(k) >= offset);
+    return this.#concatenateChecked(runId, wanted, offset);
+  }
+
+  /**
+   * Concatenates `keys` (already listed and, for `readFrom`, already
+   * filtered) in order, asserting they tile `[start, ...)` with no gap --
+   * shared by `readFrom`, `assemble` and `finalize` (Task 9 B1) so this
+   * check exists in exactly one place rather than being re-derived, and
+   * possibly re-forgotten, at each call site.
    *
    * TWO CHECKS, NOT ONE, because they cost differently and catch different
    * things. The HEAD check runs before the `get` fan-out -- it needs only
@@ -169,22 +210,22 @@ export class LiveChunkStore {
    * which only the fetched bytes carry (a key encodes where a chunk starts,
    * never how far it runs), so it necessarily runs after.
    *
-   * An empty result is NOT a violation and must stay a plain empty buffer:
-   * "the caller is already at the frontier, nothing new yet" is the single
-   * most common outcome of this call, once per owned run per tick.
+   * An empty `keys` is NOT a violation and must stay a plain empty buffer:
+   * for `readFrom`, "the caller is already at the frontier, nothing new
+   * yet" is the single most common outcome of this call, once per owned run
+   * per tick; for `assemble`/`finalize`, "no bytes received yet" is a
+   * legitimate state their own callers already handle explicitly.
    */
-  async readFrom(runId: string, offset: number): Promise<Buffer> {
-    const keys = await this.#listChunkKeys(runId);
-    const wanted = keys.filter((k) => offsetOf(k) >= offset);
-    if (wanted.length === 0) return Buffer.alloc(0);
+  async #concatenateChecked(runId: string, keys: string[], start: number): Promise<Buffer> {
+    if (keys.length === 0) return Buffer.alloc(0);
 
-    const head = offsetOf(wanted[0]!);
-    if (head !== offset) throw new LiveChunkGapError(runId, offset, head);
+    const head = offsetOf(keys[0]!);
+    if (head !== start) throw new LiveChunkGapError(runId, start, head);
 
-    const parts = await Promise.all(wanted.map((k) => this.#blobs.get(k)));
-    let end = offset;
+    const parts = await Promise.all(keys.map((k) => this.#blobs.get(k)));
+    let end = start;
     for (let i = 0; i < parts.length; i++) {
-      const startsAt = offsetOf(wanted[i]!);
+      const startsAt = offsetOf(keys[i]!);
       if (startsAt !== end) throw new LiveChunkGapError(runId, end, startsAt);
       end += parts[i]!.length;
     }
@@ -230,8 +271,16 @@ export class LiveChunkStore {
 
     if (!alreadyWritten) {
       if (keys.length === 0) return;
-      const parts = await Promise.all(keys.map((k) => this.#blobs.get(k)));
-      const assembled = Buffer.concat(parts);
+      // TASK 9 B1: the same `#concatenateChecked` `readFrom`/`assemble` use,
+      // rather than a third unguarded `Promise.all`/`Buffer.concat` pair --
+      // THIS is the real terminal path a production `close()` runs (only
+      // `finalize` writes `simulation.log`; `assemble` today exists for this
+      // method to share and for its own tests to probe the same logic
+      // directly). A gap here throws instead of writing anything: `key`
+      // stays absent and the surviving chunks stay in place, rather than
+      // this call quietly deleting evidence a retry -- or an operator --
+      // might need.
+      const assembled = await this.#concatenateChecked(runId, keys, 0);
       await this.#blobs.putStream(key, Readable.from([assembled]), assembled.length);
     }
 

@@ -120,10 +120,25 @@ const WATCHDOG_STUCK_MULTIPLIER = 6;
  *  - Redis's own per-entry overhead (the entry id, the `delta` field name,
  *    listpack bookkeeping) is not counted. It is tens of bytes against a
  *    body measured in kilobytes.
- *  - A single delta larger than this whole budget still gets retained,
- *    because the floor below is one entry. A stream with nothing in it is
- *    not a replay buffer, and one oversized entry is a bounded overshoot
- *    where the previous behaviour's was not bounded at all.
+ *  - TASK 9 B3: this budget is not actually a hard per-run ceiling, and the
+ *    case that breaks it is not exotic. A RE-BUCKETING delta
+ *    (`responseTime.replaces: true` -- see delta.ts's "THE COALESCE RULE")
+ *    carries its series from offset 0 rather than from a cursor, so it
+ *    routinely dwarfs the ordinary upsert deltas immediately before and
+ *    after it in the stream -- it "exceeds its neighbours". Because
+ *    {@link replayEntryCap} is recomputed on EVERY publish from that
+ *    publish's OWN body, the cap right after the re-bucketing tick is small
+ *    (correctly, for that oversized tick), but the very next tick's small,
+ *    ordinary delta recomputes a much LARGER cap -- one wide enough to also
+ *    keep the still-recent oversized survivor, for as long as it stays
+ *    within {@link REPLAY_MAX_ENTRIES} of the tip. So the true bound on one
+ *    run's retained bytes is not this budget alone; it is this budget (as
+ *    sized by whichever tick's body last computed the cap in effect) PLUS
+ *    however large that one still-surviving oversized entry is. A stream
+ *    with nothing in it is not a replay buffer, and one oversized entry
+ *    surviving alongside a budget-sized window is a bounded overshoot where
+ *    the previous behaviour's was not bounded at all -- but "bounded" here
+ *    means "budget plus one oversized entry", not "budget".
  *  - This bounds one WORKER's owned runs. Two workers at
  *    `maxOwnedRuns` each is twice the figure above, and the compose file
  *    still sets no `maxmemory` -- deliberately, since the only eviction
@@ -185,12 +200,19 @@ export const SNAPSHOT_TTL_SECONDS = 3600;
  * How many entries this delta's replay stream may keep, given what this
  * delta costs.
  *
- * Recomputed per publish, from the CURRENT body, which is what makes the
- * budget hold as a run grows: deltas only get bigger over a run's life, so
- * each XADD trims to a cap derived from the largest body the stream
- * contains, and every older entry it retains is no larger than that. Total
- * retained bytes therefore stay at or under the budget rather than tracking
- * whatever the deltas happened to cost when the run started.
+ * Recomputed per publish, from the CURRENT body ONLY -- not from the largest
+ * body the stream currently holds, which is what makes the budget an honest
+ * approximation rather than a hard ceiling (TASK 9 B3, see
+ * {@link REPLAY_BUDGET_BYTES}'s own "WHAT REMAINS EXPOSED" for the concrete
+ * case: a re-bucketing delta's cap is small when IT publishes, but the very
+ * next, ordinary-sized delta recomputes a much larger cap that also keeps
+ * that oversized entry around). What this recomputation DOES buy is holding
+ * the budget as the TYPICAL delta a run produces grows over its life --
+ * deltas trend larger as a run runs longer, so a cap fixed at claim time
+ * would under-retain early and over-retain late. Total retained bytes track
+ * roughly the budget, not whatever the deltas happened to cost when the run
+ * started -- "roughly", not "at or under": see the oversized-entry case
+ * above for exactly how the true bound differs from the nominal one.
  *
  * `Buffer.byteLength`, not `body.length`: the cap is a bound on what REDIS
  * stores, which is UTF-8, while a JS string's `length` counts UTF-16 code
