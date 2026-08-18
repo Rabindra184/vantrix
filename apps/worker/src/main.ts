@@ -6,6 +6,7 @@ import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
 import { LiveFoldOwner } from './live/fold-owner.js';
 import { PipelineService } from './pipeline/pipeline.service.js';
+import { runShutdown } from './shutdown.js';
 import { Sweeper } from './sweeper.js';
 
 const config = loadWorkerConfig();
@@ -103,20 +104,34 @@ const liveTickTimer = setInterval(() => {
   void foldOwner.tick().catch((err) => console.error('live fold tick failed', err));
 }, config.liveTickMs);
 
-async function shutdown(): Promise<void> {
-  clearInterval(sweepTimer);
-  clearInterval(liveTickTimer);
-  await worker.close();
-  await sweeper.close();
-  // Before pool.end(): each owned run holds a dedicated pooled client for
-  // its advisory lock's whole lifetime, and close() releases every one of
-  // them (plus this owner's own Redis connection) -- see its own doc
-  // comment for why draining safely needs the tick guard, not just the
-  // owned-run map.
-  await foldOwner.close();
-  await pool.end();
-  await prisma.$disconnect();
+/**
+ * Ordered, and every step isolated -- see `runShutdown`'s own doc comment
+ * for why a plain sequence of awaits made `LiveFoldOwner.close()`'s
+ * DESIGNED `AggregateError` fatal to the whole teardown, leaving the pool
+ * and Prisma's connections open and printing `ERR_UNHANDLED_REJECTION`
+ * instead of the message that error was built to carry.
+ */
+function shutdown(): Promise<void> {
+  return runShutdown([
+    { name: 'clear timers', run: () => { clearInterval(sweepTimer); clearInterval(liveTickTimer); } },
+    { name: 'worker.close', run: () => worker.close() },
+    { name: 'sweeper.close', run: () => sweeper.close() },
+    // Before pool.end(): each owned run holds a dedicated pooled client for
+    // its advisory lock's whole lifetime, and close() releases every one of
+    // them (plus this owner's own Redis connection) -- see its own doc
+    // comment for why draining safely needs the tick guard, not just the
+    // owned-run map.
+    { name: 'foldOwner.close', run: () => foldOwner.close() },
+    { name: 'pool.end', run: () => pool.end() },
+    { name: 'prisma.$disconnect', run: () => prisma.$disconnect() },
+  ]);
 }
 
-process.on('SIGTERM', () => void shutdown());
-process.on('SIGINT', () => void shutdown());
+// `.catch()` even though `runShutdown` is documented not to reject: a
+// signal handler is the one place in this process with nowhere to put a
+// rejection, and on Node 22 an unhandled one terminates immediately --
+// which is exactly how the AggregateError above used to take the whole
+// teardown down. Belt and braces, at the cost of one line.
+const onSignal = () => void shutdown().catch((err) => console.error('worker shutdown failed', err));
+process.on('SIGTERM', onSignal);
+process.on('SIGINT', onSignal);
