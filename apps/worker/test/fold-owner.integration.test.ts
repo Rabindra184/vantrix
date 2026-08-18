@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createPool, createPrisma } from '@perfportal/persistence';
-import { parseSimulationLog } from '@perfportal/plugin-gatling';
+import { parseSimulationLog, StreamingLogDecoder } from '@perfportal/plugin-gatling';
 import { runEngine, type EngineResult } from '@perfportal/statistics';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
 import { LiveFoldOwner } from '../src/live/fold-owner.js';
 
@@ -88,6 +88,25 @@ async function seedRunningRun(
 }
 
 const runStat = (r: EngineResult) => r.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
+
+/**
+ * The byte offset the fixture's Gatling header ends at, discovered rather
+ * than hard-coded (CLAUDE.md's "expectations are computed from the payload"
+ * rule): feed the reference log to a fresh decoder one byte at a time and
+ * take the first offset at which `consumedBytes` moves off zero -- that is
+ * exactly the instant the header's own meta event is fully parsed and
+ * nothing else has been consumed yet (mirrors the boundary-walk technique
+ * `packages/plugin-gatling/test/stream.test.ts` already uses for the same
+ * kind of "where does record N end" question).
+ */
+function headerLength(fullLog: Buffer): number {
+  const probe = new StreamingLogDecoder();
+  for (let i = 0; i < fullLog.length; i++) {
+    probe.push(fullLog.subarray(i, i + 1));
+    if (probe.consumedBytes > 0) return probe.consumedBytes;
+  }
+  throw new Error('fixture never emitted a meta event');
+}
 
 describe('LiveFoldOwner', () => {
   it('folds a streaming run to the same numbers a batch parse produces', async () => {
@@ -280,4 +299,62 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     }
   }, 120_000);
+
+  /**
+   * Fix round 1, Important 3. `tick()` used to await `#fold` for each owned
+   * run with no per-run try/catch, so one run's fold throwing aborted the
+   * whole pass -- every OTHER owned run silently got no fold that tick, with
+   * nothing to distinguish it from an idle tick. Reachable in the ordinary
+   * course of operation, not just synthetically: `LiveChunkStore.finalize`
+   * (`close()`'s path) lists a run's chunk keys and then deletes them, so a
+   * key `readFrom` listed can be deleted before its own parallel `get` runs.
+   *
+   * The "bad" run's corruption here is a genuinely thrown decode error (not
+   * a `TruncatedError`, which `StreamingLogDecoder` already handles by
+   * buffering and returning cleanly) -- a valid header immediately followed
+   * by one byte that is not any of `header.ts`'s five real record types, so
+   * `readRecord`'s `default` branch throws before returning any events at
+   * all. `headerLength` is derived from the fixture, not hard-coded.
+   */
+  it('one owned run failing to fold does not stop another owned run folding in the same tick', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+
+    const goodRunId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(goodRunId, 0, log);
+
+    const badRunId = await seedRunningRun(orgId, projectId, log.length);
+    const corrupted = Buffer.concat([log.subarray(0, headerLength(log)), Buffer.from([0xfe])]);
+    await chunks.put(badRunId, 0, corrupted);
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const owner = new LiveFoldOwner(config, pool, chunks);
+    try {
+      await expect(owner.tick()).resolves.toBeUndefined();
+
+      // Exactly one failure logged, and it names the bad run -- proves the
+      // isolation caught and reported it rather than the tick somehow
+      // avoiding the throw altogether.
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy.mock.calls[0]?.[0]).toContain(`fold failed for run ${badRunId}`);
+
+      const good = owner.snapshotOf(goodRunId);
+      expect(good).not.toBeNull();
+      const batch = runEngine(parseSimulationLog(log));
+      expect(runStat(good!)!.count).toBe(runStat(batch)!.count);
+      expect(runStat(good!)!.okCount).toBe(runStat(batch)!.okCount);
+      expect(runStat(good!)!.koCount).toBe(runStat(batch)!.koCount);
+
+      // The bad run stays owned (a failed fold is retried, not evicted) but
+      // nothing was ever folded into it -- decoder.push threw before
+      // returning any events, so engine.add was never called and no
+      // run-scope rollup exists yet at all.
+      const bad = owner.snapshotOf(badRunId);
+      expect(bad).not.toBeNull();
+      expect(runStat(bad!)).toBeUndefined();
+    } finally {
+      errorSpy.mockRestore();
+      await owner.close();
+    }
+  });
 });

@@ -97,18 +97,68 @@ export class LiveFoldOwner {
     // Release first: an id that dropped out of 'running' must not be
     // treated as newly discoverable, and freeing its client/lock before the
     // claim pass below keeps the pool accounting honest within this tick.
+    // Isolated per run for the same reason the claim and fold passes below
+    // are: one run's unlock failing (a dead connection, a network blip)
+    // must not strand every OTHER owned run's release for this tick too.
     for (const runId of this.#owned.keys()) {
-      if (!runningIds.has(runId)) await this.#release(runId);
+      if (!runningIds.has(runId)) {
+        await this.#guarded('release', runId, () => this.#release(runId));
+      }
     }
 
+    // Counts, not an early `break`, so the log line below reports the true
+    // number skipped this tick rather than stopping at the first one and
+    // leaving every later id silently unaccounted for.
+    let skippedForCap = 0;
     for (const runId of runningIds) {
-      if (this.#owned.size >= this.#config.maxOwnedRuns) break;
       if (this.#owned.has(runId)) continue;
-      await this.#claim(runId);
+      if (this.#owned.size >= this.#config.maxOwnedRuns) {
+        skippedForCap += 1;
+        continue;
+      }
+      // Isolated per run: `#claim` reaching for a `pg.PoolClient` the pool
+      // cannot hand out (a bad connection string, or -- with the pool sized
+      // per design §1.3 -- genuine exhaustion under an operator's
+      // misconfiguration) must fail that ONE run's claim, not this whole
+      // tick and every run already owned along with it.
+      await this.#guarded('claim', runId, () => this.#claim(runId));
+    }
+    if (skippedForCap > 0) {
+      // Design §1.3: "At the cap the owner logs and skips." A run silently
+      // never folded is exactly the undiagnosable-from-outside failure §1.2
+      // warns about for the missed-pub/sub case; this is the same failure
+      // reached a different way, and needs the same visibility.
+      console.warn(
+        `LiveFoldOwner: at maxOwnedRuns (${this.#config.maxOwnedRuns}); ` +
+          `skipped ${skippedForCap} newly-discovered running run(s) this tick`,
+      );
     }
 
     for (const [runId, state] of this.#owned) {
-      await this.#fold(runId, state);
+      // Isolated per run -- see `#fold`'s own doc comment for the concrete,
+      // ordinary way this throws (a run's chunk objects deleted out from
+      // under a listed key by a concurrent `close()`), and why one run's
+      // failure must not cost every other owned run its fold this tick.
+      await this.#guarded('fold', runId, () => this.#fold(runId, state));
+    }
+  }
+
+  /**
+   * Runs `fn`, logging (not propagating) any failure. `tick()` processes
+   * several runs in one pass, sharing nothing but this owner's own state
+   * between them -- one run's storage error, decode error, or connection
+   * failure is exactly that run's problem, not a reason to abandon claiming
+   * or folding every run that comes after it in iteration order this tick.
+   * A failed run simply gets retried next tick: an unclaimed id is
+   * rediscovered by the next poll, and a claimed-but-failed-to-fold run
+   * keeps its `FoldState` (and its `fetchedBytes` cursor) untouched, so
+   * nothing about the failure needs to be remembered here.
+   */
+  async #guarded(label: string, runId: string, fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`LiveFoldOwner: ${label} failed for run ${runId}`, err);
     }
   }
 
@@ -171,6 +221,15 @@ export class LiveFoldOwner {
    * emitted event, then advances the frontier by the bytes just fetched --
    * NEVER by `decoder.consumedBytes`. See `FoldState.fetchedBytes`'s doc
    * comment for why those two are not interchangeable.
+   *
+   * `readFrom` throwing here is not exotic. `LiveChunkStore.finalize`
+   * (`apps/api/src/ingest/live.service.ts`'s `close()` calls it) lists a
+   * run's chunk keys, then DELETES them once the assembled log is written
+   * durably; `readFrom` lists keys and fans out parallel `get`s over them,
+   * so a key it listed can be deleted by a concurrent `finalize` before its
+   * own `get` runs, and that `get` rejects. `tick()` calls this once per
+   * owned run per pass, so that must be this one run's failure, not every
+   * other owned run's fold for the tick -- see `tick()`'s `#guarded` calls.
    */
   async #fold(runId: string, state: FoldState): Promise<void> {
     const bytes = await this.#chunks.readFrom(runId, state.fetchedBytes);
