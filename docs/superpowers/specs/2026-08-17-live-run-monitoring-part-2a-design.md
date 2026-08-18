@@ -77,6 +77,22 @@ Two paths find runs to own:
 
 - **`live:opened`** — the API publishes a run id when `POST /v1/runs/live`
   succeeds. Gives latency.
+- **`live:closed`** — the API publishes a run id when `close()`'s
+  `claimForClose` succeeds, so the owner releases the advisory lock at once
+  instead of on its next tick.
+
+  **This channel is not an optimisation; the close path is incorrect without
+  it.** `close()` enqueues the pipeline immediately, and `PipelineService`
+  takes the same advisory lock the owner still holds. The pipeline's retry
+  budget is BullMQ's three attempts on exponential backoff from 2 s — about
+  6 s of window — while the owner's release latency is `liveTickMs` plus the
+  duration of the in-flight tick, and that duration is unbounded: one tick
+  folds and publishes up to `maxOwnedRuns` runs sequentially, and `readFrom`
+  has no request timeout. Raising `LIVE_TICK_MS` at all, or a single slow
+  tick at defaults, exhausts all three attempts — and the run then sits at
+  `parsing` until `parsingStaleAfterMs` (15 minutes) before the sweeper
+  re-enqueues it. A live run's worst-case time to verdict becomes a quarter
+  of an hour, silently.
 - **A poll** of `SELECT id FROM run WHERE status = 'running'` on the tick,
   skipping ids already owned. Gives correctness.
 
@@ -174,6 +190,15 @@ several delivered chunks' start offsets at once.
 |---|---|---|
 | `fetchedBytes` | `FoldState` | the highest byte fetched from storage — what `readFrom` is given |
 | `consumedBytes` | the decoder | the last whole-record boundary — what the decoder retains from |
+
+**`readFrom` must assert the contiguity it promises.** The invariant above —
+that the first chunk returned starts exactly at `fetchedBytes` — is derived
+correctly from offset negotiation, and nothing checks it. `LiveChunkStore
+.finalize` breaks it: it lists chunk keys and deletes them concurrently, so a
+fold racing a close can be handed the surviving keys, which may start above
+the frontier or contain a hole. Those bytes enter the decoder, the frontier
+advances by their length, and nothing throws. A single comparison at the top
+of `readFrom` turns that into a logged error and a retry on the next tick.
 
 `fetchedBytes += bytes.length` is exact, and does not need per-chunk lengths:
 offset negotiation only accepts a chunk when `offset === cursor` (Part 1's
