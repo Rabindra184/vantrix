@@ -123,7 +123,7 @@ describe('LiveFoldOwner', () => {
     // that throws before its own owner.close() would otherwise leak that
     // client past the end of the test -- and afterAll's pool.end() then
     // hangs waiting for it, turning one assertion failure into a
-    // hookTimeout that hides the real error. See the report's RED section.
+    // hookTimeout that hides the real error.
     const owner = new LiveFoldOwner(config, pool, chunks);
     try {
       await owner.tick();
@@ -262,8 +262,7 @@ describe('LiveFoldOwner', () => {
    *
    * With the cursor set to `decoder.consumedBytes` this case fails (either a
    * thrown decode error or corrupted counts, from feeding the decoder
-   * duplicate bytes); with the fetch frontier it passes. See the report for
-   * the actual before/after run.
+   * duplicate bytes); with the fetch frontier it passes.
    */
   it('folds correctly when chunks are smaller than a single record, across several ticks', async () => {
     await truncateAll();
@@ -585,6 +584,57 @@ describe('LiveFoldOwner', () => {
       }
     } finally {
       vi.restoreAllMocks();
+    }
+  });
+
+  /**
+   * Fix round 1, Critical 1. `maxOwnedRuns` (default 25) against
+   * `createPool`'s OLD default pool size (`max: 10`, no
+   * `connectionTimeoutMillis`) did not degrade -- it deadlocked the whole
+   * worker the instant an eleventh run needed a connection: `pool.connect()`
+   * queues forever under pg's own default timeout of 0, `tick()` never
+   * reaches its fold loop, and everything else sharing that pool (in
+   * production, `PipelineService` and `Sweeper`) starves behind it. No
+   * error, no timeout, no log -- see design part-2a §1.3 as amended.
+   *
+   * This owner's own `maxOwnedRuns` (3) is deliberately larger than the
+   * dedicated pool's `max` (2): the CAP is not what is under test here (the
+   * "does not exceed maxOwnedRuns" case above already covers that), the
+   * POOL'S OWN BOUND is. With `connectionTimeoutMillis` set, a claim beyond
+   * what the pool can hand out fails fast (caught by Important 3's per-run
+   * isolation, logged, not propagated) rather than hanging -- provable by
+   * elapsed time staying well under what "hangs until the test runner gives
+   * up" would look like, and by exactly `pool.max` runs ending up owned,
+   * never more.
+   */
+  it('a claim beyond what the pool can hand out fails fast rather than hanging tick()', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const runId = await seedRunningRun(orgId, projectId, log.length);
+      await chunks.put(runId, 0, log);
+      runIds.push(runId);
+    }
+
+    const smallPool = createPool(config.databaseUrl, { max: 2, connectionTimeoutMillis: 500 });
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks);
+    try {
+      const start = Date.now();
+      await owner.tick();
+      const elapsedMs = Date.now() - start;
+
+      // Bounded by the pool's own timeout (500ms) times, at most, the
+      // number of runs that cannot get a connection (at most one, since
+      // only a THIRD claim can ever be starved with pool max 2 and 3 runs)
+      // -- nowhere near "hangs until the runner's own timeout fires".
+      expect(elapsedMs).toBeLessThan(5000);
+
+      const ownedCount = runIds.filter((id) => owner.snapshotOf(id) !== null).length;
+      expect(ownedCount).toBe(2);
+    } finally {
+      await owner.close();
+      await smallPool.end();
     }
   });
 });

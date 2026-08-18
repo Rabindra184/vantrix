@@ -73,9 +73,38 @@ export interface WorkerConfig {
    * for its advisory lock's whole lifetime (see `LiveFoldOwner`), so this
    * bounds pooled-connection usage directly. NFR-SC-4 targets 50 concurrent
    * live runs across the deployment; two workers at the default of 25 meet
-   * that without either one exhausting its own pool trying to own everything.
+   * that.
+   *
+   * THE POOL MUST BE SIZED FROM THIS VALUE, NOT THE OTHER WAY AROUND — design
+   * §1.3, amended after an earlier draft asserted the opposite ("one worker
+   * cannot exhaust its pool trying to own everything") without ever checking
+   * it against the pool's actual size, which defaults to 10
+   * (`packages/persistence/src/client.ts`) against this field's default of
+   * 25. `main.ts` sizes the shared `pg.Pool` as `maxOwnedRuns` plus headroom
+   * for the pipeline's own concurrency and the sweeper — see its own
+   * `POOL_HEADROOM`-adjacent comment. Raising this default without also
+   * reviewing that sizing reintroduces the exact silent deadlock the
+   * amendment exists to prevent: no error, no timeout, no log, just a
+   * worker that stops.
    */
   maxOwnedRuns: number;
+}
+
+/**
+ * `Number(x)` on a non-numeric string is `NaN`, and `NaN` defeats both of
+ * this config's own guards silently: `Math.max(1000, NaN)` is `NaN` (so
+ * `setInterval(fn, NaN)` becomes an effectively-zero-delay timer, the
+ * opposite of the floor it is supposed to enforce), and `someCount >= NaN`
+ * is always `false` (so a cap compared against it is never reached — see
+ * `LiveFoldOwner#doTick`'s `this.#owned.size >= this.#config.maxOwnedRuns`).
+ * Falling back to `fallback` on a non-finite parse (covers `NaN` and
+ * `Infinity` alike) keeps a misconfigured value from silently disabling the
+ * exact protection it was meant to configure.
+ */
+function numberOr(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -100,7 +129,9 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
       env.MAX_DECOMPRESSED_BUNDLE_BYTES ?? 2 * 1024 * 1024 * 1024,
     ),
     // Math.max, not a validation error -- see the field's own doc comment.
-    liveTickMs: Math.max(1000, Number(env.LIVE_TICK_MS ?? 5000)),
-    maxOwnedRuns: Number(env.MAX_OWNED_RUNS ?? 25),
+    // numberOr, not a bare Number(...) -- see ITS doc comment: an invalid
+    // LIVE_TICK_MS must not turn the floor below into NaN.
+    liveTickMs: Math.max(1000, numberOr(env.LIVE_TICK_MS, 5000)),
+    maxOwnedRuns: numberOr(env.MAX_OWNED_RUNS, 25),
   };
 }

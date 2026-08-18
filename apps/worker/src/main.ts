@@ -8,7 +8,40 @@ import { Sweeper } from './sweeper.js';
 
 const config = loadWorkerConfig();
 const prisma = createPrisma(config.databaseUrl);
-const pool = createPool(config.databaseUrl);
+
+/**
+ * This ONE pool is shared by `PipelineService`, `Sweeper`, and (once wired
+ * in alongside them here — not yet as of this file) `LiveFoldOwner` — design
+ * part-2a §1.3, amended after an earlier draft claimed a worker "cannot
+ * exhaust its pool trying to own everything" without ever checking that
+ * against the pool's actual size. It was false: `createPool`'s own default
+ * (`max: 10`) against `maxOwnedRuns`'s default (25), with no
+ * `connectionTimeoutMillis` set either, does not degrade — it deadlocks the
+ * whole worker the instant a tenth run is owned (every client held by a
+ * `FoldState`, the eleventh `connect()` queuing forever), with no error, no
+ * timeout, and no log.
+ *
+ * So the pool is sized FROM `maxOwnedRuns`, not left at the default:
+ *  - `maxOwnedRuns` itself — each owned run holds one dedicated client for
+ *    its advisory lock's whole lifetime (`FoldState.client`).
+ *  - `concurrency * PIPELINE_CLIENTS_PER_JOB` — `PipelineService.process`
+ *    holds up to two clients per in-flight job at once: the lock-holding
+ *    client for the whole call, plus a second, brief one `#ingest` opens
+ *    for its final commit transaction. Worst case across BullMQ's
+ *    configured job concurrency.
+ *  - `SWEEPER_CLIENTS` — `Sweeper.sweep` holds exactly one client for its
+ *    whole duration (one transaction, BEGIN to COMMIT).
+ *
+ * `connectionTimeoutMillis` is set alongside it so any FUTURE mis-sizing —
+ * or genuine connection pressure — fails loud (a rejected `connect()`)
+ * instead of repeating the same silent stall this sizing exists to prevent.
+ */
+const PIPELINE_CLIENTS_PER_JOB = 2;
+const SWEEPER_CLIENTS = 1;
+const pool = createPool(config.databaseUrl, {
+  max: config.maxOwnedRuns + config.concurrency * PIPELINE_CLIENTS_PER_JOB + SWEEPER_CLIENTS,
+  connectionTimeoutMillis: 10_000,
+});
 const blobs = new BlobStore(config.blob);
 await blobs.ensureBucket();
 
