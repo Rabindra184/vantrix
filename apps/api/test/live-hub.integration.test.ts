@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { WebSocket } from 'ws';
-import { LiveHub } from '../src/live/live-hub.js';
+import { LiveHub, type LiveSink } from '../src/live/live-hub.js';
 
 // Same fallback every other integration suite in this directory uses for a
 // raw ioredis client (see live.integration.test.ts, trends.integration.test.ts).
@@ -13,18 +12,18 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * A minimal stand-in for the `ws` WebSocket LiveHub actually talks to: only
- * `send` is called, so only `send` needs to exist. Real sockets are exercised
- * once the endpoint that creates them lands (a later task) -- this suite is
- * about the fan-out plumbing underneath it, not the wire protocol.
+ * A `LiveSink` that records what it was handed. `send` is the whole of the
+ * interface, which is the point of the interface -- real sockets, framing and
+ * backpressure belong to `LiveGateway`, and this suite is about the fan-out
+ * plumbing underneath all three.
  */
-function fakeSocket(): { sent: string[] } & Pick<WebSocket, 'send'> {
+function fakeSocket(): { sent: string[] } & LiveSink {
   const sent: string[] = [];
   return {
     sent,
-    send: ((data: string) => {
+    send(data: string) {
       sent.push(data);
-    }) as WebSocket['send'],
+    },
   };
 }
 
@@ -55,8 +54,8 @@ describe('LiveHub', () => {
     const sb = fakeSocket();
     publisher = new Redis(REDIS_URL);
 
-    await a.join(runId, sa as unknown as WebSocket);
-    await b.join(runId, sb as unknown as WebSocket);
+    await a.join(runId, sa);
+    await b.join(runId, sb);
 
     await publisher.publish(`live:${runId}`, JSON.stringify({ seq: 1 }));
     await vi.waitFor(() => expect(sa.sent.length === 1 && sb.sent.length === 1).toBe(true));
@@ -74,16 +73,16 @@ describe('LiveHub', () => {
     const s2 = fakeSocket();
     publisher = new Redis(REDIS_URL);
 
-    await hub.join(runId, s1 as unknown as WebSocket);
-    await hub.join(runId, s2 as unknown as WebSocket);
+    await hub.join(runId, s1);
+    await hub.join(runId, s2);
     expect(hub.size(runId)).toBe(2);
 
-    await hub.leave(runId, s1 as unknown as WebSocket);
+    await hub.leave(runId, s1);
     expect(hub.size(runId)).toBe(1);
     await publisher.publish(`live:${runId}`, JSON.stringify({ seq: 2 }));
     await vi.waitFor(() => expect(s2.sent.length).toBe(1));
 
-    await hub.leave(runId, s2 as unknown as WebSocket);
+    await hub.leave(runId, s2);
     expect(hub.size(runId)).toBe(0);
     await publisher.publish(`live:${runId}`, JSON.stringify({ seq: 3 }));
     // No event to wait for on the negative side (nothing SHOULD happen), so
@@ -104,10 +103,37 @@ describe('LiveHub', () => {
     const s2 = fakeSocket();
 
     await Promise.all([
-      hub.join(runId, s1 as unknown as WebSocket),
-      hub.join(runId, s2 as unknown as WebSocket),
+      hub.join(runId, s1),
+      hub.join(runId, s2),
     ]);
 
     expect(hub.size(runId)).toBe(2);
+  });
+
+  // One dead socket in a room must not deny the live ones behind it.
+  // `ws.send()` throws outright on a CONNECTING socket, and the fan-out ran
+  // the whole room inside one synchronous `for` -- so a single throw
+  // abandoned every subscriber after it in iteration order, silently, and
+  // did so again for every delta while the dead one stayed in the room.
+  it('delivers to the rest of a room when one socket throws on send', async () => {
+    const runId = randomUUID();
+    const hub = newHub();
+    const healthy = fakeSocket();
+    const broken: LiveSink = {
+      send() {
+        throw new Error('socket is not open');
+      },
+    };
+    publisher = new Redis(REDIS_URL);
+
+    // Joined FIRST, so it precedes the healthy one in the room's iteration
+    // order -- otherwise the test passes whether or not the guard exists.
+    await hub.join(runId, broken);
+    await hub.join(runId, healthy);
+
+    await publisher.publish(`live:${runId}`, JSON.stringify({ seq: 4 }));
+
+    await vi.waitFor(() => expect(healthy.sent).toHaveLength(1));
+    expect(JSON.parse(healthy.sent[0]!).seq).toBe(4);
   });
 });
