@@ -132,18 +132,85 @@ describe('LiveChunkStore', () => {
     expect((await store.readFrom(runId, 999)).toString('latin1')).toBe('yz');
   });
 
-  it('readFrom does not return chunks that straddle the offset', async () => {
+  /**
+   * THIS CASE USED TO ASSERT THE OPPOSITE, and the old assertion was
+   * describing a data-loss bug as a feature.
+   *
+   * Offset 5 sits INSIDE the chunk at 0. `readFrom` returned only the chunk
+   * at 10 and called that "does not return chunks that straddle the
+   * offset" -- but bytes [5,10) are then simply gone: they are in no chunk
+   * the call returned, and the caller advances its frontier by the length
+   * of what it did get, so nothing ever asks for them again. Silent. The
+   * only way to reach that argument is to pass a DECODE position where the
+   * contract asks for a fetch frontier, which this method's own doc comment
+   * already forbids in capitals -- so the honest answer is not to skip five
+   * bytes quietly, it is to refuse.
+   *
+   * Design §2.2.1's amendment says so directly: readFrom must assert the
+   * contiguity it promises.
+   */
+  it('readFrom refuses an offset the chunks cannot start from, rather than silently skipping bytes', async () => {
     await blobs.ensureBucket();
     const store = new LiveChunkStore(blobs);
     const runId = `readfrom-straddle-${randomUUID()}`;
     // Chunks at offsets 0 (length 10) and 10 (length 10).
-    // Read from offset 5 -- it is inside the first chunk.
-    // The first chunk starts before 5, so it is not returned.
-    // The decoder already retains its own unconsumed tail from exactly offset 5,
-    // so re-feeding the straddling chunk would duplicate bytes in the fold.
     await store.put(runId, 0, Buffer.from('0123456789', 'latin1'));
     await store.put(runId, 10, Buffer.from('abcdefghij', 'latin1'));
 
-    expect((await store.readFrom(runId, 5)).toString('latin1')).toBe('abcdefghij');
+    await expect(store.readFrom(runId, 5)).rejects.toMatchObject({
+      name: 'LiveChunkGapError',
+      expectedOffset: 5,
+      actualOffset: 10,
+    });
+
+    // The real chunk boundaries are still perfectly readable -- the refusal
+    // is about THIS offset, not about the run.
+    expect((await store.readFrom(runId, 10)).toString('latin1')).toBe('abcdefghij');
+  });
+
+  /**
+   * The `finalize` race design §2.2.1 names, staged directly: `finalize`
+   * lists a run's chunk keys and deletes them CONCURRENTLY, so a fold that
+   * reads while a close is running can be handed a set with a hole punched
+   * through the middle. Before the assertion, those bytes were concatenated
+   * across the hole and fed to the decoder, whose absolute positions were
+   * then wrong for the rest of the run, with nothing thrown and nothing
+   * logged.
+   *
+   * Deleting the middle chunk by hand rather than racing a real `finalize`
+   * is deliberate: the race is timing-dependent and would make this case
+   * flaky, while the STATE it produces -- surviving keys with a gap -- is
+   * exactly what is staged here and is the only thing `readFrom` can
+   * actually see.
+   */
+  it('readFrom refuses a set of chunks with a hole in the middle', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `readfrom-hole-${randomUUID()}`;
+    await store.put(runId, 0, Buffer.from('aaaa', 'latin1'));   // [0,4)
+    await store.put(runId, 4, Buffer.from('bbbb', 'latin1'));   // [4,8)
+    await store.put(runId, 8, Buffer.from('cccc', 'latin1'));   // [8,12)
+
+    // A concurrent finalize got to the middle one first.
+    await blobs.delete(`live/${runId}/${String(4).padStart(16, '0')}.bin`);
+
+    await expect(store.readFrom(runId, 0)).rejects.toMatchObject({
+      name: 'LiveChunkGapError',
+      expectedOffset: 4,
+      actualOffset: 8,
+    });
+  });
+
+  /** The frontier case must stay a plain empty buffer -- it is by far the
+   * most common outcome of this call (once per owned run per tick, whenever
+   * no new chunk has landed), and turning it into a gap error would make
+   * every idle tick throw. */
+  it('readFrom at the exact end is empty, not a gap error', async () => {
+    await blobs.ensureBucket();
+    const store = new LiveChunkStore(blobs);
+    const runId = `readfrom-frontier-${randomUUID()}`;
+    await store.put(runId, 0, Buffer.from('aaaa', 'latin1'));
+
+    expect(await store.readFrom(runId, 4)).toHaveLength(0);
   });
 });
