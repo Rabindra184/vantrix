@@ -21,7 +21,7 @@ describe('buildDelta', () => {
     expect(delta.summary.koCount).toBe(batch.koCount);
     expect(delta.summary.errorRate).toBeCloseTo(batch.errorRate, 10);
     expect(delta.seq).toBe(0);
-    expect(delta.replacesSeries).toBe(true);   // first delta always replaces
+    expect(delta.responseTime.replaces).toBe(true);   // first delta always replaces
   });
 
   it('emits only buckets past the cursor on the second call', () => {
@@ -36,14 +36,16 @@ describe('buildDelta', () => {
     const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next);
 
     expect(second.delta.seq).toBe(1);
-    const firstMax = Math.max(...first.delta.responseTime.map((b) => b.startOffsetMs));
-    for (const b of second.delta.responseTime) expect(b.startOffsetMs).toBeGreaterThan(firstMax);
+    const firstMax = Math.max(...first.delta.responseTime.buckets.map((b) => b.startOffsetMs));
+    for (const b of second.delta.responseTime.buckets) expect(b.startOffsetMs).toBeGreaterThan(firstMax);
   });
 
-  it('flags a full replacement when the bucket width changes', () => {
+  it('flags a full replacement when the bucket width changes, independently of the users series', () => {
     const all = events();
 
-    // A tiny cap forces BucketSeries to coalesce partway through.
+    // A tiny cap forces BucketSeries to coalesce partway through. Default
+    // maxBucketsUsers is untouched, so the users series has no reason to
+    // coalesce at all over this fixture's ~63s duration.
     const engine = new LiveEngine({ maxBucketsRun: 4 });
     const third = Math.floor(all.length / 3);
     for (const e of all.slice(0, third)) engine.add(e);
@@ -54,10 +56,18 @@ describe('buildDelta', () => {
 
     // Derived, not asserted as a literal: the width MUST have grown for this
     // case to be testing anything, so assert that first.
-    expect(second.delta.bucketWidthMs).toBeGreaterThan(first.delta.bucketWidthMs);
-    expect(second.delta.replacesSeries).toBe(true);
+    expect(second.delta.responseTime.widthMs).toBeGreaterThan(first.delta.responseTime.widthMs);
+    expect(second.delta.responseTime.replaces).toBe(true);
     // A replacement carries the WHOLE series, including offset 0.
-    expect(Math.min(...second.delta.responseTime.map((b) => b.startOffsetMs))).toBe(0);
+    expect(Math.min(...second.delta.responseTime.buckets.map((b) => b.startOffsetMs))).toBe(0);
+
+    // The users series coalesces against its OWN cap (maxBucketsUsers,
+    // untouched here) on its OWN schedule -- it has no reason to have
+    // widened just because the response-time series above did, so its width
+    // must still read what it always has. One shared width for both series
+    // would fail this assertion by construction.
+    expect(second.delta.users.widthMs).toBe(first.delta.users.widthMs);
+    expect(second.delta.users.widthMs).toBeLessThan(second.delta.responseTime.widthMs);
   });
 
   it('does not flag a replacement when the width is unchanged', () => {
@@ -69,7 +79,64 @@ describe('buildDelta', () => {
     for (const e of all.slice(half)) engine.add(e);
     const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next);
 
-    expect(second.delta.bucketWidthMs).toBe(first.delta.bucketWidthMs);
-    expect(second.delta.replacesSeries).toBe(false);
+    expect(second.delta.responseTime.widthMs).toBe(first.delta.responseTime.widthMs);
+    expect(second.delta.responseTime.replaces).toBe(false);
+  });
+
+  it('sends users whole every tick, unaffected by the response-time cursor', () => {
+    const all = events();
+    const half = Math.floor(all.length / 2);
+
+    const engine = new LiveEngine();
+    for (const e of all.slice(0, half)) engine.add(e);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+
+    for (const e of all.slice(half)) engine.add(e);
+    const finalSnapshot = engine.snapshot({ clone: true });
+    const second = buildDelta('r1', finalSnapshot, first.next);
+
+    // Every bucket of every scenario in the FULL snapshot, on every tick --
+    // never filtered by the response-time cursor (`first.next`), and never
+    // fewer than what the engine actually holds. Derived from the payload:
+    // this is not the fixture's own bucket count written down, it is
+    // `finalSnapshot.users` counted the same way `buildDelta` must.
+    const expectedCount = finalSnapshot.users.reduce((n, u) => n + u.buckets.length, 0);
+    expect(second.delta.users.buckets.length).toBe(expectedCount);
+    // Same invariant on the very first call, where "the cursor" is
+    // INITIAL_CURSOR rather than a real one -- users ignores it just as it
+    // ignores a real one.
+    expect(first.delta.users.buckets.length).toBeGreaterThan(0);
+  });
+
+  it('reads the response-time width from the engine field, not by inferring gaps between buckets', () => {
+    const all = events();
+    const result = runEngine(all);
+    const runKey = 'run  response_time';
+    const real = result.series.get(runKey);
+    if (!real) throw new Error('fixture produced no run-scope response-time series');
+
+    // Thin the buckets so the SMALLEST GAP between what remains is wider
+    // than the series' true width -- an inference-based reader (the smallest
+    // gap between occupied offsets) would report that wider gap as the
+    // width; the engine's own `bucketWidthMs` must not be fooled by it.
+    const thinned = real.buckets.filter((_, i) => i % 5 === 0);
+    // Guard: the fixture must leave more than one bucket, or there is no gap
+    // to be wrong about.
+    expect(thinned.length).toBeGreaterThan(1);
+    const smallestGapAfterThinning = Math.min(
+      ...thinned.slice(1).map((b, i) => b.startOffsetMs - (thinned[i]?.startOffsetMs ?? 0)),
+    );
+    // Guard: thinning must actually have produced a gap wider than the true
+    // width, or this test would pass even with the old, wrong, inferring
+    // implementation.
+    expect(smallestGapAfterThinning).toBeGreaterThan(real.bucketWidthMs);
+
+    const sparseSeries = new Map(result.series);
+    sparseSeries.set(runKey, { ...real, buckets: thinned });
+    const sparseResult = { ...result, series: sparseSeries };
+
+    const { delta } = buildDelta('r1', sparseResult, INITIAL_CURSOR);
+
+    expect(delta.responseTime.widthMs).toBe(real.bucketWidthMs);
   });
 });

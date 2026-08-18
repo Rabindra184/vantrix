@@ -1,11 +1,21 @@
-import { inferBucketWidthMs, type EngineResult } from '@perfportal/statistics';
-import type { LiveDelta, LiveSeriesBucket } from '@perfportal/contracts';
+import type { EngineResult } from '@perfportal/statistics';
+import type { LiveDelta } from '@perfportal/contracts';
 
 export interface DeltaCursor {
   seq: number;
-  /** -1 before the first delta: bucket 0 is a real bucket and must be sent. */
+  /**
+   * -1 before the first delta: bucket 0 is a real bucket and must be sent.
+   *
+   * Tracks the RESPONSE-TIME series only. `users` has no cursor of its own —
+   * see "WHY `users` HAS NO CURSOR" below — so there is nothing else for this
+   * field to track.
+   */
   lastPublishedOffsetMs: number;
-  /** 0 before the first delta: no real bucket width is ever 0. */
+  /**
+   * 0 before the first delta: no real bucket width is ever 0.
+   *
+   * Tracks the RESPONSE-TIME series' width only, for the same reason.
+   */
   lastBucketWidthMs: number;
 }
 
@@ -22,7 +32,7 @@ export const INITIAL_CURSOR: DeltaCursor = {
  * sub-project that fails silently, and keeping it out of the owner means it
  * can be tested without Redis, blob storage, or a claimed run.
  *
- * ═══ THE COALESCE RULE ═══
+ * ═══ THE COALESCE RULE (response-time series only) ═══
  * `BucketSeries` (packages/statistics/src/buckets.ts) halves its resolution
  * IN PLACE once a run passes `maxBucketsRun`, rewriting every bucket's
  * `startOffsetMs` to fit the new, wider buckets. "Buckets past offset N"
@@ -33,10 +43,10 @@ export const INITIAL_CURSOR: DeltaCursor = {
  * that tick on, forever, unless it is told.
  *
  * So: whenever the emitted width differs from the width the PREVIOUS delta
- * reported, this delta is a REPLACEMENT. It carries the whole series (from
- * offset 0, not from the cursor) and `replacesSeries` is set so the consumer
- * knows to discard whatever it had accumulated and start over from this
- * message.
+ * reported, `responseTime` is a REPLACEMENT. It carries the whole series
+ * (from offset 0, not from the cursor) and `responseTime.replaces` is set so
+ * the consumer knows to discard whatever it had accumulated and start over
+ * from this message.
  *
  * The very first delta is a replacement for the same mechanism, not as a
  * bolted-on special case: `INITIAL_CURSOR.lastBucketWidthMs` is 0, and no
@@ -49,6 +59,33 @@ export const INITIAL_CURSOR: DeltaCursor = {
  * call, or into treating `since` as `0` on a replacement — offset 0 is a
  * real bucket, and a replacement is defined as "no cursor", not "the same
  * cursor filtered differently".
+ *
+ * ═══ WHY THE RESPONSE-TIME AND USERS SERIES EACH GET THEIR OWN WIDTH ═══
+ * `UserSeries` coalesces against its own `maxBucketsUsers` cap, independent
+ * of `maxBucketsRun`, and on its own per-SCENARIO schedule (see
+ * `EngineResult.users` in packages/statistics/src/engine.ts). So the two
+ * series — and even two scenarios within `users` — are routinely at
+ * DIFFERENT widths at the same instant. One shared width, or one flag
+ * derived from only one of the series, would be a false statement about
+ * whichever series didn't just coalesce. Each series' width is therefore
+ * read from the statistics engine's own authoritative field
+ * (`series` / `users` entries' `bucketWidthMs`) rather than inferred from
+ * gaps between offsets — inference is wrong on a sparse series (a small gap
+ * between two occupied buckets is not necessarily the true width) and both
+ * mis-scales downstream rate math and fires spurious replacements when the
+ * inferred value drifts without any real coalesce.
+ *
+ * ═══ WHY `users` HAS NO CURSOR ═══
+ * `users` is sent WHOLE on every tick, never filtered by a since-cursor.
+ * Three reasons: it is bounded by `maxBucketsUsers` regardless of run
+ * length, so a whole copy is never large; `UserSeries` gap-fills every
+ * bucket across a standing-concurrency plateau, so it is dense rather than
+ * sparse and cheap to resend; and it materialises that plateau only up to
+ * the last user EVENT, so during a steady phase it lags the response-time
+ * series and then fills in BEHIND wherever a shared cursor would have
+ * settled — a cursor-based filter drops that catch-up permanently rather
+ * than merely delaying it. Sending the whole series removes the failure
+ * mode instead of chasing it.
  */
 export function buildDelta(
   runId: string,
@@ -62,18 +99,16 @@ export function buildDelta(
   // matching comment on `#runResponseSeries` in packages/statistics/src/engine.ts.
   const runSeries = result.series.get('run  response_time');
   const buckets = runSeries?.buckets ?? [];
-
-  // The width this SNAPSHOT's buckets were coalesced to. `|| 1000` is belt
-  // and suspenders: inferBucketWidthMs already falls back to 1000 when there
-  // are fewer than two buckets to measure a gap between.
-  const bucketWidthMs = inferBucketWidthMs(buckets.map((b) => b.startOffsetMs)) || 1000;
+  // AUTHORITATIVE: the BucketSeries' own width, never inferred. See "WHY THE
+  // RESPONSE-TIME AND USERS SERIES EACH GET THEIR OWN WIDTH" above.
+  const responseWidthMs = runSeries?.bucketWidthMs ?? 1000;
 
   // See "THE COALESCE RULE" above.
-  const replacesSeries = bucketWidthMs !== prev.lastBucketWidthMs;
-  const since = replacesSeries ? -1 : prev.lastPublishedOffsetMs;
+  const replaces = responseWidthMs !== prev.lastBucketWidthMs;
+  const since = replaces ? -1 : prev.lastPublishedOffsetMs;
 
   const freshBuckets = buckets.filter((b) => b.startOffsetMs > since);
-  const responseTime: LiveSeriesBucket[] = freshBuckets.map((b) => ({
+  const responseTimeBuckets: LiveDelta['responseTime']['buckets'] = freshBuckets.map((b) => ({
     startOffsetMs: b.startOffsetMs,
     startedCount: b.startedCount,
     endedCount: b.endedCount,
@@ -100,9 +135,8 @@ export function buildDelta(
   // each offset, not the largest single-scenario peak -- the same rule
   // UsersResponse's `total` series applies in apps/api/src/metrics/parity.controller.ts
   // ("Gatling's own 'All users' series is exactly this sum"). Built from the
-  // whole snapshot, not from `freshBuckets`/`since`: this is a cumulative
-  // run-so-far summary field, like `summary.count` and `summary.durationMs`
-  // beside it, not a per-tick delta.
+  // whole snapshot: this is a cumulative run-so-far summary field, like
+  // `summary.count` and `summary.durationMs` beside it, not a per-tick delta.
   const concurrencyByOffset = new Map<number, number>();
   for (const { buckets: userBuckets } of result.users) {
     for (const b of userBuckets) {
@@ -111,23 +145,27 @@ export function buildDelta(
   }
   const maxUsers = concurrencyByOffset.size === 0 ? 0 : Math.max(...concurrencyByOffset.values());
 
-  // Flattened per-scenario buckets, filtered by the SAME cursor as the
-  // response-time series: `startOffsetMs` is a real millisecond offset from
-  // run start regardless of which series produced it, so "past the cursor"
-  // means the same thing here as it does above, even though the user series
-  // coalesces independently (its own `maxBucketsUsers` cap) and so is not
-  // guaranteed to share a width with the response-time series.
-  const users: LiveDelta['users'] = result.users.flatMap(({ scenario, buckets: userBuckets }) =>
-    userBuckets
-      .filter((b) => b.startOffsetMs > since)
-      .map((b) => ({ scenario, startOffsetMs: b.startOffsetMs, active: b.maxConcurrent })),
+  // The users envelope's OWN width. Each scenario carries its own
+  // `bucketWidthMs` (they coalesce independently, see above), and the wire
+  // shape has one `widthMs` for the whole envelope -- so scenarios agreeing
+  // is an assumption, not a guarantee. Picking the COARSEST (max) of the
+  // per-scenario widths present is the conservative choice: it never
+  // understates the true window a bucket spans. In every fixture this
+  // project ships, all scenarios stay well under `maxBucketsUsers` and never
+  // coalesce, so they agree in practice; a run large enough for scenarios to
+  // disagree is untested territory this comment flags rather than hides.
+  const usersWidthMs =
+    result.users.length === 0 ? 1000 : Math.max(...result.users.map((u) => u.bucketWidthMs));
+
+  // WHOLE, not filtered by `since` -- see "WHY `users` HAS NO CURSOR" above.
+  const usersBuckets: LiveDelta['users']['buckets'] = result.users.flatMap(
+    ({ scenario, buckets: userBuckets }) =>
+      userBuckets.map((b) => ({ scenario, startOffsetMs: b.startOffsetMs, active: b.maxConcurrent })),
   );
 
   const delta: LiveDelta = {
     runId,
     seq: prev.seq,
-    bucketWidthMs,
-    replacesSeries,
     summary: {
       count: runStat?.count ?? 0,
       okCount: runStat?.okCount ?? 0,
@@ -137,14 +175,21 @@ export function buildDelta(
       maxUsers,
       durationMs: result.durationMs,
     },
-    responseTime,
-    users,
+    responseTime: {
+      widthMs: responseWidthMs,
+      replaces,
+      buckets: responseTimeBuckets,
+    },
+    users: {
+      widthMs: usersWidthMs,
+      buckets: usersBuckets,
+    },
   };
 
   const next: DeltaCursor = {
     seq: prev.seq + 1,
     lastPublishedOffsetMs,
-    lastBucketWidthMs: bucketWidthMs,
+    lastBucketWidthMs: responseWidthMs,
   };
 
   return { delta, next };
