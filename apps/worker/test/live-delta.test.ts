@@ -38,13 +38,13 @@ describe('buildDelta', () => {
 
     expect(second.delta.seq).toBe(1);
     const firstMax = Math.max(...first.delta.responseTime.buckets.map((b) => b.startOffsetMs));
-    // At or past, not strictly past: the frontier bucket is upserted, so it
-    // may legitimately reappear with a corrected count.
-    for (const b of second.delta.responseTime.buckets) expect(b.startOffsetMs).toBeGreaterThanOrEqual(firstMax);
-    // And it is not merely allowed to reappear -- it actually does, which is
-    // the whole point of upserting rather than appending. Without this
-    // assertion the test above would pass just as well under the OLD,
-    // strictly-greater filter.
+    // The frontier bucket is upserted, so it must reappear with a (possibly
+    // corrected) count. This is deliberately NOT "every bucket is >=
+    // firstMax": the lookback window (see the dedicated case below) can
+    // legitimately re-send buckets OLDER than the prior frontier too, when
+    // the run has shown a response time spanning more than one bucket
+    // width. Without this assertion the case would pass just as well under
+    // the OLD, strictly-greater filter.
     expect(second.delta.responseTime.buckets.some((b) => b.startOffsetMs === firstMax)).toBe(true);
   });
 
@@ -188,6 +188,53 @@ describe('buildDelta', () => {
     // reduction picked the minimum.
     for (const b of delta.users.buckets) {
       expect(b.startOffsetMs % delta.users.widthMs).toBe(0);
+    }
+  });
+
+  it('re-emits a response-time bucket whose count grew, even when it is behind the frontier', () => {
+    // engine.ts folds a request into BOTH its start and end bucket, and the
+    // tool's log is end-time-ordered -- so a slow request's start-edge
+    // bucket can still be behind the cursor by the time that request's own
+    // (end-time-positioned) log line is processed. Split the real fixture
+    // in half exactly like the upsert case above; the reference log's own
+    // response times (p99 > 2400ms against 1000ms buckets, per the design
+    // doc) are enough to reproduce this without any synthetic data.
+    const all = events();
+    const half = Math.floor(all.length / 2);
+
+    const engine = new LiveEngine();
+    for (const e of all.slice(0, half)) engine.add(e);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+
+    for (const e of all.slice(half)) engine.add(e);
+    const secondSnapshot = engine.snapshot({ clone: true });
+    const second = buildDelta('r1', secondSnapshot, first.next);
+
+    const firstByOffset = new Map(first.delta.responseTime.buckets.map((b) => [b.startOffsetMs, b]));
+    const secondOffsets = new Set(second.delta.responseTime.buckets.map((b) => b.startOffsetMs));
+
+    const finalRunSeries = secondSnapshot.series.get('run  response_time');
+    if (!finalRunSeries) throw new Error('fixture produced no run-scope response-time series');
+
+    // Buckets the FIRST delta already reported, where the FINAL truth
+    // (`secondSnapshot`) now disagrees -- i.e. a bucket that kept
+    // accumulating startedCount after it was first published. Derived from
+    // the payload, not written down: if the fixture has none, this case
+    // cannot exercise the hazard, so it fails loudly here rather than
+    // passing vacuously below.
+    const changedOffsets = finalRunSeries.buckets
+      .filter((b) => {
+        const reported = firstByOffset.get(b.startOffsetMs);
+        return reported !== undefined && reported.startedCount !== b.startedCount;
+      })
+      .map((b) => b.startOffsetMs);
+    expect(changedOffsets.length).toBeGreaterThan(0);
+
+    // Every one of them must be re-sent on the second tick. Under a
+    // frontier-only window (`>= since`, no lookback) this fails for any
+    // offset behind `first`'s own frontier.
+    for (const offset of changedOffsets) {
+      expect(secondOffsets.has(offset)).toBe(true);
     }
   });
 });

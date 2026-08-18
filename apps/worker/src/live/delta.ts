@@ -74,6 +74,32 @@ export const INITIAL_CURSOR: DeltaCursor = {
  * a re-sent bucket overwrites its own prior, more-partial value instead of
  * duplicating a row.
  *
+ * ═══ LOOKBACK: THE FRONTIER IS NOT THE ONLY BUCKET STILL FILLING ═══
+ * `engine.ts` folds a request into BOTH its start bucket and its end bucket
+ * (see the request branch of `LiveEngine#add`), and the tool's log is
+ * ordered by END time. So a request whose duration exceeds one bucket width
+ * can increment `startedCount` on a bucket that is ALREADY BEHIND the
+ * frontier by the time that request's log line is finally processed — a
+ * fast neighbor with a similar end time but a much later start time can
+ * advance the frontier past a slow request's start bucket before that slow
+ * request's own line (positioned by ITS end time) is even read. `>= since`
+ * alone only re-visits the bucket AT the frontier, so it never catches this:
+ * requests/s on that earlier bucket is undercounted forever. Not
+ * hypothetical for this project — the reference fixture's own p99 exceeds
+ * 2400ms against 1000ms buckets, more than two bucket-widths of possible
+ * lag.
+ *
+ * So the re-send window is a LOOKBACK, not just the frontier: buckets are
+ * emitted from `since - lookbackMs` onward, where `lookbackMs` is derived
+ * from `maxMs` on the run-scope rollup — the slowest response the run has
+ * shown SO FAR — rounded UP to a whole number of bucket-widths so the
+ * lookback always reaches as far back as a max-latency request's start edge
+ * could land. Self-scaling by what the run has actually demonstrated, not a
+ * guessed constant, and bounded: `ceil(maxMs / widthMs)` extra buckets
+ * re-sent per tick, one per bucket-width of observed tail latency. Upsert
+ * (above) is what makes re-sending them safe: each is a correction, not a
+ * duplicate.
+ *
  * ═══ WHY THE RESPONSE-TIME AND USERS SERIES EACH GET THEIR OWN WIDTH ═══
  * `UserSeries` coalesces against its own `maxBucketsUsers` cap, independent
  * of `maxBucketsRun`, and on its own per-SCENARIO schedule (see
@@ -116,15 +142,23 @@ export function buildDelta(
   // AUTHORITATIVE: the BucketSeries' own width, never inferred. See "WHY THE
   // RESPONSE-TIME AND USERS SERIES EACH GET THEIR OWN WIDTH" above.
   const responseWidthMs = runSeries?.bucketWidthMs ?? 1000;
+  const runStat = result.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
 
   // See "THE COALESCE RULE" above.
   const replaces = responseWidthMs !== prev.lastBucketWidthMs;
   const since = replaces ? -1 : prev.lastPublishedOffsetMs;
 
-  // `>=`, not `>` -- see "UPSERT, NOT APPEND" above. The bucket AT `since`
-  // (the previous tick's frontier) is deliberately re-included so the
-  // consumer can correct it, not just the buckets strictly newer than it.
-  const freshBuckets = buckets.filter((b) => b.startOffsetMs >= since);
+  // See "LOOKBACK: THE FRONTIER IS NOT THE ONLY BUCKET STILL FILLING" above.
+  // `maxMs` is 0 before any response has been observed, which makes
+  // `lookbackMs` 0 too -- no lookback with nothing yet to look back for.
+  const maxMs = runStat?.maxMs ?? 0;
+  const lookbackMs = Math.ceil(maxMs / responseWidthMs) * responseWidthMs;
+  const emitFloor = since - lookbackMs;
+
+  // `>=`, not `>` -- see "UPSERT, NOT APPEND" above. `emitFloor`, not
+  // `since` -- see "LOOKBACK" above: the bucket AT `since` is not the only
+  // one that may still need correcting.
+  const freshBuckets = buckets.filter((b) => b.startOffsetMs >= emitFloor);
   const responseTimeBuckets: LiveDelta['responseTime']['buckets'] = freshBuckets.map((b) => ({
     startOffsetMs: b.startOffsetMs,
     startedCount: b.startedCount,
@@ -139,14 +173,19 @@ export function buildDelta(
   // received an observation (BucketSeries only materialises a bucket on its
   // first `add`). Taking the snapshot's max in that case would set the
   // cursor past a bucket that was never sent, and that bucket would then
-  // never be sent -- even under upsert semantics `>= since` only reaches
-  // buckets already in the snapshot, so a cursor set past one that never
-  // existed would keep excluding it forever, exactly as under `>`. When
-  // nothing fresh was emitted this tick, the cursor simply does not move.
+  // never be sent -- even under upsert semantics this only reaches buckets
+  // already in the snapshot, so a cursor set past one that never existed
+  // would keep excluding it forever. When nothing fresh was emitted this
+  // tick, the cursor simply does not move.
+  //
+  // Falls back to `since`, the true (non-widened) frontier, NOT `emitFloor`:
+  // the lookback widens what gets RE-SENT, it does not change what counts as
+  // the newest bucket actually seen. Using `emitFloor` here would make the
+  // cursor retreat every tick that had a lookback, and the lookback would
+  // then grow without bound instead of covering a fixed multiple of the
+  // observed tail.
   const lastPublishedOffsetMs =
     freshBuckets.length > 0 ? Math.max(...freshBuckets.map((b) => b.startOffsetMs)) : since;
-
-  const runStat = result.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
 
   // Peak concurrent users across the whole run so far. Scenarios run
   // concurrently, so the run's own peak is the per-scenario PEAKS SUMMED at
