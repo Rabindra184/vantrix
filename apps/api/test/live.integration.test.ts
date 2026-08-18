@@ -676,6 +676,55 @@ describe('live streaming', () => {
     }
   });
 
+  /**
+   * Design §1.2 as amended: `live:closed` is the one API-side channel that
+   * is not an optimisation. `close()` enqueues the terminal parse
+   * immediately, and `PipelineService` needs the same advisory lock the
+   * fold owner still holds -- with only BullMQ's ~6 s of retries to wait it
+   * out, against a release latency of one tick interval plus an unbounded
+   * in-flight tick. Without the ping the run lands at `parsing` and stays
+   * there until the sweeper's 15-minute window.
+   *
+   * The negative half is a close that does NOT claim: `claimForClose` is a
+   * CAS off `running`, so a second close for the same run cannot match, and
+   * the ping must be conditioned on the claim rather than on the request
+   * arriving. Publishing on the 409 path would tell the owner to release a
+   * lock it may have re-taken for an entirely different reason.
+   */
+  it('pings live:closed when a close claims the run, and not when it 409s', async () => {
+    ctx = await createTestApp();
+    const sub = new Redis(REDIS_URL);
+    const pings: string[] = [];
+    await sub.subscribe('live:closed');
+    sub.on('message', (_channel, message: string) => pings.push(message));
+
+    try {
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+      await stream(ctx.streamToken, runId, 0, Buffer.from('some bytes'));
+
+      // 202, not 200: nothing drains the BullMQ queue in this test process,
+      // so the run is still `parsing` when the terminal wait times out (the
+      // same reason this file lowers INGEST_WAIT_MS -- see its note above).
+      // The ping is published at `claimForClose`, well before that wait, so
+      // it does not depend on which of the two this answers.
+      const closed = await close(ctx.streamToken, runId);
+      expect(closed.status).toBe(202);
+      await vi.waitFor(() => expect(pings).toContain(runId));
+
+      // Second close: claimForClose can no longer match, so no second ping.
+      // No event to wait for on the negative side, so this gives pub/sub
+      // delivery a generous window before asserting its absence.
+      const before = pings.length;
+      const again = await close(ctx.streamToken, runId);
+      expect(again.status).toBe(409);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(pings.length).toBe(before);
+    } finally {
+      await sub.quit();
+    }
+  });
+
   it('does not ping live:advance for a replayed (behind-the-cursor) chunk', async () => {
     // A replay is also `kind: 'accepted'` (LiveService.stream's own
     // docstring), so this is a DIFFERENT negative case from the gap above --

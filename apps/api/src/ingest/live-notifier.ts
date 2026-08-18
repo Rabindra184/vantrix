@@ -24,9 +24,20 @@ import { Redis } from 'ioredis';
  * A dropped or undelivered message is harmless. Redis pub/sub has no
  * persistence: a message published while every worker is down (or between
  * deploys) reaches nobody. The fold owner's tick polls `running` runs
- * regardless of either channel, and that poll is NOT redundant -- see its
- * own docstring in `fold-owner.ts`. Both channels here are optimisations
- * over that poll, never replacements for it.
+ * regardless of any of these channels, and that poll is NOT redundant --
+ * see its own docstring in `fold-owner.ts`.
+ *
+ * TWO OF THE THREE CHANNELS ARE OPTIMISATIONS; `live:closed` IS NOT.
+ * `opened` and `advanced` only buy latency -- the poll finds an unclaimed
+ * run and a claimed run's new bytes on its own schedule regardless. Design
+ * §1.2, as amended, is explicit that the CLOSE path is incorrect without
+ * its channel: `close()` enqueues the pipeline immediately, the pipeline
+ * takes the same advisory lock the fold owner is still holding, and its
+ * whole retry budget (BullMQ's three attempts on exponential backoff from
+ * 2 s -- about 6 s) is shorter than the owner's own release latency, which
+ * is `liveTickMs` plus an unbounded in-flight tick. Exhausting those
+ * attempts strands the run at `parsing` until `parsingStaleAfterMs` -- 15
+ * minutes. See `closed`'s own doc comment.
  */
 @Injectable()
 export class LiveNotifier implements OnModuleDestroy {
@@ -61,6 +72,35 @@ export class LiveNotifier implements OnModuleDestroy {
    */
   advanced(runId: string): void {
     void this.#redis.publish('live:advance', runId).catch(() => {});
+  }
+
+  /**
+   * A run's `close()` has claimed it off `running`. Tells the fold owner to
+   * release its advisory lock NOW rather than on its next tick.
+   *
+   * NOT AN OPTIMISATION, unlike the two channels above -- design §1.2 as
+   * amended. `close()` enqueues the terminal parse moments after this call,
+   * and `PipelineService.process` takes the SAME advisory lock this owner
+   * still holds (§1.1 reuses the namespace deliberately, so a run can never
+   * be folded and parsed at once). The pipeline's whole budget for waiting
+   * that out is BullMQ's three attempts on exponential backoff from 2 s --
+   * roughly 6 s. The owner's own release latency is `liveTickMs` plus the
+   * duration of whatever tick is in flight, and that duration is unbounded:
+   * one tick folds and publishes up to `maxOwnedRuns` runs sequentially.
+   * Raising `LIVE_TICK_MS` at all, or one slow tick at the defaults, burns
+   * all three attempts -- and the run then sits at `parsing` until the
+   * sweeper's `parsingStaleAfterMs` (15 minutes) re-enqueues it. A live
+   * run's worst-case time to verdict becomes a quarter of an hour,
+   * silently.
+   *
+   * A DROPPED MESSAGE IS STILL COVERED, which is why this being
+   * load-bearing does not make it a single point of failure: the tick's
+   * release pass drops any owned run whose status has left `running`
+   * regardless. This channel removes the LATENCY of that pass, and the
+   * latency is the whole defect.
+   */
+  closed(runId: string): void {
+    void this.#redis.publish('live:closed', runId).catch(() => {});
   }
 
   async onModuleDestroy(): Promise<void> {

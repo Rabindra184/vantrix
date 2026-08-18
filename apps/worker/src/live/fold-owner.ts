@@ -89,17 +89,25 @@ const WATCHDOG_STUCK_MULTIPLIER = 6;
  * run's fold for the same tick, never interleaved with it, so every delta
  * describes a whole number of decoded records.
  *
- * DISCOVERY IS THE TICK'S OWN POLL PLUS TWO REDIS PINGS, NEVER THE PINGS
+ * DISCOVERY IS THE TICK'S OWN POLL PLUS THREE REDIS PINGS, NEVER THE PINGS
  * ALONE (design §1.2). `LiveNotifier` (`apps/api/src/ingest/live-notifier.ts`)
- * publishes `live:opened` when a run is created and `live:advance` after a
- * chunk is durably accepted; `listen()` subscribes this owner to both and
- * `#onOpened`/`#onAdvance` react. Either message can be dropped -- Redis
- * pub/sub has no persistence, and a message published while every worker is
- * down (a deploy, an outage) reaches nobody -- so `#doTick`'s poll of
- * `WHERE status = 'running'` keeps running on its own schedule regardless of
- * whether either ping ever arrives. The pings are strictly an optimisation
- * over that poll: they lower claim and fold latency when they land, and
- * change nothing about correctness when they do not.
+ * publishes `live:opened` when a run is created, `live:advance` after a
+ * chunk is durably accepted, and `live:closed` when `close()` claims a run
+ * off `running`; `listen()` subscribes this owner to all three and
+ * `#onOpened`/`#onAdvance`/`#onClosed` react. Any message can be dropped --
+ * Redis pub/sub has no persistence, and a message published while every
+ * worker is down (a deploy, an outage) reaches nobody -- so `#doTick`'s poll
+ * of `WHERE status = 'running'` keeps running on its own schedule
+ * regardless of whether any ping ever arrives, and its release pass drops
+ * any owned run that has left `running` regardless of whether `live:closed`
+ * arrived.
+ *
+ * TWO OF THE THREE ARE OPTIMISATIONS AND ONE IS NOT. `live:opened` and
+ * `live:advance` only lower latency; the poll finds both cases on its own.
+ * `live:closed` removes a latency that is itself the defect -- see
+ * `#onClosed`'s own doc comment for why the close path is incorrect without
+ * it, and why that is still compatible with a dropped message being
+ * survivable.
  */
 export class LiveFoldOwner {
   readonly #config: WorkerConfig;
@@ -197,6 +205,31 @@ export class LiveFoldOwner {
    */
   readonly #claiming = new Set<string>();
   /**
+   * Run ids `#onClosed` has released since the CURRENT tick's poll ran, so
+   * that tick's claim loop does not immediately re-claim them from its own
+   * now-stale snapshot.
+   *
+   * A real window, not a theoretical one. `#doTick` polls once, releases
+   * runs missing from that snapshot, then claims runs in it that are not
+   * owned -- and both loops `await` per run, so a `live:closed` ping can be
+   * delivered BETWEEN them. The release pass has already passed over that
+   * run (it was still `running` when the poll ran), `#onClosed` then deletes
+   * it from `#owned`, and the claim loop finds an id that is in
+   * `runningIds` and not owned: it claims it straight back, and holds the
+   * lock until the NEXT tick's release pass. That is exactly the
+   * `liveTickMs`-plus-a-tick latency `live:closed` exists to remove,
+   * reintroduced by the tick that was running when it arrived.
+   *
+   * Cleared at the TOP of `#doTick`, before the poll query, which is what
+   * bounds it. A ping delivered before that clear had its `claimForClose`
+   * COMMIT before it too, so the poll immediately after already sees
+   * `parsing` and the id never enters `runningIds` at all -- nothing is
+   * lost by forgetting it. A ping delivered after the clear is in the set
+   * for the rest of that tick, which is precisely the span the stale
+   * snapshot covers.
+   */
+  readonly #recentlyClosed = new Set<string>();
+  /**
    * Guards `tick()` against overlapping with itself. `main.ts` drives it from
    * a `setInterval` in the same shape it already uses for the sweeper's
    * timer -- fire-and-forget, never awaiting the previous call -- and design
@@ -254,6 +287,8 @@ export class LiveFoldOwner {
         void this.#guarded('claim (ping)', message, () => this.#onOpened(message));
       } else if (channel === 'live:advance') {
         void this.#guarded('fold (ping)', message, () => this.#onAdvance(message));
+      } else if (channel === 'live:closed') {
+        void this.#guarded('release (ping)', message, () => this.#onClosed(message));
       }
     });
   }
@@ -273,7 +308,7 @@ export class LiveFoldOwner {
    * scheduled tick instead of immediately.
    */
   async listen(): Promise<void> {
-    await this.#sub.subscribe('live:opened', 'live:advance');
+    await this.#sub.subscribe('live:opened', 'live:advance', 'live:closed');
   }
 
   /**
@@ -350,6 +385,52 @@ export class LiveFoldOwner {
     const state = this.#owned.get(runId);
     if (!state) return;
     await this.#foldOnce(runId, state);
+  }
+
+  /**
+   * Reacts to `live:closed` (design §1.2, as amended): a run's `close()`
+   * has claimed it off `running`, so release its advisory lock NOW instead
+   * of on the next tick's release pass.
+   *
+   * THIS CHANNEL IS NOT AN OPTIMISATION, and that is the amendment's own
+   * wording. `LiveService.close()` enqueues the terminal parse moments
+   * after publishing this, and `PipelineService.process` takes the SAME
+   * advisory lock this owner is still holding -- §1.1 reuses the namespace
+   * deliberately, precisely so a run cannot be folded and parsed at once.
+   * The pipeline's entire budget for waiting that out is BullMQ's three
+   * attempts on exponential backoff from 2 s: about 6 s. This owner's
+   * release latency without this handler is `liveTickMs` PLUS the duration
+   * of whatever tick is in flight, and that duration is unbounded -- one
+   * tick folds and publishes up to `maxOwnedRuns` runs sequentially. Raise
+   * `LIVE_TICK_MS` at all, or have one slow tick at the defaults, and all
+   * three attempts are gone; the run then sits at `parsing` until the
+   * sweeper's `parsingStaleAfterMs` (15 minutes) re-enqueues it.
+   *
+   * A DROPPED MESSAGE IS STILL SURVIVABLE, so "not an optimisation" does
+   * not make this a single point of failure. `#doTick`'s release pass drops
+   * any owned run whose status has left `running` regardless of whether
+   * this ping ever arrived. What this removes is the LATENCY of that pass,
+   * and the latency is the whole defect.
+   *
+   * Records the id in `#recentlyClosed` UNCONDITIONALLY, before the
+   * ownership check -- see that field's own doc comment. An in-flight
+   * `#doTick` holds a `runningIds` snapshot taken before this run left
+   * `running`, and its claim loop would otherwise re-claim the run this
+   * handler just released (or claim, for the first time, one this owner
+   * never held).
+   *
+   * Releasing while a `#fold` for the same run is in flight is safe and
+   * already accounted for: `#fold` never touches `state.client`, and a
+   * `readFrom` racing the `finalize` that `close()` is running right now
+   * throws (`LiveChunkGapError`, or a deleted key's `get`) into the
+   * `#guarded` wrapper that already surrounds every fold. `close()`'s own
+   * doc comment documents that same pairing for shutdown.
+   */
+  async #onClosed(runId: string): Promise<void> {
+    if (this.#closing) return;
+    this.#recentlyClosed.add(runId);
+    if (!this.#owned.has(runId)) return;
+    await this.#release(runId);
   }
 
   /**
@@ -461,6 +542,12 @@ export class LiveFoldOwner {
   }
 
   async #doTick(): Promise<void> {
+    // Cleared BEFORE the query, never after -- see `#recentlyClosed`'s own
+    // doc comment. Anything it held was published (and therefore committed)
+    // before this line, so the poll one statement later already sees the
+    // new status; anything added from here on is guarding against exactly
+    // the snapshot this query is about to take.
+    this.#recentlyClosed.clear();
     const { rows } = await this.#pool.query<{ id: string }>(
       "SELECT id FROM run WHERE status = 'running'",
     );
@@ -484,6 +571,10 @@ export class LiveFoldOwner {
     let skippedForCap = 0;
     for (const runId of runningIds) {
       if (this.#owned.has(runId)) continue;
+      // A `live:closed` ping landed for this run after the poll above:
+      // `runningIds` is stale for it, and claiming it now would re-take
+      // the lock the pipeline is waiting on.
+      if (this.#recentlyClosed.has(runId)) continue;
       // `#atCap()`, not a bare `#owned.size` comparison: a `live:opened`
       // ping's own `#claim` can be in flight right now, holding a
       // reservation this loop must respect or double-count against.

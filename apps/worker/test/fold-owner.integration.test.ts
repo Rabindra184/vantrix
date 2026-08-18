@@ -1237,6 +1237,135 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
+   * Design §1.2 as amended: `live:closed` is the one API-side channel that
+   * is NOT an optimisation.
+   *
+   * `LiveService.close()` claims the run off `running` and enqueues the
+   * terminal parse moments later, and `PipelineService.process` needs the
+   * SAME advisory lock this owner holds. The pipeline's whole budget is
+   * BullMQ's three attempts on exponential backoff from 2 s -- about 6 s --
+   * while the owner's release latency without this channel is `liveTickMs`
+   * plus an unbounded in-flight tick. When that budget runs out the run
+   * sits at `parsing` until the sweeper's 15-minute window.
+   *
+   * So the assertion is not merely "eventually released": it is released
+   * WITHOUT A TICK. `owner.tick()` is called exactly once here, to claim,
+   * and never again -- if the ping did nothing, `snapshotOf` would stay
+   * non-null forever and this case would time out rather than pass late.
+   *
+   * The status UPDATE stands in for `claimForClose`, which is all the owner
+   * can observe of it, and it is done BEFORE the ping for the same reason
+   * the real `close()` publishes only after its CAS commits.
+   */
+  it('releases an owned run immediately on a live:closed ping, without waiting for a tick', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+      await owner.tick();
+      expect(owner.snapshotOf(runId)).not.toBeNull();
+
+      await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [runId]);
+      await publisher.publish('live:closed', runId);
+
+      await vi.waitFor(() => expect(owner.snapshotOf(runId)).toBeNull());
+
+      // Dropping the FoldState is not the point -- freeing the lock is, and
+      // it is what the pipeline is actually blocked on. Asserted from a
+      // different session, since the releasing session's own try-lock would
+      // succeed re-entrantly whether or not the lock was ever dropped.
+      const observer = await pool.connect();
+      try {
+        const { rows } = await observer.query<{ got: boolean }>(
+          'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+          [RUN_INGEST_LOCK_NAMESPACE, runId],
+        );
+        expect(rows[0]?.got).toBe(true);
+      } finally {
+        await observer.query('SELECT pg_advisory_unlock_all()');
+        observer.release();
+      }
+    } finally {
+      await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * The other half of `live:closed`: a tick ALREADY IN FLIGHT when the ping
+   * lands must not undo it.
+   *
+   * `#doTick` polls once, releases runs missing from that snapshot, then
+   * claims runs in it that are not owned -- and both loops await per run,
+   * so a ping can be delivered between them. Without `#recentlyClosed` the
+   * claim loop finds an id that is in its now-stale `runningIds` and no
+   * longer in `#owned`, and takes the lock straight back, holding it until
+   * the NEXT tick's release pass. That is exactly the latency this channel
+   * exists to remove, reintroduced by whichever tick happened to be
+   * running -- and it would show up as `live:closed` "working" in every
+   * test that pings an idle owner and failing only under load.
+   *
+   * Staged deterministically rather than by racing: the discovery query is
+   * intercepted so that the ping is published, and provably HANDLED, after
+   * the poll's rows are read and before `#doTick` resumes. The row is left
+   * at `running` throughout, which is the entire point -- `runningIds` must
+   * contain the id, or there is no stale snapshot to guard against.
+   */
+  it('a live:closed ping is not undone by the claim loop of a tick already in flight', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+      await owner.tick();
+      expect(owner.snapshotOf(runId)).not.toBeNull();
+
+      // Intercepts the SECOND tick's discovery query only: run the real
+      // query first (so the rows genuinely say 'running'), then deliver the
+      // ping and wait until the release has actually happened, and only
+      // then let #doTick resume into its release/claim loops.
+      const realQuery = pool.query.bind(pool);
+      let intercepted = false;
+      vi.spyOn(pool, 'query').mockImplementation(((...args: unknown[]) => {
+        const [text] = args;
+        const isDiscovery = typeof text === 'string' && text.includes("status = 'running'");
+        if (!isDiscovery || intercepted) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#query's own overloaded signature verbatim
+          return (realQuery as any)(...args);
+        }
+        intercepted = true;
+        return (async () => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#query's own overloaded signature verbatim
+          const result = await (realQuery as any)(...args);
+          await publisher.publish('live:closed', runId);
+          await vi.waitFor(() => expect(owner.snapshotOf(runId)).toBeNull());
+          return result;
+        })();
+      }) as typeof pool.query);
+
+      await owner.tick();
+
+      // Still released. The claim loop saw this id in its snapshot, saw it
+      // unowned, and declined it anyway.
+      expect(owner.snapshotOf(runId)).toBeNull();
+      expect(intercepted).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+      await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
    * The negative half of the pair above -- "fold that run IF OWNED" (design
    * §2.3) is a conditional, and this is what proves the condition is
    * actually checked rather than the handler claiming on advance too. If

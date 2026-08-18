@@ -290,6 +290,25 @@ export class LiveService {
     const claimed = await this.runs.claimForClose(runId);
     if (!claimed) return { kind: 'not_running' };
 
+    // HERE, not after `queue.add` below -- design §1.2's `live:closed`. The
+    // fold owner still holds this run's advisory lock, and
+    // `PipelineService.process` needs that same lock the moment the job
+    // below is picked up. Publishing at the claim gives the owner the whole
+    // of `finalize` + `assemble` + hashing + `finalizeLive` as a head start
+    // on releasing it, instead of racing the enqueue.
+    //
+    // Fire-and-forget by signature, like the other two channels: a failure
+    // here must not fail a close that has already committed its CAS, and a
+    // dropped message only costs what this call saves -- the tick's own
+    // release pass still drops a run that has left `running`.
+    //
+    // The `releaseClose` path below can revert this claim on an error
+    // before `committed`. If the owner has already acted on this ping, the
+    // run returns to `running` unowned and the next tick re-claims it,
+    // re-folding from byte 0 -- correct (the fold position is deliberately
+    // not persisted, design §2.1), and it costs CPU on an error path only.
+    this.notifier.closed(runId);
+
     let hasData: boolean;
     // Flips the instant this run's terminal state is durably decided —
     // `finalizeLive` for the normal path, `markIncomplete` for the
