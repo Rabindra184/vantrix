@@ -15,7 +15,9 @@ import { errorsQueryKey, seriesQueryKey, usersQueryKey } from './metrics';
  *
  * It opens `GET /v1/runs/:id/live` when `enabled`, applies every frame to the
  * React Query cache under the SAME keys the REST metric queries use, and
- * reconnects with backoff. The charts are never told any of this happened:
+ * reconnects with backoff on any RETRYABLE close — never on `CLOSE_UNAUTHORIZED`
+ * (4401), which `LiveRunState.unauthorized` surfaces instead of silently
+ * retrying forever. The charts are never told any of this happened:
  * `RunChartsTab`/`RunOverviewTab`/`RunErrorsTab` and everything they render
  * are unmodified by this file, and read whatever is in the cache regardless
  * of whether it arrived over REST or over this socket (design part 1 §4,
@@ -79,6 +81,19 @@ export function backoffDelayMs(attempt: number, random: () => number = Math.rand
  * cost more than the string being written twice.
  */
 const RESUME_PARAM = 'lastSeq';
+
+/**
+ * The gateway's close code for "not authenticated, not a member, or not this
+ * org's run" — see `CLOSE_UNAUTHORIZED` in `live.gateway.ts`. Duplicated for
+ * the same reason `RESUME_PARAM` is: apps/web does not depend on apps/api.
+ *
+ * This is the ONE close code `useLiveRun` treats specially. It is a
+ * permanent condition — reconnecting cannot fix who the caller is — so
+ * scheduling a reconnect for it would retry the same refusal forever, every
+ * ~30s, for as long as the tab stays open, and never tell the caller that
+ * access rather than connectivity is the problem.
+ */
+const CLOSE_UNAUTHORIZED = 4401;
 
 /**
  * `?lastSeq=N` is appended ONLY when `lastSeq` is non-null — a fresh connect
@@ -261,6 +276,16 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
 export interface LiveRunState {
   readonly connected: boolean;
   readonly lastDelta: LiveDelta | null;
+  /**
+   * True once the gateway has refused this run with `CLOSE_UNAUTHORIZED`
+   * (4401) — the session is invalid, or the run belongs to another org.
+   * Permanent for the life of this hook instance: once set, `useLiveRun`
+   * stops reconnecting, because the condition a reconnect would be retrying
+   * is WHO is asking, not whether the socket is up. A caller checks this to
+   * tell "still trying to connect" (`connected: false`, this `false`) apart
+   * from "will not connect, and retrying will not help" (this `true`).
+   */
+  readonly unauthorized: boolean;
 }
 
 /**
@@ -273,9 +298,15 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
   const queryClient = useQueryClient();
   const [connected, setConnected] = useState(false);
   const [lastDelta, setLastDelta] = useState<LiveDelta | null>(null);
+  const [unauthorized, setUnauthorized] = useState(false);
 
   useEffect(() => {
     if (!enabled) return;
+    // A fresh effect run (a new runId, or re-enabling after the caller
+    // turned this off) starts a fresh access decision — carrying a STALE
+    // `true` over from a previous runId would permanently withhold a run
+    // this hook has not even asked the gateway about yet.
+    setUnauthorized(false);
 
     let cancelled = false;
     let socket: WebSocket | null = null;
@@ -314,10 +345,18 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
       // the WebSocket connection" algorithm fires both), so `close` is the
       // one place reconnection needs to live — an `error` with nothing
       // listening is silently dropped by the platform, not thrown.
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         socket = null;
         if (cancelled) return;
         setConnected(false);
+        // CLOSE_UNAUTHORIZED is permanent — see LiveRunState.unauthorized's
+        // own comment. Every other close code (a dropped connection, a
+        // restarting pod, CLOSE_TOO_FAR_BEHIND) is retryable, so it alone
+        // skips the backoff schedule below instead of joining it.
+        if (event.code === CLOSE_UNAUTHORIZED) {
+          setUnauthorized(true);
+          return;
+        }
         const delay = backoffDelayMs(attempt);
         attempt += 1;
         reconnectTimer = setTimeout(connect, delay);
@@ -343,5 +382,5 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
     };
   }, [runId, enabled, queryClient]);
 
-  return { connected, lastDelta };
+  return { connected, lastDelta, unauthorized };
 }

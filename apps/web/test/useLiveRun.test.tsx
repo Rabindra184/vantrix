@@ -373,6 +373,45 @@ describe('useLiveRun', () => {
     expect(server.connections).toHaveLength(1);
   });
 
+  it('does not reconnect after a 4401 close, and surfaces it as unauthorized', async () => {
+    const client = new QueryClient();
+    const { result } = renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+    await flush();
+    expect(result.current.unauthorized).toBe(false);
+
+    // CLOSE_UNAUTHORIZED (live.gateway.ts) — the session is invalid, or the
+    // run belongs to another org. Permanent: no reconnect can fix WHO is
+    // asking.
+    act(() => lastConnection().close(4401));
+    expect(result.current.connected).toBe(false);
+    expect(result.current.unauthorized).toBe(true);
+
+    // Advancing well past the maximum possible backoff proves no reconnect
+    // was merely delayed — retrying this close code forever, every ~30s, for
+    // as long as the tab stays open, is exactly the bug this fix closes.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_BACKOFF_MS + 1);
+    });
+    expect(server.connections).toHaveLength(1);
+  });
+
+  it('still reconnects after an ordinary close, and does not report unauthorized', async () => {
+    const client = new QueryClient();
+    const { result } = renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+    await flush();
+
+    // 1006 (abnormal closure) — the code a real dropped connection or a
+    // restarting pod produces, and the transient counterpart to 4401 above.
+    act(() => lastConnection().close(1006));
+    expect(result.current.unauthorized).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_BACKOFF_MS + 1);
+    });
+    expect(server.connections).toHaveLength(2);
+    expect(result.current.unauthorized).toBe(false);
+  });
+
   it('reconnects using the SNAPSHOT FRAME lastSeq, never a delta.seq', async () => {
     const client = new QueryClient();
     renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
