@@ -1,0 +1,200 @@
+import { StreamingLogDecoder } from '@perfportal/plugin-gatling';
+import { LiveEngine, type EngineResult } from '@perfportal/statistics';
+import type { LiveChunkStore } from '@perfportal/storage';
+import type pg from 'pg';
+import type { WorkerConfig } from '../config.js';
+import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
+
+/**
+ * Everything one owned run needs to keep folding, held for as long as this
+ * process owns the run. See the design doc's §2.1 for the authoritative
+ * shape; `lastSeq` / `lastPublishedOffsetMs` / `lastBucketWidthMs` are not
+ * here yet because this task does not publish — Task 5 adds the delta
+ * cursor alongside Redis.
+ */
+interface FoldState {
+  decoder: StreamingLogDecoder;
+  engine: LiveEngine;
+  /** Holds the advisory lock for `runId`. Taken and released on THIS client,
+   * never a different one drawn from the pool -- see `#claim` and
+   * `#release`. */
+  client: pg.PoolClient;
+  /**
+   * The FETCH FRONTIER, not the decode position -- the highest byte this
+   * owner has already retrieved from `LiveChunkStore`, and exactly what
+   * `readFrom`'s `offset` argument expects.
+   *
+   * THIS IS NOT `decoder.consumedBytes`. `consumedBytes` is the last WHOLE
+   * RECORD boundary, which routinely sits *behind* the last byte fetched --
+   * a record straddling a chunk boundary leaves a partial tail the decoder
+   * buffers and reports as unconsumed. `readFrom` selects every chunk whose
+   * START is at or past its argument, so handing it `consumedBytes` would
+   * re-select chunks already delivered; the decoder splices them in again
+   * after the tail it correctly retained, and every absolute position from
+   * there on is silently wrong for the rest of the run. See design §2.2.1.
+   *
+   * Advancing by `bytes.length` (rather than tracking per-chunk lengths) is
+   * exact because offset negotiation only ever accepts a chunk when
+   * `offset === cursor` (Part 1's `LiveService.stream`): a run's chunks tile
+   * `[0, stream_offset)` with no gap and no overlap, so the first chunk
+   * `readFrom` returns always starts exactly at `fetchedBytes`.
+   */
+  fetchedBytes: number;
+}
+
+/**
+ * Claims each `running` run on the advisory lock `PipelineService` already
+ * uses, folds the chunk bytes it has not yet fetched into a `LiveEngine`,
+ * and releases the run once its status leaves `running`.
+ *
+ * REUSES `RUN_INGEST_LOCK_NAMESPACE` rather than minting a second namespace,
+ * and that choice buys a property a separate lock would not: a run cannot be
+ * folded by two workers, AND it cannot be folded while `PipelineService` is
+ * parsing it. That second half matters because `close()` (Task 9) hands a
+ * run to the pipeline for its terminal parse while this owner may still be
+ * holding it -- without the shared lock, the two would race over the same
+ * bytes with no serialization between them.
+ *
+ * The fold position is NOT persisted. An owner that claims a run always
+ * starts folding at byte 0, re-reading and re-decoding everything the run
+ * has streamed so far. That is design §3.5's checkpoint property doing its
+ * job: the chunk bytes are already durable and already ordered in blob
+ * storage, so "where the fold got to" needs no engine-state serialization,
+ * no checkpoint format to version, and a worker dying mid-run costs some
+ * CPU re-folding on the next claim rather than costing correctness.
+ *
+ * No publishing here -- Task 5 wires deltas onto Redis. `tick()` only
+ * claims, folds, and releases; `snapshotOf` is a test seam standing in for
+ * the publish path until then.
+ */
+export class LiveFoldOwner {
+  readonly #config: WorkerConfig;
+  readonly #pool: pg.Pool;
+  readonly #chunks: LiveChunkStore;
+  readonly #owned = new Map<string, FoldState>();
+
+  constructor(config: WorkerConfig, pool: pg.Pool, chunks: LiveChunkStore) {
+    this.#config = config;
+    this.#pool = pool;
+    this.#chunks = chunks;
+  }
+
+  /**
+   * One pass: discover currently-`running` runs, claim any not already
+   * owned (bounded by `maxOwnedRuns`), fold every owned run's new bytes, and
+   * release any owned run whose status has left `running`.
+   *
+   * Release is checked from the SAME poll that discovers new runs -- design
+   * §4: "Detected on the tick, which is already re-reading status to
+   * discover new runs" -- so this issues one query per tick, not two.
+   */
+  async tick(): Promise<void> {
+    const { rows } = await this.#pool.query<{ id: string }>(
+      "SELECT id FROM run WHERE status = 'running'",
+    );
+    const runningIds = new Set(rows.map((r) => r.id));
+
+    // Release first: an id that dropped out of 'running' must not be
+    // treated as newly discoverable, and freeing its client/lock before the
+    // claim pass below keeps the pool accounting honest within this tick.
+    for (const runId of this.#owned.keys()) {
+      if (!runningIds.has(runId)) await this.#release(runId);
+    }
+
+    for (const runId of runningIds) {
+      if (this.#owned.size >= this.#config.maxOwnedRuns) break;
+      if (this.#owned.has(runId)) continue;
+      await this.#claim(runId);
+    }
+
+    for (const [runId, state] of this.#owned) {
+      await this.#fold(runId, state);
+    }
+  }
+
+  /** The fold result for an owned run, or null if this owner does not hold
+   * it. Test seam standing in for Task 5's publish path. */
+  snapshotOf(runId: string): EngineResult | null {
+    const state = this.#owned.get(runId);
+    // clone: true -- the returned rollups must not alias accumulators the
+    // next tick's fold mutates; see engine.ts's own doc comment on `clone`.
+    return state ? state.engine.snapshot({ clone: true }) : null;
+  }
+
+  /** Releases every owned run. Without this, a test (or a shutdown) that
+   * constructs more than one owner leaks a pooled connection per owned run
+   * and eventually exhausts the pool. */
+  async close(): Promise<void> {
+    for (const runId of [...this.#owned.keys()]) {
+      await this.#release(runId);
+    }
+  }
+
+  /**
+   * Takes the advisory lock on a dedicated client and, only if won, starts
+   * folding this run from byte 0. Mirrors `pipeline.service.ts`'s
+   * `process()`: the lock is taken and released on the SAME connection,
+   * never handed off, because releasing on a different pooled connection
+   * than the one that took it would either fail outright or unlock nothing.
+   */
+  async #claim(runId: string): Promise<void> {
+    const client = await this.#pool.connect();
+    let got = false;
+    try {
+      const { rows } = await client.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, runId],
+      );
+      got = rows[0]?.got ?? false;
+    } catch (err) {
+      client.release();
+      throw err;
+    }
+    if (!got) {
+      // Another owner (this process or another worker) already holds the
+      // lock -- or PipelineService is parsing this run right now. Either
+      // way, not ours this tick.
+      client.release();
+      return;
+    }
+
+    this.#owned.set(runId, {
+      decoder: new StreamingLogDecoder(),
+      engine: new LiveEngine(),
+      client,
+      fetchedBytes: 0,
+    });
+  }
+
+  /**
+   * Reads every chunk at or past the fetch frontier, decodes it, folds every
+   * emitted event, then advances the frontier by the bytes just fetched --
+   * NEVER by `decoder.consumedBytes`. See `FoldState.fetchedBytes`'s doc
+   * comment for why those two are not interchangeable.
+   */
+  async #fold(runId: string, state: FoldState): Promise<void> {
+    const bytes = await this.#chunks.readFrom(runId, state.fetchedBytes);
+    if (bytes.length === 0) return;
+
+    const events = state.decoder.push(bytes);
+    for (const event of events) state.engine.add(event);
+
+    state.fetchedBytes += bytes.length;
+  }
+
+  /** Drops the fold state, unlocks on the client that took the lock, and
+   * returns that client to the pool. */
+  async #release(runId: string): Promise<void> {
+    const state = this.#owned.get(runId);
+    if (!state) return;
+    this.#owned.delete(runId);
+    try {
+      await state.client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+        RUN_INGEST_LOCK_NAMESPACE,
+        runId,
+      ]);
+    } finally {
+      state.client.release();
+    }
+  }
+}

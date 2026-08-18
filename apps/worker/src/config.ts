@@ -57,6 +57,25 @@ export interface WorkerConfig {
    * decompressed size, so this is enforced independently.
    */
   maxDecompressedBundleBytes: number;
+  /**
+   * How often `LiveFoldOwner` ticks: claims newly-running runs, folds every
+   * owned one, releases any that left `running` (design §3.1, FR-LIVE-3).
+   *
+   * Floored at 1000 ms with `Math.max`, not rejected outright — FR-LIVE-3
+   * states 1000 ms as the floor, and silently clamping a misconfiguration
+   * (rather than refusing to boot over it) is friendlier for an operator.
+   */
+  liveTickMs: number;
+  /**
+   * Caps how many runs one `LiveFoldOwner` holds at once (design §1.3).
+   *
+   * Real, not a preference: each owned run holds a dedicated `pg.PoolClient`
+   * for its advisory lock's whole lifetime (see `LiveFoldOwner`), so this
+   * bounds pooled-connection usage directly. NFR-SC-4 targets 50 concurrent
+   * live runs across the deployment; two workers at the default of 25 meet
+   * that without either one exhausting its own pool trying to own everything.
+   */
+  maxOwnedRuns: number;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -80,5 +99,8 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     maxDecompressedBundleBytes: Number(
       env.MAX_DECOMPRESSED_BUNDLE_BYTES ?? 2 * 1024 * 1024 * 1024,
     ),
+    // Math.max, not a validation error -- see the field's own doc comment.
+    liveTickMs: Math.max(1000, Number(env.LIVE_TICK_MS ?? 5000)),
+    maxOwnedRuns: Number(env.MAX_OWNED_RUNS ?? 25),
   };
 }

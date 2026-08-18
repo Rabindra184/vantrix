@@ -63,8 +63,14 @@ function rawLogBundleSource(buf: Buffer): BundleSource {
  * Namespace for the per-run ingest advisory lock. Arbitrary but fixed, and
  * paired with `hashtext(run_id)` as the second key so this lock can never
  * collide with an advisory lock taken elsewhere for another purpose.
+ *
+ * Exported rather than left `const` so `apps/worker/src/live/fold-owner.ts`
+ * can reuse it instead of copying the number. Two independent locks would
+ * NOT be equivalent here: the fold owner deliberately competes on this same
+ * namespace so a run cannot be folded while `PipelineService` is parsing it
+ * (see `LiveFoldOwner`'s own doc comment for why that matters).
  */
-const RUN_INGEST_LOCK_NAMESPACE = 8_531_001;
+export const RUN_INGEST_LOCK_NAMESPACE = 8_531_001;
 
 @Injectable()
 export class PipelineService {
