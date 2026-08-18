@@ -5,6 +5,7 @@ import { createPool, createPrisma } from '@perfportal/persistence';
 import { parseSimulationLog, StreamingLogDecoder } from '@perfportal/plugin-gatling';
 import { runEngine, type EngineResult } from '@perfportal/statistics';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
 import { LiveFoldOwner } from '../src/live/fold-owner.js';
@@ -478,6 +479,112 @@ describe('LiveFoldOwner', () => {
       expect(full.koCount).toBe(batch.koCount);
     } finally {
       await owner.close();
+    }
+  });
+
+  /**
+   * Fix round 1, Important 6. `close()` used to await `#release` in a
+   * sequential loop with no per-run isolation, so one run's unlock query
+   * throwing abandoned every run still left in `#owned` at that point in
+   * iteration order -- leaking exactly the pooled connections this method's
+   * own doc comment says it exists to prevent leaking, for every run after
+   * the failing one.
+   *
+   * The failure is forced WITHOUT touching a real connection.
+   * `pg_terminate_backend` was tried first and rejected: pg-pool removes a
+   * checked-out client's error listener for exactly as long as it is
+   * checked out (`_acquireClient`'s own `client.removeListener('error',
+   * idleListener)`, restored only once `.release()` runs), so the SAME
+   * termination that correctly rejects the in-flight unlock query also, in
+   * that window, fires a raw, unlistened socket-level 'error' -- observed
+   * to sometimes crash the whole test worker outright rather than merely
+   * fail the one test, which is not an acceptable price for one assertion.
+   *
+   * Instead, every client this pool hands out for the rest of this test has
+   * its `query` method wrapped to intercept exactly ONE call -- the unlock
+   * bound to `badRunId` -- and reject it synthetically; every other call,
+   * including badRunId's own lock ACQUIRE and everything for `goodRunId`,
+   * passes straight through to the real client. Matched on the call's own
+   * bound parameter, not on claim order, so this does not depend on which
+   * run happens to get claimed first.
+   */
+  it('settles every release even when one fails, and surfaces the failure', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const goodRunId = await seedRunningRun(orgId, projectId, log.length);
+    const badRunId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(goodRunId, 0, log);
+    await chunks.put(badRunId, 0, log);
+
+    // Installed BEFORE the claim, not just before close(): #release reuses
+    // the SAME client object #claim originally obtained from pool.connect
+    // (see FoldState.client's own doc comment -- taken and released on
+    // THIS client, never a different one), so the wrapper has to be in
+    // place at claim time for badRunId's eventual unlock call to be the
+    // wrapped instance's, not the real one's.
+    //
+    // pool.connect is overloaded (a bare Promise-returning form -- what
+    // LiveFoldOwner itself calls -- AND a callback form pg-pool's OWN
+    // `pool.query()` convenience method calls internally, including for
+    // the plain `pool.query(...)` calls this very test file's helpers use).
+    // The first attempt at this mock handled only the Promise form and
+    // silently hung the whole suite: `pool.query()` awaits its callback
+    // being invoked, and a mock that never calls it never resolves.
+    // Both forms are handled here for exactly that reason.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#connect's own overloaded signature verbatim
+    const realConnect = pool.connect.bind(pool) as (...a: any[]) => any;
+    function wrapClient(client: pg.PoolClient): pg.PoolClient {
+      const realQuery = client.query.bind(client);
+      vi.spyOn(client, 'query').mockImplementation(((...args: unknown[]) => {
+        const [text, params] = args;
+        const isBadRunUnlock =
+          typeof text === 'string' &&
+          text.includes('pg_advisory_unlock') &&
+          Array.isArray(params) &&
+          params[1] === badRunId;
+        if (isBadRunUnlock) return Promise.reject(new Error('synthetic unlock failure for test'));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.PoolClient#query's own overloaded signature verbatim
+        return (realQuery as any)(...args);
+      }) as typeof client.query);
+      return client;
+    }
+    vi.spyOn(pool, 'connect').mockImplementation(((cb?: (...a: unknown[]) => void) => {
+      if (typeof cb === 'function') {
+        return realConnect((err: Error | null, client: pg.PoolClient | undefined, release: unknown) => {
+          if (client) wrapClient(client);
+          cb(err, client, release);
+        });
+      }
+      return (realConnect() as Promise<pg.PoolClient>).then(wrapClient);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
+    }) as any);
+
+    const owner = new LiveFoldOwner(config, pool, chunks);
+    try {
+      await owner.tick();
+      expect(owner.snapshotOf(goodRunId)).not.toBeNull();
+      expect(owner.snapshotOf(badRunId)).not.toBeNull();
+
+      await expect(owner.close()).rejects.toThrow(/failed to release 1 of 2/);
+
+      // The good run's release still ran despite the bad one's failure:
+      // its lock is genuinely free, provable by a fresh owner claiming it
+      // immediately on the very next tick. The bad run is moved off
+      // 'running' first, purely so this owner's discovery poll does not
+      // also attempt to re-claim it -- badRunId's REAL advisory lock is
+      // still genuinely held (the synthetic rejection never actually ran
+      // pg_advisory_unlock against Postgres), so its own recovery is not
+      // this assertion's concern, only the good run's is.
+      await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [badRunId]);
+      const other = new LiveFoldOwner(config, pool, chunks);
+      try {
+        await other.tick();
+        expect(other.snapshotOf(goodRunId)).not.toBeNull();
+      } finally {
+        await other.close();
+      }
+    } finally {
+      vi.restoreAllMocks();
     }
   });
 });

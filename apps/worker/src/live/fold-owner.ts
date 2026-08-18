@@ -212,12 +212,40 @@ export class LiveFoldOwner {
     return state ? state.engine.snapshot({ clone: true }) : null;
   }
 
-  /** Releases every owned run. Without this, a test (or a shutdown) that
+  /**
+   * Releases every owned run. Without this, a test (or a shutdown) that
    * constructs more than one owner leaks a pooled connection per owned run
-   * and eventually exhausts the pool. */
+   * and eventually exhausts the pool.
+   *
+   * `Promise.allSettled`, not a sequential loop that stops at the first
+   * rejection -- a loop awaiting `#release` one at a time would abandon
+   * every run still left in `#owned` the moment ANY single one's unlock
+   * query failed, leaking exactly the pooled connections this method
+   * exists to prevent leaking, for every run after the failing one in
+   * iteration order. Each run's `#release` is independent (its own client,
+   * its own lock), so nothing is lost by running them concurrently.
+   *
+   * A failure is surfaced, not swallowed: `#release` already returns its
+   * client to the pool in a `finally` regardless of whether the unlock
+   * query itself succeeded (see its own doc comment), so nothing here is
+   * needed to prevent a connection leak from an individual failure -- but
+   * an advisory lock that failed to unlock stays held for as long as that
+   * connection lives, which is real enough for a caller to want to know
+   * about, and "some releases silently failed" is exactly this class's own
+   * kind of undiagnosable-from-outside failure otherwise.
+   */
   async close(): Promise<void> {
-    for (const runId of [...this.#owned.keys()]) {
-      await this.#release(runId);
+    const results = await Promise.allSettled(
+      [...this.#owned.keys()].map((runId) => this.#release(runId)),
+    );
+    const failures = results.filter(
+      (r): r is PromiseRejectedResult => r.status === 'rejected',
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((f) => f.reason as unknown),
+        `LiveFoldOwner.close(): failed to release ${failures.length} of ${results.length} owned run(s)`,
+      );
     }
   }
 
