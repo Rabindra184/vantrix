@@ -51,9 +51,34 @@ export const INITIAL_CURSOR: DeltaCursor = {
  * The very first delta is a replacement for the same mechanism, not as a
  * bolted-on special case: `INITIAL_CURSOR.lastBucketWidthMs` is 0, and no
  * real bucket width is ever 0, so the width comparison below is already
- * unequal on the first call. That is also what makes a subscriber that
- * joins mid-run correct for free — its first delta, whenever it arrives,
- * replaces rather than appends.
+ * unequal on the first call.
+ *
+ * ═══ AND THAT DOES NOT HELP A LATE SUBSCRIBER — READ THIS BEFORE PART 2b ═══
+ * An earlier version of this comment claimed the same mechanism "makes a
+ * subscriber that joins mid-run correct for free — its first delta,
+ * whenever it arrives, replaces rather than appends." IT IS FALSE, and it
+ * is the kind of false that a consumer built on top of it would not
+ * notice.
+ *
+ * `replaces` is keyed to THE OWNER'S cursor, not to any subscriber's
+ * arrival. Only the RUN's first delta replaces. A subscriber that joins at
+ * tick 300 receives delta 300, which is an ordinary upsert window —
+ * `responseTime.buckets` covers the frontier and the lookback and nothing
+ * before them — so it holds a handful of recent buckets and believes it
+ * holds the series.
+ *
+ * The asymmetry matters and is not an accident: `users` IS correct for a
+ * late subscriber, because it is sent WHOLE every tick and has no cursor
+ * (see "WHY `users` HAS NO CURSOR" below). Only `responseTime` has this
+ * gap, so a consumer can trust one envelope and not the other.
+ *
+ * PART 2b MUST BOOTSTRAP `responseTime` ON JOIN. Either from the existing
+ * REST series endpoint, or by reading `live:{runId}:deltas` back far enough
+ * to reach the delta with `seq: 0` — that one, and only that one, carries
+ * the series from offset 0. Note the replay stream is capped by an entry
+ * count AND a byte budget (`fold-owner.ts`'s `REPLAY_BUDGET_BYTES`), so on
+ * a long or a large run `seq: 0` will have been trimmed away and REST is
+ * the only option left.
  *
  * Do not "simplify" this into filtering buckets by `since > 0` on every
  * call, or into treating `since` as `0` on a replacement — offset 0 is a
