@@ -815,29 +815,30 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
-   * Review item (a) on Task 5's brief: `close()` used to snapshot
-   * `[...this.#owned.keys()]` with no regard for a `tick()` already in
-   * flight. If that in-flight tick's `#claim` was still awaiting
-   * `pool.connect()` at the moment of the snapshot, the `FoldState` it went
-   * on to insert a moment later would never appear in it -- never released,
-   * its pooled client leaked for good, `main.ts`'s `pool.end()` waiting on
-   * it forever with nothing to explain why.
+   * Fix round 1, Important 2. `close()` used to set `#closing` and then
+   * AWAIT the in-flight tick before draining `#owned`, on the theory that
+   * only a fully-settled tick could guarantee every `#claim` it started had
+   * already inserted its `FoldState`. That guarantee was real, but a tick
+   * genuinely stuck in `readFrom` (blob storage's client sets no request
+   * timeout) made `close()` -- and therefore `main.ts`'s whole
+   * `shutdown()` -- hang forever, WORSE than before this class had any
+   * interlock at all.
    *
-   * Forced deterministically, without a real hung connection: `pool.connect`
-   * is wrapped so the ONE promise-form call `#claim` makes for our seeded
-   * run resolves only once this test releases a gate -- mirroring the
-   * callback-vs-promise-form split `pool.connect` needs in the
-   * "settles every release" case above, since `pool.query`'s OWN internal
-   * use of `connect` (the callback form, exercised by this tick's discovery
-   * query) must stay completely unaffected.
+   * The fix moves the leak-closing check to `#claim` itself: a claim that
+   * wins its lock after `#closing` is already true unwinds itself (unlock,
+   * release the client) instead of inserting. `close()` no longer needs to
+   * wait for anything.
    *
-   * `order` proves the INTERLOCK, not just the eventual outcome: `close()`
-   * must not resolve before the gated claim does. Re-claiming the run with
-   * a fresh owner afterwards proves the INTERLOCK actually paid off -- the
-   * lock is genuinely free, which it would not be if the original claim's
-   * client had been abandoned rather than released.
+   * Same gating technique as the previous round's version of this case
+   * (`pool.connect`'s promise-form call for `#claim` is held open by a
+   * manually-released gate; its callback form, which `pool.query`'s own
+   * internal use of `connect` goes through, is left completely alone), but
+   * the assertions now prove the OPPOSITE property: `close()` resolves
+   * WITHOUT the gate ever being released, and only once it is released
+   * afterward does the delayed claim discover `#closing` and unwind --
+   * proven by a fresh owner immediately re-claiming the same run's lock.
    */
-  it('close() waits for an in-flight tick before draining, so a claim racing the snapshot is not leaked', async () => {
+  it('close() does not wait for an in-flight tick, and a claim that resolves afterward does not leak its client', async () => {
     await truncateAll();
     const { orgId, projectId } = await seedOrgProject();
     const runId = await seedRunningRun(orgId, projectId, log.length);
@@ -851,7 +852,6 @@ describe('LiveFoldOwner', () => {
     const claimStartedPromise = new Promise<void>((resolve) => {
       claimStarted = resolve;
     });
-    const order: string[] = [];
 
     let promiseFormCalls = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#connect's own overloaded signature verbatim
@@ -861,10 +861,7 @@ describe('LiveFoldOwner', () => {
       promiseFormCalls += 1;
       if (promiseFormCalls === 1) {
         claimStarted!();
-        return claimGate.then(() => {
-          order.push('claim-connect-resolved');
-          return realConnect();
-        });
+        return claimGate.then(() => realConnect());
       }
       return realConnect();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
@@ -875,26 +872,22 @@ describe('LiveFoldOwner', () => {
       const tickPromise = owner.tick();
       await claimStartedPromise; // #claim's own connect() call is now gated, in flight
 
-      const closePromise = owner.close().then((r) => {
-        order.push('close-resolved');
-        return r;
-      });
+      const closeStart = Date.now();
+      await owner.close(); // must resolve WITHOUT the gate ever being released
+      const closeElapsedMs = Date.now() - closeStart;
+      // Generous bound, well above what an empty-map drain plus a redis
+      // quit needs, and well below "waited for a gate nothing released" --
+      // the discriminating evidence that close() did not wait this time.
+      expect(closeElapsedMs).toBeLessThan(300);
 
-      // A real delay before releasing the gate, so a broken (non-interlocked)
-      // close() has every opportunity to race past the still-pending claim --
-      // if it were going to resolve early, it would have by now.
-      await new Promise((r) => setTimeout(r, 50));
-      expect(order).not.toContain('close-resolved');
-
+      // Only now let the delayed claim resolve -- it wins the lock (no one
+      // else holds it) but must find #closing already true and unwind.
       releaseClaim!();
-      await closePromise;
-      await tickPromise;
-
-      expect(order).toEqual(['claim-connect-resolved', 'close-resolved']);
+      await tickPromise; // the tick itself still completes cleanly
 
       // The lock is genuinely free: a fresh owner can claim this run
-      // immediately, proving the client the delayed claim opened was
-      // actually released, not stranded.
+      // immediately, proving the delayed claim's client was released, not
+      // leaked, once it discovered #closing.
       const verifier = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
       try {
         await verifier.tick();

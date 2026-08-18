@@ -112,19 +112,18 @@ export class LiveFoldOwner {
    */
   #ticking = false;
   /**
-   * Set once `close()` has been called. Checked alongside `#ticking` in
-   * `tick()` so that once a drain has started, no later call can start a
-   * NEW pass that would insert a fresh `FoldState` after (or during) that
-   * drain -- see `close()`'s own doc comment for the race this closes.
+   * Set once `close()` has been called. Checked in TWO places, for two
+   * different reasons:
+   *  - `tick()` -- so that once a drain has started, no NEW `#doTick()`
+   *    pass can begin.
+   *  - `#claim()` -- so that a claim already IN FLIGHT when `close()` ran
+   *    unwinds itself (unlock, release the client, do not insert) instead
+   *    of inserting a `FoldState` after `close()`'s drain has already run.
+   *    See `#claim`'s and `close()`'s own doc comments for the race this
+   *    closes and why closing it AT THE INSERT SITE is what lets `close()`
+   *    itself stay unbounded-wait-free.
    */
   #closing = false;
-  /**
-   * The promise behind the currently (or most recently) in-flight
-   * `#doTick()` call, so `close()` can await the SAME pass `#ticking` is
-   * guarding rather than only the state that pass has produced so far. See
-   * `close()`'s doc comment.
-   */
-  #tickPromise: Promise<void> | null = null;
   /** When the in-flight tick started, for `#checkWatchdog`; `null` whenever
    * `#ticking` is false. */
   #tickStartedAt: number | null = null;
@@ -183,10 +182,8 @@ export class LiveFoldOwner {
     this.#ticking = true;
     this.#tickStartedAt = Date.now();
     this.#watchdogWarned = false;
-    const settled = this.#doTick();
-    this.#tickPromise = settled;
     try {
-      await settled;
+      await this.#doTick();
     } finally {
       this.#ticking = false;
       this.#tickStartedAt = null;
@@ -394,32 +391,56 @@ export class LiveFoldOwner {
    * owner leaks a pooled connection per owned run and eventually exhausts
    * the pool.
    *
-   * INTERLOCKS WITH `#ticking` BEFORE TOUCHING `#owned`, and that ordering
-   * is load-bearing, not defensive dressing. `#owned` is mutated by
-   * `#claim` mid-tick, so a naive `close()` that read `#owned` without
-   * regard for an in-flight `tick()` could take its snapshot BETWEEN a
-   * `#claim` starting and it inserting the `FoldState` it just won the
-   * advisory lock for -- that run's client would then never appear in the
-   * snapshot below, never get released, and `main.ts`'s `pool.end()` would
-   * wait on it forever with nothing to explain why. Setting `#closing`
-   * FIRST (checked in `tick()` alongside `#ticking`) guarantees no NEW pass
-   * can start once this method has begun, so there is at most one
-   * already-in-flight pass left to wait for; awaiting `#tickPromise` -- the
-   * SAME promise `#ticking` is guarding, not a fresh call of our own --
-   * then guarantees that pass has fully settled `#owned` (every `#claim` it
-   * started has either inserted its `FoldState` or failed and logged,
-   * `#guarded`'s already-per-run isolation covers that) before the snapshot
-   * below is taken. `#tickPromise` being `null` (no tick has ever run, or
-   * one already finished and cleared it) makes the wait a no-op.
+   * DOES NOT WAIT FOR AN IN-FLIGHT TICK -- fix round 1, Important 2. An
+   * earlier version set `#closing` and then awaited the SAME `#doTick()`
+   * promise `#ticking` was guarding, on the theory that only a fully-
+   * settled tick could guarantee every `#claim` it started had already
+   * inserted its `FoldState` before the snapshot below was taken. That
+   * guarantee was real, but the price was unbounded: a tick genuinely stuck
+   * in `LiveChunkStore.readFrom` (blob storage's client sets no request
+   * timeout -- see `#checkWatchdog`'s doc comment) made `close()`, and
+   * therefore `main.ts`'s whole `shutdown()`, hang forever -- WORSE than
+   * before this class had a `close()`/`#ticking` interlock at all, since a
+   * stuck tick used to leave `close()` free to drain and return.
    *
-   * A tick that is STUCK, not merely slow, makes this method stuck too --
-   * see `#checkWatchdog`'s own doc comment for why that trade is accepted
-   * rather than solved by racing a timeout here as well. That failure mode
-   * lives entirely in `LiveChunkStore.readFrom` never settling (blob
-   * storage's client sets no request timeout), which this file cannot fix
-   * without touching `packages/storage/src/blobs.ts` -- outside this
-   * task's scope. The watchdog at least means the stall was already visible
-   * in the logs, repeatedly, before any shutdown was even attempted.
+   * The actual leak this method exists to prevent is closed AT ITS SOURCE
+   * instead, in `#claim` (see that method's own doc comment): a claim that
+   * wins its advisory lock AFTER `#closing` has been set unlocks and
+   * releases its own client immediately rather than inserting into
+   * `#owned` at all. Setting `#closing` here, synchronously, before this
+   * method does anything else, is what makes that self-check meaningful --
+   * every `#claim` call still able to reach the insert at `#claim`'s own
+   * `this.#owned.set(...)` line has ALREADY read `#closing` as `false` and
+   * committed to inserting by the time this line runs (JS has no
+   * mid-statement preemption), so the snapshot below either sees that
+   * insert already landed or the claim that would have produced it has
+   * already unwound itself -- never a claim caught in between. With the
+   * leak closed there, this method needs no wait of its own: draining
+   * `#owned` immediately is correct regardless of what any in-flight tick
+   * is currently doing.
+   *
+   * What remains, and is accepted rather than solved here: an ALREADY-
+   * OWNED run's fold or publish that is mid-flight when `close()` runs is
+   * NOT waited for either. Its `FoldState` is synchronously deleted from
+   * `#owned` and its client released as part of the drain below (Map
+   * deletion mid-iteration is well-defined in JS -- a `for...of` fold loop
+   * still in progress on `this.#owned` simply stops finding further
+   * entries once they are gone, and the SEPARATE publish loop that runs
+   * after it starts fresh against whatever remains, which by then is
+   * nothing new). The one in-flight `#fold` call already past its own
+   * `readFrom` await, if any, keeps running in the background using its
+   * captured `state` reference -- harmless in itself (nothing reads that
+   * `state` again once its run is gone from `#owned`, and `#fold` never
+   * touches `state.client`) -- but releasing that run's advisory lock while
+   * its own `readFrom` may still be reading the SAME chunk keys reopens the
+   * exact race `#fold`'s doc comment already documents as ordinary
+   * operation for `LiveChunkStore.finalize` (a listed key deleted by a
+   * concurrent finalize before its own `get` runs): `readFrom` throws, the
+   * error is swallowed and logged by whatever `#guarded` call is still
+   * wrapping it, nothing corrupts. Narrower than before (bounded to at
+   * most the one run whose fold was already past its `readFrom` await at
+   * the exact instant `close()` ran, and only during shutdown), and a
+   * pre-existing, already-handled failure class rather than a new one.
    *
    * `Promise.allSettled` for the releases, not a sequential loop that stops
    * at the first rejection -- a loop awaiting `#release` one at a time
@@ -444,18 +465,11 @@ export class LiveFoldOwner {
    * not strand the other.
    */
   async close(): Promise<void> {
+    // Synchronous, first statement: see this method's own doc comment for
+    // why setting this BEFORE anything else is what makes #claim's
+    // self-check meaningful, and why that is what lets this method skip
+    // waiting for any in-flight tick.
     this.#closing = true;
-    if (this.#tickPromise) {
-      await this.#tickPromise.catch((err: unknown) => {
-        // `#doTick`'s own per-run work is already isolated by `#guarded`;
-        // what can still reach here is the UN-guarded discovery query at
-        // the very top of `#doTick`. That failure is orthogonal to closing
-        // down and must not abort the drain below -- the whole reason the
-        // release step itself uses Promise.allSettled rather than a bare
-        // await chain.
-        console.error('LiveFoldOwner: in-flight tick failed while close() was waiting for it', err);
-      });
-    }
 
     const results = await Promise.allSettled(
       [...this.#owned.keys()].map((runId) => this.#release(runId)),
@@ -482,6 +496,19 @@ export class LiveFoldOwner {
    * `process()`: the lock is taken and released on the SAME connection,
    * never handed off, because releasing on a different pooled connection
    * than the one that took it would either fail outright or unlock nothing.
+   *
+   * SELF-CHECKS `#closing` immediately before inserting -- fix round 1,
+   * Important 2. `close()` no longer waits for an in-flight tick before
+   * draining `#owned` (see its own doc comment), which means a claim that
+   * is still awaiting `pool.connect()` or the lock query when `close()`
+   * runs would otherwise win its lock and insert a `FoldState` AFTER
+   * `close()`'s drain has already run and returned -- a client neither
+   * released by that drain nor ever released by anything else, leaked for
+   * good. Checking `#closing` here, at the one and only insertion site,
+   * closes that leak at its source: a claim that wins its lock too late to
+   * matter unwinds itself (unlock, release the client) exactly like the
+   * "another owner already holds it" branch just above, instead of
+   * inserting into a map `close()` has already decided is final.
    */
   async #claim(runId: string): Promise<void> {
     const client = await this.#pool.connect();
@@ -501,6 +528,22 @@ export class LiveFoldOwner {
       // lock -- or PipelineService is parsing this run right now. Either
       // way, not ours this tick.
       client.release();
+      return;
+    }
+
+    if (this.#closing) {
+      // Won the lock, but close() already started (or finished) draining
+      // #owned -- inserting now would never be seen by it. Unwind exactly
+      // like #release does: unlock on this same client, then return it to
+      // the pool in a finally regardless of whether the unlock succeeded.
+      try {
+        await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+          RUN_INGEST_LOCK_NAMESPACE,
+          runId,
+        ]);
+      } finally {
+        client.release();
+      }
       return;
     }
 
