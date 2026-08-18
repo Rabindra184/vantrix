@@ -81,6 +81,30 @@ export const useWindowFromShell = (): Window | null =>
   useOutletContext<RunWindowContext>().window;
 
 /**
+ * `[0, durationMs]` — the domain a run without a narrowed window shares while
+ * its span is still growing (or has just finished growing), factored out of
+ * `useTimeDomainFromShell` below so it can be called from a SECOND site that
+ * cannot reach that hook at all (TASK 9 C4).
+ *
+ * `Live` in `RunDetail.tsx` computes this exact tuple directly rather than
+ * through `useTimeDomainFromShell`, because that hook reads `RunWindowContext`
+ * off an `<Outlet/>` — and a still-processing run renders no `RunShell`, so
+ * there is no `<Outlet/>` for `Live` to be inside of at all (see that
+ * component's own docstring). The two sites cannot be UNIFIED into one call,
+ * since one needs the shell's outlet context and the other structurally
+ * cannot have it — but the ARITHMETIC both apply once they have a span is the
+ * same formula, and leaving it written out twice would let the two silently
+ * diverge with nothing to notice. Routing both through this one function is
+ * what actually closes that gap: `timeAxis.test.ts`'s "Live and
+ * useTimeDomainFromShell agree on the growing-run domain formula" pins it,
+ * and `RunDetail.tsx`'s own call site names this function in its comment the
+ * same way this one names `RunDetail.tsx`.
+ */
+export function growingDomainMs(durationMs: number): readonly [number, number] {
+  return [0, durationMs];
+}
+
+/**
  * The domain every time chart on the page shares, in elapsed milliseconds —
  * §22.5's "one time axis".
  *
@@ -105,5 +129,5 @@ export function useTimeDomainFromShell(): readonly [number, number] | undefined 
   const { window, durationMs, liveDurationMs } = useOutletContext<RunWindowContext>();
   if (window !== null) return [window.fromMs, window.toMs];
   const span = durationMs ?? liveDurationMs;
-  return span === null ? undefined : [0, span];
+  return span === null ? undefined : growingDomainMs(span);
 }

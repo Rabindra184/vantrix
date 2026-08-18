@@ -4,8 +4,6 @@ import TimeBrush from '../charts/TimeBrush';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
 import type { RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
-import { useLiveRun } from '../api/live';
-import useIsCompact from '../useIsCompact';
 import RunHeader from './RunHeader';
 import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
@@ -58,21 +56,6 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
   // the header flicker a value in.
   const users = useQuery(usersQuery(run.id, window));
 
-  // ALWAYS WIRED, gated by the design's own rule (`run.status === 'running'
-  // && !useIsCompact()`, part 2b §4.1) rather than by "this shell only ever
-  // renders a ready run" — that fact is true of `RunShell`'s one caller
-  // today (`RunDetail`'s `Ready` branch, itself only reachable once
-  // `run.status` is `complete`/`failed`/`incomplete`), so `enabled` here is
-  // always false and `live.lastDelta` always null. The gate is written out
-  // in full anyway: a `run` object with `status: 'running'` typechecks
-  // against `RunResponse` even though today's server never serves one at
-  // 200 (`RunsService.statusFor` answers 202 for anything short of
-  // `complete`), and coding the literal rule rather than a hard-coded
-  // `false` is what keeps this correct if that ever changes, instead of
-  // silently wrong.
-  const compact = useIsCompact();
-  const live = useLiveRun(run.id, run.status === 'running' && !compact);
-
   return (
     <div className="flex flex-col gap-6">
       <RunHeader run={run} peakUsers={users.data ? peakConcurrentUsers(users.data) : null} />
@@ -115,21 +98,29 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
           than here — different query keys, so `/users` was fetched twice and
           the "one window for the whole page" this shell promises was not true.
           One parse, one object, one key. */}
-      {/* `liveDurationMs` reads the shell's own `live` socket above, for the
-          same reason `durationMs` reads the shell's own `run`: a tab that
-          asked its own `useLiveRun()` for this number would be a second
-          source for a value every time chart on the page must agree on. As
-          explained above, `live.lastDelta` is always null for every run this
-          component renders today (a `ready` run has already left
-          `running`), so `useTimeDomainFromShell` never actually consults
-          this field in practice — `durationMs` is never null here either —
-          but the expression is the honest one rather than a hard-coded
-          placeholder. */}
+      {/* TASK 9 C1: `liveDurationMs` IS ALWAYS `null` HERE, and deliberately
+          so rather than wired to a socket this shell never opens. `RunShell`
+          used to call its own `useLiveRun(run.id, run.status === 'running' &&
+          !compact)` for this field — but `RunShell` has exactly one caller
+          (`RunDetail`'s `Ready` branch), reachable only once `run.status` is
+          `complete`/`failed`/`incomplete`, so `run.status === 'running'` can
+          never be true for a run this component renders and that call was
+          permanently disabled from the day it was added: `enabled` was
+          always false, `live.lastDelta` was always null, and the socket
+          never opened. `liveDurationMs` stays on `RunWindowContext` — the
+          type is still correct, and a genuinely live run reaches its OWN
+          growing domain through `Live` in `RunDetail.tsx` instead (see
+          `growingDomainMs` in `useRunWindow.ts`, which that component calls
+          directly because it mounts no `<Outlet/>` and so has no shell to
+          read this context from). If a live run is ever routed through this
+          shell, wiring a real `useLiveRun` call back in is a one-line
+          change; until then a hard-coded `null` is the honest value, not a
+          placeholder for a dead one. */}
       <Outlet
         context={{
           window,
           durationMs: run.durationMs ?? null,
-          liveDurationMs: live.lastDelta?.summary.durationMs ?? null,
+          liveDurationMs: null,
         } satisfies RunWindowContext}
       />
     </div>

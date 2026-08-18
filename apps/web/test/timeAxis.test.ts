@@ -15,7 +15,7 @@ import type { SeriesResponse, UsersResponse } from '@perfportal/contracts';
 import { toPercentiles } from '../src/charts/transforms/percentiles';
 import { toRequestRate, toResponseRate } from '../src/charts/transforms/rates';
 import { toConcurrentUsers, toUserStartRate } from '../src/charts/transforms/users';
-import { useTimeDomainFromShell, type RunWindowContext } from '../src/routes/useRunWindow';
+import { growingDomainMs, useTimeDomainFromShell, type RunWindowContext } from '../src/routes/useRunWindow';
 import fixture from './fixtures/reference-run.json';
 
 /**
@@ -183,4 +183,35 @@ describe('useTimeDomainFromShell', () => {
     });
     expect(result.current).toEqual([0, 60_000]);
   });
+});
+
+/**
+ * ═══ TASK 9 C4: ONE FORMULA, TWO SITES THAT CANNOT SHARE ONE CALL ═══
+ *
+ * `Live` in `RunDetail.tsx` computes its own growing domain directly —
+ * `growingDomainMs(delta.summary.durationMs)` — because it mounts no
+ * `<Outlet/>` (a still-processing run renders no `RunShell`) and so cannot
+ * call `useTimeDomainFromShell`, which reads `RunWindowContext` off one. The
+ * shell cannot be added just to unify the two: a still-streaming run
+ * genuinely has no `RunResponse` to build one from (`Live`'s own docstring).
+ *
+ * What CAN be shared, and now is, is the arithmetic: both sites hand a
+ * duration to the same `growingDomainMs`, so the two can never silently
+ * diverge on what `[0, x]` means. This case is the guard — without a shared
+ * function there would be nothing here to test, and a typo in either
+ * inlined `[0, ...]` would only ever show up as two charts disagreeing on
+ * screen.
+ */
+it('Live and useTimeDomainFromShell agree on the growing-run domain formula', () => {
+  const durationMs = 42_000;
+
+  // The formula itself, independent of either call site.
+  expect(growingDomainMs(durationMs)).toEqual([0, durationMs]);
+
+  // `useTimeDomainFromShell`'s own growing-domain branch (no window, no
+  // settled duration) resolves through the identical function.
+  const { result } = renderHook(() => useTimeDomainFromShell(), {
+    wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: durationMs }),
+  });
+  expect(result.current).toEqual(growingDomainMs(durationMs));
 });

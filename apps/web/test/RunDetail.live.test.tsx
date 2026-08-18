@@ -98,8 +98,9 @@ describe('RunDetail — choosing Processing vs. the live page', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Run in progress' })).toBeInTheDocument();
     expect(screen.getByText(/updating as the run streams/i)).toBeInTheDocument();
     expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
-    // Three withheld sections, and only three.
-    expect(screen.getAllByTestId('live-notice-withheld')).toHaveLength(3);
+    // Four withheld sections (Task 9 C2 added the errors-over-time chart's),
+    // and only four.
+    expect(screen.getAllByTestId('live-notice-withheld')).toHaveLength(4);
   });
 
   it('keeps the ordinary Processing screen while running with no delta yet', async () => {
@@ -262,15 +263,18 @@ describe('Live — the live page itself', () => {
     }
   });
 
-  it('shows exactly three withheld sections, and the errors table live-fed beside them', () => {
+  it('shows exactly four withheld sections, and the errors table live-fed beside them', () => {
     renderLive();
 
-    expect(screen.getAllByTestId('live-notice-withheld')).toHaveLength(3);
+    expect(screen.getAllByTestId('live-notice-withheld')).toHaveLength(4);
+    // Task 9 C2: errors-over-time is withheld (a different endpoint than the
+    // table below, which the errors table itself proves is still live-fed).
+    expect(screen.getByText('Errors per second')).toBeInTheDocument();
     expect(screen.getByRole('table', { name: /errors/i })).toBeInTheDocument();
     expect(screen.getByText('boom')).toBeInTheDocument();
   });
 
-  it('gates the charts and the two distribution notices behind DesktopOnly on a narrow viewport', () => {
+  it('gates the charts and the three withheld notices behind DesktopOnly on a narrow viewport', () => {
     renderLive({ compact: true });
 
     // The charts never mounted at all.
@@ -278,7 +282,9 @@ describe('Live — the live page itself', () => {
       expect(screen.queryByTestId(`chart-${id}`)).not.toBeInTheDocument();
     }
     // DesktopOnly's own notice replaces them (two instances: the charts
-    // region and the statistics region each carry their own).
+    // region and the statistics region each carry their own) -- unchanged by
+    // Task 9 C2, since the new notice joined the SAME "Live charts" region
+    // rather than opening a third.
     expect(screen.getAllByTestId('desktop-only')).toHaveLength(2);
     // The errors table is NOT gated — matching RunErrorsTab, which never
     // gates it either, and §22.6's own "error summary" exemption.
@@ -305,6 +311,41 @@ describe('Live — the live page itself', () => {
       </QueryClientProvider>,
     );
     expect(screen.getByTestId('live-notice-finalizing')).toBeInTheDocument();
+  });
+
+  /**
+   * TASK 9 C3. The "Duration So Far" tile used to say "still streaming"
+   * unconditionally -- including directly under `live-notice-finalizing`'s
+   * own banner, which on the same render says streaming has stopped. The
+   * hint now reads `frozen`, the same flag the banner is gated on, so the
+   * two can never disagree about whether this run is still live.
+   */
+  it('drops the "still streaming" hint once the run has frozen', () => {
+    // `StatTile`'s `data-testid` lands on the `<dd>` holding the VALUE only
+    // (its own docstring) -- the hint is a sibling `<p>`, so the tile's own
+    // bordered container (the label's closest `div`) is what a query for the
+    // hint text has to scope to. `screen.getByText('still streaming', ...)`
+    // unscoped would also match the withheld-notice bodies, which use the
+    // same phrase for an unrelated reason.
+    const { rerender } = render(
+      <QueryClientProvider client={clientWithLiveCache()}>
+        <MemoryRouter>
+          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('Duration So Far').closest('div')).toHaveTextContent(/still streaming/i);
+
+    rerender(
+      <QueryClientProvider client={clientWithLiveCache()}>
+        <MemoryRouter>
+          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const tile = screen.getByText('Duration So Far').closest('div');
+    expect(tile).not.toHaveTextContent(/still streaming/i);
+    expect(tile).toHaveTextContent(/stopped/i);
   });
 
   // Defensive: `RunDetail` only ever renders `Live` once `lastDelta` is

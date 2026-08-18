@@ -38,7 +38,7 @@ import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
-import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import { growingDomainMs, useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import LiveNotice from './LiveNotice';
 import RunShell from './RunShell';
@@ -361,14 +361,18 @@ export function Live({
   if (delta === null) return null;
 
   const frozen = status !== 'running';
-  // THE GROWING DOMAIN, computed locally rather than through
-  // `useTimeDomainFromShell`: that hook reads `RunWindowContext` off an
-  // `<Outlet/>` this page never mounts (there is no `RunShell` here — see
-  // this component's own docstring). The rule is the same one anyway —
-  // `[0, durationMs]`, taken from the latest delta while the run has not
-  // settled — just applied directly, with no window to prefer over it: a
-  // live view is never narrowed (`useLiveRun`'s own module docstring).
-  const domainMs: readonly [number, number] = [0, delta.summary.durationMs];
+  // THE GROWING DOMAIN, computed through `growingDomainMs` directly rather
+  // than through `useTimeDomainFromShell` (`useRunWindow.ts`): that hook
+  // reads `RunWindowContext` off an `<Outlet/>` this page never mounts (there
+  // is no `RunShell` here — see this component's own docstring), so it
+  // cannot be called from here. The two sites cannot be unified into one
+  // CALL, but they share one FORMULA — see `growingDomainMs`'s own comment,
+  // which names this call site the way this one names it, and
+  // `timeAxis.test.ts`'s "Live and useTimeDomainFromShell agree on the
+  // growing-run domain formula", which pins the two to the same result for
+  // the same input. No window to prefer over it here either: a live view is
+  // never narrowed (`useLiveRun`'s own module docstring).
+  const domainMs = growingDomainMs(delta.summary.durationMs);
 
   // OBSERVE THE CACHE; NEVER FETCH IT. `useLiveRun` already writes every one
   // of these three keys directly (`applyDelta`, `api/live.ts`) on every
@@ -405,10 +409,10 @@ export function Live({
           `Processing` here was rejected. */}
       {frozen && <LiveNotice kind="finalizing" />}
 
-      <LiveSummary summary={delta.summary} />
+      <LiveSummary summary={delta.summary} frozen={frozen} />
 
       {/* §22.6: mounting five ECharts instances costs real work a phone
-          should not pay for, even though the two withheld notices beside
+          should not pay for, even though the three withheld notices beside
           them cost nothing — so the whole grid is gated together, the same
           scope `RunChartsTab` gates its own eight figures at. No `onShow`:
           nothing behind this content is a query this page has NOT already
@@ -439,14 +443,26 @@ export function Live({
                 <ResponseRateChart series={series.data} domainMs={domainMs} />
               </>
             )}
-            {/* THE TWO OF THE THREE WITHHELD SECTIONS THAT ARE CHARTS. Both
-                fold the SAME `/distribution` payload on a finished run
+            {/* THREE OF THE FOUR WITHHELD SECTIONS THAT ARE CHARTS. The first
+                two fold the SAME `/distribution` payload on a finished run
                 (`RunChartsTab`'s own `DISTRIBUTION`/`PERCENTILE_DISTRIBUTION`
                 slots) and neither has ANY live source — §4.3: they need
                 per-request or full-sketch data no delta carries, on any
-                path, while the run streams. */}
+                path, while the run streams.
+
+                TASK 9 C2: errors-over-time is the same shape of gap, just
+                fed by a DIFFERENT endpoint (`errorSeriesQuery`,
+                `RunErrorsTab`'s own chart) that the live wire also never
+                carries — §1.3 scopes the live `errors` envelope to run-scope
+                TOTALS only (`LiveErrorsSchema`), with no time series. Before
+                this notice the chart was simply never rendered here at all:
+                silent absence, exactly what the withheld-notice pattern
+                exists to replace with a stated one. The errors TABLE right
+                below this section is unaffected — `delta.errors.rows` feeds
+                it live, same as it always has. */}
             <LiveNotice kind="withheld" subject="Response time distribution" />
             <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
+            <LiveNotice kind="withheld" subject="Errors per second" />
           </section>
         )}
       </DesktopOnly>
@@ -458,7 +474,7 @@ export function Live({
         {(data) => <ErrorsTable errors={data} />}
       </TableSection>
 
-      {/* THE THIRD WITHHELD SECTION. Gated the same way the REAL statistics
+      {/* THE FOURTH WITHHELD SECTION. Gated the same way the REAL statistics
           table is on a finished run (`RunOverviewTab`'s own `DesktopOnly`,
           same `what` text) — the table itself needs per-endpoint rows §1.3
           excludes from the live wire entirely, so there is no live version
@@ -488,8 +504,21 @@ export function Live({
  * comment states for its REST tiles: these are cheap, already-fetched (by
  * the socket, not by this component) numbers, and it is the per-request
  * TABLE a phone cannot usefully render, not a handful of tiles.
+ *
+ * `frozen` (TASK 9 C3) is `Live`'s own `status !== 'running'` — the same
+ * flag that decides whether `LiveNotice[kind="finalizing"]` renders directly
+ * above this section. Without it the "Duration So Far" tile said "still
+ * streaming" unconditionally, including in the exact render where the
+ * banner one section up says streaming has stopped — the tile and the
+ * banner disagreeing about the run's own state on the same screen.
  */
-function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
+function LiveSummary({
+  summary,
+  frozen,
+}: {
+  readonly summary: LiveDelta['summary'];
+  readonly frozen: boolean;
+}) {
   return (
     <section aria-label="Run totals so far">
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -517,7 +546,7 @@ function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
         <StatTile
           label="Duration So Far"
           value={formatDuration(summary.durationMs)}
-          hint="still streaming"
+          hint={frozen ? 'when streaming stopped' : 'still streaming'}
           data-testid="live-stat-duration"
         />
         <StatTile
