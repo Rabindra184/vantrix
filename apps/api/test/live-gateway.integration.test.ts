@@ -109,7 +109,9 @@ function deltaFixture(runId: string, seq: number, offsets: number[]): LiveDelta 
     },
     users: {
       widthMs: 1000,
-      buckets: offsets.map((startOffsetMs) => ({ scenario: 'checkout', startOffsetMs, active: 5 })),
+      buckets: offsets.map((startOffsetMs) => ({
+        scenario: 'checkout', startOffsetMs, started: 5, ended: 0, active: 5,
+      })),
     },
     errors: { rows: [{ message: 'status 500', count: offsets.length }] },
   };

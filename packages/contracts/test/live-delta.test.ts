@@ -24,7 +24,7 @@ const valid = {
   },
   users: {
     widthMs: 1000,
-    buckets: [{ scenario: 'checkout', startOffsetMs: 0, active: 3 }],
+    buckets: [{ scenario: 'checkout', startOffsetMs: 0, started: 3, ended: 0, active: 3 }],
   },
   errors: {
     rows: [{ message: 'connection reset', count: 1 }],
@@ -110,7 +110,7 @@ describe('LiveDeltaSchema', () => {
         ...valid,
         users: {
           ...valid.users,
-          buckets: [{ scenario: 'checkout', startOffsetMs: 0.5, active: 3 }],
+          buckets: [{ scenario: 'checkout', startOffsetMs: 0.5, started: 3, ended: 0, active: 3 }],
         },
       }),
     ).toThrow();

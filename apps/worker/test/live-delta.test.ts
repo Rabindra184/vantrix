@@ -239,6 +239,45 @@ describe('buildDelta', () => {
     }
   });
 
+  it('carries the source UserBucket\'s started/ended counts, not a hard-coded zero', () => {
+    // Three starts and one end for 'Checkout', spread across two buckets --
+    // enough that both the per-bucket counts and their SUM disagree with 0,
+    // so a regression back to the old hard-coded zeros cannot pass by luck.
+    const userEvent = (kind: 'start' | 'end', tsMs: number): CanonicalEvent => ({
+      type: 'user', scenario: 'Checkout', userId: `u-${tsMs}`, kind, tsMs,
+    });
+    const engine = new LiveEngine();
+    engine.add(userEvent('start', 0));
+    engine.add(userEvent('start', 100));
+    engine.add(userEvent('start', 1_200));
+    engine.add(userEvent('end', 1_300));
+
+    const result = engine.snapshot({ clone: true });
+    const source = result.users.find((u) => u.scenario === 'Checkout');
+    if (!source) throw new Error('expected a Checkout scenario in the snapshot');
+
+    const { delta } = buildDelta('r1', result, INITIAL_CURSOR);
+    const published = delta.users.buckets.filter((b) => b.scenario === 'Checkout');
+
+    // Derived from the SAME snapshot the delta was built from, never written
+    // down: every published bucket's started/ended must equal its source
+    // UserBucket's, at every offset the engine produced -- including the
+    // gap-filled bucket between the two occupied ones (`UserSeries#sweep`),
+    // which carries started: 0, ended: 0 for real, distinct from a value
+    // that was never sent at all.
+    expect(published.length).toBe(source.buckets.length);
+    for (const origin of source.buckets) {
+      const match = published.find((b) => b.startOffsetMs === origin.startOffsetMs);
+      if (!match) throw new Error(`delta is missing the bucket at offset ${origin.startOffsetMs}`);
+      expect(match.started).toBe(origin.started);
+      expect(match.ended).toBe(origin.ended);
+    }
+    // Guard: the fixture must actually exercise a nonzero count, or the
+    // equality checks above would pass just as well under the old bug.
+    expect(source.buckets.some((b) => b.started > 0)).toBe(true);
+    expect(source.buckets.some((b) => b.ended > 0)).toBe(true);
+  });
+
   it('re-emits a response-time bucket whose count grew, even when it is behind the frontier', () => {
     // engine.ts folds a request into BOTH its start and end bucket, and the
     // tool's log is end-time-ordered -- so a slow request's start-edge

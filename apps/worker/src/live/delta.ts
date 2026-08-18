@@ -253,9 +253,20 @@ export function buildDelta(
     result.users.length === 0 ? 1000 : Math.min(...result.users.map((u) => u.bucketWidthMs));
 
   // WHOLE, not filtered by `since` -- see "WHY `users` HAS NO CURSOR" above.
+  // `started`/`ended` are read straight off the source `UserBucket`
+  // (packages/statistics/src/users.ts) beside `active` (`= b.maxConcurrent`)
+  // -- the engine already computes both; only the wire shape used to drop
+  // them, which made the arrival-rate chart read a flat zero for a live
+  // run's whole duration (see LiveUserBucketSchema's own comment).
   const usersBuckets: LiveDelta['users']['buckets'] = result.users.flatMap(
     ({ scenario, buckets: userBuckets }) =>
-      userBuckets.map((b) => ({ scenario, startOffsetMs: b.startOffsetMs, active: b.maxConcurrent })),
+      userBuckets.map((b) => ({
+        scenario,
+        startOffsetMs: b.startOffsetMs,
+        started: b.started,
+        ended: b.ended,
+        active: b.maxConcurrent,
+      })),
   );
 
   // Run scope only -- see LiveErrorsSchema. `top(200)` per key is already

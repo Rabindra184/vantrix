@@ -182,29 +182,33 @@ function mergeResponseTime(
 type UserBucket = UsersResponse['scenarios'][number]['buckets'][number];
 
 /**
- * `LiveUserBucketSchema` carries only `active` (`= b.maxConcurrent`,
- * `apps/worker/src/live/delta.ts`) — `started`/`ended` have NO source on the
- * wire. `users` is already sent whole every tick; part 2b widened the
- * response-time bucket and added the `errors` envelope, and deliberately did
- * not add two more numbers per bucket per scenario per tick for a chart
- * (users started per second) that REST answers correctly seconds after the
- * run ends anyway.
- *
- * So `started`/`ended` are `0` here — an HONESTLY absent measurement, not an
- * estimate standing in for a real one. `toConcurrentUsers` (fed by
- * `maxConcurrent`) is therefore live and correct; `toUserStartRate` (fed by
- * `started`) reads a flat zero until the run ends and REST replaces this
- * cache entry with the real answer.
+ * `LiveUserBucketSchema` now carries `started`/`ended` straight from the
+ * source `UserBucket` (`packages/statistics/src/users.ts`), alongside
+ * `active` (`= b.maxConcurrent`, `apps/worker/src/live/delta.ts`) — the
+ * engine already computes all three every tick, so this is a field-for-field
+ * copy, not a transform. `toConcurrentUsers` (fed by `maxConcurrent`) and
+ * `toUserStartRate` (fed by `started`) are therefore both live and correct;
+ * neither reads a fabricated zero for a measurement the wire never sent.
  */
 function usersResponseFrom(runId: string, envelope: LiveDelta['users']): UsersResponse {
   const byScenario = new Map<string, UserBucket[]>();
-  const totalByOffset = new Map<number, number>();
+  // Per-scenario counts SUMMED at each offset, matching how `maxConcurrent`
+  // is already totalled below — `started`/`ended` are ordinary per-tick
+  // counts, so summing them across concurrently-running scenarios is exactly
+  // as valid as summing concurrency, with none of the max-of-sums caveat
+  // that applies only to a peak.
+  const totalByOffset = new Map<number, { started: number; ended: number; maxConcurrent: number }>();
 
   for (const b of envelope.buckets) {
     const buckets = byScenario.get(b.scenario) ?? [];
-    buckets.push({ startOffsetMs: b.startOffsetMs, started: 0, ended: 0, maxConcurrent: b.active });
+    buckets.push({ startOffsetMs: b.startOffsetMs, started: b.started, ended: b.ended, maxConcurrent: b.active });
     byScenario.set(b.scenario, buckets);
-    totalByOffset.set(b.startOffsetMs, (totalByOffset.get(b.startOffsetMs) ?? 0) + b.active);
+    const prior = totalByOffset.get(b.startOffsetMs) ?? { started: 0, ended: 0, maxConcurrent: 0 };
+    totalByOffset.set(b.startOffsetMs, {
+      started: prior.started + b.started,
+      ended: prior.ended + b.ended,
+      maxConcurrent: prior.maxConcurrent + b.active,
+    });
   }
 
   const scenarios = [...byScenario.entries()].map(([scenario, buckets]) => ({
@@ -218,7 +222,7 @@ function usersResponseFrom(runId: string, envelope: LiveDelta['users']): UsersRe
   // (`apps/worker/src/live/delta.ts`). Never max-of-sums.
   const total = [...totalByOffset.entries()]
     .sort(([a], [c]) => a - c)
-    .map(([startOffsetMs, maxConcurrent]) => ({ startOffsetMs, started: 0, ended: 0, maxConcurrent }));
+    .map(([startOffsetMs, agg]) => ({ startOffsetMs, ...agg }));
 
   return { runId, window: null, scenarios, total };
 }

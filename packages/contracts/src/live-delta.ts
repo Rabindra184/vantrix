@@ -117,10 +117,22 @@ export type LiveResponseTime = z.infer<typeof LiveResponseTimeSchema>;
  * an integer, for the same reason as `LiveSeriesBucketSchema.startOffsetMs`
  * above: it is built from the same integer `UserBucket.startOffsetMs`
  * upstream and can never legitimately be fractional.
+ *
+ * `started`/`ended` match `UsersResponseSchema`'s bucket in name, type, and
+ * required-ness (both `z.number().int()`, never optional) for the same
+ * reason `active` already does: the producer's `UserBucket` (`packages/statistics/
+ * src/users.ts`) carries both fields already, and a live bucket that omitted
+ * them would force `usersResponseFrom` (apps/web/src/api/live.ts) to invent a
+ * value with no source -- which is exactly the bug this schema previously
+ * had. `0` and "not sent" are indistinguishable to a reader; the fix is to
+ * send the real count, not to make the field optional so a caller can
+ * distinguish the two some other way.
  */
 export const LiveUserBucketSchema = z.object({
   scenario: z.string(),
   startOffsetMs: z.number().int(),
+  started: z.number().int(),
+  ended: z.number().int(),
   active: z.number(),
 });
 export type LiveUserBucket = z.infer<typeof LiveUserBucketSchema>;

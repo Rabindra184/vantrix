@@ -156,8 +156,8 @@ function deltaFixture(overrides: Partial<LiveDelta> = {}): LiveDelta {
     users: {
       widthMs: 1000,
       buckets: [
-        { scenario: 'Checkout', startOffsetMs: 0, active: 3 },
-        { scenario: 'Browse', startOffsetMs: 0, active: 2 },
+        { scenario: 'Checkout', startOffsetMs: 0, started: 3, ended: 1, active: 3 },
+        { scenario: 'Browse', startOffsetMs: 0, started: 2, ended: 0, active: 2 },
       ],
     },
     errors: { rows: [{ message: 'timeout', count: 1 }, { message: null, count: 3 }] },
@@ -199,11 +199,32 @@ describe('useLiveRun', () => {
 
     const users = client.getQueryData<UsersResponse>(usersQueryKey(RUN_ID));
     expect(users).toBeDefined();
-    // Two scenarios in the fixture, both starting at offset 0 with active
-    // counts 3 and 2 — the total is their SUM at that offset (5), matching
-    // Gatling's own "All users" convention (UsersResponseSchema's docstring).
+    // Two scenarios in the fixture, both starting at offset 0 — the total is
+    // their SUM at that offset, matching Gatling's own "All users" convention
+    // (UsersResponseSchema's docstring). Derived from the fixture buckets
+    // rather than written down, so this keeps proving the sum regardless of
+    // what values the fixture happens to carry.
+    const fixtureBuckets = delta.users.buckets;
     expect(users?.scenarios.map((s) => s.scenario).sort()).toEqual(['Browse', 'Checkout']);
-    expect(users?.total).toEqual([{ startOffsetMs: 0, started: 0, ended: 0, maxConcurrent: 5 }]);
+    expect(users?.total).toEqual([
+      {
+        startOffsetMs: 0,
+        started: fixtureBuckets.reduce((n, b) => n + b.started, 0),
+        ended: fixtureBuckets.reduce((n, b) => n + b.ended, 0),
+        maxConcurrent: fixtureBuckets.reduce((n, b) => n + b.active, 0),
+      },
+    ]);
+    // Both scenarios' buckets carry their OWN started/ended through
+    // unchanged, not zeroed — the defect this fix closes.
+    for (const scenario of users?.scenarios ?? []) {
+      for (const b of scenario.buckets) {
+        const source = fixtureBuckets.find(
+          (f) => f.scenario === scenario.scenario && f.startOffsetMs === b.startOffsetMs,
+        );
+        expect(b.started).toBe(source?.started);
+        expect(b.ended).toBe(source?.ended);
+      }
+    }
   });
 
   // CLAUDE.md §22.6: a phone holding an open socket to draw nothing is
@@ -278,8 +299,8 @@ describe('useLiveRun', () => {
       users: {
         widthMs: 1000,
         buckets: [
-          { scenario: 'Checkout', startOffsetMs: 0, active: 3 },
-          { scenario: 'Browse', startOffsetMs: 0, active: 2 },
+          { scenario: 'Checkout', startOffsetMs: 0, started: 3, ended: 0, active: 3 },
+          { scenario: 'Browse', startOffsetMs: 0, started: 2, ended: 0, active: 2 },
         ],
       },
       errors: { rows: [{ message: 'timeout', count: 1 }, { message: 'reset', count: 2 }] },
@@ -290,7 +311,10 @@ describe('useLiveRun', () => {
     // sends only what is still true.
     const next = deltaFixture({
       seq: 1,
-      users: { widthMs: 1000, buckets: [{ scenario: 'Checkout', startOffsetMs: 1000, active: 4 }] },
+      users: {
+        widthMs: 1000,
+        buckets: [{ scenario: 'Checkout', startOffsetMs: 1000, started: 1, ended: 0, active: 4 }],
+      },
       errors: { rows: [{ message: 'timeout', count: 2 }] },
     });
     await send({ type: 'delta', delta: next });
