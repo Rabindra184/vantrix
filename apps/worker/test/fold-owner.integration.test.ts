@@ -1118,6 +1118,17 @@ describe('LiveFoldOwner', () => {
    * fold has actually reached `readFrom`) rather than racing an arbitrary
    * delay against however long claiming and discovering the run happens to
    * take on this run of the test.
+   *
+   * `totalReadFromCalls` is fix round 1, Minor 4. `maxConcurrent === 1`
+   * alone passes whether the ping actually arrived and was correctly
+   * deferred, OR never arrived at all (a channel typo, an unsubscribed
+   * `#sub`) -- both look identical to that assertion. Asserting a SECOND
+   * call for this run actually happened once the gate releases is what the
+   * sibling delivery-focused case (`a live:advance ping for a run this
+   * owner does not own does not claim it`) does not cover for THIS test's
+   * own subject: this is the one case guarding the concurrency bug this
+   * whole plan's round found, so it is the one that most needs to fail for
+   * the right reason.
    */
   it('a live:advance ping never overlaps a fold already in flight for the same run', async () => {
     await truncateAll();
@@ -1127,6 +1138,7 @@ describe('LiveFoldOwner', () => {
 
     let concurrent = 0;
     let maxConcurrent = 0;
+    let totalReadFromCalls = 0;
     let releaseGate: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve;
@@ -1138,6 +1150,7 @@ describe('LiveFoldOwner', () => {
     const realReadFrom = chunks.readFrom.bind(chunks);
     const readFromSpy = vi.spyOn(chunks, 'readFrom').mockImplementation(async (rid: string, offset: number) => {
       if (rid !== runId) return realReadFrom(rid, offset);
+      totalReadFromCalls += 1;
       concurrent += 1;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
       readFromStarted!(); // the tick's own fold has now reached readFrom -- provably "in flight"
@@ -1163,11 +1176,20 @@ describe('LiveFoldOwner', () => {
       // call for runId would start while the gate is still held, pushing
       // `concurrent` to 2.
       await new Promise((resolve) => setTimeout(resolve, 150));
-      // THE discriminating assertion.
+      // THE discriminating assertion for OVERLAP specifically.
       expect(maxConcurrent).toBe(1);
 
       releaseGate!();
       await tickPromise;
+
+      // THE discriminating assertion for DELIVERY -- fix round 1, Minor 4.
+      // `#foldOnce`'s rerun mechanism (fix round 1, Important 1) means the
+      // deferred ping causes a SECOND, sequential `readFrom` call once the
+      // gate releases, even though this test's run has nothing further to
+      // fetch by then (the rerun's own `readFrom` returns empty). Without
+      // the ping ever having arrived, only the ONE call the tick itself
+      // issued would exist.
+      expect(totalReadFromCalls).toBeGreaterThanOrEqual(2);
 
       // Not just "not measurably concurrent" -- genuinely undamaged: the
       // batch numbers still match, which they would NOT if a second
