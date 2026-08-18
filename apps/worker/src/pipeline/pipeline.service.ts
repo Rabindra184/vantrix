@@ -63,8 +63,33 @@ function rawLogBundleSource(buf: Buffer): BundleSource {
  * Namespace for the per-run ingest advisory lock. Arbitrary but fixed, and
  * paired with `hashtext(run_id)` as the second key so this lock can never
  * collide with an advisory lock taken elsewhere for another purpose.
+ *
+ * Exported rather than left `const` so `apps/worker/src/live/fold-owner.ts`
+ * can reuse it instead of copying the number. Two independent locks would
+ * NOT be equivalent here: the fold owner deliberately competes on this same
+ * namespace so a run cannot be folded while `PipelineService` is parsing it
+ * (see `LiveFoldOwner`'s own doc comment for why that matters).
  */
-const RUN_INGEST_LOCK_NAMESPACE = 8_531_001;
+export const RUN_INGEST_LOCK_NAMESPACE = 8_531_001;
+
+/**
+ * Thrown by `process()` when it loses the lock race to the LIVE FOLD OWNER
+ * rather than to another `process()` call for the same run -- see
+ * `#handleLockLost`'s doc comment for how the two are told apart. Always
+ * means "ask the caller to try again shortly," never "this run's data is
+ * bad," so it is deliberately NOT an `IngestError`: `isTransient`
+ * (`pipeline/retry.ts`) treats every `IngestError` as deterministic on
+ * principle, which is the opposite of what this needs. `code: 'RUN_LOCKED'`
+ * is what tells `retry.ts` to retry it, alongside the networking/Prisma
+ * codes already there.
+ */
+class RunLockedError extends Error {
+  readonly code = 'RUN_LOCKED';
+  constructor(runId: string) {
+    super(`run ${runId} is locked by the live fold owner; will retry`);
+    this.name = 'RunLockedError';
+  }
+}
 
 @Injectable()
 export class PipelineService {
@@ -105,7 +130,10 @@ export class PipelineService {
         'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
         [RUN_INGEST_LOCK_NAMESPACE, runId],
       );
-      if (!rows[0]?.got) return;                        // another processor owns this run
+      if (!rows[0]?.got) {
+        await this.#handleLockLost(runId);
+        return;
+      }
 
       try {
         await this.#processHoldingLock(runId);
@@ -118,6 +146,58 @@ export class PipelineService {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Reached when `process()` loses the advisory-lock race for `runId`. Two
+   * structurally different races land here, and they need OPPOSITE
+   * treatments:
+   *
+   *  1. TWO INGEST PROCESSORS RACING OVER THE SAME BUNDLE -- a duplicate
+   *     BullMQ delivery, or the Sweeper's 'parsing' re-enqueue landing while
+   *     the original attempt is still alive (this method's own class doc
+   *     comment above `process` describes the hazard the lock exists to
+   *     close). The lock is held by ANOTHER `process()` call for this exact
+   *     run, actively driving it to a terminal state on its own. The
+   *     ORIGINAL behaviour here -- silently return, do nothing -- is
+   *     correct and must stay: the winner will finish (or, if it dies, the
+   *     Sweeper's staleness re-enqueue is the recovery path, not a BullMQ
+   *     retry racing the same lock again).
+   *
+   *  2. THE LIVE FOLD OWNER STILL HOLDS THE LOCK. `LiveService.close()`
+   *     (`apps/api/src/ingest/live.service.ts`) moves a run to `'parsing'`
+   *     and enqueues this job BEFORE the fold owner's next tick has
+   *     released the shared lock -- design part-2a §1.1 reuses this exact
+   *     namespace deliberately so a run can never be folded while it is
+   *     being parsed. The owner releases within one `liveTickMs` (<=5s by
+   *     default), so returning silently here would report the job a
+   *     success while nothing has actually parsed the run: it would sit at
+   *     `'parsing'` until the Sweeper's `parsingStaleAfterMs` (15 minutes by
+   *     default) notices. This case must THROW so BullMQ retries -- its
+   *     default 3 attempts with exponential backoff from 2s (`queue.ts`)
+   *     comfortably covers a <=5s wait.
+   *
+   * The two are told apart by `bundleKey`, NOT by status: `claimForClose`
+   * and `markParsing` both write `'parsing'`, so status alone cannot
+   * distinguish a run the fold owner is about to release from one another
+   * `process()` call is actively driving. Only a LIVE run's bundleKey (the
+   * `/${SIMULATION_LOG}` suffix `rawLogBundleSource` above already tests
+   * for) can ever contend with the fold owner for this lock -- the owner
+   * only claims runs at `status = 'running'`, and an uploaded run never
+   * passes through that state -- so an uploaded run losing the race can
+   * only mean case 1, and a live run losing it while non-terminal is
+   * overwhelmingly case 2.
+   */
+  async #handleLockLost(runId: string): Promise<void> {
+    const runs = new RunRepository(this.prisma);
+    const run = await runs.findByIdUnscoped(runId);
+    if (!run) return;                                                   // swept away or deleted
+    if (run.status === 'complete' || run.status === 'failed') return;   // already terminal -- case 1, resolved
+
+    if (run.bundleKey.endsWith(`/${SIMULATION_LOG}`)) {
+      throw new RunLockedError(runId);                                  // case 2 -- ask BullMQ to retry
+    }
+    // Case 1: another process() call already owns this run's outcome.
   }
 
   async #processHoldingLock(runId: string): Promise<void> {

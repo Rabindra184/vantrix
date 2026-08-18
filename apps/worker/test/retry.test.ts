@@ -58,6 +58,45 @@ describe('isTransient', () => {
     expect(isTransient(e)).toBe(true);
   });
 
+  // Fix round 1, Important 5. PipelineService throws this (RunLockedError,
+  // code 'RUN_LOCKED') when it loses the advisory-lock race to the live
+  // fold owner rather than to another process() call for the same run --
+  // see pipeline.service.ts's #handleLockLost. It must be retried, not
+  // treated as a deterministic failure, or the run sits at 'parsing' for up
+  // to parsingStaleAfterMs (15 minutes by default) despite the owner
+  // releasing the lock within one liveTickMs.
+  it("treats PipelineService's own RUN_LOCKED signal as transient", () => {
+    const e = Object.assign(new Error('run r1 is locked by the live fold owner; will retry'), {
+      code: 'RUN_LOCKED',
+    });
+    expect(isTransient(e)).toBe(true);
+  });
+
+  // Fix round 2, item 3. main.ts now gives the shared pool a real
+  // connectionTimeoutMillis (fix round 1's Critical 1), so pool pressure
+  // fails loud via pg-pool's own connect-timeout error instead of hanging
+  // forever -- strictly better, but that error is a bare `new Error(...)`
+  // with no `.code`, and isTransient's code-based lookup found nothing to
+  // match, landing it on UnrecoverableError: permanent failure, no retry,
+  // for a pool-pressure condition exactly as transient as
+  // '53300 too_many_connections' above. The message text is pg-pool
+  // 3.14.0's own exact wording (pg-pool/index.js), not paraphrased.
+  it("treats pg-pool's own connect-timeout error as transient", () => {
+    const e = new Error('timeout exceeded when trying to connect');
+    expect(isTransient(e)).toBe(true);
+  });
+
+  it('does not swallow an unrelated bare Error that merely also lacks a code', () => {
+    // The discriminating case for item 3's own "narrow enough" requirement:
+    // a bug or a mistyped call can easily produce a plain Error with a
+    // different message and no .code either. If the match above were by
+    // substring (e.g. "timeout") or by absence-of-code alone, this would
+    // wrongly come back transient too, silently retrying a real defect
+    // three times instead of surfacing it once, deterministically.
+    const e = new Error('x is not a function');
+    expect(isTransient(e)).toBe(false);
+  });
+
   it('still treats a Prisma-shaped query error with an unrelated code as deterministic', () => {
     // A genuinely deterministic failure (e.g. a unique-constraint violation)
     // must not be swept into "retryable" just because it is Prisma-shaped.

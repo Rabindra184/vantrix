@@ -21,6 +21,63 @@ function chunkKey(runId: string, offset: number): string {
   return `${chunkPrefix(runId)}${String(offset).padStart(16, '0')}.bin`;
 }
 
+/** The offset a chunk key encodes. Inverse of `chunkKey`. */
+function offsetOf(key: string): number {
+  const base = key.slice(key.lastIndexOf('/') + 1).replace(/\.bin$/, '');
+  return Number(base);
+}
+
+/**
+ * `readFrom` was handed an offset the surviving chunk objects cannot start
+ * from, or found a hole between two of them.
+ *
+ * NAMED, and carrying the two offsets, because the whole point is that this
+ * condition used to be INVISIBLE. `readFrom`'s contract -- and
+ * `LiveFoldOwner`'s `fetchedBytes` doc comment, which derives it -- promise
+ * that the first chunk returned starts exactly at the requested offset. The
+ * derivation is sound (offset negotiation only accepts a chunk at
+ * `offset === cursor`, so a run's chunks tile `[0, stream_offset)` with no
+ * gap and no overlap), and nothing checked it. `LiveChunkStore.finalize`
+ * breaks it as a matter of ordinary operation: it lists chunk keys and then
+ * deletes them CONCURRENTLY, so a fold racing a close is handed whichever
+ * keys happened to survive -- which may start above the frontier, or have a
+ * hole punched through the middle. Those bytes went into the decoder, the
+ * fold's frontier advanced by their length, and every absolute position
+ * after them was wrong for the rest of the run with nothing thrown and
+ * nothing logged.
+ *
+ * Throwing is the whole fix, and it is safe to throw here specifically:
+ * `LiveFoldOwner#fold` advances `fetchedBytes` only AFTER `readFrom`
+ * resolves, so a rejection leaves that run's frontier exactly where it was
+ * and the next tick retries the identical read. If the cause is transient
+ * (a finalize mid-flight) the retry succeeds; if it is not, the run is by
+ * definition no longer `running` -- only `close()` calls `finalize` -- so
+ * the tick's own release pass drops it within one interval rather than
+ * retrying forever.
+ */
+export class LiveChunkGapError extends Error {
+  /** What the caller asked to read from -- its fetch frontier. */
+  readonly expectedOffset: number;
+  /** Where the surviving chunks actually resume. */
+  readonly actualOffset: number;
+  readonly runId: string;
+
+  constructor(runId: string, expectedOffset: number, actualOffset: number) {
+    super(
+      `LiveChunkStore.readFrom(${runId}, ${expectedOffset}): the chunk objects ` +
+        `do not start at that offset -- the next one begins at ${actualOffset}. ` +
+        'A concurrent finalize() has deleted chunks this read needed, or the ' +
+        'caller passed a decode position rather than a fetch frontier.',
+    );
+    // Set explicitly: `class X extends Error` leaves `name` as 'Error'
+    // otherwise, and a named error nobody can match on by name is not one.
+    this.name = 'LiveChunkGapError';
+    this.runId = runId;
+    this.expectedOffset = expectedOffset;
+    this.actualOffset = actualOffset;
+  }
+}
+
 /**
  * Reassembles a live run's byte stream from the per-chunk objects S3 has no
  * append to avoid. `put` lands one object per chunk as it arrives; `assemble`
@@ -74,6 +131,63 @@ export class LiveChunkStore {
   async assemble(runId: string): Promise<Buffer> {
     const keys = await this.#listChunkKeys(runId);
     const parts = await Promise.all(keys.map((key) => this.#blobs.get(key)));
+    return Buffer.concat(parts);
+  }
+
+  /**
+   * Chunks whose **start** offset is >= `offset`, concatenated in offset order.
+   *
+   * The fold owner's read: it holds a byte position and wants everything
+   * after it, without re-reading a run's whole history on every tick.
+   *
+   * `offset` is a FETCH FRONTIER — the highest byte the caller has already
+   * retrieved. Callers MUST NOT pass a decode position (e.g. the byte offset
+   * of the last whole record decoded, or `StreamingLogDecoder.consumedBytes`).
+   * A decoder's `consumedBytes` sits behind its unconsumed tail: a record can
+   * straddle chunk boundaries, leaving a partial tail the decoder buffers.
+   * Passing `consumedBytes` re-selects chunks already fetched whose start is
+   * still >= that position, duplicating them in the fold and corrupting every
+   * byte offset thereafter. The decoder's tail retention solves a different
+   * problem — the partial record — and does not make re-delivery safe.
+   *
+   * Filters on the offset PARSED OUT of the key rather than on the key string,
+   * even though the padding makes the two orders agree. A string comparison
+   * would silently start behaving differently the day an offset needs 17 digits.
+   * The parse is what the caller's units actually are.
+   *
+   * ═══ AND IT ASSERTS THE CONTIGUITY IT PROMISES ═══
+   * Design §2.2.1: a return value that does not begin exactly at `offset`,
+   * or that has a hole in it, throws {@link LiveChunkGapError} rather than
+   * being concatenated and handed back. See that class's own doc comment
+   * for why the invariant is sound and still needs checking, and why
+   * throwing is safe for the one caller.
+   *
+   * TWO CHECKS, NOT ONE, because they cost differently and catch different
+   * things. The HEAD check runs before the `get` fan-out -- it needs only
+   * the key names, so a read that cannot possibly be contiguous pays for no
+   * object fetches at all. The INTERIOR check needs each chunk's LENGTH,
+   * which only the fetched bytes carry (a key encodes where a chunk starts,
+   * never how far it runs), so it necessarily runs after.
+   *
+   * An empty result is NOT a violation and must stay a plain empty buffer:
+   * "the caller is already at the frontier, nothing new yet" is the single
+   * most common outcome of this call, once per owned run per tick.
+   */
+  async readFrom(runId: string, offset: number): Promise<Buffer> {
+    const keys = await this.#listChunkKeys(runId);
+    const wanted = keys.filter((k) => offsetOf(k) >= offset);
+    if (wanted.length === 0) return Buffer.alloc(0);
+
+    const head = offsetOf(wanted[0]!);
+    if (head !== offset) throw new LiveChunkGapError(runId, offset, head);
+
+    const parts = await Promise.all(wanted.map((k) => this.#blobs.get(k)));
+    let end = offset;
+    for (let i = 0; i < parts.length; i++) {
+      const startsAt = offsetOf(wanted[i]!);
+      if (startsAt !== end) throw new LiveChunkGapError(runId, end, startsAt);
+      end += parts[i]!.length;
+    }
     return Buffer.concat(parts);
   }
 

@@ -251,6 +251,79 @@ moved for `RUNNING_STALE_AFTER_MS` (10 minutes by default). That threshold is
 on silence, not on run length: a live run streams for as long as the load test
 does, and only the time since its last accepted chunk counts against it.
 
+### How the worker learns about a stream
+
+Bytes accepted above land in blob storage, never in Redis. A dedicated worker
+process (`LiveFoldOwner`) folds the chunk objects of a `running` run into a
+live, incrementally-maintained set of statistics and publishes a delta on a
+timer. Redis carries five channels for this, and none of them carry the bytes
+themselves — only notifications and computed deltas:
+
+| Channel | Direction | Carries |
+|---|---|---|
+| `live:opened` | API → worker | a run id, on a successful `POST /v1/runs/live` |
+| `live:advance` | API → worker | a run id, when a chunk is **accepted** (not on a gap or a replay) |
+| `live:closed` | API → worker | a run id, when `POST /v1/runs/:id/close` claims it off `running` |
+| `live:{runId}` | worker → subscribers | a delta, published each tick |
+| `live:{runId}:deltas` | worker → replay | the same delta, appended to a stream capped by a byte budget |
+
+**None of the five ever carries bytes.** The bytes are already durable in
+blob storage by the time any API-side channel is published to — that is
+the whole reason these are notifications rather than a queue: duplicating a
+run's bytes into Redis as well would mean storing every byte twice.
+
+`live:opened` and `live:advance` are optimisations over the worker's own poll
+of `running` runs, never replacements for it. Redis pub/sub has no
+persistence, so a message published while every worker is down (a deploy, an
+outage) reaches nobody — it is the poll, not either channel, that makes a run
+opened during an outage eventually fold.
+
+**`live:closed` is not an optimisation.** Closing a run enqueues its terminal
+parse immediately, and the pipeline takes the same advisory lock the fold
+owner is still holding — deliberately, so a run can never be folded and
+parsed at once. The pipeline's whole budget for waiting that out is BullMQ's
+three attempts on exponential backoff from 2 s, about six seconds, while the
+owner's release latency without this channel is one tick interval plus an
+unbounded in-flight tick. Exhausting those attempts leaves the run at
+`parsing` until the sweeper's 15-minute staleness window notices, so a live
+run's worst-case time to a verdict becomes a quarter of an hour. The tick's
+own release pass still covers a dropped message; what the channel removes is
+the latency, and the latency is the defect.
+
+### The worker's connection budget
+
+Each owned run holds one dedicated Postgres connection for its whole
+ownership — the fold owner claims a run on the same advisory lock the
+pipeline uses, and that lock must be held and released on one connection.
+`apps/worker/src/main.ts` therefore sizes the worker's Postgres pool well
+above the driver default of 10, deriving every term from a client some
+component actually holds:
+
+| Term | At defaults | Held by |
+|---|---|---|
+| `maxOwnedRuns` | 25 | one pooled client per owned run, for its lock's lifetime |
+| fold-owner discovery | 1 | the tick's `SELECT id FROM run WHERE status = 'running'` |
+| `concurrency × 2` | 4 | `PipelineService.process` — the lock client, plus a brief one for its commit |
+| sweeper | 1 | one client, `BEGIN` to `COMMIT` |
+| **pg pool total** | **31** | |
+| Prisma's own pool | 3 | `concurrency + 1`, pinned via `connection_limit` |
+| **per worker replica** | **34** | |
+
+**Prisma's pool is a second pool, and it has to be pinned.** `createPrisma`
+opens its own, entirely separate pool against the same database. Left
+unpinned, Prisma sizes it as `num_physical_cpus × 2 + 1` — roughly 9 to 17
+— so a replica that budgeted 31 really took 40 to 48, and the overshoot
+varied with the host's CPU count rather than with anything in the code. The
+worker now passes an explicit `connectionLimit`; an operator's own
+`connection_limit` in `DATABASE_URL` still wins.
+
+Two worker replicas is therefore ~68 connections before a single API
+replica, against `postgres:16-alpine`'s stock `max_connections = 100`.
+`infra/docker-compose.yml` raises it to 200. **The API's own Prisma pool is
+still unpinned** — the API holds no long-lived connections the way the fold
+owner does, so it has never been the binding term, but anyone sizing a
+production database should count it.
+
 ## Proving it end to end
 
 `apps/api/test/parity.e2e.test.ts` is the keystone test: it posts the whole

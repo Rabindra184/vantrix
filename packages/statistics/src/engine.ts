@@ -54,8 +54,23 @@ export interface EngineOptions {
 
 export interface EngineResult {
   stats: StatRollup[];
-  series: Map<string, { scope: MetricScope; name: string; family: MetricFamily; buckets: Bucket[] }>;
-  users: { scenario: string; buckets: UserBucket[] }[];
+  /**
+   * `bucketWidthMs` is the series' OWN width, straight from the `BucketSeries`
+   * that produced `buckets` (`buckets.ts`'s `widthMs` getter) -- never
+   * inferred from the gaps between offsets. A sparse series' smallest gap is
+   * not its width (three buckets at 5s, 40s, 90s infer 35000ms from a true
+   * 1000ms), so a consumer that infers instead of reading this field both
+   * mis-scales every derived rate and fires spurious replacements when the
+   * inferred value drifts without any coalesce having happened.
+   */
+  series: Map<string, { scope: MetricScope; name: string; family: MetricFamily; bucketWidthMs: number; buckets: Bucket[] }>;
+  /**
+   * One entry per scenario, each with its OWN `bucketWidthMs`: `UserSeries`
+   * coalesces every scenario independently against the SAME `maxBucketsUsers`
+   * cap, so two scenarios in one run are not guaranteed to land on the same
+   * width. Do not assume they do.
+   */
+  users: { scenario: string; bucketWidthMs: number; buckets: UserBucket[] }[];
   /** `message: null` is the folded remainder — see `ErrorTally`. */
   errors: { scope: MetricScope; name: string; message: string | null; count: number }[];
   /**
@@ -372,7 +387,7 @@ export class LiveEngine {
 
     return {
       stats,
-      series: new Map([...this.#series].map(([k, v]) => [k, { scope: v.scope, name: v.name, family: v.family, buckets: v.series.buckets() }])),
+      series: new Map([...this.#series].map(([k, v]) => [k, { scope: v.scope, name: v.name, family: v.family, bucketWidthMs: v.series.widthMs, buckets: v.series.buckets() }])),
       users: users.scenarios(),
       errors,
       errorSeries: errorSeriesResult,

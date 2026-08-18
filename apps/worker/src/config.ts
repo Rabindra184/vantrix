@@ -8,6 +8,21 @@ export interface WorkerConfig {
     accessKeyId: string;
     secretAccessKey: string;
   };
+  /**
+   * BullMQ's job concurrency for the ingest queue (`consumer.ts`).
+   *
+   * Also a POOL-SIZING INPUT since fix round 1: `main.ts` sizes the shared
+   * `pg.Pool` as `maxOwnedRuns` plus `concurrency * PIPELINE_CLIENTS_PER_JOB`
+   * (`PipelineService.process` can hold two clients per in-flight job) plus
+   * fixed headroom for the fold owner's own discovery client and the
+   * sweeper. A non-numeric override reaching `Number(...)` un-guarded would
+   * make that `max` computation `NaN`, and pg-pool's own fallback chain
+   * (`this.options.max || this.options.poolSize || 10`) SILENTLY substitutes
+   * 10 for a `NaN`/falsy `max` — reintroducing Critical 1's exact shape (a
+   * pool of 10 against `maxOwnedRuns`'s default of 25) through this field
+   * instead of `maxOwnedRuns` or `liveTickMs`. Guarded by `numberOr` for
+   * exactly that reason, same as those two.
+   */
   concurrency: number;
   sweepIntervalMs: number;
   staleAfterMs: number;
@@ -57,6 +72,54 @@ export interface WorkerConfig {
    * decompressed size, so this is enforced independently.
    */
   maxDecompressedBundleBytes: number;
+  /**
+   * How often `LiveFoldOwner` ticks: claims newly-running runs, folds every
+   * owned one, releases any that left `running` (design §3.1, FR-LIVE-3).
+   *
+   * Floored at 1000 ms with `Math.max`, not rejected outright — FR-LIVE-3
+   * states 1000 ms as the floor, and silently clamping a misconfiguration
+   * (rather than refusing to boot over it) is friendlier for an operator.
+   */
+  liveTickMs: number;
+  /**
+   * Caps how many runs one `LiveFoldOwner` holds at once (design §1.3).
+   *
+   * Real, not a preference: each owned run holds a dedicated `pg.PoolClient`
+   * for its advisory lock's whole lifetime (see `LiveFoldOwner`), so this
+   * bounds pooled-connection usage directly. NFR-SC-4 targets 50 concurrent
+   * live runs across the deployment; two workers at the default of 25 meet
+   * that.
+   *
+   * THE POOL MUST BE SIZED FROM THIS VALUE, NOT THE OTHER WAY AROUND — design
+   * §1.3, amended after an earlier draft asserted the opposite ("one worker
+   * cannot exhaust its pool trying to own everything") without ever checking
+   * it against the pool's actual size, which defaults to 10
+   * (`packages/persistence/src/client.ts`) against this field's default of
+   * 25. `main.ts` sizes the shared `pg.Pool` as `maxOwnedRuns` plus headroom
+   * for the pipeline's own concurrency and the sweeper — see its own
+   * `POOL_HEADROOM`-adjacent comment. Raising this default without also
+   * reviewing that sizing reintroduces the exact silent deadlock the
+   * amendment exists to prevent: no error, no timeout, no log, just a
+   * worker that stops.
+   */
+  maxOwnedRuns: number;
+}
+
+/**
+ * `Number(x)` on a non-numeric string is `NaN`, and `NaN` defeats both of
+ * this config's own guards silently: `Math.max(1000, NaN)` is `NaN` (so
+ * `setInterval(fn, NaN)` becomes an effectively-zero-delay timer, the
+ * opposite of the floor it is supposed to enforce), and `someCount >= NaN`
+ * is always `false` (so a cap compared against it is never reached — see
+ * `LiveFoldOwner#doTick`'s `this.#owned.size >= this.#config.maxOwnedRuns`).
+ * Falling back to `fallback` on a non-finite parse (covers `NaN` and
+ * `Infinity` alike) keeps a misconfigured value from silently disabling the
+ * exact protection it was meant to configure.
+ */
+function numberOr(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
@@ -72,7 +135,10 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
       accessKeyId: env.S3_ACCESS_KEY ?? 'perfportal',
       secretAccessKey: env.S3_SECRET_KEY ?? 'perfportal123',
     },
-    concurrency: Number(env.WORKER_CONCURRENCY ?? 2),
+    // numberOr, not a bare Number(...) -- see the field's own doc comment:
+    // this is now a pool-sizing input, and an invalid override must not
+    // reach main.ts's `max` computation as NaN.
+    concurrency: numberOr(env.WORKER_CONCURRENCY, 2),
     sweepIntervalMs: Number(env.SWEEP_INTERVAL_MS ?? 30_000),
     staleAfterMs: Number(env.STALE_AFTER_MS ?? 60_000),
     parsingStaleAfterMs: Number(env.PARSING_STALE_AFTER_MS ?? 15 * 60_000),
@@ -80,5 +146,10 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
     maxDecompressedBundleBytes: Number(
       env.MAX_DECOMPRESSED_BUNDLE_BYTES ?? 2 * 1024 * 1024 * 1024,
     ),
+    // Math.max, not a validation error -- see the field's own doc comment.
+    // numberOr, not a bare Number(...) -- see ITS doc comment: an invalid
+    // LIVE_TICK_MS must not turn the floor below into NaN.
+    liveTickMs: Math.max(1000, numberOr(env.LIVE_TICK_MS, 5000)),
+    maxOwnedRuns: numberOr(env.MAX_OWNED_RUNS, 25),
   };
 }

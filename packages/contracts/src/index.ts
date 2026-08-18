@@ -6,3 +6,4 @@ export * from './metrics.js';
 export * from './settings.js';
 export * from './tokens.js';
 export * from './live.js';
+export * from './live-delta.js';

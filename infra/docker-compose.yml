@@ -1,6 +1,21 @@
 services:
   postgres:
     image: postgres:16-alpine
+    # Stock postgres:16 allows 100 connections, three of them reserved for
+    # superusers. One worker replica now budgets 34 (a pg pool of
+    # maxOwnedRuns + headroom = 31, plus Prisma's own pinned pool of 3 --
+    # see apps/worker/src/main.ts, which derives both), and NFR-SC-4's 50
+    # concurrent live runs needs two of them. Add an API replica or two and
+    # the stock limit is the binding constraint before anything in this
+    # repository is.
+    #
+    # 200 leaves genuine room for that topology plus migrations, psql, and
+    # the integration suite's own pools, all of which point at this same
+    # container. Raising it is cheap here: Postgres reserves a few hundred
+    # KB per allowed connection whether or not it is used, which is nothing
+    # against what a dev machine running MinIO and Redis alongside it is
+    # already spending.
+    command: postgres -c max_connections=200
     environment:
       POSTGRES_USER: perfportal
       POSTGRES_PASSWORD: perfportal

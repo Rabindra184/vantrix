@@ -13,6 +13,7 @@ import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { engineOptionsFrom } from './ingest.service.js';
+import { LiveNotifier } from './live-notifier.js';
 import { IngestQueue } from './queue.js';
 
 export interface OpenLiveRunResult {
@@ -48,6 +49,7 @@ export class LiveService {
     private readonly chunks: LiveChunkStore,
     private readonly queue: IngestQueue,
     private readonly waiter: TerminalWaiter,
+    private readonly notifier: LiveNotifier,
   ) {}
 
   /**
@@ -72,6 +74,12 @@ export class LiveService {
       startedAt: new Date(),
       engineOptions: engineOptionsFrom(settings),
     });
+
+    // Fire-and-forget (design §1.2): lets the fold owner attempt a claim now
+    // instead of waiting for its next discovery poll. Never awaited, and a
+    // dropped message is harmless -- the poll finds this run's `running` row
+    // regardless, on the next tick at the latest.
+    this.notifier.opened(run.id);
 
     // NOT a hardcoded 0: createLive is idempotent under idempotencyKey, so a
     // retried open can rejoin a run that already accepted bytes. Reading the
@@ -137,7 +145,9 @@ export class LiveService {
     if (offset < cursor) {
       // Replay: a no-op, deliberately not calling chunks.put at all — see
       // the docstring above for why writing here (even to the "same" key)
-      // is exactly the bug this method exists to not have.
+      // is exactly the bug this method exists to not have. No notifier ping
+      // either, for the same reason (design §2.3): a replay changes nothing
+      // the owner needs to know.
       return { kind: 'accepted', nextOffset: cursor };
     }
 
@@ -167,13 +177,24 @@ export class LiveService {
     // report success for bytes that never actually landed, which is a gap.
     await this.chunks.put(runId, offset, bytes);
     const advanced = await this.runs.advanceOffset(runId, offset, offset + bytes.length);
-    if (advanced) return { kind: 'accepted', nextOffset: offset + bytes.length };
+    if (advanced) {
+      // Design §2.3: fire-and-forget, and ONLY here -- this is the one
+      // branch that just durably landed genuinely new bytes. The replay
+      // branch above and the race-recovery re-read below both return
+      // `accepted` too, but neither wrote anything this call: a gap or a
+      // replay changes nothing the owner needs to know, so pinging there
+      // would just cost the owner a wasted readFrom next tick.
+      this.notifier.advanced(runId);
+      return { kind: 'accepted', nextOffset: offset + bytes.length };
+    }
 
     // Lost a race between the reads above and this CAS: a concurrent chunk
     // at this exact offset landed first, or the run closed in the interim.
     // Re-read rather than assume which — if the cursor has since moved
     // PAST our offset, a rival's write already accepted these same bytes
     // and this is a replay now too; otherwise the run stopped running.
+    // No ping here either: the rival's own advanceOffset call already sent
+    // one for these bytes, if it landed through this same code path.
     const current = (await this.runs.liveState(runId))?.streamOffset ?? cursor;
     if (offset < current) return { kind: 'accepted', nextOffset: current };
     return { kind: 'rejected', nextOffset: current };
@@ -268,6 +289,25 @@ export class LiveService {
 
     const claimed = await this.runs.claimForClose(runId);
     if (!claimed) return { kind: 'not_running' };
+
+    // HERE, not after `queue.add` below -- design §1.2's `live:closed`. The
+    // fold owner still holds this run's advisory lock, and
+    // `PipelineService.process` needs that same lock the moment the job
+    // below is picked up. Publishing at the claim gives the owner the whole
+    // of `finalize` + `assemble` + hashing + `finalizeLive` as a head start
+    // on releasing it, instead of racing the enqueue.
+    //
+    // Fire-and-forget by signature, like the other two channels: a failure
+    // here must not fail a close that has already committed its CAS, and a
+    // dropped message only costs what this call saves -- the tick's own
+    // release pass still drops a run that has left `running`.
+    //
+    // The `releaseClose` path below can revert this claim on an error
+    // before `committed`. If the owner has already acted on this ping, the
+    // run returns to `running` unowned and the next tick re-claims it,
+    // re-folding from byte 0 -- correct (the fold position is deliberately
+    // not persisted, design §2.1), and it costs CPU on an error path only.
+    this.notifier.closed(runId);
 
     let hasData: boolean;
     // Flips the instant this run's terminal state is durably decided —

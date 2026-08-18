@@ -45,6 +45,91 @@ function isObjectMissing(err: unknown): boolean {
   return status === 404;
 }
 
+/**
+ * SOCKET-IDLE timeout for every request this client makes, in ms.
+ *
+ * THE SDK'S OWN DEFAULT IS 0 -- NO TIMEOUT -- and that default was, until
+ * this constant existed, the single longest-reaching failure on the live
+ * path. `LiveFoldOwner#fold` awaits `LiveChunkStore.readFrom`, which fans
+ * out `get()` calls through this client, while holding `#ticking` and
+ * `#folding`. A `get` whose socket goes quiet and never returns therefore
+ * stalls not just that one run's fold but EVERY owned run's fold and
+ * publish for the whole process, indefinitely: the tick's release loop
+ * never runs, so a closed run keeps the advisory lock `PipelineService`
+ * needs and sits at `parsing` until the sweeper's `parsingStaleAfterMs`
+ * (15 minutes) picks it up. The fold watchdog
+ * (`LiveFoldOwner#checkWatchdog`) exists to make that visible precisely
+ * because nothing could bound it; this bounds it.
+ *
+ * ═══ `socketTimeout`, NOT `requestTimeout` -- THE OBVIOUS OPTION IS THE
+ * WRONG ONE, TWICE OVER ═══
+ *
+ * `@smithy/node-http-handler` 4.x offers both, and `requestTimeout` is the
+ * one that looks right and is not:
+ *
+ *  1. It is a TOTAL DEADLINE ("the maximum number of milliseconds request &
+ *     response should take"), measured from a plain `setTimeout` at request
+ *     start. Any value short enough to bound a stall would also abort a
+ *     healthy transfer that is simply large -- the live design sizes a run's
+ *     assembled log at up to ~250 MB, read back through `assemble` as ONE
+ *     `GetObject` body, and `putStream` ships bundle parts of comparable
+ *     size. `socketTimeout` is `socket.setTimeout`: it fires only after the
+ *     socket has moved NO BYTES for this long, so a slow-but-progressing
+ *     transfer is never punished for taking a while, and a black-holed one
+ *     is caught within one window regardless of how big the object was.
+ *  2. IT DOES NOT EVEN THROW BY DEFAULT. That handler logs
+ *     `[WARN] a request has exceeded the configured N ms requestTimeout`
+ *     and lets the request keep hanging unless `throwOnRequestTimeout: true`
+ *     is also set -- their own compatibility shim for having historically
+ *     documented `requestTimeout` as an idle timeout when it was not. So
+ *     setting `requestTimeout` alone, the obvious reading of "give the
+ *     S3Client a request timeout", buys a log line and changes NOTHING
+ *     about the hang. Verified against @smithy/node-http-handler 4.9.13,
+ *     and by the black-hole case in `test/blobs.test.ts`, which was written
+ *     with `requestTimeout` first and timed out at 30 s while the handler
+ *     printed exactly that warning.
+ *
+ * `socketTimeout` rejects with a `TimeoutError` on its own, no opt-in.
+ *
+ * ═══ THE VALUE ═══
+ *
+ * 10 s, matching the `connectionTimeoutMillis` the worker's own pg pool
+ * already uses (`apps/worker/src/main.ts`) -- one number for "a round trip
+ * this process depends on has stopped making progress", not two. Orders of
+ * magnitude above the byte-to-byte gap a healthy S3 or MinIO transfer shows
+ * even with the SDK's 50-socket cap saturated, and far below any window in
+ * which a stalled worker is still someone's acceptable behaviour.
+ *
+ * The SDK's standard retry strategy treats the resulting `TimeoutError` as
+ * transient and retries it up to `maxAttempts` (3 by default), so one
+ * `get()` against a black-holed socket costs up to ~3x this plus backoff
+ * before it finally rejects. That is the point: BOUNDED, and it rejects --
+ * versus never. `TimeoutError` is also already in the pipeline's own
+ * `TRANSIENT_CODES` (`apps/worker/src/pipeline/retry.ts`), so a batch
+ * ingest that hits this gets BullMQ's retries rather than a permanent
+ * failure, with no further wiring.
+ *
+ * WHAT REMAINS UNBOUNDED, stated rather than papered over: a peer that
+ * dribbles one byte just inside every window keeps a request alive
+ * forever. No idle timeout can catch that, and the only thing that could --
+ * a total deadline -- is the option rejected above for being unable to tell
+ * that case apart from a legitimate 250 MB read. The realistic failure this
+ * constant exists for is a socket that goes silent, which is what a dropped
+ * connection, a black-holed NAT entry, or a wedged endpoint actually looks
+ * like.
+ */
+export const BLOB_SOCKET_TIMEOUT_MS = 10_000;
+
+/**
+ * How long to wait for the TCP/TLS connection itself, in ms. Separate from
+ * {@link BLOB_SOCKET_TIMEOUT_MS} because it bounds a different failure --
+ * an endpoint that accepts nothing (a wrong host, a dead load balancer)
+ * rather than one that accepts and then goes quiet -- and because there is
+ * no legitimate reason for establishing a connection to a store in the same
+ * network to take anywhere near as long as a large body takes to move.
+ */
+export const BLOB_CONNECTION_TIMEOUT_MS = 5_000;
+
 export interface BlobConfig {
   endpoint: string;
   region: string;
@@ -52,6 +137,16 @@ export interface BlobConfig {
   accessKeyId: string;
   secretAccessKey: string;
   forcePathStyle?: boolean;
+  /**
+   * Overrides {@link BLOB_SOCKET_TIMEOUT_MS} for this store only.
+   *
+   * Exists so a test can prove the timeout is WIRED without waiting the
+   * production value out (`test/blobs.test.ts` points a store at a socket
+   * that accepts and never answers), and so an operator on a genuinely
+   * slower link can raise it without a code change. Nothing in this
+   * repository sets it in production.
+   */
+  socketTimeoutMs?: number;
 }
 
 export class BlobStore {
@@ -65,6 +160,18 @@ export class BlobStore {
       region: cfg.region,
       forcePathStyle: cfg.forcePathStyle ?? true,
       credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+      // A plain options object, not a constructed NodeHttpHandler: the SDK
+      // hands it to `NodeHttpHandler.create`, which is what keeps the
+      // handler's own agent/keep-alive defaults intact instead of this file
+      // having to restate them.
+      // A plain options object, not a constructed NodeHttpHandler: the SDK
+      // hands it to `NodeHttpHandler.create`, which is what keeps the
+      // handler's own agent/keep-alive defaults intact instead of this file
+      // having to restate them.
+      requestHandler: {
+        socketTimeout: cfg.socketTimeoutMs ?? BLOB_SOCKET_TIMEOUT_MS,
+        connectionTimeout: BLOB_CONNECTION_TIMEOUT_MS,
+      },
     });
   }
 
