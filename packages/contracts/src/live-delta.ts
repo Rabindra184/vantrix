@@ -37,6 +37,12 @@ export type LiveSummary = z.infer<typeof LiveSummarySchema>;
  * exactly, which is built from the same `Bucket` upstream. Identical fields
  * crossing the batch wire and the live wire must have identical constraints, so
  * both reject fractional values.
+ *
+ * The SAME shape `SeriesBucketSchema` uses (`metrics.ts`), field for field and
+ * nullability for nullability -- so a live bucket and a persisted one are
+ * indistinguishable to `toPercentiles` and the chart transforms need no live
+ * branch. The nullable started splits are nullable in the REST schema because
+ * old persisted rows may lack them; a live bucket always sends a number.
  */
 export const LiveSeriesBucketSchema = z.object({
   /**
@@ -48,6 +54,14 @@ export const LiveSeriesBucketSchema = z.object({
   endedCount: z.number().int(),
   okCount: z.number().int(),
   koCount: z.number().int(),
+  startedOkCount: z.number().int().nullable(),
+  startedKoCount: z.number().int().nullable(),
+  minMs: z.number(),
+  maxMs: z.number(),
+  meanMs: z.number(),
+  percentiles: z.record(z.string(), z.number()),
+  percentilesOk: z.record(z.string(), z.number()),
+  percentilesKo: z.record(z.string(), z.number()),
 });
 export type LiveSeriesBucket = z.infer<typeof LiveSeriesBucketSchema>;
 

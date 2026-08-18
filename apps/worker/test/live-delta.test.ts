@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { CanonicalEvent } from '@perfportal/core';
 import { LiveDeltaSchema } from '@perfportal/contracts';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
-import { LiveEngine, runEngine } from '@perfportal/statistics';
+import { bucketLatency, LiveEngine, runEngine, type EngineResult } from '@perfportal/statistics';
 import { buildDelta, INITIAL_CURSOR } from '../src/live/delta.js';
 
 const LOG = new URL(
@@ -11,6 +11,26 @@ const LOG = new URL(
   import.meta.url,
 );
 const events = () => [...parseSimulationLog(readFileSync(LOG))];
+
+const RUN_ID = '0f9b1d4e-1111-2222-3333-444455556666';
+
+/**
+ * Builds an `EngineResult` from bare request shapes, for cases that only care
+ * about the run-scope response-time series and don't need a real log fixture.
+ * `name`/`groups`/`userId` are irrelevant to that series, so they are fixed.
+ */
+function engineResultFrom(requests: { startMs: number; endMs: number; ok: boolean }[]): EngineResult {
+  const reqEvents: CanonicalEvent[] = requests.map((r, i) => ({
+    type: 'request',
+    name: 'req',
+    groups: [],
+    userId: `u${i}`,
+    startMs: r.startMs,
+    endMs: r.endMs,
+    ok: r.ok,
+  }));
+  return runEngine(reqEvents);
+}
 
 describe('buildDelta', () => {
   it('summarises the run from the payload, not from written-down numbers', () => {
@@ -247,5 +267,29 @@ describe('buildDelta', () => {
     const { delta } = buildDelta('0f9b1d4e-1111-2222-3333-444455556666', runEngine(all), INITIAL_CURSOR);
 
     expect(() => LiveDeltaSchema.parse(delta)).not.toThrow();
+  });
+
+  it('publishes the same latency fields the batch writer would persist for the same bucket', () => {
+    // Build a run whose buckets are not uniform, so a wrong-bucket bug shows.
+    const result = engineResultFrom([
+      { startMs: 0, endMs: 120, ok: true },
+      { startMs: 100, endMs: 900, ok: true },
+      { startMs: 1200, endMs: 1260, ok: false },
+    ]);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+
+    const source = result.series.get('run  response_time')!.buckets;
+    for (const published of delta.responseTime.buckets) {
+      const origin = source.find((b) => b.startOffsetMs === published.startOffsetMs)!;
+      const expected = bucketLatency(origin);
+      expect(published.minMs).toBe(expected.minMs);
+      expect(published.maxMs).toBe(expected.maxMs);
+      expect(published.meanMs).toBe(expected.meanMs);
+      expect(published.percentiles).toEqual(expected.percentiles);
+      expect(published.percentilesOk).toEqual(expected.percentilesOk);
+      expect(published.percentilesKo).toEqual(expected.percentilesKo);
+      expect(published.startedOkCount).toBe(origin.startedOkCount);
+      expect(published.startedKoCount).toBe(origin.startedKoCount);
+    }
   });
 });

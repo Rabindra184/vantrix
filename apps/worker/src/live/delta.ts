@@ -1,4 +1,4 @@
-import type { EngineResult } from '@perfportal/statistics';
+import { bucketLatency, type EngineResult } from '@perfportal/statistics';
 import type { LiveDelta } from '@perfportal/contracts';
 
 export interface DeltaCursor {
@@ -190,6 +190,11 @@ export function buildDelta(
     endedCount: b.endedCount,
     okCount: b.okCount,
     koCount: b.koCount,
+    startedOkCount: b.startedOkCount,
+    startedKoCount: b.startedKoCount,
+    // Spread last: bucketLatency owns every latency field, and listing them
+    // individually here would be the second copy Task 1 exists to prevent.
+    ...bucketLatency(b),
   }));
 
   // The high-water mark for NEXT tick's `since` must be the max offset this
