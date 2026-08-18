@@ -8,7 +8,8 @@ import { Readable } from 'node:stream';
 import { createPool, createPrisma, MetricReader } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PipelineService } from '../src/pipeline/pipeline.service.js';
+import { PipelineService, RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
+import { isTransient } from '../src/pipeline/retry.js';
 import { loadWorkerConfig } from '../src/config.js';
 
 const FIXTURE_LOG = fileURLToPath(
@@ -321,6 +322,91 @@ describe('PipelineService', () => {
       [ctx.runId],
     );
     expect(rows[0]?.n).toBeGreaterThan(0);
+  });
+
+  /**
+   * Fix round 1, Important 5. `LiveService.close()` moves a run to
+   * `'parsing'` and enqueues this job BEFORE the fold owner's next tick
+   * releases the shared advisory lock (design part-2a §1.1). Before this
+   * fix, losing the lock always returned silently — correct for two
+   * `process()` calls racing each other, wrong here: the job would report
+   * success while nothing had actually parsed the run, and it would sit at
+   * `'parsing'` until the Sweeper's 15-minute staleness re-enqueue noticed.
+   *
+   * Simulated deterministically rather than via a real race: a second
+   * client takes the SAME advisory lock `process()` would (the one
+   * `#handleLockLost` is designed to recognise it lost to), the run is
+   * moved to `'parsing'` the way `claimForClose` leaves it, and only then
+   * is `process()` called.
+   */
+  it('retries rather than silently giving up when the live fold owner still holds the lock', async () => {
+    const ctx = await seedLiveRun(readFileSync(FIXTURE_LOG));
+    await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [ctx.runId]);
+
+    const owner = await pool.connect();
+    try {
+      const { rows: lockRows } = await owner.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, ctx.runId],
+      );
+      expect(lockRows[0]?.got).toBe(true);
+
+      const rejection = await pipeline()
+        .process(ctx.runId)
+        .then(() => null, (err: unknown) => err);
+      expect(rejection).not.toBeNull();
+      expect((rejection as { code?: unknown }).code).toBe('RUN_LOCKED');
+      expect(isTransient(rejection)).toBe(true);
+
+      // Untouched: process() never reached #processHoldingLock at all.
+      const stillParsing = await prisma.run.findUnique({ where: { id: ctx.runId } });
+      expect(stillParsing?.status).toBe('parsing');
+    } finally {
+      await owner.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+        RUN_INGEST_LOCK_NAMESPACE,
+        ctx.runId,
+      ]);
+      owner.release();
+    }
+
+    // The lock is genuinely free now (mirrors what the owner's own next
+    // tick would do) -- BullMQ's retry lands here, and it must succeed.
+    await pipeline().process(ctx.runId);
+    const finished = await prisma.run.findUnique({ where: { id: ctx.runId } });
+    expect(finished?.status).toBe('complete');
+  });
+
+  /**
+   * The case Important 5's fix must NOT change: two `process()` calls
+   * racing over the same UPLOADED run (never seen by the fold owner, which
+   * only ever claims runs at `status = 'running'`). `#handleLockLost` tells
+   * this apart from the live case by `bundleKey` alone -- `seedRun`'s key
+   * always ends in `.tgz` -- so it must return silently here regardless of
+   * the run's status at the moment of the check.
+   */
+  it('still gives up silently when another process() call owns an uploaded run\'s lock', async () => {
+    const ctx = await seedRun(bundle);
+
+    const other = await pool.connect();
+    try {
+      const { rows: lockRows } = await other.query<{ got: boolean }>(
+        'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+        [RUN_INGEST_LOCK_NAMESPACE, ctx.runId],
+      );
+      expect(lockRows[0]?.got).toBe(true);
+
+      await expect(pipeline().process(ctx.runId)).resolves.toBeUndefined();
+
+      // Nothing changed -- the loser did nothing at all.
+      const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
+      expect(run?.status).toBe('pending');
+    } finally {
+      await other.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+        RUN_INGEST_LOCK_NAMESPACE,
+        ctx.runId,
+      ]);
+      other.release();
+    }
   });
 });
 

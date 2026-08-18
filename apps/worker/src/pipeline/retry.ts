@@ -14,6 +14,14 @@ const TRANSIENT_CODES = new Set([
   'P1001', // Can't reach database server
   'P1002', // The database server was reached but timed out
   'P1017', // Server has closed the connection
+  // Not a networking or Prisma code -- PipelineService's own signal
+  // (RunLockedError, pipeline.service.ts's #handleLockLost) meaning "the
+  // live fold owner still holds this run's advisory lock; ask again once it
+  // has released it." Genuinely transient in the same sense as the codes
+  // above: the condition it names resolves itself within one liveTickMs
+  // (<=5s by default) without any action this worker can take, and BullMQ's
+  // exponential backoff from 2s comfortably outlasts that wait.
+  'RUN_LOCKED',
 ]);
 
 /**

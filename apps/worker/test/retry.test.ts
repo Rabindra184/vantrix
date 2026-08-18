@@ -58,6 +58,20 @@ describe('isTransient', () => {
     expect(isTransient(e)).toBe(true);
   });
 
+  // Fix round 1, Important 5. PipelineService throws this (RunLockedError,
+  // code 'RUN_LOCKED') when it loses the advisory-lock race to the live
+  // fold owner rather than to another process() call for the same run --
+  // see pipeline.service.ts's #handleLockLost. It must be retried, not
+  // treated as a deterministic failure, or the run sits at 'parsing' for up
+  // to parsingStaleAfterMs (15 minutes by default) despite the owner
+  // releasing the lock within one liveTickMs.
+  it("treats PipelineService's own RUN_LOCKED signal as transient", () => {
+    const e = Object.assign(new Error('run r1 is locked by the live fold owner; will retry'), {
+      code: 'RUN_LOCKED',
+    });
+    expect(isTransient(e)).toBe(true);
+  });
+
   it('still treats a Prisma-shaped query error with an unrelated code as deterministic', () => {
     // A genuinely deterministic failure (e.g. a unique-constraint violation)
     // must not be swept into "retryable" just because it is Prisma-shaped.
