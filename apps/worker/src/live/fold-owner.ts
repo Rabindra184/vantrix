@@ -165,6 +165,38 @@ export class LiveFoldOwner {
    */
   readonly #foldAgain = new Set<string>();
   /**
+   * Run ids with a `#claim` IN FLIGHT -- reserved against `maxOwnedRuns`
+   * even though nothing is in `#owned` for them yet.
+   *
+   * WITHOUT THIS THE CAP IS NOT A CAP. `#claim` awaits `pool.connect()` and
+   * then the lock query -- two round trips -- before it inserts anything,
+   * and the ioredis `message` handler fires `void this.#guarded(...)` per
+   * message with NO serialization between them. So N `live:opened` pings
+   * arriving inside that window all read the same pre-insert `#owned.size`,
+   * all pass the cap check, and all insert: the cap is overshot by however
+   * many pings land in one connect-plus-lock window, unbounded. Not exotic
+   * -- NFR-SC-4 targets 50 concurrent live runs and pub/sub fans every
+   * `live:opened` to every replica, so a CI fan-out opening 30 runs at once
+   * is the documented load.
+   *
+   * AND THE OVERSHOOT IS UNRECOVERABLE, which is what makes it worse than
+   * "a few runs too many". Design §1.3 sizes the shared pool FROM this cap;
+   * `main.ts` leaves exactly one client of headroom for `#doTick`'s own
+   * discovery query. Overshoot past that and every pooled client is held by
+   * a `FoldState`, so `#doTick`'s FIRST statement -- the `SELECT id FROM
+   * run WHERE status = 'running'` -- waits out `connectionTimeoutMillis`
+   * and throws. `#doTick` therefore never reaches its release loop, and
+   * `#release` is called from nowhere else except `close()`. Nothing ever
+   * frees a client again; every later tick fails identically, and
+   * `PipelineService` and `Sweeper` starve on the same pool. Recovery needs
+   * a process restart.
+   *
+   * A Set of ids rather than a counter, so the "already claiming this run"
+   * case is the same lookup as the "already own this run" one, and so a
+   * leaked increment is not expressible.
+   */
+  readonly #claiming = new Set<string>();
+  /**
    * Guards `tick()` against overlapping with itself. `main.ts` drives it from
    * a `setInterval` in the same shape it already uses for the sweeper's
    * timer -- fire-and-forget, never awaiting the previous call -- and design
@@ -267,7 +299,11 @@ export class LiveFoldOwner {
   async #onOpened(runId: string): Promise<void> {
     if (this.#closing) return;
     if (this.#owned.has(runId)) return;
-    if (this.#owned.size >= this.#config.maxOwnedRuns) return;
+    // A cheap early-out only. `#claim` re-checks the same thing
+    // SYNCHRONOUSLY at its own reservation point, which is the check that
+    // actually holds -- see `#claiming`'s doc comment for why a check here,
+    // before two awaited round trips, cannot.
+    if (this.#atCap()) return;
     await this.#claim(runId);
   }
 
@@ -448,7 +484,10 @@ export class LiveFoldOwner {
     let skippedForCap = 0;
     for (const runId of runningIds) {
       if (this.#owned.has(runId)) continue;
-      if (this.#owned.size >= this.#config.maxOwnedRuns) {
+      // `#atCap()`, not a bare `#owned.size` comparison: a `live:opened`
+      // ping's own `#claim` can be in flight right now, holding a
+      // reservation this loop must respect or double-count against.
+      if (this.#atCap()) {
         skippedForCap += 1;
         continue;
       }
@@ -685,6 +724,25 @@ export class LiveFoldOwner {
   }
 
   /**
+   * Whether another run can be taken on -- the ONE definition of "at the
+   * cap", used by every caller so none of them can disagree.
+   *
+   * Counts in-flight claims (`#claiming`) alongside settled ones
+   * (`#owned`), because a claim that has not inserted yet still costs a
+   * pooled client the moment its `pool.connect()` resolves. Counting only
+   * `#owned` is exactly the hole a burst of `live:opened` pings walked
+   * through -- see `#claiming`'s own doc comment.
+   *
+   * A run is briefly in BOTH sets (between `#owned.set` and `#claim`'s
+   * `finally`), so this can over-count by one per settling claim. That
+   * direction is the safe one and there is no await between those two
+   * statements for anything to observe it in.
+   */
+  #atCap(): boolean {
+    return this.#owned.size + this.#claiming.size >= this.#config.maxOwnedRuns;
+  }
+
+  /**
    * Takes the advisory lock on a dedicated client and, only if won, starts
    * folding this run from byte 0. Mirrors `pipeline.service.ts`'s
    * `process()`: the lock is taken and released on the SAME connection,
@@ -705,6 +763,29 @@ export class LiveFoldOwner {
    * inserting into a map `close()` has already decided is final.
    */
   async #claim(runId: string): Promise<void> {
+    // ═══ SYNCHRONOUS, BEFORE THE FIRST await ═══
+    // Everything down to `#claiming.add` runs in the caller's own turn, so
+    // two claims started from two `message` events cannot interleave here:
+    // the first adds its reservation before the second reads the size. That
+    // atomicity is the entire fix, and it only exists because these
+    // statements precede `pool.connect()`. Moving any of them below an
+    // await reopens the burst overshoot -- see `#claiming`'s doc comment.
+    if (this.#owned.has(runId) || this.#claiming.has(runId)) return;
+    if (this.#atCap()) return;
+    this.#claiming.add(runId);
+    try {
+      await this.#claimReserved(runId);
+    } finally {
+      // After the insert, never before: a run is momentarily counted twice
+      // rather than momentarily not at all.
+      this.#claiming.delete(runId);
+    }
+  }
+
+  /** `#claim`'s body, past the reservation gate. Split out only so that
+   * gate can be `return`-based and the release can be one `finally` -- the
+   * lock/insert/unwind logic below is unchanged. */
+  async #claimReserved(runId: string): Promise<void> {
     const client = await this.#pool.connect();
     let got = false;
     try {

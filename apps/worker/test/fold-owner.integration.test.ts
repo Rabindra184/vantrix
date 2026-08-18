@@ -240,6 +240,82 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
+   * THE CAP IS ONLY A CAP IF IT SURVIVES A BURST.
+   *
+   * `#onOpened` used to check `#owned.size` and then `await this.#claim()`,
+   * and `#claim` awaits `pool.connect()` and the lock query -- two round
+   * trips -- before inserting anything. The ioredis `message` handler fires
+   * `void this.#guarded(...)` per message with no serialization, so every
+   * ping that lands inside that window reads the SAME pre-insert size, and
+   * every one of them passes a check that is by then meaningless.
+   *
+   * This is not a tidiness issue. Design §1.3 sizes the shared pool FROM
+   * this cap, with one client of headroom for `#doTick`'s own discovery
+   * query -- so overshooting means every pooled client is held by a
+   * `FoldState`, `#doTick`'s FIRST statement times out and throws, the
+   * release loop after it is never reached, and `#release` is called from
+   * nowhere else except `close()`. Nothing frees a client again. The worker
+   * is wedged until it is restarted, taking `PipelineService` and `Sweeper`
+   * with it.
+   *
+   * Published in ONE pipeline rather than a loop of awaited `publish` calls
+   * so the six messages are written to the socket together and ioredis
+   * delivers them back to back -- the burst this case is about, rather than
+   * six well-separated pings that would each find the previous claim
+   * already settled and prove nothing.
+   *
+   * `>= runIds.length` deliberately is NOT the assertion: the point is the
+   * exact number, since the failure mode is overshoot, not undershoot.
+   */
+  it('a burst of live:opened pings does not overshoot maxOwnedRuns', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runIds: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const runId = await seedRunningRun(orgId, projectId, log.length);
+      await chunks.put(runId, 0, log);
+      runIds.push(runId);
+    }
+
+    const maxOwnedRuns = 2;
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(
+      { ...config, maxOwnedRuns },
+      pool,
+      chunks,
+      new Redis(config.redisUrl),
+    );
+    try {
+      await owner.listen();
+
+      const burst = publisher.pipeline();
+      for (const runId of runIds) burst.publish('live:opened', runId);
+      await burst.exec();
+
+      const ownedCount = () => runIds.filter((id) => owner.snapshotOf(id) !== null).length;
+
+      // Two steps, and the second is not decoration. An overshoot arrives
+      // AFTER the cap is hit, so a single `waitFor(count === 2)` can be
+      // satisfied by a poll that happens to land mid-burst and then pass
+      // while four more claims are still in flight behind it. Waiting for
+      // the cap first, then letting every started claim SETTLE before
+      // asserting, is what makes this case able to fail.
+      //
+      // 500 ms is a settle window, not a latency estimate: each of these
+      // claims is one local `pool.connect()` plus one `pg_try_advisory_lock`
+      // round trip, on the order of a millisecond here, and all six were
+      // started at once. Nothing is still legitimately in flight by then.
+      await vi.waitFor(() => expect(ownedCount()).toBe(maxOwnedRuns));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      expect(ownedCount()).toBe(maxOwnedRuns);
+    } finally {
+      await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
    * THE cursor case. Design §2.2.1: the cursor `readFrom` needs is the FETCH
    * FRONTIER (the highest byte already retrieved), never
    * `decoder.consumedBytes` (the last WHOLE-RECORD boundary, which routinely
