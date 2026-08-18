@@ -96,7 +96,7 @@ export const LiveDeltaSchema = z.object({
   users: z.array(
     z.object({
       scenario: z.string(),
-      startOffsetMs: z.number(),
+      startOffsetMs: z.number().int(),
       active: z.number(),
     }),
   ),
