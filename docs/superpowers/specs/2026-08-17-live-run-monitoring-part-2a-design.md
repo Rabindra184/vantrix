@@ -203,10 +203,42 @@ existed at no instant.
 total / ok / ko counts, error rate, the run-scope percentiles, max concurrent
 users, elapsed duration.
 
-**Series — append-only:** run-scope response-time buckets, user buckets, and
-error buckets whose `startOffsetMs` exceeds `lastPublishedOffsetMs`.
+**Series — one envelope per series, each carrying its OWN width:**
+
+```
+responseTime: { widthMs, replaces: boolean, buckets: [...] }
+users:        { widthMs, buckets: [...] }     // always whole
+```
 
 **`seq`** — monotonic per run, so a consumer can detect a gap.
+
+**Why two envelopes rather than one width and one flag.** `UserSeries` is built
+with its own cap (`maxBucketsUsers`, `engine.ts:164`), independent of
+`maxBucketsRun`, and halves on its own schedule. The two series are therefore
+routinely at **different widths at the same instant** — measured at 16000 ms for
+responses against 1000 ms for users under this plan's own coalesce-test
+configuration. A single `bucketWidthMs` on the wire would be a false statement
+about one of them, and a single `replaces` flag derived from the response series
+would let a users-only coalesce rewrite every user offset while the message says
+nothing changed. That is §3.3's hazard, unguarded, for the second series.
+
+**Why `users` is sent whole and has no cursor.** It is bounded by
+`maxBucketsUsers` regardless of run length, it gap-fills every bucket
+(`users.ts:67-80`) so it is dense rather than sparse, and it materialises the
+standing-concurrency plateau only up to the last user *event* — so it lags the
+response series during a steady phase and then fills in behind any shared
+cursor, which silently drops the plateau. Sending it whole costs a bounded
+payload and removes an entire class of cursor bug. `maxUsers` is already
+computed from the whole snapshot beside it.
+
+**Buckets are upserted by `startOffsetMs`, not appended.** The newest bucket is
+still filling when it is first published, so a strictly-greater cursor publishes
+it at its most partial and then never corrects it — at the default 5 s tick
+against 1000 ms buckets, one bucket in five is permanently undercounted, and at
+the 1 s floor every bucket is. The response envelope therefore emits buckets at
+or past the cursor (`>=`), re-sending the newest until a newer one exists, and
+the consumer replaces by offset. Upsert costs one re-sent bucket per tick and
+removes a permanent undercount.
 
 Per-endpoint statistics are **not** in the delta. FR-LIVE-4's list is what a
 live dashboard shows, and it is bounded; a run at the 2000-endpoint cap would
@@ -222,11 +254,20 @@ stable across a coalesce: every bucket a consumer already holds silently
 changes identity, and its accumulated series is wrong from that point on with
 nothing thrown and nothing logged.
 
-**The fix uses a signal that already exists.** `BucketSeries` exposes
-`widthMs` (`buckets.ts:58`). Every delta carries the width it was built at.
-When the width differs from `lastBucketWidthMs`, the message is flagged a
-**full replacement** — it carries the entire series and the consumer discards
-what it held.
+**The fix uses a signal that already exists — but it must be the AUTHORITATIVE
+one.** `BucketSeries` exposes `widthMs` (`buckets.ts:58`), and the response
+envelope carries the width it was built at. When that width differs from the
+one the consumer last saw, the message is flagged a **full replacement** — it
+carries the entire series and the consumer discards what it held.
+
+**`EngineResult.series` must expose that width.** Today its entries are
+`{scope, name, family, buckets}` (`engine.ts:57`) — no width — so a consumer is
+forced to *infer* one from the gaps between offsets. On a sparse series the
+smallest gap is not the width: a low-rate run reports 3000 ms where the truth is
+1000, which both scales every derived rate by 3× and fires spurious replacements
+when the inferred value moves without any coalesce having happened.
+`errorSeries` already carries a `bucketWidthMs` (`errors-series.ts:88`), so the
+precedent and the shape both exist; `series` entries gain the same field.
 
 Coalescing halves at most a bounded number of times over a run (each halving
 doubles the window the same cap covers), so replacements are rare. §5.3 is the
