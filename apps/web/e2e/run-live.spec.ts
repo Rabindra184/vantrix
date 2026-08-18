@@ -86,7 +86,7 @@ async function seedSnapshot(redis: Redis, runId: string, delta: ReturnType<typeo
 }
 
 test.describe('a running run draws its live dashboard', () => {
-  test('the live charts draw, the tiles read the delta, and the three withheld sections say what they are waiting for', async ({
+  test('the live charts draw, the tiles read the delta, and the four withheld sections say what they are waiting for', async ({
     page,
   }) => {
     const admin = await seedAdmin();
@@ -129,18 +129,25 @@ test.describe('a running run draws its live dashboard', () => {
         await expect(page.getByTestId('error-row').filter({ hasText: row.message })).toBeVisible();
       }
 
-      /* ---- exactly three withheld sections, saying what they wait for ---- */
+      /* ---- exactly four withheld sections, saying what they wait for ----
+       * Task 9 C2 added the errors-over-time chart's: it is fed by a
+       * separate endpoint (errorSeriesQuery) the live wire never carries,
+       * so it joined the statistics table, the distribution chart and the
+       * percentile-distribution chart as a STATED gap rather than a section
+       * that simply never appeared. */
       const withheld = page.getByTestId('live-notice-withheld');
-      await expect(withheld).toHaveCount(3);
+      await expect(withheld).toHaveCount(4);
       await expect(withheld).toContainText([
         /available when the run finishes/i,
         /available when the run finishes/i,
         /available when the run finishes/i,
+        /available when the run finishes/i,
       ]);
-      // Named, not a generic apology — the reader can tell the three apart.
+      // Named, not a generic apology — the reader can tell the four apart.
       await expect(page.getByText('Statistics', { exact: true })).toBeVisible();
       await expect(page.getByText('Response time distribution', { exact: true })).toBeVisible();
       await expect(page.getByText('Response time percentiles distribution', { exact: true })).toBeVisible();
+      await expect(page.getByText('Errors per second', { exact: true })).toBeVisible();
       // No progress indicator anywhere on the withheld sections — a spinner
       // claims something is arriving, and nothing is, on any path, while
       // this run streams.
