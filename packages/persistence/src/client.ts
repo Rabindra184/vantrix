@@ -1,14 +1,70 @@
 import { PrismaClient } from '@prisma/client';
 import pg from 'pg';
 
+export interface PrismaOptions {
+  /**
+   * Pins Prisma's OWN connection pool size, via the `connection_limit`
+   * query parameter its datasource URL accepts.
+   *
+   * Omitted, Prisma sizes its pool as `num_physical_cpus * 2 + 1` --
+   * roughly 9 to 17 connections depending on the machine, and NOTHING in
+   * this repository accounts for it. That matters because `createPool`
+   * below is sized with great care from what its consumers hold, and this
+   * client opens a SECOND, entirely separate pool against the same
+   * database. A process that budgets 31 connections for the pg pool and
+   * says so actually opens up to ~48, and the difference is a function of
+   * the host's CPU count rather than of anything the code decides.
+   *
+   * A caller that has sized `createPool` from a real bound should size this
+   * from one too, so its total is a number someone chose. An operator's own
+   * `connection_limit` already in the URL WINS -- see `createPrisma`.
+   */
+  connectionLimit?: number;
+}
+
 /**
  * Prisma owns schema, migrations, and CRUD. The metric tables are written and
  * read with raw parameterized SQL through this pool: Prisma is weak at bytea
  * payloads, batched inserts of tens of thousands of rows, and analytical
  * aggregation, and that is where query performance would quietly rot.
+ *
+ * "This pool" in that sentence is `createPool`'s. THIS function opens a
+ * different one -- see {@link PrismaOptions.connectionLimit}, which is the
+ * only way to bound it.
  */
-export function createPrisma(url: string): PrismaClient {
-  return new PrismaClient({ datasources: { db: { url } } });
+export function createPrisma(url: string, options: PrismaOptions = {}): PrismaClient {
+  return new PrismaClient({ datasources: { db: { url: withConnectionLimit(url, options.connectionLimit) } } });
+}
+
+/**
+ * `url` with `?connection_limit=N` applied, unless the caller passed no
+ * limit or the URL already carries one.
+ *
+ * AN EXISTING VALUE WINS, deliberately: `connection_limit` is the knob an
+ * operator reaches for when a deployment's database says otherwise, and a
+ * code-level default that silently overrode a deliberately-set URL
+ * parameter would be the harder failure to diagnose of the two.
+ *
+ * Left completely alone when the URL cannot be parsed. A malformed
+ * `DATABASE_URL` must fail where it already fails -- inside Prisma, with
+ * Prisma's own message -- not here with a `TypeError` from `new URL` that
+ * says nothing about what is wrong.
+ *
+ * Exported for its own test. `PrismaClient` does not expose the datasource
+ * URL it was constructed with, so testing this through `createPrisma` would
+ * mean asserting nothing at all.
+ */
+export function withConnectionLimit(url: string, limit: number | undefined): string {
+  if (limit === undefined) return url;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.searchParams.has('connection_limit')) return url;
+  parsed.searchParams.set('connection_limit', String(limit));
+  return parsed.toString();
 }
 
 export interface PoolOptions {

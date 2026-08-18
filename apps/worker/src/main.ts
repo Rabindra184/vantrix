@@ -10,7 +10,40 @@ import { runShutdown } from './shutdown.js';
 import { Sweeper } from './sweeper.js';
 
 const config = loadWorkerConfig();
-const prisma = createPrisma(config.databaseUrl);
+
+/**
+ * Prisma's pool is a SECOND pool, and until this line nothing sized it.
+ *
+ * The `pg.Pool` below is derived term by term from clients its consumers
+ * actually hold, and the README quotes the resulting number as this
+ * process's connection budget. That number was wrong: `createPrisma` opens
+ * its own, entirely separate pool against the same database, and Prisma's
+ * default is `num_physical_cpus * 2 + 1` -- roughly 9 to 17 depending on
+ * the machine. So a replica that budgeted 31 was really taking 40 to 48,
+ * two replicas 80 to 96, against `postgres:16-alpine`'s stock
+ * `max_connections = 100` shared with every API replica. The overshoot was
+ * not merely unaccounted for, it varied with the host's CPU count.
+ *
+ * Derived the same way as the pool below, so the total is a number someone
+ * chose:
+ *  - `concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB` -- Prisma is reached
+ *    ONLY from `PipelineService` in this process (`RunRepository`,
+ *    `ProjectRepository`, `RuleRepository`), and only ever one query at a
+ *    time per job: nothing in `packages/persistence` opens an interactive
+ *    `$transaction`, so a job never holds two Prisma connections at once.
+ *    `Sweeper` and `LiveFoldOwner` do not touch Prisma at all.
+ *  - `PRISMA_HEADROOM` -- one spare, so a `P2024` pool timeout cannot be
+ *    reached by a single unaccounted-for query (a future repository call
+ *    outside a job, a shutdown-time read) rather than by real pressure.
+ *
+ * An operator who puts `connection_limit` in `DATABASE_URL` overrides this;
+ * see `createPrisma`.
+ */
+const PIPELINE_PRISMA_CLIENTS_PER_JOB = 1;
+const PRISMA_HEADROOM = 1;
+const prisma = createPrisma(config.databaseUrl, {
+  connectionLimit: config.concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB + PRISMA_HEADROOM,
+});
 
 /**
  * This ONE pool is shared by `PipelineService`, `Sweeper`, and

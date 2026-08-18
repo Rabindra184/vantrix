@@ -290,15 +290,39 @@ run's worst-case time to a verdict becomes a quarter of an hour. The tick's
 own release pass still covers a dropped message; what the channel removes is
 the latency, and the latency is the defect.
 
+### The worker's connection budget
+
 Each owned run holds one dedicated Postgres connection for its whole
 ownership — the fold owner claims a run on the same advisory lock the
 pipeline uses, and that lock must be held and released on one connection.
 `apps/worker/src/main.ts` therefore sizes the worker's Postgres pool well
-above the driver default of 10: `maxOwnedRuns` (25 by default) plus headroom
-for the pipeline's own concurrency and the sweeper. Anyone sizing a
-database's `max_connections` for this deployment needs to budget roughly
-that many connections per worker process, not just enough for ordinary query
-traffic.
+above the driver default of 10, deriving every term from a client some
+component actually holds:
+
+| Term | At defaults | Held by |
+|---|---|---|
+| `maxOwnedRuns` | 25 | one pooled client per owned run, for its lock's lifetime |
+| fold-owner discovery | 1 | the tick's `SELECT id FROM run WHERE status = 'running'` |
+| `concurrency × 2` | 4 | `PipelineService.process` — the lock client, plus a brief one for its commit |
+| sweeper | 1 | one client, `BEGIN` to `COMMIT` |
+| **pg pool total** | **31** | |
+| Prisma's own pool | 3 | `concurrency + 1`, pinned via `connection_limit` |
+| **per worker replica** | **34** | |
+
+**Prisma's pool is a second pool, and it has to be pinned.** `createPrisma`
+opens its own, entirely separate pool against the same database. Left
+unpinned, Prisma sizes it as `num_physical_cpus × 2 + 1` — roughly 9 to 17
+— so a replica that budgeted 31 really took 40 to 48, and the overshoot
+varied with the host's CPU count rather than with anything in the code. The
+worker now passes an explicit `connectionLimit`; an operator's own
+`connection_limit` in `DATABASE_URL` still wins.
+
+Two worker replicas is therefore ~68 connections before a single API
+replica, against `postgres:16-alpine`'s stock `max_connections = 100`.
+`infra/docker-compose.yml` raises it to 200. **The API's own Prisma pool is
+still unpinned** — the API holds no long-lived connections the way the fold
+owner does, so it has never been the binding term, but anyone sizing a
+production database should count it.
 
 ## Proving it end to end
 
