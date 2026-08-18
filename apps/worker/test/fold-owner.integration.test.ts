@@ -11,6 +11,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
 import { LiveFoldOwner } from '../src/live/fold-owner.js';
+import { RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
 
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
@@ -662,6 +663,98 @@ describe('LiveFoldOwner', () => {
       }
     } finally {
       vi.restoreAllMocks();
+    }
+  });
+
+  /**
+   * A FAILED UNLOCK MUST NOT PUT THE LOCK BACK IN THE POOL.
+   *
+   * Advisory locks are session-scoped. If `pg_advisory_unlock` fails while
+   * the backend is alive, the lock is still held by that session -- and a
+   * bare `client.release()` returns that session to the idle pool as an
+   * ordinary client. No other worker, and no `PipelineService.process`, can
+   * ever take that run's lock again for the life of the connection: the
+   * terminal parse throws `RunLockedError` until BullMQ's attempts are
+   * gone, and the run sits at `parsing` until the sweeper's 15-minute
+   * window, forever. `release(true)` destroys the connection instead, and a
+   * session's advisory locks die with it.
+   *
+   * The assertion has to come from ANOTHER SESSION, and that is the whole
+   * subtlety of this case. `pg_try_advisory_lock` from the offending
+   * session itself succeeds either way -- re-entrant if the lock is still
+   * held, trivially if it is gone -- so the client that caused the problem
+   * is the one witness that cannot detect it. A separate connection sees
+   * `false` while the lock is stranded and `true` once it is not.
+   *
+   * A dedicated `max: 1` pool for the owner, so there is exactly one
+   * connection for the lock to be stranded ON, and so "the pool handed the
+   * lock-holding session back out" is not left to chance.
+   */
+  it('destroys the connection when its unlock fails, rather than pooling a session that still holds the lock', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const ownerPool = createPool(config.databaseUrl, { max: 1, connectionTimeoutMillis: 5000 });
+    // Same wrapping technique as the "settles every release" case above,
+    // and for the same reason: killing the backend for real also fires a
+    // raw socket-level error that has been seen to take the whole test
+    // worker down. Only the unlock is intercepted -- the ACQUIRE has to
+    // reach Postgres, or there would be no real lock to strand.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#connect's own overloaded signature verbatim
+    const realConnect = ownerPool.connect.bind(ownerPool) as (...a: any[]) => any;
+    function wrapClient(client: pg.PoolClient): pg.PoolClient {
+      const realQuery = client.query.bind(client);
+      vi.spyOn(client, 'query').mockImplementation(((...args: unknown[]) => {
+        const [text] = args;
+        if (typeof text === 'string' && text.includes('pg_advisory_unlock')) {
+          return Promise.reject(new Error('synthetic unlock failure for test'));
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.PoolClient#query's own overloaded signature verbatim
+        return (realQuery as any)(...args);
+      }) as typeof client.query);
+      return client;
+    }
+    vi.spyOn(ownerPool, 'connect').mockImplementation(((cb?: (...a: unknown[]) => void) => {
+      if (typeof cb === 'function') {
+        return realConnect((err: Error | null, client: pg.PoolClient | undefined, release: unknown) => {
+          if (client) wrapClient(client);
+          cb(err, client, release);
+        });
+      }
+      return (realConnect() as Promise<pg.PoolClient>).then(wrapClient);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
+    }) as any);
+
+    const owner = new LiveFoldOwner(config, ownerPool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.tick();
+      expect(owner.snapshotOf(runId)).not.toBeNull();
+
+      await expect(owner.close()).rejects.toThrow(/failed to release 1 of 1/);
+
+      // From a DIFFERENT session (the file-level pool), and polled because
+      // destroying a pg client ends the backend asynchronously.
+      const observer = await pool.connect();
+      try {
+        await vi.waitFor(async () => {
+          const { rows } = await observer.query<{ got: boolean }>(
+            'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
+            [RUN_INGEST_LOCK_NAMESPACE, runId],
+          );
+          expect(rows[0]?.got).toBe(true);
+        });
+      } finally {
+        // Unlock whatever this observer took: it is a client of the pool
+        // every other case in this file shares, and a stranded lock here
+        // would be exactly the bug under test, inflicted on the suite.
+        await observer.query('SELECT pg_advisory_unlock_all()');
+        observer.release();
+      }
+    } finally {
+      vi.restoreAllMocks();
+      await ownerPool.end();
     }
   });
 

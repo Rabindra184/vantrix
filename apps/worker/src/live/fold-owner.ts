@@ -811,14 +811,20 @@ export class LiveFoldOwner {
       // #owned -- inserting now would never be seen by it. Unwind exactly
       // like #release does: unlock on this same client, then return it to
       // the pool in a finally regardless of whether the unlock succeeded.
+      // `release(true)` on failure, exactly as `#release` does -- see its
+      // own doc comment. This branch has just WON the advisory lock, so a
+      // failed unlock here strands it on a session about to go back into
+      // the idle pool, with the same permanent consequences.
       try {
         await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
           RUN_INGEST_LOCK_NAMESPACE,
           runId,
         ]);
-      } finally {
-        client.release();
+      } catch (err) {
+        client.release(true);
+        throw err;
       }
+      client.release();
       return;
     }
 
@@ -924,8 +930,42 @@ export class LiveFoldOwner {
     for (const event of events) state.engine.add(event);
   }
 
-  /** Drops the fold state, unlocks on the client that took the lock, and
-   * returns that client to the pool. */
+  /**
+   * Drops the fold state, unlocks on the client that took the lock, and
+   * returns that client to the pool.
+   *
+   * A FAILED UNLOCK DESTROYS THE CONNECTION -- `release(true)` -- rather
+   * than returning it to the idle pool. This is one argument, not a
+   * defensive flourish:
+   *
+   * Advisory locks are SESSION-scoped and RE-ENTRANT. If the unlock query
+   * fails while the backend is still alive (a statement timeout, a
+   * cancelled query, a transient error on a healthy connection), the lock
+   * is still held BY THAT SESSION -- and a bare `client.release()` puts
+   * that session straight back into the pool as an ordinary idle client.
+   * Every consequence of that is silent:
+   *
+   *  - a later `#claim` that happens to draw the same client runs
+   *    `pg_try_advisory_lock` on the session that already holds the lock,
+   *    and re-entrancy makes it SUCCEED. The owner concludes it won a lock
+   *    it never contested, while the hold count goes to 2 and every
+   *    subsequent unlock only ever brings it back to 1.
+   *  - no OTHER worker, and no `PipelineService.process`, can ever take
+   *    that lock again for the life of the connection. The run's terminal
+   *    parse is locked out permanently -- `#handleLockLost` throws
+   *    `RunLockedError`, BullMQ exhausts its three attempts, and the run
+   *    sits at `parsing` until the sweeper's 15-minute staleness window,
+   *    then repeats.
+   *
+   * Destroying the connection ends the session, and a session's advisory
+   * locks die with it -- which is the only way to be sure the lock is gone
+   * when the statement meant to drop it did not run. The cost is one
+   * reconnect on a path that has already failed.
+   *
+   * The error still propagates: `close()`'s `Promise.allSettled` collects
+   * it into the `AggregateError` it exists to raise, and `#doTick`'s
+   * release loop hands it to `#guarded` to log.
+   */
   async #release(runId: string): Promise<void> {
     const state = this.#owned.get(runId);
     if (!state) return;
@@ -935,8 +975,10 @@ export class LiveFoldOwner {
         RUN_INGEST_LOCK_NAMESPACE,
         runId,
       ]);
-    } finally {
-      state.client.release();
+    } catch (err) {
+      state.client.release(true);
+      throw err;
     }
+    state.client.release();
   }
 }
