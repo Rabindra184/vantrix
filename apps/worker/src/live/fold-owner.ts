@@ -297,8 +297,20 @@ export class LiveFoldOwner {
    * fresh at tick time. Publishing here too would mean every accepted
    * chunk -- not every tick -- drives a `PUBLISH`/`XADD` pair, which is the
    * per-run timer §3.1 explicitly rejects.
+   *
+   * CHECKS `#closing` FIRST -- fix round 1, Minor 2 -- the same guard
+   * `#onOpened` already applies, for symmetry rather than because a missing
+   * check here was ever unsafe: `#fold` touches no pooled client (only
+   * `state.decoder`/`state.engine`, and blob storage), and any failure it
+   * hits is swallowed by the `#guarded` wrapper the `message` handler
+   * already installs. Without this, though, a ping delivered during
+   * `close()`'s release drain could read `#owned` before that run's entry
+   * is deleted and start a fold that outlives `close()` -- harmless in
+   * effect, but needless: `close()` has already committed to shutting
+   * every owned run down, so a fold started after that point serves no one.
    */
   async #onAdvance(runId: string): Promise<void> {
+    if (this.#closing) return;
     const state = this.#owned.get(runId);
     if (!state) return;
     await this.#foldOnce(runId, state);
