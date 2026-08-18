@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import type { CanonicalEvent } from '@perfportal/core';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
 import { LiveEngine, runEngine } from '@perfportal/statistics';
 import { buildDelta, INITIAL_CURSOR } from '../src/live/delta.js';
@@ -145,5 +146,48 @@ describe('buildDelta', () => {
     const { delta } = buildDelta('r1', sparseResult, INITIAL_CURSOR);
 
     expect(delta.responseTime.widthMs).toBe(real.bucketWidthMs);
+  });
+
+  it('reduces the users envelope width to the FINEST scenario, not the coarsest', () => {
+    // A tiny users cap forces one scenario -- the one with the longer ACTIVE
+    // SPAN -- to coalesce, while a short-lived scenario in the SAME run
+    // stays at the base width. Span, not event count, is what decides this
+    // (see the comment on `UserSeries#sweep` in packages/statistics/src/users.ts),
+    // so two events far apart are enough; volume is irrelevant.
+    const engine = new LiveEngine({ maxBucketsUsers: 5 });
+    const userEvent = (scenario: string, kind: 'start' | 'end', tsMs: number): CanonicalEvent => ({
+      type: 'user', scenario, userId: `${scenario}-1`, kind, tsMs,
+    });
+    engine.add(userEvent('Soak', 'start', 0));
+    engine.add(userEvent('Soak', 'end', 10_000));    // long span -> coalesces
+    engine.add(userEvent('Quick', 'start', 0));
+    engine.add(userEvent('Quick', 'end', 2_000));     // short span -> stays put
+
+    const result = engine.snapshot({ clone: true });
+    const soak = result.users.find((u) => u.scenario === 'Soak');
+    const quick = result.users.find((u) => u.scenario === 'Quick');
+    if (!soak || !quick) throw new Error('expected both scenarios in the snapshot');
+
+    // Derived, not asserted as a literal: the two scenarios MUST actually
+    // disagree for this case to be testing anything.
+    expect(soak.bucketWidthMs).toBeGreaterThan(quick.bucketWidthMs);
+
+    const { delta } = buildDelta('r1', result, INITIAL_CURSOR);
+
+    // The FINER width, not the coarser one.
+    expect(delta.users.widthMs).toBe(quick.bucketWidthMs);
+    expect(delta.users.widthMs).toBeLessThan(soak.bucketWidthMs);
+    // Every emitted offset -- from EITHER scenario -- must be a multiple of
+    // the declared width, or a consumer indexing buckets by
+    // `startOffsetMs / widthMs` collides two distinct offsets into one
+    // index and silently drops a bucket. This is exactly what declaring the
+    // COARSER width would break: the Soak scenario's own offsets are
+    // multiples of its 4000ms+ width, which are also multiples of the finer
+    // declared width (a coarser real width is always a whole multiple of a
+    // finer one), so this holds for both scenarios only because the
+    // reduction picked the minimum.
+    for (const b of delta.users.buckets) {
+      expect(b.startOffsetMs % delta.users.widthMs).toBe(0);
+    }
   });
 });

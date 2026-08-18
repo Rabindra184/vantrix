@@ -164,16 +164,24 @@ export function buildDelta(
   const maxUsers = concurrencyByOffset.size === 0 ? 0 : Math.max(...concurrencyByOffset.values());
 
   // The users envelope's OWN width. Each scenario carries its own
-  // `bucketWidthMs` (they coalesce independently, see above), and the wire
-  // shape has one `widthMs` for the whole envelope -- so scenarios agreeing
-  // is an assumption, not a guarantee. Picking the COARSEST (max) of the
-  // per-scenario widths present is the conservative choice: it never
-  // understates the true window a bucket spans. In every fixture this
-  // project ships, all scenarios stay well under `maxBucketsUsers` and never
-  // coalesce, so they agree in practice; a run large enough for scenarios to
-  // disagree is untested territory this comment flags rather than hides.
+  // `bucketWidthMs` (they coalesce independently, BY SPAN not volume -- see
+  // the comment on `UserSeries#sweep` in packages/statistics/src/users.ts --
+  // so two scenarios of very different duration in the same run routinely
+  // disagree), and the wire shape has one `widthMs` for the whole envelope.
+  //
+  // This must be the MINIMUM of the per-scenario widths, not the maximum.
+  // Every real width is `1000 * 2^k`, so the FINEST width divides every
+  // COARSER scenario's offsets exactly, while a coarser width does not
+  // divide a finer scenario's. Declaring anything but the minimum leaves
+  // some scenario's real offsets (1000, 3000, 5000, ...) as non-multiples of
+  // the declared width -- and a consumer that indexes buckets by
+  // `floor(startOffsetMs / widthMs)`, which the batch path
+  // (apps/api/src/metrics/parity.controller.ts) does exactly, collides two
+  // distinct offsets into one index and silently drops a bucket. Declaring
+  // the minimum only makes a coarser scenario's series read as sparse
+  // against that finer grid, which is true rather than wrong.
   const usersWidthMs =
-    result.users.length === 0 ? 1000 : Math.max(...result.users.map((u) => u.bucketWidthMs));
+    result.users.length === 0 ? 1000 : Math.min(...result.users.map((u) => u.bucketWidthMs));
 
   // WHOLE, not filtered by `since` -- see "WHY `users` HAS NO CURSOR" above.
   const usersBuckets: LiveDelta['users']['buckets'] = result.users.flatMap(

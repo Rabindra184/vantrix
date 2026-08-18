@@ -44,12 +44,17 @@ export class UserSeries {
     return out.sort((a, b) => a.scenario.localeCompare(b.scenario));
   }
 
-  // Each scenario sweeps and coalesces INDEPENDENTLY -- its own event count
-  // decides when its own buckets cross `#maxBuckets`, so two scenarios in the
-  // same run can (and in an imbalanced simulation, do) settle on different
-  // widths. `widthMs` is therefore returned per scenario, not once for the
-  // whole series; a caller that needs one number for several scenarios must
-  // decide how to reduce them, not assume they already agree.
+  // Each scenario sweeps and coalesces INDEPENDENTLY -- and what decides when
+  // its own buckets cross `#maxBuckets` is its active SPAN, not its event
+  // count: the gap-fill below manufactures a bucket for every index between
+  // a scenario's first and last event, occupied or not, so bucket COUNT
+  // tracks (last - first) / width, not how many events landed in between. A
+  // million events packed into 60s never coalesces; three events 25 minutes
+  // apart does. So two scenarios in the same run can (and in a soak run with
+  // staggered scenario durations, do) settle on different widths. `widthMs`
+  // is therefore returned per scenario, not once for the whole series; a
+  // caller that needs one number for several scenarios must decide how to
+  // reduce them, not assume they already agree.
   #sweep(events: Delta[]): { widthMs: number; buckets: UserBucket[] } {
     // Starts before ends at the same instant, so a user who starts and ends in
     // the same millisecond still contributes 1 to the peak rather than 0.
