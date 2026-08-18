@@ -71,4 +71,33 @@ describe('loadWorkerConfig', () => {
       expect(Number.isFinite(config.maxOwnedRuns)).toBe(true);
     });
   });
+
+  /**
+   * Fix round 2, item 2. `concurrency` became a POOL-SIZING INPUT in fix
+   * round 1 (`main.ts`'s `max: maxOwnedRuns + ... + concurrency *
+   * PIPELINE_CLIENTS_PER_JOB + ...`), but was still read with a bare
+   * `Number(...)`, unguarded. A non-numeric `WORKER_CONCURRENCY` would make
+   * that `max` computation `NaN`, and pg-pool's own fallback chain
+   * (`this.options.max = this.options.max || this.options.poolSize || 10`)
+   * silently substitutes 10 for a falsy/`NaN` `max` -- reintroducing
+   * Critical 1's exact shape (a pool of 10 against `maxOwnedRuns`'s default
+   * of 25) through this field instead of the two `numberOr` already guarded.
+   */
+  describe('concurrency', () => {
+    it('defaults to 2 when unset', () => {
+      const config = loadWorkerConfig(BASE_ENV);
+      expect(config.concurrency).toBe(2);
+    });
+
+    it('passes through a valid explicit value', () => {
+      const config = loadWorkerConfig({ ...BASE_ENV, WORKER_CONCURRENCY: '4' });
+      expect(config.concurrency).toBe(4);
+    });
+
+    it('falls back to the default, not NaN, on a non-numeric value', () => {
+      const config = loadWorkerConfig({ ...BASE_ENV, WORKER_CONCURRENCY: 'lots' });
+      expect(config.concurrency).toBe(2);
+      expect(Number.isNaN(config.concurrency)).toBe(false);
+    });
+  });
 });

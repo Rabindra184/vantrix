@@ -8,6 +8,21 @@ export interface WorkerConfig {
     accessKeyId: string;
     secretAccessKey: string;
   };
+  /**
+   * BullMQ's job concurrency for the ingest queue (`consumer.ts`).
+   *
+   * Also a POOL-SIZING INPUT since fix round 1: `main.ts` sizes the shared
+   * `pg.Pool` as `maxOwnedRuns` plus `concurrency * PIPELINE_CLIENTS_PER_JOB`
+   * (`PipelineService.process` can hold two clients per in-flight job) plus
+   * fixed headroom for the fold owner's own discovery client and the
+   * sweeper. A non-numeric override reaching `Number(...)` un-guarded would
+   * make that `max` computation `NaN`, and pg-pool's own fallback chain
+   * (`this.options.max || this.options.poolSize || 10`) SILENTLY substitutes
+   * 10 for a `NaN`/falsy `max` — reintroducing Critical 1's exact shape (a
+   * pool of 10 against `maxOwnedRuns`'s default of 25) through this field
+   * instead of `maxOwnedRuns` or `liveTickMs`. Guarded by `numberOr` for
+   * exactly that reason, same as those two.
+   */
   concurrency: number;
   sweepIntervalMs: number;
   staleAfterMs: number;
@@ -120,7 +135,10 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
       accessKeyId: env.S3_ACCESS_KEY ?? 'perfportal',
       secretAccessKey: env.S3_SECRET_KEY ?? 'perfportal123',
     },
-    concurrency: Number(env.WORKER_CONCURRENCY ?? 2),
+    // numberOr, not a bare Number(...) -- see the field's own doc comment:
+    // this is now a pool-sizing input, and an invalid override must not
+    // reach main.ts's `max` computation as NaN.
+    concurrency: numberOr(env.WORKER_CONCURRENCY, 2),
     sweepIntervalMs: Number(env.SWEEP_INTERVAL_MS ?? 30_000),
     staleAfterMs: Number(env.STALE_AFTER_MS ?? 60_000),
     parsingStaleAfterMs: Number(env.PARSING_STALE_AFTER_MS ?? 15 * 60_000),

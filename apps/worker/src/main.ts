@@ -21,9 +21,20 @@ const prisma = createPrisma(config.databaseUrl);
  * `FoldState`, the eleventh `connect()` queuing forever), with no error, no
  * timeout, and no log.
  *
- * So the pool is sized FROM `maxOwnedRuns`, not left at the default:
+ * So the pool is sized FROM `maxOwnedRuns`, not left at the default. EVERY
+ * TERM BELOW IS DERIVED FROM A CLIENT SOME COMPONENT ACTUALLY HOLDS
+ * CONCURRENTLY, not guessed — the next component added to this pool must
+ * add its own term the same way, or this sizing silently under-counts
+ * again exactly as the original bug did:
  *  - `maxOwnedRuns` itself — each owned run holds one dedicated client for
  *    its advisory lock's whole lifetime (`FoldState.client`).
+ *  - `FOLD_OWNER_DISCOVERY_CLIENTS` — `LiveFoldOwner#doTick`'s own
+ *    `pool.query('SELECT id FROM run WHERE status = ...')` checks out a
+ *    client for that one query, CONCURRENTLY with every `FoldState` client
+ *    the SAME owner already holds from previous ticks (a tick folds owned
+ *    runs after its discovery query, but does not release their clients
+ *    first) — a fold round trip is not accounted for by `maxOwnedRuns`
+ *    alone, so it needs its own term.
  *  - `concurrency * PIPELINE_CLIENTS_PER_JOB` — `PipelineService.process`
  *    holds up to two clients per in-flight job at once: the lock-holding
  *    client for the whole call, plus a second, brief one `#ingest` opens
@@ -36,10 +47,15 @@ const prisma = createPrisma(config.databaseUrl);
  * or genuine connection pressure — fails loud (a rejected `connect()`)
  * instead of repeating the same silent stall this sizing exists to prevent.
  */
+const FOLD_OWNER_DISCOVERY_CLIENTS = 1;
 const PIPELINE_CLIENTS_PER_JOB = 2;
 const SWEEPER_CLIENTS = 1;
 const pool = createPool(config.databaseUrl, {
-  max: config.maxOwnedRuns + config.concurrency * PIPELINE_CLIENTS_PER_JOB + SWEEPER_CLIENTS,
+  max:
+    config.maxOwnedRuns +
+    FOLD_OWNER_DISCOVERY_CLIENTS +
+    config.concurrency * PIPELINE_CLIENTS_PER_JOB +
+    SWEEPER_CLIENTS,
   connectionTimeoutMillis: 10_000,
 });
 const blobs = new BlobStore(config.blob);
