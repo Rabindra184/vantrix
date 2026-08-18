@@ -1,8 +1,10 @@
 import 'reflect-metadata';
+import { Redis } from 'ioredis';
 import { createPool, createPrisma } from '@perfportal/persistence';
-import { BlobStore } from '@perfportal/storage';
+import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
+import { LiveFoldOwner } from './live/fold-owner.js';
 import { PipelineService } from './pipeline/pipeline.service.js';
 import { Sweeper } from './sweeper.js';
 
@@ -10,11 +12,11 @@ const config = loadWorkerConfig();
 const prisma = createPrisma(config.databaseUrl);
 
 /**
- * This ONE pool is shared by `PipelineService`, `Sweeper`, and (once wired
- * in alongside them here — not yet as of this file) `LiveFoldOwner` — design
- * part-2a §1.3, amended after an earlier draft claimed a worker "cannot
- * exhaust its pool trying to own everything" without ever checking that
- * against the pool's actual size. It was false: `createPool`'s own default
+ * This ONE pool is shared by `PipelineService`, `Sweeper`, and
+ * `LiveFoldOwner` — design part-2a §1.3, amended after an earlier draft
+ * claimed a worker "cannot exhaust its pool trying to own everything"
+ * without ever checking that against the pool's actual size. It was false:
+ * `createPool`'s own default
  * (`max: 10`) against `maxOwnedRuns`'s default (25), with no
  * `connectionTimeoutMillis` set either, does not degrade — it deadlocks the
  * whole worker the instant a tenth run is owned (every client held by a
@@ -60,19 +62,40 @@ const pool = createPool(config.databaseUrl, {
 });
 const blobs = new BlobStore(config.blob);
 await blobs.ensureBucket();
+const chunks = new LiveChunkStore(blobs);
 
 const pipeline = new PipelineService(config, prisma, pool, blobs);
 const worker = startConsumer(config, pipeline);
 const sweeper = new Sweeper(config, pool);
+// This owner's Redis connection is its own -- not the one BullMQ's
+// `startConsumer`/`Sweeper` open via `{ connection: { url } }` -- because
+// `LiveFoldOwner.close()` calls `.quit()` on it directly (see that method's
+// own doc comment), and quitting a connection those libraries still hold
+// open would break their own shutdown.
+const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
 
-const timer = setInterval(() => {
+const sweepTimer = setInterval(() => {
   void sweeper.sweep().catch((err) => console.error('sweep failed', err));
 }, config.sweepIntervalMs);
+// Same fire-and-forget shape as the sweeper's own timer above -- `tick()`
+// guards itself against overlapping with a still-running previous call
+// (`LiveFoldOwner`'s own `#ticking`), so this never awaits the previous
+// firing before starting the next one.
+const liveTickTimer = setInterval(() => {
+  void foldOwner.tick().catch((err) => console.error('live fold tick failed', err));
+}, config.liveTickMs);
 
 async function shutdown(): Promise<void> {
-  clearInterval(timer);
+  clearInterval(sweepTimer);
+  clearInterval(liveTickTimer);
   await worker.close();
   await sweeper.close();
+  // Before pool.end(): each owned run holds a dedicated pooled client for
+  // its advisory lock's whole lifetime, and close() releases every one of
+  // them (plus this owner's own Redis connection) -- see its own doc
+  // comment for why draining safely needs the tick guard, not just the
+  // owned-run map.
+  await foldOwner.close();
   await pool.end();
   await prisma.$disconnect();
 }

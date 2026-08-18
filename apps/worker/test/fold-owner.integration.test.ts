@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { LiveDeltaSchema, type LiveDelta } from '@perfportal/contracts';
 import { createPool, createPrisma } from '@perfportal/persistence';
 import { parseSimulationLog, StreamingLogDecoder } from '@perfportal/plugin-gatling';
 import { runEngine, type EngineResult } from '@perfportal/statistics';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import { Redis } from 'ioredis';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
@@ -124,7 +126,7 @@ describe('LiveFoldOwner', () => {
     // client past the end of the test -- and afterAll's pool.end() then
     // hangs waiting for it, turning one assertion failure into a
     // hookTimeout that hides the real error.
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
 
@@ -147,7 +149,7 @@ describe('LiveFoldOwner', () => {
     const half = Math.floor(log.length / 2);
     await chunks.put(runId, 0, log.subarray(0, half));
 
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
       const partial = runStat(owner.snapshotOf(runId)!)!;
@@ -173,8 +175,8 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const a = new LiveFoldOwner(config, pool, chunks);
-    const b = new LiveFoldOwner(config, pool, chunks);
+    const a = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const b = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await a.tick();
       await b.tick();
@@ -196,8 +198,8 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const owner = new LiveFoldOwner(config, pool, chunks);
-    const other = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
       expect(owner.snapshotOf(runId)).not.toBeNull();
@@ -226,7 +228,7 @@ describe('LiveFoldOwner', () => {
       runIds.push(runId);
     }
 
-    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 2 }, pool, chunks);
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 2 }, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
 
@@ -272,7 +274,7 @@ describe('LiveFoldOwner', () => {
     const STORAGE_CHUNK = 4;      // smaller than every record in the fixture (min ~10 bytes)
     const TICK_BATCH = 4096;      // bytes newly available between ticks; not record-aligned
 
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       let written = 0;
       while (written < log.length) {
@@ -328,7 +330,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(badRunId, 0, corrupted);
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await expect(owner.tick()).resolves.toBeUndefined();
 
@@ -386,7 +388,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, corrupted);
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
       expect(errorSpy).toHaveBeenCalledTimes(1);
@@ -426,7 +428,7 @@ describe('LiveFoldOwner', () => {
     const half = Math.floor(log.length / 2);
     await chunks.put(runId, 0, log.subarray(0, half));
 
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
       const partial = runStat(owner.snapshotOf(runId)!)!;
@@ -558,7 +560,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, pool, chunks);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
     try {
       await owner.tick();
       expect(owner.snapshotOf(goodRunId)).not.toBeNull();
@@ -575,7 +577,7 @@ describe('LiveFoldOwner', () => {
       // pg_advisory_unlock against Postgres), so its own recovery is not
       // this assertion's concern, only the good run's is.
       await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [badRunId]);
-      const other = new LiveFoldOwner(config, pool, chunks);
+      const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
       try {
         await other.tick();
         expect(other.snapshotOf(goodRunId)).not.toBeNull();
@@ -618,7 +620,7 @@ describe('LiveFoldOwner', () => {
     }
 
     const smallPool = createPool(config.databaseUrl, { max: 2, connectionTimeoutMillis: 500 });
-    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks);
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks, new Redis(config.redisUrl));
     try {
       const start = Date.now();
       await owner.tick();
@@ -637,4 +639,255 @@ describe('LiveFoldOwner', () => {
       await smallPool.end();
     }
   });
+
+  /**
+   * Task 5's own case. Design §3.1: "Each tick, for every owned run:
+   * snapshot, build a delta, publish." The subscriber is a SEPARATE `Redis`
+   * connection from the owner's own -- ioredis puts a connection into
+   * subscriber mode on `subscribe()` and it cannot then issue normal
+   * commands, so the owner's publisher and the test's subscriber can never
+   * be the same client.
+   *
+   * `seen[0].responseTime.replaces` (not a flat `replacesSeries`, per the
+   * two-envelope shape design §3.2 settled on after the brief was written)
+   * proves the wire shape actually matches `LiveDeltaSchema` -- if `#publish`
+   * emitted the brief's original flat shape, `LiveDeltaSchema.parse` above
+   * would already have thrown before this line ever ran.
+   */
+  it('publishes a delta per tick, with monotonic seq and append-only series', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+
+    const sub = new Redis(config.redisUrl);
+    const seen: LiveDelta[] = [];
+    await sub.subscribe(`live:${runId}`);
+    sub.on('message', (_channel, message: string) => {
+      seen.push(LiveDeltaSchema.parse(JSON.parse(message)));
+    });
+
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      const half = Math.floor(log.length / 2);
+      await chunks.put(runId, 0, log.subarray(0, half));
+      await owner.tick();
+      await chunks.put(runId, half, log.subarray(half));
+      await owner.tick();
+
+      await vi.waitFor(() => expect(seen.length).toBe(2));
+      expect(seen.map((d) => d.seq)).toEqual([0, 1]);
+      // The FIRST delta for any run is always a replacement -- INITIAL_CURSOR's
+      // lastBucketWidthMs (0) never equals a real bucket width. See
+      // delta.ts's own "THE COALESCE RULE" doc comment.
+      expect(seen[0]!.responseTime.replaces).toBe(true);
+      expect(seen[1]!.summary.count).toBeGreaterThan(seen[0]!.summary.count);
+      // Two separate envelopes, each with its own width (design §3.2) --
+      // not one shared width/flag pair on the delta as a whole.
+      expect(seen[0]!.responseTime.widthMs).toBeGreaterThan(0);
+      expect(seen[0]!.users.widthMs).toBeGreaterThan(0);
+      expect(Array.isArray(seen[0]!.users.buckets)).toBe(true);
+    } finally {
+      await sub.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * Design §3.4: "Published to `live:{runId}` (pub/sub, for Part 2b's
+   * fan-out) **and** appended to `live:{runId}:deltas` with `MAXLEN
+   * ~200`." Part 2a writes that stream even though nothing reads it until
+   * Part 2b -- this is the case that proves the writer actually works,
+   * which is what makes that later reader testable against something real.
+   */
+  it('appends every delta to the capped replay stream', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      const half = Math.floor(log.length / 2);
+      await chunks.put(runId, 0, log.subarray(0, half));
+      await owner.tick();
+      await chunks.put(runId, half, log.subarray(half));
+      await owner.tick();
+
+      const streamKey = `live:${runId}:deltas`;
+      expect(await redis.xlen(streamKey)).toBe(2);
+
+      const entries = await redis.xrange(streamKey, '-', '+');
+      // Each XRANGE entry is `[id, [field, value, field, value, ...]]` --
+      // `'delta'` is the one field name `#publish`'s XADD call wrote.
+      const deltas = entries.map(([, fields]) => {
+        const idx = fields.indexOf('delta');
+        return LiveDeltaSchema.parse(JSON.parse(fields[idx + 1] as string));
+      });
+      // The SAME seqs the pub/sub subscriber above would have seen -- one
+      // wire contract, two destinations, not two independently-numbered ones.
+      expect(deltas.map((d) => d.seq)).toEqual([0, 1]);
+      expect(deltas[0]!.responseTime.replaces).toBe(true);
+      expect(deltas[1]!.summary.count).toBeGreaterThan(deltas[0]!.summary.count);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * Review item (a) on Task 5's brief: `close()` used to snapshot
+   * `[...this.#owned.keys()]` with no regard for a `tick()` already in
+   * flight. If that in-flight tick's `#claim` was still awaiting
+   * `pool.connect()` at the moment of the snapshot, the `FoldState` it went
+   * on to insert a moment later would never appear in it -- never released,
+   * its pooled client leaked for good, `main.ts`'s `pool.end()` waiting on
+   * it forever with nothing to explain why.
+   *
+   * Forced deterministically, without a real hung connection: `pool.connect`
+   * is wrapped so the ONE promise-form call `#claim` makes for our seeded
+   * run resolves only once this test releases a gate -- mirroring the
+   * callback-vs-promise-form split `pool.connect` needs in the
+   * "settles every release" case above, since `pool.query`'s OWN internal
+   * use of `connect` (the callback form, exercised by this tick's discovery
+   * query) must stay completely unaffected.
+   *
+   * `order` proves the INTERLOCK, not just the eventual outcome: `close()`
+   * must not resolve before the gated claim does. Re-claiming the run with
+   * a fresh owner afterwards proves the INTERLOCK actually paid off -- the
+   * lock is genuinely free, which it would not be if the original claim's
+   * client had been abandoned rather than released.
+   */
+  it('close() waits for an in-flight tick before draining, so a claim racing the snapshot is not leaked', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    let releaseClaim: (() => void) | undefined;
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    let claimStarted: (() => void) | undefined;
+    const claimStartedPromise = new Promise<void>((resolve) => {
+      claimStarted = resolve;
+    });
+    const order: string[] = [];
+
+    let promiseFormCalls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#connect's own overloaded signature verbatim
+    const realConnect = pool.connect.bind(pool) as (...a: any[]) => any;
+    vi.spyOn(pool, 'connect').mockImplementation(((cb?: (...a: unknown[]) => void) => {
+      if (typeof cb === 'function') return realConnect(cb);
+      promiseFormCalls += 1;
+      if (promiseFormCalls === 1) {
+        claimStarted!();
+        return claimGate.then(() => {
+          order.push('claim-connect-resolved');
+          return realConnect();
+        });
+      }
+      return realConnect();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
+    }) as any);
+
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      const tickPromise = owner.tick();
+      await claimStartedPromise; // #claim's own connect() call is now gated, in flight
+
+      const closePromise = owner.close().then((r) => {
+        order.push('close-resolved');
+        return r;
+      });
+
+      // A real delay before releasing the gate, so a broken (non-interlocked)
+      // close() has every opportunity to race past the still-pending claim --
+      // if it were going to resolve early, it would have by now.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(order).not.toContain('close-resolved');
+
+      releaseClaim!();
+      await closePromise;
+      await tickPromise;
+
+      expect(order).toEqual(['claim-connect-resolved', 'close-resolved']);
+
+      // The lock is genuinely free: a fresh owner can claim this run
+      // immediately, proving the client the delayed claim opened was
+      // actually released, not stranded.
+      const verifier = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+      try {
+        await verifier.tick();
+        expect(verifier.snapshotOf(runId)).not.toBeNull();
+      } finally {
+        await verifier.close();
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  /**
+   * Review item (b) on Task 5's brief: `#ticking` releases on a throw (every
+   * other case in this file already proves that, via `#guarded`) but never
+   * on a HANG -- `BlobStore`'s `S3Client` sets no `requestTimeout`
+   * (`packages/storage/src/blobs.ts`), so a stalled `readFrom` used to leave
+   * `#ticking` true with no error, no log, and no further deltas for ANY
+   * owned run, forever. `fold-owner.ts`'s `#checkWatchdog` fixes the
+   * SILENCE, deliberately without touching the STUCK-ness itself -- see its
+   * own doc comment for why cancelling would risk exactly the concurrent-
+   * mutation corruption `#ticking` exists to prevent.
+   *
+   * `readFrom` is mocked to a REAL (bounded) delay rather than a genuine
+   * infinite hang, so this test terminates either way; the point under test
+   * is only whether the watchdog fires WHILE it is still pending, not
+   * whether the delay is technically finite.
+   *
+   * The watchdog only checks from `tick()`'s own early-return path (see that
+   * method's doc comment for why), so this simulates `main.ts`'s real
+   * `setInterval` driver by calling `tick()` repeatedly while the first call
+   * is still in flight, exactly as that timer would.
+   */
+  it('logs a watchdog warning when a fold has been stuck for several tick intervals, without cancelling it', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const STUCK_MS = 260;
+    const realReadFrom = chunks.readFrom.bind(chunks);
+    const readFromSpy = vi.spyOn(chunks, 'readFrom').mockImplementation((rid: string, offset: number) => {
+      if (rid !== runId) return realReadFrom(rid, offset);
+      return new Promise((resolve) => {
+        setTimeout(() => resolve(realReadFrom(rid, offset)), STUCK_MS);
+      });
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // liveTickMs small enough that the watchdog's threshold (6x liveTickMs,
+    // WATCHDOG_STUCK_MULTIPLIER) clears well before STUCK_MS elapses:
+    // 6 * 20 = 120ms < 260ms.
+    const owner = new LiveFoldOwner({ ...config, liveTickMs: 20 }, pool, chunks, new Redis(config.redisUrl));
+    try {
+      const stuckTick = owner.tick(); // resolves only once STUCK_MS elapses
+
+      const isWatchdogWarning = (call: unknown[]): boolean =>
+        typeof call[0] === 'string' && call[0].includes('LiveFoldOwner: tick() has not completed');
+
+      const deadline = Date.now() + STUCK_MS + 500;
+      while (Date.now() < deadline && !errorSpy.mock.calls.some(isWatchdogWarning)) {
+        await owner.tick(); // early return while #ticking is true -- checks the watchdog
+        await new Promise((r) => setTimeout(r, 15));
+      }
+
+      const watchdogCalls = errorSpy.mock.calls.filter(isWatchdogWarning);
+      expect(watchdogCalls.length).toBe(1); // one warning per stuck episode, not one per poll
+
+      await stuckTick; // let the originally-stuck tick actually finish
+    } finally {
+      errorSpy.mockRestore();
+      readFromSpy.mockRestore();
+      await owner.close();
+    }
+  }, 10_000);
 });

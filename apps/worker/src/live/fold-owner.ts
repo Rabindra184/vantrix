@@ -1,16 +1,16 @@
+import type { Redis } from 'ioredis';
 import { StreamingLogDecoder } from '@perfportal/plugin-gatling';
 import { LiveEngine, type EngineResult } from '@perfportal/statistics';
 import type { LiveChunkStore } from '@perfportal/storage';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
+import { buildDelta, INITIAL_CURSOR, type DeltaCursor } from './delta.js';
 
 /**
  * Everything one owned run needs to keep folding, held for as long as this
  * process owns the run. See the design doc's §2.1 for the authoritative
- * shape; `lastSeq` / `lastPublishedOffsetMs` / `lastBucketWidthMs` are not
- * here yet because this task does not publish — Task 5 adds the delta
- * cursor alongside Redis.
+ * shape.
  */
 interface FoldState {
   decoder: StreamingLogDecoder;
@@ -19,6 +19,14 @@ interface FoldState {
    * never a different one drawn from the pool -- see `#claim` and
    * `#release`. */
   client: pg.PoolClient;
+  /**
+   * What the NEXT delta's `buildDelta` call needs to know about the LAST
+   * one published for this run -- `seq`, and the response-time series'
+   * frontier/width (design §3.3). Starts at `INITIAL_CURSOR` on claim,
+   * which is what makes a freshly (or re-)claimed run's first delta a
+   * replacement rather than an upsert into a series the consumer never saw.
+   */
+  cursor: DeltaCursor;
   /**
    * The FETCH FRONTIER, not the decode position -- the highest byte this
    * owner has already retrieved from `LiveChunkStore`, and exactly what
@@ -43,6 +51,17 @@ interface FoldState {
 }
 
 /**
+ * How many `liveTickMs` intervals `#ticking` may stay true before a fold is
+ * treated as worth logging about. Purely diagnostic -- see `#checkWatchdog`'s
+ * doc comment for why this never cancels anything -- so a false positive on
+ * a legitimately huge backlog fold costs one extra log line, not a wrong
+ * decision. 6x gives real headroom above ordinary tick-to-tick variance
+ * while still firing well inside an operator's patience for "is this worker
+ * alive".
+ */
+const WATCHDOG_STUCK_MULTIPLIER = 6;
+
+/**
  * Claims each `running` run on the advisory lock `PipelineService` already
  * uses, folds the chunk bytes it has not yet fetched into a `LiveEngine`,
  * and releases the run once its status leaves `running`.
@@ -63,18 +82,22 @@ interface FoldState {
  * no checkpoint format to version, and a worker dying mid-run costs some
  * CPU re-folding on the next claim rather than costing correctness.
  *
- * No publishing here -- Task 5 wires deltas onto Redis. `tick()` only
- * claims, folds, and releases; `snapshotOf` is a test seam standing in for
- * the publish path until then.
+ * After folding, each owned run is snapshotted (`{ clone: true }` --
+ * see `#publish`'s own doc comment for why that flag is load-bearing),
+ * turned into a delta by the pure `buildDelta`, and published to both of
+ * design §3.4's destinations. Publishing always runs strictly after that
+ * run's fold for the same tick, never interleaved with it, so every delta
+ * describes a whole number of decoded records.
  */
 export class LiveFoldOwner {
   readonly #config: WorkerConfig;
   readonly #pool: pg.Pool;
   readonly #chunks: LiveChunkStore;
+  readonly #redis: Redis;
   readonly #owned = new Map<string, FoldState>();
   /**
-   * Guards `tick()` against overlapping with itself. Task 5 drives it from a
-   * `setInterval` in the same shape `main.ts` already uses for the sweeper's
+   * Guards `tick()` against overlapping with itself. `main.ts` drives it from
+   * a `setInterval` in the same shape it already uses for the sweeper's
    * timer -- fire-and-forget, never awaiting the previous call -- and design
    * §2.1 is explicit that claiming a run which already streamed 200 MB means
    * folding 200 MB before its first delta, which will routinely outlast the
@@ -88,11 +111,34 @@ export class LiveFoldOwner {
    * rather than a wrong cursor or a failure path.
    */
   #ticking = false;
+  /**
+   * Set once `close()` has been called. Checked alongside `#ticking` in
+   * `tick()` so that once a drain has started, no later call can start a
+   * NEW pass that would insert a fresh `FoldState` after (or during) that
+   * drain -- see `close()`'s own doc comment for the race this closes.
+   */
+  #closing = false;
+  /**
+   * The promise behind the currently (or most recently) in-flight
+   * `#doTick()` call, so `close()` can await the SAME pass `#ticking` is
+   * guarding rather than only the state that pass has produced so far. See
+   * `close()`'s doc comment.
+   */
+  #tickPromise: Promise<void> | null = null;
+  /** When the in-flight tick started, for `#checkWatchdog`; `null` whenever
+   * `#ticking` is false. */
+  #tickStartedAt: number | null = null;
+  /** Whether the watchdog has already logged for the CURRENT stuck episode,
+   * so a hung tick produces one warning, not one per subsequent `tick()`
+   * call that finds it still stuck. Reset to `false` every time a tick
+   * actually starts. */
+  #watchdogWarned = false;
 
-  constructor(config: WorkerConfig, pool: pg.Pool, chunks: LiveChunkStore) {
+  constructor(config: WorkerConfig, pool: pg.Pool, chunks: LiveChunkStore, redis: Redis) {
     this.#config = config;
     this.#pool = pool;
     this.#chunks = chunks;
+    this.#redis = redis;
   }
 
   /**
@@ -118,15 +164,81 @@ export class LiveFoldOwner {
    * guard deterministically -- `a` claims it before yielding, `b` sees it
    * already claimed and returns immediately -- rather than depending on how
    * the two calls happen to interleave.
+   *
+   * An early return while `#ticking` is already true also checks the
+   * watchdog (`#checkWatchdog`) before returning -- see that method's own
+   * doc comment. This is deliberately piggybacked on the SAME early-return
+   * path a real deployment already exercises every `liveTickMs`
+   * (`main.ts`'s `setInterval` keeps calling `tick()` on schedule whether or
+   * not the previous call has finished), rather than running its own
+   * independent timer: it needs no lifecycle of its own to leak or to clean
+   * up in `close()`, and it is exercised by exactly the mechanism that would
+   * observe a real stall in production.
    */
   async tick(): Promise<void> {
-    if (this.#ticking) return;
+    if (this.#ticking || this.#closing) {
+      if (this.#ticking) this.#checkWatchdog();
+      return;
+    }
     this.#ticking = true;
+    this.#tickStartedAt = Date.now();
+    this.#watchdogWarned = false;
+    const settled = this.#doTick();
+    this.#tickPromise = settled;
     try {
-      await this.#doTick();
+      await settled;
     } finally {
       this.#ticking = false;
+      this.#tickStartedAt = null;
     }
+  }
+
+  /**
+   * Diagnostic only -- logs once when `#ticking` has stayed true for over
+   * `WATCHDOG_STUCK_MULTIPLIER` tick intervals, and never cancels or races
+   * anything.
+   *
+   * A cancel-and-move-on design (e.g. `Promise.race`ing `#fold` against a
+   * timeout) was considered and rejected: the ABANDONED `#fold` call would
+   * keep running in the background regardless -- there is no way to
+   * actually cancel `LiveChunkStore.readFrom`, which is exactly what stalls
+   * (`BlobStore`'s `S3Client` sets no `requestTimeout`, see
+   * `packages/storage/src/blobs.ts`). If a later tick then retried the same
+   * run (freed to do so the instant the timeout gave up), TWO `#fold` calls
+   * would be mutating the SAME `state.decoder` / `state.engine` at once the
+   * moment the abandoned one finally resolved -- design §2.2.1's corruption
+   * again, this time smuggled in by the very mechanism meant to guard
+   * against overlap. `#ticking` staying true is what PREVENTS that; a
+   * watchdog that logs instead of racing keeps that guarantee intact and
+   * only restores what was actually missing -- visibility. Silence was the
+   * whole problem: no error, no log, no further deltas for any run, and no
+   * way to tell from outside whether the process was stuck or merely quiet.
+   *
+   * This does NOT make `close()` return promptly if the current tick really
+   * is stuck forever -- `close()` awaits the same in-flight pass (see its
+   * own doc comment), so a genuine hang here is a genuine shutdown hang too.
+   * That is accepted rather than papered over: this file cannot fix
+   * `readFrom`'s missing timeout (out of this task's scope -- see the
+   * paragraph above), and a `close()` that abandoned a possibly-still-owned
+   * client to avoid waiting would reintroduce the exact leak this method's
+   * own interlock exists to close. The watchdog at least means an operator
+   * SEES the stall build up (repeatedly, every `liveTickMs`, well before any
+   * shutdown is even attempted) instead of a shutdown that hangs with no
+   * prior explanation.
+   */
+  #checkWatchdog(): void {
+    if (this.#tickStartedAt === null || this.#watchdogWarned) return;
+    const stuckForMs = Date.now() - this.#tickStartedAt;
+    const thresholdMs = this.#config.liveTickMs * WATCHDOG_STUCK_MULTIPLIER;
+    if (stuckForMs < thresholdMs) return;
+    this.#watchdogWarned = true;
+    console.error(
+      `LiveFoldOwner: tick() has not completed in over ${stuckForMs}ms ` +
+        `(over ${WATCHDOG_STUCK_MULTIPLIER}x liveTickMs) -- likely a stalled ` +
+        `readFrom against blob storage (BlobStore's S3Client sets no ` +
+        `requestTimeout). No further deltas will be published for ANY owned ` +
+        'run until this tick resolves.',
+    );
   }
 
   async #doTick(): Promise<void> {
@@ -182,6 +294,52 @@ export class LiveFoldOwner {
       // failure must not cost every other owned run its fold this tick.
       await this.#guarded('fold', runId, () => this.#fold(runId, state));
     }
+
+    // A separate loop, after every owned run has folded -- never combined
+    // into the loop above so that a Redis failure publishing run A's delta
+    // cannot be confused (in the log, or in effect) with run A's OWN fold
+    // failing, and so that run B still gets its fold this tick even if run
+    // A's publish call is what throws. Runs strictly after ALL folding for
+    // this tick, per design §3.1 ("snapshot, build a delta, publish") and
+    // per `#publish`'s own doc comment on why "after, never between reads"
+    // matters for what a delta describes.
+    for (const [runId, state] of this.#owned) {
+      await this.#guarded('publish', runId, () => this.#publish(runId, state));
+    }
+  }
+
+  /**
+   * Builds this tick's delta from a clone-safe snapshot of the run's fold
+   * state, advances that run's cursor, and writes the SAME serialized body
+   * to both destinations design §3.4 names: `PUBLISH live:{runId}` for Part
+   * 2b's fan-out, and `XADD live:{runId}:deltas MAXLEN ~200` for the replay
+   * buffer FR-LIVE-8 wants. Part 2a writes that stream even though nothing
+   * reads it until Part 2b -- splitting a stream's writer from its reader
+   * across two sub-projects would leave 2b with nothing real to test replay
+   * against.
+   *
+   * `{ clone: true }` is not optional (design §3.1): without it the
+   * snapshot's rollups alias the SAME accumulators the next tick's `#fold`
+   * mutates, so a delta `JSON.stringify`'d after the two `await`s below
+   * would describe a state that kept changing underneath it -- one that
+   * existed at no single instant, not merely a stale one.
+   *
+   * The cursor is advanced BEFORE either Redis call, not after. A publish
+   * that fails partway (a dropped connection between the `PUBLISH` and the
+   * `XADD`, say) still must not re-emit the SAME `seq` next tick with
+   * DIFFERENT contents -- `seq` is how a consumer detects a gap at all
+   * (`LiveDeltaSchema`'s own doc comment), and a repeated value would hide
+   * exactly the drop it exists to reveal. A tick that fails to publish is
+   * simply a gap the next successful one is visible across, which is the
+   * behaviour the wire contract is already designed to tolerate.
+   */
+  async #publish(runId: string, state: FoldState): Promise<void> {
+    const snapshot = state.engine.snapshot({ clone: true });
+    const { delta, next } = buildDelta(runId, snapshot, state.cursor);
+    state.cursor = next;
+    const body = JSON.stringify(delta);
+    await this.#redis.publish(`live:${runId}`, body);
+    await this.#redis.xadd(`live:${runId}:deltas`, 'MAXLEN', '~', '200', '*', 'delta', body);
   }
 
   /**
@@ -204,7 +362,9 @@ export class LiveFoldOwner {
   }
 
   /** The fold result for an owned run, or null if this owner does not hold
-   * it. Test seam standing in for Task 5's publish path. */
+   * it. Test seam: production code never calls this -- `#publish` takes its
+   * own snapshot on the same terms -- it exists so a test can inspect fold
+   * state directly rather than parsing a wire delta back apart. */
   snapshotOf(runId: string): EngineResult | null {
     const state = this.#owned.get(runId);
     // clone: true -- the returned rollups must not alias accumulators the
@@ -213,17 +373,45 @@ export class LiveFoldOwner {
   }
 
   /**
-   * Releases every owned run. Without this, a test (or a shutdown) that
-   * constructs more than one owner leaks a pooled connection per owned run
-   * and eventually exhausts the pool.
+   * Releases every owned run and quits this owner's own Redis connection.
+   * Without this, a test (or a shutdown) that constructs more than one
+   * owner leaks a pooled connection per owned run and eventually exhausts
+   * the pool.
    *
-   * `Promise.allSettled`, not a sequential loop that stops at the first
-   * rejection -- a loop awaiting `#release` one at a time would abandon
-   * every run still left in `#owned` the moment ANY single one's unlock
-   * query failed, leaking exactly the pooled connections this method
-   * exists to prevent leaking, for every run after the failing one in
-   * iteration order. Each run's `#release` is independent (its own client,
-   * its own lock), so nothing is lost by running them concurrently.
+   * INTERLOCKS WITH `#ticking` BEFORE TOUCHING `#owned`, and that ordering
+   * is load-bearing, not defensive dressing. `#owned` is mutated by
+   * `#claim` mid-tick, so a naive `close()` that read `#owned` without
+   * regard for an in-flight `tick()` could take its snapshot BETWEEN a
+   * `#claim` starting and it inserting the `FoldState` it just won the
+   * advisory lock for -- that run's client would then never appear in the
+   * snapshot below, never get released, and `main.ts`'s `pool.end()` would
+   * wait on it forever with nothing to explain why. Setting `#closing`
+   * FIRST (checked in `tick()` alongside `#ticking`) guarantees no NEW pass
+   * can start once this method has begun, so there is at most one
+   * already-in-flight pass left to wait for; awaiting `#tickPromise` -- the
+   * SAME promise `#ticking` is guarding, not a fresh call of our own --
+   * then guarantees that pass has fully settled `#owned` (every `#claim` it
+   * started has either inserted its `FoldState` or failed and logged,
+   * `#guarded`'s already-per-run isolation covers that) before the snapshot
+   * below is taken. `#tickPromise` being `null` (no tick has ever run, or
+   * one already finished and cleared it) makes the wait a no-op.
+   *
+   * A tick that is STUCK, not merely slow, makes this method stuck too --
+   * see `#checkWatchdog`'s own doc comment for why that trade is accepted
+   * rather than solved by racing a timeout here as well. That failure mode
+   * lives entirely in `LiveChunkStore.readFrom` never settling (blob
+   * storage's client sets no request timeout), which this file cannot fix
+   * without touching `packages/storage/src/blobs.ts` -- outside this
+   * task's scope. The watchdog at least means the stall was already visible
+   * in the logs, repeatedly, before any shutdown was even attempted.
+   *
+   * `Promise.allSettled` for the releases, not a sequential loop that stops
+   * at the first rejection -- a loop awaiting `#release` one at a time
+   * would abandon every run still left in `#owned` the moment ANY single
+   * one's unlock query failed, leaking exactly the pooled connections this
+   * method exists to prevent leaking, for every run after the failing one
+   * in iteration order. Each run's `#release` is independent (its own
+   * client, its own lock), so nothing is lost by running them concurrently.
    *
    * A failure is surfaced, not swallowed: `#release` already returns its
    * client to the pool in a `finally` regardless of whether the unlock
@@ -233,11 +421,34 @@ export class LiveFoldOwner {
    * connection lives, which is real enough for a caller to want to know
    * about, and "some releases silently failed" is exactly this class's own
    * kind of undiagnosable-from-outside failure otherwise.
+   *
+   * The Redis connection is quit AFTER the release drain, and regardless of
+   * whether any individual release failed -- same `Promise.allSettled`
+   * reasoning applied to this owner's own last resource: one failure must
+   * not strand the other.
    */
   async close(): Promise<void> {
+    this.#closing = true;
+    if (this.#tickPromise) {
+      await this.#tickPromise.catch((err: unknown) => {
+        // `#doTick`'s own per-run work is already isolated by `#guarded`;
+        // what can still reach here is the UN-guarded discovery query at
+        // the very top of `#doTick`. That failure is orthogonal to closing
+        // down and must not abort the drain below -- the whole reason the
+        // release step itself uses Promise.allSettled rather than a bare
+        // await chain.
+        console.error('LiveFoldOwner: in-flight tick failed while close() was waiting for it', err);
+      });
+    }
+
     const results = await Promise.allSettled(
       [...this.#owned.keys()].map((runId) => this.#release(runId)),
     );
+
+    await this.#redis.quit().catch((err: unknown) => {
+      console.error('LiveFoldOwner: failed to quit redis connection during close()', err);
+    });
+
     const failures = results.filter(
       (r): r is PromiseRejectedResult => r.status === 'rejected',
     );
@@ -282,6 +493,7 @@ export class LiveFoldOwner {
       engine: new LiveEngine(),
       client,
       fetchedBytes: 0,
+      cursor: INITIAL_CURSOR,
     });
   }
 
