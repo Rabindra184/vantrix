@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import request from 'supertest';
+import { Redis } from 'ioredis';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { RunRepository } from '@perfportal/persistence';
@@ -19,6 +20,11 @@ const LOG = fileURLToPath(
 );
 
 const CHUNK_BYTES = 64 * 1024;
+
+// Same fallback every other integration suite in this directory uses
+// (trends.integration.test.ts, window.integration.test.ts, ...) for a raw
+// ioredis client, distinct from IngestQueue's own BullMQ-wrapped connection.
+const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6380';
 
 let ctx: TestContext;
 
@@ -619,5 +625,84 @@ describe('live streaming', () => {
       expect(liveRun.body.status).toBe('complete');
       expect(liveRun.body.durationMs).toBe(uploadedRun.body.durationMs);
     });
+  });
+
+  it('pings live:opened when a run opens', async () => {
+    ctx = await createTestApp();
+    const sub = new Redis(REDIS_URL);
+    const pings: string[] = [];
+    await sub.subscribe('live:opened');
+    sub.on('message', (_channel, message: string) => pings.push(message));
+
+    try {
+      const opened = await open(ctx.streamToken);
+      expect(opened.status).toBe(201);
+
+      await vi.waitFor(() => expect(pings).toContain(opened.body.runId));
+    } finally {
+      await sub.quit();
+    }
+  });
+
+  it('pings live:advance when a chunk is accepted, and not when it is rejected as a gap', async () => {
+    ctx = await createTestApp();
+    const sub = new Redis(REDIS_URL);
+    const pings: string[] = [];
+    await sub.subscribe('live:advance');
+    sub.on('message', (_channel, message: string) => pings.push(message));
+
+    try {
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+
+      const accepted = await stream(ctx.streamToken, runId, 0, Buffer.from('abc'));
+      expect(accepted.status).toBe(202);
+      await vi.waitFor(() => expect(pings).toContain(runId));
+
+      // A genuine gap: 409, and -- the negative half of this test, which is
+      // what actually proves LiveService.stream conditions the ping on the
+      // accepted branch rather than firing it unconditionally -- no second
+      // ping for it.
+      const before = pings.length;
+      const gap = await stream(ctx.streamToken, runId, 9999, Buffer.from('xyz'));
+      expect(gap.status).toBe(409);
+      // No event to wait for on the negative side (nothing SHOULD happen),
+      // so this gives pub/sub delivery a generous window before asserting
+      // its absence, rather than racing the assertion against delivery.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(pings.length).toBe(before);
+    } finally {
+      await sub.quit();
+    }
+  });
+
+  it('does not ping live:advance for a replayed (behind-the-cursor) chunk', async () => {
+    // A replay is also `kind: 'accepted'` (LiveService.stream's own
+    // docstring), so this is a DIFFERENT negative case from the gap above --
+    // it proves the ping is conditioned on genuinely new bytes landing via
+    // advanceOffset, not merely on the outcome's `kind`.
+    ctx = await createTestApp();
+    const sub = new Redis(REDIS_URL);
+    const pings: string[] = [];
+    await sub.subscribe('live:advance');
+    sub.on('message', (_channel, message: string) => pings.push(message));
+
+    try {
+      const opened = await open(ctx.streamToken);
+      const runId = opened.body.runId;
+      const bytes = Buffer.from('some bytes of a simulation.log');
+
+      const first = await stream(ctx.streamToken, runId, 0, bytes);
+      expect(first.status).toBe(202);
+      await vi.waitFor(() => expect(pings).toContain(runId));
+
+      const before = pings.length;
+      const replay = await stream(ctx.streamToken, runId, 0, bytes);
+      expect(replay.status).toBe(202);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(pings.length).toBe(before);
+    } finally {
+      await sub.quit();
+    }
   });
 });

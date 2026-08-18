@@ -999,4 +999,189 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     }
   }, 10_000);
+
+  /**
+   * Task 6's own subject: design §1.2's `live:opened` ping should let an
+   * owner claim a freshly-created run WITHOUT waiting for `#doTick`'s own
+   * discovery poll. `owner.tick()` is deliberately never called anywhere in
+   * this case -- calling it would make the assertion pass whether or not
+   * the ping itself did anything, since the poll claims the very same run
+   * on its own the moment it runs. `vi.waitFor` is what proves the claim
+   * happened asynchronously, off the ping's own message handler, rather
+   * than off any call this test makes directly.
+   */
+  it('claims a run immediately on a live:opened ping, without waiting for a tick', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+      expect(owner.snapshotOf(runId)).toBeNull();
+
+      await publisher.publish('live:opened', runId);
+
+      await vi.waitFor(() => expect(owner.snapshotOf(runId)).not.toBeNull());
+    } finally {
+      await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * The companion case for `live:advance` (design §2.2 / §2.3): once a run
+   * is owned, a ping should fold newly-available bytes without waiting for
+   * `tick()`. The run is claimed the ORDINARY way first (one real `tick()`
+   * call against the first half of the fixture) so this case isolates the
+   * ADVANCE reaction from the OPENED one the case above already covers --
+   * only the SECOND half's bytes, and the fold that picks them up, are
+   * attributable to the ping.
+   */
+  it('folds an owned run immediately on a live:advance ping, without waiting for a tick', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    const half = Math.floor(log.length / 2);
+    await chunks.put(runId, 0, log.subarray(0, half));
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+      await owner.tick();
+      const partial = runStat(owner.snapshotOf(runId)!)!;
+      expect(partial.count).toBeGreaterThan(0);
+
+      await chunks.put(runId, half, log.subarray(half));
+      await publisher.publish('live:advance', runId);
+
+      const batch = runStat(runEngine(parseSimulationLog(log)))!;
+      await vi.waitFor(() => {
+        expect(runStat(owner.snapshotOf(runId)!)!.count).toBe(batch.count);
+      });
+    } finally {
+      await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * The negative half of the pair above -- "fold that run IF OWNED" (design
+   * §2.3) is a conditional, and this is what proves the condition is
+   * actually checked rather than the handler claiming on advance too. If
+   * `#onAdvance` claimed instead of no-op'ing for a run it does not hold,
+   * this run would show up owned; nothing here ever calls `tick()` or
+   * publishes `live:opened`, so there is no other way it could.
+   */
+  it('a live:advance ping for a run this owner does not own does not claim it', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+      expect(owner.snapshotOf(runId)).toBeNull();
+
+      await publisher.publish('live:advance', runId);
+      // No event to wait FOR (nothing should happen), so this gives message
+      // delivery a generous window before asserting its absence, rather
+      // than racing the assertion against delivery -- same shape as the
+      // API-side negative cases in live.integration.test.ts.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(owner.snapshotOf(runId)).toBeNull();
+    } finally {
+      await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * `#ticking` guards `tick()` against overlapping ITSELF, but a
+   * `live:advance` ping calls `#fold` from a `message` event handler
+   * entirely outside `tick()` -- so without a SEPARATE guard, a ping
+   * arriving while `#doTick`'s own fold loop is mid-`#fold` for that exact
+   * run would run a second, concurrent `#fold` against the same
+   * `FoldState`. `#fold`'s own doc comment already explains why that
+   * corrupts: both calls would read `state.fetchedBytes` before either
+   * advances it, both `readFrom` the identical range, and both push it into
+   * the SAME shared decoder -- design §2.2.1's corruption, reached across
+   * the tick/ping boundary instead of across two overlapping ticks.
+   *
+   * The tick's own fold is made to STALL inside `readFrom` -- gated on a
+   * manually-released promise, not a blind `setTimeout` -- so the ping can
+   * be fired at a DETERMINISTIC moment (once the mock proves the tick's
+   * fold has actually reached `readFrom`) rather than racing an arbitrary
+   * delay against however long claiming and discovering the run happens to
+   * take on this run of the test.
+   */
+  it('a live:advance ping never overlaps a fold already in flight for the same run', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    let releaseGate: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let readFromStarted: (() => void) | undefined;
+    const readFromStartedPromise = new Promise<void>((resolve) => {
+      readFromStarted = resolve;
+    });
+    const realReadFrom = chunks.readFrom.bind(chunks);
+    const readFromSpy = vi.spyOn(chunks, 'readFrom').mockImplementation(async (rid: string, offset: number) => {
+      if (rid !== runId) return realReadFrom(rid, offset);
+      concurrent += 1;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      readFromStarted!(); // the tick's own fold has now reached readFrom -- provably "in flight"
+      try {
+        await gate;
+        return await realReadFrom(rid, offset);
+      } finally {
+        concurrent -= 1;
+      }
+    });
+
+    const publisher = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.listen();
+
+      const tickPromise = owner.tick(); // claims runId, then stalls inside the mocked readFrom
+      await readFromStartedPromise; // wait for the stall, not a fixed delay
+
+      await publisher.publish('live:advance', runId);
+      // Give the ping's message handler + #onAdvance -> #foldOnce a moment
+      // to run. If the guard is absent, this is where a SECOND readFrom
+      // call for runId would start while the gate is still held, pushing
+      // `concurrent` to 2.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // THE discriminating assertion.
+      expect(maxConcurrent).toBe(1);
+
+      releaseGate!();
+      await tickPromise;
+
+      // Not just "not measurably concurrent" -- genuinely undamaged: the
+      // batch numbers still match, which they would NOT if a second
+      // concurrent readFrom had spliced duplicate bytes into the decoder.
+      const live = owner.snapshotOf(runId);
+      const batch = runEngine(parseSimulationLog(log));
+      expect(live).not.toBeNull();
+      expect(runStat(live!)!.count).toBe(runStat(batch)!.count);
+      expect(runStat(live!)!.okCount).toBe(runStat(batch)!.okCount);
+      expect(runStat(live!)!.koCount).toBe(runStat(batch)!.koCount);
+    } finally {
+      readFromSpy.mockRestore();
+      await publisher.quit();
+      await owner.close();
+    }
+  });
 });

@@ -6,6 +6,7 @@ import { RunsModule } from '../runs/runs.module.js';
 import { IngestController } from './ingest.controller.js';
 import { IngestService } from './ingest.service.js';
 import { LiveController } from './live.controller.js';
+import { LiveNotifier } from './live-notifier.js';
 import { LiveService } from './live.service.js';
 import { IngestQueue } from './queue.js';
 
@@ -41,7 +42,18 @@ import { IngestQueue } from './queue.js';
       useFactory: (config: AppConfig) => new IngestQueue(config.redisUrl),
       inject: [CONFIG],
     },
+    // Same useFactory + inject: [CONFIG] shape as IngestQueue just above --
+    // the API has no other Redis client for this to reuse (see
+    // LiveNotifier's own docstring). Implementing OnModuleDestroy is what
+    // lets Nest's own app.close() quit this connection, the same way it
+    // already closes IngestQueue's -- no manual disposal wiring needed in
+    // createTestApp() or main.ts.
+    {
+      provide: LiveNotifier,
+      useFactory: (config: AppConfig) => new LiveNotifier(config.redisUrl),
+      inject: [CONFIG],
+    },
   ],
-  exports: [BlobStore, IngestQueue],
+  exports: [BlobStore, IngestQueue, LiveNotifier],
 })
 export class IngestModule {}

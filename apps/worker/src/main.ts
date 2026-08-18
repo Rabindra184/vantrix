@@ -71,8 +71,20 @@ const sweeper = new Sweeper(config, pool);
 // `startConsumer`/`Sweeper` open via `{ connection: { url } }` -- because
 // `LiveFoldOwner.close()` calls `.quit()` on it directly (see that method's
 // own doc comment), and quitting a connection those libraries still hold
-// open would break their own shutdown.
+// open would break their own shutdown. LiveFoldOwner derives its own second,
+// subscriber-mode connection from this one internally (`redis.duplicate()`
+// in its constructor -- see `#sub`'s own doc comment); nothing here needs to
+// construct or pass in a second connection for that.
 const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+// Subscribes the owner to `live:opened`/`live:advance` (design §1.2, §2.3)
+// before either timer starts below. Awaited, not fire-and-forget, so a
+// failure here (a bad REDIS_URL, the broker unreachable at boot) surfaces as
+// a boot-time rejection rather than a silently-never-subscribed owner --
+// consistent with `blobs.ensureBucket()` above, the other awaited startup
+// step this file already has. Not awaiting it would still be SAFE, only
+// less prompt: `listen()`'s own doc comment covers why the tick's poll
+// backstops every case this subscription speeds up.
+await foldOwner.listen();
 
 const sweepTimer = setInterval(() => {
   void sweeper.sweep().catch((err) => console.error('sweep failed', err));

@@ -88,13 +88,68 @@ const WATCHDOG_STUCK_MULTIPLIER = 6;
  * design §3.4's destinations. Publishing always runs strictly after that
  * run's fold for the same tick, never interleaved with it, so every delta
  * describes a whole number of decoded records.
+ *
+ * DISCOVERY IS THE TICK'S OWN POLL PLUS TWO REDIS PINGS, NEVER THE PINGS
+ * ALONE (design §1.2). `LiveNotifier` (`apps/api/src/ingest/live-notifier.ts`)
+ * publishes `live:opened` when a run is created and `live:advance` after a
+ * chunk is durably accepted; `listen()` subscribes this owner to both and
+ * `#onOpened`/`#onAdvance` react. Either message can be dropped -- Redis
+ * pub/sub has no persistence, and a message published while every worker is
+ * down (a deploy, an outage) reaches nobody -- so `#doTick`'s poll of
+ * `WHERE status = 'running'` keeps running on its own schedule regardless of
+ * whether either ping ever arrives. The pings are strictly an optimisation
+ * over that poll: they lower claim and fold latency when they land, and
+ * change nothing about correctness when they do not.
  */
 export class LiveFoldOwner {
   readonly #config: WorkerConfig;
   readonly #pool: pg.Pool;
   readonly #chunks: LiveChunkStore;
   readonly #redis: Redis;
+  /**
+   * A SEPARATE connection from `#redis`, for subscribing -- design §1.2 /
+   * §2.3. ioredis puts a connection into subscriber mode on `subscribe()`
+   * and then rejects ordinary commands on it (`Redis.js`'s own
+   * `sendCommand`, gated on `VALID_IN_SUBSCRIBER_MODE`); `#redis` is the
+   * owner's PUBLISHER, used for every `PUBLISH`/`XADD` in `#publish`, so
+   * subscribing on it would break every one of those the moment the first
+   * `subscribe()` call landed.
+   *
+   * `redis.duplicate()` (not a second `new Redis(...)` built from
+   * `#config.redisUrl` here) reuses whatever options `#redis` was
+   * constructed with -- host, port, TLS, auth, anything a caller supplied --
+   * without this class needing to know or re-derive any of it, and without
+   * `LiveFoldOwner`'s own constructor gaining a parameter for it: the
+   * constructor still takes exactly the four arguments it has taken since
+   * `main.ts` and the test suite in this directory both started calling it.
+   * `close()` quits this connection alongside `#redis`'s own (see that
+   * method's doc comment); `listen()` below is what actually subscribes it.
+   */
+  readonly #sub: Redis;
   readonly #owned = new Map<string, FoldState>();
+  /**
+   * Run ids with a `#fold` call CURRENTLY in flight -- guards against a
+   * hazard `#ticking` does not cover. `#ticking` only prevents two `tick()`
+   * calls from overlapping EACH OTHER; it says nothing about a
+   * `live:advance` ping's `#onAdvance`, which calls `#fold` from a
+   * `message` event handler outside `tick()` entirely and can therefore
+   * land WHILE `#doTick`'s own fold loop is mid-`#fold` for that very run
+   * (or while a second ping for the same run is).
+   *
+   * `#fold`'s own doc comment already spells out why two concurrent calls
+   * for the SAME `FoldState` corrupt: both read `state.fetchedBytes` before
+   * either advances it, both `readFrom` the identical byte range, and both
+   * push it into the SAME shared decoder -- design §2.2.1's exact
+   * corruption, reached here across the tick/ping boundary instead of
+   * across two overlapping ticks.
+   *
+   * `#foldOnce` is the single gate every caller of `#fold` now goes
+   * through (`#doTick`'s own loop included) -- see its own doc comment for
+   * why skipping, rather than queuing, a fold that finds this run already
+   * in flight is safe: nothing is lost, because `fetchedBytes` only
+   * advances once a fold actually completes.
+   */
+  readonly #folding = new Set<string>();
   /**
    * Guards `tick()` against overlapping with itself. `main.ts` drives it from
    * a `setInterval` in the same shape it already uses for the sweeper's
@@ -141,6 +196,98 @@ export class LiveFoldOwner {
     this.#pool = pool;
     this.#chunks = chunks;
     this.#redis = redis;
+    this.#sub = redis.duplicate();
+    // Registered here, not inside listen(): ioredis buffers a 'message'
+    // listener attached before subscribe() resolves just fine (the
+    // EventEmitter is live from construction), so there is no ordering
+    // requirement forcing this into listen() -- and keeping it here means
+    // the routing table exists as soon as the instance does, regardless of
+    // whether or when a caller ever calls listen() at all.
+    this.#sub.on('message', (channel: string, message: string) => {
+      if (channel === 'live:opened') {
+        void this.#guarded('claim (ping)', message, () => this.#onOpened(message));
+      } else if (channel === 'live:advance') {
+        void this.#guarded('fold (ping)', message, () => this.#onAdvance(message));
+      }
+    });
+  }
+
+  /**
+   * Subscribes the dedicated `#sub` connection to both discovery/advance
+   * channels design §1.2 and §2.3 name. Separate from the constructor
+   * because subscribing is a real round trip to Redis (ioredis's
+   * `subscribe()` returns a `Promise`, and a constructor cannot be async) --
+   * `main.ts` awaits this once, right after construction, before the
+   * periodic tick timer starts.
+   *
+   * NOT awaiting this before relying on the owner is still safe, only less
+   * prompt: every case `listen()` exists to speed up is also covered by
+   * `tick()`'s own poll (design §1.2's whole point) -- a run opened, or a
+   * chunk accepted, before this resolves is simply picked up on the next
+   * scheduled tick instead of immediately.
+   */
+  async listen(): Promise<void> {
+    await this.#sub.subscribe('live:opened', 'live:advance');
+  }
+
+  /**
+   * Reacts to `live:opened` (design §1.2): a run was just created, and this
+   * is the SAME per-id claim gate `#doTick`'s discovery loop applies to a
+   * newly-`running` id, just reached a tick early. `#claim` itself already
+   * self-checks `#closing` right before it would insert (see that method's
+   * own doc comment), so nothing here needs to duplicate that -- but the
+   * cheaper checks (already owned, already at cap) are worth doing BEFORE
+   * paying for a `pool.connect()` and a lock query that `#claim` would only
+   * discover was pointless once it got there.
+   *
+   * Deliberately does NOT re-verify the run is still `running` against the
+   * database first. `#claim` never has -- it wins or loses the advisory
+   * lock and, if it wins, folds from byte 0 regardless of what row state
+   * produced the attempt. A `live:opened` ping for a run that somehow
+   * closed in the few milliseconds since it was published either finds the
+   * lock already released (nothing else could hold it that fast) and claims
+   * a run with nothing to fold, harmlessly, or -- if it raced a close --
+   * gets released again on the very next tick the same way any other owned,
+   * no-longer-running run already is (`#doTick`'s release loop).
+   */
+  async #onOpened(runId: string): Promise<void> {
+    if (this.#closing) return;
+    if (this.#owned.has(runId)) return;
+    if (this.#owned.size >= this.#config.maxOwnedRuns) return;
+    await this.#claim(runId);
+  }
+
+  /**
+   * Reacts to `live:advance` (design §2.2 / §2.3): fetches and folds
+   * whatever new bytes are available for a run this owner already holds.
+   *
+   * A no-op, not a claim attempt, if this owner does not hold `runId` --
+   * "if owned" is the operative word design §2.3 uses for this reaction.
+   * The run may be owned by a DIFFERENT worker (fine: that worker's own
+   * subscriber gets the same ping), not yet claimed at all (the
+   * `live:opened` ping or the next tick's poll will get to it), or no
+   * longer running (already released). None of those are this call's
+   * problem to solve; folding only ever happens against THIS owner's own
+   * `FoldState`.
+   *
+   * Goes through `#foldOnce`, not `#fold` directly -- see `#foldOnce`'s own
+   * doc comment for why a ping and `#doTick`'s own fold loop must never run
+   * `#fold` concurrently for the same run.
+   *
+   * Deliberately does not publish. §3.1's cadence ("one timer on the owner,
+   * not one per run") stays exactly as `#doTick`'s own publish loop already
+   * implements it -- this only warms the fold itself (§2.2's "on a
+   * `live:advance` ping OR on the tick, the owner reads chunk objects...")
+   * so that whenever the next scheduled tick DOES publish, it describes
+   * data that was folded moments after it arrived rather than data fetched
+   * fresh at tick time. Publishing here too would mean every accepted
+   * chunk -- not every tick -- drives a `PUBLISH`/`XADD` pair, which is the
+   * per-run timer §3.1 explicitly rejects.
+   */
+  async #onAdvance(runId: string): Promise<void> {
+    const state = this.#owned.get(runId);
+    if (!state) return;
+    await this.#foldOnce(runId, state);
   }
 
   /**
@@ -302,7 +449,7 @@ export class LiveFoldOwner {
       // ordinary way this throws (a run's chunk objects deleted out from
       // under a listed key by a concurrent `close()`), and why one run's
       // failure must not cost every other owned run its fold this tick.
-      await this.#guarded('fold', runId, () => this.#fold(runId, state));
+      await this.#guarded('fold', runId, () => this.#foldOnce(runId, state));
     }
 
     // A separate loop, after every owned run has folded -- never combined
@@ -488,9 +635,17 @@ export class LiveFoldOwner {
       [...this.#owned.keys()].map((runId) => this.#release(runId)),
     );
 
-    await this.#redis.quit().catch((err: unknown) => {
-      console.error('LiveFoldOwner: failed to quit redis connection during close()', err);
-    });
+    // Both connections quit independently (same Promise.all reasoning as
+    // the release drain above applied to this owner's own two resources):
+    // #sub failing to quit must not skip quitting #redis, or the reverse.
+    await Promise.all([
+      this.#redis.quit().catch((err: unknown) => {
+        console.error('LiveFoldOwner: failed to quit redis connection during close()', err);
+      }),
+      this.#sub.quit().catch((err: unknown) => {
+        console.error('LiveFoldOwner: failed to quit redis subscriber connection during close()', err);
+      }),
+    ]);
 
     const failures = results.filter(
       (r): r is PromiseRejectedResult => r.status === 'rejected',
@@ -567,6 +722,36 @@ export class LiveFoldOwner {
       fetchedBytes: 0,
       cursor: INITIAL_CURSOR,
     });
+  }
+
+  /**
+   * The single gate every caller of `#fold` goes through -- `#doTick`'s own
+   * fold loop included, not just `#onAdvance`. See `#folding`'s own doc
+   * comment for the hazard this closes: a `live:advance` ping can call
+   * `#fold` for a run WHILE `#doTick`'s fold loop (or another ping) is
+   * already mid-`#fold` for that same run, and two concurrent `#fold` calls
+   * against the same `FoldState` corrupt the decode.
+   *
+   * SKIPS, does not queue, a run already folding. That is deliberately
+   * lossy in the sense that this particular trigger's bytes are not fetched
+   * by THIS call -- but nothing is actually lost: `fetchedBytes` only
+   * advances once a fold completes, so whichever fold IS in flight will
+   * pick up everything available once it reaches its own next `readFrom`
+   * (immediately, since `#fold` re-reads `state.fetchedBytes` fresh on
+   * every call), and if neither is currently in flight when new bytes
+   * arrive, the next tick or the next ping tries again. Queuing instead
+   * would mean an unbounded number of skipped triggers each waiting to run
+   * their own redundant `#fold` back to back, for bytes the run-in-flight
+   * fold is about to fetch anyway.
+   */
+  async #foldOnce(runId: string, state: FoldState): Promise<void> {
+    if (this.#folding.has(runId)) return;
+    this.#folding.add(runId);
+    try {
+      await this.#fold(runId, state);
+    } finally {
+      this.#folding.delete(runId);
+    }
   }
 
   /**
