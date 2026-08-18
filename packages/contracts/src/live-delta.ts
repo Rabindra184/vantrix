@@ -3,11 +3,16 @@ import { z } from 'zod';
 /**
  * Summary statistics included in a delta, updated by the fold engine on each
  * tick. These are the aggregates across all requests in the run so far.
+ *
+ * Count fields match `StatRowSchema` from `metrics.ts` exactly, which is built
+ * from the same `StatRollup` upstream. Identical fields crossing the batch wire
+ * and the live wire must have identical constraints, so both reject fractional
+ * values.
  */
 export const LiveSummarySchema = z.object({
-  count: z.number(),
-  okCount: z.number(),
-  koCount: z.number(),
+  count: z.number().int(),
+  okCount: z.number().int(),
+  koCount: z.number().int(),
   /**
    * A ratio: errorRate ranges [0, 1]. Matching how `StatRollup.errorRate` is
    * computed upstream, never a percentage or a raw count that the reader
@@ -27,17 +32,22 @@ export type LiveSummary = z.infer<typeof LiveSummarySchema>;
 /**
  * A single bucket in a response-time or user-count series, one bucket-width
  * window aligned to the start of the run.
+ *
+ * All count and offset fields match `SeriesBucketSchema` from `metrics.ts`
+ * exactly, which is built from the same `Bucket` upstream. Identical fields
+ * crossing the batch wire and the live wire must have identical constraints, so
+ * both reject fractional values.
  */
 export const LiveSeriesBucketSchema = z.object({
   /**
    * Milliseconds since the run started. Multiple buckets in one series always
    * have unique offsets, and they are sorted in ascending order.
    */
-  startOffsetMs: z.number(),
-  startedCount: z.number(),
-  endedCount: z.number(),
-  okCount: z.number(),
-  koCount: z.number(),
+  startOffsetMs: z.number().int(),
+  startedCount: z.number().int(),
+  endedCount: z.number().int(),
+  okCount: z.number().int(),
+  koCount: z.number().int(),
 });
 export type LiveSeriesBucket = z.infer<typeof LiveSeriesBucketSchema>;
 
@@ -58,7 +68,7 @@ export type LiveSeriesBucket = z.infer<typeof LiveSeriesBucketSchema>;
  * design's section 3.3.
  */
 export const LiveDeltaSchema = z.object({
-  runId: z.string(),
+  runId: z.string().uuid(),
   /**
    * A counter the consumer uses to detect dropped messages by comparing
    * consecutive values. Fractional or negative values are meaningless for this

@@ -40,4 +40,24 @@ describe('LiveDeltaSchema', () => {
       LiveDeltaSchema.parse({ ...valid, responseTime: [], users: [] }),
     ).not.toThrow();
   });
+
+  it('rejects errorRate outside [0, 1] — it is a ratio', () => {
+    expect(() =>
+      LiveDeltaSchema.parse({ ...valid, summary: { ...valid.summary, errorRate: 1.5 } }),
+    ).toThrow();
+    expect(() =>
+      LiveDeltaSchema.parse({ ...valid, summary: { ...valid.summary, errorRate: -0.1 } }),
+    ).toThrow();
+  });
+
+  it('rejects fractional counts — they match batch-wire constraints', () => {
+    expect(() =>
+      LiveDeltaSchema.parse({
+        ...valid,
+        responseTime: [
+          { startOffsetMs: 0, startedCount: 5.5, endedCount: 5, okCount: 5, koCount: 0 },
+        ],
+      }),
+    ).toThrow();
+  });
 });
