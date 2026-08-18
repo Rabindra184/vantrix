@@ -277,6 +277,102 @@ describe('the live gateway rejects what it should', () => {
     }
   });
 
+  /**
+   * TASK 9 A1, THE LAST OF THIS FILE'S UNAUTHENTICATED REMOTE PROCESS-EXIT
+   * VECTORS -- and, unlike the case above, a REJECTED PROMISE rather than a
+   * synchronous 'error' event, so this asserts on 'unhandledRejection'.
+   *
+   * `onUpgrade` used to be `void this.handleUpgrade(req, socket, head)` with
+   * no `.catch()`. `handleUpgrade`'s own `try` wraps only `this.authorize(...)`;
+   * `new URL(req.url, 'http://localhost')` runs BEFORE that try, and an
+   * absolute-form request target (RFC 7230 §5.3.2) carrying a port out of
+   * range is enough to make it throw "Invalid URL". Thrown inside an async
+   * function with nothing awaiting or catching it, that became an unhandled
+   * rejection -- and on Node 22 that exits the process, for every OTHER
+   * viewer on the pod, over one malformed request line from an anonymous
+   * caller who never even reached the handshake.
+   */
+  it('survives a pathological absolute-form request target new URL() cannot parse', async () => {
+    const port = await start();
+    const seen: unknown[] = [];
+    const record = (reason: unknown): void => void seen.push(reason);
+    process.on('unhandledRejection', record);
+
+    try {
+      await new Promise<void>((resolve) => {
+        const raw = tcpConnect(port, '127.0.0.1', () => {
+          raw.write(
+            'GET http://x:99999/v1/runs/anything/live HTTP/1.1\r\nHost: x\r\n' +
+              'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
+              'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n',
+          );
+          setTimeout(() => {
+            raw.destroy();
+            resolve();
+          }, 250);
+        });
+        raw.on('error', () => resolve());
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(seen).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', record);
+    }
+  });
+
+  /**
+   * The SECOND reachable example the same defect class covers: `serve` is
+   * dispatched with `void this.serve(...)` (`handleUpgrade`, below the
+   * authorization check), a fire-and-forget call whose own rejection the
+   * `onUpgrade` fix above cannot see -- an async function's errors never
+   * propagate synchronously to a `void` caller, no matter how early they
+   * occur, so `serve`'s promise is an entirely separate chain from
+   * `handleUpgrade`'s once dispatched. `serve`'s own `catch` used to call
+   * `socket.close(1011, 'seed failed')` unguarded; if THAT throws -- a
+   * socket left in an unexpected state by whatever made the seed fail in the
+   * first place is exactly the kind of thing that could -- the throw
+   * reaches nobody, and is this file's next remote crash vector.
+   *
+   * Forces the seed to fail (`LiveHub#join` rejected) and the recovery close
+   * to fail too (`WebSocket#close` throwing on its first call this test
+   * makes -- which, with a real join short-circuited by the mock, is
+   * guaranteed to be exactly this one), so the case reaches the nested catch
+   * this task adds rather than merely exercising the outer one.
+   */
+  it("survives socket.close() itself throwing inside serve's own catch", async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+
+    const hub = ctx.app.get(LiveHub);
+    const joinSpy = vi.spyOn(hub, 'join').mockRejectedValueOnce(new Error('join boom'));
+    const closeSpy = vi
+      .spyOn(WebSocket.prototype, 'close')
+      .mockImplementationOnce(() => {
+        throw new Error('close boom');
+      });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const seen: unknown[] = [];
+    const record = (reason: unknown): void => void seen.push(reason);
+    process.on('unhandledRejection', record);
+
+    try {
+      connect(port, `/v1/runs/${runId}/live`, cookie);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(seen).toEqual([]);
+      // Both mocked calls were actually reached -- otherwise this would pass
+      // for the wrong reason (nothing exercised the nested catch at all).
+      expect(joinSpy).toHaveBeenCalledTimes(1);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off('unhandledRejection', record);
+      joinSpy.mockRestore();
+      closeSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
   // Answering these two differently -- a different close code, a different
   // latency, a frame on one and not the other -- turns this endpoint into an
   // existence oracle for run ids across the whole deployment.

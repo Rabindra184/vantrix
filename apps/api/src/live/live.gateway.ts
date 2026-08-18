@@ -233,9 +233,24 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
   /**
    * Bound once, as a field, so `onModuleDestroy` and a future detach have a
    * stable reference and `this` is the gateway rather than the HTTP server.
+   *
+   * `.catch()`, NOT `void this.handleUpgrade(...)` bare -- the last of this
+   * file's unauthenticated remote process-exit vectors. `handleUpgrade`'s own
+   * `try` only wraps `this.authorize(...)`; a throw from anything ELSE in its
+   * synchronous prelude -- concretely, `new URL(req.url, ...)` on a
+   * pathological absolute-form request target (an out-of-range port is enough)
+   * -- propagates out of the async function as a REJECTED promise, and a
+   * fire-and-forget `void` call leaves that rejection unhandled. On Node 22
+   * that exits the process, taking every other viewer on the pod down with an
+   * anonymous caller's single malformed request line. `socket.destroy()`
+   * mirrors every other refusal path in this file, which never leaves a
+   * half-open socket behind.
    */
   private readonly onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    void this.handleUpgrade(req, socket, head);
+    this.handleUpgrade(req, socket, head).catch((err: unknown) => {
+      console.error('LiveGateway: onUpgrade failed unexpectedly', err);
+      socket.destroy();
+    });
   };
 
   private async handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
@@ -370,7 +385,26 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
       }
     } catch (err) {
       console.error(`LiveGateway: seed failed for ${runId}:`, err);
-      socket.close(1011, 'seed failed');
+      // A SECOND, NESTED catch -- not decoration. `serve` is dispatched with
+      // `void this.serve(...)` (`handleUpgrade`, above), a fire-and-forget
+      // call whose own rejection nothing ever observes, unlike `handleUpgrade`
+      // itself, which `onUpgrade` now attaches a `.catch()` to. That `.catch()`
+      // cannot reach in here: this method's promise is entirely separate from
+      // `handleUpgrade`'s once it is dispatched, no matter how early the
+      // failure -- an async function's own errors never propagate synchronously
+      // to its caller, so nothing at the dispatch site can observe them.
+      // `close()` is an ordinary `ws` call and does not normally throw, but a
+      // socket in an unexpected state is exactly the kind of thing a seed
+      // failure can leave behind, and an uncaught throw here -- reached
+      // asynchronously, typically well after `handleUpgrade` has already
+      // returned -- is the same unauthenticated remote process-exit class the
+      // `onUpgrade` fix above closes, reached through the other fire-and-forget
+      // call in this file.
+      try {
+        socket.close(1011, 'seed failed');
+      } catch (closeErr) {
+        console.error(`LiveGateway: closing after a failed seed itself failed for ${runId}:`, closeErr);
+      }
     }
   }
 

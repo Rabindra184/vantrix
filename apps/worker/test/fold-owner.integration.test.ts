@@ -1666,6 +1666,49 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
+   * TASK 9 A2. `#publish` calls `buildSnapshot(runId, snapshot, next.seq)` --
+   * see that call's own comment for why `next.seq` (the seq of the delta this
+   * snapshot does NOT yet contain) is the only correct argument, even though
+   * `state.cursor.seq` reads as equal to it at that point in TODAY's statement
+   * order. Nothing before this case asserted the relationship at all: the
+   * consumer of this convention is `apps/api`'s gateway (`attemptSeed`), which
+   * has no dependency on this package and therefore encodes the same
+   * convention as its own hand-written fixture (`snapshotFixture`,
+   * `live-gateway.integration.test.ts`) rather than importing anything from
+   * here. A producer-side regression -- e.g. swapping in `state.cursor.seq`,
+   * which a future reordering of the code above could make genuinely diverge
+   * from `next.seq` -- would leave BOTH suites green while silently dropping
+   * exactly one delta from every client seeded from that snapshot, with no
+   * gap the client's own `seq` bookkeeping could ever detect (the label would
+   * simply be wrong, not missing). This is the guard `apps/api` cannot write
+   * for itself.
+   */
+  it("stamps the snapshot with the last published delta's seq plus one", async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      // The FIRST tick both publishes delta 0 AND writes the first snapshot
+      // (`FoldState.ticksSinceSnapshot` starts at `SNAPSHOT_EVERY_N_TICKS` on
+      // claim -- see that field's own comment), so one tick is enough to
+      // observe both halves of the relationship this case pins.
+      const published = await nextPublishedDelta(owner, runId);
+
+      const raw = await redis.get(`live:${runId}:snapshot`);
+      expect(raw).not.toBeNull();
+      const snapshot = LiveDeltaSchema.parse(JSON.parse(raw!));
+      expect(snapshot.seq).toBe(published.seq + 1);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
    * Task 4's other half: a snapshot write failing must not run the DELTA
    * path's own compensating logic (`{ ...state.cursor, seq: next.seq }`,
    * `#publish`'s catch block) -- that compensation exists for a failed

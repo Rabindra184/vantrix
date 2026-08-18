@@ -849,6 +849,23 @@ export class LiveFoldOwner {
     state.ticksSinceSnapshot += 1;
     if (state.ticksSinceSnapshot >= SNAPSHOT_EVERY_N_TICKS) {
       try {
+        // `next.seq`, NOT `state.cursor.seq` -- they read as interchangeable
+        // here (the try block above already assigned `state.cursor = next`
+        // on every path that reaches this line) but that equality is an
+        // ARTIFACT of today's statement order, not a guarantee: `state.cursor`
+        // is mutable owner state a future change could legitimately reorder
+        // around, while `next.seq` is this call's own `buildDelta` result --
+        // `prev.seq + 1`, the seq of the delta this snapshot does NOT yet
+        // contain (see delta.ts's "A SNAPSHOT IS STAMPED WITH THE SEQ IT DOES
+        // NOT CONTAIN") -- and stays correct regardless of how the
+        // surrounding code moves. `apps/api`'s replay filter
+        // (`live.gateway.ts`'s `attemptSeed`) depends on exactly this
+        // convention and encodes it as a hand-written fixture rather than an
+        // import, because apps/api has no dependency on apps/worker -- so
+        // nothing on that side would fail if this producer silently drifted.
+        // The worker-side guard is `fold-owner.integration.test.ts`'s
+        // "stamps the snapshot with the last published delta's seq plus
+        // one".
         await this.#redis.set(
           `live:${runId}:snapshot`,
           JSON.stringify(buildSnapshot(runId, snapshot, next.seq)),
