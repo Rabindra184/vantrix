@@ -405,4 +405,79 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     }
   });
+
+  /**
+   * Fix round 1, Important 2. Task 5 drives `tick()` from a fire-and-forget
+   * `setInterval` that never awaits the previous call (the same shape
+   * `main.ts` already uses for the sweeper), and design §2.1 says claiming a
+   * run that already streamed 200 MB means folding 200 MB before its first
+   * delta -- routinely longer than the 5000 ms default `liveTickMs`. Without
+   * a guard, an overlapping second `tick()` would run its own claim/fold
+   * passes concurrently with the first over the SAME `#owned` map: two
+   * `#fold` calls for one already-owned run both read `state.fetchedBytes`
+   * before either advances it, both fetch the identical range, and both
+   * push it into the SAME shared decoder -- design §2.2.1's corruption
+   * again, this time from real concurrency rather than a wrong cursor.
+   */
+  it('ignores an overlapping tick instead of racing the previous one over the same owned run', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    const half = Math.floor(log.length / 2);
+    await chunks.put(runId, 0, log.subarray(0, half));
+
+    const owner = new LiveFoldOwner(config, pool, chunks);
+    try {
+      await owner.tick();
+      const partial = runStat(owner.snapshotOf(runId)!)!;
+      expect(partial.count).toBeGreaterThan(0);
+
+      await chunks.put(runId, half, log.subarray(half));
+
+      // Neither awaited before the other starts: the guard is checked and
+      // set synchronously, before tick()'s first `await`, so calling it
+      // twice back to back like this deterministically exercises it rather
+      // than depending on a lucky interleaving.
+      const first = owner.tick();
+      const secondStart = Date.now();
+      const second = owner.tick();
+      await second;
+      const secondElapsedMs = Date.now() - secondStart;
+      await first;
+
+      // THE discriminating assertion. An ignored call resolves off an
+      // already-true flag check, synchronously, before its body ever issues
+      // a query -- a microtask, not a network round trip. A call that ran
+      // its OWN real pass instead (guard absent) does at minimum one
+      // `SELECT` against Postgres plus a `LiveChunkStore.readFrom` (a blob
+      // LIST plus GETs), which on this stack is consistently tens of
+      // milliseconds (the "does not exceed maxOwnedRuns" case's whole
+      // tick(), across three seeded runs, takes ~300ms end to end). 15ms
+      // leaves a wide, deliberately non-flaky margin below that floor while
+      // still being generous for CI jitter around a genuinely-instant
+      // early return.
+      //
+      // A same-process race between the two calls' OWN independent queries
+      // (asserting `second` merely finishes before `first`) was tried first
+      // and rejected: with comparable real work on both sides, either can
+      // legitimately finish first by chance, which observably made that
+      // version pass even with the guard removed. Elapsed time against an
+      // absolute floor does not have that failure mode.
+      expect(secondElapsedMs).toBeLessThan(15);
+
+      const full = runStat(owner.snapshotOf(runId)!)!;
+      const batch = runStat(runEngine(parseSimulationLog(log)))!;
+      // Not the discriminating assertion (a losing racer's decoder.push
+      // throwing before its own engine.add loop runs can leave the winner's
+      // correct fold intact even without the guard -- Important 3's
+      // isolation absorbs that particular shape of corruption too), but
+      // still worth asserting: the guarded, intended behaviour must also
+      // reach the right numbers, not just resolve quickly.
+      expect(full.count).toBe(batch.count);
+      expect(full.okCount).toBe(batch.okCount);
+      expect(full.koCount).toBe(batch.koCount);
+    } finally {
+      await owner.close();
+    }
+  });
 });

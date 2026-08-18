@@ -72,6 +72,22 @@ export class LiveFoldOwner {
   readonly #pool: pg.Pool;
   readonly #chunks: LiveChunkStore;
   readonly #owned = new Map<string, FoldState>();
+  /**
+   * Guards `tick()` against overlapping with itself. Task 5 drives it from a
+   * `setInterval` in the same shape `main.ts` already uses for the sweeper's
+   * timer -- fire-and-forget, never awaiting the previous call -- and design
+   * §2.1 is explicit that claiming a run which already streamed 200 MB means
+   * folding 200 MB before its first delta, which will routinely outlast the
+   * 5000 ms default `liveTickMs`. Without this flag, a second `tick()`
+   * firing mid-fold would run its OWN claim/fold passes concurrently with
+   * the first over the SAME `#owned` map and the SAME `FoldState` objects --
+   * two overlapping `#fold` calls for one already-owned run both read
+   * `state.fetchedBytes` before either has advanced it, both `readFrom` the
+   * identical range, and both push it into the SAME shared decoder. That is
+   * design §2.2.1's corruption again, reached by real concurrency this time
+   * rather than a wrong cursor or a failure path.
+   */
+  #ticking = false;
 
   constructor(config: WorkerConfig, pool: pg.Pool, chunks: LiveChunkStore) {
     this.#config = config;
@@ -87,8 +103,33 @@ export class LiveFoldOwner {
    * Release is checked from the SAME poll that discovers new runs -- design
    * §4: "Detected on the tick, which is already re-reading status to
    * discover new runs" -- so this issues one query per tick, not two.
+   *
+   * Ignores (does not queue, does not wait for) a call that arrives while a
+   * previous one is still running -- see `#ticking`'s own doc comment for
+   * why an overlap must never actually run the pass twice concurrently.
+   * The next scheduled tick will simply see the by-then-larger backlog and
+   * pick up where the in-flight one left off; nothing here needs to be
+   * "made up" for a skipped call, since `fetchedBytes` already IS the
+   * record of how far each owned run has gotten.
+   *
+   * Synchronous set-then-check: `#ticking` is read and written before the
+   * first `await` below, so two calls issued back to back with neither
+   * awaited (`const a = owner.tick(); const b = owner.tick();`) resolve the
+   * guard deterministically -- `a` claims it before yielding, `b` sees it
+   * already claimed and returns immediately -- rather than depending on how
+   * the two calls happen to interleave.
    */
   async tick(): Promise<void> {
+    if (this.#ticking) return;
+    this.#ticking = true;
+    try {
+      await this.#doTick();
+    } finally {
+      this.#ticking = false;
+    }
+  }
+
+  async #doTick(): Promise<void> {
     const { rows } = await this.#pool.query<{ id: string }>(
       "SELECT id FROM run WHERE status = 'running'",
     );
