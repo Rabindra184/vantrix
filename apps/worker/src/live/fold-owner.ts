@@ -324,22 +324,38 @@ export class LiveFoldOwner {
    * would describe a state that kept changing underneath it -- one that
    * existed at no single instant, not merely a stale one.
    *
-   * The cursor is advanced BEFORE either Redis call, not after. A publish
-   * that fails partway (a dropped connection between the `PUBLISH` and the
-   * `XADD`, say) still must not re-emit the SAME `seq` next tick with
-   * DIFFERENT contents -- `seq` is how a consumer detects a gap at all
-   * (`LiveDeltaSchema`'s own doc comment), and a repeated value would hide
-   * exactly the drop it exists to reveal. A tick that fails to publish is
-   * simply a gap the next successful one is visible across, which is the
-   * behaviour the wire contract is already designed to tolerate.
+   * `state.cursor` is advanced to `next` ONLY once both Redis calls have
+   * actually succeeded -- fix round 1, Important 1. It used to advance
+   * unconditionally, before either call, on the theory that a `seq` gap is
+   * all a consumer needs to detect a drop. That is true for `seq`, and
+   * ONLY for `seq`: `next.lastBucketWidthMs` and `next.lastPublishedOffsetMs`
+   * are not a loss-detection signal, they are the STATE `buildDelta`'s
+   * coalesce rule (§3.3, `delta.ts`) reasons from on the NEXT call. Advance
+   * them on a publish that never reached anyone and the next tick computes
+   * `replaces = responseWidthMs !== prev.lastBucketWidthMs` against a width
+   * ALREADY equal to the current one -- `false` -- and emits a plain upsert
+   * for a series the consumer never received the REPLACEMENT for. That is
+   * §3.3's exact hazard ("nothing thrown and nothing logged... the
+   * consumer's picture is just quietly wrong from that tick on, forever"),
+   * reached through the failure path instead of a genuine mid-run coalesce.
+   * `seq` alone still must not repeat a value with different contents next
+   * to it (`LiveDeltaSchema`'s own doc comment), so it advances regardless
+   * of outcome -- `{ ...state.cursor, seq: next.seq }` on the catch path
+   * reads as "this attempt is accounted for, but nothing it would have told
+   * the next call about `replaces`/`since` actually happened."
    */
   async #publish(runId: string, state: FoldState): Promise<void> {
     const snapshot = state.engine.snapshot({ clone: true });
     const { delta, next } = buildDelta(runId, snapshot, state.cursor);
-    state.cursor = next;
     const body = JSON.stringify(delta);
-    await this.#redis.publish(`live:${runId}`, body);
-    await this.#redis.xadd(`live:${runId}:deltas`, 'MAXLEN', '~', '200', '*', 'delta', body);
+    try {
+      await this.#redis.publish(`live:${runId}`, body);
+      await this.#redis.xadd(`live:${runId}:deltas`, 'MAXLEN', '~', '200', '*', 'delta', body);
+      state.cursor = next;
+    } catch (err) {
+      state.cursor = { ...state.cursor, seq: next.seq };
+      throw err;
+    }
   }
 
   /**

@@ -735,6 +735,86 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
+   * Fix round 1, Important 1. `#publish` used to advance `state.cursor` to
+   * `next` BEFORE either Redis call, on the theory that a `seq` gap alone
+   * is what a consumer needs to detect a dropped delta. That is true for
+   * `seq` -- it is NOT true for `next.lastBucketWidthMs`, which
+   * `buildDelta`'s coalesce rule (design §3.3) reasons from on the NEXT
+   * call: if a publish that would have flagged `replaces: true` fails, and
+   * the cursor advances anyway, the FOLLOWING tick sees
+   * `prev.lastBucketWidthMs` already equal to the current width and wrongly
+   * computes `replaces: false` -- a plain upsert for a series the consumer
+   * never received the replacement for. Silent from then on, exactly what
+   * §3.3 calls "not optional".
+   *
+   * The very FIRST delta for any run is always a `replaces: true` tick
+   * (`INITIAL_CURSOR.lastBucketWidthMs` is 0, and no real width is ever
+   * 0 -- see `delta.ts`'s own "the very first delta is a replacement for
+   * the same mechanism" comment), which makes it the one coalesce-flagged
+   * tick reachable through `LiveFoldOwner`'s real, unmodified engine
+   * defaults without forcing an actual mid-run bucket coalesce: the
+   * `buildDelta` comparison this test exercises
+   * (`responseWidthMs !== prev.lastBucketWidthMs`) is identical whether
+   * `prev` is the `INITIAL_CURSOR` sentinel or a genuine prior width, and a
+   * true mid-run coalesce needs far more buckets than this fixture's ~63s
+   * duration can produce against `LiveEngine`'s default `maxBucketsRun`
+   * (1200) -- `#claim` constructs the engine with no override, and adding
+   * one is out of this fix's scope.
+   */
+  it('preserves the coalesce replacement flag across a failed publish, so the next tick still replaces rather than silently upserting', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const publisherRedis = new Redis(config.redisUrl);
+    // Fails ONLY the very first PUBLISH -- #guarded catches it and logs, so
+    // tick() itself still resolves; XADD is never reached for that attempt
+    // (#publish's own try/catch never calls it once publish rejects).
+    const publishSpy = vi
+      .spyOn(publisherRedis, 'publish')
+      .mockRejectedValueOnce(new Error('synthetic publish failure'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const owner = new LiveFoldOwner(config, pool, chunks, publisherRedis);
+    try {
+      await owner.tick();
+      expect(
+        errorSpy.mock.calls.some(
+          (c) => typeof c[0] === 'string' && c[0].includes(`publish failed for run ${runId}`),
+        ),
+      ).toBe(true);
+      publishSpy.mockRestore();
+
+      const sub = new Redis(config.redisUrl);
+      const seen: LiveDelta[] = [];
+      await sub.subscribe(`live:${runId}`);
+      sub.on('message', (_channel, message: string) => {
+        seen.push(LiveDeltaSchema.parse(JSON.parse(message)));
+      });
+
+      // Nothing new to fold, but the owner still ticks and publishes again
+      // -- the run's very first SUCCESSFULLY-delivered delta. Under the
+      // bug, `state.cursor.lastBucketWidthMs` was already set to the real
+      // width by the failed first attempt, so this tick would wrongly
+      // compute `replaces: false`.
+      await owner.tick();
+      await vi.waitFor(() => expect(seen.length).toBe(1));
+
+      expect(seen[0]!.responseTime.replaces).toBe(true);
+      // seq still advanced across the failed attempt (0 was never
+      // delivered to anyone) -- proves the fix does not repeat a seq value,
+      // only the fields that gate the replacement flag are preserved.
+      expect(seen[0]!.seq).toBe(1);
+
+      await sub.quit();
+    } finally {
+      errorSpy.mockRestore();
+      await owner.close();
+    }
+  });
+
+  /**
    * Review item (a) on Task 5's brief: `close()` used to snapshot
    * `[...this.#owned.keys()]` with no regard for a `tick()` already in
    * flight. If that in-flight tick's `#claim` was still awaiting
