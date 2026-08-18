@@ -891,7 +891,7 @@ second SUBSCRIBE."
 
 **Interfaces:**
 - Consumes: `LiveHub` (Task 5); `buildSnapshot`'s key layout `live:{runId}:snapshot` and stream `live:{runId}:deltas` (Task 4); `OrgMemberRepository.findOrgForUser(userId)`; `auth.api.getSession({ headers })` and `fromNodeHeaders` as used by `apps/api/src/auth/auth.middleware.ts:30`.
-- Produces: `GET /v1/runs/:id/live` (WebSocket upgrade). Frames: `{ type: 'snapshot', delta: LiveDelta, partial: boolean }` then `{ type: 'delta', delta: LiveDelta }`. Client's optional first frame: `{ lastSeq: number }`.
+- Produces: `GET /v1/runs/:id/live?lastSeq=N` (WebSocket upgrade; `lastSeq` optional). Frames: `{ type: 'snapshot', delta: LiveDelta, partial: boolean, lastSeq: number }` then `{ type: 'delta', delta: LiveDelta }`. The snapshot frame's `lastSeq` is the resume point — NOT `delta.seq`, which is the seq the snapshot does not yet contain.
 
 - [ ] **Step 1: Write the failing auth tests**
 
@@ -1017,7 +1017,7 @@ if (!authorized) {
 }
 ```
 2. **Seed.** `GET live:{runId}:snapshot`. Send `{ type: 'snapshot', delta, partial: false }`. On a missing key, send the reconstruction from whatever the stream holds with `partial: true`.
-3. **Replay.** `XRANGE live:{runId}:deltas ({seq} +` where `seq` is the snapshot's, or the client's `lastSeq` when it sent one and the stream still reaches it. Send each as `{ type: 'delta', delta }`.
+3. **Replay.** Read the (bounded) stream and filter on the parsed `seq`: `seq >= snapshot.seq`, or `> lastSeq` when the client passed one and the stream still reaches it. `XRANGE` cannot express this — it ranges over stream IDs, and the producer `XADD`s with `*`, so `seq` is not the ID. Send each as `{ type: 'delta', delta }`.
 4. **Join.** `hub.join(runId, socket)`, and `hub.leave` on `'close'`.
 
 Add the backpressure guard on every send:
@@ -1056,7 +1056,7 @@ git commit -m "feat(api): a WebSocket gateway that seeds, replays, then follows
 GET /v1/runs/:id/live. The gateway performs the seed SERVER-SIDE -- a
 browser cannot read a Redis key -- so the socket carries one snapshot frame
 and then delta frames, and the client never assembles a seed itself. A
-reconnecting client sends {lastSeq} and the SERVER decides whether the
+reconnecting client passes ?lastSeq=N and the SERVER decides whether the
 stream still reaches it.
 
 Auth is explicit and that is the point: Nest's HTTP guards do not run on an
@@ -1111,7 +1111,9 @@ Expected: FAIL — `useLiveRun` does not exist.
 
 `apps/web/src/api/live.ts`. It opens a `WebSocket` when `enabled`, applies each
 frame to the React Query cache under the REST keys, reconnects with exponential
-backoff plus jitter, and sends `{ lastSeq }` as its first frame on a reconnect.
+backoff plus jitter, and passes `?lastSeq=N` on a reconnect -- the value the
+SERVER last gave it in a snapshot frame's `lastSeq`, never one derived from a
+delta's own `seq`.
 
 The merge is the subtle part, and it has exactly two rules:
 

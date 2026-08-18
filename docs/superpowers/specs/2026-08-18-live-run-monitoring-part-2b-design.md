@@ -207,11 +207,35 @@ then `delta` frames. The client's protocol is "connect, seed from frame one,
 apply the rest" — it never addresses Redis and never assembles the seed
 itself.
 
-On reconnect the client sends `{ lastSeq }` as its first frame and the
-**server** decides: replay from the stream when it still reaches back that
-far, or send a fresh `snapshot` frame when it does not. A `seq` gap detected
-mid-stream is the same decision, so the client has exactly one recovery path
-and the server owns the judgement about what is still recoverable.
+On reconnect the client passes its cursor as a **query parameter**,
+`?lastSeq=N`, and the **server** decides: replay from the stream when it still
+reaches back that far, or send a fresh `snapshot` frame when it does not. A
+`seq` gap detected mid-stream is the same decision, so the client has exactly
+one recovery path and the server owns the judgement about what is recoverable.
+
+**A query parameter rather than a first frame.** As a frame, the server cannot
+know whether a given connection intends to send one, so it must wait before
+seeding EVERY connection — and fresh connects, which send nothing, are the
+common case. The cursor is known before the socket opens, so paying a round
+trip for it buys nothing.
+
+**The snapshot frame carries its own `lastSeq`, and that field is
+load-bearing.** The producer stamps the snapshot key with the seq of the delta
+it does NOT yet contain (`fold-owner.ts` writes `next.seq` against the
+`EngineResult` the previous delta was built from). A client that echoed the
+frame's `delta.seq` back as `?lastSeq=` would therefore ask the server to skip
+precisely the delta its seed is missing — the same silent hole, one layer up.
+Two states make the resume point unknowable from any other signal: a seed built
+from a snapshot alone, and a seed sent when neither key exists yet. So the
+server states the resume point outright:
+
+```
+{ type: 'snapshot', delta: LiveDelta, partial: boolean, lastSeq: number }
+{ type: 'delta', delta: LiveDelta }
+```
+
+`lastSeq` is deliberately absent from delta frames, where `delta.seq` is
+already unambiguous.
 
 **A missing snapshot is degraded, not broken.** If the key has expired under a
 stalled producer (§2.4), the gateway sends whatever the stream still holds and
@@ -384,11 +408,12 @@ something having gone wrong at the exact moment nothing has.
 
 ### 4.5 Reconnect
 
-Exponential backoff with a cap and jitter. On reconnect the client sends
-`{ lastSeq }` and takes whatever the server sends back — a replay or a fresh
-snapshot frame, per §2.2. It never assumes it can resume from the channel
-alone, and it never decides for itself whether its own seq is still
-recoverable.
+Exponential backoff with a cap and jitter. On reconnect the client passes
+`?lastSeq=N` and takes whatever the server sends back — a replay or a fresh
+snapshot frame, per §2.2. **The value it passes is the `lastSeq` the server
+gave it**, never a seq it derived from a delta's own contents. It never
+assumes it can resume from the channel alone, and it never decides for itself
+whether its own seq is still recoverable.
 
 ---
 
