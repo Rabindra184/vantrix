@@ -5,7 +5,7 @@ import type { LiveChunkStore } from '@perfportal/storage';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
-import { buildDelta, INITIAL_CURSOR, type DeltaCursor } from './delta.js';
+import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor } from './delta.js';
 
 /**
  * Everything one owned run needs to keep folding, held for as long as this
@@ -48,6 +48,17 @@ interface FoldState {
    * `readFrom` returns always starts exactly at `fetchedBytes`.
    */
   fetchedBytes: number;
+  /**
+   * Ticks since `live:{runId}:snapshot` was last written. Compared against
+   * {@link SNAPSHOT_EVERY_N_TICKS} in `#publish`.
+   *
+   * Initialised to `SNAPSHOT_EVERY_N_TICKS` itself on claim, not 0 -- so the
+   * very first tick a run is owned already writes a snapshot, rather than
+   * leaving a freshly-claimed (or re-claimed after a worker restart) run
+   * unseedable for a full interval, which at the default is five minutes a
+   * late joiner would otherwise have nothing to seed from.
+   */
+  ticksSinceSnapshot: number;
 }
 
 /**
@@ -129,6 +140,46 @@ export const REPLAY_BUDGET_BYTES = 4 * 1024 * 1024;
  * ~17 minutes at the 5 s default) and bytes bound it in SPACE.
  */
 export const REPLAY_MAX_ENTRIES = 200;
+
+/**
+ * How many ticks between whole-state snapshots to `live:{runId}:snapshot`.
+ *
+ * ═══ THIS AND THE REPLAY CAP ARE ONE DECISION ═══
+ * A connecting client seeds from the snapshot and then replays the stream
+ * FORWARD from the snapshot's seq. If the stream's oldest surviving entry is
+ * newer than that seq, the join drops every bucket in between -- silently,
+ * because a consumer cannot tell a bucket that was never sent from one that
+ * saw no traffic.
+ *
+ * `REPLAY_MAX_ENTRIES` is 200 (~17 minutes at the 5 s default), but
+ * `REPLAY_BUDGET_BYTES` can lower the retained count below that at any moment
+ * for a run with large deltas. So this interval is chosen well inside the
+ * BYTE-derived floor rather than against the entry cap: 60 ticks is 5 minutes
+ * at the default, leaving the stream more than three times the room it needs
+ * even when the budget is biting hard.
+ *
+ * The gateway still treats "oldest entry newer than the snapshot's seq" as
+ * recoverable -- re-read the snapshot, which by then has advanced -- because
+ * this margin is an argument, not an invariant, and the failure it guards is
+ * invisible.
+ */
+export const SNAPSHOT_EVERY_N_TICKS = 60;
+
+/**
+ * How long a snapshot key outlives its last write.
+ *
+ * `infra/docker-compose.yml` sets no `maxmemory` and no eviction policy
+ * deliberately (this Redis also carries BullMQ job data, and every fitting
+ * policy would start dropping jobs), so THIS TTL is the only thing that
+ * reclaims the snapshot of a run whose producer died without close().
+ *
+ * One hour: twelve times the write interval above, and six times
+ * `runningStaleAfterMs` (10 min default), so the sweeper finalizes an
+ * abandoned run long before its snapshot expires. A run whose ticks stall past
+ * this loses only the seed, which the gateway degrades over rather than
+ * failing on.
+ */
+export const SNAPSHOT_TTL_SECONDS = 3600;
 
 /**
  * How many entries this delta's replay stream may keep, given what this
@@ -788,6 +839,29 @@ export class LiveFoldOwner {
       state.cursor = { ...state.cursor, seq: next.seq };
       throw err;
     }
+
+    // AFTER the cursor advances, and in its own try -- a snapshot is a
+    // convenience for future subscribers, and letting its failure reach the
+    // caller would run the delta path's compensating logic
+    // (`{ ...state.cursor, seq: next.seq }`) for an error that has nothing to
+    // do with the delta. That would drop the coalesce replacement flag for a
+    // tick whose PUBLISH and XADD both succeeded.
+    state.ticksSinceSnapshot += 1;
+    if (state.ticksSinceSnapshot >= SNAPSHOT_EVERY_N_TICKS) {
+      try {
+        await this.#redis.set(
+          `live:${runId}:snapshot`,
+          JSON.stringify(buildSnapshot(runId, snapshot, next.seq)),
+          'EX',
+          SNAPSHOT_TTL_SECONDS,
+        );
+        state.ticksSinceSnapshot = 0;
+      } catch (err) {
+        // Left un-reset, so the next tick retries rather than waiting a full
+        // interval after a transient failure.
+        console.error(`LiveFoldOwner: snapshot write failed for ${runId}:`, err);
+      }
+    }
   }
 
   /**
@@ -1044,6 +1118,9 @@ export class LiveFoldOwner {
       client,
       fetchedBytes: 0,
       cursor: INITIAL_CURSOR,
+      // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
+      // own doc comment: the first tick after a claim must seed immediately.
+      ticksSinceSnapshot: SNAPSHOT_EVERY_N_TICKS,
     });
   }
 

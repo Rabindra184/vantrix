@@ -112,6 +112,32 @@ function headerLength(fullLog: Buffer): number {
   throw new Error('fixture never emitted a meta event');
 }
 
+/**
+ * Subscribes to `live:{runId}` on its own connection, ticks the owner once,
+ * and returns the delta that tick published for that run. Most cases in this
+ * file that need to observe a published delta ("publishes a delta per
+ * tick...") build the subscribe/parse/wait sequence inline because they
+ * assert on more than one tick's worth of messages -- the snapshot-failure
+ * case below only needs exactly one more delta after its own setup, so this
+ * keeps that from being three more lines of duplicated boilerplate at the
+ * one new call site that needs it.
+ */
+async function nextPublishedDelta(owner: LiveFoldOwner, runId: string): Promise<LiveDelta> {
+  const sub = new Redis(config.redisUrl);
+  try {
+    const seen: LiveDelta[] = [];
+    await sub.subscribe(`live:${runId}`);
+    sub.on('message', (_channel, message: string) => {
+      seen.push(LiveDeltaSchema.parse(JSON.parse(message)));
+    });
+    await owner.tick();
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0));
+    return seen[0]!;
+  } finally {
+    await sub.quit();
+  }
+}
+
 describe('LiveFoldOwner', () => {
   it('folds a streaming run to the same numbers a batch parse produces', async () => {
     await truncateAll();
@@ -1598,6 +1624,89 @@ describe('LiveFoldOwner', () => {
     } finally {
       readFromSpy.mockRestore();
       await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * Task 4's own case. A late-joining subscriber seeds from
+   * `live:{runId}:snapshot` and replays the stream FORWARD from its `seq` --
+   * so a run that has never written one is exactly the run a late joiner
+   * cannot recover: the first delta.ts's own doc comment already
+   * establishes ("PART 2b MUST BOOTSTRAP responseTime ON JOIN") that only
+   * `seq: 0` carries the whole series, and that entry is routinely gone from
+   * the replay stream on anything but a short run.
+   *
+   * `FoldState.ticksSinceSnapshot` starts at `SNAPSHOT_EVERY_N_TICKS` on
+   * claim for exactly this reason -- without it, a freshly-claimed run would
+   * need `SNAPSHOT_EVERY_N_TICKS` real ticks (five minutes at the default
+   * `liveTickMs`) before its first snapshot existed at all, which is its own
+   * version of "unseedable", just delayed instead of permanent.
+   */
+  it('seeds a snapshot on the first tick, so a late joiner is never unseedable', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.tick();
+
+      const raw = await redis.get(`live:${runId}:snapshot`);
+      expect(raw).not.toBeNull();
+      const seeded = LiveDeltaSchema.parse(JSON.parse(raw!));
+      expect(seeded.responseTime.buckets.length).toBeGreaterThan(0);
+      expect(await redis.ttl(`live:${runId}:snapshot`)).toBeGreaterThan(0);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * Task 4's other half: a snapshot write failing must not run the DELTA
+   * path's own compensating logic (`{ ...state.cursor, seq: next.seq }`,
+   * `#publish`'s catch block) -- that compensation exists for a failed
+   * PUBLISH/XADD, and running it here would drop the coalesce replacement
+   * flag for a tick whose delta was actually delivered fine, per
+   * `#publish`'s own doc comment on why the snapshot write sits in its own
+   * try, after the cursor has already advanced.
+   *
+   * Spies on `set` on the OWNER's OWN redis client (the instance passed into
+   * its constructor), not a second connection, since `#publish` calls `set`
+   * on that exact instance -- unlike the replay-stream cases above, which
+   * read back through a deliberately SEPARATE connection.
+   */
+  it('a failed snapshot write does not disturb the delta cursor', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, redis);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const set = vi.spyOn(redis, 'set').mockRejectedValueOnce(new Error('redis down'));
+      await expect(owner.tick()).resolves.not.toThrow();
+      set.mockRestore();
+      // The failure was logged (swallowed, not propagated) -- proves the
+      // guard in #publish's own try/catch actually caught it, rather than
+      // this case passing merely because nothing was mocked at all.
+      expect(
+        errorSpy.mock.calls.some(
+          (c) => typeof c[0] === 'string' && c[0].includes(`snapshot write failed for ${runId}`),
+        ),
+      ).toBe(true);
+
+      // The delta still published, and the NEXT delta must still be a plain
+      // upsert -- not a spurious replacement caused by a mangled cursor.
+      const next = await nextPublishedDelta(owner, runId);
+      expect(next.responseTime.replaces).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
       await owner.close();
     }
   });

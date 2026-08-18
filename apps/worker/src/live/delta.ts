@@ -296,3 +296,20 @@ export function buildDelta(
 
   return { delta, next };
 }
+
+/**
+ * The whole current state, for seeding a client that was not listening.
+ *
+ * Built by running `buildDelta` from `INITIAL_CURSOR` -- which is exactly "no
+ * lookback floor, replaces everything" -- rather than by a second traversal of
+ * the series. One code path decides what a bucket looks like on the wire, so a
+ * seed and a delta can never disagree about it.
+ *
+ * `seq` is stamped from the caller's CURRENT cursor, not from the synthetic
+ * cursor used to build it: the seed's seq is the point a consumer resumes the
+ * stream from, and `INITIAL_CURSOR` would claim 1 and re-deliver the run.
+ */
+export function buildSnapshot(runId: string, result: EngineResult, seq: number): LiveDelta {
+  const { delta } = buildDelta(runId, result, INITIAL_CURSOR);
+  return { ...delta, seq };
+}

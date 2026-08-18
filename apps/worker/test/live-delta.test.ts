@@ -4,7 +4,7 @@ import type { CanonicalEvent } from '@perfportal/core';
 import { LiveDeltaSchema } from '@perfportal/contracts';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
 import { bucketLatency, LiveEngine, runEngine, type EngineResult } from '@perfportal/statistics';
-import { buildDelta, INITIAL_CURSOR } from '../src/live/delta.js';
+import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor } from '../src/live/delta.js';
 
 const LOG = new URL(
   '../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log',
@@ -42,6 +42,21 @@ function engineResultFrom(requests: { startMs: number; endMs: number; ok: boolea
  */
 function engineResultWithErrors(errors: EngineResult['errors']): EngineResult {
   return { ...runEngine([]), errors };
+}
+
+/**
+ * An `EngineResult` whose run-scope response-time series spans `durationMs`
+ * at the default 1000ms bucket width, for cases that only care about "many
+ * buckets exist" and don't need a real log fixture. One request per bucket
+ * is enough to materialise it -- `BucketSeries` only creates a bucket on its
+ * first `add` (see `buildDelta`'s own comment on this).
+ */
+function engineResultSpanning(durationMs: number): EngineResult {
+  const requests: { startMs: number; endMs: number; ok: boolean }[] = [];
+  for (let ms = 0; ms < durationMs; ms += 1000) {
+    requests.push({ startMs: ms, endMs: ms + 10, ok: true });
+  }
+  return engineResultFrom(requests);
 }
 
 describe('buildDelta', () => {
@@ -324,5 +339,22 @@ describe('buildDelta', () => {
     ]);
     const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
     expect(delta.errors.rows).toContainEqual({ message: null, count: 11 });
+  });
+});
+
+describe('buildSnapshot', () => {
+  it('a snapshot carries the whole series, not the lookback window', () => {
+    const result = engineResultSpanning(60_000); // many buckets
+    const advanced: DeltaCursor = { seq: 12, lastPublishedOffsetMs: 50_000, lastBucketWidthMs: 1000 };
+
+    const { delta } = buildDelta(RUN_ID, result, advanced);
+    const snapshot = buildSnapshot(RUN_ID, result, advanced.seq);
+
+    const all = result.series.get('run  response_time')!.buckets.length;
+    expect(delta.responseTime.buckets.length).toBeLessThan(all);
+    expect(snapshot.responseTime.buckets).toHaveLength(all);
+    expect(snapshot.seq).toBe(12);
+    // A seed replaces whatever a client had; it is never an upsert.
+    expect(snapshot.responseTime.replaces).toBe(true);
   });
 });
