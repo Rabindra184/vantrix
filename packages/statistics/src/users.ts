@@ -35,15 +35,22 @@ export class UserSeries {
     list.push({ tsMs, delta: kind === 'start' ? 1 : -1 });
   }
 
-  scenarios(): { scenario: string; buckets: UserBucket[] }[] {
-    const out: { scenario: string; buckets: UserBucket[] }[] = [];
+  scenarios(): { scenario: string; bucketWidthMs: number; buckets: UserBucket[] }[] {
+    const out: { scenario: string; bucketWidthMs: number; buckets: UserBucket[] }[] = [];
     for (const [scenario, events] of this.#events) {
-      out.push({ scenario, buckets: this.#sweep(events) });
+      const { widthMs, buckets } = this.#sweep(events);
+      out.push({ scenario, bucketWidthMs: widthMs, buckets });
     }
     return out.sort((a, b) => a.scenario.localeCompare(b.scenario));
   }
 
-  #sweep(events: Delta[]): UserBucket[] {
+  // Each scenario sweeps and coalesces INDEPENDENTLY -- its own event count
+  // decides when its own buckets cross `#maxBuckets`, so two scenarios in the
+  // same run can (and in an imbalanced simulation, do) settle on different
+  // widths. `widthMs` is therefore returned per scenario, not once for the
+  // whole series; a caller that needs one number for several scenarios must
+  // decide how to reduce them, not assume they already agree.
+  #sweep(events: Delta[]): { widthMs: number; buckets: UserBucket[] } {
     // Starts before ends at the same instant, so a user who starts and ends in
     // the same millisecond still contributes 1 to the peak rather than 0.
     const sorted = [...events].sort((a, b) => a.tsMs - b.tsMs || b.delta - a.delta);
@@ -99,6 +106,6 @@ export class UserSeries {
       width = newWidth;
     }
 
-    return [...buckets.values()].sort((a, b) => a.startOffsetMs - b.startOffsetMs);
+    return { widthMs: width, buckets: [...buckets.values()].sort((a, b) => a.startOffsetMs - b.startOffsetMs) };
   }
 }
