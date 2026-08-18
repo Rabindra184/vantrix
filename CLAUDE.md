@@ -53,11 +53,18 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **96 files / 1065 tests**, it
+`nvm use` first, and if a run reports fewer than **99 files / 1079 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on live run monitoring
-part 2a's fold owner, which added `apps/worker/test/config.test.ts` (12),
+silently-skipped run looks like a pass. Last measured on the fold owner's
+whole-branch review fixes, which added `packages/storage/test/blobs.test.ts`
+(2, the black-hole socket case that catches `requestTimeout` being the wrong
+option), `apps/worker/test/replay-cap.test.ts` (4, the replay stream's byte
+budget) and `apps/worker/test/shutdown.test.ts` (3, a designed
+`AggregateError` not being allowed to crash SIGTERM) as new files, plus 5
+`withConnectionLimit` cases to `packages/persistence/test/client.test.ts` for
+Prisma's own, previously unsized pool — from a floor of 96 / 1065. That
+sub-project's own additions were `apps/worker/test/config.test.ts` (12),
 `packages/persistence/test/client.test.ts` (3),
 `packages/contracts/test/live-delta.test.ts` (9), and
 `apps/worker/test/live-delta.test.ts` (9) as new files, plus 3 cases to
