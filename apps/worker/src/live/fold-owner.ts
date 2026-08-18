@@ -62,6 +62,102 @@ interface FoldState {
 const WATCHDOG_STUCK_MULTIPLIER = 6;
 
 /**
+ * How many bytes of published deltas one run's replay stream
+ * (`live:{runId}:deltas`) may hold, before Redis's own per-entry overhead.
+ *
+ * ═══ WHY A BYTE BUDGET AND NOT AN ENTRY COUNT ═══
+ * The stream used to be capped at a flat `MAXLEN ~ 200`, which bounds the
+ * number of deltas while bounding NOTHING about their size -- and a delta's
+ * size is set by the run's shape, not by anything this owner controls.
+ * `users` is sent WHOLE every tick, by design (§3.2), and `UserSeries`
+ * coalesces each SCENARIO independently against its own
+ * `maxBucketsUsers` -- 1200 by default, PER SCENARIO. A 20-scenario soak
+ * therefore carries up to 24,000 user buckets in every delta, each of them
+ * a `{scenario, startOffsetMs, active}` object: on the order of a megabyte
+ * of JSON per message. Two hundred of those is hundreds of megabytes for
+ * ONE run's replay buffer, times up to `maxOwnedRuns` runs per worker, in a
+ * Redis that `infra/docker-compose.yml` gives no `maxmemory` and no
+ * eviction policy.
+ *
+ * ═══ WHY NOT THE OTHER TWO OPTIONS ═══
+ * Omitting `users` from the replay copy was rejected: it is the ONE series
+ * a late subscriber can bootstrap correctly (see `delta.ts` -- `users` is
+ * whole, `responseTime` is a window), so dropping it from replay removes
+ * the only part of a replayed delta that stands on its own. It would also
+ * mean the stream and the pub/sub channel carry DIFFERENT bodies for the
+ * same `seq`, which is a trap for Part 2b rather than a saving.
+ * Truncating the `users` envelope per tick was rejected for contradicting
+ * §3.2's "sent whole" outright -- a partial `users` array is
+ * indistinguishable on the wire from a run that genuinely has fewer
+ * scenarios.
+ *
+ * Capping by bytes keeps every retained delta INTACT and shrinks the
+ * WINDOW instead. A run whose deltas are small keeps the full
+ * {@link REPLAY_MAX_ENTRIES}; a run whose deltas are enormous keeps fewer,
+ * which is the honest trade -- and the property that actually needed
+ * bounding was always "how much Redis does one run cost", never "how many
+ * messages".
+ *
+ * ═══ THE VALUE ═══
+ * 4 MiB. At NFR-SC-4's 50 concurrent live runs that is ~200 MB across the
+ * whole deployment, which is a reasonable working set for a Redis already
+ * carrying BullMQ. It also keeps the full 200-entry window for any delta up
+ * to ~21 KB, which covers ordinary runs comfortably -- the budget only
+ * starts biting on exactly the pathological shapes it exists for.
+ *
+ * ═══ WHAT REMAINS EXPOSED, stated rather than papered over ═══
+ *  - Redis's own per-entry overhead (the entry id, the `delta` field name,
+ *    listpack bookkeeping) is not counted. It is tens of bytes against a
+ *    body measured in kilobytes.
+ *  - A single delta larger than this whole budget still gets retained,
+ *    because the floor below is one entry. A stream with nothing in it is
+ *    not a replay buffer, and one oversized entry is a bounded overshoot
+ *    where the previous behaviour's was not bounded at all.
+ *  - This bounds one WORKER's owned runs. Two workers at
+ *    `maxOwnedRuns` each is twice the figure above, and the compose file
+ *    still sets no `maxmemory` -- deliberately, since the only eviction
+ *    policies that would fit share the instance with BullMQ's job data and
+ *    would start dropping jobs instead.
+ */
+export const REPLAY_BUDGET_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The most deltas one run's replay stream holds regardless of how small
+ * they are -- FR-LIVE-8's replay depth, and the cap this stream had before
+ * {@link REPLAY_BUDGET_BYTES} joined it. The two are a MINIMUM of each
+ * other, not alternatives: entries bound the window in TIME (200 ticks,
+ * ~17 minutes at the 5 s default) and bytes bound it in SPACE.
+ */
+export const REPLAY_MAX_ENTRIES = 200;
+
+/**
+ * How many entries this delta's replay stream may keep, given what this
+ * delta costs.
+ *
+ * Recomputed per publish, from the CURRENT body, which is what makes the
+ * budget hold as a run grows: deltas only get bigger over a run's life, so
+ * each XADD trims to a cap derived from the largest body the stream
+ * contains, and every older entry it retains is no larger than that. Total
+ * retained bytes therefore stay at or under the budget rather than tracking
+ * whatever the deltas happened to cost when the run started.
+ *
+ * `Buffer.byteLength`, not `body.length`: the cap is a bound on what REDIS
+ * stores, which is UTF-8, while a JS string's `length` counts UTF-16 code
+ * units. They agree for ASCII and diverge for exactly the non-ASCII
+ * scenario and request names a real run is free to contain -- undercounting
+ * the budget by up to 3x on the runs most likely to be large.
+ *
+ * Exported for its own unit test. It is the one part of this file that is
+ * pure arithmetic, and the one whose failure mode is quiet: a cap that
+ * silently came out as 0 would make every XADD delete the entire stream it
+ * had just written to.
+ */
+export function replayEntryCap(body: string): number {
+  const bytes = Buffer.byteLength(body, 'utf8');
+  return Math.min(REPLAY_MAX_ENTRIES, Math.max(1, Math.floor(REPLAY_BUDGET_BYTES / bytes)));
+}
+
+/**
  * Claims each `running` run on the advisory lock `PipelineService` already
  * uses, folds the chunk bytes it has not yet fetched into a `LiveEngine`,
  * and releases the run once its status leaves `running`.
@@ -625,8 +721,10 @@ export class LiveFoldOwner {
    * Builds this tick's delta from a clone-safe snapshot of the run's fold
    * state, advances that run's cursor, and writes the SAME serialized body
    * to both destinations design §3.4 names: `PUBLISH live:{runId}` for Part
-   * 2b's fan-out, and `XADD live:{runId}:deltas MAXLEN ~200` for the replay
-   * buffer FR-LIVE-8 wants. Part 2a writes that stream even though nothing
+   * 2b's fan-out, and `XADD live:{runId}:deltas` for the replay buffer
+   * FR-LIVE-8 wants -- capped by BOTH an entry count and a byte budget,
+   * see `REPLAY_BUDGET_BYTES` for why an entry count alone bounded
+   * nothing. Part 2a writes that stream even though nothing
    * reads it until Part 2b -- splitting a stream's writer from its reader
    * across two sub-projects would leave 2b with nothing real to test replay
    * against.
@@ -663,7 +761,22 @@ export class LiveFoldOwner {
     const body = JSON.stringify(delta);
     try {
       await this.#redis.publish(`live:${runId}`, body);
-      await this.#redis.xadd(`live:${runId}:deltas`, 'MAXLEN', '~', '200', '*', 'delta', body);
+      // EXACT `MAXLEN`, not `MAXLEN ~`. Approximate trimming only evicts
+      // whole macro-nodes (`stream-node-max-entries`, 100 by default), so
+      // `~ 4` can legitimately retain a hundred entries or more -- which
+      // would leave `REPLAY_BUDGET_BYTES` bounding nothing precisely on the
+      // large-delta runs it exists for. Exact trimming costs an eviction of
+      // one or two entries per call, at one call per owned run per
+      // `liveTickMs`; the approximation was never buying anything at this
+      // rate.
+      await this.#redis.xadd(
+        `live:${runId}:deltas`,
+        'MAXLEN',
+        String(replayEntryCap(body)),
+        '*',
+        'delta',
+        body,
+      );
       state.cursor = next;
     } catch (err) {
       state.cursor = { ...state.cursor, seq: next.seq };
