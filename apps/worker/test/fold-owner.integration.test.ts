@@ -901,19 +901,30 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
-   * Review item (b) on Task 5's brief: `#ticking` releases on a throw (every
-   * other case in this file already proves that, via `#guarded`) but never
-   * on a HANG -- `BlobStore`'s `S3Client` sets no `requestTimeout`
-   * (`packages/storage/src/blobs.ts`), so a stalled `readFrom` used to leave
-   * `#ticking` true with no error, no log, and no further deltas for ANY
-   * owned run, forever. `fold-owner.ts`'s `#checkWatchdog` fixes the
-   * SILENCE, deliberately without touching the STUCK-ness itself -- see its
-   * own doc comment for why cancelling would risk exactly the concurrent-
-   * mutation corruption `#ticking` exists to prevent.
+   * `#ticking` releases on a throw (every other case in this file already
+   * proves that, via `#guarded`) but never on a HANG -- `BlobStore`'s
+   * `S3Client` sets no `requestTimeout` (`packages/storage/src/blobs.ts`),
+   * so a stalled `readFrom` used to leave `#ticking` true with no error, no
+   * log, and no further deltas for ANY owned run, forever.
+   * `fold-owner.ts`'s `#checkWatchdog` fixes the SILENCE, deliberately
+   * without touching the STUCK-ness itself -- see its own doc comment for
+   * why cancelling would risk exactly the concurrent-mutation corruption
+   * `#ticking` exists to prevent.
+   *
+   * Fix round 1, Important 3: the first version of this warning fired
+   * exactly ONCE per stuck episode and then fell silent for however long
+   * the stall lasted -- while its own doc comments (and this file's
+   * original version of this very test) claimed it logged "repeatedly".
+   * That was false, and the gap mattered: a single line emitted once,
+   * possibly long before an operator investigates, has typically scrolled
+   * out of any reasonable log buffer by the time anyone looks. This case
+   * now proves the CORRECTED claim -- the warning re-arms and fires again
+   * every `WATCHDOG_STUCK_MULTIPLIER` tick-intervals for as long as the
+   * stall persists -- rather than merely asserting "exactly one".
    *
    * `readFrom` is mocked to a REAL (bounded) delay rather than a genuine
    * infinite hang, so this test terminates either way; the point under test
-   * is only whether the watchdog fires WHILE it is still pending, not
+   * is whether the watchdog fires REPEATEDLY while it is still pending, not
    * whether the delay is technically finite.
    *
    * The watchdog only checks from `tick()`'s own early-return path (see that
@@ -921,13 +932,18 @@ describe('LiveFoldOwner', () => {
    * `setInterval` driver by calling `tick()` repeatedly while the first call
    * is still in flight, exactly as that timer would.
    */
-  it('logs a watchdog warning when a fold has been stuck for several tick intervals, without cancelling it', async () => {
+  it('logs a repeating watchdog warning for as long as a fold stays stuck, not just once', async () => {
     await truncateAll();
     const { orgId, projectId } = await seedOrgProject();
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const STUCK_MS = 260;
+    // liveTickMs small enough that several watchdog thresholds (6x
+    // liveTickMs each, WATCHDOG_STUCK_MULTIPLIER) fit inside STUCK_MS:
+    // 6 * 20 = 120ms per threshold, ~4 fit inside 500ms -- comfortable room
+    // to observe more than one re-arm without being flaky right at a
+    // boundary.
+    const STUCK_MS = 500;
     const realReadFrom = chunks.readFrom.bind(chunks);
     const readFromSpy = vi.spyOn(chunks, 'readFrom').mockImplementation((rid: string, offset: number) => {
       if (rid !== runId) return realReadFrom(rid, offset);
@@ -937,9 +953,6 @@ describe('LiveFoldOwner', () => {
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    // liveTickMs small enough that the watchdog's threshold (6x liveTickMs,
-    // WATCHDOG_STUCK_MULTIPLIER) clears well before STUCK_MS elapses:
-    // 6 * 20 = 120ms < 260ms.
     const owner = new LiveFoldOwner({ ...config, liveTickMs: 20 }, pool, chunks, new Redis(config.redisUrl));
     try {
       const stuckTick = owner.tick(); // resolves only once STUCK_MS elapses
@@ -947,16 +960,39 @@ describe('LiveFoldOwner', () => {
       const isWatchdogWarning = (call: unknown[]): boolean =>
         typeof call[0] === 'string' && call[0].includes('LiveFoldOwner: tick() has not completed');
 
-      const deadline = Date.now() + STUCK_MS + 500;
-      while (Date.now() < deadline && !errorSpy.mock.calls.some(isWatchdogWarning)) {
-        await owner.tick(); // early return while #ticking is true -- checks the watchdog
+      // Simulates main.ts's real setInterval driver: keeps calling tick()
+      // (an early return while #ticking is true, checking the watchdog
+      // each time) on a cadence finer than the watchdog's own threshold,
+      // well past STUCK_MS so the whole stuck episode is observed.
+      let polls = 0;
+      const deadline = Date.now() + STUCK_MS + 300;
+      while (Date.now() < deadline) {
+        await owner.tick();
+        polls += 1;
         await new Promise((r) => setTimeout(r, 15));
       }
+      await stuckTick; // let the originally-stuck tick actually finish
 
       const watchdogCalls = errorSpy.mock.calls.filter(isWatchdogWarning);
-      expect(watchdogCalls.length).toBe(1); // one warning per stuck episode, not one per poll
+      // Genuinely repeats -- more than the single warning a one-shot flag
+      // would have produced. THE discriminating assertion for this fix.
+      expect(watchdogCalls.length).toBeGreaterThanOrEqual(2);
+      // But throttled to the threshold's own cadence, not fired on every
+      // poll -- proves this is "every Nx liveTickMs", not "every
+      // early-return call that happens to still find it stuck".
+      expect(watchdogCalls.length).toBeLessThan(polls);
 
-      await stuckTick; // let the originally-stuck tick actually finish
+      // Each successive message reports a STRICTLY larger elapsed time than
+      // the last -- proves these are genuinely separate, later checks, not
+      // the same call's arguments inspected more than once.
+      const elapsedMsPerCall = watchdogCalls.map((c) => {
+        const match = /not completed in over (\d+)ms/.exec(c[0] as string);
+        if (!match) throw new Error('watchdog message did not match the expected shape');
+        return Number(match[1]);
+      });
+      for (let i = 1; i < elapsedMsPerCall.length; i++) {
+        expect(elapsedMsPerCall[i]).toBeGreaterThan(elapsedMsPerCall[i - 1]!);
+      }
     } finally {
       errorSpy.mockRestore();
       readFromSpy.mockRestore();

@@ -127,11 +127,14 @@ export class LiveFoldOwner {
   /** When the in-flight tick started, for `#checkWatchdog`; `null` whenever
    * `#ticking` is false. */
   #tickStartedAt: number | null = null;
-  /** Whether the watchdog has already logged for the CURRENT stuck episode,
-   * so a hung tick produces one warning, not one per subsequent `tick()`
-   * call that finds it still stuck. Reset to `false` every time a tick
-   * actually starts. */
-  #watchdogWarned = false;
+  /**
+   * How many watchdog warnings have already fired for the CURRENT stuck
+   * episode -- NOT a boolean, so a tick stuck for a long time gets a fresh
+   * warning every `WATCHDOG_STUCK_MULTIPLIER` tick-intervals rather than
+   * exactly one ever. See `#checkWatchdog`'s own doc comment. Reset to 0
+   * every time a tick actually starts.
+   */
+  #watchdogWarnCount = 0;
 
   constructor(config: WorkerConfig, pool: pg.Pool, chunks: LiveChunkStore, redis: Redis) {
     this.#config = config;
@@ -181,7 +184,7 @@ export class LiveFoldOwner {
     }
     this.#ticking = true;
     this.#tickStartedAt = Date.now();
-    this.#watchdogWarned = false;
+    this.#watchdogWarnCount = 0;
     try {
       await this.#doTick();
     } finally {
@@ -191,9 +194,10 @@ export class LiveFoldOwner {
   }
 
   /**
-   * Diagnostic only -- logs once when `#ticking` has stayed true for over
-   * `WATCHDOG_STUCK_MULTIPLIER` tick intervals, and never cancels or races
-   * anything.
+   * Diagnostic only -- logs when `#ticking` has stayed true for over
+   * `WATCHDOG_STUCK_MULTIPLIER` tick intervals, and AGAIN every additional
+   * `WATCHDOG_STUCK_MULTIPLIER` intervals for as long as it stays stuck --
+   * never cancels or races anything.
    *
    * A cancel-and-move-on design (e.g. `Promise.race`ing `#fold` against a
    * timeout) was considered and rejected: the ABANDONED `#fold` call would
@@ -211,30 +215,39 @@ export class LiveFoldOwner {
    * whole problem: no error, no log, no further deltas for any run, and no
    * way to tell from outside whether the process was stuck or merely quiet.
    *
-   * This does NOT make `close()` return promptly if the current tick really
-   * is stuck forever -- `close()` awaits the same in-flight pass (see its
-   * own doc comment), so a genuine hang here is a genuine shutdown hang too.
-   * That is accepted rather than papered over: this file cannot fix
-   * `readFrom`'s missing timeout (out of this task's scope -- see the
-   * paragraph above), and a `close()` that abandoned a possibly-still-owned
-   * client to avoid waiting would reintroduce the exact leak this method's
-   * own interlock exists to close. The watchdog at least means an operator
-   * SEES the stall build up (repeatedly, every `liveTickMs`, well before any
-   * shutdown is even attempted) instead of a shutdown that hangs with no
-   * prior explanation.
+   * REPEATING, not one-shot, is load-bearing for that visibility claim, not
+   * decoration: a single log line emitted once, possibly hours before an
+   * operator investigates a hung `SIGTERM`, has typically scrolled out of
+   * whatever log buffer or retention window exists by the time anyone
+   * looks. `#watchdogWarnCount` tracks how many `thresholdMs` multiples
+   * have already produced a warning (`Math.floor(stuckForMs /
+   * thresholdMs)`), not a boolean, so a permanently-stuck tick keeps
+   * re-arming: one warning at `1x threshold`, another at `2x`, and so on --
+   * genuinely recurring in the log for as long as the stall lasts, on this
+   * class's own early-return path (see `tick()`'s doc comment for why that
+   * path needs no timer of its own to drive it).
+   *
+   * `close()` no longer waits on an in-flight tick at all (see its own doc
+   * comment), so this watchdog's silence would no longer make SHUTDOWN
+   * hang -- but a stuck tick still blocks every OTHER owned run's fold and
+   * publish for as long as it lasts (`#doTick`'s fold loop `await`s each
+   * run's `#fold` in sequence), which is exactly the ongoing, DURING-
+   * NORMAL-OPERATION visibility gap repeating warnings are for.
    */
   #checkWatchdog(): void {
-    if (this.#tickStartedAt === null || this.#watchdogWarned) return;
+    if (this.#tickStartedAt === null) return;
     const stuckForMs = Date.now() - this.#tickStartedAt;
     const thresholdMs = this.#config.liveTickMs * WATCHDOG_STUCK_MULTIPLIER;
-    if (stuckForMs < thresholdMs) return;
-    this.#watchdogWarned = true;
+    const dueWarnings = Math.floor(stuckForMs / thresholdMs);
+    if (dueWarnings <= this.#watchdogWarnCount) return;
+    this.#watchdogWarnCount = dueWarnings;
     console.error(
       `LiveFoldOwner: tick() has not completed in over ${stuckForMs}ms ` +
-        `(over ${WATCHDOG_STUCK_MULTIPLIER}x liveTickMs) -- likely a stalled ` +
-        `readFrom against blob storage (BlobStore's S3Client sets no ` +
-        `requestTimeout). No further deltas will be published for ANY owned ` +
-        'run until this tick resolves.',
+        `(over ${dueWarnings * WATCHDOG_STUCK_MULTIPLIER}x liveTickMs) -- ` +
+        `likely a stalled readFrom against blob storage (BlobStore's ` +
+        `S3Client sets no requestTimeout). No further deltas will be ` +
+        'published for ANY owned run until this tick resolves. This ' +
+        'warning repeats for as long as the stall lasts.',
     );
   }
 
