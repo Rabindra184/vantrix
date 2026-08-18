@@ -91,8 +91,25 @@ and works for the next, which is close to undiagnosable from the outside.
 `maxOwnedRuns` (default 25, config in the `apps/worker/src/config.ts` style)
 caps the map. Each owned run costs one pooled connection (§1.1) plus its fold
 state, and NFR-SC-4's target is 50 concurrent live runs across the deployment —
-so two workers at 25 meets it, and one worker cannot exhaust its pool trying to
-own everything.
+so two workers at 25 meets it.
+
+**The pool must be sized FROM that cap, and this is not optional.**
+`createPool` builds `new pg.Pool({ max: 10 })` with no `connectionTimeoutMillis`
+(`packages/persistence/src/client.ts`), and `apps/worker/src/main.ts` hands that
+ONE pool to `PipelineService`, `Sweeper` and the fold owner alike. A cap of 25
+against a pool of 10 does not degrade — it **deadlocks the whole worker**: at ten
+owned runs every client is held by a `FoldState`, the eleventh `pool.connect()`
+queues forever (pg's default timeout is 0), `tick()` never reaches its fold loop,
+and the pipeline and sweeper starve behind it. No error, no timeout, no log.
+
+An earlier draft of this section asserted that "one worker cannot exhaust its
+pool trying to own everything." That was never checked against the pool's actual
+size and it is false.
+
+So: the worker sizes its pool as `maxOwnedRuns` plus headroom for the pipeline's
+own concurrency and the sweeper, and sets a `connectionTimeoutMillis` so that any
+future mis-sizing surfaces as a loud error rather than a silent stall. The cap
+and the pool are one decision, not two.
 
 At the cap the owner logs and skips. It does **not** drop an owned run to make
 room: releasing a run mid-stream throws away a fold that would have to restart
