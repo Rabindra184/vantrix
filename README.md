@@ -251,6 +251,42 @@ moved for `RUNNING_STALE_AFTER_MS` (10 minutes by default). That threshold is
 on silence, not on run length: a live run streams for as long as the load test
 does, and only the time since its last accepted chunk counts against it.
 
+### How the worker learns about a stream
+
+Bytes accepted above land in blob storage, never in Redis. A dedicated worker
+process (`LiveFoldOwner`) folds the chunk objects of a `running` run into a
+live, incrementally-maintained set of statistics and publishes a delta on a
+timer. Redis carries four channels for this, and none of them carry the bytes
+themselves — only notifications and computed deltas:
+
+| Channel | Direction | Carries |
+|---|---|---|
+| `live:opened` | API → worker | a run id, on a successful `POST /v1/runs/live` |
+| `live:advance` | API → worker | a run id, when a chunk is **accepted** (not on a gap or a replay) |
+| `live:{runId}` | worker → subscribers | a delta, published each tick |
+| `live:{runId}:deltas` | worker → replay | the same delta, appended to a stream capped `MAXLEN ~ 200` |
+
+**None of the four ever carries bytes.** The bytes are already durable in
+blob storage by the time either API-side channel is published to — that is
+the whole reason these are notifications rather than a queue: duplicating a
+run's bytes into Redis as well would mean storing every byte twice.
+
+`live:opened` and `live:advance` are optimisations over the worker's own poll
+of `running` runs, never replacements for it. Redis pub/sub has no
+persistence, so a message published while every worker is down (a deploy, an
+outage) reaches nobody — it is the poll, not either channel, that makes a run
+opened during an outage eventually fold.
+
+Each owned run holds one dedicated Postgres connection for its whole
+ownership — the fold owner claims a run on the same advisory lock the
+pipeline uses, and that lock must be held and released on one connection.
+`apps/worker/src/main.ts` therefore sizes the worker's Postgres pool well
+above the driver default of 10: `maxOwnedRuns` (25 by default) plus headroom
+for the pipeline's own concurrency and the sweeper. Anyone sizing a
+database's `max_connections` for this deployment needs to budget roughly
+that many connections per worker process, not just enough for ordinary query
+traffic.
+
 ## Proving it end to end
 
 `apps/api/test/parity.e2e.test.ts` is the keystone test: it posts the whole

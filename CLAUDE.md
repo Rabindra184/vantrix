@@ -53,12 +53,20 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **92 files / 1029 tests**, it
+`nvm use` first, and if a run reports fewer than **96 files / 1065 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on §22.6's mobile
-summary, which added `DesktopOnly.test.tsx` (6) and `useIsCompact.test.tsx`
-(6), from a floor of 90 / 1017 — and that one from live run monitoring
+silently-skipped run looks like a pass. Last measured on live run monitoring
+part 2a's fold owner, which added `apps/worker/test/config.test.ts` (12),
+`packages/persistence/test/client.test.ts` (3),
+`packages/contracts/test/live-delta.test.ts` (9), and
+`apps/worker/test/live-delta.test.ts` (9) as new files, plus 3 cases to
+`apps/worker/test/retry.test.ts` — one for `PipelineService`'s own
+`RUN_LOCKED` signal, one for pg-pool's own connect-timeout error, and one
+proving an unrelated bare `Error` still reads as deterministic — from a floor
+of 92 / 1029 — and that one from §22.6's mobile summary, which added
+`DesktopOnly.test.tsx` (6) and `useIsCompact.test.tsx` (6), from a floor of
+90 / 1017 — and that one from live run monitoring
 part 1's review fixes, which added 2 cases to
 `packages/plugin-gatling/test/stream.test.ts` — one pinning `consumedBytes`
 against the last whole-record boundary, one pinning that the decoder's
@@ -387,6 +395,69 @@ zero-byte run answered `202` with a `Retry-After` header and no `verdict`
 field, forever, because an aborted live run has no worker left to ever move
 it past 202. Add a status to `statusFor` in the same change that adds it to
 `RunStatusSchema`.
+
+**A fold cursor is a fetch frontier, not a decode position.**
+`LiveChunkStore.readFrom` returns every chunk whose **start** offset is at
+or past the offset it is given (`packages/storage/src/live-chunks.ts`) — it
+wants the highest byte already FETCHED. `StreamingLogDecoder.consumedBytes`
+is the last whole-record boundary instead, and it routinely sits *behind*
+the last byte fetched: a record straddling a chunk boundary leaves a partial
+tail the decoder buffers and reports as unconsumed. Passing that value to
+`readFrom` re-selects chunks already delivered; the decoder splices them in
+again after the tail it correctly retained, and every absolute position from
+there on is wrong, silently, for the rest of the run. `LiveFoldOwner`'s
+`FoldState.fetchedBytes` tracks the fetch frontier instead, advanced by the
+length of the bytes just received — exact, because offset negotiation only
+ever accepts a chunk at `offset === cursor` (`LiveService.stream`), so a
+run's chunks tile `[0, stream_offset)` with no gap and no overlap.
+`fold-owner.integration.test.ts`'s "folds correctly when chunks are smaller
+than a single record, across several ticks" is the guard.
+
+**Two series, two widths.** `UserSeries` coalesces against its own
+`maxBucketsUsers` cap, independent of the response-time series'
+`maxBucketsRun`, and on its own per-scenario schedule — bucket count tracks
+a scenario's active SPAN, not its event volume, so a run whose scenarios
+have staggered durations genuinely holds two widths at once
+(`packages/statistics/src/users.ts`). A live delta therefore carries one
+`widthMs` per envelope, never one for the whole message. The users width is
+the **minimum** across scenarios, not the maximum: every real width is
+`1000 × 2^k`, so the finest width divides every coarser scenario's offsets
+exactly, while a coarser width does not divide a finer scenario's —
+declaring anything but the minimum leaves a fine scenario's real offsets as
+non-multiples of the declared width. `apps/worker/test/live-delta.test.ts`'s
+"reduces the users envelope width to the FINEST scenario, not the coarsest"
+is the guard.
+
+**The owned-run cap and the pool size are one decision.** `createPool`
+defaults to `new pg.Pool({ max: 10 })` with no `connectionTimeoutMillis`
+(`packages/persistence/src/client.ts`), and the worker hands that ONE pool
+to `PipelineService`, `Sweeper`, and `LiveFoldOwner` alike
+(`apps/worker/src/main.ts`). A `maxOwnedRuns` cap above what the pool can
+serve does not degrade — it deadlocks the whole worker: at ten owned runs
+every client is held by a `FoldState`, the eleventh `pool.connect()` queues
+forever because pg's own default connection timeout is 0, `tick()` never
+reaches its fold loop, and the pipeline and sweeper starve behind it, with
+no error, no timeout, no log. `main.ts` now sizes the pool as `maxOwnedRuns`
+plus one client for the fold owner's own discovery query, `concurrency * 2`
+for the pipeline's worst case, and one for the sweeper — and sets a
+10-second `connectionTimeoutMillis`, so a future mis-sizing surfaces as a
+loud, rejected `connect()` instead of a silent, permanent stall.
+
+**A cursor must not advance past a failed publish.** `LiveFoldOwner#publish`
+builds a delta from `state.cursor`, then writes it to both `PUBLISH
+live:{runId}` and `XADD live:{runId}:deltas`; that cursor carries the
+coalesce-replacement flag (`lastBucketWidthMs`) the NEXT delta's replacement
+decision is computed from. Advancing `state.cursor` before either Redis call
+means a dropped connection on the very tick the buckets halve loses that
+tick's `replaces: true` — the next delta then computes `replaces = width !==
+prev.lastBucketWidthMs` against a width the cursor already (wrongly) equals,
+so it silently presents new-width buckets as a plain upsert into a series
+the consumer never got the replacement for. On failure only `seq` advances
+(`{ ...state.cursor, seq: next.seq }`): a consumer still needs a gap-free
+`seq` to detect a drop, but nothing about `replaces`/`since` may be assumed
+to have reached anyone. `fold-owner.integration.test.ts`'s "preserves the
+coalesce replacement flag across a failed publish, so the next tick still
+replaces rather than silently upserting" is the guard.
 
 ## Conventions the design pass added
 
