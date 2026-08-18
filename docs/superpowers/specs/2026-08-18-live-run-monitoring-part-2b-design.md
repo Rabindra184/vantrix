@@ -133,11 +133,20 @@ unchanged. A run at the endpoint cap would publish thousands of rows per tick
 per subscriber; the Errors tab's per-request drill-down is a REST read on a
 finished run.
 
-**No `errorSeries` envelope is added.** The Charts tab's "Errors per second"
-figure is driven by the response-time series (`RunDetail.tsx:446` passes
-`series` to the `errors-over-time` slot), whose `koCount` per bucket the delta
-already carries. Adding a second failures-over-time series to the wire would
-put two sources behind one chart.
+**No `errorSeries` envelope is added, and the original reason given here was
+wrong.** This section first claimed the "Errors per second" figure is driven by
+the response-time series' per-bucket `koCount`. It is not: `RunDetail.tsx`
+binds that chart to `errorSeriesQuery` — a **separate endpoint** — and a
+comment beside it says so outright ("the flat totals and the time series are
+different endpoints"). So the delta genuinely cannot feed that chart, and no
+argument about avoiding two sources applies.
+
+The envelope is still excluded, on scope rather than on that reasoning:
+errors-over-time is **not** one of FR-LIVE-4's six items, and
+`EngineResult.errorSeries` already exists, so a follow-up can carry it
+whenever the chart is wanted live. What this part does instead is refuse to
+let the chart vanish silently — §4.3 gives it a withheld notice like the
+other three.
 
 ### 1.4 What this costs on the wire
 
@@ -385,11 +394,25 @@ They render an explicit "available when the run finishes" state — not a
 spinner, which claims something is arriving, and not an empty chart, which
 claims there is nothing to draw.
 
-Everything else on the page is live: Overview's summary, Charts' users, rates,
-percentiles and errors-over-time, the Errors table, and Trends (historical, and
-never needed this run to be finished). The Load generators tab is already live
-today and needs nothing from this part — telemetry reaches `TelemetrySample`
-through the agent's own path during the run, not through the parse pipeline.
+Live: the summary's headline numbers, users, request and response rates,
+response-time percentiles, and the Errors **table**. **Errors-over-time is
+NOT** — its endpoint is not on the live wire (§1.3), so it takes a withheld
+notice rather than disappearing.
+
+**What shipped is a standalone live page, not the five-tab run page this
+section originally described.** That was a design error, not an implementation
+shortcut: `RunsService.statusFor` answers **202** for every status short of
+`complete`, and a 202's body is `RunProcessing { id, status, statusUrl }` — no
+project, no tool, no verdict. `RunShell` renders its header and tabs from a
+full `RunResponse`, so it cannot render for a running run at all. Delivering
+the five-tab version means widening the 202 body to carry a running run's
+identity, which is a contracts and API change and its own sub-project.
+
+The consequence to know: a run ending is a **layout** change, not just a data
+swap — the standalone page is replaced by the tabbed one. Trends and Load
+generators are unreachable while a run is live, though neither needs this part
+(telemetry already reaches `TelemetrySample` through the agent's own path
+during the run, not through the parse pipeline).
 
 ### 4.4 The run ends: freeze, do not blank
 
