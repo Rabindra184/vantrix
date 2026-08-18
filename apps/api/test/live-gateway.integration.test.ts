@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
+import { connect as tcpConnect, type AddressInfo } from 'node:net';
 import type { LiveDelta } from '@perfportal/contracts';
 import { OrgMemberRepository } from '@perfportal/persistence';
 import { Redis } from 'ioredis';
@@ -17,6 +17,8 @@ const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6380';
 interface Frame {
   type: 'snapshot' | 'delta';
   partial?: boolean;
+  /** Present on a snapshot frame only; see `snapshotFixture` below. */
+  lastSeq?: number;
   delta: LiveDelta;
 }
 
@@ -113,6 +115,35 @@ function deltaFixture(runId: string, seq: number, offsets: number[]): LiveDelta 
   };
 }
 
+/**
+ * A snapshot key's content, built the way the PRODUCER builds it.
+ *
+ * ═══ A SNAPSHOT IS STAMPED WITH THE SEQ IT DOES NOT CONTAIN ═══
+ * `LiveFoldOwner#publish` emits delta C, advances its cursor to C+1, and only
+ * THEN writes the snapshot -- from the same EngineResult delta C came from,
+ * stamped `next.seq`. So a key labelled C+1 holds state through delta C, and
+ * the first delta a seeded client still needs is the stream entry AT C+1.
+ *
+ * WRITTEN OUT HERE ON PURPOSE. `apps/api` has no dependency on the worker, so
+ * `buildSnapshot` cannot be imported to supply it -- and a fixture that
+ * stamped the snapshot with the seq of the last delta it contains would encode
+ * the GATEWAY's reading of the key on both sides of the assertion, leaving the
+ * join between producer and gateway untested. That is the defect this fixture
+ * exists to catch: reading the key the other way drops exactly one delta, and
+ * drops it invisibly, because the client's own last-seen seq is contiguous.
+ *
+ * `replaces: true` for the same fidelity: `buildSnapshot` runs `buildDelta`
+ * from `INITIAL_CURSOR`, which is "no lookback floor, replaces everything".
+ */
+function snapshotFixture(runId: string, throughSeq: number, offsets: number[]): LiveDelta {
+  const base = deltaFixture(runId, throughSeq, offsets);
+  return {
+    ...base,
+    seq: throughSeq + 1,
+    responseTime: { ...base.responseTime, replaces: true },
+  };
+}
+
 async function seedSnapshot(runId: string, delta: LiveDelta): Promise<void> {
   await redis!.set(`live:${runId}:snapshot`, JSON.stringify(delta), 'EX', 300);
 }
@@ -150,13 +181,6 @@ function collect(conn: Conn, count: number): Promise<Frame[]> {
     .then(() => conn.frames.slice(0, count));
 }
 
-function opened(conn: Conn): Promise<void> {
-  return new Promise((resolve, reject) => {
-    conn.socket.on('open', () => resolve());
-    conn.socket.on('error', reject);
-  });
-}
-
 describe('the live gateway rejects what it should', () => {
   // Nest's HTTP guards do not run on an upgrade. A gateway that declares
   // @UseGuards(AuthGuard) and stops there is unauthenticated while reading as
@@ -186,6 +210,71 @@ describe('the live gateway rejects what it should', () => {
     expect(conn.frames).toHaveLength(0);
   });
 
+  /**
+   * A REPRODUCED UNAUTHENTICATED REMOTE PROCESS CRASH, and the reason this
+   * asserts on `uncaughtException` rather than on anything the socket does.
+   *
+   * `ws.close()` does not stop the socket READING. The receiver keeps parsing
+   * whatever arrives next, and a frame declaring more than `maxPayload` -- or
+   * any protocol violation, including plain garbage -- reaches
+   * `receiverOnError`, which emits 'error' on the WebSocket. With no listener
+   * that is an uncaught exception, and in production the pod exits: every
+   * viewer on it disconnected, by an anonymous caller, over and over.
+   *
+   * Registering a listener is also what makes this assertable -- any
+   * `uncaughtException` listener suppresses Node's default handler, so the
+   * run survives either way and the array is the only evidence.
+   */
+  it('survives garbage sent on a socket it has already rejected', async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const seen: Error[] = [];
+    const record = (err: Error): void => void seen.push(err);
+    process.on('uncaughtException', record);
+
+    try {
+      // A masked frame declaring 1 MiB, past the 4096-byte inbound cap.
+      const oversized = Buffer.alloc(14);
+      oversized[0] = 0x82; // FIN + binary
+      oversized[1] = 0x80 | 127; // masked, 64-bit length
+      oversized.writeBigUInt64BE(1n << 20n, 2);
+      oversized.write('abcd', 10, 'ascii');
+      const conn = connect(port, `/v1/runs/${runId}/live`);
+      await new Promise<void>((resolve) => {
+        conn.socket.on('open', () => {
+          (conn.socket as unknown as { _socket: { write(b: Buffer): void } })._socket.write(oversized);
+          resolve();
+        });
+        conn.socket.on('close', () => resolve());
+        setTimeout(resolve, 3000);
+      });
+
+      // And the same failure by the cruder route: bytes appended to the
+      // upgrade request itself, which the receiver parses as frames the
+      // instant the handshake completes.
+      await new Promise<void>((resolve) => {
+        const raw = tcpConnect(port, '127.0.0.1', () => {
+          raw.write(
+            `GET /v1/runs/${runId}/live HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n` +
+              `Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
+              `Sec-WebSocket-Version: 13\r\n\r\n`,
+          );
+          raw.write(Buffer.alloc(4096, 0x41));
+          setTimeout(() => {
+            raw.destroy();
+            resolve();
+          }, 250);
+        });
+        raw.on('error', () => resolve());
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(seen).toEqual([]);
+    } finally {
+      process.off('uncaughtException', record);
+    }
+  });
+
   // Answering these two differently -- a different close code, a different
   // latency, a frame on one and not the other -- turns this endpoint into an
   // existence oracle for run ids across the whole deployment.
@@ -209,25 +298,70 @@ describe('the live gateway rejects what it should', () => {
 });
 
 describe('the live gateway seeds, replays, then follows', () => {
-  it('seeds from the snapshot, then replays the stream forward from its seq', async () => {
+  it('replays from the stream entry AT the snapshot seq, which the snapshot does not contain', async () => {
     const port = await start();
     const runId = await openLiveRun();
     const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
-    const snapshot = deltaFixture(runId, 5, [0, 1000, 2000, 3000, 4000]);
+    // C is the last delta the snapshot's CONTENT covers; the key is stamped
+    // C+1. See snapshotFixture -- the whole point of this case is that the two
+    // numbers differ, so the fixture must not be built from the gateway's own
+    // reading of the key.
+    const C = 5;
+    const snapshot = snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]);
+    expect(snapshot.seq).toBe(C + 1);
     await seedSnapshot(runId, snapshot);
-    const tail = [5, 6, 7, 8].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000]));
-    await appendDeltas(runId, tail);
+    const stream = [C, C + 1, C + 2].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000]));
+    await appendDeltas(runId, stream);
 
-    const frames = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 4);
+    const frames = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 3);
 
     expect(frames[0]!.type).toBe('snapshot');
     expect(frames[0]!.partial).toBe(false);
-    expect(frames[0]!.delta.seq).toBe(snapshot.seq);
-    expect(frames.slice(1).map((f) => f.type)).toEqual(['delta', 'delta', 'delta']);
-    // The stream entry AT the snapshot's seq is not re-sent: the snapshot
-    // already carries it, and a consumer that upserts by startOffsetMs would
-    // not notice the duplicate, which is exactly why it has to be asserted.
-    expect(frames.slice(1).map((f) => f.delta.seq)).toEqual([6, 7, 8]);
+    expect(frames[0]!.delta.seq).toBe(C + 1);
+    // Delta C is NOT re-sent -- the snapshot already carries it. Delta C+1 IS,
+    // and dropping it is invisible downstream: the client's own last-seen seq
+    // would be C+1 either way, so its gap detection never fires and a handful
+    // of responseTime buckets just vanish from the middle of the chart.
+    expect(frames.slice(1).map((f) => f.type)).toEqual(['delta', 'delta']);
+    expect(frames.slice(1).map((f) => f.delta.seq)).toEqual([C + 1, C + 2]);
+    // The resume cursor is the seq the client HOLDS, which after this seed is
+    // the last delta delivered -- never the snapshot's own label.
+    expect(frames[0]!.lastSeq).toBe(C + 2);
+  });
+
+  // The one case where the snapshot's label and the client's cursor differ on
+  // the wire, and the only one that can pin it: nothing to replay, so the
+  // client holds state through C while the frame it just read says C+1.
+  it('tells a client seeded from a snapshot alone to resume one behind its label', async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const C = 5;
+    await seedSnapshot(runId, snapshotFixture(runId, C, [0, 1000, 2000]));
+
+    const [first] = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 1);
+
+    expect(first!.delta.seq).toBe(C + 1);
+    expect(first!.lastSeq).toBe(C);
+  });
+
+  // §2.3: a stream that no longer reaches the snapshot's seq is a genuine hole
+  // in the MIDDLE of the series, and a consumer cannot tell a bucket that was
+  // never sent from one that saw no traffic. Reading the seam one off makes
+  // this report as healthy.
+  it('marks the seed partial when the stream no longer reaches the snapshot seq', async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const C = 5;
+    await seedSnapshot(runId, snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]));
+    // C+1 is missing: the snapshot stops at C, the stream starts at C+2.
+    await appendDeltas(runId, [C + 2, C + 3].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000])));
+
+    const [first] = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 1);
+
+    expect(first!.type).toBe('snapshot');
+    expect(first!.partial).toBe(true);
   });
 
   // The seed is the ONE thing a browser cannot do for itself: it cannot read
@@ -260,6 +394,26 @@ describe('the live gateway seeds, replays, then follows', () => {
     expect(first!.partial).toBe(true);
     expect(first!.delta.runId).toBe(runId);
     expect(first!.delta.responseTime.buckets).toEqual([]);
+    // -1, NOT 0. Deltas are zero-indexed, and seq 0 is the one delta carrying
+    // `replaces: true` and the series from offset 0 -- so a cursor of 0 here
+    // makes the flush drop the owner's very first tick on `0 > 0`, for exactly
+    // the client that opened the page in the run's first seconds.
+    expect(first!.lastSeq).toBe(-1);
+  });
+
+  // A resume cursor is an optimisation; a bad one must degrade to the correct
+  // answer -- a full seed -- never to a partial series presented as whole.
+  it('ignores a malformed resume cursor and seeds in full', async () => {
+    const port = await start();
+    const runId = await openLiveRun();
+    const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
+    const snapshot = snapshotFixture(runId, 5, [0, 1000, 2000, 3000, 4000]);
+    await seedSnapshot(runId, snapshot);
+
+    const [first] = await collect(connect(port, `/v1/runs/${runId}/live?lastSeq=nonsense`, cookie), 1);
+
+    expect(first!.type).toBe('snapshot');
+    expect(first!.delta).toEqual(snapshot);
   });
 
   // Design §5.2. Without the snapshot key this fails with holes at the FRONT
@@ -271,12 +425,14 @@ describe('the live gateway seeds, replays, then follows', () => {
     const port = await start();
     const runId = await openLiveRun();
     const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
-    const snapshot = deltaFixture(runId, 5, [0, 1000, 2000, 3000, 4000]);
+    const C = 5;
+    const snapshot = snapshotFixture(runId, C, [0, 1000, 2000, 3000, 4000]);
     await seedSnapshot(runId, snapshot);
-    // The stream has been trimmed past the run's start: nothing in it carries
-    // the first buckets, so a client replaying only the stream would draw a
-    // series beginning at 5000ms and never know it.
-    const tail = [6, 7, 8].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000]));
+    // The stream has been trimmed to exactly the snapshot's own seam: its
+    // oldest surviving entry is C+1, and nothing in it carries the run's first
+    // buckets -- so a client replaying only the stream would draw a series
+    // beginning at 5000ms and never know it.
+    const tail = [C + 1, C + 2, C + 3].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000]));
     await appendDeltas(runId, tail);
     const oldest = await redis!.xrange(`live:${runId}:deltas`, '-', '+', 'COUNT', 1);
     expect(JSON.parse(oldest[0]![1][1]!).seq).toBeGreaterThan(1); // genuinely trimmed
@@ -284,26 +440,27 @@ describe('the live gateway seeds, replays, then follows', () => {
     const frames = await collect(connect(port, `/v1/runs/${runId}/live`, cookie), 4);
 
     // Relayed faithfully, field for field -- not summarised, not re-encoded.
+    expect(frames[0]!.type).toBe('snapshot');
+    expect(frames[0]!.partial).toBe(false);
     expect(frames[0]!.delta).toEqual(snapshot);
     expect(frames[0]!.delta.responseTime.buckets[0]!.startOffsetMs).toBe(0);
-    // ...and joined with NO gap at the seam. A hole here is invisible to a
-    // consumer: it cannot tell a bucket that was never sent from one that saw
-    // no traffic.
-    const seqs = frames.map((f) => f.delta.seq);
-    expect(seqs).toEqual([snapshot.seq, ...tail.map((d) => d.seq)]);
+    // ...and joined with NO gap at the seam: the replay begins at the entry
+    // the snapshot's label names, not after it.
     expect(frames.slice(1).map((f) => f.delta)).toEqual(tail);
+    expect(frames.slice(1).map((f) => f.delta.seq)).toEqual([C + 1, C + 2, C + 3]);
   });
 
   it('follows the run live once the seed is delivered', async () => {
     const port = await start();
     const runId = await openLiveRun();
     const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
-    await seedSnapshot(runId, deltaFixture(runId, 1, [0]));
+    await seedSnapshot(runId, snapshotFixture(runId, 0, [0]));
     const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
     await collect(conn, 1);
     await vi.waitFor(() => expect(ctx.app.get(LiveHub).size(runId)).toBe(1));
 
-    const live = deltaFixture(runId, 2, [1000]);
+    // Seq 1 is exactly the snapshot's label -- the delta it does NOT contain.
+    const live = deltaFixture(runId, 1, [1000]);
     await redis!.publish(`live:${runId}`, JSON.stringify(live));
 
     const frames = await collect(conn, 2);
@@ -314,12 +471,13 @@ describe('the live gateway seeds, replays, then follows', () => {
     const port = await start();
     const runId = await openLiveRun();
     const cookie = await signUpAsOrgMember(ctx, `member-${randomUUID()}@example.com`);
-    await seedSnapshot(runId, deltaFixture(runId, 5, [0, 1000, 2000, 3000, 4000]));
+    await seedSnapshot(runId, snapshotFixture(runId, 5, [0, 1000, 2000, 3000, 4000]));
     await appendDeltas(runId, [6, 7, 8].map((seq) => deltaFixture(runId, seq, [(seq - 1) * 1000])));
 
-    const conn = connect(port, `/v1/runs/${runId}/live`, cookie);
-    await opened(conn);
-    conn.socket.send(JSON.stringify({ lastSeq: 6 }));
+    // A QUERY PARAMETER, not a first frame: the server has the answer before
+    // the handshake completes, so a fresh connection -- which sends nothing --
+    // never waits out a timeout to be told it is fresh.
+    const conn = connect(port, `/v1/runs/${runId}/live?lastSeq=6`, cookie);
 
     const frames = await collect(conn, 2);
     // No snapshot frame at all: the client already holds everything up to 6,

@@ -53,15 +53,9 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.1.6
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)
-      '@nestjs/platform-ws':
-        specifier: ^11.2.1
-        version: 11.2.1(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/websockets@11.2.1)(rxjs@7.8.2)
       '@nestjs/swagger':
         specifier: ^8.1.0
         version: 8.1.1(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)
-      '@nestjs/websockets':
-        specifier: ^11.2.1
-        version: 11.2.1(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@perfportal/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -917,13 +911,6 @@ packages:
     peerDependencies:
       '@nestjs/common': ^11.0.0
       '@nestjs/core': ^11.0.0
-
-  '@nestjs/platform-ws@11.2.1':
-    resolution: {integrity: sha512-BG1n74Pn1LwEBccGC9faextXl7jov2gxhLI7ck5vaXOlbfqQxMK9pzzI7eSXjyx2e60OpcUDbF9jiWHQRypZMQ==}
-    peerDependencies:
-      '@nestjs/common': ^11.0.0
-      '@nestjs/websockets': ^11.0.0
-      rxjs: ^7.1.0
 
   '@nestjs/swagger@8.1.1':
     resolution: {integrity: sha512-5Mda7H1DKnhKtlsb0C7PYshcvILv8UFyUotHzxmWh0G65Z21R3LZH/J8wmpnlzL4bmXIfr42YwbEwRxgzpJ5sQ==}
@@ -3604,18 +3591,6 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.21.2:
-    resolution: {integrity: sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -4202,17 +4177,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@nestjs/platform-ws@11.2.1(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/websockets@11.2.1)(rxjs@7.8.2)':
-    dependencies:
-      '@nestjs/common': 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      '@nestjs/websockets': 11.2.1(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      rxjs: 7.8.2
-      tslib: 2.8.1
-      ws: 8.21.2
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
   '@nestjs/swagger@8.1.1(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)':
     dependencies:
       '@microsoft/tsdoc': 0.15.1
@@ -4242,6 +4206,7 @@ snapshots:
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
       tslib: 2.8.1
+    optional: true
 
   '@noble/ciphers@2.3.0': {}
 
@@ -5996,7 +5961,8 @@ snapshots:
 
   object-assign@4.1.1: {}
 
-  object-hash@3.0.0: {}
+  object-hash@3.0.0:
+    optional: true
 
   object-inspect@1.13.4: {}
 
@@ -6726,8 +6692,6 @@ snapshots:
   word-wrap@1.2.5: {}
 
   wrappy@1.0.2: {}
-
-  ws@8.21.2: {}
 
   ws@8.21.3: {}
 

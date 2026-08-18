@@ -6,7 +6,7 @@ import type { LiveDelta } from '@perfportal/contracts';
 import type { OrgMemberRepository, RunRepository } from '@perfportal/persistence';
 import { fromNodeHeaders } from 'better-auth/node';
 import { Redis } from 'ioredis';
-import { WebSocket, WebSocketServer, type RawData } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { auth } from '../auth/better-auth.instance.js';
 import { LiveHub, type LiveSink } from './live-hub.js';
 
@@ -39,23 +39,23 @@ const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 /**
  * The most a client may send in one frame.
  *
- * Its entire vocabulary is `{ lastSeq: number }`. `ws` defaults to a 100 MiB
- * inbound limit, which on an endpoint that reads exactly one small object is
- * a per-socket heap budget handed to whoever opened the socket.
+ * A client has NO vocabulary here -- the resume cursor is a query parameter
+ * (below) and nothing else is ever read -- so this is purely a bound on abuse.
+ * `ws` defaults to 100 MiB, which on an endpoint that reads nothing is a
+ * per-socket heap budget handed to whoever opened the socket.
  */
 const MAX_CLIENT_FRAME_BYTES = 4096;
 
 /**
- * How long the seed waits for the client's optional `{ lastSeq }` frame.
+ * The resume cursor: `?lastSeq=N`, the highest seq the client already holds.
  *
- * The resume cursor is a FRAME rather than a query parameter (design §2.2), so
- * there is no way to know a fresh connection is fresh except by not hearing
- * one. That costs every fresh connect this much latency before its snapshot --
- * against re-sending a ~2 MB seed the client already holds on every reconnect,
- * which is precisely what a deploy or a wifi blip produces in bulk. A quarter
- * of a second against a 5 s tick is not visible; the seed is not.
+ * A QUERY PARAMETER, NOT A FIRST FRAME. As a frame the server cannot tell a
+ * fresh connection from a resuming one except by not hearing one, so every
+ * connection would have to wait out a timeout before it could be seeded -- and
+ * fresh connects, which send nothing, are the common case. On the URL the
+ * answer is present before the handshake completes and costs nothing.
  */
-const RESUME_FRAME_WAIT_MS = 250;
+const RESUME_PARAM = 'lastSeq';
 
 /**
  * Deltas the hub may deliver while the seed is still being read.
@@ -80,6 +80,12 @@ interface Seed {
   snapshot: string | null;
   partial: boolean;
   replay: StreamEntry[];
+  /**
+   * The highest seq the client HOLDS once this seed is delivered -- which is
+   * not always the highest seq it has SEEN. See {@link LiveGateway.attemptSeed}:
+   * a snapshot is stamped with the seq it does not yet contain, so a seed made
+   * of a snapshot alone leaves the client holding `snapshot.seq - 1`.
+   */
   lastSeq: number;
 }
 
@@ -99,6 +105,21 @@ function seqOf(body: string): number | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The client's resume cursor, or null for a fresh connection.
+ *
+ * Anything that is not a non-negative integer -- absent, malformed, hostile --
+ * reads as fresh. A resume cursor is an optimisation, so a bad one must
+ * degrade to the correct answer (a full seed), never to a partial series
+ * presented as whole.
+ */
+function readResumeCursor(url: URL): number | null {
+  const raw = url.searchParams.get(RESUME_PARAM);
+  if (raw === null || !/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
 }
 
 /**
@@ -218,7 +239,18 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
   };
 
   private async handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
-    const runId = LIVE_PATH.exec(new URL(req.url ?? '/', 'http://localhost').pathname)?.[1];
+    // FIRST STATEMENT, BEFORE ANY AWAIT, AND THIS IS NOT DEFENSIVE PADDING.
+    // Node's HTTP server removes its own 'error' listener before emitting
+    // 'upgrade', and `ws` attaches its as the first thing `handleUpgrade` does
+    // -- which is below, past the session lookup and two DB round trips. For
+    // the whole of that window the raw socket has NO 'error' listener, so a
+    // TCP reset from an unauthenticated caller is an uncaught 'error' event
+    // and the process exits. `socket.destroyed` catches a clean FIN, not an
+    // RST, so it is not a substitute. This also covers the 503 write below.
+    socket.on('error', () => socket.destroy());
+
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const runId = LIVE_PATH.exec(url.pathname)?.[1];
     if (runId === undefined) {
       // Node destroys an upgrade nobody listens for; the moment THIS listener
       // exists it stops doing that, so an unmatched path would hold a socket
@@ -249,6 +281,13 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
 
     this.#wss.handleUpgrade(req, socket, head, (ws) => {
       if (!authorized) {
+        // `close()` DOES NOT STOP THE SOCKET READING. The receiver keeps
+        // parsing whatever the caller sends next, and a protocol violation or
+        // a frame declaring more than `maxPayload` reaches `receiverOnError`,
+        // which emits 'error' on this instance -- with no listener, on an
+        // UNAUTHENTICATED connection, that is an uncaught exception and the
+        // process exits. The authorized path gets its listener in `serve`.
+        ws.on('error', () => undefined);
         // CLOSED, never accepted-then-errored: an accepted socket is one an
         // unauthorized caller can hold open. There is no `await` between the
         // handshake and this close, so no frame can precede it -- which is
@@ -257,7 +296,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
         ws.close(CLOSE_UNAUTHORIZED, 'unauthorized');
         return;
       }
-      void this.serve(ws, runId);
+      void this.serve(ws, runId, readResumeCursor(url));
     });
   }
 
@@ -273,7 +312,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
    * what arrives closes it; the buffer is flushed behind the replay, filtered
    * by `seq`, so nothing is delivered twice or out of order.
    */
-  private async serve(socket: WebSocket, runId: string): Promise<void> {
+  private async serve(socket: WebSocket, runId: string, clientLastSeq: number | null): Promise<void> {
     let seeded = false;
     let lastSeq = -1;
     const pending: string[] = [];
@@ -303,18 +342,22 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
     socket.on('close', leave);
     socket.on('error', leave);
 
-    // Registered before the first `await`, so a client that sends its resume
-    // cursor the instant the handshake completes cannot beat the listener.
-    const resume = this.awaitResume(socket);
-
     try {
       await this.hub.join(runId, sink);
-      const clientLastSeq = await resume;
       const seed = await this.seed(runId, clientLastSeq);
       if (socket.readyState !== WebSocket.OPEN) return;
 
       if (seed.snapshot !== null) {
-        this.write(socket, `{"type":"snapshot","partial":${seed.partial},"delta":${seed.snapshot}}`);
+        // `lastSeq` IS NOT `delta.seq`, and the client needs to be told which
+        // to resume from. The producer stamps a snapshot with the seq it does
+        // NOT yet contain, so a client that echoed `delta.seq` back as its
+        // cursor would ask the server to skip the one delta the snapshot is
+        // missing -- the same off-by-one the seam below is built to avoid,
+        // one layer up and just as silent.
+        this.write(
+          socket,
+          `{"type":"snapshot","partial":${seed.partial},"lastSeq":${seed.lastSeq},"delta":${seed.snapshot}}`,
+        );
       }
       for (const entry of seed.replay) this.deliver(socket, entry.body);
       lastSeq = seed.lastSeq;
@@ -329,38 +372,6 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
       console.error(`LiveGateway: seed failed for ${runId}:`, err);
       socket.close(1011, 'seed failed');
     }
-  }
-
-  /**
-   * Waits for the client's optional `{ lastSeq }` frame, or gives up.
-   *
-   * Anything that is not a non-negative integer `lastSeq` -- a malformed
-   * frame, a hostile one, an empty one -- resolves to null and takes the fresh
-   * seed. A resume cursor is an optimisation; a bad one must degrade to the
-   * correct answer, never to a partial series presented as whole.
-   */
-  private awaitResume(socket: WebSocket): Promise<number | null> {
-    return new Promise((resolve) => {
-      const finish = (value: number | null): void => {
-        clearTimeout(timer);
-        socket.off('message', onMessage);
-        socket.off('close', onClose);
-        resolve(value);
-      };
-      const onMessage = (data: RawData): void => {
-        try {
-          const parsed: unknown = JSON.parse(String(data));
-          const value = (parsed as { lastSeq?: unknown }).lastSeq;
-          finish(typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null);
-        } catch {
-          finish(null);
-        }
-      };
-      const onClose = (): void => finish(null);
-      const timer = setTimeout(() => finish(null), RESUME_FRAME_WAIT_MS);
-      socket.on('message', onMessage);
-      socket.on('close', onClose);
-    });
   }
 
   /**
@@ -409,19 +420,41 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
         snapshot: head?.body ?? JSON.stringify(emptyDelta(runId)),
         partial: true,
         replay: entries.slice(1),
-        lastSeq: entries.at(-1)?.seq ?? 0,
+        // -1, NOT 0. Deltas are zero-indexed (`INITIAL_CURSOR.seq` is 0), and
+        // seq 0 is the one delta that carries `replaces: true` and the series
+        // from offset 0. A browser opening the page in a run's first seconds
+        // finds neither key, and `?? 0` made the flush drop the owner's very
+        // first tick on `0 > 0`.
+        lastSeq: entries.at(-1)?.seq ?? -1,
         holed: false,
       };
     }
 
+    // ═══ A SNAPSHOT IS STAMPED WITH THE SEQ IT DOES NOT CONTAIN ═══
+    // `LiveFoldOwner#publish` emits delta C, advances its cursor to C+1, and
+    // only THEN writes the snapshot -- from the SAME EngineResult delta C came
+    // from, stamped `next.seq` (`fold-owner.ts`, and `buildSnapshot`'s own
+    // docstring at `delta.ts`: "the seed's seq is the point a consumer resumes
+    // the stream FROM"). So a snapshot labelled C+1 holds state through C, and
+    // the first delta a seeded client still needs is the stream entry AT C+1.
+    //
+    // Reading it as "everything after C+1" drops exactly one delta, and drops
+    // it INVISIBLY: the client's own last-seen seq is C+1, so the next frame
+    // is contiguous and its gap detection never fires. `users`, `errors` and
+    // `summary` are sent whole every tick and self-heal; `responseTime` is an
+    // upsert and does not -- a handful of buckets simply vanish from the
+    // middle of the chart for the rest of the run.
     const oldest = entries[0]?.seq;
-    const holed = oldest !== undefined && oldest > snapshot.seq + 1;
-    const replay = entries.filter((entry) => entry.seq > snapshot.seq);
+    const holed = oldest !== undefined && oldest > snapshot.seq;
+    const replay = entries.filter((entry) => entry.seq >= snapshot.seq);
     return {
       snapshot: snapshot.body,
       partial: holed,
       replay,
-      lastSeq: replay.at(-1)?.seq ?? snapshot.seq,
+      // With nothing to replay the client holds state through C, one behind
+      // the label -- so a delta at C+1 buffered during the seed must still
+      // pass the flush filter.
+      lastSeq: replay.at(-1)?.seq ?? snapshot.seq - 1,
       holed,
     };
   }
