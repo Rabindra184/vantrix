@@ -182,6 +182,51 @@ export const LiveErrorsSchema = z.object({
 });
 export type LiveErrors = z.infer<typeof LiveErrorsSchema>;
 
+export const LiveBreachSchema = z.object({
+  ruleId: z.string(),
+  /** The evaluator's own message — one sentence, already human-readable. */
+  description: z.string(),
+  actualValue: z.number(),
+  /** Elapsed run offset at which this rule began breaching. */
+  sinceOffsetMs: z.number().int(),
+});
+export type LiveBreach = z.infer<typeof LiveBreachSchema>;
+
+/**
+ * ONLY the breaching rules travel. `evaluated` is a count so a reader can be
+ * told "2 of 7 breaching" without six passing rules riding every tick.
+ *
+ * THREE NUMBERS, NOT ONE, because "we did not check" is a different fact from
+ * "we checked and it was fine" and a banner built on `evaluated` alone cannot
+ * say which it means. A project with seven rules whose percentile rules are
+ * still below the live evidence floor reads "1 of 1" at second 30 and "1 of 7"
+ * at minute 3, with nothing accounting for the six that moved — and the gate
+ * exists for exactly the opening minutes, so the denominator is least
+ * trustworthy when the banner is most likely to be read.
+ *
+ *  - `evaluated`  — passed + failed. Rules that were actually judged.
+ *  - `notJudged`  — `not_applicable`. Below the evidence floor, no matching
+ *                   statistic, an ambiguous target: judged by nobody, for
+ *                   reasons the assertion's own message carries and this
+ *                   count deliberately does not distinguish.
+ *  - `rulesUnavailable` — the rules could not be LOADED for this run at all
+ *                   (`LiveFoldOwner`'s `#claimContext`). Zero rules with this
+ *                   false means a project with no SLA; zero rules with it
+ *                   true means nothing is being checked and nobody knows what
+ *                   should be. Those two render identically — as nothing —
+ *                   without this flag.
+ *
+ * Both are defaulted for `LiveDeltaSchema['sla']`'s own reason: a body
+ * already in Redis was written by whatever code was running at the time.
+ */
+export const LiveSlaSchema = z.object({
+  evaluated: z.number().int(),
+  notJudged: z.number().int().default(0),
+  rulesUnavailable: z.boolean().default(false),
+  breaching: z.array(LiveBreachSchema),
+});
+export type LiveSla = z.infer<typeof LiveSlaSchema>;
+
 /**
  * A delta published by the fold engine to Redis on a timer, carrying the
  * incremental update to a run's statistics since the last delta.
@@ -202,5 +247,26 @@ export const LiveDeltaSchema = z.object({
   responseTime: LiveResponseTimeSchema,
   users: LiveUsersSchema,
   errors: LiveErrorsSchema,
+  /**
+   * DEFAULTED, not required — for the same reason `LiveSeriesBucketSchema`'s
+   * started splits are nullable: a body that is already in Redis was written
+   * by whatever code was running when it was written.
+   *
+   * `sla` arrived on this branch. The browser validates every inbound frame
+   * and DROPS THE WHOLE FRAME on failure (`apps/web/src/api/live.ts`'s
+   * `parseFrame`), and the gateway does not validate at all — it forwards
+   * stored bodies as they are. Snapshots live for `SNAPSHOT_TTL_SECONDS` and
+   * replay entries for `REPLAY_TTL_SECONDS`, so during any rolling deploy
+   * (new web assets, old worker still publishing) a required `sla` means
+   * every delta fails `safeParse`, every frame is dropped, and the live page
+   * renders NOTHING for the whole deploy window — with one `console.error`
+   * per frame as the only trace. A run that closed just before the deploy is
+   * worse: its snapshot has no owner left to republish it, so the frame never
+   * becomes valid.
+   *
+   * The default is the honest reading of a body that predates the field: no
+   * rule was evaluated, so none is breaching and none was withheld.
+   */
+  sla: LiveSlaSchema.default({ evaluated: 0, breaching: [] }),
 });
 export type LiveDelta = z.infer<typeof LiveDeltaSchema>;

@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { Redis } from 'ioredis';
-import { createPool, createPrisma } from '@perfportal/persistence';
+import { createPool, createPrisma, RuleRepository } from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
@@ -27,11 +27,22 @@ const config = loadWorkerConfig();
  * Derived the same way as the pool below, so the total is a number someone
  * chose:
  *  - `concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB` -- Prisma is reached
- *    ONLY from `PipelineService` in this process (`RunRepository`,
+ *    from `PipelineService` in this process (`RunRepository`,
  *    `ProjectRepository`, `RuleRepository`), and only ever one query at a
  *    time per job: nothing in `packages/persistence` opens an interactive
  *    `$transaction`, so a job never holds two Prisma connections at once.
- *    `Sweeper` and `LiveFoldOwner` do not touch Prisma at all.
+ *  - `maxOwnedRuns * FOLD_OWNER_CLAIM_PRISMA_CLIENTS` -- live-sla-signals
+ *    Task 3 added `LiveFoldOwner`'s own Prisma reach: `#claimRules` reads a
+ *    run's SLA rules through `RuleRepository`, ONCE, on EVERY claim that
+ *    wins its advisory lock -- not only on the `live:opened` ping's
+ *    tenant-lookup fallback path. `#claiming`'s own cap bounds how many
+ *    claims can be in flight AT ONCE to `maxOwnedRuns`
+ *    (`#atCap()`'s `#owned.size + #claiming.size >= maxOwnedRuns`), and that
+ *    is exactly the burst `#claiming` itself exists to survive (a fan-out of
+ *    `live:opened` pings, NFR-SC-4's documented load) -- so up to
+ *    `maxOwnedRuns` of these Prisma queries can legitimately be in flight at
+ *    the same instant. `Sweeper` still does not touch Prisma at all; as of
+ *    Task 3, `LiveFoldOwner` does.
  *  - `PRISMA_HEADROOM` -- one spare, so a `P2024` pool timeout cannot be
  *    reached by a single unaccounted-for query (a future repository call
  *    outside a job, a shutdown-time read) rather than by real pressure.
@@ -40,9 +51,13 @@ const config = loadWorkerConfig();
  * see `createPrisma`.
  */
 const PIPELINE_PRISMA_CLIENTS_PER_JOB = 1;
+const FOLD_OWNER_CLAIM_PRISMA_CLIENTS = 1;
 const PRISMA_HEADROOM = 1;
 const prisma = createPrisma(config.databaseUrl, {
-  connectionLimit: config.concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB + PRISMA_HEADROOM,
+  connectionLimit:
+    config.concurrency * PIPELINE_PRISMA_CLIENTS_PER_JOB +
+    config.maxOwnedRuns * FOLD_OWNER_CLAIM_PRISMA_CLIENTS +
+    PRISMA_HEADROOM,
 });
 
 /**
@@ -109,7 +124,11 @@ const sweeper = new Sweeper(config, pool);
 // subscriber-mode connection from this one internally (`redis.duplicate()`
 // in its constructor -- see `#sub`'s own doc comment); nothing here needs to
 // construct or pass in a second connection for that.
-const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+// `RuleRepository` on the pipeline's OWN `prisma` client, not a new one --
+// LiveFoldOwner reads no other Prisma-backed table, so this is the only
+// reason it would otherwise open a second pool, and that pool's connections
+// are exactly what the sizing comment above does not count.
+const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), new RuleRepository(prisma));
 // Subscribes the owner to `live:opened`/`live:advance` (design §1.2, §2.3).
 // FIRE-AND-FORGET, not awaited -- fix round 1, Minor 3. An earlier version
 // awaited this before either timer below started, on the theory that a

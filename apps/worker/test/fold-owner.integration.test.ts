@@ -2,16 +2,22 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { LiveDeltaSchema, type LiveDelta } from '@perfportal/contracts';
-import { createPool, createPrisma } from '@perfportal/persistence';
+import { createPool, createPrisma, RuleRepository } from '@perfportal/persistence';
 import { parseSimulationLog, StreamingLogDecoder } from '@perfportal/plugin-gatling';
 import { runEngine, type EngineResult } from '@perfportal/statistics';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { Redis } from 'ioredis';
 import type pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
 import { LiveFoldOwner, REPLAY_TTL_SECONDS } from '../src/live/fold-owner.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
+// A synthetic simulation.log this file's SLA cases own outright -- see
+// `synthetic-log.ts`'s own header for why the reference fixture cannot serve
+// them. Extracted to a module rather than kept inline because
+// `sla-agreement.integration.test.ts` needs exactly the same bytes to compare
+// the live and batch call sites against each other.
+import { buildRequestBatch, buildRunHeader, RUN_START_MS } from './synthetic-log.js';
 
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
@@ -25,6 +31,11 @@ const pool = createPool(config.databaseUrl);
 const prisma = createPrisma(config.databaseUrl);
 const blobs = new BlobStore(config.blob);
 const chunks = new LiveChunkStore(blobs);
+// Built on the SAME prisma client every other helper in this file already
+// shares (main.ts's own comment on why LiveFoldOwner never gets a second
+// one) -- every `new LiveFoldOwner(...)` call below now takes this as its
+// fifth argument.
+const rules = new RuleRepository(prisma);
 
 let log: Buffer;
 
@@ -76,6 +87,12 @@ async function seedRunningRun(
   orgId: string,
   projectId: string,
   rawLogLength: number,
+  // The run's frozen engine options, exactly as `LiveService.open` writes
+  // them from project settings. Defaulted to `{}` because that is what every
+  // case here needed before the fold owner threaded them into its own
+  // `LiveEngine` -- which is also why NO case here could see that it did not
+  // (whole-branch review, A1).
+  engineOptions: Record<string, unknown> = {},
 ): Promise<string> {
   const startedAt = new Date('2026-08-07T10:00:00Z');
   const run = await prisma.run.create({
@@ -85,10 +102,37 @@ async function seedRunningRun(
       bundleSha256: createHash('sha256').update(randomUUID()).digest('hex'),
       bundleBytes: BigInt(rawLogLength), streamOffset: BigInt(rawLogLength),
       startedAt, startedOn: new Date('2026-08-07T00:00:00Z'),
-      engineOptions: {},
+      engineOptions: engineOptions as object,
     },
   });
   return run.id;
+}
+
+/** One enabled rule at run scope, against the run-scope `response_time` stat
+ * every request rolls into (`scope: 'run', name: ''`, engine.ts's own
+ * `#rollupFor('run', '', 'response_time')`). Shared by the SLA-evaluation
+ * cases below and by the `live:opened` burst case, which needs a real rule
+ * in the database to prove concurrent claims attribute it to the right run
+ * rather than merely proving they do not overshoot the cap. */
+async function seedSlaRule(
+  orgId: string,
+  projectId: string,
+  opts: { metric: string; comparator: 'lte' | 'gte'; threshold: number },
+): Promise<string> {
+  const rule = await prisma.slaRule.create({
+    data: {
+      orgId,
+      projectId,
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: opts.metric,
+      comparator: opts.comparator,
+      threshold: opts.threshold,
+      enabled: true,
+    },
+  });
+  return rule.id;
 }
 
 const runStat = (r: EngineResult) => r.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
@@ -138,6 +182,16 @@ async function nextPublishedDelta(owner: LiveFoldOwner, runId: string): Promise<
   }
 }
 
+/** `owner.breachingSinceOf(runId)` as an array, for `toHaveLength`/index
+ * assertions -- the Map itself is the right shape for the production code,
+ * an array is the right shape for a test. */
+function breachesOf(o: LiveFoldOwner, id: string): { ruleId: string; sinceOffsetMs: number }[] {
+  return [...(o.breachingSinceOf(id) ?? [])].map(([rid, sinceOffsetMs]) => ({
+    ruleId: rid,
+    sinceOffsetMs,
+  }));
+}
+
 describe('LiveFoldOwner', () => {
   it('folds a streaming run to the same numbers a batch parse produces', async () => {
     await truncateAll();
@@ -153,7 +207,7 @@ describe('LiveFoldOwner', () => {
     // client past the end of the test -- and afterAll's pool.end() then
     // hangs waiting for it, turning one assertion failure into a
     // hookTimeout that hides the real error.
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -176,7 +230,7 @@ describe('LiveFoldOwner', () => {
     const half = Math.floor(log.length / 2);
     await chunks.put(runId, 0, log.subarray(0, half));
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       const partial = runStat(owner.snapshotOf(runId)!)!;
@@ -202,8 +256,8 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const a = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
-    const b = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const a = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    const b = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await a.tick();
       await b.tick();
@@ -225,8 +279,8 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
-    const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(owner.snapshotOf(runId)).not.toBeNull();
@@ -255,7 +309,7 @@ describe('LiveFoldOwner', () => {
       runIds.push(runId);
     }
 
-    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 2 }, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 2 }, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -293,10 +347,26 @@ describe('LiveFoldOwner', () => {
    *
    * `>= runIds.length` deliberately is NOT the assertion: the point is the
    * exact number, since the failure mode is overshoot, not undershoot.
+   *
+   * ALSO the one case in this file that exercises `#claimRules`'s Prisma
+   * query under real concurrency (live-sla-signals Task 3, review round 2,
+   * IMPORTANT 1): every claim below runs off an unserialized `message`
+   * event, exactly like the pings above, so up to `maxOwnedRuns` of them can
+   * have `RuleRepository.listEnabled` in flight against Prisma's pool at
+   * once -- the burst `main.ts`'s `FOLD_OWNER_CLAIM_PRISMA_CLIENTS` sizing
+   * term exists for. One rule, shared by every candidate run (they share one
+   * project), so `rulesOf` on each of the two that actually got claimed
+   * proves attribution held under the race rather than merely that nothing
+   * threw.
    */
   it('a burst of live:opened pings does not overshoot maxOwnedRuns', async () => {
     await truncateAll();
     const { orgId, projectId } = await seedOrgProject();
+    const ruleId = await seedSlaRule(orgId, projectId, {
+      metric: 'error_rate',
+      comparator: 'lte',
+      threshold: 0.5,
+    });
     const runIds: string[] = [];
     for (let i = 0; i < 6; i++) {
       const runId = await seedRunningRun(orgId, projectId, log.length);
@@ -311,6 +381,7 @@ describe('LiveFoldOwner', () => {
       pool,
       chunks,
       new Redis(config.redisUrl),
+      rules,
     );
     try {
       await owner.listen();
@@ -336,6 +407,17 @@ describe('LiveFoldOwner', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       expect(ownedCount()).toBe(maxOwnedRuns);
+
+      // Every claim that won its race also won its OWN rule load, not a
+      // neighbour's -- and neither `#lookupTenant` nor `RuleRepository`
+      // failed under the concurrent load, which `rulesLoadFailedFor` would
+      // otherwise have caught silently turning into "no rules configured".
+      for (const id of runIds.filter((rid) => owner.snapshotOf(rid) !== null)) {
+        expect(owner.rulesLoadFailedFor(id)).toBe(false);
+        expect(owner.rulesOf(id)).toEqual([
+          expect.objectContaining({ id: ruleId, metric: 'error_rate', threshold: 0.5 }),
+        ]);
+      }
     } finally {
       await publisher.quit();
       await owner.close();
@@ -377,7 +459,7 @@ describe('LiveFoldOwner', () => {
     const STORAGE_CHUNK = 4;      // smaller than every record in the fixture (min ~10 bytes)
     const TICK_BATCH = 4096;      // bytes newly available between ticks; not record-aligned
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       let written = 0;
       while (written < log.length) {
@@ -433,7 +515,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(badRunId, 0, corrupted);
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await expect(owner.tick()).resolves.toBeUndefined();
 
@@ -491,7 +573,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, corrupted);
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(errorSpy).toHaveBeenCalledTimes(1);
@@ -531,7 +613,7 @@ describe('LiveFoldOwner', () => {
     const half = Math.floor(log.length / 2);
     await chunks.put(runId, 0, log.subarray(0, half));
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       const partial = runStat(owner.snapshotOf(runId)!)!;
@@ -663,7 +745,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(owner.snapshotOf(goodRunId)).not.toBeNull();
@@ -680,7 +762,7 @@ describe('LiveFoldOwner', () => {
       // pg_advisory_unlock against Postgres), so its own recovery is not
       // this assertion's concern, only the good run's is.
       await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [badRunId]);
-      const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+      const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
       try {
         await other.tick();
         expect(other.snapshotOf(goodRunId)).not.toBeNull();
@@ -753,7 +835,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, ownerPool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, ownerPool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(owner.snapshotOf(runId)).not.toBeNull();
@@ -815,7 +897,7 @@ describe('LiveFoldOwner', () => {
     }
 
     const smallPool = createPool(config.databaseUrl, { max: 2, connectionTimeoutMillis: 500 });
-    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks, new Redis(config.redisUrl), rules);
     try {
       const start = Date.now();
       await owner.tick();
@@ -861,7 +943,7 @@ describe('LiveFoldOwner', () => {
       seen.push(LiveDeltaSchema.parse(JSON.parse(message)));
     });
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const half = Math.floor(log.length / 2);
       await chunks.put(runId, 0, log.subarray(0, half));
@@ -900,7 +982,7 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const half = Math.floor(log.length / 2);
       await chunks.put(runId, 0, log.subarray(0, half));
@@ -971,7 +1053,7 @@ describe('LiveFoldOwner', () => {
       .mockRejectedValueOnce(new Error('synthetic publish failure'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const owner = new LiveFoldOwner(config, pool, chunks, publisherRedis);
+    const owner = new LiveFoldOwner(config, pool, chunks, publisherRedis, rules);
     try {
       await owner.tick();
       expect(
@@ -1062,7 +1144,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const tickPromise = owner.tick();
       await claimStartedPromise; // #claim's own connect() call is now gated, in flight
@@ -1083,7 +1165,7 @@ describe('LiveFoldOwner', () => {
       // The lock is genuinely free: a fresh owner can claim this run
       // immediately, proving the delayed claim's client was released, not
       // leaked, once it discovered #closing.
-      const verifier = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+      const verifier = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
       try {
         await verifier.tick();
         expect(verifier.snapshotOf(runId)).not.toBeNull();
@@ -1151,7 +1233,7 @@ describe('LiveFoldOwner', () => {
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const owner = new LiveFoldOwner({ ...config, liveTickMs: 20 }, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner({ ...config, liveTickMs: 20 }, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const stuckTick = owner.tick(); // resolves only once STUCK_MS elapses
 
@@ -1214,7 +1296,7 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       expect(owner.snapshotOf(runId)).toBeNull();
@@ -1245,7 +1327,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log.subarray(0, half));
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       await owner.tick();
@@ -1293,7 +1375,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       await owner.tick();
@@ -1352,7 +1434,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       await owner.tick();
@@ -1409,7 +1491,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       expect(owner.snapshotOf(runId)).toBeNull();
@@ -1490,7 +1572,7 @@ describe('LiveFoldOwner', () => {
     });
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
 
@@ -1591,7 +1673,7 @@ describe('LiveFoldOwner', () => {
     });
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
 
@@ -1650,7 +1732,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -1690,7 +1772,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       // The FIRST tick both publishes delta 0 AND writes the first snapshot
       // (`FoldState.ticksSinceSnapshot` starts at `SNAPSHOT_EVERY_N_TICKS` on
@@ -1729,7 +1811,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, redis);
+    const owner = new LiveFoldOwner(config, pool, chunks, redis, rules);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const set = vi.spyOn(redis, 'set').mockRejectedValueOnce(new Error('redis down'));
@@ -1770,7 +1852,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -1815,7 +1897,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       // The previous incarnation's last published delta. `seq` is the only
       // field the claim reads out of it -- the rest of a delta body says
@@ -1837,5 +1919,402 @@ describe('LiveFoldOwner', () => {
       await redis.quit();
       await owner.close();
     }
+  });
+
+  /**
+   * Task 3 (live-sla-signals): `#publish` now runs the SAME pure evaluator
+   * `PipelineService` runs against a finished run, through the SAME
+   * `toEvaluableStats` mapping, gated by `liveEvidenceFloor` -- so a running
+   * test's breach banner agrees with the verdict the same run would get if
+   * it ended right now.
+   *
+   * Every case here shares one synthetic run: `KO_COUNT` failures against
+   * `INITIAL_OK_COUNT` successes, chosen with margin on both sides of the
+   * `0.01` threshold the cases below use, so a breach or a recovery is never
+   * a coin flip against floating-point rounding --
+   *   - 2 of 150 (1.33%) is comfortably ABOVE 0.01 (breaches);
+   *   - 2 of 400, after `foldEnoughSuccessesToRecover`, is comfortably BELOW
+   *     it (0.5%, recovers).
+   * Both are also comfortably above `liveEvidenceFloor`'s flat 100 for a
+   * scalar metric, so neither tick is "not enough evidence yet".
+   */
+  describe('SLA evaluation', () => {
+    const KO_COUNT = 2;
+    const INITIAL_OK_COUNT = 148;
+    const RECOVER_EXTRA_OK = 250;
+
+    let orgId: string;
+    let projectId: string;
+    let runId: string;
+    let owner: LiveFoldOwner;
+    let ruleId: string;
+    // The byte offset the NEXT `chunks.put` should land at -- the initial
+    // seed below already occupies `[0, initialLog.length)`, so
+    // `foldEnoughSuccessesToRecover` has to know where that left off rather
+    // than guessing a chunk boundary, exactly like every other multi-put
+    // case in this file (e.g. "folds only the new bytes on a second tick").
+    let nextByteOffset: number;
+
+    beforeEach(async () => {
+      await truncateAll();
+      ({ orgId, projectId } = await seedOrgProject());
+      const initialLog = Buffer.concat([
+        buildRunHeader(RUN_START_MS),
+        buildRequestBatch(0, KO_COUNT, false),
+        buildRequestBatch(KO_COUNT, INITIAL_OK_COUNT, true),
+      ]);
+      runId = await seedRunningRun(orgId, projectId, initialLog.length);
+      await chunks.put(runId, 0, initialLog);
+      nextByteOffset = initialLog.length;
+      owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    });
+
+    afterEach(async () => {
+      // Same reason every other case in this file closes its own owner: an
+      // owned run holds a pooled client for its lock's whole lifetime, and a
+      // leaked one turns the NEXT hook's assertion failure into afterAll's
+      // pool.end() hanging instead.
+      await owner.close();
+    });
+
+    /** Wraps the shared `seedSlaRule`, recording the id on the closure for
+     * `tightenRuleTo` to find. */
+    async function seedRule(opts: {
+      metric: string;
+      comparator: 'lte' | 'gte';
+      threshold: number;
+    }): Promise<void> {
+      ruleId = await seedSlaRule(orgId, projectId, opts);
+    }
+
+    /** Edits the threshold of the rule `seedRule` most recently created --
+     * standing in for an operator editing a rule mid-run, straight against
+     * the row, the same way `chunks.put` stands in for the agent streaming
+     * more bytes. */
+    async function tightenRuleTo(threshold: number): Promise<void> {
+      await prisma.slaRule.update({ where: { id: ruleId }, data: { threshold } });
+    }
+
+    /** Appends `RECOVER_EXTRA_OK` more successes onto the SAME byte stream --
+     * no new header, exactly like a real agent's next chunk: the decoder's
+     * string cache and running byte position both live past the first
+     * `owner.tick()` that read the initial seed. */
+    async function foldEnoughSuccessesToRecover(): Promise<void> {
+      const extra = buildRequestBatch(INITIAL_OK_COUNT + KO_COUNT, RECOVER_EXTRA_OK, true);
+      await chunks.put(runId, nextByteOffset, extra);
+      nextByteOffset += extra.length;
+    }
+
+    it('reports a rule that is breaching, with the offset it started breaching at', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      await owner.tick(); // fold enough failures to breach
+      const first = breachesOf(owner, runId);
+      expect(first).toHaveLength(1);
+      expect(first[0]!.sinceOffsetMs).toBeGreaterThanOrEqual(0);
+
+      await owner.tick();
+      // A STATE, not an event: the same breach, and the "since" does not move.
+      expect(breachesOf(owner, runId)[0]!.sinceOffsetMs).toBe(first[0]!.sinceOffsetMs);
+    });
+
+    it('clears a breach when the metric recovers', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(1);
+
+      await foldEnoughSuccessesToRecover();
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(0);
+    });
+
+    // The rules a run is judged against are the ones it started under.
+    it('does not pick up a rule edited after the run was claimed', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.99 });
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(0);
+
+      await tightenRuleTo(0.0001); // would breach, if it were re-read
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(0);
+    });
+
+    /**
+     * Review round 2, IMPORTANT 1 (also covering the "zero test coverage"
+     * finding): every case above claims through `owner.tick()`'s own poll,
+     * which always has `org_id`/`project_id` in hand from the widened
+     * discovery query. A `live:opened` PING never does -- it carries a bare
+     * runId (`LiveNotifier.opened`) -- so this is the one path that
+     * actually exercises `#lookupTenant`'s fallback query inside
+     * `#claimRules`. Claiming happens off the ping; folding and evaluating
+     * still only happen on a tick (`#onOpened` never folds -- see its own
+     * doc comment), so the ping only replaces how `runId` ENTERS `#owned`,
+     * not how the breach is found afterward.
+     */
+    it('evaluates a rule for a run claimed via a live:opened ping, not just a tick', async () => {
+      // `owner.listen()` FIRST, before the Prisma round trip below -- not
+      // stylistic. `beforeEach` constructs `owner` moments before this body
+      // runs, and its underlying Redis connections are still mid-handshake;
+      // an awaited Prisma call between construction and `listen()` gives
+      // ioredis's own internal `_readyCheck` (an `INFO` command) just enough
+      // room to land AFTER `subscribe()` has already put the connection into
+      // subscriber-only mode, which ioredis then rejects -- silently, from
+      // this test's point of view, as zero delivered subscribers. Every
+      // other ping case in this file avoids the gap by listening right after
+      // construction; this one has to preserve that ordering explicitly
+      // since its owner comes from a shared `beforeEach` instead.
+      await owner.listen();
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+
+      const publisher = new Redis(config.redisUrl);
+      try {
+        await publisher.publish('live:opened', runId);
+        await vi.waitFor(() => expect(owner.snapshotOf(runId)).not.toBeNull());
+
+        // Claimed correctly, tenant and all -- the ping path's own success case.
+        expect(owner.rulesLoadFailedFor(runId)).toBe(false);
+        expect(owner.rulesOf(runId)).toHaveLength(1);
+
+        // Nothing folds or publishes off the ping itself; a tick still has
+        // to run before there is anything to evaluate.
+        await owner.tick();
+        expect(breachesOf(owner, runId)).toHaveLength(1);
+      } finally {
+        await publisher.quit();
+      }
+    });
+
+    /**
+     * Review round 2, IMPORTANT 2. `pg_try_advisory_lock`'s key is
+     * `hashtext(runId)` -- an arbitrary string with no foreign-key tie to
+     * the `run` table (see `#claimRules`'s own doc comment) -- so a claim
+     * CAN win the lock for an id with no backing row. That is the ONE way
+     * `#lookupTenant` legitimately returns null instead of throwing, and it
+     * is reachable only off a ping: the poll's own discovery query can never
+     * produce an id with no row.
+     */
+    it('marks a rules-load failure, distinctly from "no rules configured", for a ping with no backing run row', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const publisher = new Redis(config.redisUrl);
+      const fakeRunId = randomUUID();
+      try {
+        await owner.listen();
+        await publisher.publish('live:opened', fakeRunId);
+        await vi.waitFor(() => expect(owner.snapshotOf(fakeRunId)).not.toBeNull());
+
+        // Failed open: the claim still succeeded (folding a run with no
+        // chunks is harmless -- see #onOpened's own doc comment), but the
+        // failure is on the record rather than reading as an empty project.
+        expect(owner.rulesOf(fakeRunId)).toEqual([]);
+        expect(owner.rulesLoadFailedFor(fakeRunId)).toBe(true);
+        expect(
+          errorSpy.mock.calls.some(
+            (c) => typeof c[0] === 'string' && c[0].includes(`no run row found for ${fakeRunId}`),
+          ),
+        ).toBe(true);
+      } finally {
+        await publisher.quit();
+        errorSpy.mockRestore();
+      }
+    });
+
+    /**
+     * Review round 2, IMPORTANT 2's other branch: `RuleRepository.listEnabled`
+     * itself throwing (a Prisma pool under real pressure, a transient
+     * connection failure) is the failure THE new `maxOwnedRuns *
+     * FOLD_OWNER_CLAIM_PRISMA_CLIENTS` sizing term in `main.ts` exists to
+     * make rare, not impossible -- and it must still fail the CLAIM open
+     * (a rules problem is not a reason to refuse to fold a run at all),
+     * while still being distinguishable from "this project has no rules".
+     * Claimed the ordinary way (a tick, not a ping): this failure mode is
+     * not specific to either claim path.
+     */
+    it('marks a rules-load failure, distinctly, when RuleRepository itself throws', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const listEnabledSpy = vi
+        .spyOn(rules, 'listEnabled')
+        .mockRejectedValueOnce(new Error('synthetic rule load failure'));
+      try {
+        await owner.tick();
+
+        expect(owner.rulesOf(runId)).toEqual([]);
+        expect(owner.rulesLoadFailedFor(runId)).toBe(true);
+        // Not the same breach this rule would otherwise report -- a rules
+        // problem must not be silently read as "nothing configured".
+        expect(breachesOf(owner, runId)).toHaveLength(0);
+        expect(
+          errorSpy.mock.calls.some(
+            (c) => typeof c[0] === 'string' && c[0].includes(`could not load SLA rules for ${runId}`),
+          ),
+        ).toBe(true);
+
+        // Failed OPEN, not stuck: the run is still owned and still folds --
+        // this claim never gets a second attempt at loading rules (they load
+        // once, at claim), but that is the documented behaviour, not a hang.
+        expect(owner.snapshotOf(runId)).not.toBeNull();
+      } finally {
+        listEnabledSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  /**
+   * Whole-branch review, A1. `#claimReserved` used to build `new LiveEngine()`
+   * with NO options while `PipelineService` builds its engine from
+   * `run.engineOptions` (pipeline.service.ts), frozen at open from project
+   * settings (`LiveService.open`). `warmupMs` is not cosmetic: it decides
+   * which events are aggregated AT ALL (`engine.ts`'s `isWarmup`), so the two
+   * paths answered different questions about the same bytes.
+   *
+   * The user-visible failure this pins: a project with `warmupMs: 5000` and a
+   * rule `max <= 1000` gets a banner reading "1 of 1 SLA rule currently
+   * breaching -- actual 4000", an operator kills the run on it, and the run
+   * then parses to verdict PASSED with `max 50`. That is the live-contradicts-
+   * final failure this feature was arranged to make impossible.
+   *
+   * The counts are chosen against `liveEvidenceFloor`'s flat 100 observations
+   * for a scalar metric: 150 on each side of the warm-up, so BOTH the correct
+   * fold and the wrong one clear the gate. A case that let the warmed-up fold
+   * fall under the floor would report "not breaching" for the wrong reason and
+   * pass whether or not the options were threaded.
+   *
+   * Every other case in this file seeds `engineOptions: {}` -- which is why
+   * none of them could see this either way.
+   */
+  describe("the run's own engine options", () => {
+    const WARMUP_MS = 5000;
+    const SLOW_MS = 4000;
+    const FAST_MS = 50;
+    const PER_SIDE = 150;
+
+    /** Slow requests wholly inside the warm-up, then fast ones wholly after
+     * it. `isWarmup` tests a request's START against the run start, so the
+     * second batch begins a clear second past the boundary rather than on
+     * it. */
+    const engineOptionsLog = Buffer.concat([
+      buildRunHeader(RUN_START_MS),
+      buildRequestBatch(0, PER_SIDE, true, SLOW_MS),
+      buildRequestBatch(WARMUP_MS + 1000, PER_SIDE, true, FAST_MS),
+    ]);
+
+    it('folds through them, so a warm-up drops exactly the events a batch parse drops', async () => {
+      await truncateAll();
+      const { orgId, projectId } = await seedOrgProject();
+      const runId = await seedRunningRun(orgId, projectId, engineOptionsLog.length, {
+        warmupMs: WARMUP_MS,
+      });
+      await chunks.put(runId, 0, engineOptionsLog);
+
+      const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      try {
+        await owner.tick();
+
+        // Derived from the payload, never written down: the batch path parsing
+        // the SAME bytes under the SAME options is the only definition of
+        // right that matters here.
+        const batch = runStat(runEngine(parseSimulationLog(engineOptionsLog), { warmupMs: WARMUP_MS }))!;
+        const live = runStat(owner.snapshotOf(runId)!)!;
+
+        expect(live.count).toBe(batch.count);
+        expect(live.maxMs).toBe(batch.maxMs);
+        // And the fold really is the smaller one -- without this the case
+        // would still pass if BOTH sides wrongly counted the warm-up.
+        expect(live.count).toBe(PER_SIDE);
+        expect(live.maxMs).toBe(FAST_MS);
+      } finally {
+        await owner.close();
+      }
+    });
+
+    it('judges its SLA rules on those numbers, so the banner cannot contradict the final verdict', async () => {
+      await truncateAll();
+      const { orgId, projectId } = await seedOrgProject();
+      const runId = await seedRunningRun(orgId, projectId, engineOptionsLog.length, {
+        warmupMs: WARMUP_MS,
+      });
+      await chunks.put(runId, 0, engineOptionsLog);
+      // Between the two maxima: passes on the warmed-up fold (50), breaches on
+      // the un-warmed-up one (4000).
+      await seedSlaRule(orgId, projectId, { metric: 'max', comparator: 'lte', threshold: 1000 });
+
+      const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      try {
+        await owner.tick();
+        expect(owner.rulesOf(runId)).toHaveLength(1);
+        expect(breachesOf(owner, runId)).toHaveLength(0);
+      } finally {
+        await owner.close();
+      }
+    });
+  });
+
+  /**
+   * Whole-branch review, B2. A re-claim -- rolling deploy, crash, lock
+   * handover -- re-folds a run from byte 0, so on the new owner's FIRST tick
+   * `snapshot.durationMs` is the full elapsed offset. `#publish` stamps a
+   * rule it has not seen before at that offset, so a rule that had been
+   * breaching since minute three came back reading "breaching since 2h 40m".
+   *
+   * That is the one number in the banner an abort decision turns on, and it
+   * failed in the direction that suppresses action: the longer the run and
+   * the later the deploy, the more recent -- and so the more ignorable -- the
+   * breach looked.
+   *
+   * The fix reads it back out of the replay stream's tip, which the claim was
+   * already fetching for `seq`. This case makes the two numbers differ by
+   * four orders of magnitude, so a re-stamp cannot pass by coincidence.
+   */
+  describe('a re-claim', () => {
+    const KO_COUNT = 2;
+    const OK_COUNT = 148;
+    /** Where the SECOND owner's bytes sit in run time. Ten minutes past the
+     * first owner's last event, so the re-folded run's `durationMs` is
+     * nothing like the offset the breach actually started at. */
+    const LATE_OFFSET_MS = 600_000;
+
+    it("keeps a breach's since-offset, rather than re-stamping it at the moment the new owner took over", async () => {
+      await truncateAll();
+      const { orgId, projectId } = await seedOrgProject();
+      const initial = Buffer.concat([
+        buildRunHeader(RUN_START_MS),
+        buildRequestBatch(0, KO_COUNT, false),
+        buildRequestBatch(KO_COUNT, OK_COUNT, true),
+      ]);
+      const runId = await seedRunningRun(orgId, projectId, initial.length);
+      await chunks.put(runId, 0, initial);
+      await seedSlaRule(orgId, projectId, {
+        metric: 'error_rate', comparator: 'lte', threshold: 0.01,
+      });
+
+      const first = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      let firstSince: number;
+      try {
+        await first.tick();
+        const breaches = breachesOf(first, runId);
+        expect(breaches).toHaveLength(1);
+        firstSince = breaches[0]!.sinceOffsetMs;
+      } finally {
+        // Releases the advisory lock, exactly as a rolling deploy's SIGTERM
+        // would -- which is what lets the second owner claim the same run.
+        await first.close();
+      }
+
+      // The agent kept streaming across the handover, and kept failing.
+      await chunks.put(runId, initial.length, buildRequestBatch(LATE_OFFSET_MS, 150, false));
+
+      const second = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      try {
+        await second.tick();
+        const after = breachesOf(second, runId);
+        expect(after).toHaveLength(1);
+        // The new owner really did re-fold the whole run: its own notion of
+        // "now" is past LATE_OFFSET_MS, which is what a re-stamp would report.
+        expect(second.snapshotOf(runId)!.durationMs).toBeGreaterThan(LATE_OFFSET_MS);
+        expect(after[0]!.sinceOffsetMs).toBe(firstSince);
+      } finally {
+        await second.close();
+      }
+    });
   });
 });

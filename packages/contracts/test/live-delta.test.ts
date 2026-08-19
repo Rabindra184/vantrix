@@ -29,6 +29,14 @@ const valid = {
   errors: {
     rows: [{ message: 'connection reset', count: 1 }],
   },
+  sla: {
+    evaluated: 2,
+    notJudged: 1,
+    rulesUnavailable: false,
+    breaching: [
+      { ruleId: 'rule-1', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 3000 },
+    ],
+  },
 };
 
 /**
@@ -120,5 +128,38 @@ describe('LiveDeltaSchema', () => {
     const delta = validDelta();
     delete (delta.responseTime.buckets[0] as Record<string, unknown>).percentiles;
     expect(() => LiveDeltaSchema.parse(delta)).toThrow();
+  });
+
+  /**
+   * Whole-branch review, B1. A body written before `sla` existed is not
+   * hypothetical during a rolling deploy: the browser drops every frame that
+   * fails this schema (`apps/web/src/api/live.ts`'s `parseFrame`) and the
+   * gateway forwards stored bodies without validating them, so a required
+   * `sla` blanks the live page for the whole deploy window — and permanently
+   * for a run that closed just before it, whose snapshot has no owner left to
+   * republish.
+   */
+  it('accepts a delta written before sla existed, and reads it as nothing evaluated', () => {
+    const delta = validDelta();
+    delete (delta as Record<string, unknown>).sla;
+    const parsed = LiveDeltaSchema.parse(delta);
+    expect(parsed.sla).toEqual({ evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] });
+  });
+
+  /**
+   * The same hazard one field deeper, and the reason `notJudged` and
+   * `rulesUnavailable` are defaulted rather than required: a delta published
+   * before those existed is a well-formed `sla` object missing two keys, and
+   * a required key there drops the frame exactly as a missing `sla` did.
+   */
+  it('accepts an sla written before notJudged and rulesUnavailable existed', () => {
+    const delta = validDelta();
+    delete (delta.sla as Record<string, unknown>).notJudged;
+    delete (delta.sla as Record<string, unknown>).rulesUnavailable;
+    const parsed = LiveDeltaSchema.parse(delta);
+    expect(parsed.sla.notJudged).toBe(0);
+    expect(parsed.sla.rulesUnavailable).toBe(false);
+    // And nothing else about the field was reinterpreted.
+    expect(parsed.sla.breaching).toHaveLength(1);
   });
 });
