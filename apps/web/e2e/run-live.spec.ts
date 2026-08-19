@@ -78,6 +78,14 @@ function deltaFixture(runId: string, seq: number) {
         { message: 'timeout', count: 12 },
       ],
     },
+    // Required on the wire (LiveDeltaSchema). This fixture is untyped (no
+    // `LiveDelta` import here), so a missing field is invisible to
+    // `pnpm typecheck` -- but `apps/web/src/api/live.ts`'s `parseFrame`
+    // validates every inbound frame with `LiveDeltaSchema.safeParse` and
+    // silently drops the WHOLE delta on failure (`ws.onmessage`'s
+    // `if (frame === null) return;`), so without this the client never
+    // receives any of this fixture's data at all.
+    sla: { evaluated: 0, breaching: [] },
   };
 }
 

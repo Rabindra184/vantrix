@@ -410,21 +410,28 @@ describe('buildDelta', () => {
   });
 
   it('carries only the breaching rules, and a count of those evaluated', () => {
-    // `buildDeltaWithSla` is a thin wrapper you write over `buildDelta`, so the
-    // case reads as one call; it does not exist yet.
+    // TWO failed, ONE not_applicable, ZERO passed -- asymmetric on purpose.
+    // The brief's original 1-failed/1-passed/1-not_applicable fixture makes
+    // "evaluated = passed + failed" (correct, 2) indistinguishable from a
+    // differently-wrong "evaluated = failed + not_applicable" (also 2) --
+    // both formulas land on the same number by coincidence of that specific
+    // fixture. Here they diverge: correct is failed(2) + passed(0) = 2;
+    // the wrong formula is failed(2) + not_applicable(1) = 3.
     const delta = buildDeltaWithSla({
       assertions: [
         { ruleId: 'a', outcome: 'failed', actualValue: 900, message: 'p95 ≤ 100 — actual 900' },
-        { ruleId: 'b', outcome: 'passed', actualValue: 20, message: 'p95 ≤ 100 — actual 20' },
+        { ruleId: 'b', outcome: 'failed', actualValue: 950, message: 'p99 ≤ 200 — actual 950' },
         { ruleId: 'c', outcome: 'not_applicable', actualValue: null, message: 'not checked yet' },
       ],
-      breachingSince: new Map([['a', 42_000]]),
+      breachingSince: new Map([['a', 42_000], ['b', 10_000]]),
     });
 
     expect(delta.sla.breaching).toEqual([
       { ruleId: 'a', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 42_000 },
+      { ruleId: 'b', description: 'p99 ≤ 200 — actual 950', actualValue: 950, sinceOffsetMs: 10_000 },
     ]);
-    // Passed AND failed count as evaluated; not_applicable did not get judged.
+    // Passed (0 here) AND failed (2) count as evaluated; not_applicable did
+    // not get judged and must not inflate the count.
     expect(delta.sla.evaluated).toBe(2);
   });
 });
