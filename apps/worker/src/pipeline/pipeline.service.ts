@@ -9,7 +9,7 @@ import {
   type RunRecord,
 } from '@perfportal/persistence';
 import { SIMULATION_LOG } from '@perfportal/plugin-gatling';
-import { evaluateRules, type EvaluableRule, type EvaluableStat } from '@perfportal/sla';
+import { evaluateRules, toEvaluableStats, type EvaluableRule } from '@perfportal/sla';
 import { runEngineAsync, type EngineOptions } from '@perfportal/statistics';
 import { BlobStore, openTarGzBundle } from '@perfportal/storage';
 import type { PrismaClient } from '@prisma/client';
@@ -298,22 +298,7 @@ export class PipelineService {
       projectId: run.projectId,
     });
 
-    const evaluable: EvaluableStat[] = result.stats.map((s) => ({
-      scope: s.scope,
-      name: s.name,
-      family: s.family,
-      count: s.count,
-      okCount: s.okCount,
-      koCount: s.koCount,
-      errorRate: s.errorRate,
-      minMs: s.minMs,
-      maxMs: s.maxMs,
-      meanMs: s.meanMs,
-      stddevMs: s.stddevMs,
-      throughputRps: s.throughputRps,
-      percentiles: s.percentiles,
-      sketch: s.sketch,
-    }));
+    const evaluable = toEvaluableStats(result.stats);
 
     const evaluableRules: EvaluableRule[] = rules.map((r) => ({
       id: r.id,
