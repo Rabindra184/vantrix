@@ -29,6 +29,12 @@ const valid = {
   errors: {
     rows: [{ message: 'connection reset', count: 1 }],
   },
+  sla: {
+    evaluated: 2,
+    breaching: [
+      { ruleId: 'rule-1', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 3000 },
+    ],
+  },
 };
 
 /**

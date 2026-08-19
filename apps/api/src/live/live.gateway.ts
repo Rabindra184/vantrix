@@ -146,6 +146,9 @@ function emptyDelta(runId: string): LiveDelta {
     responseTime: { widthMs: 1000, replaces: true, buckets: [] },
     users: { widthMs: 1000, buckets: [] },
     errors: { rows: [] },
+    // Nothing has been evaluated yet -- the owner hasn't ticked, so there is
+    // no assertion result to report either way.
+    sla: { evaluated: 0, breaching: [] },
   };
 }
 

@@ -182,6 +182,27 @@ export const LiveErrorsSchema = z.object({
 });
 export type LiveErrors = z.infer<typeof LiveErrorsSchema>;
 
+export const LiveBreachSchema = z.object({
+  ruleId: z.string(),
+  /** The evaluator's own message — one sentence, already human-readable. */
+  description: z.string(),
+  actualValue: z.number(),
+  /** Elapsed run offset at which this rule began breaching. */
+  sinceOffsetMs: z.number().int(),
+});
+export type LiveBreach = z.infer<typeof LiveBreachSchema>;
+
+/**
+ * ONLY the breaching rules travel. `evaluated` is a count so a reader can be
+ * told "2 of 7 breaching" without six passing rules riding every tick, and a
+ * rule below the evidence floor is in neither number -- it was not judged.
+ */
+export const LiveSlaSchema = z.object({
+  evaluated: z.number().int(),
+  breaching: z.array(LiveBreachSchema),
+});
+export type LiveSla = z.infer<typeof LiveSlaSchema>;
+
 /**
  * A delta published by the fold engine to Redis on a timer, carrying the
  * incremental update to a run's statistics since the last delta.
@@ -202,5 +223,6 @@ export const LiveDeltaSchema = z.object({
   responseTime: LiveResponseTimeSchema,
   users: LiveUsersSchema,
   errors: LiveErrorsSchema,
+  sla: LiveSlaSchema,
 });
 export type LiveDelta = z.infer<typeof LiveDeltaSchema>;

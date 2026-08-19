@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { CanonicalEvent } from '@perfportal/core';
 import { LiveDeltaSchema } from '@perfportal/contracts';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
+import type { EvaluableRule, EvaluatedAssertion } from '@perfportal/sla';
 import { bucketLatency, LiveEngine, runEngine, type EngineResult } from '@perfportal/statistics';
-import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor } from '../src/live/delta.js';
+import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor, type SlaInput } from '../src/live/delta.js';
 
 const LOG = new URL(
   '../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log',
@@ -13,6 +14,34 @@ const LOG = new URL(
 const events = () => [...parseSimulationLog(readFileSync(LOG))];
 
 const RUN_ID = '0f9b1d4e-1111-2222-3333-444455556666';
+
+// The overwhelming majority of cases in this file exist to test the
+// statistics envelopes, not the SLA one -- this is their `sla` argument, so
+// each reads as "the run's stats" rather than "the run's stats, and also
+// nothing is breaching, which is irrelevant here". The one case that DOES
+// care about `sla` builds its own via `buildDeltaWithSla` below.
+const NO_SLA: SlaInput = { assertions: [], breachingSince: new Map() };
+
+/** A rule snapshot for cases that only care about the fields `evaluateRules`
+ *  reports back (ruleId/outcome/actualValue/message), not the rule itself. */
+const RULE_SNAPSHOT: EvaluableRule = {
+  id: 'placeholder', scope: 'run', targetName: null, family: 'response_time',
+  metric: 'p95', comparator: 'lte', threshold: 100,
+};
+
+/**
+ * A thin wrapper over `buildDelta` for cases that only care about the `sla`
+ * envelope: fixes the runId/result/cursor so the call reads as one line
+ * about assertions and breachingSince, not about the run's statistics.
+ */
+function buildDeltaWithSla(sla: {
+  assertions: readonly Omit<EvaluatedAssertion, 'ruleSnapshot'>[];
+  breachingSince: ReadonlyMap<string, number>;
+}): ReturnType<typeof buildDelta>['delta'] {
+  const assertions: EvaluatedAssertion[] = sla.assertions.map((a) => ({ ...a, ruleSnapshot: RULE_SNAPSHOT }));
+  const { delta } = buildDelta(RUN_ID, runEngine([]), INITIAL_CURSOR, { ...sla, assertions });
+  return delta;
+}
 
 /**
  * Builds an `EngineResult` from bare request shapes, for cases that only care
@@ -62,7 +91,7 @@ function engineResultSpanning(durationMs: number): EngineResult {
 describe('buildDelta', () => {
   it('summarises the run from the payload, not from written-down numbers', () => {
     const all = events();
-    const { delta } = buildDelta('r1', runEngine(all), INITIAL_CURSOR);
+    const { delta } = buildDelta('r1', runEngine(all), INITIAL_CURSOR, NO_SLA);
     const batch = runEngine(all).stats.find((s) => s.scope === 'run' && s.family === 'response_time')!;
 
     expect(delta.summary.count).toBe(batch.count);
@@ -79,10 +108,10 @@ describe('buildDelta', () => {
 
     const engine = new LiveEngine();
     for (const e of all.slice(0, half)) engine.add(e);
-    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR, NO_SLA);
 
     for (const e of all.slice(half)) engine.add(e);
-    const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next);
+    const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next, NO_SLA);
 
     expect(second.delta.seq).toBe(1);
     const firstMax = Math.max(...first.delta.responseTime.buckets.map((b) => b.startOffsetMs));
@@ -105,10 +134,10 @@ describe('buildDelta', () => {
     const engine = new LiveEngine({ maxBucketsRun: 4 });
     const third = Math.floor(all.length / 3);
     for (const e of all.slice(0, third)) engine.add(e);
-    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR, NO_SLA);
 
     for (const e of all.slice(third)) engine.add(e);
-    const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next);
+    const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next, NO_SLA);
 
     // Derived, not asserted as a literal: the width MUST have grown for this
     // case to be testing anything, so assert that first.
@@ -131,9 +160,9 @@ describe('buildDelta', () => {
     const engine = new LiveEngine();
     const half = Math.floor(all.length / 2);
     for (const e of all.slice(0, half)) engine.add(e);
-    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR, NO_SLA);
     for (const e of all.slice(half)) engine.add(e);
-    const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next);
+    const second = buildDelta('r1', engine.snapshot({ clone: true }), first.next, NO_SLA);
 
     expect(second.delta.responseTime.widthMs).toBe(first.delta.responseTime.widthMs);
     expect(second.delta.responseTime.replaces).toBe(false);
@@ -145,11 +174,11 @@ describe('buildDelta', () => {
 
     const engine = new LiveEngine();
     for (const e of all.slice(0, half)) engine.add(e);
-    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR, NO_SLA);
 
     for (const e of all.slice(half)) engine.add(e);
     const finalSnapshot = engine.snapshot({ clone: true });
-    const second = buildDelta('r1', finalSnapshot, first.next);
+    const second = buildDelta('r1', finalSnapshot, first.next, NO_SLA);
 
     // Every bucket of every scenario in the FULL snapshot, on every tick --
     // never filtered by the response-time cursor (`first.next`), and never
@@ -191,7 +220,7 @@ describe('buildDelta', () => {
     sparseSeries.set(runKey, { ...real, buckets: thinned });
     const sparseResult = { ...result, series: sparseSeries };
 
-    const { delta } = buildDelta('r1', sparseResult, INITIAL_CURSOR);
+    const { delta } = buildDelta('r1', sparseResult, INITIAL_CURSOR, NO_SLA);
 
     expect(delta.responseTime.widthMs).toBe(real.bucketWidthMs);
   });
@@ -220,7 +249,7 @@ describe('buildDelta', () => {
     // disagree for this case to be testing anything.
     expect(soak.bucketWidthMs).toBeGreaterThan(quick.bucketWidthMs);
 
-    const { delta } = buildDelta('r1', result, INITIAL_CURSOR);
+    const { delta } = buildDelta('r1', result, INITIAL_CURSOR, NO_SLA);
 
     // The FINER width, not the coarser one.
     expect(delta.users.widthMs).toBe(quick.bucketWidthMs);
@@ -256,7 +285,7 @@ describe('buildDelta', () => {
     const source = result.users.find((u) => u.scenario === 'Checkout');
     if (!source) throw new Error('expected a Checkout scenario in the snapshot');
 
-    const { delta } = buildDelta('r1', result, INITIAL_CURSOR);
+    const { delta } = buildDelta('r1', result, INITIAL_CURSOR, NO_SLA);
     const published = delta.users.buckets.filter((b) => b.scenario === 'Checkout');
 
     // Derived from the SAME snapshot the delta was built from, never written
@@ -291,11 +320,11 @@ describe('buildDelta', () => {
 
     const engine = new LiveEngine();
     for (const e of all.slice(0, half)) engine.add(e);
-    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR);
+    const first = buildDelta('r1', engine.snapshot({ clone: true }), INITIAL_CURSOR, NO_SLA);
 
     for (const e of all.slice(half)) engine.add(e);
     const secondSnapshot = engine.snapshot({ clone: true });
-    const second = buildDelta('r1', secondSnapshot, first.next);
+    const second = buildDelta('r1', secondSnapshot, first.next, NO_SLA);
 
     const firstByOffset = new Map(first.delta.responseTime.buckets.map((b) => [b.startOffsetMs, b]));
     const secondOffsets = new Set(second.delta.responseTime.buckets.map((b) => b.startOffsetMs));
@@ -330,7 +359,7 @@ describe('buildDelta', () => {
     // The schema requires a real UUID; the other cases' 'r1' would be
     // rejected here, which is the point -- this proves the two actually
     // meet, not just that each is internally consistent.
-    const { delta } = buildDelta('0f9b1d4e-1111-2222-3333-444455556666', runEngine(all), INITIAL_CURSOR);
+    const { delta } = buildDelta('0f9b1d4e-1111-2222-3333-444455556666', runEngine(all), INITIAL_CURSOR, NO_SLA);
 
     expect(() => LiveDeltaSchema.parse(delta)).not.toThrow();
   });
@@ -342,7 +371,7 @@ describe('buildDelta', () => {
       { startMs: 100, endMs: 900, ok: true },
       { startMs: 1200, endMs: 1260, ok: false },
     ]);
-    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR, NO_SLA);
 
     const source = result.series.get('run  response_time')!.buckets;
     for (const published of delta.responseTime.buckets) {
@@ -364,7 +393,7 @@ describe('buildDelta', () => {
       { scope: 'run', name: '', message: 'connection reset', count: 7 },
       { scope: 'request', name: 'GET /cart', message: 'connection reset', count: 7 },
     ]);
-    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR, NO_SLA);
     expect(delta.errors.rows).toEqual([{ message: 'connection reset', count: 7 }]);
   });
 
@@ -376,8 +405,27 @@ describe('buildDelta', () => {
       { scope: 'run', name: '', message: 'timeout', count: 3 },
       { scope: 'run', name: '', message: null, count: 11 },
     ]);
-    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR, NO_SLA);
     expect(delta.errors.rows).toContainEqual({ message: null, count: 11 });
+  });
+
+  it('carries only the breaching rules, and a count of those evaluated', () => {
+    // `buildDeltaWithSla` is a thin wrapper you write over `buildDelta`, so the
+    // case reads as one call; it does not exist yet.
+    const delta = buildDeltaWithSla({
+      assertions: [
+        { ruleId: 'a', outcome: 'failed', actualValue: 900, message: 'p95 ≤ 100 — actual 900' },
+        { ruleId: 'b', outcome: 'passed', actualValue: 20, message: 'p95 ≤ 100 — actual 20' },
+        { ruleId: 'c', outcome: 'not_applicable', actualValue: null, message: 'not checked yet' },
+      ],
+      breachingSince: new Map([['a', 42_000]]),
+    });
+
+    expect(delta.sla.breaching).toEqual([
+      { ruleId: 'a', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 42_000 },
+    ]);
+    // Passed AND failed count as evaluated; not_applicable did not get judged.
+    expect(delta.sla.evaluated).toBe(2);
   });
 });
 
@@ -386,8 +434,8 @@ describe('buildSnapshot', () => {
     const result = engineResultSpanning(60_000); // many buckets
     const advanced: DeltaCursor = { seq: 12, lastPublishedOffsetMs: 50_000, lastBucketWidthMs: 1000 };
 
-    const { delta } = buildDelta(RUN_ID, result, advanced);
-    const snapshot = buildSnapshot(RUN_ID, result, advanced.seq);
+    const { delta } = buildDelta(RUN_ID, result, advanced, NO_SLA);
+    const snapshot = buildSnapshot(RUN_ID, result, advanced.seq, NO_SLA);
 
     const all = result.series.get('run  response_time')!.buckets.length;
     expect(delta.responseTime.buckets.length).toBeLessThan(all);

@@ -161,6 +161,7 @@ function deltaFixture(overrides: Partial<LiveDelta> = {}): LiveDelta {
       ],
     },
     errors: { rows: [{ message: 'timeout', count: 1 }, { message: null, count: 3 }] },
+    sla: { evaluated: 0, breaching: [] },
     ...overrides,
   };
 }

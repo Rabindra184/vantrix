@@ -1,5 +1,6 @@
 import { bucketLatency, type EngineResult } from '@perfportal/statistics';
 import type { LiveDelta } from '@perfportal/contracts';
+import type { EvaluatedAssertion } from '@perfportal/sla';
 
 export interface DeltaCursor {
   seq: number;
@@ -24,6 +25,17 @@ export const INITIAL_CURSOR: DeltaCursor = {
   lastPublishedOffsetMs: -1,
   lastBucketWidthMs: 0,
 };
+
+/**
+ * The SLA state a tick needs to fill `LiveDelta['sla']` -- `buildDelta` has
+ * no other way to know about assertions, since `EngineResult` carries only
+ * statistics, never rule evaluations.
+ */
+export interface SlaInput {
+  assertions: readonly EvaluatedAssertion[];
+  /** ruleId -> the offset at which it began breaching (`FoldState`'s map). */
+  breachingSince: ReadonlyMap<string, number>;
+}
 
 /**
  * One tick's message, plus the cursor the next tick needs.
@@ -156,6 +168,7 @@ export function buildDelta(
   runId: string,
   result: EngineResult,
   prev: DeltaCursor,
+  sla: SlaInput,
 ): { delta: LiveDelta; next: DeltaCursor } {
   // The run-scope response-time series is keyed `${scope} ${name} ${family}`
   // with an EMPTY name, so the key is 'run' + ' ' + '' + ' ' + 'response_time'
@@ -275,6 +288,26 @@ export function buildDelta(
     .filter((e) => e.scope === 'run')
     .map((e) => ({ message: e.message, count: e.count }));
 
+  // ONLY the breaching rules travel -- see LiveSlaSchema's own comment.
+  // `sinceOffsetMs` falls back to 0 rather than the current tick's offset:
+  // that fallback is unreachable in practice (a rule in `breaching` was, by
+  // construction, just added to or already present in `breachingSince` by
+  // the caller), but 0 is the honest answer for "we don't know" rather than
+  // a value that would read as "breaching since the very start".
+  const breaching = sla.assertions
+    .filter((a) => a.outcome === 'failed')
+    .map((a) => ({
+      ruleId: a.ruleId,
+      description: a.message,
+      actualValue: a.actualValue ?? 0,
+      sinceOffsetMs: sla.breachingSince.get(a.ruleId) ?? 0,
+    }));
+  // `passed` and `failed` were both judged; `not_applicable` was not --
+  // whether because there was nothing to measure or because the live
+  // evidence floor withheld judgement. Neither belongs in a count of rules
+  // actually evaluated.
+  const evaluated = sla.assertions.filter((a) => a.outcome !== 'not_applicable').length;
+
   const delta: LiveDelta = {
     runId,
     seq: prev.seq,
@@ -297,6 +330,7 @@ export function buildDelta(
       buckets: usersBuckets,
     },
     errors: { rows: errorRows },
+    sla: { evaluated, breaching },
   };
 
   const next: DeltaCursor = {
@@ -319,8 +353,12 @@ export function buildDelta(
  * `seq` is stamped from the caller's CURRENT cursor, not from the synthetic
  * cursor used to build it: the seed's seq is the point a consumer resumes the
  * stream from, and `INITIAL_CURSOR` would claim 1 and re-deliver the run.
+ *
+ * `sla` is forwarded, not omitted or defaulted: a seed that reported no
+ * breaches while the run was breaching would clear the banner for every
+ * newly-connecting viewer, which is the opposite of what a seed is for.
  */
-export function buildSnapshot(runId: string, result: EngineResult, seq: number): LiveDelta {
-  const { delta } = buildDelta(runId, result, INITIAL_CURSOR);
+export function buildSnapshot(runId: string, result: EngineResult, seq: number, sla: SlaInput): LiveDelta {
+  const { delta } = buildDelta(runId, result, INITIAL_CURSOR, sla);
   return { ...delta, seq };
 }

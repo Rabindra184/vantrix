@@ -7,7 +7,7 @@ import type { LiveChunkStore } from '@perfportal/storage';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
-import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor } from './delta.js';
+import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor, type SlaInput } from './delta.js';
 
 /**
  * Everything one owned run needs to keep folding, held for as long as this
@@ -941,7 +941,14 @@ export class LiveFoldOwner {
       }
     }
 
-    const { delta, next } = buildDelta(runId, snapshot, state.cursor);
+    // Required, not optional (`delta.ts`'s own comment on `SlaInput`) -- an
+    // optional fourth argument would let a future call site silently omit
+    // the SLA state and publish a delta claiming nothing is breaching, which
+    // reads exactly like a healthy run. Shared between the delta below and
+    // the snapshot further down, since both describe THIS tick's evaluation.
+    const sla: SlaInput = { assertions, breachingSince: state.breachingSince };
+
+    const { delta, next } = buildDelta(runId, snapshot, state.cursor, sla);
     const body = JSON.stringify(delta);
     try {
       await this.#redis.publish(`live:${runId}`, body);
@@ -1004,7 +1011,7 @@ export class LiveFoldOwner {
         // one".
         await this.#redis.set(
           `live:${runId}:snapshot`,
-          JSON.stringify(buildSnapshot(runId, snapshot, next.seq)),
+          JSON.stringify(buildSnapshot(runId, snapshot, next.seq, sla)),
           'EX',
           SNAPSHOT_TTL_SECONDS,
         );
