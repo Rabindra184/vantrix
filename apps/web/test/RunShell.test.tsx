@@ -1,10 +1,11 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunResponse } from '@perfportal/contracts';
 import RunShell from '../src/routes/RunShell';
+import type { RunWindowContext } from '../src/routes/useRunWindow';
 
 afterEach(cleanup);
 
@@ -33,6 +34,27 @@ function renderShell() {
         <Routes>
           <Route path="/runs/:runId" element={<RunShell run={RUN} />}>
             <Route index element={<div />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** Reads back exactly what `RunShell`'s `<Outlet/>` hands its children. */
+function ContextProbe() {
+  const context = useOutletContext<RunWindowContext>();
+  return <div data-testid="context-probe">{JSON.stringify(context)}</div>;
+}
+
+function renderShellWithProbe() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
+        <Routes>
+          <Route path="/runs/:runId" element={<RunShell run={RUN} />}>
+            <Route index element={<ContextProbe />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -98,5 +120,26 @@ describe('RunShell', () => {
     // failed fetch never resolves `errors.data`.
     await screen.findByRole('link', { name: 'Errors' });
     expect(screen.queryByRole('link', { name: 'Errors (0)' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * TASK 9 C1. `RunShell` used to call its own `useLiveRun(run.id,
+   * run.status === 'running' && !compact)` to fill this field -- a call
+   * that could never actually fire, since `RunShell`'s one caller
+   * (`RunDetail`'s `Ready` branch) only ever renders a run that has already
+   * left `running`. Removed; `liveDurationMs` is now a hard-coded `null` on
+   * the context this shell provides. Pinned directly rather than trusted to
+   * stay dead by induction from the fact that no test exercised it before.
+   */
+  it('always hands liveDurationMs: null through the outlet context', async () => {
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })));
+
+    renderShellWithProbe();
+
+    const probe = await screen.findByTestId('context-probe');
+    const context = JSON.parse(probe.textContent ?? '{}') as RunWindowContext;
+    expect(context.liveDurationMs).toBeNull();
+    // `durationMs` is unaffected -- this pins ONLY the field Task 9 C1 touched.
+    expect(context.durationMs).toBe(RUN.durationMs);
   });
 });

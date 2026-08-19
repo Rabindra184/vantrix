@@ -98,7 +98,31 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
           than here — different query keys, so `/users` was fetched twice and
           the "one window for the whole page" this shell promises was not true.
           One parse, one object, one key. */}
-      <Outlet context={{ window, durationMs: run.durationMs ?? null } satisfies RunWindowContext} />
+      {/* TASK 9 C1: `liveDurationMs` IS ALWAYS `null` HERE, and deliberately
+          so rather than wired to a socket this shell never opens. `RunShell`
+          used to call its own `useLiveRun(run.id, run.status === 'running' &&
+          !compact)` for this field — but `RunShell` has exactly one caller
+          (`RunDetail`'s `Ready` branch), reachable only once `run.status` is
+          `complete`/`failed`/`incomplete`, so `run.status === 'running'` can
+          never be true for a run this component renders and that call was
+          permanently disabled from the day it was added: `enabled` was
+          always false, `live.lastDelta` was always null, and the socket
+          never opened. `liveDurationMs` stays on `RunWindowContext` — the
+          type is still correct, and a genuinely live run reaches its OWN
+          growing domain through `Live` in `RunDetail.tsx` instead (see
+          `growingDomainMs` in `useRunWindow.ts`, which that component calls
+          directly because it mounts no `<Outlet/>` and so has no shell to
+          read this context from). If a live run is ever routed through this
+          shell, wiring a real `useLiveRun` call back in is a one-line
+          change; until then a hard-coded `null` is the honest value, not a
+          placeholder for a dead one. */}
+      <Outlet
+        context={{
+          window,
+          durationMs: run.durationMs ?? null,
+          liveDurationMs: null,
+        } satisfies RunWindowContext}
+      />
     </div>
   );
 }

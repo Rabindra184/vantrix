@@ -1,5 +1,5 @@
 import type { EngineResult } from '@perfportal/statistics';
-import { BUCKET_PERCENTILES, HISTOGRAM_KIND, SKETCH_KIND } from '@perfportal/statistics';
+import { HISTOGRAM_KIND, SKETCH_KIND, bucketLatency } from '@perfportal/statistics';
 import type pg from 'pg';
 
 export interface MetricContext {
@@ -74,20 +74,22 @@ export class MetricWriter {
     const bucketRows: unknown[][] = [];
     for (const entry of result.series.values()) {
       for (const b of entry.buckets) {
+        // The one derivation, shared with the live publisher — see
+        // bucketLatency's own doc comment for why it is not inlined here.
+        // Bucket sketches themselves are deliberately not persisted (spec §9.1).
+        const lat = bucketLatency(b);
         bucketRows.push([
           ctx.runStartedOn, ctx.runId, ctx.orgId, ctx.projectId,
           entry.scope, entry.name, entry.family,
           b.startOffsetMs,
           b.startedCount, b.endedCount, b.okCount, b.koCount,
           b.startedOkCount, b.startedKoCount,
-          b.sketch.count === 0 ? 0 : b.sketch.min,
-          b.sketch.count === 0 ? 0 : b.sketch.max,
-          b.sketch.count === 0 ? 0 : b.sketch.sum / b.sketch.count,
-          // Only the configured percentiles are stored per bucket; per spec §9.1
-          // bucket sketches are deliberately not persisted.
-          JSON.stringify(percentilesOf(b.sketch)),
-          JSON.stringify(percentilesOf(b.sketchOk)),
-          JSON.stringify(percentilesOf(b.sketchKo)),
+          lat.minMs,
+          lat.maxMs,
+          lat.meanMs,
+          JSON.stringify(lat.percentiles),
+          JSON.stringify(lat.percentilesOk),
+          JSON.stringify(lat.percentilesKo),
           // Beside the frozen percentiles above, not instead of them: those
           // answer the chart's fixed bands cheaply, these are what a sub-range
           // is re-aggregated from.
@@ -165,25 +167,4 @@ export class MetricWriter {
       ]),
     );
   }
-}
-
-/**
- * The per-bucket percentile bands are a FIXED set (BUCKET_PERCENTILES), not the
- * project's configured columns. A bucket stores numbers and no sketch, so a
- * configurable set would freeze whatever the project happened to be configured
- * as on ingest day. Reading the keys off result.stats[0] - the previous
- * behaviour - did exactly that.
- *
- * An empty sketch returns {}, not a band of zeros. A p95 of 0 is a fabricated
- * observation for a bucket that made none - and it is exactly what let the
- * scatter gate on a response count instead of on whether the status-filtered
- * digest exists, matching Gatling's own gate
- * (LogFileData.timeAgainstGlobalNumberOfRequestsPerSec: presence of a digest,
- * not a response count).
- */
-function percentilesOf(sketch: { count: number; quantile(q: number): number }): Record<string, number> {
-  if (sketch.count === 0) return {};
-  const out: Record<string, number> = {};
-  for (const p of BUCKET_PERCENTILES) out[`p${p}`] = sketch.quantile(p / 100);
-  return out;
 }

@@ -1,4 +1,4 @@
-import type { EngineResult } from '@perfportal/statistics';
+import { bucketLatency, type EngineResult } from '@perfportal/statistics';
 import type { LiveDelta } from '@perfportal/contracts';
 
 export interface DeltaCursor {
@@ -190,6 +190,11 @@ export function buildDelta(
     endedCount: b.endedCount,
     okCount: b.okCount,
     koCount: b.koCount,
+    startedOkCount: b.startedOkCount,
+    startedKoCount: b.startedKoCount,
+    // Spread last: bucketLatency owns every latency field, and listing them
+    // individually here would be the second copy Task 1 exists to prevent.
+    ...bucketLatency(b),
   }));
 
   // The high-water mark for NEXT tick's `since` must be the max offset this
@@ -248,10 +253,27 @@ export function buildDelta(
     result.users.length === 0 ? 1000 : Math.min(...result.users.map((u) => u.bucketWidthMs));
 
   // WHOLE, not filtered by `since` -- see "WHY `users` HAS NO CURSOR" above.
+  // `started`/`ended` are read straight off the source `UserBucket`
+  // (packages/statistics/src/users.ts) beside `active` (`= b.maxConcurrent`)
+  // -- the engine already computes both; only the wire shape used to drop
+  // them, which made the arrival-rate chart read a flat zero for a live
+  // run's whole duration (see LiveUserBucketSchema's own comment).
   const usersBuckets: LiveDelta['users']['buckets'] = result.users.flatMap(
     ({ scenario, buckets: userBuckets }) =>
-      userBuckets.map((b) => ({ scenario, startOffsetMs: b.startOffsetMs, active: b.maxConcurrent })),
+      userBuckets.map((b) => ({
+        scenario,
+        startOffsetMs: b.startOffsetMs,
+        started: b.started,
+        ended: b.ended,
+        active: b.maxConcurrent,
+      })),
   );
+
+  // Run scope only -- see LiveErrorsSchema. `top(200)` per key is already
+  // applied by Engine.snapshot(), so this is bounded before it arrives.
+  const errorRows = result.errors
+    .filter((e) => e.scope === 'run')
+    .map((e) => ({ message: e.message, count: e.count }));
 
   const delta: LiveDelta = {
     runId,
@@ -274,6 +296,7 @@ export function buildDelta(
       widthMs: usersWidthMs,
       buckets: usersBuckets,
     },
+    errors: { rows: errorRows },
   };
 
   const next: DeltaCursor = {
@@ -283,4 +306,21 @@ export function buildDelta(
   };
 
   return { delta, next };
+}
+
+/**
+ * The whole current state, for seeding a client that was not listening.
+ *
+ * Built by running `buildDelta` from `INITIAL_CURSOR` -- which is exactly "no
+ * lookback floor, replaces everything" -- rather than by a second traversal of
+ * the series. One code path decides what a bucket looks like on the wire, so a
+ * seed and a delta can never disagree about it.
+ *
+ * `seq` is stamped from the caller's CURRENT cursor, not from the synthetic
+ * cursor used to build it: the seed's seq is the point a consumer resumes the
+ * stream from, and `INITIAL_CURSOR` would claim 1 and re-deliver the run.
+ */
+export function buildSnapshot(runId: string, result: EngineResult, seq: number): LiveDelta {
+  const { delta } = buildDelta(runId, result, INITIAL_CURSOR);
+  return { ...delta, seq };
 }

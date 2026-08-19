@@ -10,7 +10,7 @@ import { Redis } from 'ioredis';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
-import { LiveFoldOwner } from '../src/live/fold-owner.js';
+import { LiveFoldOwner, REPLAY_TTL_SECONDS } from '../src/live/fold-owner.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
 
 const FIXTURE_LOG = fileURLToPath(
@@ -110,6 +110,32 @@ function headerLength(fullLog: Buffer): number {
     if (probe.consumedBytes > 0) return probe.consumedBytes;
   }
   throw new Error('fixture never emitted a meta event');
+}
+
+/**
+ * Subscribes to `live:{runId}` on its own connection, ticks the owner once,
+ * and returns the delta that tick published for that run. Most cases in this
+ * file that need to observe a published delta ("publishes a delta per
+ * tick...") build the subscribe/parse/wait sequence inline because they
+ * assert on more than one tick's worth of messages -- the snapshot-failure
+ * case below only needs exactly one more delta after its own setup, so this
+ * keeps that from being three more lines of duplicated boilerplate at the
+ * one new call site that needs it.
+ */
+async function nextPublishedDelta(owner: LiveFoldOwner, runId: string): Promise<LiveDelta> {
+  const sub = new Redis(config.redisUrl);
+  try {
+    const seen: LiveDelta[] = [];
+    await sub.subscribe(`live:${runId}`);
+    sub.on('message', (_channel, message: string) => {
+      seen.push(LiveDeltaSchema.parse(JSON.parse(message)));
+    });
+    await owner.tick();
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0));
+    return seen[0]!;
+  } finally {
+    await sub.quit();
+  }
 }
 
 describe('LiveFoldOwner', () => {
@@ -1598,6 +1624,217 @@ describe('LiveFoldOwner', () => {
     } finally {
       readFromSpy.mockRestore();
       await publisher.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * Task 4's own case. A late-joining subscriber seeds from
+   * `live:{runId}:snapshot` and replays the stream FORWARD from its `seq` --
+   * so a run that has never written one is exactly the run a late joiner
+   * cannot recover: the first delta.ts's own doc comment already
+   * establishes ("PART 2b MUST BOOTSTRAP responseTime ON JOIN") that only
+   * `seq: 0` carries the whole series, and that entry is routinely gone from
+   * the replay stream on anything but a short run.
+   *
+   * `FoldState.ticksSinceSnapshot` starts at `SNAPSHOT_EVERY_N_TICKS` on
+   * claim for exactly this reason -- without it, a freshly-claimed run would
+   * need `SNAPSHOT_EVERY_N_TICKS` real ticks (five minutes at the default
+   * `liveTickMs`) before its first snapshot existed at all, which is its own
+   * version of "unseedable", just delayed instead of permanent.
+   */
+  it('seeds a snapshot on the first tick, so a late joiner is never unseedable', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.tick();
+
+      const raw = await redis.get(`live:${runId}:snapshot`);
+      expect(raw).not.toBeNull();
+      const seeded = LiveDeltaSchema.parse(JSON.parse(raw!));
+      expect(seeded.responseTime.buckets.length).toBeGreaterThan(0);
+      expect(await redis.ttl(`live:${runId}:snapshot`)).toBeGreaterThan(0);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * TASK 9 A2. `#publish` calls `buildSnapshot(runId, snapshot, next.seq)` --
+   * see that call's own comment for why `next.seq` (the seq of the delta this
+   * snapshot does NOT yet contain) is the only correct argument, even though
+   * `state.cursor.seq` reads as equal to it at that point in TODAY's statement
+   * order. Nothing before this case asserted the relationship at all: the
+   * consumer of this convention is `apps/api`'s gateway (`attemptSeed`), which
+   * has no dependency on this package and therefore encodes the same
+   * convention as its own hand-written fixture (`snapshotFixture`,
+   * `live-gateway.integration.test.ts`) rather than importing anything from
+   * here. A producer-side regression -- e.g. swapping in `state.cursor.seq`,
+   * which a future reordering of the code above could make genuinely diverge
+   * from `next.seq` -- would leave BOTH suites green while silently dropping
+   * exactly one delta from every client seeded from that snapshot, with no
+   * gap the client's own `seq` bookkeeping could ever detect (the label would
+   * simply be wrong, not missing). This is the guard `apps/api` cannot write
+   * for itself.
+   */
+  it("stamps the snapshot with the last published delta's seq plus one", async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      // The FIRST tick both publishes delta 0 AND writes the first snapshot
+      // (`FoldState.ticksSinceSnapshot` starts at `SNAPSHOT_EVERY_N_TICKS` on
+      // claim -- see that field's own comment), so one tick is enough to
+      // observe both halves of the relationship this case pins.
+      const published = await nextPublishedDelta(owner, runId);
+
+      const raw = await redis.get(`live:${runId}:snapshot`);
+      expect(raw).not.toBeNull();
+      const snapshot = LiveDeltaSchema.parse(JSON.parse(raw!));
+      expect(snapshot.seq).toBe(published.seq + 1);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * Task 4's other half: a snapshot write failing must not run the DELTA
+   * path's own compensating logic (`{ ...state.cursor, seq: next.seq }`,
+   * `#publish`'s catch block) -- that compensation exists for a failed
+   * PUBLISH/XADD, and running it here would drop the coalesce replacement
+   * flag for a tick whose delta was actually delivered fine, per
+   * `#publish`'s own doc comment on why the snapshot write sits in its own
+   * try, after the cursor has already advanced.
+   *
+   * Spies on `set` on the OWNER's OWN redis client (the instance passed into
+   * its constructor), not a second connection, since `#publish` calls `set`
+   * on that exact instance -- unlike the replay-stream cases above, which
+   * read back through a deliberately SEPARATE connection.
+   */
+  it('a failed snapshot write does not disturb the delta cursor', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, redis);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const set = vi.spyOn(redis, 'set').mockRejectedValueOnce(new Error('redis down'));
+      await expect(owner.tick()).resolves.not.toThrow();
+      set.mockRestore();
+      // The failure was logged (swallowed, not propagated) -- proves the
+      // guard in #publish's own try/catch actually caught it, rather than
+      // this case passing merely because nothing was mocked at all.
+      expect(
+        errorSpy.mock.calls.some(
+          (c) => typeof c[0] === 'string' && c[0].includes(`snapshot write failed for ${runId}`),
+        ),
+      ).toBe(true);
+
+      // The delta still published, and the NEXT delta must still be a plain
+      // upsert -- not a spurious replacement caused by a mangled cursor.
+      const next = await nextPublishedDelta(owner, runId);
+      expect(next.responseTime.replaces).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+      await owner.close();
+    }
+  });
+
+  /**
+   * TASK 9 C1. `live:{runId}:deltas` had no TTL and nothing ever deleted it
+   * -- not `#release`, not `#onClosed`, not the gateway -- so every run that
+   * ever streamed left up to REPLAY_BUDGET_BYTES in Redis permanently. The
+   * design's memory arithmetic is sized against CONCURRENT runs; the real
+   * figure grew with the deployment's LIFETIME run count, in the instance
+   * that also carries BullMQ jobs, with no `maxmemory` and no eviction
+   * policy set (`infra/docker-compose.yml`, deliberately).
+   */
+  it('gives the replay stream a TTL, so a run that streamed does not hold Redis forever', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.tick();
+
+      const streamKey = `live:${runId}:deltas`;
+      expect(await redis.xlen(streamKey)).toBeGreaterThan(0);
+      // -1 is "no expiry", which is exactly the leak. Bounded by the constant
+      // rather than compared to a written-down number, and required to be
+      // positive so a TTL set to something already elapsed cannot pass.
+      const ttl = await redis.ttl(streamKey);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(REPLAY_TTL_SECONDS);
+
+      // Still bounded after a SECOND publish: an EXPIRE that only ran on the
+      // first write would be reset to -1 by nothing, but one that ran only
+      // once and then stopped is the shape a refactor could leave behind.
+      await owner.tick();
+      expect(await redis.ttl(streamKey)).toBeGreaterThan(0);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * TASK 9 C2. `#claim` reset every claimed run to `INITIAL_CURSOR`, so a
+   * worker restart or a rolling deploy mid-run published `seq 0, 1, 2...`
+   * into a stream still holding the previous incarnation's `seq 0...199`.
+   * `seq` was per-OWNER while both of the gateway's filters assume per-RUN
+   * monotonicity: a fresh connect then replayed stale deltas over a correct
+   * seed (old first, so a stale partial bucket overwrote a complete one), and
+   * a resuming client filtered out the new incarnation's `seq 0` -- the one
+   * delta carrying `replaces: true`.
+   *
+   * Seeded here by writing the stream directly rather than by killing a real
+   * owner: the SUT is what `#claim` reads, and a stream tip is a stream tip
+   * however it got there.
+   */
+  it('continues a run’s seq from the replay tip after a re-claim, rather than restarting at 0', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      // The previous incarnation's last published delta. `seq` is the only
+      // field the claim reads out of it -- the rest of a delta body says
+      // nothing about where the sequence resumes.
+      const tipSeq = 199;
+      await redis.xadd(`live:${runId}:deltas`, '*', 'delta', JSON.stringify({ runId, seq: tipSeq }));
+
+      const first = await nextPublishedDelta(owner, runId);
+
+      // One PAST the tip, so the stream stays monotonic across the restart
+      // and the gateway's `entry.seq >= snapshot.seq` filter still excludes
+      // the old incarnation's entries instead of replaying them.
+      expect(first.seq).toBe(tipSeq + 1);
+      // And it is still a full replacement: only `seq` is taken from the tip,
+      // so the new owner -- folding this run from byte 0 with a fresh engine
+      // -- tells every consumer to discard what it had.
+      expect(first.responseTime.replaces).toBe(true);
+    } finally {
+      await redis.quit();
       await owner.close();
     }
   });

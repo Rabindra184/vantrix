@@ -12,14 +12,34 @@ const valid = {
     widthMs: 1000,
     replaces: false,
     buckets: [
-      { startOffsetMs: 0, startedCount: 5, endedCount: 5, okCount: 5, koCount: 0 },
+      {
+        startOffsetMs: 0, startedCount: 5, endedCount: 5, okCount: 5, koCount: 0,
+        startedOkCount: 5, startedKoCount: 0,
+        minMs: 10, maxMs: 40, meanMs: 22,
+        percentiles: { p50: 20, p95: 38 },
+        percentilesOk: { p50: 20, p95: 38 },
+        percentilesKo: {},
+      },
     ],
   },
   users: {
     widthMs: 1000,
-    buckets: [{ scenario: 'checkout', startOffsetMs: 0, active: 3 }],
+    buckets: [{ scenario: 'checkout', startOffsetMs: 0, started: 3, ended: 0, active: 3 }],
+  },
+  errors: {
+    rows: [{ message: 'connection reset', count: 1 }],
   },
 };
+
+/**
+ * A deep clone of `valid`, for cases that mutate a nested field (e.g.
+ * `delete`ing a bucket property) -- `valid` itself is shared across every
+ * case in this file via shallow spreads, so mutating it in place would leak
+ * into unrelated tests.
+ */
+function validDelta(): typeof valid {
+  return structuredClone(valid);
+}
 
 describe('LiveDeltaSchema', () => {
   it('accepts a well-formed delta', () => {
@@ -90,9 +110,15 @@ describe('LiveDeltaSchema', () => {
         ...valid,
         users: {
           ...valid.users,
-          buckets: [{ scenario: 'checkout', startOffsetMs: 0.5, active: 3 }],
+          buckets: [{ scenario: 'checkout', startOffsetMs: 0.5, started: 3, ended: 0, active: 3 }],
         },
       }),
     ).toThrow();
+  });
+
+  it('rejects a response bucket missing its latency fields', () => {
+    const delta = validDelta();
+    delete (delta.responseTime.buckets[0] as Record<string, unknown>).percentiles;
+    expect(() => LiveDeltaSchema.parse(delta)).toThrow();
   });
 });

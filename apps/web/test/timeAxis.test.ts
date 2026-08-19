@@ -1,8 +1,21 @@
+// This file needs jsdom for the `useTimeDomainFromShell` hook cases at the
+// bottom (`renderHook` mounts a real `MemoryRouter`/`Outlet` tree, which needs
+// a `document`) — but it lives at `apps/web/test/timeAxis.test.ts`, a `.ts`
+// file, and `environmentMatchGlobs` in vitest.config.ts routes only
+// `*.test.tsx` to jsdom. This magic comment overrides the environment for
+// just this file rather than renaming it, which would also require rewriting
+// every path a git-blame or another task's brief already points at. Every
+// existing assertion above is plain data and runs identically under jsdom.
+// @vitest-environment jsdom
+import { createElement, Fragment, type ReactNode } from 'react';
+import { renderHook } from '@testing-library/react';
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import type { SeriesResponse, UsersResponse } from '@perfportal/contracts';
 import { toPercentiles } from '../src/charts/transforms/percentiles';
 import { toRequestRate, toResponseRate } from '../src/charts/transforms/rates';
 import { toConcurrentUsers, toUserStartRate } from '../src/charts/transforms/users';
+import { growingDomainMs, useTimeDomainFromShell, type RunWindowContext } from '../src/routes/useRunWindow';
 import fixture from './fixtures/reference-run.json';
 
 /**
@@ -97,4 +110,108 @@ describe('the run page draws one time axis', () => {
     expect(Math.max(...seriesOffsets)).toBe(Math.max(...userOffsets));
     expect(seriesOffsets.length).toBeLessThan(userOffsets.length);
   });
+});
+
+/**
+ * ═══ `useTimeDomainFromShell` — THE DOMAIN GROWS THROUGH ONE CODE PATH ═══
+ *
+ * `useOutletContext` throws outside a matching `<Route>`'s element tree, so
+ * there is no plain function to call here — every case below mounts a real
+ * `MemoryRouter`/`Routes`/`Route`/`Outlet`, the shape `RunShell` itself
+ * renders, with a `RunWindowContext` the test controls.
+ *
+ * `createElement` rather than JSX: this file is `.ts`, not `.tsx`, and
+ * `vitest.config.ts` transforms `apps/*.ts` through swc's PLAIN TypeScript
+ * parser (`syntax: 'typescript'`, no `tsx`) — JSX syntax here would be a
+ * parse error, not a type error. `createElement` sidesteps that without
+ * renaming the file the brief and every later task's cross-reference already
+ * name.
+ */
+function wrapperFor(context: RunWindowContext) {
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(
+      MemoryRouter,
+      { initialEntries: ['/r'] },
+      createElement(
+        Routes,
+        null,
+        createElement(
+          Route,
+          { path: '/r', element: createElement(Outlet, { context }) },
+          createElement(Route, { index: true, element: createElement(Fragment, null, children) }),
+        ),
+      ),
+    );
+  };
+}
+
+describe('useTimeDomainFromShell', () => {
+  // One code path decides the domain for a live run and a finished one, or
+  // the shared crosshair means one instant on one and something else on the
+  // other.
+  it('takes the domain from the live duration while a run is streaming', () => {
+    const { result } = renderHook(() => useTimeDomainFromShell(), {
+      wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: 42_000 }),
+    });
+    expect(result.current).toEqual([0, 42_000]);
+  });
+
+  it('still prefers an explicit window over the live duration', () => {
+    // `bucketWidthMs` is a real, required field of `Window` (`WindowSchema`,
+    // metrics.ts) that `useTimeDomainFromShell` never reads — supplied here
+    // only so this object typechecks as one.
+    const window = { fromMs: 5_000, toMs: 9_000, bucketWidthMs: 1_000 };
+    const { result } = renderHook(() => useTimeDomainFromShell(), {
+      wrapper: wrapperFor({ window, durationMs: null, liveDurationMs: 42_000 }),
+    });
+    expect(result.current).toEqual([5_000, 9_000]);
+  });
+
+  it('is undefined when a run reports no duration at all', () => {
+    const { result } = renderHook(() => useTimeDomainFromShell(), {
+      wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: null }),
+    });
+    expect(result.current).toBeUndefined();
+  });
+
+  // The settled duration must WIN, unconditionally, once one exists — a live
+  // delta from before the run finished must never override the ground truth
+  // just because a caller forgot to clear it.
+  it('prefers the settled duration over a stale live one', () => {
+    const { result } = renderHook(() => useTimeDomainFromShell(), {
+      wrapper: wrapperFor({ window: null, durationMs: 60_000, liveDurationMs: 42_000 }),
+    });
+    expect(result.current).toEqual([0, 60_000]);
+  });
+});
+
+/**
+ * ═══ TASK 9 C4: ONE FORMULA, TWO SITES THAT CANNOT SHARE ONE CALL ═══
+ *
+ * `Live` in `RunDetail.tsx` computes its own growing domain directly —
+ * `growingDomainMs(delta.summary.durationMs)` — because it mounts no
+ * `<Outlet/>` (a still-processing run renders no `RunShell`) and so cannot
+ * call `useTimeDomainFromShell`, which reads `RunWindowContext` off one. The
+ * shell cannot be added just to unify the two: a still-streaming run
+ * genuinely has no `RunResponse` to build one from (`Live`'s own docstring).
+ *
+ * What CAN be shared, and now is, is the arithmetic: both sites hand a
+ * duration to the same `growingDomainMs`, so the two can never silently
+ * diverge on what `[0, x]` means. This case is the guard — without a shared
+ * function there would be nothing here to test, and a typo in either
+ * inlined `[0, ...]` would only ever show up as two charts disagreeing on
+ * screen.
+ */
+it('Live and useTimeDomainFromShell agree on the growing-run domain formula', () => {
+  const durationMs = 42_000;
+
+  // The formula itself, independent of either call site.
+  expect(growingDomainMs(durationMs)).toEqual([0, durationMs]);
+
+  // `useTimeDomainFromShell`'s own growing-domain branch (no window, no
+  // settled duration) resolves through the identical function.
+  const { result } = renderHook(() => useTimeDomainFromShell(), {
+    wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: durationMs }),
+  });
+  expect(result.current).toEqual(growingDomainMs(durationMs));
 });

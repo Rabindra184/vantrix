@@ -3,6 +3,7 @@ import { AuthMiddleware } from './auth/auth.middleware.js';
 import { AuthModule } from './auth/auth.module.js';
 import { HealthController } from './health.controller.js';
 import { IngestModule } from './ingest/ingest.module.js';
+import { LiveModule } from './live/live.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { RunsModule } from './runs/runs.module.js';
@@ -10,7 +11,7 @@ import { TelemetryModule } from './telemetry/telemetry.module.js';
 import { TokensModule } from './tokens/tokens.module.js';
 
 @Module({
-  imports: [AuthModule, RunsModule, IngestModule, MetricsModule, ProjectsModule, TelemetryModule, TokensModule],
+  imports: [AuthModule, RunsModule, IngestModule, LiveModule, MetricsModule, ProjectsModule, TelemetryModule, TokensModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

@@ -37,6 +37,12 @@ export type LiveSummary = z.infer<typeof LiveSummarySchema>;
  * exactly, which is built from the same `Bucket` upstream. Identical fields
  * crossing the batch wire and the live wire must have identical constraints, so
  * both reject fractional values.
+ *
+ * The SAME shape `SeriesBucketSchema` uses (`metrics.ts`), field for field and
+ * nullability for nullability -- so a live bucket and a persisted one are
+ * indistinguishable to `toPercentiles` and the chart transforms need no live
+ * branch. The nullable started splits are nullable in the REST schema because
+ * old persisted rows may lack them; a live bucket always sends a number.
  */
 export const LiveSeriesBucketSchema = z.object({
   /**
@@ -48,6 +54,14 @@ export const LiveSeriesBucketSchema = z.object({
   endedCount: z.number().int(),
   okCount: z.number().int(),
   koCount: z.number().int(),
+  startedOkCount: z.number().int().nullable(),
+  startedKoCount: z.number().int().nullable(),
+  minMs: z.number(),
+  maxMs: z.number(),
+  meanMs: z.number(),
+  percentiles: z.record(z.string(), z.number()),
+  percentilesOk: z.record(z.string(), z.number()),
+  percentilesKo: z.record(z.string(), z.number()),
 });
 export type LiveSeriesBucket = z.infer<typeof LiveSeriesBucketSchema>;
 
@@ -103,10 +117,22 @@ export type LiveResponseTime = z.infer<typeof LiveResponseTimeSchema>;
  * an integer, for the same reason as `LiveSeriesBucketSchema.startOffsetMs`
  * above: it is built from the same integer `UserBucket.startOffsetMs`
  * upstream and can never legitimately be fractional.
+ *
+ * `started`/`ended` match `UsersResponseSchema`'s bucket in name, type, and
+ * required-ness (both `z.number().int()`, never optional) for the same
+ * reason `active` already does: the producer's `UserBucket` (`packages/statistics/
+ * src/users.ts`) carries both fields already, and a live bucket that omitted
+ * them would force `usersResponseFrom` (apps/web/src/api/live.ts) to invent a
+ * value with no source -- which is exactly the bug this schema previously
+ * had. `0` and "not sent" are indistinguishable to a reader; the fix is to
+ * send the real count, not to make the field optional so a caller can
+ * distinguish the two some other way.
  */
 export const LiveUserBucketSchema = z.object({
   scenario: z.string(),
   startOffsetMs: z.number().int(),
+  started: z.number().int(),
+  ended: z.number().int(),
   active: z.number(),
 });
 export type LiveUserBucket = z.infer<typeof LiveUserBucketSchema>;
@@ -137,6 +163,25 @@ export const LiveUsersSchema = z.object({
 });
 export type LiveUsers = z.infer<typeof LiveUsersSchema>;
 
+export const LiveErrorRowSchema = z.object({
+  /** `null` is `ErrorTally`'s folded remainder, carried rather than dropped. */
+  message: z.string().nullable(),
+  count: z.number().int(),
+});
+export type LiveErrorRow = z.infer<typeof LiveErrorRowSchema>;
+
+/**
+ * RUN SCOPE ONLY. Per-endpoint error rows are excluded on part 2a §3.2's
+ * argument unchanged: their count tracks the run's endpoint cardinality (2000
+ * at the cap), so a live run would publish thousands of rows every tick to
+ * every subscriber. The Errors tab's per-request drill-down is a REST read on
+ * a finished run.
+ */
+export const LiveErrorsSchema = z.object({
+  rows: z.array(LiveErrorRowSchema),
+});
+export type LiveErrors = z.infer<typeof LiveErrorsSchema>;
+
 /**
  * A delta published by the fold engine to Redis on a timer, carrying the
  * incremental update to a run's statistics since the last delta.
@@ -156,5 +201,6 @@ export const LiveDeltaSchema = z.object({
   summary: LiveSummarySchema,
   responseTime: LiveResponseTimeSchema,
   users: LiveUsersSchema,
+  errors: LiveErrorsSchema,
 });
 export type LiveDelta = z.infer<typeof LiveDeltaSchema>;

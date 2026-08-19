@@ -53,11 +53,26 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **99 files / 1079 tests**, it
+`nvm use` first, and if a run reports fewer than **103 files / 1150 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the fold owner's
-whole-branch review fixes, which added `packages/storage/test/blobs.test.ts`
+silently-skipped run looks like a pass. Last measured on live run monitoring
+part 2b — the fan-out and the live dashboard — which added
+`packages/statistics/test/bucket-latency.test.ts` (4),
+`apps/web/test/useLiveRun.test.tsx` (15), `apps/web/test/LiveNotice.test.tsx`
+(4) and `apps/web/test/RunDetail.live.test.tsx` (14) as new files, plus cases
+across `live-delta.test.ts`, `timeAxis.test.ts` and the two live integration
+suites, from a floor of 99 / 1079. The last 19 of those tests came from the
+whole-branch review's own fix wave, which is worth knowing: two of its
+findings were defects no per-task review could see, and neither had ANY test
+over it. Its integration floor is 108 files / 1269 tests and its e2e is 89 — neither of which `pnpm test:unit` counts. Earlier: the live dashboard
+sub-project's task 1, the `bucketLatency` extraction, which added
+`packages/statistics/test/bucket-latency.test.ts` (4, deriving min/max/mean
+from the all-outcomes sketch, emitting every fixed band per outcome split,
+and the empty-sketch asymmetry — {} for percentiles but 0 for min/max/mean)
+as a new file — from a floor of 99 / 1079 — and that one from the fold
+owner's whole-branch review fixes, which added
+`packages/storage/test/blobs.test.ts`
 (2, the black-hole socket case that catches `requestTimeout` being the wrong
 option), `apps/worker/test/replay-cap.test.ts` (4, the replay stream's byte
 budget) and `apps/worker/test/shutdown.test.ts` (3, a designed
@@ -133,6 +148,16 @@ CI never sees this — `.github/workflows/ci.yml` declares its own service
 containers and does not read the compose file. Which also means a compose-only
 fix is invisible to CI: the `max_connections` override cannot be expressed as a
 GitHub Actions service container, so CI still runs Postgres at the stock 100.
+
+**It also cannot race ITSELF, and that failure is the more likely one.** The
+same setup truncation means two overlapping `pnpm test:integration`
+invocations sabotage each other, and what you get back is not a timeout — it
+is unique-constraint violations on slugs, null results mid-test, and
+timing-sensitive assertions failing, i.e. a plausible-looking regression that
+reproduces on nothing. This has already cost this project two separate
+sessions. Before believing an integration failure, run
+`ps aux | grep vitest` (or `pgrep -f vitest`) and confirm you are alone, then
+re-run once.
 
 Never run `pnpm test:integration` while `scripts/capture-chart-fixture.mjs` is
 capturing: that suite truncates every table on setup and will delete the org

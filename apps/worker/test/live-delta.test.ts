@@ -3,14 +3,61 @@ import { describe, expect, it } from 'vitest';
 import type { CanonicalEvent } from '@perfportal/core';
 import { LiveDeltaSchema } from '@perfportal/contracts';
 import { parseSimulationLog } from '@perfportal/plugin-gatling';
-import { LiveEngine, runEngine } from '@perfportal/statistics';
-import { buildDelta, INITIAL_CURSOR } from '../src/live/delta.js';
+import { bucketLatency, LiveEngine, runEngine, type EngineResult } from '@perfportal/statistics';
+import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor } from '../src/live/delta.js';
 
 const LOG = new URL(
   '../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log',
   import.meta.url,
 );
 const events = () => [...parseSimulationLog(readFileSync(LOG))];
+
+const RUN_ID = '0f9b1d4e-1111-2222-3333-444455556666';
+
+/**
+ * Builds an `EngineResult` from bare request shapes, for cases that only care
+ * about the run-scope response-time series and don't need a real log fixture.
+ * `name`/`groups`/`userId` are irrelevant to that series, so they are fixed.
+ */
+function engineResultFrom(requests: { startMs: number; endMs: number; ok: boolean }[]): EngineResult {
+  const reqEvents: CanonicalEvent[] = requests.map((r, i) => ({
+    type: 'request',
+    name: 'req',
+    groups: [],
+    userId: `u${i}`,
+    startMs: r.startMs,
+    endMs: r.endMs,
+    ok: r.ok,
+  }));
+  return runEngine(reqEvents);
+}
+
+/**
+ * An `EngineResult` from zero requests, with `errors` overridden to the given
+ * rows -- for cases that only care about `buildDelta`'s error-row filtering
+ * and don't need a real log fixture to produce failures. Built from
+ * `runEngine([])` rather than hand-assembled, so every other field (series,
+ * users, errorSeries, ...) is a real, internally-consistent empty result
+ * instead of a second, hand-maintained shape of `EngineResult`.
+ */
+function engineResultWithErrors(errors: EngineResult['errors']): EngineResult {
+  return { ...runEngine([]), errors };
+}
+
+/**
+ * An `EngineResult` whose run-scope response-time series spans `durationMs`
+ * at the default 1000ms bucket width, for cases that only care about "many
+ * buckets exist" and don't need a real log fixture. One request per bucket
+ * is enough to materialise it -- `BucketSeries` only creates a bucket on its
+ * first `add` (see `buildDelta`'s own comment on this).
+ */
+function engineResultSpanning(durationMs: number): EngineResult {
+  const requests: { startMs: number; endMs: number; ok: boolean }[] = [];
+  for (let ms = 0; ms < durationMs; ms += 1000) {
+    requests.push({ startMs: ms, endMs: ms + 10, ok: true });
+  }
+  return engineResultFrom(requests);
+}
 
 describe('buildDelta', () => {
   it('summarises the run from the payload, not from written-down numbers', () => {
@@ -192,6 +239,45 @@ describe('buildDelta', () => {
     }
   });
 
+  it('carries the source UserBucket\'s started/ended counts, not a hard-coded zero', () => {
+    // Three starts and one end for 'Checkout', spread across two buckets --
+    // enough that both the per-bucket counts and their SUM disagree with 0,
+    // so a regression back to the old hard-coded zeros cannot pass by luck.
+    const userEvent = (kind: 'start' | 'end', tsMs: number): CanonicalEvent => ({
+      type: 'user', scenario: 'Checkout', userId: `u-${tsMs}`, kind, tsMs,
+    });
+    const engine = new LiveEngine();
+    engine.add(userEvent('start', 0));
+    engine.add(userEvent('start', 100));
+    engine.add(userEvent('start', 1_200));
+    engine.add(userEvent('end', 1_300));
+
+    const result = engine.snapshot({ clone: true });
+    const source = result.users.find((u) => u.scenario === 'Checkout');
+    if (!source) throw new Error('expected a Checkout scenario in the snapshot');
+
+    const { delta } = buildDelta('r1', result, INITIAL_CURSOR);
+    const published = delta.users.buckets.filter((b) => b.scenario === 'Checkout');
+
+    // Derived from the SAME snapshot the delta was built from, never written
+    // down: every published bucket's started/ended must equal its source
+    // UserBucket's, at every offset the engine produced -- including the
+    // gap-filled bucket between the two occupied ones (`UserSeries#sweep`),
+    // which carries started: 0, ended: 0 for real, distinct from a value
+    // that was never sent at all.
+    expect(published.length).toBe(source.buckets.length);
+    for (const origin of source.buckets) {
+      const match = published.find((b) => b.startOffsetMs === origin.startOffsetMs);
+      if (!match) throw new Error(`delta is missing the bucket at offset ${origin.startOffsetMs}`);
+      expect(match.started).toBe(origin.started);
+      expect(match.ended).toBe(origin.ended);
+    }
+    // Guard: the fixture must actually exercise a nonzero count, or the
+    // equality checks above would pass just as well under the old bug.
+    expect(source.buckets.some((b) => b.started > 0)).toBe(true);
+    expect(source.buckets.some((b) => b.ended > 0)).toBe(true);
+  });
+
   it('re-emits a response-time bucket whose count grew, even when it is behind the frontier', () => {
     // engine.ts folds a request into BOTH its start and end bucket, and the
     // tool's log is end-time-ordered -- so a slow request's start-edge
@@ -247,5 +333,67 @@ describe('buildDelta', () => {
     const { delta } = buildDelta('0f9b1d4e-1111-2222-3333-444455556666', runEngine(all), INITIAL_CURSOR);
 
     expect(() => LiveDeltaSchema.parse(delta)).not.toThrow();
+  });
+
+  it('publishes the same latency fields the batch writer would persist for the same bucket', () => {
+    // Build a run whose buckets are not uniform, so a wrong-bucket bug shows.
+    const result = engineResultFrom([
+      { startMs: 0, endMs: 120, ok: true },
+      { startMs: 100, endMs: 900, ok: true },
+      { startMs: 1200, endMs: 1260, ok: false },
+    ]);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+
+    const source = result.series.get('run  response_time')!.buckets;
+    for (const published of delta.responseTime.buckets) {
+      const origin = source.find((b) => b.startOffsetMs === published.startOffsetMs)!;
+      const expected = bucketLatency(origin);
+      expect(published.minMs).toBe(expected.minMs);
+      expect(published.maxMs).toBe(expected.maxMs);
+      expect(published.meanMs).toBe(expected.meanMs);
+      expect(published.percentiles).toEqual(expected.percentiles);
+      expect(published.percentilesOk).toEqual(expected.percentilesOk);
+      expect(published.percentilesKo).toEqual(expected.percentilesKo);
+      expect(published.startedOkCount).toBe(origin.startedOkCount);
+      expect(published.startedKoCount).toBe(origin.startedKoCount);
+    }
+  });
+
+  it('carries run-scope error rows, and no per-endpoint rows', () => {
+    const result = engineResultWithErrors([
+      { scope: 'run', name: '', message: 'connection reset', count: 7 },
+      { scope: 'request', name: 'GET /cart', message: 'connection reset', count: 7 },
+    ]);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    expect(delta.errors.rows).toEqual([{ message: 'connection reset', count: 7 }]);
+  });
+
+  // ErrorTally folds everything past its cap into one `message: null` row.
+  // Dropping it would make the rows fail to sum to summary.koCount, which is
+  // the one arithmetic a reader can check by eye.
+  it('keeps the folded remainder row rather than dropping it', () => {
+    const result = engineResultWithErrors([
+      { scope: 'run', name: '', message: 'timeout', count: 3 },
+      { scope: 'run', name: '', message: null, count: 11 },
+    ]);
+    const { delta } = buildDelta(RUN_ID, result, INITIAL_CURSOR);
+    expect(delta.errors.rows).toContainEqual({ message: null, count: 11 });
+  });
+});
+
+describe('buildSnapshot', () => {
+  it('a snapshot carries the whole series, not the lookback window', () => {
+    const result = engineResultSpanning(60_000); // many buckets
+    const advanced: DeltaCursor = { seq: 12, lastPublishedOffsetMs: 50_000, lastBucketWidthMs: 1000 };
+
+    const { delta } = buildDelta(RUN_ID, result, advanced);
+    const snapshot = buildSnapshot(RUN_ID, result, advanced.seq);
+
+    const all = result.series.get('run  response_time')!.buckets.length;
+    expect(delta.responseTime.buckets.length).toBeLessThan(all);
+    expect(snapshot.responseTime.buckets).toHaveLength(all);
+    expect(snapshot.seq).toBe(12);
+    // A seed replaces whatever a client had; it is never an upsert.
+    expect(snapshot.responseTime.replaces).toBe(true);
   });
 });
