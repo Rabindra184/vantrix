@@ -53,7 +53,7 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **103 files / 1129 tests**, it
+`nvm use` first, and if a run reports fewer than **103 files / 1148 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. Last measured on live run monitoring
@@ -62,8 +62,10 @@ part 2b — the fan-out and the live dashboard — which added
 `apps/web/test/useLiveRun.test.tsx` (15), `apps/web/test/LiveNotice.test.tsx`
 (4) and `apps/web/test/RunDetail.live.test.tsx` (14) as new files, plus cases
 across `live-delta.test.ts`, `timeAxis.test.ts` and the two live integration
-suites, from a floor of 99 / 1079. Its integration floor is 108 files / 1265
-tests and its e2e is 89 — neither of which `pnpm test:unit` counts. Earlier: the live dashboard
+suites, from a floor of 99 / 1079. The last 19 of those tests came from the
+whole-branch review's own fix wave, which is worth knowing: two of its
+findings were defects no per-task review could see, and neither had ANY test
+over it. Its integration floor is 108 files / 1269 tests and its e2e is 89 — neither of which `pnpm test:unit` counts. Earlier: the live dashboard
 sub-project's task 1, the `bucketLatency` extraction, which added
 `packages/statistics/test/bucket-latency.test.ts` (4, deriving min/max/mean
 from the all-outcomes sketch, emitting every fixed band per outcome split,
