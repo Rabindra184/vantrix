@@ -114,7 +114,7 @@ function deltaFixture(runId: string, seq: number, offsets: number[]): LiveDelta 
       })),
     },
     errors: { rows: [{ message: 'status 500', count: offsets.length }] },
-    sla: { evaluated: 2, breaching: [] },
+    sla: { evaluated: 2, notJudged: 0, rulesUnavailable: false, breaching: [] },
   };
 }
 

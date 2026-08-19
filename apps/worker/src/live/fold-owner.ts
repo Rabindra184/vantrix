@@ -1041,7 +1041,16 @@ export class LiveFoldOwner {
     // the SLA state and publish a delta claiming nothing is breaching, which
     // reads exactly like a healthy run. Shared between the delta below and
     // the snapshot further down, since both describe THIS tick's evaluation.
-    const sla: SlaInput = { assertions, breachingSince: state.breachingSince };
+    //
+    // `rulesLoadFailed` rides along because it is the ONLY thing that tells a
+    // reader "no rules were checked" apart from "this project has no rules":
+    // both leave `assertions` empty, and both render as no banner at all.
+    // Until it was on the wire it had no production reader whatsoever.
+    const sla: SlaInput = {
+      assertions,
+      breachingSince: state.breachingSince,
+      rulesUnavailable: state.rulesLoadFailed,
+    };
 
     const { delta, next } = buildDelta(runId, snapshot, state.cursor, sla);
     const body = JSON.stringify(delta);

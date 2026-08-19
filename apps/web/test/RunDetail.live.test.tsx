@@ -60,7 +60,7 @@ function deltaFixture(overrides: Partial<LiveDelta> = {}): LiveDelta {
     responseTime: { widthMs: 1000, replaces: false, buckets: [] },
     users: { widthMs: 1000, buckets: [] },
     errors: { rows: [{ message: 'boom', count: 12 }] },
-    sla: { evaluated: 0, breaching: [] },
+    sla: { evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] },
     ...overrides,
   };
 }

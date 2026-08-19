@@ -31,6 +31,8 @@ const valid = {
   },
   sla: {
     evaluated: 2,
+    notJudged: 1,
+    rulesUnavailable: false,
     breaching: [
       { ruleId: 'rule-1', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 3000 },
     ],
@@ -141,6 +143,23 @@ describe('LiveDeltaSchema', () => {
     const delta = validDelta();
     delete (delta as Record<string, unknown>).sla;
     const parsed = LiveDeltaSchema.parse(delta);
-    expect(parsed.sla).toEqual({ evaluated: 0, breaching: [] });
+    expect(parsed.sla).toEqual({ evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] });
+  });
+
+  /**
+   * The same hazard one field deeper, and the reason `notJudged` and
+   * `rulesUnavailable` are defaulted rather than required: a delta published
+   * before those existed is a well-formed `sla` object missing two keys, and
+   * a required key there drops the frame exactly as a missing `sla` did.
+   */
+  it('accepts an sla written before notJudged and rulesUnavailable existed', () => {
+    const delta = validDelta();
+    delete (delta.sla as Record<string, unknown>).notJudged;
+    delete (delta.sla as Record<string, unknown>).rulesUnavailable;
+    const parsed = LiveDeltaSchema.parse(delta);
+    expect(parsed.sla.notJudged).toBe(0);
+    expect(parsed.sla.rulesUnavailable).toBe(false);
+    // And nothing else about the field was reinterpreted.
+    expect(parsed.sla.breaching).toHaveLength(1);
   });
 });

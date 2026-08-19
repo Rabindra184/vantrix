@@ -194,11 +194,35 @@ export type LiveBreach = z.infer<typeof LiveBreachSchema>;
 
 /**
  * ONLY the breaching rules travel. `evaluated` is a count so a reader can be
- * told "2 of 7 breaching" without six passing rules riding every tick, and a
- * rule below the evidence floor is in neither number -- it was not judged.
+ * told "2 of 7 breaching" without six passing rules riding every tick.
+ *
+ * THREE NUMBERS, NOT ONE, because "we did not check" is a different fact from
+ * "we checked and it was fine" and a banner built on `evaluated` alone cannot
+ * say which it means. A project with seven rules whose percentile rules are
+ * still below the live evidence floor reads "1 of 1" at second 30 and "1 of 7"
+ * at minute 3, with nothing accounting for the six that moved — and the gate
+ * exists for exactly the opening minutes, so the denominator is least
+ * trustworthy when the banner is most likely to be read.
+ *
+ *  - `evaluated`  — passed + failed. Rules that were actually judged.
+ *  - `notJudged`  — `not_applicable`. Below the evidence floor, no matching
+ *                   statistic, an ambiguous target: judged by nobody, for
+ *                   reasons the assertion's own message carries and this
+ *                   count deliberately does not distinguish.
+ *  - `rulesUnavailable` — the rules could not be LOADED for this run at all
+ *                   (`LiveFoldOwner`'s `#claimContext`). Zero rules with this
+ *                   false means a project with no SLA; zero rules with it
+ *                   true means nothing is being checked and nobody knows what
+ *                   should be. Those two render identically — as nothing —
+ *                   without this flag.
+ *
+ * Both are defaulted for `LiveDeltaSchema['sla']`'s own reason: a body
+ * already in Redis was written by whatever code was running at the time.
  */
 export const LiveSlaSchema = z.object({
   evaluated: z.number().int(),
+  notJudged: z.number().int().default(0),
+  rulesUnavailable: z.boolean().default(false),
   breaching: z.array(LiveBreachSchema),
 });
 export type LiveSla = z.infer<typeof LiveSlaSchema>;

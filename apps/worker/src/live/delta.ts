@@ -35,6 +35,14 @@ export interface SlaInput {
   assertions: readonly EvaluatedAssertion[];
   /** ruleId -> the offset at which it began breaching (`FoldState`'s map). */
   breachingSince: ReadonlyMap<string, number>;
+  /**
+   * `FoldState.rulesLoadFailed`: this run's rules could not be READ at claim,
+   * so `assertions` is empty for a reason that has nothing to do with the
+   * run. Required rather than optional, exactly as this whole field is on
+   * `buildDelta` -- an omitted flag would default to "rules are fine" and
+   * publish a delta that reads like a healthy, rule-less project.
+   */
+  rulesUnavailable: boolean;
 }
 
 /**
@@ -305,8 +313,11 @@ export function buildDelta(
   // `passed` and `failed` were both judged; `not_applicable` was not --
   // whether because there was nothing to measure or because the live
   // evidence floor withheld judgement. Neither belongs in a count of rules
-  // actually evaluated.
+  // actually evaluated -- but they are not nothing either, which is what
+  // `notJudged` carries: a denominator that silently grows from 1 to 7 over
+  // the first three minutes is a true number and a misleading sentence.
   const evaluated = sla.assertions.filter((a) => a.outcome !== 'not_applicable').length;
+  const notJudged = sla.assertions.length - evaluated;
 
   const delta: LiveDelta = {
     runId,
@@ -330,7 +341,7 @@ export function buildDelta(
       buckets: usersBuckets,
     },
     errors: { rows: errorRows },
-    sla: { evaluated, breaching },
+    sla: { evaluated, notJudged, rulesUnavailable: sla.rulesUnavailable, breaching },
   };
 
   const next: DeltaCursor = {

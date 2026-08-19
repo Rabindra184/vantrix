@@ -57,6 +57,12 @@ function bucketFixture(startOffsetMs: number) {
  */
 type SlaFixture = {
   evaluated: number;
+  /** Optional here, and defaulted on the wire (`LiveSlaSchema`), for the same
+   * reason: a body already in Redis was written by whatever code was running
+   * at the time. Every caller below that does not set it is exercising that
+   * default through the real gateway, which does not validate what it
+   * forwards. */
+  notJudged?: number;
   breaching: { ruleId: string; description: string; actualValue: number; sinceOffsetMs: number }[];
 };
 
@@ -209,7 +215,11 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
     // above -- fixture data written by hand like the rest of `deltaFixture`,
     // not a value any assertion below re-derives from it.
     const delta = deltaFixture(runId, 5, {
-      evaluated: 3,
+      evaluated: 1,
+      // Whole-branch review, C1: six of this project's seven rules are still
+      // below the live evidence floor. "1 of 1" with no account of the other
+      // six is the sentence that finding is about.
+      notJudged: 6,
       breaching: [
         {
           ruleId: 'p95-checkout',
@@ -231,6 +241,11 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
       await expect(banner).toContainText('p95');
       // `sinceOffsetMs: 2000` -> `formatOffset` reads "2s" (apps/web/src/routes/format.ts).
       await expect(banner).toContainText('2s');
+      // The denominator names what it counts, and the rules nobody has
+      // checked yet are stated rather than left to be inferred from a number
+      // that grows silently over the run's first minutes.
+      await expect(banner).toContainText('1 of 1 checked SLA rule');
+      await expect(banner).toContainText('6 further rules have not been checked yet');
 
       // Never inside a chart's own <figure> — the CLAUDE.md rule nine other
       // specs already rest on (an <svg> inside one corrupts a drawn-chart

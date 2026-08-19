@@ -20,7 +20,7 @@ const RUN_ID = '0f9b1d4e-1111-2222-3333-444455556666';
 // each reads as "the run's stats" rather than "the run's stats, and also
 // nothing is breaching, which is irrelevant here". The one case that DOES
 // care about `sla` builds its own via `buildDeltaWithSla` below.
-const NO_SLA: SlaInput = { assertions: [], breachingSince: new Map() };
+const NO_SLA: SlaInput = { assertions: [], breachingSince: new Map(), rulesUnavailable: false };
 
 /** A rule snapshot for cases that only care about the fields `evaluateRules`
  *  reports back (ruleId/outcome/actualValue/message), not the rule itself. */
@@ -37,9 +37,14 @@ const RULE_SNAPSHOT: EvaluableRule = {
 function buildDeltaWithSla(sla: {
   assertions: readonly Omit<EvaluatedAssertion, 'ruleSnapshot'>[];
   breachingSince: ReadonlyMap<string, number>;
+  rulesUnavailable?: boolean;
 }): ReturnType<typeof buildDelta>['delta'] {
   const assertions: EvaluatedAssertion[] = sla.assertions.map((a) => ({ ...a, ruleSnapshot: RULE_SNAPSHOT }));
-  const { delta } = buildDelta(RUN_ID, runEngine([]), INITIAL_CURSOR, { ...sla, assertions });
+  const { delta } = buildDelta(RUN_ID, runEngine([]), INITIAL_CURSOR, {
+    rulesUnavailable: false,
+    ...sla,
+    assertions,
+  });
   return delta;
 }
 
@@ -433,6 +438,52 @@ describe('buildDelta', () => {
     // Passed (0 here) AND failed (2) count as evaluated; not_applicable did
     // not get judged and must not inflate the count.
     expect(delta.sla.evaluated).toBe(2);
+    // ...but it is not nothing either. The same asymmetry protects this one:
+    // `notJudged` must be the 1 not_applicable, not `assertions.length - failed`
+    // (also 1 here only because nothing passed -- see the fixture note above,
+    // which is why the case below adds a passing rule).
+    expect(delta.sla.notJudged).toBe(1);
+    expect(delta.sla.rulesUnavailable).toBe(false);
+  });
+
+  /**
+   * Whole-branch review, C1. `evaluated` alone made the banner's denominator
+   * grow silently over a run's opening minutes -- "1 of 1" at second 30 and
+   * "1 of 7" at minute 3 -- so the rules that were NOT judged travel as their
+   * own number rather than being inferrable from one that moves.
+   *
+   * A fourth outcome distribution from the case above: one of each, so
+   * `notJudged` (1) is distinguishable from `assertions.length - failed` (2)
+   * and from `assertions.length - evaluated` only if the latter is right.
+   */
+  it('counts the rules that were not judged, separately from those that were', () => {
+    const delta = buildDeltaWithSla({
+      assertions: [
+        { ruleId: 'a', outcome: 'failed', actualValue: 900, message: 'p95 ≤ 100 — actual 900' },
+        { ruleId: 'b', outcome: 'passed', actualValue: 40, message: 'p50 ≤ 100 — actual 40' },
+        { ruleId: 'c', outcome: 'not_applicable', actualValue: null, message: 'not checked yet' },
+      ],
+      breachingSince: new Map([['a', 42_000]]),
+    });
+
+    expect(delta.sla.evaluated).toBe(2);
+    expect(delta.sla.notJudged).toBe(1);
+  });
+
+  /**
+   * The other half of C1: `FoldState.rulesLoadFailed` had no production
+   * reader at all before this field existed. A project with no SLA and a
+   * project whose rules could not be READ both produce zero assertions, and
+   * without this they publish the identical delta.
+   */
+  it('says when the rules could not be loaded, distinctly from a project with none', () => {
+    const none = buildDeltaWithSla({ assertions: [], breachingSince: new Map() });
+    const failed = buildDeltaWithSla({
+      assertions: [], breachingSince: new Map(), rulesUnavailable: true,
+    });
+
+    expect(none.sla).toEqual({ evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] });
+    expect(failed.sla.rulesUnavailable).toBe(true);
   });
 });
 

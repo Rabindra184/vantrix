@@ -54,6 +54,33 @@ import { formatOffset } from './format';
  * the wash and the border, so there is no second failed-red hard-coded here
  * either way.
  *
+ * ═══ THE DENOMINATOR SAYS WHAT IT COUNTS ═══
+ *
+ * `evaluated` is `passed + failed` -- an honest number under a misleading
+ * sentence, when the sentence called it "SLA rules". A project with seven
+ * rules whose percentile rules are still below the live evidence floor read
+ * "1 of 1 SLA rules currently breaching" at second 30 and "1 of 7" at minute
+ * 3, with nothing accounting for the six that moved; the truth at second 30
+ * was "six rules have not been checked at all". The gate exists for exactly
+ * the opening minutes, so the denominator is least trustworthy when this
+ * banner is most likely to be read.
+ *
+ * So the denominator is named as CHECKED rules, and `sla.notJudged` is stated
+ * beside it rather than left to be inferred from a number that moves. The
+ * copy does not say WHY a rule was not judged -- too little data, no matching
+ * statistic, an ambiguous target are all `not_applicable`, and the
+ * assertion's own message on the finished run's page is where that belongs.
+ *
+ * ═══ AND AN ABSENT BANNER IS NOT ALWAYS GOOD NEWS ═══
+ *
+ * "all checked and fine", "nothing has enough data yet" and "the rules failed
+ * to load" all used to render as nothing. The last of those is not transient:
+ * a run's rules are read ONCE, at claim, and never retried for as long as the
+ * owner holds it (`FoldState.rules`), so a failed load means this run is
+ * being watched by nobody for its whole life. `sla.rulesUnavailable` is
+ * therefore the one case where this component renders with NOTHING breaching
+ * -- because "no breaches" is precisely what it cannot honestly say.
+ *
  * `frozen` (TASK 9 C3's same flag, `Live`'s own `status !== 'running'`)
  * governs one word, not the whole banner: once streaming stops the fold
  * owner released this run and nothing evaluates it again, so "currently
@@ -73,7 +100,7 @@ export default function SlaBanner({
   readonly sla: LiveDelta['sla'];
   readonly frozen?: boolean;
 }) {
-  if (sla.breaching.length === 0) return null;
+  if (sla.breaching.length === 0 && !sla.rulesUnavailable) return null;
 
   return (
     <div
@@ -82,17 +109,35 @@ export default function SlaBanner({
       className="tint flex flex-col gap-2 rounded-xl border px-4 py-3 text-[13px]"
       style={{ color: ASSERTION_OUTCOME.failed.colour }}
     >
-      <p className="font-semibold">
-        {sla.breaching.length} of {sla.evaluated} SLA {sla.evaluated === 1 ? 'rule' : 'rules'}{' '}
-        {frozen ? 'breaching when streaming stopped' : 'currently breaching'}
-      </p>
-      <ul className="flex flex-col gap-1">
-        {sla.breaching.map((rule) => (
-          <li key={rule.ruleId}>
-            {rule.description} — breaching since {formatOffset(rule.sinceOffsetMs)} into the run
-          </li>
-        ))}
-      </ul>
+      {sla.rulesUnavailable ? (
+        // A load failure leaves `assertions` empty, so there is never a breach
+        // list to draw beside this -- and never a number to put in the
+        // sentence above, which is the whole reason it needs its own.
+        <p className="font-semibold">
+          This run’s SLA rules could not be loaded, so nothing is being checked against them.
+        </p>
+      ) : (
+        <>
+          <p className="font-semibold">
+            {sla.breaching.length} of {sla.evaluated} checked SLA{' '}
+            {sla.evaluated === 1 ? 'rule' : 'rules'}{' '}
+            {frozen ? 'breaching when streaming stopped' : 'currently breaching'}
+          </p>
+          <ul className="flex flex-col gap-1">
+            {sla.breaching.map((rule) => (
+              <li key={rule.ruleId}>
+                {rule.description} — breaching since {formatOffset(rule.sinceOffsetMs)} into the run
+              </li>
+            ))}
+          </ul>
+          {sla.notJudged > 0 && (
+            <p>
+              {sla.notJudged} further{' '}
+              {sla.notJudged === 1 ? 'rule has' : 'rules have'} not been checked yet.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
