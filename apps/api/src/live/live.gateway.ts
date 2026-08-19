@@ -311,7 +311,26 @@ export class LiveGateway implements OnApplicationBootstrap, OnModuleDestroy {
         ws.close(CLOSE_UNAUTHORIZED, 'unauthorized');
         return;
       }
-      void this.serve(ws, runId, readResumeCursor(url));
+      // `.catch()`, like `onUpgrade`'s own dispatch above and for the same
+      // reason -- this is the file's OTHER fire-and-forget call. `serve`'s
+      // `try` starts at `this.hub.join(...)`, so it is only the fact that
+      // every statement before it happens to be non-throwing that keeps the
+      // rejection hypothetical today; nothing enforces that, and this file
+      // has already shipped two unauthenticated remote process-exit vectors
+      // of exactly this class. A rejected promise nothing observes exits the
+      // process on Node 22, taking every other viewer on the pod with it.
+      //
+      // `terminate()`, not `close(1011)`: `serve`'s own catch already owns
+      // every failure from `hub.join` onward and answers it with a graceful
+      // 1011. What reaches HERE is a throw from the prelude before that try,
+      // on a socket in a state this handler cannot reason about -- and a
+      // close handshake needs a peer to answer it, which is not something to
+      // wait on inside the handler that exists to stop this connection
+      // killing the process.
+      void this.serve(ws, runId, readResumeCursor(url)).catch((err: unknown) => {
+        console.error(`LiveGateway: serve failed unexpectedly for ${runId}:`, err);
+        ws.terminate();
+      });
     });
   }
 
