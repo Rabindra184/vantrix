@@ -57,6 +57,17 @@ interface FoldState {
    * in the data.
    */
   rules: EvaluableRule[];
+  /**
+   * True when `rules` is `[]` because the load FAILED at claim (the tenant
+   * lookup found no row, or `RuleRepository.listEnabled` itself threw) --
+   * distinct from a project that legitimately has no enabled rules, which
+   * also leaves `rules` as `[]` but with this `false`. Without this, "the
+   * DB was unreachable when this run was claimed" and "nobody has
+   * configured an SLA yet" render identically: a breach banner reading
+   * "nothing breaching" either way. The claim still succeeds either way --
+   * see `#claimRules`'s own doc comment for why failing open is right here.
+   */
+  rulesLoadFailed: boolean;
   /** ruleId -> the elapsed offset at which it began breaching. */
   breachingSince: Map<string, number>;
   /**
@@ -1047,6 +1058,24 @@ export class LiveFoldOwner {
     return state ? new Map(state.breachingSince) : null;
   }
 
+  /** The rules THIS run was claimed with -- or null if this owner does not
+   * hold `runId`. Test seam, on the same terms as `snapshotOf`: proves which
+   * project's rules a concurrently-claimed run actually ended up with,
+   * rather than assuming attribution held under a burst of claims. */
+  rulesOf(runId: string): readonly EvaluableRule[] | null {
+    const state = this.#owned.get(runId);
+    return state ? state.rules : null;
+  }
+
+  /** Whether this run's SLA rules failed to load at claim -- see
+   * `FoldState.rulesLoadFailed`'s own doc comment for why this is not the
+   * same question as "were there any". Null if this owner does not hold
+   * `runId`. Test seam, on the same terms as `snapshotOf`. */
+  rulesLoadFailedFor(runId: string): boolean | null {
+    const state = this.#owned.get(runId);
+    return state ? state.rulesLoadFailed : null;
+  }
+
   /**
    * Releases every owned run and quits this owner's own Redis connection.
    * Without this, a test (or a shutdown) that constructs more than one
@@ -1262,7 +1291,7 @@ export class LiveFoldOwner {
     // Same reasoning as `#resumeCursor` above -- this run's SLA rules,
     // loaded ONCE, right here, and never again for as long as this owner
     // holds the run (`FoldState.rules`' own doc comment).
-    const rules = await this.#claimRules(runId, client, tenant);
+    const { rules, rulesLoadFailed } = await this.#claimRules(runId, client, tenant);
 
     if (this.#closing) {
       // Won the lock, but close() already started (or finished) draining
@@ -1296,6 +1325,7 @@ export class LiveFoldOwner {
       // second one inside it.
       cursor,
       rules,
+      rulesLoadFailed,
       breachingSince: new Map(),
       // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
       // own doc comment: the first tick after a claim must seed immediately.
@@ -1310,14 +1340,48 @@ export class LiveFoldOwner {
    * only ever carries a bare runId). Mirrors `#resumeCursor`'s own failure
    * shape: a rules lookup is a nice-to-have for a run this owner is about to
    * fold regardless, so a failure here degrades to "no rules this claim"
-   * rather than aborting a claim that would otherwise have succeeded.
+   * rather than aborting a claim that would otherwise have succeeded --
+   * FAILING OPEN is right, because a stalled or unreachable Prisma pool must
+   * not block a run from being folded at all.
+   *
+   * BUT FAILING OPEN SILENTLY IS NOT RIGHT, which is what
+   * `rulesLoadFailed` is for: `rules === []` alone cannot tell "this
+   * project genuinely has no enabled rules" apart from "the load failed",
+   * and those read identically on a breach banner ("nothing breaching")
+   * for two very different reasons. Both branches below are logged for the
+   * same reason -- an operator needs to be able to tell the two apart from
+   * outside, not just this method's own caller.
+   *
+   * `!scope` is the more anomalous of the two branches, not the more
+   * ordinary one: `pg_try_advisory_lock`'s key is `hashtext(runId)`, an
+   * arbitrary string with no foreign-key tie to the `run` table, so a claim
+   * CAN win the lock for an id with no backing row (a stray or malformed
+   * `live:opened` ping -- runs are never deleted, so a live one dropping
+   * out from under a lookup that just ran is not the concern; a lookup for
+   * an id that was never a real run in the first place is).
    */
-  async #claimRules(runId: string, client: pg.PoolClient, tenant?: ProjectScope): Promise<EvaluableRule[]> {
+  async #claimRules(
+    runId: string,
+    client: pg.PoolClient,
+    tenant?: ProjectScope,
+  ): Promise<{ rules: EvaluableRule[]; rulesLoadFailed: boolean }> {
+    let scope: ProjectScope | null;
     try {
-      const scope = tenant ?? (await this.#lookupTenant(client, runId));
-      if (!scope) return [];
+      scope = tenant ?? (await this.#lookupTenant(client, runId));
+    } catch (err) {
+      console.error(`LiveFoldOwner: could not resolve the tenant for ${runId}, claiming with no SLA rules:`, err);
+      return { rules: [], rulesLoadFailed: true };
+    }
+    if (!scope) {
+      console.error(
+        `LiveFoldOwner: no run row found for ${runId} while resolving its SLA tenant ` +
+          '(a lock with no backing row -- see hashtext(runId) above); claiming with no SLA rules',
+      );
+      return { rules: [], rulesLoadFailed: true };
+    }
+    try {
       const records = await this.#rules.listEnabled(scope);
-      return records.map((r) => ({
+      const rules = records.map((r) => ({
         id: r.id,
         scope: r.scope,
         targetName: r.targetName,
@@ -1326,9 +1390,10 @@ export class LiveFoldOwner {
         comparator: r.comparator,
         threshold: r.threshold,
       }));
+      return { rules, rulesLoadFailed: false };
     } catch (err) {
       console.error(`LiveFoldOwner: could not load SLA rules for ${runId}, claiming with none:`, err);
-      return [];
+      return { rules: [], rulesLoadFailed: true };
     }
   }
 

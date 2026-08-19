@@ -96,6 +96,33 @@ async function seedRunningRun(
   return run.id;
 }
 
+/** One enabled rule at run scope, against the run-scope `response_time` stat
+ * every request rolls into (`scope: 'run', name: ''`, engine.ts's own
+ * `#rollupFor('run', '', 'response_time')`). Shared by the SLA-evaluation
+ * cases below and by the `live:opened` burst case, which needs a real rule
+ * in the database to prove concurrent claims attribute it to the right run
+ * rather than merely proving they do not overshoot the cap. */
+async function seedSlaRule(
+  orgId: string,
+  projectId: string,
+  opts: { metric: string; comparator: 'lte' | 'gte'; threshold: number },
+): Promise<string> {
+  const rule = await prisma.slaRule.create({
+    data: {
+      orgId,
+      projectId,
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: opts.metric,
+      comparator: opts.comparator,
+      threshold: opts.threshold,
+      enabled: true,
+    },
+  });
+  return rule.id;
+}
+
 const runStat = (r: EngineResult) => r.stats.find((s) => s.scope === 'run' && s.family === 'response_time');
 
 /**
@@ -387,10 +414,26 @@ describe('LiveFoldOwner', () => {
    *
    * `>= runIds.length` deliberately is NOT the assertion: the point is the
    * exact number, since the failure mode is overshoot, not undershoot.
+   *
+   * ALSO the one case in this file that exercises `#claimRules`'s Prisma
+   * query under real concurrency (live-sla-signals Task 3, review round 2,
+   * IMPORTANT 1): every claim below runs off an unserialized `message`
+   * event, exactly like the pings above, so up to `maxOwnedRuns` of them can
+   * have `RuleRepository.listEnabled` in flight against Prisma's pool at
+   * once -- the burst `main.ts`'s `FOLD_OWNER_CLAIM_PRISMA_CLIENTS` sizing
+   * term exists for. One rule, shared by every candidate run (they share one
+   * project), so `rulesOf` on each of the two that actually got claimed
+   * proves attribution held under the race rather than merely that nothing
+   * threw.
    */
   it('a burst of live:opened pings does not overshoot maxOwnedRuns', async () => {
     await truncateAll();
     const { orgId, projectId } = await seedOrgProject();
+    const ruleId = await seedSlaRule(orgId, projectId, {
+      metric: 'error_rate',
+      comparator: 'lte',
+      threshold: 0.5,
+    });
     const runIds: string[] = [];
     for (let i = 0; i < 6; i++) {
       const runId = await seedRunningRun(orgId, projectId, log.length);
@@ -431,6 +474,17 @@ describe('LiveFoldOwner', () => {
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       expect(ownedCount()).toBe(maxOwnedRuns);
+
+      // Every claim that won its race also won its OWN rule load, not a
+      // neighbour's -- and neither `#lookupTenant` nor `RuleRepository`
+      // failed under the concurrent load, which `rulesLoadFailedFor` would
+      // otherwise have caught silently turning into "no rules configured".
+      for (const id of runIds.filter((rid) => owner.snapshotOf(rid) !== null)) {
+        expect(owner.rulesLoadFailedFor(id)).toBe(false);
+        expect(owner.rulesOf(id)).toEqual([
+          expect.objectContaining({ id: ruleId, metric: 'error_rate', threshold: 0.5 }),
+        ]);
+      }
     } finally {
       await publisher.quit();
       await owner.close();
@@ -1991,29 +2045,14 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     });
 
-    /** Seeds one enabled rule at run scope, against the run-scope
-     * `response_time` stat every request above rolls into (`scope: 'run',
-     * name: ''`, engine.ts's own `#rollupFor('run', '', 'response_time')`).
-     * `ruleId` is recorded on the closure for `tightenRuleTo` to find. */
+    /** Wraps the shared `seedSlaRule`, recording the id on the closure for
+     * `tightenRuleTo` to find. */
     async function seedRule(opts: {
       metric: string;
       comparator: 'lte' | 'gte';
       threshold: number;
     }): Promise<void> {
-      const rule = await prisma.slaRule.create({
-        data: {
-          orgId,
-          projectId,
-          scope: 'run',
-          targetName: null,
-          family: 'response_time',
-          metric: opts.metric,
-          comparator: opts.comparator,
-          threshold: opts.threshold,
-          enabled: true,
-        },
-      });
-      ruleId = rule.id;
+      ruleId = await seedSlaRule(orgId, projectId, opts);
     }
 
     /** Edits the threshold of the rule `seedRule` most recently created --
@@ -2075,6 +2114,126 @@ describe('LiveFoldOwner', () => {
       await tightenRuleTo(0.0001); // would breach, if it were re-read
       await owner.tick();
       expect(breachesOf(owner, runId)).toHaveLength(0);
+    });
+
+    /**
+     * Review round 2, IMPORTANT 1 (also covering the "zero test coverage"
+     * finding): every case above claims through `owner.tick()`'s own poll,
+     * which always has `org_id`/`project_id` in hand from the widened
+     * discovery query. A `live:opened` PING never does -- it carries a bare
+     * runId (`LiveNotifier.opened`) -- so this is the one path that
+     * actually exercises `#lookupTenant`'s fallback query inside
+     * `#claimRules`. Claiming happens off the ping; folding and evaluating
+     * still only happen on a tick (`#onOpened` never folds -- see its own
+     * doc comment), so the ping only replaces how `runId` ENTERS `#owned`,
+     * not how the breach is found afterward.
+     */
+    it('evaluates a rule for a run claimed via a live:opened ping, not just a tick', async () => {
+      // `owner.listen()` FIRST, before the Prisma round trip below -- not
+      // stylistic. `beforeEach` constructs `owner` moments before this body
+      // runs, and its underlying Redis connections are still mid-handshake;
+      // an awaited Prisma call between construction and `listen()` gives
+      // ioredis's own internal `_readyCheck` (an `INFO` command) just enough
+      // room to land AFTER `subscribe()` has already put the connection into
+      // subscriber-only mode, which ioredis then rejects -- silently, from
+      // this test's point of view, as zero delivered subscribers. Every
+      // other ping case in this file avoids the gap by listening right after
+      // construction; this one has to preserve that ordering explicitly
+      // since its owner comes from a shared `beforeEach` instead.
+      await owner.listen();
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+
+      const publisher = new Redis(config.redisUrl);
+      try {
+        await publisher.publish('live:opened', runId);
+        await vi.waitFor(() => expect(owner.snapshotOf(runId)).not.toBeNull());
+
+        // Claimed correctly, tenant and all -- the ping path's own success case.
+        expect(owner.rulesLoadFailedFor(runId)).toBe(false);
+        expect(owner.rulesOf(runId)).toHaveLength(1);
+
+        // Nothing folds or publishes off the ping itself; a tick still has
+        // to run before there is anything to evaluate.
+        await owner.tick();
+        expect(breachesOf(owner, runId)).toHaveLength(1);
+      } finally {
+        await publisher.quit();
+      }
+    });
+
+    /**
+     * Review round 2, IMPORTANT 2. `pg_try_advisory_lock`'s key is
+     * `hashtext(runId)` -- an arbitrary string with no foreign-key tie to
+     * the `run` table (see `#claimRules`'s own doc comment) -- so a claim
+     * CAN win the lock for an id with no backing row. That is the ONE way
+     * `#lookupTenant` legitimately returns null instead of throwing, and it
+     * is reachable only off a ping: the poll's own discovery query can never
+     * produce an id with no row.
+     */
+    it('marks a rules-load failure, distinctly from "no rules configured", for a ping with no backing run row', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const publisher = new Redis(config.redisUrl);
+      const fakeRunId = randomUUID();
+      try {
+        await owner.listen();
+        await publisher.publish('live:opened', fakeRunId);
+        await vi.waitFor(() => expect(owner.snapshotOf(fakeRunId)).not.toBeNull());
+
+        // Failed open: the claim still succeeded (folding a run with no
+        // chunks is harmless -- see #onOpened's own doc comment), but the
+        // failure is on the record rather than reading as an empty project.
+        expect(owner.rulesOf(fakeRunId)).toEqual([]);
+        expect(owner.rulesLoadFailedFor(fakeRunId)).toBe(true);
+        expect(
+          errorSpy.mock.calls.some(
+            (c) => typeof c[0] === 'string' && c[0].includes(`no run row found for ${fakeRunId}`),
+          ),
+        ).toBe(true);
+      } finally {
+        await publisher.quit();
+        errorSpy.mockRestore();
+      }
+    });
+
+    /**
+     * Review round 2, IMPORTANT 2's other branch: `RuleRepository.listEnabled`
+     * itself throwing (a Prisma pool under real pressure, a transient
+     * connection failure) is the failure THE new `maxOwnedRuns *
+     * FOLD_OWNER_CLAIM_PRISMA_CLIENTS` sizing term in `main.ts` exists to
+     * make rare, not impossible -- and it must still fail the CLAIM open
+     * (a rules problem is not a reason to refuse to fold a run at all),
+     * while still being distinguishable from "this project has no rules".
+     * Claimed the ordinary way (a tick, not a ping): this failure mode is
+     * not specific to either claim path.
+     */
+    it('marks a rules-load failure, distinctly, when RuleRepository itself throws', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const listEnabledSpy = vi
+        .spyOn(rules, 'listEnabled')
+        .mockRejectedValueOnce(new Error('synthetic rule load failure'));
+      try {
+        await owner.tick();
+
+        expect(owner.rulesOf(runId)).toEqual([]);
+        expect(owner.rulesLoadFailedFor(runId)).toBe(true);
+        // Not the same breach this rule would otherwise report -- a rules
+        // problem must not be silently read as "nothing configured".
+        expect(breachesOf(owner, runId)).toHaveLength(0);
+        expect(
+          errorSpy.mock.calls.some(
+            (c) => typeof c[0] === 'string' && c[0].includes(`could not load SLA rules for ${runId}`),
+          ),
+        ).toBe(true);
+
+        // Failed OPEN, not stuck: the run is still owned and still folds --
+        // this claim never gets a second attempt at loading rules (they load
+        // once, at claim), but that is the documented behaviour, not a hang.
+        expect(owner.snapshotOf(runId)).not.toBeNull();
+      } finally {
+        listEnabledSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
     });
   });
 });
