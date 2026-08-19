@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Histogram, runEngine, Sketch, type StatRollup } from '@perfportal/statistics';
-import { evaluateRules, toEvaluableStats } from '../src/index.js';
+import { Histogram, Sketch, type StatRollup } from '@perfportal/statistics';
+import { toEvaluableStats } from '../src/index.js';
 
 function rollup(overrides: Record<string, unknown> = {}): StatRollup {
   return {
@@ -51,27 +51,33 @@ describe('toEvaluableStats', () => {
   it('maps every rollup it is given', () => {
     expect(toEvaluableStats([rollup(), rollup({ scope: 'request' })])).toHaveLength(2);
   });
-
-  // The batch path and the live path must reach the same assertions from the
-  // same fold. They call the same two functions, so this test's job is to fail
-  // the day someone gives one of them its own mapping.
-  it('produces assertions identical to a second caller of the same two functions', () => {
-    const result = runEngine([
-      { type: 'request', name: 'GET /cart', groups: [], userId: 'u1', startMs: 0, endMs: 120, ok: true },
-      { type: 'request', name: 'GET /cart', groups: [], userId: 'u1', startMs: 100, endMs: 900, ok: false },
-    ]);
-    const rules = [{
-      id: 'r1', scope: 'run', targetName: null, family: 'response_time' as const,
-      metric: 'max', comparator: 'lte' as const, threshold: 100,
-    }];
-
-    const viaBatch = evaluateRules(rules, toEvaluableStats(result.stats));
-    const viaLive = evaluateRules(rules, toEvaluableStats(result.stats));
-
-    expect(viaLive.assertions).toEqual(viaBatch.assertions);
-    expect(viaLive.verdict).toBe(viaBatch.verdict);
-    // And it must be a real judgement, not two matching empties.
-    expect(viaBatch.assertions).not.toHaveLength(0);
-    expect(viaBatch.verdict).not.toBe('not_evaluated');
-  });
 });
+
+/**
+ * ═══ WHERE THE BATCH/LIVE AGREEMENT TEST LIVES, AND WHY NOT HERE ═══
+ *
+ * This file used to end with a case titled "produces assertions identical to a
+ * second caller of the same two functions", whose two sides were the IDENTICAL
+ * expression:
+ *
+ *     const viaBatch = evaluateRules(rules, toEvaluableStats(result.stats));
+ *     const viaLive  = evaluateRules(rules, toEvaluableStats(result.stats));
+ *
+ * That is `f(x) === f(x)` for a pure function. It could not fail for any
+ * implementation of either caller, and it imported neither — its comment
+ * claimed it "will fail the day someone gives one of them its own mapping",
+ * and it did not. It stayed green through five reviews while `LiveFoldOwner`
+ * built its engine with NO options and `PipelineService` built its own from
+ * `run.engineOptions`, which made the two paths report `count 6, max 4000` and
+ * `count 3, max 50` for the same bytes (whole-branch review, A1/A2).
+ *
+ * A test of that claim has to reach both CALL SITES. `packages/sla` is the
+ * leaf both of them import and depends on neither app, so it cannot: the
+ * agreement test lives at `apps/worker/test/sla-agreement.integration.test.ts`,
+ * where `LiveFoldOwner` and `PipelineService` are both in scope, and it
+ * compares the delta the browser would receive against the `run_assertion`
+ * rows the pipeline committed for one seeded run.
+ *
+ * The three cases above are what this package can honestly pin on its own: the
+ * shape of the mapping both call sites go through.
+ */

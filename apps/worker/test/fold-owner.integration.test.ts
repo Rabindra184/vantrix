@@ -12,6 +12,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { loadWorkerConfig } from '../src/config.js';
 import { LiveFoldOwner, REPLAY_TTL_SECONDS } from '../src/live/fold-owner.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
+// A synthetic simulation.log this file's SLA cases own outright -- see
+// `synthetic-log.ts`'s own header for why the reference fixture cannot serve
+// them. Extracted to a module rather than kept inline because
+// `sla-agreement.integration.test.ts` needs exactly the same bytes to compare
+// the live and batch call sites against each other.
+import { buildRequestBatch, buildRunHeader, RUN_START_MS } from './synthetic-log.js';
 
 const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
@@ -81,6 +87,12 @@ async function seedRunningRun(
   orgId: string,
   projectId: string,
   rawLogLength: number,
+  // The run's frozen engine options, exactly as `LiveService.open` writes
+  // them from project settings. Defaulted to `{}` because that is what every
+  // case here needed before the fold owner threaded them into its own
+  // `LiveEngine` -- which is also why NO case here could see that it did not
+  // (whole-branch review, A1).
+  engineOptions: Record<string, unknown> = {},
 ): Promise<string> {
   const startedAt = new Date('2026-08-07T10:00:00Z');
   const run = await prisma.run.create({
@@ -90,7 +102,7 @@ async function seedRunningRun(
       bundleSha256: createHash('sha256').update(randomUUID()).digest('hex'),
       bundleBytes: BigInt(rawLogLength), streamOffset: BigInt(rawLogLength),
       startedAt, startedOn: new Date('2026-08-07T00:00:00Z'),
-      engineOptions: {},
+      engineOptions: engineOptions as object,
     },
   });
   return run.id;
@@ -170,93 +182,14 @@ async function nextPublishedDelta(owner: LiveFoldOwner, runId: string): Promise<
   }
 }
 
-// ═══ A SYNTHETIC simulation.log, FOR THE SLA CASES BELOW ═══
-//
-// Mirrors packages/plugin-gatling/test/records.test.ts's own encoder --
-// there is no shared WRITER for this format anywhere in the workspace (only
-// the one reader `record-decoder.ts` deliberately keeps, per its own doc
-// comment), so a synthetic log built for a different package's test builds
-// its bytes the same way that file already does rather than importing a
-// test file across a package boundary.
-//
-// The reference fixture used by every other case in this file carries a
-// FIXED error rate (~2.7%, see `runStat`'s own callers): fine for proving
-// the fold matches a batch parse, wrong for a test that needs to choose
-// exactly how much a run is or is not breaching. CLAUDE.md's "expectations
-// are computed from the payload" rule is about not re-deriving a fixture's
-// numbers by hand -- it does not forbid choosing the payload in the first
-// place, which is what building it here means: the counts below are inputs
-// this test owns, not a real run's output being second-guessed.
-
-/** [int len][len bytes][coder byte]; empty string is just the zero length. */
-function encodeString(s: string): Buffer {
-  if (s.length === 0) return Buffer.from([0, 0, 0, 0]);
-  const str = Buffer.from(s, 'latin1');
-  const len = Buffer.alloc(4);
-  len.writeInt32BE(str.length, 0);
-  return Buffer.concat([len, str, Buffer.from([0])]);
-}
-
-function encodeInt(n: number): Buffer {
-  const buf = Buffer.alloc(4);
-  buf.writeInt32BE(n, 0);
-  return buf;
-}
-
-function encodeLong(n: number): Buffer {
-  const buf = Buffer.alloc(8);
-  buf.writeBigInt64BE(BigInt(n), 0);
-  return buf;
-}
-
-/** `[int index][string]` -- always DEFINES the slot inline (`index >= 0`),
- * never a `< 0` back-reference. `BinaryReader.readCachedString`'s own doc
- * comment makes redefinition valid ("i >= 0 defines cache[i] inline"), so a
- * synthetic log that needs no compression can just redefine the same few
- * slots on every record instead of building real back-references. */
-function encodeNewCachedString(index: number, value: string): Buffer {
-  return Buffer.concat([encodeInt(index), encodeString(value)]);
-}
-
-/** RECORD.RUN (see header.ts's `RECORD`): one scenario, no description, no
- * tool assertions -- nothing this file's SLA cases read. */
-function buildRunHeader(runStartMs: number): Buffer {
-  return Buffer.concat([
-    Buffer.from([0]),
-    encodeString('3.15.1'),
-    encodeString('test.Sim'),
-    encodeLong(runStartMs),
-    encodeString(''),
-    encodeInt(1),
-    encodeString('TestScenario'),
-    encodeInt(0),
-  ]);
-}
-
-/** RECORD.REQUEST, zero groups -- every case below asks only run-scope
- * questions, so no group hierarchy is needed for `evaluateRules` to find the
- * run-scope stat (`scope: 'run', name: ''`, `evaluate.ts`'s own target
- * resolution). */
-function buildRequestRecord(tsOffsetMs: number, ok: boolean): Buffer {
-  return Buffer.concat([
-    Buffer.from([1]),
-    encodeInt(0), // zero groups
-    encodeNewCachedString(1, 'Checkout'),
-    encodeInt(tsOffsetMs),
-    encodeInt(tsOffsetMs + 1),
-    Buffer.from([ok ? 1 : 0]),
-    encodeNewCachedString(2, ok ? '' : 'status.find.is(200), found 500'),
-  ]);
-}
-
-/** `count` REQUEST records, all `ok`, starting `startTsOffsetMs` apart by
- * 1ms each -- built as an array and concatenated ONCE (never
- * `Buffer.concat` inside the loop), the same quadratic-copy trap
- * `BinaryReader.append`'s own doc comment documents for the real reader. */
-function buildRequestBatch(startTsOffsetMs: number, count: number, ok: boolean): Buffer {
-  const parts: Buffer[] = [];
-  for (let i = 0; i < count; i++) parts.push(buildRequestRecord(startTsOffsetMs + i, ok));
-  return Buffer.concat(parts);
+/** `owner.breachingSinceOf(runId)` as an array, for `toHaveLength`/index
+ * assertions -- the Map itself is the right shape for the production code,
+ * an array is the right shape for a test. */
+function breachesOf(o: LiveFoldOwner, id: string): { ruleId: string; sinceOffsetMs: number }[] {
+  return [...(o.breachingSinceOf(id) ?? [])].map(([rid, sinceOffsetMs]) => ({
+    ruleId: rid,
+    sinceOffsetMs,
+  }));
 }
 
 describe('LiveFoldOwner', () => {
@@ -2006,7 +1939,6 @@ describe('LiveFoldOwner', () => {
    * scalar metric, so neither tick is "not enough evidence yet".
    */
   describe('SLA evaluation', () => {
-    const RUN_START_MS = 1_700_000_000_000;
     const KO_COUNT = 2;
     const INITIAL_OK_COUNT = 148;
     const RECOVER_EXTRA_OK = 250;
@@ -2061,16 +1993,6 @@ describe('LiveFoldOwner', () => {
      * more bytes. */
     async function tightenRuleTo(threshold: number): Promise<void> {
       await prisma.slaRule.update({ where: { id: ruleId }, data: { threshold } });
-    }
-
-    /** `owner.breachingSinceOf(runId)` as an array, for `toHaveLength`/index
-     * assertions -- the Map itself is the right shape for the production
-     * code, an array is the right shape for a test. */
-    function breachesOf(o: LiveFoldOwner, id: string): { ruleId: string; sinceOffsetMs: number }[] {
-      return [...(o.breachingSinceOf(id) ?? [])].map(([rid, sinceOffsetMs]) => ({
-        ruleId: rid,
-        sinceOffsetMs,
-      }));
     }
 
     /** Appends `RECOVER_EXTRA_OK` more successes onto the SAME byte stream --
@@ -2233,6 +2155,96 @@ describe('LiveFoldOwner', () => {
       } finally {
         listEnabledSpy.mockRestore();
         errorSpy.mockRestore();
+      }
+    });
+  });
+
+  /**
+   * Whole-branch review, A1. `#claimReserved` used to build `new LiveEngine()`
+   * with NO options while `PipelineService` builds its engine from
+   * `run.engineOptions` (pipeline.service.ts), frozen at open from project
+   * settings (`LiveService.open`). `warmupMs` is not cosmetic: it decides
+   * which events are aggregated AT ALL (`engine.ts`'s `isWarmup`), so the two
+   * paths answered different questions about the same bytes.
+   *
+   * The user-visible failure this pins: a project with `warmupMs: 5000` and a
+   * rule `max <= 1000` gets a banner reading "1 of 1 SLA rule currently
+   * breaching -- actual 4000", an operator kills the run on it, and the run
+   * then parses to verdict PASSED with `max 50`. That is the live-contradicts-
+   * final failure this feature was arranged to make impossible.
+   *
+   * The counts are chosen against `liveEvidenceFloor`'s flat 100 observations
+   * for a scalar metric: 150 on each side of the warm-up, so BOTH the correct
+   * fold and the wrong one clear the gate. A case that let the warmed-up fold
+   * fall under the floor would report "not breaching" for the wrong reason and
+   * pass whether or not the options were threaded.
+   *
+   * Every other case in this file seeds `engineOptions: {}` -- which is why
+   * none of them could see this either way.
+   */
+  describe("the run's own engine options", () => {
+    const WARMUP_MS = 5000;
+    const SLOW_MS = 4000;
+    const FAST_MS = 50;
+    const PER_SIDE = 150;
+
+    /** Slow requests wholly inside the warm-up, then fast ones wholly after
+     * it. `isWarmup` tests a request's START against the run start, so the
+     * second batch begins a clear second past the boundary rather than on
+     * it. */
+    const engineOptionsLog = Buffer.concat([
+      buildRunHeader(RUN_START_MS),
+      buildRequestBatch(0, PER_SIDE, true, SLOW_MS),
+      buildRequestBatch(WARMUP_MS + 1000, PER_SIDE, true, FAST_MS),
+    ]);
+
+    it('folds through them, so a warm-up drops exactly the events a batch parse drops', async () => {
+      await truncateAll();
+      const { orgId, projectId } = await seedOrgProject();
+      const runId = await seedRunningRun(orgId, projectId, engineOptionsLog.length, {
+        warmupMs: WARMUP_MS,
+      });
+      await chunks.put(runId, 0, engineOptionsLog);
+
+      const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      try {
+        await owner.tick();
+
+        // Derived from the payload, never written down: the batch path parsing
+        // the SAME bytes under the SAME options is the only definition of
+        // right that matters here.
+        const batch = runStat(runEngine(parseSimulationLog(engineOptionsLog), { warmupMs: WARMUP_MS }))!;
+        const live = runStat(owner.snapshotOf(runId)!)!;
+
+        expect(live.count).toBe(batch.count);
+        expect(live.maxMs).toBe(batch.maxMs);
+        // And the fold really is the smaller one -- without this the case
+        // would still pass if BOTH sides wrongly counted the warm-up.
+        expect(live.count).toBe(PER_SIDE);
+        expect(live.maxMs).toBe(FAST_MS);
+      } finally {
+        await owner.close();
+      }
+    });
+
+    it('judges its SLA rules on those numbers, so the banner cannot contradict the final verdict', async () => {
+      await truncateAll();
+      const { orgId, projectId } = await seedOrgProject();
+      const runId = await seedRunningRun(orgId, projectId, engineOptionsLog.length, {
+        warmupMs: WARMUP_MS,
+      });
+      await chunks.put(runId, 0, engineOptionsLog);
+      // Between the two maxima: passes on the warmed-up fold (50), breaches on
+      // the un-warmed-up one (4000).
+      await seedSlaRule(orgId, projectId, { metric: 'max', comparator: 'lte', threshold: 1000 });
+
+      const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      try {
+        await owner.tick();
+        expect(owner.rulesOf(runId)).toHaveLength(1);
+        expect(breachesOf(owner, runId)).toHaveLength(0);
+      } finally {
+        await owner.close();
       }
     });
   });
