@@ -53,11 +53,25 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **103 files / 1150 tests**, it
+`nvm use` first, and if a run reports fewer than **106 files / 1164 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on live run monitoring
-part 2b — the fan-out and the live dashboard — which added
+silently-skipped run looks like a pass. Last measured on live SLA signals —
+the run page's own SLA breach banner — which added
+`packages/sla/test/stats.test.ts` (4, `toEvaluableStats`'s field mapping, its
+"does not carry an unrelated field" boundary, and that the batch and live
+paths reach identical assertions through the same two functions),
+`packages/sla/test/evidence-gate.test.ts` (6, the evidence floor a live tick
+judges a metric against before it counts as evaluated — `not_applicable`
+below the floor, a real breach once it clears, and absent by default for the
+batch path) and `apps/web/test/SlaBanner.test.tsx` (3, the condition-not-event
+guard: renders on any non-empty `breaching`, nothing on an empty one, and
+survives a re-render carrying the identical breach) as new files, plus 1 case
+to `apps/worker/test/live-delta.test.ts` — the built delta carrying only the
+breaching rules and a count of those evaluated — from a floor of 103 / 1150.
+Its integration floor is 110 files / 1286 tests and its e2e is 90 — neither
+of which `pnpm test:unit` counts. Earlier: live run monitoring part 2b — the
+fan-out and the live dashboard — which added
 `packages/statistics/test/bucket-latency.test.ts` (4),
 `apps/web/test/useLiveRun.test.tsx` (15), `apps/web/test/LiveNotice.test.tsx`
 (4) and `apps/web/test/RunDetail.live.test.tsx` (14) as new files, plus cases
