@@ -42,6 +42,7 @@ import { growingDomainMs, useTimeDomainFromShell, useWindowFromShell } from './u
 import DesktopOnly from './DesktopOnly';
 import LiveNotice from './LiveNotice';
 import RunShell from './RunShell';
+import SlaBanner from './SlaBanner';
 import useIsCompact from '../useIsCompact';
 import RunStats from './RunStats';
 
@@ -467,6 +468,15 @@ export function Live({
       {live.partial && <LiveNotice kind="partial" />}
 
       <LiveSummary summary={delta.summary} frozen={frozen} />
+
+      {/* Which SLA rules this run is breaching right now, above the charts
+          rather than beside `LiveNotice`'s own banners — those say something
+          about the CONNECTION (frozen, partial seed); this says something
+          about the NUMBERS the tiles just above it report. Never desktop-gated:
+          `SlaBanner`'s own docstring is the reason a phone still needs to see
+          this exactly as much as a phone needs the tiles, and it is cheap — a
+          few strings off the delta already in hand, not a chart. */}
+      <SlaBanner sla={delta.sla} />
 
       {/* §22.6: mounting five ECharts instances costs real work a phone
           should not pay for, even though the three withheld notices beside

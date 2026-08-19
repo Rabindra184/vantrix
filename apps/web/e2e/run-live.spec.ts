@@ -48,12 +48,29 @@ function bucketFixture(startOffsetMs: number) {
 }
 
 /**
+ * The shape `LiveSlaSchema` requires on the wire (`packages/contracts/src/live-delta.ts`).
+ * Named here, rather than left for TS to infer from the `{ evaluated: 0,
+ * breaching: [] }` default below, because inference from an empty array
+ * literal pins `breaching` at `never[]` -- a caller that then wants to
+ * pass a REAL breach (Task 5's own e2e case) gets rejected by a parameter
+ * type nobody wrote on purpose.
+ */
+type SlaFixture = {
+  evaluated: number;
+  breaching: { ruleId: string; description: string; actualValue: number; sinceOffsetMs: number }[];
+};
+
+/**
  * `seq` is a parameter, not fixed, because the AC-LIVE-1 measurement below
  * publishes a SECOND delta on the same run and needs it to carry a
  * different, checkable seq — the frame the client receives is the only
  * evidence the measurement has that it is timing the right message.
+ *
+ * `sla` defaults to "nothing breaching" -- true of every caller before
+ * Task 5, and still true of most callers after it. The one exception passes
+ * its own breach explicitly (see `deltaFixture(runId, seq, { ... })` below).
  */
-function deltaFixture(runId: string, seq: number) {
+function deltaFixture(runId: string, seq: number, sla: SlaFixture = { evaluated: 0, breaching: [] }) {
   const offsets = [0, 1000, 2000, 3000];
   return {
     runId,
@@ -85,7 +102,7 @@ function deltaFixture(runId: string, seq: number) {
     // silently drops the WHOLE delta on failure (`ws.onmessage`'s
     // `if (frame === null) return;`), so without this the client never
     // receives any of this fixture's data at all.
-    sla: { evaluated: 0, breaching: [] },
+    sla,
   };
 }
 
@@ -160,6 +177,65 @@ test.describe('a running run draws its live dashboard', () => {
       // claims something is arriving, and nothing is, on any path, while
       // this run streams.
       await expect(page.getByRole('progressbar')).toHaveCount(0);
+      // This fixture's `sla.breaching` is empty — nothing is breaching, so
+      // the banner must draw nothing at all, not an empty shell.
+      await expect(page.getByTestId('sla-banner')).toHaveCount(0);
+    } finally {
+      await redis.del(`live:${runId}:snapshot`, `live:${runId}:deltas`);
+      await redis.quit();
+    }
+  });
+});
+
+test.describe('a running run shows which SLA rules it is currently breaching', () => {
+  /**
+   * Task 5: the banner. A CONDITION, not an EVENT — a reader who opens this
+   * page mid-breach must see the truth as it stands, so this seeds the
+   * breach directly into the snapshot a fresh connection is served, rather
+   * than publishing it as a later delta the reader would have had to
+   * already be watching for.
+   *
+   * No real `sla_rule` row is seeded: `openLiveRun` starts no worker (this
+   * file's own docstring), so nothing here ever evaluates a rule — the
+   * fold owner that does was Task 3/4's own coverage. What this page reads
+   * is exactly what a real fold owner would have written to the same Redis
+   * key, and that shape is `deltaFixture`'s own `sla` field, overridden.
+   */
+  test('names the breaching rule and how long it has been breaching', async ({ page }) => {
+    const admin = await seedAdmin();
+    const runId = await openLiveRun(admin.orgId);
+    const redis = new Redis(REDIS_URL);
+    // `actualValue: 470` mirrors this same fixture's own `percentiles.p95`
+    // above -- fixture data written by hand like the rest of `deltaFixture`,
+    // not a value any assertion below re-derives from it.
+    const delta = deltaFixture(runId, 5, {
+      evaluated: 3,
+      breaching: [
+        {
+          ruleId: 'p95-checkout',
+          description: 'p95 of the run (response_time) ≤ 100 — actual 470',
+          actualValue: 470,
+          sinceOffsetMs: 2000,
+        },
+      ],
+    });
+
+    try {
+      await seedSnapshot(redis, runId, delta);
+      await signIn(page, admin);
+      await page.goto(runPath(runId));
+
+      const banner = page.getByTestId('sla-banner');
+      await expect(banner).toBeVisible();
+      await expect(banner).toHaveRole('status');
+      await expect(banner).toContainText('p95');
+      // `sinceOffsetMs: 2000` -> `formatOffset` reads "2s" (apps/web/src/routes/format.ts).
+      await expect(banner).toContainText('2s');
+
+      // Never inside a chart's own <figure> — the CLAUDE.md rule nine other
+      // specs already rest on (an <svg> inside one corrupts a drawn-chart
+      // count), and this component carries no <svg> at all regardless.
+      await expect(banner.locator('svg')).toHaveCount(0);
     } finally {
       await redis.del(`live:${runId}:snapshot`, `live:${runId}:deltas`);
       await redis.quit();
