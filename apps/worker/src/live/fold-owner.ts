@@ -1,5 +1,7 @@
 import type { Redis } from 'ioredis';
+import { RuleRepository, type ProjectScope } from '@perfportal/persistence';
 import { StreamingLogDecoder } from '@perfportal/plugin-gatling';
+import { evaluateRules, liveEvidenceFloor, toEvaluableStats, type EvaluableRule } from '@perfportal/sla';
 import { LiveEngine, type EngineResult } from '@perfportal/statistics';
 import type { LiveChunkStore } from '@perfportal/storage';
 import type pg from 'pg';
@@ -48,6 +50,15 @@ interface FoldState {
    * `readFrom` returns always starts exactly at `fetchedBytes`.
    */
   fetchedBytes: number;
+  /**
+   * The project's rules AS THEY READ WHEN THIS RUN WAS CLAIMED. Deliberately
+   * not re-read per tick: a run's SLA should be the SLA it started under, and
+   * a rule edited mid-run would otherwise make a breach appear with no change
+   * in the data.
+   */
+  rules: EvaluableRule[];
+  /** ruleId -> the elapsed offset at which it began breaching. */
+  breachingSince: Map<string, number>;
   /**
    * Ticks since `live:{runId}:snapshot` was last written. Compared against
    * {@link SNAPSHOT_EVERY_N_TICKS} in `#publish`.
@@ -313,6 +324,15 @@ export class LiveFoldOwner {
   readonly #chunks: LiveChunkStore;
   readonly #redis: Redis;
   /**
+   * Reads a claimed run's SLA rules, ONCE, at claim -- see `FoldState.rules`'
+   * own doc comment for why never again after. Built by the caller on the
+   * Prisma client it already owns (`main.ts`): this class touches Postgres
+   * everywhere else through `#pool`'s raw `pg.Pool`, and constructing a
+   * second `PrismaClient` here would open a second connection pool that
+   * `main.ts`'s careful, term-by-term connection sizing does not know about.
+   */
+  readonly #rules: RuleRepository;
+  /**
    * A SEPARATE connection from `#redis`, for subscribing -- design §1.2 /
    * §2.3. ioredis puts a connection into subscriber mode on `subscribe()`
    * and then rejects ordinary commands on it (`Redis.js`'s own
@@ -468,11 +488,18 @@ export class LiveFoldOwner {
    */
   #watchdogWarnCount = 0;
 
-  constructor(config: WorkerConfig, pool: pg.Pool, chunks: LiveChunkStore, redis: Redis) {
+  constructor(
+    config: WorkerConfig,
+    pool: pg.Pool,
+    chunks: LiveChunkStore,
+    redis: Redis,
+    rules: RuleRepository,
+  ) {
     this.#config = config;
     this.#pool = pool;
     this.#chunks = chunks;
     this.#redis = redis;
+    this.#rules = rules;
     this.#sub = redis.duplicate();
     // Registered here, not inside listen(): ioredis buffers a 'message'
     // listener attached before subscribe() resolves just fine (the
@@ -752,10 +779,19 @@ export class LiveFoldOwner {
     // new status; anything added from here on is guarding against exactly
     // the snapshot this query is about to take.
     this.#recentlyClosed.clear();
-    const { rows } = await this.#pool.query<{ id: string }>(
-      "SELECT id FROM run WHERE status = 'running'",
+    const { rows } = await this.#pool.query<{ id: string; org_id: string; project_id: string }>(
+      // org_id and project_id ride along because the claim needs them to read
+      // the project's SLA rules -- the same rows and the same index, so this
+      // costs nothing over selecting `id` alone, and it saves a round trip.
+      "SELECT id, org_id, project_id FROM run WHERE status = 'running'",
     );
     const runningIds = new Set(rows.map((r) => r.id));
+    // Only the claim loop below reads this -- a run already owned or claimed
+    // via a `live:opened` ping never needs its tenant from here at all (see
+    // `#claim`'s own doc comment for how the ping path resolves it instead).
+    const tenantByRunId = new Map<string, ProjectScope>(
+      rows.map((r) => [r.id, { orgId: r.org_id, projectId: r.project_id }]),
+    );
 
     // Release first: an id that dropped out of 'running' must not be
     // treated as newly discoverable, and freeing its client/lock before the
@@ -791,7 +827,7 @@ export class LiveFoldOwner {
       // per design §1.3 -- genuine exhaustion under an operator's
       // misconfiguration) must fail that ONE run's claim, not this whole
       // tick and every run already owned along with it.
-      await this.#guarded('claim', runId, () => this.#claim(runId));
+      await this.#guarded('claim', runId, () => this.#claim(runId, tenantByRunId.get(runId)));
     }
     if (skippedForCap > 0) {
       // Design §1.3: "At the cap the owner logs and skips." A run silently
@@ -865,6 +901,35 @@ export class LiveFoldOwner {
    */
   async #publish(runId: string, state: FoldState): Promise<void> {
     const snapshot = state.engine.snapshot({ clone: true });
+
+    // The SAME pure evaluator PipelineService runs against a finished run
+    // (pipeline.service.ts:313), through the SAME `toEvaluableStats` mapping
+    // -- a live breach that disagreed with the final verdict for the same
+    // run would be the record-decoder/`bucketLatency` lesson a third time.
+    // `state.rules` is this run's SLA as it read AT CLAIM (`FoldState.rules`'
+    // own doc comment), never re-read here. `liveEvidenceFloor` is the one
+    // thing a live evaluation needs that a batch one does not: ungated, the
+    // first few seconds of every run would breach almost any rule on a
+    // handful of samples.
+    const { assertions } = evaluateRules(state.rules, toEvaluableStats(snapshot.stats), {
+      minObservations: liveEvidenceFloor,
+    });
+
+    const breaching = assertions.filter((a) => a.outcome === 'failed');
+    const seen = new Set(breaching.map((a) => a.ruleId));
+    // A rule that recovered -- or that fell back BELOW the evidence floor --
+    // loses its entry. Freezing the timer through a period where the rule
+    // was not judged at all would report "breaching for 4 minutes" about
+    // three minutes nobody looked at.
+    for (const ruleId of state.breachingSince.keys()) {
+      if (!seen.has(ruleId)) state.breachingSince.delete(ruleId);
+    }
+    for (const a of breaching) {
+      if (!state.breachingSince.has(a.ruleId)) {
+        state.breachingSince.set(a.ruleId, snapshot.durationMs);
+      }
+    }
+
     const { delta, next } = buildDelta(runId, snapshot, state.cursor);
     const body = JSON.stringify(delta);
     try {
@@ -969,6 +1034,17 @@ export class LiveFoldOwner {
     // clone: true -- the returned rollups must not alias accumulators the
     // next tick's fold mutates; see engine.ts's own doc comment on `clone`.
     return state ? state.engine.snapshot({ clone: true }) : null;
+  }
+
+  /** The rules currently breaching for an owned run, and the elapsed offset
+   * each began breaching at -- or null if this owner does not hold `runId`.
+   * Test seam, on the same terms as `snapshotOf`: the next task's wire
+   * format carries this same state from `#publish`'s own evaluation, not
+   * from here. A copy, not the live `Map`, so a caller cannot mutate
+   * `state.breachingSince` out from under the next tick. */
+  breachingSinceOf(runId: string): ReadonlyMap<string, number> | null {
+    const state = this.#owned.get(runId);
+    return state ? new Map(state.breachingSince) : null;
   }
 
   /**
@@ -1122,8 +1198,16 @@ export class LiveFoldOwner {
    * matter unwinds itself (unlock, release the client) exactly like the
    * "another owner already holds it" branch just above, instead of
    * inserting into a map `close()` has already decided is final.
+   *
+   * `tenant`, when known, is the org/project the widened discovery query in
+   * `#doTick` already read for this run -- passing it through here is what
+   * lets that widening actually save the round trip it exists to save.
+   * `#onOpened`'s `live:opened` ping has no such row to hand over (the
+   * channel carries a bare runId -- `LiveNotifier.opened`), so it leaves
+   * this `undefined` and `#claimReserved` looks the tenant up itself, once
+   * it has actually won the lock.
    */
-  async #claim(runId: string): Promise<void> {
+  async #claim(runId: string, tenant?: ProjectScope): Promise<void> {
     // ═══ SYNCHRONOUS, BEFORE THE FIRST await ═══
     // Everything down to `#claiming.add` runs in the caller's own turn, so
     // two claims started from two `message` events cannot interleave here:
@@ -1135,7 +1219,7 @@ export class LiveFoldOwner {
     if (this.#atCap()) return;
     this.#claiming.add(runId);
     try {
-      await this.#claimReserved(runId);
+      await this.#claimReserved(runId, tenant);
     } finally {
       // After the insert, never before: a run is momentarily counted twice
       // rather than momentarily not at all.
@@ -1146,7 +1230,7 @@ export class LiveFoldOwner {
   /** `#claim`'s body, past the reservation gate. Split out only so that
    * gate can be `return`-based and the release can be one `finally` -- the
    * lock/insert/unwind logic below is unchanged. */
-  async #claimReserved(runId: string): Promise<void> {
+  async #claimReserved(runId: string, tenant?: ProjectScope): Promise<void> {
     const client = await this.#pool.connect();
     let got = false;
     try {
@@ -1175,6 +1259,10 @@ export class LiveFoldOwner {
     // query above are both awaits), and the check still runs immediately
     // before the insert.
     const cursor = await this.#resumeCursor(runId);
+    // Same reasoning as `#resumeCursor` above -- this run's SLA rules,
+    // loaded ONCE, right here, and never again for as long as this owner
+    // holds the run (`FoldState.rules`' own doc comment).
+    const rules = await this.#claimRules(runId, client, tenant);
 
     if (this.#closing) {
       // Won the lock, but close() already started (or finished) draining
@@ -1207,10 +1295,54 @@ export class LiveFoldOwner {
       // or a rolling deploy has to continue this RUN's sequence, not start a
       // second one inside it.
       cursor,
+      rules,
+      breachingSince: new Map(),
       // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
       // own doc comment: the first tick after a claim must seed immediately.
       ticksSinceSnapshot: SNAPSHOT_EVERY_N_TICKS,
     });
+  }
+
+  /**
+   * Resolves the tenant for `runId` -- from the discovery query's own row
+   * when the caller already has it, or by asking Postgres directly on the
+   * client this claim already holds (the `live:opened` ping path, which
+   * only ever carries a bare runId). Mirrors `#resumeCursor`'s own failure
+   * shape: a rules lookup is a nice-to-have for a run this owner is about to
+   * fold regardless, so a failure here degrades to "no rules this claim"
+   * rather than aborting a claim that would otherwise have succeeded.
+   */
+  async #claimRules(runId: string, client: pg.PoolClient, tenant?: ProjectScope): Promise<EvaluableRule[]> {
+    try {
+      const scope = tenant ?? (await this.#lookupTenant(client, runId));
+      if (!scope) return [];
+      const records = await this.#rules.listEnabled(scope);
+      return records.map((r) => ({
+        id: r.id,
+        scope: r.scope,
+        targetName: r.targetName,
+        family: r.family,
+        metric: r.metric,
+        comparator: r.comparator,
+        threshold: r.threshold,
+      }));
+    } catch (err) {
+      console.error(`LiveFoldOwner: could not load SLA rules for ${runId}, claiming with none:`, err);
+      return [];
+    }
+  }
+
+  /** The one query `#claimRules` needs when its caller has no tenant already
+   * in hand -- the `live:opened` ping path (see `#claim`'s own doc comment).
+   * Runs on the client this claim already holds the advisory lock on, so it
+   * costs a statement on an already-open connection, not a new one. */
+  async #lookupTenant(client: pg.PoolClient, runId: string): Promise<ProjectScope | null> {
+    const { rows } = await client.query<{ org_id: string; project_id: string }>(
+      'SELECT org_id, project_id FROM run WHERE id = $1',
+      [runId],
+    );
+    const row = rows[0];
+    return row ? { orgId: row.org_id, projectId: row.project_id } : null;
   }
 
   /**

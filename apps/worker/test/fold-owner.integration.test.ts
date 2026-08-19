@@ -2,13 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { LiveDeltaSchema, type LiveDelta } from '@perfportal/contracts';
-import { createPool, createPrisma } from '@perfportal/persistence';
+import { createPool, createPrisma, RuleRepository } from '@perfportal/persistence';
 import { parseSimulationLog, StreamingLogDecoder } from '@perfportal/plugin-gatling';
 import { runEngine, type EngineResult } from '@perfportal/statistics';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { Redis } from 'ioredis';
 import type pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
 import { LiveFoldOwner, REPLAY_TTL_SECONDS } from '../src/live/fold-owner.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
@@ -25,6 +25,11 @@ const pool = createPool(config.databaseUrl);
 const prisma = createPrisma(config.databaseUrl);
 const blobs = new BlobStore(config.blob);
 const chunks = new LiveChunkStore(blobs);
+// Built on the SAME prisma client every other helper in this file already
+// shares (main.ts's own comment on why LiveFoldOwner never gets a second
+// one) -- every `new LiveFoldOwner(...)` call below now takes this as its
+// fifth argument.
+const rules = new RuleRepository(prisma);
 
 let log: Buffer;
 
@@ -138,6 +143,95 @@ async function nextPublishedDelta(owner: LiveFoldOwner, runId: string): Promise<
   }
 }
 
+// ═══ A SYNTHETIC simulation.log, FOR THE SLA CASES BELOW ═══
+//
+// Mirrors packages/plugin-gatling/test/records.test.ts's own encoder --
+// there is no shared WRITER for this format anywhere in the workspace (only
+// the one reader `record-decoder.ts` deliberately keeps, per its own doc
+// comment), so a synthetic log built for a different package's test builds
+// its bytes the same way that file already does rather than importing a
+// test file across a package boundary.
+//
+// The reference fixture used by every other case in this file carries a
+// FIXED error rate (~2.7%, see `runStat`'s own callers): fine for proving
+// the fold matches a batch parse, wrong for a test that needs to choose
+// exactly how much a run is or is not breaching. CLAUDE.md's "expectations
+// are computed from the payload" rule is about not re-deriving a fixture's
+// numbers by hand -- it does not forbid choosing the payload in the first
+// place, which is what building it here means: the counts below are inputs
+// this test owns, not a real run's output being second-guessed.
+
+/** [int len][len bytes][coder byte]; empty string is just the zero length. */
+function encodeString(s: string): Buffer {
+  if (s.length === 0) return Buffer.from([0, 0, 0, 0]);
+  const str = Buffer.from(s, 'latin1');
+  const len = Buffer.alloc(4);
+  len.writeInt32BE(str.length, 0);
+  return Buffer.concat([len, str, Buffer.from([0])]);
+}
+
+function encodeInt(n: number): Buffer {
+  const buf = Buffer.alloc(4);
+  buf.writeInt32BE(n, 0);
+  return buf;
+}
+
+function encodeLong(n: number): Buffer {
+  const buf = Buffer.alloc(8);
+  buf.writeBigInt64BE(BigInt(n), 0);
+  return buf;
+}
+
+/** `[int index][string]` -- always DEFINES the slot inline (`index >= 0`),
+ * never a `< 0` back-reference. `BinaryReader.readCachedString`'s own doc
+ * comment makes redefinition valid ("i >= 0 defines cache[i] inline"), so a
+ * synthetic log that needs no compression can just redefine the same few
+ * slots on every record instead of building real back-references. */
+function encodeNewCachedString(index: number, value: string): Buffer {
+  return Buffer.concat([encodeInt(index), encodeString(value)]);
+}
+
+/** RECORD.RUN (see header.ts's `RECORD`): one scenario, no description, no
+ * tool assertions -- nothing this file's SLA cases read. */
+function buildRunHeader(runStartMs: number): Buffer {
+  return Buffer.concat([
+    Buffer.from([0]),
+    encodeString('3.15.1'),
+    encodeString('test.Sim'),
+    encodeLong(runStartMs),
+    encodeString(''),
+    encodeInt(1),
+    encodeString('TestScenario'),
+    encodeInt(0),
+  ]);
+}
+
+/** RECORD.REQUEST, zero groups -- every case below asks only run-scope
+ * questions, so no group hierarchy is needed for `evaluateRules` to find the
+ * run-scope stat (`scope: 'run', name: ''`, `evaluate.ts`'s own target
+ * resolution). */
+function buildRequestRecord(tsOffsetMs: number, ok: boolean): Buffer {
+  return Buffer.concat([
+    Buffer.from([1]),
+    encodeInt(0), // zero groups
+    encodeNewCachedString(1, 'Checkout'),
+    encodeInt(tsOffsetMs),
+    encodeInt(tsOffsetMs + 1),
+    Buffer.from([ok ? 1 : 0]),
+    encodeNewCachedString(2, ok ? '' : 'status.find.is(200), found 500'),
+  ]);
+}
+
+/** `count` REQUEST records, all `ok`, starting `startTsOffsetMs` apart by
+ * 1ms each -- built as an array and concatenated ONCE (never
+ * `Buffer.concat` inside the loop), the same quadratic-copy trap
+ * `BinaryReader.append`'s own doc comment documents for the real reader. */
+function buildRequestBatch(startTsOffsetMs: number, count: number, ok: boolean): Buffer {
+  const parts: Buffer[] = [];
+  for (let i = 0; i < count; i++) parts.push(buildRequestRecord(startTsOffsetMs + i, ok));
+  return Buffer.concat(parts);
+}
+
 describe('LiveFoldOwner', () => {
   it('folds a streaming run to the same numbers a batch parse produces', async () => {
     await truncateAll();
@@ -153,7 +247,7 @@ describe('LiveFoldOwner', () => {
     // client past the end of the test -- and afterAll's pool.end() then
     // hangs waiting for it, turning one assertion failure into a
     // hookTimeout that hides the real error.
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -176,7 +270,7 @@ describe('LiveFoldOwner', () => {
     const half = Math.floor(log.length / 2);
     await chunks.put(runId, 0, log.subarray(0, half));
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       const partial = runStat(owner.snapshotOf(runId)!)!;
@@ -202,8 +296,8 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const a = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
-    const b = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const a = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    const b = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await a.tick();
       await b.tick();
@@ -225,8 +319,8 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
     await chunks.put(runId, 0, log);
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
-    const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(owner.snapshotOf(runId)).not.toBeNull();
@@ -255,7 +349,7 @@ describe('LiveFoldOwner', () => {
       runIds.push(runId);
     }
 
-    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 2 }, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 2 }, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -311,6 +405,7 @@ describe('LiveFoldOwner', () => {
       pool,
       chunks,
       new Redis(config.redisUrl),
+      rules,
     );
     try {
       await owner.listen();
@@ -377,7 +472,7 @@ describe('LiveFoldOwner', () => {
     const STORAGE_CHUNK = 4;      // smaller than every record in the fixture (min ~10 bytes)
     const TICK_BATCH = 4096;      // bytes newly available between ticks; not record-aligned
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       let written = 0;
       while (written < log.length) {
@@ -433,7 +528,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(badRunId, 0, corrupted);
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await expect(owner.tick()).resolves.toBeUndefined();
 
@@ -491,7 +586,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, corrupted);
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(errorSpy).toHaveBeenCalledTimes(1);
@@ -531,7 +626,7 @@ describe('LiveFoldOwner', () => {
     const half = Math.floor(log.length / 2);
     await chunks.put(runId, 0, log.subarray(0, half));
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       const partial = runStat(owner.snapshotOf(runId)!)!;
@@ -663,7 +758,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(owner.snapshotOf(goodRunId)).not.toBeNull();
@@ -680,7 +775,7 @@ describe('LiveFoldOwner', () => {
       // pg_advisory_unlock against Postgres), so its own recovery is not
       // this assertion's concern, only the good run's is.
       await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [badRunId]);
-      const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+      const other = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
       try {
         await other.tick();
         expect(other.snapshotOf(goodRunId)).not.toBeNull();
@@ -753,7 +848,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, ownerPool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, ownerPool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
       expect(owner.snapshotOf(runId)).not.toBeNull();
@@ -815,7 +910,7 @@ describe('LiveFoldOwner', () => {
     }
 
     const smallPool = createPool(config.databaseUrl, { max: 2, connectionTimeoutMillis: 500 });
-    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner({ ...config, maxOwnedRuns: 3 }, smallPool, chunks, new Redis(config.redisUrl), rules);
     try {
       const start = Date.now();
       await owner.tick();
@@ -861,7 +956,7 @@ describe('LiveFoldOwner', () => {
       seen.push(LiveDeltaSchema.parse(JSON.parse(message)));
     });
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const half = Math.floor(log.length / 2);
       await chunks.put(runId, 0, log.subarray(0, half));
@@ -900,7 +995,7 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const half = Math.floor(log.length / 2);
       await chunks.put(runId, 0, log.subarray(0, half));
@@ -971,7 +1066,7 @@ describe('LiveFoldOwner', () => {
       .mockRejectedValueOnce(new Error('synthetic publish failure'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const owner = new LiveFoldOwner(config, pool, chunks, publisherRedis);
+    const owner = new LiveFoldOwner(config, pool, chunks, publisherRedis, rules);
     try {
       await owner.tick();
       expect(
@@ -1062,7 +1157,7 @@ describe('LiveFoldOwner', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matching pool.connect's own overloaded signature
     }) as any);
 
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const tickPromise = owner.tick();
       await claimStartedPromise; // #claim's own connect() call is now gated, in flight
@@ -1083,7 +1178,7 @@ describe('LiveFoldOwner', () => {
       // The lock is genuinely free: a fresh owner can claim this run
       // immediately, proving the delayed claim's client was released, not
       // leaked, once it discovered #closing.
-      const verifier = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+      const verifier = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
       try {
         await verifier.tick();
         expect(verifier.snapshotOf(runId)).not.toBeNull();
@@ -1151,7 +1246,7 @@ describe('LiveFoldOwner', () => {
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const owner = new LiveFoldOwner({ ...config, liveTickMs: 20 }, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner({ ...config, liveTickMs: 20 }, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       const stuckTick = owner.tick(); // resolves only once STUCK_MS elapses
 
@@ -1214,7 +1309,7 @@ describe('LiveFoldOwner', () => {
     const runId = await seedRunningRun(orgId, projectId, log.length);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       expect(owner.snapshotOf(runId)).toBeNull();
@@ -1245,7 +1340,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log.subarray(0, half));
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       await owner.tick();
@@ -1293,7 +1388,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       await owner.tick();
@@ -1352,7 +1447,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       await owner.tick();
@@ -1409,7 +1504,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
       expect(owner.snapshotOf(runId)).toBeNull();
@@ -1490,7 +1585,7 @@ describe('LiveFoldOwner', () => {
     });
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
 
@@ -1591,7 +1686,7 @@ describe('LiveFoldOwner', () => {
     });
 
     const publisher = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.listen();
 
@@ -1650,7 +1745,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -1690,7 +1785,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       // The FIRST tick both publishes delta 0 AND writes the first snapshot
       // (`FoldState.ticksSinceSnapshot` starts at `SNAPSHOT_EVERY_N_TICKS` on
@@ -1729,7 +1824,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, redis);
+    const owner = new LiveFoldOwner(config, pool, chunks, redis, rules);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const set = vi.spyOn(redis, 'set').mockRejectedValueOnce(new Error('redis down'));
@@ -1770,7 +1865,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       await owner.tick();
 
@@ -1815,7 +1910,7 @@ describe('LiveFoldOwner', () => {
     await chunks.put(runId, 0, log);
 
     const redis = new Redis(config.redisUrl);
-    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       // The previous incarnation's last published delta. `seq` is the only
       // field the claim reads out of it -- the rest of a delta body says
@@ -1837,5 +1932,149 @@ describe('LiveFoldOwner', () => {
       await redis.quit();
       await owner.close();
     }
+  });
+
+  /**
+   * Task 3 (live-sla-signals): `#publish` now runs the SAME pure evaluator
+   * `PipelineService` runs against a finished run, through the SAME
+   * `toEvaluableStats` mapping, gated by `liveEvidenceFloor` -- so a running
+   * test's breach banner agrees with the verdict the same run would get if
+   * it ended right now.
+   *
+   * Every case here shares one synthetic run: `KO_COUNT` failures against
+   * `INITIAL_OK_COUNT` successes, chosen with margin on both sides of the
+   * `0.01` threshold the cases below use, so a breach or a recovery is never
+   * a coin flip against floating-point rounding --
+   *   - 2 of 150 (1.33%) is comfortably ABOVE 0.01 (breaches);
+   *   - 2 of 400, after `foldEnoughSuccessesToRecover`, is comfortably BELOW
+   *     it (0.5%, recovers).
+   * Both are also comfortably above `liveEvidenceFloor`'s flat 100 for a
+   * scalar metric, so neither tick is "not enough evidence yet".
+   */
+  describe('SLA evaluation', () => {
+    const RUN_START_MS = 1_700_000_000_000;
+    const KO_COUNT = 2;
+    const INITIAL_OK_COUNT = 148;
+    const RECOVER_EXTRA_OK = 250;
+
+    let orgId: string;
+    let projectId: string;
+    let runId: string;
+    let owner: LiveFoldOwner;
+    let ruleId: string;
+    // The byte offset the NEXT `chunks.put` should land at -- the initial
+    // seed below already occupies `[0, initialLog.length)`, so
+    // `foldEnoughSuccessesToRecover` has to know where that left off rather
+    // than guessing a chunk boundary, exactly like every other multi-put
+    // case in this file (e.g. "folds only the new bytes on a second tick").
+    let nextByteOffset: number;
+
+    beforeEach(async () => {
+      await truncateAll();
+      ({ orgId, projectId } = await seedOrgProject());
+      const initialLog = Buffer.concat([
+        buildRunHeader(RUN_START_MS),
+        buildRequestBatch(0, KO_COUNT, false),
+        buildRequestBatch(KO_COUNT, INITIAL_OK_COUNT, true),
+      ]);
+      runId = await seedRunningRun(orgId, projectId, initialLog.length);
+      await chunks.put(runId, 0, initialLog);
+      nextByteOffset = initialLog.length;
+      owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    });
+
+    afterEach(async () => {
+      // Same reason every other case in this file closes its own owner: an
+      // owned run holds a pooled client for its lock's whole lifetime, and a
+      // leaked one turns the NEXT hook's assertion failure into afterAll's
+      // pool.end() hanging instead.
+      await owner.close();
+    });
+
+    /** Seeds one enabled rule at run scope, against the run-scope
+     * `response_time` stat every request above rolls into (`scope: 'run',
+     * name: ''`, engine.ts's own `#rollupFor('run', '', 'response_time')`).
+     * `ruleId` is recorded on the closure for `tightenRuleTo` to find. */
+    async function seedRule(opts: {
+      metric: string;
+      comparator: 'lte' | 'gte';
+      threshold: number;
+    }): Promise<void> {
+      const rule = await prisma.slaRule.create({
+        data: {
+          orgId,
+          projectId,
+          scope: 'run',
+          targetName: null,
+          family: 'response_time',
+          metric: opts.metric,
+          comparator: opts.comparator,
+          threshold: opts.threshold,
+          enabled: true,
+        },
+      });
+      ruleId = rule.id;
+    }
+
+    /** Edits the threshold of the rule `seedRule` most recently created --
+     * standing in for an operator editing a rule mid-run, straight against
+     * the row, the same way `chunks.put` stands in for the agent streaming
+     * more bytes. */
+    async function tightenRuleTo(threshold: number): Promise<void> {
+      await prisma.slaRule.update({ where: { id: ruleId }, data: { threshold } });
+    }
+
+    /** `owner.breachingSinceOf(runId)` as an array, for `toHaveLength`/index
+     * assertions -- the Map itself is the right shape for the production
+     * code, an array is the right shape for a test. */
+    function breachesOf(o: LiveFoldOwner, id: string): { ruleId: string; sinceOffsetMs: number }[] {
+      return [...(o.breachingSinceOf(id) ?? [])].map(([rid, sinceOffsetMs]) => ({
+        ruleId: rid,
+        sinceOffsetMs,
+      }));
+    }
+
+    /** Appends `RECOVER_EXTRA_OK` more successes onto the SAME byte stream --
+     * no new header, exactly like a real agent's next chunk: the decoder's
+     * string cache and running byte position both live past the first
+     * `owner.tick()` that read the initial seed. */
+    async function foldEnoughSuccessesToRecover(): Promise<void> {
+      const extra = buildRequestBatch(INITIAL_OK_COUNT + KO_COUNT, RECOVER_EXTRA_OK, true);
+      await chunks.put(runId, nextByteOffset, extra);
+      nextByteOffset += extra.length;
+    }
+
+    it('reports a rule that is breaching, with the offset it started breaching at', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      await owner.tick(); // fold enough failures to breach
+      const first = breachesOf(owner, runId);
+      expect(first).toHaveLength(1);
+      expect(first[0]!.sinceOffsetMs).toBeGreaterThanOrEqual(0);
+
+      await owner.tick();
+      // A STATE, not an event: the same breach, and the "since" does not move.
+      expect(breachesOf(owner, runId)[0]!.sinceOffsetMs).toBe(first[0]!.sinceOffsetMs);
+    });
+
+    it('clears a breach when the metric recovers', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(1);
+
+      await foldEnoughSuccessesToRecover();
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(0);
+    });
+
+    // The rules a run is judged against are the ones it started under.
+    it('does not pick up a rule edited after the run was claimed', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.99 });
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(0);
+
+      await tightenRuleTo(0.0001); // would breach, if it were re-read
+      await owner.tick();
+      expect(breachesOf(owner, runId)).toHaveLength(0);
+    });
   });
 });

@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { Redis } from 'ioredis';
-import { createPool, createPrisma } from '@perfportal/persistence';
+import { createPool, createPrisma, RuleRepository } from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { loadWorkerConfig } from './config.js';
 import { startConsumer } from './consumer.js';
@@ -109,7 +109,11 @@ const sweeper = new Sweeper(config, pool);
 // subscriber-mode connection from this one internally (`redis.duplicate()`
 // in its constructor -- see `#sub`'s own doc comment); nothing here needs to
 // construct or pass in a second connection for that.
-const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+// `RuleRepository` on the pipeline's OWN `prisma` client, not a new one --
+// LiveFoldOwner reads no other Prisma-backed table, so this is the only
+// reason it would otherwise open a second pool, and that pool's connections
+// are exactly what the sizing comment above does not count.
+const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), new RuleRepository(prisma));
 // Subscribes the owner to `live:opened`/`live:advance` (design §1.2, §2.3).
 // FIRE-AND-FORGET, not awaited -- fix round 1, Minor 3. An earlier version
 // awaited this before either timer below started, on the theory that a
