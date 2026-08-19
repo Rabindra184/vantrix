@@ -173,4 +173,28 @@ describe('pollIntervalFor', () => {
   it('does not poll when there is no data', () => {
     expect(pollIntervalFor(undefined, false)).toBe(false);
   });
+
+  /**
+   * The cap was written for a PARSE wait and part 2b hung the live page off
+   * the same `processing` branch. Every run this feature exists for outlives
+   * two minutes, and once the cap fired `run.data` froze at `running` forever:
+   * the socket stayed open for a run nobody was publishing to, and the page
+   * kept saying "Live — updating as the run streams" over dead numbers.
+   */
+  const processingWith = (status: 'pending' | 'parsing' | 'running'): RunDetail => ({
+    state: 'processing',
+    run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` },
+  });
+
+  it('keeps polling a running run past the cap — a live run is evidence the poll is worth making', () => {
+    expect(pollIntervalFor(processingWith('running'), true)).toBe(POLL_INTERVAL_MS);
+  });
+
+  // The exemption is the RUN's status, not the whole processing branch: a run
+  // that has stopped streaming is back under the cap, which is what stops a
+  // forgotten tab polling a stuck parse forever.
+  it('still caps a run that has stopped streaming', () => {
+    expect(pollIntervalFor(processingWith('pending'), true)).toBe(false);
+    expect(pollIntervalFor(processingWith('parsing'), true)).toBe(false);
+  });
 });

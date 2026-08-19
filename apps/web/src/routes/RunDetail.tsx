@@ -80,30 +80,15 @@ export default function RunDetail() {
   // A timer that sets state is what makes the message appear when it is true
   // rather than at the next unrelated render.
   const [capReached, setCapReached] = useState(false);
-  useEffect(() => {
-    // Reset the FLAG as well as the timer. `[runId]` already says this
-    // component instance can outlive the run it was showing (two /runs/:runId
-    // locations in a row, no unmount); without this line, a second run opened
-    // after the first hit the cap renders "stopped checking automatically" on
-    // its first paint and never polls once.
-    //
-    // COVERED, finally, by `apps/web/test/RunDetail.polling.test.tsx` — both
-    // halves: the timer that sets the flag, and this line that resets it for a
-    // second run. That test mounts this component in jsdom and advances fake
-    // timers past POLL_CAP_MS, which is what makes the two real minutes the
-    // cap needs cost nothing. Until the DOM environment existed this effect
-    // had no test that could fail; deleting it left every suite green.
-    setCapReached(false);
-    const timer = setTimeout(() => setCapReached(true), POLL_CAP_MS);
-    return () => clearTimeout(timer);
-  }, [runId]);
 
   const run = useQuery({
     queryKey: runQueryKey(runId ?? ''),
     queryFn: () => fetchRun(runId!),
     enabled: runId !== undefined,
     // The decision lives in api/run.ts as a pure function so the cap is
-    // testable without waiting two real minutes in a browser.
+    // testable without waiting two real minutes in a browser. That function
+    // also holds the OTHER half of the live exemption below: a `running` run
+    // is polled whatever `capReached` says.
     refetchInterval: (query) => pollIntervalFor(query.state.data, capReached),
   });
 
@@ -118,6 +103,40 @@ export default function RunDetail() {
   const compact = useIsCompact();
   const running = run.data?.state === 'processing' && run.data.run.status === 'running';
   const live = useLiveRun(runId ?? '', running && !compact);
+
+  // The polling cap, held as state rather than computed at render time. A
+  // derived `Date.now() - start > CAP` would be correct only at the moments
+  // something else happens to re-render — and the whole point of the cap is
+  // the moment polling STOPS, when by definition nothing else is happening.
+  // A timer that sets state is what makes the message appear when it is true
+  // rather than at the next unrelated render.
+  useEffect(() => {
+    // Reset the FLAG as well as the timer. `[runId]` already says this
+    // component instance can outlive the run it was showing (two /runs/:runId
+    // locations in a row, no unmount); without this line, a second run opened
+    // after the first hit the cap renders "stopped checking automatically" on
+    // its first paint and never polls once.
+    //
+    // COVERED, finally, by `apps/web/test/RunDetail.polling.test.tsx` — both
+    // halves: the timer that sets the flag, and this line that resets it for a
+    // second run. That test mounts this component in jsdom and advances fake
+    // timers past POLL_CAP_MS, which is what makes the two real minutes the
+    // cap needs cost nothing. Until the DOM environment existed this effect
+    // had no test that could fail; deleting it left every suite green.
+    setCapReached(false);
+    // ═══ NO TIMER AT ALL WHILE THE RUN IS STREAMING, AND `running` IS A DEP ═══
+    // `pollIntervalFor`'s own exemption keeps a `running` run polling past the
+    // cap, but that alone leaves a worse bug one state over: a two-hour soak
+    // would trip this timer in its third minute, and the instant it stopped
+    // streaming — the exact moment REST finally has something new to say —
+    // polling would be capped ALREADY, so the finalizing page would never
+    // reach the finished report. Arming the timer on the `running` ->
+    // `!running` transition instead gives the frozen page a full, honest cap
+    // window measured from when the run actually stopped.
+    if (running) return;
+    const timer = setTimeout(() => setCapReached(true), POLL_CAP_MS);
+    return () => clearTimeout(timer);
+  }, [runId, running]);
 
   // Not reachable through the router — `/runs/:runId` cannot match without a
   // segment — but `useParams` is typed as optional and silently rendering an
@@ -185,7 +204,16 @@ export default function RunDetail() {
     // compact viewport where one never opens at all — falls straight
     // through to the unmodified `Processing` screen below.
     if (live.lastDelta !== null) {
-      return <Live status={status} runId={runId} live={live} compact={compact} />;
+      return (
+        <Live
+          status={status}
+          runId={runId}
+          live={live}
+          compact={compact}
+          capReached={capReached}
+          onRetry={() => void run.refetch()}
+        />
+      );
     }
     return <Processing status={status} capReached={capReached} onRetry={() => void run.refetch()} />;
   }
@@ -345,6 +373,8 @@ export function Live({
   runId,
   live,
   compact,
+  capReached,
+  onRetry,
 }: {
   // `RunProcessing['status']`, not `string` — see `Processing`'s own prop
   // for the same reasoning.
@@ -352,6 +382,17 @@ export function Live({
   readonly runId: string;
   readonly live: LiveRunState;
   readonly compact: boolean;
+  /**
+   * `RunDetail`'s own polling cap, carried here for the same reason
+   * `Processing` takes it: a page that has stopped asking on its own must say
+   * so and hand the reader the control. It can only be ACTED on once this run
+   * has stopped streaming — `pollIntervalFor` exempts a `running` run from the
+   * cap entirely, so while `status === 'running'` the page is still polling
+   * whatever this flag says, and claiming otherwise would be the "appears to
+   * be working while making no requests" failure inverted.
+   */
+  readonly capReached: boolean;
+  readonly onRetry: () => void;
 }) {
   const delta = live.lastDelta;
   // Unreachable through `RunDetail`'s own guard (this component is only ever
@@ -406,8 +447,15 @@ export function Live({
 
       {/* A banner ABOVE the still-populated dashboard, not a replacement for
           it — see `LiveNotice`'s own docstring on why falling back to
-          `Processing` here was rejected. */}
-      {frozen && <LiveNotice kind="finalizing" />}
+          `Processing` here was rejected.
+
+          ONE OR THE OTHER, never both: `LiveNotice[kind="finalizing"]`
+          promises "this page will refresh with the full report once they are
+          ready", which is a lie the moment polling has stopped. The capped
+          variant makes the same situation readable and gives the reader the
+          Retry `Processing` has had all along. */}
+      {frozen &&
+        (capReached ? <LiveCapped onRetry={onRetry} /> : <LiveNotice kind="finalizing" />)}
 
       <LiveSummary summary={delta.summary} frozen={frozen} />
 
@@ -482,6 +530,45 @@ export function Live({
       <DesktopOnly compact={compact} what="The per-request statistics table">
         {() => <LiveNotice kind="withheld" subject="Statistics" />}
       </DesktopOnly>
+    </div>
+  );
+}
+
+/**
+ * The frozen live page's version of `Processing`'s cap block — the affordance
+ * `Live` shipped without.
+ *
+ * `Processing` has said "PerfPortal stopped checking automatically" with a
+ * Check again button since the parity shell; `Live` replaced that whole screen
+ * for a run that streamed, and inherited neither. So a run that finished
+ * streaming and then took longer than the cap to finalize left the reader on a
+ * page that had silently stopped polling while promising to refresh itself.
+ *
+ * NOT `LiveNotice`, and not a third `kind` on it: this one carries a `<button>`
+ * (with an icon), and `LiveNotice`'s own docstring earns its "safe wherever a
+ * caller places it" precisely by having no `<svg>` — nine e2e specs count SVG
+ * elements inside chart `<figure>`s. Keeping the button out here keeps that
+ * guarantee true for the component that needs it.
+ *
+ * The copy shares `Processing`'s "stopped checking automatically after two
+ * minutes" sentence deliberately — one page state, one wording — and the two
+ * screens are mutually exclusive branches, so no query can resolve both.
+ */
+function LiveCapped({ onRetry }: { readonly onRetry: () => void }) {
+  return (
+    <div
+      role="status"
+      data-testid="live-notice-capped"
+      className="flex flex-col items-start gap-2.5 rounded-xl border border-default bg-surface px-4 py-3 text-[13px] text-muted"
+    >
+      <p className="leading-relaxed">
+        This run has finished streaming. PerfPortal stopped checking automatically after two
+        minutes, so the numbers below are its last live update rather than the full report.
+      </p>
+      <Button variant="primary" size="sm" onClick={onRetry}>
+        <RefreshIcon className="h-3.5 w-3.5" />
+        Check again
+      </Button>
     </div>
   );
 }

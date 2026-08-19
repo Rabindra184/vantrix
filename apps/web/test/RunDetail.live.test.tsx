@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, SeriesResponse, UsersResponse, ErrorsResponse } from '@perfportal/contracts';
@@ -221,7 +222,14 @@ function clientWithLiveCache(): QueryClient {
   return client;
 }
 
-function renderLive(overrides: Partial<{ status: 'running' | 'pending' | 'parsing'; compact: boolean }> = {}) {
+function renderLive(
+  overrides: Partial<{
+    status: 'running' | 'pending' | 'parsing';
+    compact: boolean;
+    capReached: boolean;
+    onRetry: () => void;
+  }> = {},
+) {
   const client = clientWithLiveCache();
   return render(
     <QueryClientProvider client={client}>
@@ -231,6 +239,8 @@ function renderLive(overrides: Partial<{ status: 'running' | 'pending' | 'parsin
           runId={RUN_ID}
           live={liveState({ lastDelta: deltaFixture() })}
           compact={overrides.compact ?? false}
+          capReached={overrides.capReached ?? false}
+          onRetry={overrides.onRetry ?? (() => undefined)}
         />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -297,7 +307,7 @@ describe('Live — the live page itself', () => {
     const { rerender } = render(
       <QueryClientProvider client={clientWithLiveCache()}>
         <MemoryRouter>
-          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} />
+          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -306,7 +316,7 @@ describe('Live — the live page itself', () => {
     rerender(
       <QueryClientProvider client={clientWithLiveCache()}>
         <MemoryRouter>
-          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} />
+          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -330,7 +340,7 @@ describe('Live — the live page itself', () => {
     const { rerender } = render(
       <QueryClientProvider client={clientWithLiveCache()}>
         <MemoryRouter>
-          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} />
+          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -339,13 +349,49 @@ describe('Live — the live page itself', () => {
     rerender(
       <QueryClientProvider client={clientWithLiveCache()}>
         <MemoryRouter>
-          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} />
+          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
         </MemoryRouter>
       </QueryClientProvider>,
     );
     const tile = screen.getByText('Duration So Far').closest('div');
     expect(tile).not.toHaveTextContent(/still streaming/i);
     expect(tile).toHaveTextContent(/stopped/i);
+  });
+
+  /**
+   * `Live` shipped with NEITHER the cap message NOR the Retry button
+   * `Processing` has had since the parity shell — so a run that stopped
+   * streaming and then took longer than POLL_CAP_MS to finalize left the
+   * reader on a page that had silently stopped polling while its own banner
+   * promised to refresh itself.
+   */
+  it('says polling stopped, and offers a retry, once the cap is reached on a frozen run', async () => {
+    const onRetry = vi.fn();
+    renderLive({ status: 'parsing', capReached: true, onRetry });
+
+    expect(screen.getByTestId('live-notice-capped')).toHaveTextContent(/stopped checking automatically/i);
+    // The promise the finalizing banner makes ("will refresh … once they are
+    // ready") is false once polling has stopped, so the two are exclusive.
+    expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
+    // The dashboard is still there — the cap is a statement about requests,
+    // not a reason to blank what already arrived.
+    expect(screen.getByTestId('live-stat-total-requests')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /check again/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * `pollIntervalFor` exempts a `running` run from the cap entirely, so while
+   * this run streams the page IS still polling — saying otherwise would be the
+   * "appears to be working while making no requests" failure inverted.
+   */
+  it('says nothing about the cap while the run is still streaming', () => {
+    renderLive({ status: 'running', capReached: true });
+
+    expect(screen.queryByTestId('live-notice-capped')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /check again/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/updating as the run streams/i)).toBeInTheDocument();
   });
 
   // Defensive: `RunDetail` only ever renders `Live` once `lastDelta` is
@@ -355,7 +401,7 @@ describe('Live — the live page itself', () => {
     const { container } = render(
       <QueryClientProvider client={clientWithLiveCache()}>
         <MemoryRouter>
-          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: null })} compact={false} />
+          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: null })} compact={false} capReached={false} onRetry={() => undefined} />
         </MemoryRouter>
       </QueryClientProvider>,
     );

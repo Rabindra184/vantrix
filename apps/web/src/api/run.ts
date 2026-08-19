@@ -77,10 +77,36 @@ export const POLL_CAP_MS = 120_000;
  * `processing`, and keeps being re-asked. The CAP is what ends that — which
  * is the second reason POLL_CAP_MS exists, alongside the never-settling run
  * its own comment describes.
+ *
+ * ═══ A `running` RUN IS EXEMPT FROM THE CAP ═══
+ *
+ * POLL_CAP_MS was written for a PARSE wait — minutes at the outside — and
+ * part 2b hung the live page off this same `processing` branch without
+ * revisiting it. Every run this feature exists for outlives two minutes: a
+ * soak run streams for hours, and once the cap fired, `GET /v1/runs/:id` was
+ * never asked again, so `run.data` froze at `status: 'running'` FOREVER. The
+ * page then held a socket open for a run nobody was publishing to, kept
+ * asserting "Live — updating as the run streams" over numbers that had
+ * stopped moving, and never rendered the finalizing banner or the finished
+ * report. Only a manual reload escaped it.
+ *
+ * A run the API is CURRENTLY reporting as `running` is evidence the poll is
+ * still worth making, which is exactly what the cap's own argument ("a run
+ * that never settles") assumes is absent. Nor does this reintroduce the
+ * forgotten-tab problem it guards: an abandoned live run is terminated
+ * SERVER-side — the sweeper finalizes a run whose producer stopped as
+ * `incomplete` after `runningStaleAfterMs`, `RunsService.statusFor` has an
+ * explicit `incomplete` branch answering 200, and this function then returns
+ * `false` on the `ready` state like any other finished run.
+ *
+ * The other half of this rule is in `RunDetail`: the cap TIMER is (re)armed
+ * when a run stops streaming, so the frozen page gets a full cap window of
+ * its own rather than inheriting a cap that elapsed hours earlier mid-run.
  */
 export function pollIntervalFor(detail: RunDetail | undefined, capReached: boolean): number | false {
-  if (capReached) return false;
   if (detail === undefined) return false;
+  if (detail.state === 'processing' && detail.run.status === 'running') return POLL_INTERVAL_MS;
+  if (capReached) return false;
   return detail.state === 'processing' ? POLL_INTERVAL_MS : false;
 }
 

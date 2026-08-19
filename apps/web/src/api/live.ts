@@ -273,6 +273,35 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
   queryClient.setQueryData<ErrorsResponse>(errorsQueryKey(runId), errorsResponseFrom(runId, delta.errors));
 }
 
+/**
+ * ═══ WHAT THE SOCKET WROTE, HANDED BACK TO REST ═══
+ *
+ * The three keys `applyDelta` writes are BYTE-IDENTICAL to the ones the
+ * FINISHED run page subscribes to: `RunShell` mounts `usersQuery(run.id)` and
+ * `errorsQuery(run.id)`, and `RunChartsTab` the same eight-element series key
+ * `liveSeriesKey` builds. Every one of those factories carries `staleTime:
+ * Infinity` (`api/metrics.ts`) — correct for a completed run, whose metrics
+ * never change, and fatal for one this socket has been writing into: nothing
+ * anywhere in `apps/web` invalidated a query before this call existed, so an
+ * operator who watched a run finish IN THE SAME TAB got the finished report
+ * drawn from the live fold's LAST DELTA — which stops at the final tick
+ * before the run left `running` — beside a statistics table that fetched REST
+ * and shows the full totals. Two contradicting sets of numbers for one run,
+ * on one screen. Reloading fixed it, which is why nothing caught it.
+ *
+ * INVALIDATE, NEVER REMOVE. `invalidateQueries` marks the entry stale and
+ * refetches only ACTIVE observers; `Live`'s own three queries are
+ * `enabled: false` (`RunDetail`), so the frozen dashboard (§4.4) keeps
+ * drawing the last delta while the run finalizes, and the refetch happens
+ * when `RunShell`'s observers mount on the finished page. `removeQueries`
+ * would blank those charts at the exact moment nothing has gone wrong.
+ */
+function invalidateLiveWrites(queryClient: QueryClient, runId: string): void {
+  for (const queryKey of [liveSeriesKey(runId), usersQueryKey(runId), errorsQueryKey(runId)]) {
+    void queryClient.invalidateQueries({ queryKey });
+  }
+}
+
 export interface LiveRunState {
   readonly connected: boolean;
   readonly lastDelta: LiveDelta | null;
@@ -312,6 +341,11 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    // Whether this effect run ever wrote to the cache — the condition on the
+    // teardown's `invalidateLiveWrites` call. A session that never received a
+    // delta wrote nothing, so invalidating would make the finished page
+    // refetch payloads no socket ever touched.
+    let applied = false;
     // THE RESUME POINT. Set from the snapshot frame's OWN `lastSeq`, then
     // from each delta's own `seq` as frames arrive — NEVER derived any other
     // way. The producer stamps a snapshot with the seq of the delta it does
@@ -337,6 +371,7 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
         if (frame === null) return;
         lastSeq = frame.type === 'snapshot' ? frame.lastSeq : frame.delta.seq;
         applyDelta(queryClient, runId, frame.delta);
+        applied = true;
         setLastDelta(frame.delta);
       };
 
@@ -374,6 +409,14 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
       if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
       socket?.close();
       setConnected(false);
+      // THE `running` -> `!running` EDGE, expressed where it already exists.
+      // The caller's `enabled` IS `run.status === 'running' && !compact`
+      // (`RunDetail`), so this teardown is exactly the moment the run stopped
+      // streaming — as well as the moment the viewport went compact, or the
+      // reader navigated away. All three want the same thing: whatever REST
+      // says next must win over what this socket last wrote. See
+      // `invalidateLiveWrites` for what happens without it.
+      if (applied) invalidateLiveWrites(queryClient, runId);
       // `lastDelta` is deliberately NOT cleared here. Task 8's frozen view
       // (design §4.4, "freeze, do not blank") reads it after the socket has
       // closed — on the compact flag flipping mid-session (§22.6) as much as

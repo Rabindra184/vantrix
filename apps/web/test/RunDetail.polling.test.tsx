@@ -48,6 +48,18 @@ vi.mock('../src/api/run.js', async (importOriginal) => ({
   })),
 }));
 
+/**
+ * The socket is out of scope here and must not open: jsdom 30's own
+ * `WebSocket` makes a REAL network connection (CLAUDE.md's jsdom/undici
+ * warning, one layer down), and the `running` case below would otherwise
+ * dial one on every mount. `lastDelta: null` also keeps `RunDetail` on the
+ * `Processing` branch, so what this file asserts stays what it has always
+ * asserted — the cap's copy and the requests it does or does not make.
+ */
+vi.mock('../src/api/live.js', () => ({
+  useLiveRun: vi.fn(() => ({ connected: false, lastDelta: null, unauthorized: false, partial: false })),
+}));
+
 const fetchRunMock = vi.mocked(fetchRun);
 
 function renderDetail() {
@@ -72,8 +84,16 @@ async function advance(ms: number) {
   });
 }
 
+function processingBody(status: 'pending' | 'parsing' | 'running') {
+  return { state: 'processing' as const, run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` } };
+}
+
 beforeEach(() => {
   fetchRunMock.mockClear();
+  // The IMPLEMENTATION too, not just the calls: `mockClear` leaves whatever a
+  // previous test installed in place, and the live-run case below swaps in one
+  // whose answer changes mid-test.
+  fetchRunMock.mockImplementation(async () => processingBody('pending'));
   vi.useFakeTimers();
 });
 
@@ -157,5 +177,54 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
     expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
     expect(fetchRunMock).toHaveBeenCalledWith(second);
+  });
+
+  /**
+   * A SOAK RUN IS NOT A STUCK RUN, and the cap could not tell them apart.
+   *
+   * Two minutes was a parse wait; part 2b hung the live page off the same
+   * `processing` branch. For any run longer than that — every run this
+   * feature exists for — polling stopped while the run was still streaming,
+   * so `run.data` froze at `status: 'running'` forever and the page never
+   * reached the finalizing banner or the finished report at all.
+   *
+   * The second half is why this test does not stop at the flip: the cap
+   * TIMER has to restart when streaming stops. A cap that merely stayed
+   * armed through a two-hour run would fire in its third minute and leave
+   * polling already dead at the one moment REST finally has something new
+   * to say.
+   */
+  it('never caps a streaming run, and starts the cap clock over when it stops streaming', async () => {
+    let status: 'running' | 'parsing' = 'running';
+    fetchRunMock.mockImplementation(async () => processingBody(status));
+
+    renderDetail();
+    await advance(0);
+
+    await advance(POLL_CAP_MS + 1);
+    // Well past the cap and still asking — the defect was that this stopped.
+    expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
+    const pastCap = fetchRunMock.mock.calls.length;
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchRunMock.mock.calls.length).toBeGreaterThan(pastCap);
+
+    // The run stops streaming. One poll picks that up.
+    status = 'parsing';
+    await advance(POLL_INTERVAL_MS);
+
+    // The cap clock started over HERE, not hours ago: the finalizing page
+    // gets its own full window to reach the finished report.
+    const atFlip = fetchRunMock.mock.calls.length;
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchRunMock.mock.calls.length).toBeGreaterThan(atFlip);
+    expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
+
+    // And it still ends: a run that stopped streaming and never finalized is
+    // exactly the stuck run the cap was written for.
+    await advance(POLL_CAP_MS + 1);
+    expect(screen.getByText(/stopped checking automatically/i)).not.toBeNull();
+    const atCap = fetchRunMock.mock.calls.length;
+    await advance(POLL_INTERVAL_MS * 10);
+    expect(fetchRunMock.mock.calls.length).toBe(atCap);
   });
 });

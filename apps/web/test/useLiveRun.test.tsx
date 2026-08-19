@@ -1,9 +1,9 @@
 import '@testing-library/jest-dom/vitest';
 import { act, renderHook } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, SeriesResponse, UsersResponse } from '@perfportal/contracts';
-import { errorsQueryKey, seriesQueryKey, usersQueryKey } from '../src/api/metrics';
+import { errorsQueryKey, seriesQueryKey, usersQuery, usersQueryKey } from '../src/api/metrics';
 import { BASE_BACKOFF_MS, MAX_BACKOFF_MS, backoffDelayMs, useLiveRun } from '../src/api/live';
 
 const RUN_ID = '00000000-0000-4000-8000-000000000001';
@@ -473,6 +473,103 @@ describe('useLiveRun', () => {
     expect(result.current.lastDelta).toBeNull();
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+/**
+ * THE COMPLETION TRANSITION — the one edge no suite exercised at all.
+ *
+ * `useLiveRun` writes `liveSeriesKey`/`usersQueryKey`/`errorsQueryKey`, which
+ * are the SAME keys the finished run page subscribes to, and every one of
+ * those factories carries `staleTime: Infinity` (`api/metrics.ts`). An
+ * operator who opens a running run and watches it finish in the same tab
+ * therefore got the finished report drawn from the live fold's last delta,
+ * beside a REST-fetched statistics table showing the full totals — two
+ * contradicting sets of numbers for one run, on one screen, until a reload.
+ *
+ * The edge itself is `enabled` going false: the caller's `enabled` IS
+ * `run.status === 'running' && !compact` (`RunDetail`), so a `rerender` with
+ * `enabled: false` is exactly what the run leaving `running` does to this
+ * hook.
+ */
+describe('useLiveRun — handing the cache back to REST when the run ends', () => {
+  const writtenKeys = (runId: string) => [
+    liveSeriesCacheKey(runId),
+    usersQueryKey(runId),
+    errorsQueryKey(runId),
+  ];
+
+  function renderLive(client: QueryClient) {
+    return renderHook(({ enabled }: { enabled: boolean }) => useLiveRun(RUN_ID, enabled), {
+      wrapper: wrapperFor(client),
+      initialProps: { enabled: true },
+    });
+  }
+
+  it('leaves what it wrote valid while the run is still streaming', async () => {
+    const client = new QueryClient();
+    renderLive(client);
+    await send({ type: 'snapshot', delta: deltaFixture(), partial: false, lastSeq: 0 });
+
+    // Invalidating mid-run would send the still-live page to REST for a run
+    // whose persisted rows do not exist yet (`MetricWriter` has not run), and
+    // that emptier payload would race the socket's own writes.
+    for (const key of writtenKeys(RUN_ID)) {
+      expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+    }
+  });
+
+  it('invalidates all three keys it wrote once the run stops streaming', async () => {
+    const client = new QueryClient();
+    const { rerender } = renderLive(client);
+    await send({ type: 'snapshot', delta: deltaFixture(), partial: false, lastSeq: 0 });
+
+    rerender({ enabled: false });
+
+    for (const key of writtenKeys(RUN_ID)) {
+      expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    }
+    // The DATA is still there — §4.4's frozen dashboard keeps drawing the
+    // last delta while the run finalizes. Invalidated, not removed.
+    expect(client.getQueryData(usersQueryKey(RUN_ID))).toBeDefined();
+  });
+
+  /**
+   * The user-visible half. `staleTime: Infinity` means a mount that finds
+   * cached data does NOT fetch — which is why the finished page rendered the
+   * last delta forever. This proves the observer the finished page mounts
+   * actually goes back to the network.
+   */
+  it('makes the finished page refetch rather than redraw the last delta', async () => {
+    const client = new QueryClient();
+    const { rerender } = renderLive(client);
+    await send({ type: 'snapshot', delta: deltaFixture(), partial: false, lastSeq: 0 });
+    rerender({ enabled: false });
+
+    const refetch = vi.fn().mockResolvedValue({ runId: RUN_ID, window: null, scenarios: [], total: [] });
+    // The REAL key the finished page's `RunShell` subscribes to, with only
+    // the fetcher swapped — a hand-written key here would prove nothing about
+    // the one the socket wrote.
+    renderHook(() => useQuery({ ...usersQuery(RUN_ID), queryFn: refetch }), {
+      wrapper: wrapperFor(client),
+    });
+    await flush();
+
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it('invalidates nothing when the socket never delivered a delta', async () => {
+    const client = new QueryClient();
+    // A payload REST fetched for itself, under one of the same keys — a
+    // session that wrote nothing has no claim on it, and marking it stale
+    // would cost the reader a needless refetch.
+    client.setQueryData(usersQueryKey(RUN_ID), { runId: RUN_ID, window: null, scenarios: [], total: [] });
+    const { rerender } = renderLive(client);
+    await flush();
+
+    rerender({ enabled: false });
+
+    expect(client.getQueryState(usersQueryKey(RUN_ID))?.isInvalidated).toBe(false);
   });
 });
 
