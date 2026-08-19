@@ -197,6 +197,35 @@ export const SNAPSHOT_EVERY_N_TICKS = 60;
 export const SNAPSHOT_TTL_SECONDS = 3600;
 
 /**
+ * How long the REPLAY STREAM outlives its last write, for exactly the reason
+ * above -- and its absence was a leak with no ceiling.
+ *
+ * `live:{runId}:deltas` had no TTL and is deleted by nothing: not `#release`,
+ * not `#onClosed`, not the gateway. So every run that ever streamed left up
+ * to {@link REPLAY_BUDGET_BYTES} in Redis PERMANENTLY. The design's memory
+ * arithmetic is sized against CONCURRENT runs; the real figure grew with the
+ * deployment's LIFETIME run count, in the same instance that carries BullMQ
+ * job data, and `infra/docker-compose.yml` deliberately sets no `maxmemory`
+ * and no eviction policy (every fitting policy would start dropping jobs).
+ *
+ * A `DEL` in `#release` was the alternative and is worse on both halves: it
+ * misses the case that actually strands the key -- an owner that died without
+ * releasing -- and it destroys the resume window at the exact moment a
+ * viewer's socket drops, which is the moment the run ends and every viewer's
+ * page transitions at once.
+ *
+ * The same hour as the snapshot's, and deliberately the SAME number rather
+ * than a second one to reason about: the two keys are one seed between them
+ * ({@link LiveGateway}'s `attemptSeed` reads both), the stream only needs to
+ * outlive its run by the resume window, and that window is bounded by
+ * `runningStaleAfterMs` (10 min default) -- past which the sweeper has
+ * finalized the run and no client is resuming anything. An hour is six times
+ * that, and it keeps the pair expiring together instead of leaving a stream
+ * whose snapshot has gone, which the gateway can only seed from as `partial`.
+ */
+export const REPLAY_TTL_SECONDS = SNAPSHOT_TTL_SECONDS;
+
+/**
  * How many entries this delta's replay stream may keep, given what this
  * delta costs.
  *
@@ -856,6 +885,15 @@ export class LiveFoldOwner {
         'delta',
         body,
       );
+      // INSIDE THIS TRY, alongside the XADD it bounds. The defect being fixed
+      // is a stream that exists without a TTL, so a failure to set one is a
+      // failed publish: the compensation on that path costs a redundant
+      // re-send next tick (`{ ...state.cursor, seq: next.seq }` keeps the
+      // width/offset state, so the next delta re-covers this one's window),
+      // never a loss. One extra round trip per owned run per tick buys the
+      // property that the key is never left immortal by a producer that dies
+      // between the XADD and any later hygiene step.
+      await this.#redis.expire(`live:${runId}:deltas`, REPLAY_TTL_SECONDS);
       state.cursor = next;
     } catch (err) {
       state.cursor = { ...state.cursor, seq: next.seq };
@@ -1129,6 +1167,15 @@ export class LiveFoldOwner {
       return;
     }
 
+    // BEFORE the `#closing` check below, never between it and the `#owned.set`
+    // it guards: that pair has to stay in one synchronous turn, or a `close()`
+    // starting during this read would drain `#owned` and this insert would
+    // strand its client and its advisory lock behind it. Placing the await
+    // here only widens a window that already exists (the connect and the lock
+    // query above are both awaits), and the check still runs immediately
+    // before the insert.
+    const cursor = await this.#resumeCursor(runId);
+
     if (this.#closing) {
       // Won the lock, but close() already started (or finished) draining
       // #owned -- inserting now would never be seen by it. Unwind exactly
@@ -1156,11 +1203,78 @@ export class LiveFoldOwner {
       engine: new LiveEngine(),
       client,
       fetchedBytes: 0,
-      cursor: INITIAL_CURSOR,
+      // NOT `INITIAL_CURSOR` -- see `#resumeCursor`. A re-claim after a crash
+      // or a rolling deploy has to continue this RUN's sequence, not start a
+      // second one inside it.
+      cursor,
       // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
       // own doc comment: the first tick after a claim must seed immediately.
       ticksSinceSnapshot: SNAPSHOT_EVERY_N_TICKS,
     });
+  }
+
+  /**
+   * The cursor a freshly-claimed run starts from: `INITIAL_CURSOR` for a run
+   * nobody has published for, and one past the replay stream's TIP for a run
+   * this or another worker was already streaming.
+   *
+   * ═══ WHY THE TIP, AND NOT `DEL live:{runId}:deltas` ═══
+   *
+   * `seq` was per-OWNER, not per-RUN: this method used to hand every claim
+   * `INITIAL_CURSOR`, so a worker restart mid-run published `seq 0, 1, 2...`
+   * into a stream still holding `seq 0...199`. Both of the gateway's filters
+   * (`attemptSeed`'s `entry.seq >= snapshot.seq`, and `serve`'s flush filter)
+   * assume per-run monotonicity, so a fresh connect replayed up to 200 STALE
+   * deltas on top of a correct seed -- old ones first, so a stale partial
+   * bucket overwrote the snapshot's complete one -- while a resuming client
+   * filtered out the new incarnation's `seq 0`, the one delta carrying
+   * `replaces: true`.
+   *
+   * Deleting the stream on claim fixes the collision and breaks something
+   * else: a client resuming with `?lastSeq=200` finds a stream that no longer
+   * reaches its cursor in the only way the gateway reads as FINE (`oldest ===
+   * undefined` -> "nothing newer to replay"), so it is neither re-seeded nor
+   * caught up, and the new incarnation's deltas -- numbered from 0 -- are
+   * filtered out as already-held for the rest of the run. It also throws away
+   * the replay window at the exact moment it is most needed, which is a
+   * worker restart.
+   *
+   * Continuing the sequence keeps every existing filter correct with no
+   * further change. The old entries stay valid history at seqs BELOW the new
+   * snapshot's, so `attemptSeed` excludes them; a resuming client's cursor
+   * still means what it meant; and the new owner's first delta -- which is
+   * `replaces: true` carrying the whole series, because only `seq` is taken
+   * from the tip while `lastPublishedOffsetMs`/`lastBucketWidthMs` keep their
+   * `INITIAL_CURSOR` sentinels -- lands at exactly the seq the stale snapshot
+   * key already points at (`prev.seq + 1`).
+   *
+   * A failure to READ the tip degrades to `INITIAL_CURSOR` rather than
+   * propagating: this is inside `#claimReserved`, which holds a pooled client
+   * and an advisory lock, and a Redis outage that makes this read fail is one
+   * that will fail the publish two lines later anyway. It is logged, because
+   * silently restarting a run's sequence is the defect this method exists to
+   * close.
+   */
+  async #resumeCursor(runId: string): Promise<DeltaCursor> {
+    try {
+      // The tip only: `XREVRANGE ... COUNT 1`. Stream ids are Redis
+      // timestamps and carry no relation to a delta's own `seq`
+      // (`live.gateway.ts`'s `readStream` makes the same point), so the seq
+      // has to be read out of the body -- but the LAST entry is the highest
+      // seq by construction, since `#publish` only ever appends.
+      const rows = await this.#redis.xrevrange(`live:${runId}:deltas`, '+', '-', 'COUNT', 1);
+      const body = rows[0]?.[1]?.[1];
+      if (typeof body !== 'string') return INITIAL_CURSOR;
+      const seq = (JSON.parse(body) as { seq?: unknown }).seq;
+      // A corrupt or half-written entry reads as "no stream" rather than as a
+      // delta with a missing seq, the same judgement `seqOf` makes on the
+      // gateway side.
+      if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) return INITIAL_CURSOR;
+      return { ...INITIAL_CURSOR, seq: seq + 1 };
+    } catch (err) {
+      console.error(`LiveFoldOwner: could not read the replay tip for ${runId}, restarting seq at 0:`, err);
+      return INITIAL_CURSOR;
+    }
   }
 
   /**

@@ -10,7 +10,7 @@ import { Redis } from 'ioredis';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
-import { LiveFoldOwner } from '../src/live/fold-owner.js';
+import { LiveFoldOwner, REPLAY_TTL_SECONDS } from '../src/live/fold-owner.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
 
 const FIXTURE_LOG = fileURLToPath(
@@ -1750,6 +1750,91 @@ describe('LiveFoldOwner', () => {
       expect(next.responseTime.replaces).toBe(false);
     } finally {
       errorSpy.mockRestore();
+      await owner.close();
+    }
+  });
+
+  /**
+   * TASK 9 C1. `live:{runId}:deltas` had no TTL and nothing ever deleted it
+   * -- not `#release`, not `#onClosed`, not the gateway -- so every run that
+   * ever streamed left up to REPLAY_BUDGET_BYTES in Redis permanently. The
+   * design's memory arithmetic is sized against CONCURRENT runs; the real
+   * figure grew with the deployment's LIFETIME run count, in the instance
+   * that also carries BullMQ jobs, with no `maxmemory` and no eviction
+   * policy set (`infra/docker-compose.yml`, deliberately).
+   */
+  it('gives the replay stream a TTL, so a run that streamed does not hold Redis forever', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      await owner.tick();
+
+      const streamKey = `live:${runId}:deltas`;
+      expect(await redis.xlen(streamKey)).toBeGreaterThan(0);
+      // -1 is "no expiry", which is exactly the leak. Bounded by the constant
+      // rather than compared to a written-down number, and required to be
+      // positive so a TTL set to something already elapsed cannot pass.
+      const ttl = await redis.ttl(streamKey);
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(REPLAY_TTL_SECONDS);
+
+      // Still bounded after a SECOND publish: an EXPIRE that only ran on the
+      // first write would be reset to -1 by nothing, but one that ran only
+      // once and then stopped is the shape a refactor could leave behind.
+      await owner.tick();
+      expect(await redis.ttl(streamKey)).toBeGreaterThan(0);
+    } finally {
+      await redis.quit();
+      await owner.close();
+    }
+  });
+
+  /**
+   * TASK 9 C2. `#claim` reset every claimed run to `INITIAL_CURSOR`, so a
+   * worker restart or a rolling deploy mid-run published `seq 0, 1, 2...`
+   * into a stream still holding the previous incarnation's `seq 0...199`.
+   * `seq` was per-OWNER while both of the gateway's filters assume per-RUN
+   * monotonicity: a fresh connect then replayed stale deltas over a correct
+   * seed (old first, so a stale partial bucket overwrote a complete one), and
+   * a resuming client filtered out the new incarnation's `seq 0` -- the one
+   * delta carrying `replaces: true`.
+   *
+   * Seeded here by writing the stream directly rather than by killing a real
+   * owner: the SUT is what `#claim` reads, and a stream tip is a stream tip
+   * however it got there.
+   */
+  it('continues a run’s seq from the replay tip after a re-claim, rather than restarting at 0', async () => {
+    await truncateAll();
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedRunningRun(orgId, projectId, log.length);
+    await chunks.put(runId, 0, log);
+
+    const redis = new Redis(config.redisUrl);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl));
+    try {
+      // The previous incarnation's last published delta. `seq` is the only
+      // field the claim reads out of it -- the rest of a delta body says
+      // nothing about where the sequence resumes.
+      const tipSeq = 199;
+      await redis.xadd(`live:${runId}:deltas`, '*', 'delta', JSON.stringify({ runId, seq: tipSeq }));
+
+      const first = await nextPublishedDelta(owner, runId);
+
+      // One PAST the tip, so the stream stays monotonic across the restart
+      // and the gateway's `entry.seq >= snapshot.seq` filter still excludes
+      // the old incarnation's entries instead of replaying them.
+      expect(first.seq).toBe(tipSeq + 1);
+      // And it is still a full replacement: only `seq` is taken from the tip,
+      // so the new owner -- folding this run from byte 0 with a fresh engine
+      // -- tells every consumer to discard what it had.
+      expect(first.responseTime.replaces).toBe(true);
+    } finally {
+      await redis.quit();
       await owner.close();
     }
   });
