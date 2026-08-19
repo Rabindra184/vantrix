@@ -614,6 +614,114 @@ describe('useLiveRun — a dropped delta', () => {
 });
 
 /**
+ * A REPEATABLE HOLE. `expectSeq` survives a reconnect — the gateway's resume
+ * path sends no snapshot frame when the stream still reaches the client's
+ * cursor, and only a snapshot resets it — so a `seq` that is PERMANENTLY
+ * missing from the stream (a frame `parseFrame` refuses without advancing
+ * the server's own cursor, or one the worker's `#publish` catch path
+ * advanced `seq` past after a failed `xadd`) reads as the identical gap
+ * every single time this client resumes. Before this fix `ws.onopen` reset
+ * `attempt` to 0 unconditionally, and every one of these reconnects
+ * genuinely DOES open — so the backoff computed at `BASE_BACKOFF_MS` forever:
+ * a full WebSocket upgrade, a session lookup, two DB queries and a
+ * whole-stream `XRANGE`, roughly once a second, for as long as the hole
+ * stays inside the replay window (`REPLAY_MAX_ENTRIES` x `liveTickMs`, about
+ * 17 minutes). A reviewer's probe measured exactly that shape: five rounds
+ * of the identical gap produced six connections.
+ */
+describe('useLiveRun — a repeatable hole', () => {
+  it('escalates the backoff instead of retrying at a flat ~1Hz when the same gap repeats every time', async () => {
+    // Pins `backoffDelayMs`'s full-jitter draw to its own ceiling, so every
+    // delay used below is the value `backoffDelayMs` itself computes for a
+    // given `attempt` — no timing is hand-written independently of it.
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1);
+    const client = new QueryClient();
+    renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    await send({ type: 'snapshot', delta: deltaFixture({ seq: 4 }), partial: false, lastSeq: 4 });
+    act(() => lastConnection().emit({ type: 'delta', delta: deltaFixture({ seq: 5 }) }));
+
+    // The gateway would replay this VERBATIM every round: seq 7 where 6 was
+    // expected, byte-for-byte identical each time — never seq 6 itself.
+    const theHole = () => deltaFixture({ seq: 7, summary: { ...deltaFixture().summary, count: 999 } });
+
+    // Round 1. `attempt` is 0 here under BOTH the pre-fix and the fixed
+    // code — this round only advances the clock to a known point, and
+    // proves nothing about the fix by itself.
+    act(() => lastConnection().emit({ type: 'delta', delta: theHole() }));
+    expect(lastConnection().readyState).toBe(FakeSocket.CLOSED);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(backoffDelayMs(0, () => 1) + 1);
+    });
+    expect(server.connections).toHaveLength(2);
+
+    // Round 2: the identical gap again, on the fresh connection — exactly
+    // what a hole that never reaches the stream produces.
+    act(() => lastConnection().emit({ type: 'delta', delta: theHole() }));
+    expect(lastConnection().readyState).toBe(FakeSocket.CLOSED);
+
+    // THE ASSERTION. Advance only as far as round 1's OWN delay again. The
+    // pre-fix code resets `attempt` to 0 in `onopen` before this gap is even
+    // detected, so round 2's delay is identical to round 1's and a third
+    // connection would already exist here — the ~1Hz loop the probe
+    // measured. The fix leaves `attempt` at 1 across a gap-triggered close,
+    // so round 2's delay has escalated and nothing has reconnected yet at
+    // this point on the clock.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(backoffDelayMs(0, () => 1) + 1);
+    });
+    expect(server.connections).toHaveLength(2); // still bounded, not a third connection
+
+    // Not stuck forever, though — advancing out to round 2's own (escalated)
+    // delay reconnects it just the same.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(backoffDelayMs(1, () => 1));
+    });
+    expect(server.connections).toHaveLength(3);
+
+    randomSpy.mockRestore();
+  });
+
+  it('resets the backoff once a genuinely forward-progressing delta arrives, so a later unrelated drop still recovers fast', async () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1);
+    const client = new QueryClient();
+    renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    await send({ type: 'snapshot', delta: deltaFixture({ seq: 4 }), partial: false, lastSeq: 4 });
+    act(() => lastConnection().emit({ type: 'delta', delta: deltaFixture({ seq: 5 }) }));
+
+    // One gap, to move `attempt` off the floor — round 1 from the case above.
+    act(() =>
+      lastConnection().emit({
+        type: 'delta',
+        delta: deltaFixture({ seq: 7, summary: { ...deltaFixture().summary, count: 999 } }),
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(backoffDelayMs(0, () => 1) + 1);
+    });
+    expect(server.connections).toHaveLength(2);
+
+    // This time the hole is genuinely gone: the reconnected socket gets
+    // exactly the delta it was missing, seq 6, and applies it cleanly.
+    act(() => lastConnection().emit({ type: 'delta', delta: deltaFixture({ seq: 6 }) }));
+
+    // An UNRELATED transient drop — a restarting pod, an abnormal closure —
+    // with no gap involved at all.
+    act(() => lastConnection().close(1006));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(backoffDelayMs(0, () => 1) + 1);
+    });
+    // Back on the BASE schedule, not whatever the already-resolved gap had
+    // escalated `attempt` to — a healthy stream must not keep paying for a
+    // hole that already closed.
+    expect(server.connections).toHaveLength(3);
+
+    randomSpy.mockRestore();
+  });
+});
+
+/**
  * `partial` — computed carefully by the gateway, parsed by
  * `SnapshotFrameSchema`, and then dropped on the floor. A seed that begins at
  * minute 20 of a soak said nothing; a holed stream drew as complete; and with

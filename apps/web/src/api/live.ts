@@ -423,7 +423,9 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
 
       ws.onopen = () => {
         if (cancelled) return;
-        attempt = 0;
+        // `attempt` is NOT reset here — see the reset site below (in
+        // `onmessage`) for why moving it out of `onopen` is the fix for a
+        // REPEATABLE hole.
         setConnected(true);
       };
 
@@ -446,6 +448,14 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
             // make it with. Applying this delta first would leave the series
             // permanently short of whatever the gap contained, which is the
             // exact failure being detected.
+            //
+            // A REPEATABLE instance of this same gap — the server re-sends
+            // the identical bytes because `expectSeq` survives the reconnect
+            // below and the resume path sends no snapshot to reset it — is
+            // bounded by backoff escalation, not by anything in this branch:
+            // `attempt` is deliberately left untouched here, so `onclose`'s
+            // schedule keeps climbing every round instead of restarting at
+            // `BASE_BACKOFF_MS`. See the `attempt = 0` reset below.
             console.error(
               `useLiveRun: delta seq ${seq} arrived where ${expectSeq} was expected — reconnecting to re-seed`,
             );
@@ -465,6 +475,28 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
           expectSeq = seq + 1;
         }
 
+        // THE FIX FOR A REPEATABLE HOLE. `attempt` used to reset in
+        // `onopen`, and every reconnect genuinely DOES open — so a `seq`
+        // that is PERMANENTLY missing from the stream (a frame `parseFrame`
+        // refuses without advancing the server's own cursor, or one the
+        // worker's `#publish` catch path advanced `seq` past after a failed
+        // `xadd`) reopened, hit the identical gap above, and closed again
+        // with `attempt` freshly zeroed every single time: backoff computed
+        // at `BASE_BACKOFF_MS` forever — a full WebSocket upgrade, a session
+        // lookup, two DB queries and a whole-stream `XRANGE`, roughly once a
+        // second, for as long as the hole stayed inside the replay window.
+        //
+        // Resetting HERE instead — on a frame that actually reached this
+        // line, i.e. was neither a gap nor already-applied — ties the reset
+        // to genuine forward progress rather than to the socket merely being
+        // open. A repeatable hole never reaches this line (the gap branch
+        // above returns first), so `attempt` keeps climbing round over round
+        // and `onclose`'s schedule escalates as designed. A genuinely
+        // transient drop still recovers fast: the moment real data resumes
+        // flowing, `attempt` drops back to 0, so the NEXT close — whatever
+        // causes it — gets the base backoff again, not whatever an
+        // already-resolved gap had escalated it to.
+        attempt = 0;
         applyDelta(queryClient, runId, frame.delta);
         applied = true;
         setLastDelta(frame.delta);
