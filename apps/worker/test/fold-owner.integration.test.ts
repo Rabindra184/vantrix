@@ -2248,4 +2248,73 @@ describe('LiveFoldOwner', () => {
       }
     });
   });
+
+  /**
+   * Whole-branch review, B2. A re-claim -- rolling deploy, crash, lock
+   * handover -- re-folds a run from byte 0, so on the new owner's FIRST tick
+   * `snapshot.durationMs` is the full elapsed offset. `#publish` stamps a
+   * rule it has not seen before at that offset, so a rule that had been
+   * breaching since minute three came back reading "breaching since 2h 40m".
+   *
+   * That is the one number in the banner an abort decision turns on, and it
+   * failed in the direction that suppresses action: the longer the run and
+   * the later the deploy, the more recent -- and so the more ignorable -- the
+   * breach looked.
+   *
+   * The fix reads it back out of the replay stream's tip, which the claim was
+   * already fetching for `seq`. This case makes the two numbers differ by
+   * four orders of magnitude, so a re-stamp cannot pass by coincidence.
+   */
+  describe('a re-claim', () => {
+    const KO_COUNT = 2;
+    const OK_COUNT = 148;
+    /** Where the SECOND owner's bytes sit in run time. Ten minutes past the
+     * first owner's last event, so the re-folded run's `durationMs` is
+     * nothing like the offset the breach actually started at. */
+    const LATE_OFFSET_MS = 600_000;
+
+    it("keeps a breach's since-offset, rather than re-stamping it at the moment the new owner took over", async () => {
+      await truncateAll();
+      const { orgId, projectId } = await seedOrgProject();
+      const initial = Buffer.concat([
+        buildRunHeader(RUN_START_MS),
+        buildRequestBatch(0, KO_COUNT, false),
+        buildRequestBatch(KO_COUNT, OK_COUNT, true),
+      ]);
+      const runId = await seedRunningRun(orgId, projectId, initial.length);
+      await chunks.put(runId, 0, initial);
+      await seedSlaRule(orgId, projectId, {
+        metric: 'error_rate', comparator: 'lte', threshold: 0.01,
+      });
+
+      const first = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      let firstSince: number;
+      try {
+        await first.tick();
+        const breaches = breachesOf(first, runId);
+        expect(breaches).toHaveLength(1);
+        firstSince = breaches[0]!.sinceOffsetMs;
+      } finally {
+        // Releases the advisory lock, exactly as a rolling deploy's SIGTERM
+        // would -- which is what lets the second owner claim the same run.
+        await first.close();
+      }
+
+      // The agent kept streaming across the handover, and kept failing.
+      await chunks.put(runId, initial.length, buildRequestBatch(LATE_OFFSET_MS, 150, false));
+
+      const second = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+      try {
+        await second.tick();
+        const after = breachesOf(second, runId);
+        expect(after).toHaveLength(1);
+        // The new owner really did re-fold the whole run: its own notion of
+        // "now" is past LATE_OFFSET_MS, which is what a re-stamp would report.
+        expect(second.snapshotOf(runId)!.durationMs).toBeGreaterThan(LATE_OFFSET_MS);
+        expect(after[0]!.sinceOffsetMs).toBe(firstSince);
+      } finally {
+        await second.close();
+      }
+    });
+  });
 });

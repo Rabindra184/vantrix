@@ -1,3 +1,4 @@
+import { LiveSlaSchema } from '@perfportal/contracts';
 import type { Redis } from 'ioredis';
 import { RuleRepository, type ProjectScope } from '@perfportal/persistence';
 import { StreamingLogDecoder } from '@perfportal/plugin-gatling';
@@ -49,6 +50,24 @@ function runContextOf(row: {
     // side effectively does with the same value.
     engineOptions: (row.engine_options ?? {}) as EngineOptions,
   };
+}
+
+/**
+ * What a claim recovers from a run that was already being streamed --
+ * everything a new owner cannot re-derive from the bytes alone. Both fields
+ * come out of ONE read of the replay stream's tip (`#resumeState`).
+ */
+interface ResumeState {
+  cursor: DeltaCursor;
+  /** `FoldState.breachingSince`, as the last published delta reported it. */
+  breachingSince: Map<string, number>;
+}
+
+/** A run nobody has published for: `INITIAL_CURSOR` and no breach history.
+ * A function and not a shared constant, because the map is owner state the
+ * `FoldState` goes on to mutate. */
+function blankResume(): ResumeState {
+  return { cursor: INITIAL_CURSOR, breachingSince: new Map() };
 }
 
 /**
@@ -110,7 +129,23 @@ interface FoldState {
    * see `#claimRules`'s own doc comment for why failing open is right here.
    */
   rulesLoadFailed: boolean;
-  /** ruleId -> the elapsed offset at which it began breaching. */
+  /**
+   * ruleId -> the elapsed offset at which it began breaching.
+   *
+   * SEEDED FROM THE REPLAY TIP ON CLAIM, not started empty -- see
+   * `#resumeState`. A re-claim (rolling deploy, crash, lock handover)
+   * re-folds this run from byte 0, so on its first tick `snapshot.durationMs`
+   * is the FULL elapsed offset; a rule that has been breaching since minute
+   * three would be re-stamped at the moment the new owner took over. That is
+   * the one number in the banner an abort decision turns on, and it fails in
+   * the direction that suppresses action: a 4-hour soak breaching at 3
+   * minutes, redeployed at 2h40m, would read "breaching since 2h 40m 0s".
+   *
+   * Entries for rules that are NOT breaching on the first tick after the
+   * claim are pruned by `#publish`'s own recovery loop before anything is
+   * published, so a tip carrying a rule since disabled, deleted, or recovered
+   * costs one map entry for part of one tick.
+   */
   breachingSince: Map<string, number>;
   /**
    * Ticks since `live:{runId}:snapshot` was last written. Compared against
@@ -1369,8 +1404,8 @@ export class LiveFoldOwner {
     // here only widens a window that already exists (the connect and the lock
     // query above are both awaits), and the check still runs immediately
     // before the insert.
-    const cursor = await this.#resumeCursor(runId);
-    // Same reasoning as `#resumeCursor` above -- this run's row and its SLA
+    const { cursor, breachingSince } = await this.#resumeState(runId);
+    // Same reasoning as `#resumeState` above -- this run's row and its SLA
     // rules, read ONCE, right here, and never again for as long as this
     // owner holds the run (`FoldState.rules`' own doc comment).
     const context = await this.#claimContext(runId, client, known);
@@ -1408,13 +1443,14 @@ export class LiveFoldOwner {
       engine: new LiveEngine(context?.engineOptions ?? {}),
       client,
       fetchedBytes: 0,
-      // NOT `INITIAL_CURSOR` -- see `#resumeCursor`. A re-claim after a crash
-      // or a rolling deploy has to continue this RUN's sequence, not start a
-      // second one inside it.
+      // NOT `INITIAL_CURSOR`, and NOT an empty breach map -- see
+      // `#resumeState`. A re-claim after a crash or a rolling deploy has to
+      // continue this RUN's sequence and this RUN's breach history, not start
+      // a second one of each inside it.
       cursor,
       rules,
       rulesLoadFailed,
-      breachingSince: new Map(),
+      breachingSince,
       // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
       // own doc comment: the first tick after a claim must seed immediately.
       ticksSinceSnapshot: SNAPSHOT_EVERY_N_TICKS,
@@ -1428,7 +1464,7 @@ export class LiveFoldOwner {
    * this claim already holds (the `live:opened` ping path, which only ever
    * carries a bare runId).
    *
-   * Mirrors `#resumeCursor`'s own failure shape: a run this owner has
+   * Mirrors `#resumeState`'s own failure shape: a run this owner has
    * already won the lock for is going to be folded regardless, so a failure
    * here degrades to "no rules and the engine's defaults for this claim"
    * rather than aborting a claim that would otherwise have succeeded --
@@ -1524,9 +1560,10 @@ export class LiveFoldOwner {
   }
 
   /**
-   * The cursor a freshly-claimed run starts from: `INITIAL_CURSOR` for a run
-   * nobody has published for, and one past the replay stream's TIP for a run
-   * this or another worker was already streaming.
+   * What a freshly-claimed run resumes from -- `blankResume()` for a run
+   * nobody has published for, and the replay stream's TIP for a run this or
+   * another worker was already streaming. ONE read serves both fields,
+   * because both are properties of the same last-published delta.
    *
    * ═══ WHY THE TIP, AND NOT `DEL live:{runId}:deltas` ═══
    *
@@ -1558,14 +1595,36 @@ export class LiveFoldOwner {
    * `INITIAL_CURSOR` sentinels -- lands at exactly the seq the stale snapshot
    * key already points at (`prev.seq + 1`).
    *
-   * A failure to READ the tip degrades to `INITIAL_CURSOR` rather than
+   * ═══ AND WHY THE TIP CARRIES THE BREACH HISTORY TOO ═══
+   *
+   * `breachingSince` is the other thing a new owner cannot re-derive from the
+   * bytes. A re-fold from byte 0 reaches the same STATISTICS, so a rule that
+   * was breaching still breaches -- but `#publish` stamps a rule it has not
+   * seen before at the CURRENT `snapshot.durationMs`, which on the first tick
+   * after a re-claim is the full elapsed offset. See
+   * `FoldState.breachingSince` for the number that produces and why it fails
+   * in the dangerous direction.
+   *
+   * The tip already carries the answer: `sla.breaching[].sinceOffsetMs` is
+   * exactly that map, in the same run-relative frame the new fold will
+   * measure in (both are offsets from the run's own start). So it is read
+   * back out of the body this method is already fetching -- no second read,
+   * no new key, and nothing to keep in sync.
+   *
+   * `LiveSlaSchema` is what validates it, rather than a hand-written shape
+   * check: this is the same wire contract the browser holds the producer to,
+   * and a tip that does not satisfy it (an older worker's body with no `sla`
+   * at all, a half-written entry) yields an empty map -- today's behaviour,
+   * which is a re-stamp rather than a wrong number.
+   *
+   * A failure to READ the tip degrades to `blankResume()` rather than
    * propagating: this is inside `#claimReserved`, which holds a pooled client
    * and an advisory lock, and a Redis outage that makes this read fail is one
    * that will fail the publish two lines later anyway. It is logged, because
    * silently restarting a run's sequence is the defect this method exists to
    * close.
    */
-  async #resumeCursor(runId: string): Promise<DeltaCursor> {
+  async #resumeState(runId: string): Promise<ResumeState> {
     try {
       // The tip only: `XREVRANGE ... COUNT 1`. Stream ids are Redis
       // timestamps and carry no relation to a delta's own `seq`
@@ -1574,16 +1633,23 @@ export class LiveFoldOwner {
       // seq by construction, since `#publish` only ever appends.
       const rows = await this.#redis.xrevrange(`live:${runId}:deltas`, '+', '-', 'COUNT', 1);
       const body = rows[0]?.[1]?.[1];
-      if (typeof body !== 'string') return INITIAL_CURSOR;
-      const seq = (JSON.parse(body) as { seq?: unknown }).seq;
+      if (typeof body !== 'string') return blankResume();
+      const tip = JSON.parse(body) as { seq?: unknown; sla?: unknown };
       // A corrupt or half-written entry reads as "no stream" rather than as a
       // delta with a missing seq, the same judgement `seqOf` makes on the
       // gateway side.
-      if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) return INITIAL_CURSOR;
-      return { ...INITIAL_CURSOR, seq: seq + 1 };
+      if (typeof tip.seq !== 'number' || !Number.isInteger(tip.seq) || tip.seq < 0) {
+        return blankResume();
+      }
+      const breachingSince = new Map<string, number>();
+      const sla = LiveSlaSchema.safeParse(tip.sla);
+      if (sla.success) {
+        for (const b of sla.data.breaching) breachingSince.set(b.ruleId, b.sinceOffsetMs);
+      }
+      return { cursor: { ...INITIAL_CURSOR, seq: tip.seq + 1 }, breachingSince };
     } catch (err) {
       console.error(`LiveFoldOwner: could not read the replay tip for ${runId}, restarting seq at 0:`, err);
-      return INITIAL_CURSOR;
+      return blankResume();
     }
   }
 

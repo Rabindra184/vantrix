@@ -127,4 +127,20 @@ describe('LiveDeltaSchema', () => {
     delete (delta.responseTime.buckets[0] as Record<string, unknown>).percentiles;
     expect(() => LiveDeltaSchema.parse(delta)).toThrow();
   });
+
+  /**
+   * Whole-branch review, B1. A body written before `sla` existed is not
+   * hypothetical during a rolling deploy: the browser drops every frame that
+   * fails this schema (`apps/web/src/api/live.ts`'s `parseFrame`) and the
+   * gateway forwards stored bodies without validating them, so a required
+   * `sla` blanks the live page for the whole deploy window — and permanently
+   * for a run that closed just before it, whose snapshot has no owner left to
+   * republish.
+   */
+  it('accepts a delta written before sla existed, and reads it as nothing evaluated', () => {
+    const delta = validDelta();
+    delete (delta as Record<string, unknown>).sla;
+    const parsed = LiveDeltaSchema.parse(delta);
+    expect(parsed.sla).toEqual({ evaluated: 0, breaching: [] });
+  });
 });

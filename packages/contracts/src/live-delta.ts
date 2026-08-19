@@ -223,6 +223,26 @@ export const LiveDeltaSchema = z.object({
   responseTime: LiveResponseTimeSchema,
   users: LiveUsersSchema,
   errors: LiveErrorsSchema,
-  sla: LiveSlaSchema,
+  /**
+   * DEFAULTED, not required — for the same reason `LiveSeriesBucketSchema`'s
+   * started splits are nullable: a body that is already in Redis was written
+   * by whatever code was running when it was written.
+   *
+   * `sla` arrived on this branch. The browser validates every inbound frame
+   * and DROPS THE WHOLE FRAME on failure (`apps/web/src/api/live.ts`'s
+   * `parseFrame`), and the gateway does not validate at all — it forwards
+   * stored bodies as they are. Snapshots live for `SNAPSHOT_TTL_SECONDS` and
+   * replay entries for `REPLAY_TTL_SECONDS`, so during any rolling deploy
+   * (new web assets, old worker still publishing) a required `sla` means
+   * every delta fails `safeParse`, every frame is dropped, and the live page
+   * renders NOTHING for the whole deploy window — with one `console.error`
+   * per frame as the only trace. A run that closed just before the deploy is
+   * worse: its snapshot has no owner left to republish it, so the frame never
+   * becomes valid.
+   *
+   * The default is the honest reading of a body that predates the field: no
+   * rule was evaluated, so none is breaching and none was withheld.
+   */
+  sla: LiveSlaSchema.default({ evaluated: 0, breaching: [] }),
 });
 export type LiveDelta = z.infer<typeof LiveDeltaSchema>;
