@@ -1058,13 +1058,27 @@ export class LiveFoldOwner {
     return state ? new Map(state.breachingSince) : null;
   }
 
-  /** The rules THIS run was claimed with -- or null if this owner does not
-   * hold `runId`. Test seam, on the same terms as `snapshotOf`: proves which
-   * project's rules a concurrently-claimed run actually ended up with,
-   * rather than assuming attribution held under a burst of claims. */
-  rulesOf(runId: string): readonly EvaluableRule[] | null {
+  /**
+   * The rules THIS run was claimed with, each one COPIED -- or null if this
+   * owner does not hold `runId`. Test seam: proves which project's rules a
+   * concurrently-claimed run actually ended up with, rather than assuming
+   * attribution held under a burst of claims.
+   *
+   * NOT the same terms as `snapshotOf`, despite looking like it: `snapshotOf`
+   * needs `{ clone: true }` because a rollup's own sketches/histograms are
+   * mutated by the NEXT fold; a plain field-spread is enough here because
+   * every `EvaluableRule` field is a primitive -- the same shallow copy
+   * `evaluateRules` already takes of each rule before using it
+   * (`packages/sla/src/evaluate.ts`'s own `{ ...rule }`). But it is NOT
+   * optional, either way: `EvaluableRule`'s fields are not `readonly`, so
+   * handing back the live objects would let `owner.rulesOf(id)![0].threshold
+   * = 0` type-check and silently corrupt this run's SLA for every
+   * subsequent tick -- this file's whole design is that live per-run state
+   * cannot be reached from outside it.
+   */
+  rulesOf(runId: string): EvaluableRule[] | null {
     const state = this.#owned.get(runId);
-    return state ? state.rules : null;
+    return state ? state.rules.map((r) => ({ ...r })) : null;
   }
 
   /** Whether this run's SLA rules failed to load at claim -- see
