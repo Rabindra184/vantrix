@@ -64,8 +64,15 @@ function deltaFixture(overrides: Partial<LiveDelta> = {}): LiveDelta {
   };
 }
 
-function liveState(overrides: Partial<{ connected: boolean; lastDelta: LiveDelta | null; unauthorized: boolean }> = {}) {
-  return { connected: true, lastDelta: null, unauthorized: false, ...overrides };
+function liveState(
+  overrides: Partial<{
+    connected: boolean;
+    lastDelta: LiveDelta | null;
+    unauthorized: boolean;
+    partial: boolean;
+  }> = {},
+) {
+  return { connected: true, lastDelta: null, unauthorized: false, partial: false, ...overrides };
 }
 
 function renderDetail() {
@@ -228,6 +235,7 @@ function renderLive(
     compact: boolean;
     capReached: boolean;
     onRetry: () => void;
+    partial: boolean;
   }> = {},
 ) {
   const client = clientWithLiveCache();
@@ -237,7 +245,7 @@ function renderLive(
         <Live
           status={overrides.status ?? 'running'}
           runId={RUN_ID}
-          live={liveState({ lastDelta: deltaFixture() })}
+          live={liveState({ lastDelta: deltaFixture(), partial: overrides.partial ?? false })}
           compact={overrides.compact ?? false}
           capReached={overrides.capReached ?? false}
           onRetry={overrides.onRetry ?? (() => undefined)}
@@ -356,6 +364,27 @@ describe('Live — the live page itself', () => {
     const tile = screen.getByText('Duration So Far').closest('div');
     expect(tile).not.toHaveTextContent(/still streaming/i);
     expect(tile).toHaveTextContent(/stopped/i);
+  });
+
+  /**
+   * The gateway computes `partial` three ways — a seed assembled from the
+   * replay stream because the snapshot key was gone, a stream holed past the
+   * snapshot's seq, or neither key present at all — and every one of them
+   * draws a dashboard that looks complete. The last is a full grid of
+   * fabricated zeros, which is the zeroed-tiles claim this codebase forbids,
+   * reached from the other side.
+   */
+  it('says so when the seed it drew from was partial', () => {
+    renderLive({ partial: true });
+
+    expect(screen.getByTestId('live-notice-partial')).toHaveTextContent(/missing/i);
+    // Still a live dashboard, not an error screen: what arrived is real.
+    expect(screen.getByTestId('live-stat-total-requests')).toBeInTheDocument();
+  });
+
+  it('says nothing about a partial seed when the seed was complete', () => {
+    renderLive();
+    expect(screen.queryByTestId('live-notice-partial')).not.toBeInTheDocument();
   });
 
   /**

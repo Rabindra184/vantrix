@@ -175,13 +175,31 @@ function emptySeries(runId: string): SeriesResponse {
  * sitting beside the new width's, at offsets that no longer mean the same
  * thing. Nothing throws; the chart just doubles its bucket count and the
  * rates halve.
+ *
+ * ═══ AND THE WIDTH ITSELF IS THE FAIL-SAFE FOR A LOST FLAG ═══
+ *
+ * `replaces` reaching the browser is not guaranteed: a delta can be dropped
+ * by the hub's subscriber reconnecting, or refused by `parseFrame`. The
+ * re-bucketing delta is the WORST one to lose, because the very next
+ * ordinary delta still carries the new `widthMs` and this function would
+ * adopt it — new-width buckets merged into an old-width series, which is
+ * exactly the doubled bucket count and halved rates described above, reached
+ * through the failure path instead of a missing flag.
+ *
+ * So a width that differs from what the cache already holds is treated as a
+ * replacement in its own right. The flag stays on the wire and stays
+ * authoritative for the case it was designed for (a replacement that happens
+ * to keep the same width — the run's own first delta against a REST-seeded
+ * series); this is the second, independent condition, not a substitute.
  */
 function mergeResponseTime(
   runId: string,
   prev: SeriesResponse | undefined,
   envelope: LiveDelta['responseTime'],
 ): SeriesResponse {
-  const base = envelope.replaces || prev === undefined ? [] : prev.buckets;
+  const replaces =
+    envelope.replaces || prev === undefined || envelope.widthMs !== prev.bucketWidthMs;
+  const base = replaces ? [] : prev.buckets;
   const byOffset = new Map(base.map((b) => [b.startOffsetMs, b]));
   // `LiveSeriesBucketSchema` and `SeriesBucketSchema` are the SAME shape,
   // field for field (live-delta.ts's own docstring) — so a live bucket is
@@ -315,6 +333,23 @@ export interface LiveRunState {
    * from "will not connect, and retrying will not help" (this `true`).
    */
   readonly unauthorized: boolean;
+  /**
+   * The gateway's own verdict on the seed this view was built from
+   * (`SnapshotFrameSchema.partial`), carried through instead of discarded.
+   *
+   * The gateway computes it carefully and three different ways it can be true
+   * all reach the reader as a dashboard that looks complete: a seed made of
+   * whatever the replay stream still held, because the snapshot key was gone;
+   * a stream whose oldest surviving entry is newer than the snapshot's seq,
+   * so the series has a hole in its middle; and — when NEITHER key exists yet
+   * — `emptyDelta`, a full dashboard of zeros ("Requests So Far 0", "Error
+   * Rate 0.00%", "Peak Users 0") that measures nothing.
+   *
+   * Set on every snapshot frame and cleared by a fresh effect run, never by a
+   * later delta: a hole in the seed stays a hole in what is drawn for the
+   * rest of the connection, however many good deltas follow it.
+   */
+  readonly partial: boolean;
 }
 
 /**
@@ -328,6 +363,7 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
   const [connected, setConnected] = useState(false);
   const [lastDelta, setLastDelta] = useState<LiveDelta | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
+  const [partial, setPartial] = useState(false);
 
   useEffect(() => {
     if (!enabled) return;
@@ -336,6 +372,9 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
     // `true` over from a previous runId would permanently withhold a run
     // this hook has not even asked the gateway about yet.
     setUnauthorized(false);
+    // Same argument for the seed's completeness: it describes THIS run's
+    // seed, and a previous run's hole says nothing about this one.
+    setPartial(false);
 
     let cancelled = false;
     let socket: WebSocket | null = null;
@@ -353,6 +392,29 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
     // `?lastSeq=` would ask the server to skip precisely the delta the seed
     // is missing: a silent, permanent hole in the chart.
     let lastSeq: number | null = null;
+    // THE GAP DETECTOR, and it is deliberately NOT `lastSeq`.
+    //
+    // `LiveDeltaSchema`'s own docstring says the browser detects a dropped
+    // message by comparing consecutive `seq` values; nothing compared them
+    // until now, and two paths lose a delta in silence — the hub's ioredis
+    // subscriber dropping and auto-resubscribing (`live-hub.ts`), and
+    // `parseFrame` refusing a frame. The comment there calls that
+    // "self-corrected by the next tick", which is true of `users`, `errors`
+    // and `summary`, all sent whole, and FALSE of `responseTime`: an upsert
+    // with a short lookback simply loses those buckets for the rest of the
+    // run.
+    //
+    // Held separately from `lastSeq` because the two answer different
+    // questions and disagree on the seed. `lastSeq` is where to RESUME from;
+    // the snapshot frame stamps it with the last entry the seed replays, and
+    // the replay deltas that follow it then arrive with LOWER seqs, in order,
+    // from `snapshot.delta.seq` upward. Checking those against `lastSeq`
+    // would read every ordinary fresh connect as a gap and reconnect forever.
+    // So a snapshot resets this to null — "expect anything next" — and only
+    // DELTA-to-DELTA transitions are checked. The seed seam is the server's
+    // own judgement, which it already reports as `partial`; re-deciding it
+    // here would turn a permanently holed stream into a reconnect loop.
+    let expectSeq: number | null = null;
 
     const connect = (): void => {
       if (cancelled) return;
@@ -369,7 +431,40 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
         if (cancelled) return;
         const frame = parseFrame(event.data as unknown);
         if (frame === null) return;
-        lastSeq = frame.type === 'snapshot' ? frame.lastSeq : frame.delta.seq;
+
+        if (frame.type === 'snapshot') {
+          lastSeq = frame.lastSeq;
+          expectSeq = null;
+          setPartial(frame.partial);
+        } else {
+          const seq = frame.delta.seq;
+          if (expectSeq !== null && seq > expectSeq) {
+            // A HOLE. Drop the socket and let the ordinary reconnect path
+            // re-ask from `lastSeq` — the last delta actually applied — so
+            // the server either replays what was missed or re-seeds. That
+            // decision is already the server's, and it has the stream to
+            // make it with. Applying this delta first would leave the series
+            // permanently short of whatever the gap contained, which is the
+            // exact failure being detected.
+            console.error(
+              `useLiveRun: delta seq ${seq} arrived where ${expectSeq} was expected — reconnecting to re-seed`,
+            );
+            ws.close();
+            return;
+          }
+          if (expectSeq !== null && seq < expectSeq) {
+            // BEHIND the cursor: already applied. The gateway filters these
+            // out (its flush and replay filters both compare against the
+            // seed's `lastSeq`), so one arriving is a protocol bug worth
+            // saying so about — but never a reason to reconnect, which would
+            // re-deliver it and loop.
+            console.error(`useLiveRun: ignoring delta seq ${seq}, already applied through ${expectSeq - 1}`);
+            return;
+          }
+          lastSeq = seq;
+          expectSeq = seq + 1;
+        }
+
         applyDelta(queryClient, runId, frame.delta);
         applied = true;
         setLastDelta(frame.delta);
@@ -425,5 +520,5 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
     };
   }, [runId, enabled, queryClient]);
 
-  return { connected, lastDelta, unauthorized };
+  return { connected, lastDelta, unauthorized, partial };
 }

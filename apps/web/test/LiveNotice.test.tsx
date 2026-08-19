@@ -35,15 +35,30 @@ describe('LiveNotice', () => {
     expect(screen.getByText(/Response time distribution/)).toBeInTheDocument();
   });
 
+  /**
+   * The gateway's `partial` reaching the reader at all. It parses off the
+   * snapshot frame, and before this kind existed nothing rendered it — so a
+   * seed with a hole in it, or one made entirely of `emptyDelta`'s zeros,
+   * drew as a complete dashboard.
+   */
+  it('says the seed was incomplete without claiming anything is loading', () => {
+    render(<LiveNotice kind="partial" />);
+    expect(screen.getByRole('status')).toHaveTextContent(/missing/i);
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
   // No `<svg>`, anywhere, ever — CLAUDE.md's chart-figure invariant: nine
   // e2e specs count SVG elements inside a chart `<figure>` to prove it drew,
   // and an icon in a figure that wraps this notice would break that count.
-  // Asserted for both kinds, since either can end up inside a chart's slot.
-  it('renders no svg, in either kind', () => {
+  // Asserted for every kind, since any can end up inside a chart's slot.
+  it('renders no svg, in any kind', () => {
     const { container: withheld } = render(<LiveNotice kind="withheld" subject="Statistics" />);
     expect(withheld.querySelector('svg')).toBeNull();
     cleanup();
     const { container: finalizing } = render(<LiveNotice kind="finalizing" />);
     expect(finalizing.querySelector('svg')).toBeNull();
+    cleanup();
+    const { container: partial } = render(<LiveNotice kind="partial" />);
+    expect(partial.querySelector('svg')).toBeNull();
   });
 });

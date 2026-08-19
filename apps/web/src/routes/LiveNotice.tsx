@@ -2,7 +2,7 @@
  * What a section of the run page says when it genuinely has nothing to draw
  * yet — design part 2b §4.3 and §4.4.
  *
- * ═══ TWO KINDS, TWO DIFFERENT CLAIMS ═══
+ * ═══ THREE KINDS, THREE DIFFERENT CLAIMS ═══
  *
  * `kind="withheld"` is for the three sections that cannot be live on ANY
  * path while a run streams — the statistics table, the response-time
@@ -22,13 +22,24 @@
  * populated dashboard away and show a bare spinner at the exact moment
  * nothing has gone wrong.
  *
- * ═══ NEITHER IS A SPINNER ═══
+ * `kind="partial"` is the gateway's own verdict on the SEED, relayed. It
+ * computes `partial` carefully — the snapshot key was missing and the seed
+ * was assembled from whatever the replay stream still held; the stream's
+ * oldest surviving entry is newer than the snapshot's seq, so the series has
+ * a hole in its middle; or NEITHER key existed and the seed is `emptyDelta`,
+ * a full dashboard of zeros — and the browser discarded it. All three draw a
+ * dashboard that looks complete and is not. The last is the worst: "Requests
+ * So Far 0", "Error Rate 0.00%", "Peak Users 0" is the zeroed-tiles claim
+ * this codebase has an explicit rule against, arrived at from the other side.
+ *
+ * ═══ NONE IS A SPINNER ═══
  *
  * A spinner claims something is arriving. For `withheld` that is false on
  * every path until the run finishes; for `finalizing` the numbers ABOVE this
  * banner already arrived, and what is missing is a portion of a report a
  * background pipeline has not started writing, not a request in flight this
- * page is waiting on. `role="status"` announces the change without
+ * page is waiting on; for `partial` what is missing is not coming at all on
+ * this connection. `role="status"` announces the change without
  * interrupting, the same non-`alert` choice `DesktopOnly` makes for its own
  * layout notice — nothing here is a failure either.
  *
@@ -41,8 +52,27 @@
  * places it.
  */
 export default function LiveNotice(
-  props: { readonly kind: 'withheld'; readonly subject: string } | { readonly kind: 'finalizing' },
+  props:
+    | { readonly kind: 'withheld'; readonly subject: string }
+    | { readonly kind: 'finalizing' }
+    | { readonly kind: 'partial' },
 ) {
+  if (props.kind === 'partial') {
+    return (
+      <div
+        role="status"
+        data-testid="live-notice-partial"
+        className="flex items-center gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[13px] text-muted"
+      >
+        <p className="leading-relaxed">
+          This view joined the run in progress and the server could not supply everything before
+          it. Some earlier measurements are missing from the numbers and charts below; the full
+          report is written when the run finishes.
+        </p>
+      </div>
+    );
+  }
+
   if (props.kind === 'finalizing') {
     return (
       <div

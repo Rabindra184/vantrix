@@ -457,6 +457,15 @@ export function Live({
       {frozen &&
         (capReached ? <LiveCapped onRetry={onRetry} /> : <LiveNotice kind="finalizing" />)}
 
+      {/* THE SEED THIS VIEW WAS BUILT FROM WAS INCOMPLETE, and the gateway
+          said so in the snapshot frame. Independent of `frozen` — a partial
+          seed is just as partial while the run is still streaming, and the
+          deltas that follow it never fill the hole in `responseTime` (an
+          upsert with a short lookback). Below the finalizing banner rather
+          than above it: what the page IS doing comes first, then what is
+          missing from what it drew. */}
+      {live.partial && <LiveNotice kind="partial" />}
+
       <LiveSummary summary={delta.summary} frozen={frozen} />
 
       {/* §22.6: mounting five ECharts instances costs real work a phone

@@ -477,6 +477,181 @@ describe('useLiveRun', () => {
 });
 
 /**
+ * `seq` GAP DETECTION — the field `LiveDeltaSchema`'s docstring says the
+ * browser uses to detect a dropped message, carried end to end and, until
+ * now, consumed by nobody.
+ *
+ * Two paths lose a delta silently: the hub's ioredis subscriber dropping and
+ * auto-resubscribing, and `parseFrame` refusing a frame. Its comment calls
+ * that "self-corrected by the next tick", which holds for `users`, `errors`
+ * and `summary` — all sent whole — and not for `responseTime`, an upsert
+ * with a short lookback that simply loses those buckets for the rest of the
+ * run.
+ */
+describe('useLiveRun — a dropped delta', () => {
+  it('reconnects from the last delta it applied when a seq is skipped', async () => {
+    const client = new QueryClient();
+    renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await send({ type: 'snapshot', delta: deltaFixture({ seq: 4 }), partial: false, lastSeq: 4 });
+    const first = lastConnection();
+    act(() => first.emit({ type: 'delta', delta: deltaFixture({ seq: 5 }) }));
+
+    // seq 6 never arrives. The delta that does is NOT applied — its buckets
+    // would sit on top of a series missing whatever 6 carried.
+    const afterGap = deltaFixture({ seq: 7, summary: { ...deltaFixture().summary, count: 999 } });
+    act(() => first.emit({ type: 'delta', delta: afterGap }));
+    expect(first.readyState).toBe(FakeSocket.CLOSED);
+    expect(errorSpy).toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_BACKOFF_MS + 1);
+    });
+    // Resumed from 5, the last delta actually applied — not from 7, which
+    // would ask the server to skip the very delta that was lost.
+    expect(lastConnection()).not.toBe(first);
+    expect(lastConnection().url).toContain('lastSeq=5');
+    errorSpy.mockRestore();
+  });
+
+  it('does not reconnect on a contiguous stream', async () => {
+    const client = new QueryClient();
+    renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    await send({ type: 'snapshot', delta: deltaFixture({ seq: 2 }), partial: false, lastSeq: 2 });
+    const socket = lastConnection();
+    for (const seq of [3, 4, 5]) act(() => socket.emit({ type: 'delta', delta: deltaFixture({ seq }) }));
+
+    expect(socket.readyState).toBe(FakeSocket.OPEN);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_BACKOFF_MS + 1);
+    });
+    expect(server.connections).toHaveLength(1);
+  });
+
+  /**
+   * THE REGRESSION THIS RULE IS EASIEST TO BREAK WITH. The gateway writes the
+   * snapshot frame stamped with the LAST entry its replay will deliver, then
+   * delivers that replay — so the deltas immediately after a snapshot arrive
+   * with LOWER seqs than the frame's own `lastSeq`, in order. Comparing them
+   * against the resume cursor would call every ordinary fresh connect a gap
+   * and reconnect forever.
+   */
+  it('treats the replay behind a snapshot cursor as ordinary, not as a gap', async () => {
+    const client = new QueryClient();
+    const { result } = renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    // The seed: a snapshot holding state through seq 7, stamped with the last
+    // entry the replay will deliver (10), exactly as the gateway writes it.
+    const seed = deltaFixture({
+      seq: 8,
+      responseTime: { widthMs: 1000, replaces: true, buckets: [bucketFixture(0)] },
+    });
+    await send({ type: 'snapshot', delta: seed, partial: false, lastSeq: 10 });
+
+    const socket = lastConnection();
+    const replayed = [8, 9, 10, 11];
+    for (const seq of replayed) {
+      act(() =>
+        socket.emit({
+          type: 'delta',
+          delta: deltaFixture({
+            seq,
+            responseTime: { widthMs: 1000, replaces: false, buckets: [bucketFixture(seq * 1000)] },
+          }),
+        }),
+      );
+    }
+
+    // No reconnect — checking these against the resume cursor would read the
+    // whole replay as one long gap.
+    expect(socket.readyState).toBe(FakeSocket.OPEN);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MAX_BACKOFF_MS + 1);
+    });
+    expect(server.connections).toHaveLength(1);
+    // And every replayed delta was APPLIED, not merely tolerated: treating
+    // "behind the resume cursor" as "already held" would drop the seed's own
+    // replay and leave the series short of exactly the buckets it exists to
+    // deliver.
+    expect(result.current.lastDelta?.seq).toBe(replayed.at(-1));
+    expect(client.getQueryData<SeriesResponse>(liveSeriesCacheKey(RUN_ID))?.buckets.map((b) => b.startOffsetMs))
+      .toEqual([0, ...replayed.map((seq) => seq * 1000)]);
+  });
+
+  /**
+   * THE FAIL-SAFE FOR THE WORST DELTA TO LOSE. If the dropped message is the
+   * re-bucketing one, its `replaces: true` never arrives — while the very
+   * next ordinary delta still carries the new `widthMs`, which this client
+   * adopts. Merged into the old-width series that is a doubled bucket count
+   * and halved rates, with nothing thrown.
+   */
+  it('treats a changed bucket width as a replacement even when the flag says otherwise', async () => {
+    const client = new QueryClient();
+    renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    const seed = deltaFixture({
+      seq: 0,
+      responseTime: { widthMs: 1000, replaces: true, buckets: [bucketFixture(0), bucketFixture(1000)] },
+    });
+    await send({ type: 'snapshot', delta: seed, partial: false, lastSeq: 0 });
+
+    // The re-bucketing delta was lost; this is the one AFTER it — an
+    // ordinary upsert, `replaces: false`, at the new width.
+    const wider = bucketFixture(4000);
+    act(() =>
+      lastConnection().emit({
+        type: 'delta',
+        delta: deltaFixture({ seq: 1, responseTime: { widthMs: 2000, replaces: false, buckets: [wider] } }),
+      }),
+    );
+
+    const series = client.getQueryData<SeriesResponse>(liveSeriesCacheKey(RUN_ID));
+    expect(series?.buckets).toEqual([wider]);
+    expect(series?.bucketWidthMs).toBe(2000);
+  });
+});
+
+/**
+ * `partial` — computed carefully by the gateway, parsed by
+ * `SnapshotFrameSchema`, and then dropped on the floor. A seed that begins at
+ * minute 20 of a soak said nothing; a holed stream drew as complete; and with
+ * neither Redis key present the reader got a whole dashboard of fabricated
+ * zeros.
+ */
+describe('useLiveRun — a partial seed', () => {
+  it('surfaces the gateway’s own partial flag', async () => {
+    const client = new QueryClient();
+    const { result } = renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+    expect(result.current.partial).toBe(false);
+
+    await send({ type: 'snapshot', delta: deltaFixture(), partial: true, lastSeq: 0 });
+    expect(result.current.partial).toBe(true);
+  });
+
+  it('keeps it set as deltas arrive — a hole in the seed is not filled by later ticks', async () => {
+    const client = new QueryClient();
+    const { result } = renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    await send({ type: 'snapshot', delta: deltaFixture({ seq: 0 }), partial: true, lastSeq: 0 });
+    act(() => lastConnection().emit({ type: 'delta', delta: deltaFixture({ seq: 1 }) }));
+
+    expect(result.current.partial).toBe(true);
+  });
+
+  it('clears it on a later complete seed', async () => {
+    const client = new QueryClient();
+    const { result } = renderHook(() => useLiveRun(RUN_ID, true), { wrapper: wrapperFor(client) });
+
+    await send({ type: 'snapshot', delta: deltaFixture(), partial: true, lastSeq: 0 });
+    act(() => lastConnection().emit({ type: 'snapshot', delta: deltaFixture(), partial: false, lastSeq: 0 }));
+
+    expect(result.current.partial).toBe(false);
+  });
+});
+
+/**
  * THE COMPLETION TRANSITION — the one edge no suite exercised at all.
  *
  * `useLiveRun` writes `liveSeriesKey`/`usersQueryKey`/`errorsQueryKey`, which
