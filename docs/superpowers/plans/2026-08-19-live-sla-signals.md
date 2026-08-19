@@ -443,7 +443,7 @@ Expected: PASS, 6 tests.
 - [ ] **Step 7: Prove the batch path is untouched**
 
 Run: `pnpm test:unit`
-Expected: PASS, at least **104 files / 1159 tests**. The existing SLA and verdict suites must be unchanged — they call `evaluateRules` with two arguments.
+Expected: PASS, at least **105 files / 1160 tests** — `evidence-gate.test.ts` is a NEW file, so the file count rises too. The existing SLA and verdict suites must be unchanged — they call `evaluateRules` with two arguments.
 
 Then run the integration suite, **alone**, because `apps/api/test/verdict.integration.test.ts` asserts on `actualValue`:
 
