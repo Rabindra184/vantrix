@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration } from '../src/routes/format';
+import { formatDuration, formatOffset } from '../src/routes/format';
 
 describe('formatDuration', () => {
   /**
@@ -31,5 +31,38 @@ describe('formatDuration', () => {
   it('is a dash, not zero, when there is no duration', () => {
     expect(formatDuration(null)).toBe('—');
     expect(formatDuration(undefined)).toBe('—');
+  });
+});
+
+describe('formatOffset', () => {
+  it('is zero seconds, not a dash or an empty string, at the very start of a run', () => {
+    expect(formatOffset(0)).toBe('0s');
+  });
+
+  /**
+   * The same rounding direction `formatDuration`'s own first test pins,
+   * checked here independently: `formatOffset` rounds through its own
+   * `Math.round`, not `formatDuration`'s, and a shared-looking formatter
+   * that quietly forked to `Math.floor` would report "0s" here instead.
+   */
+  it('rounds up a sub-second offset rather than floors it to zero', () => {
+    expect(formatOffset(999)).toBe('1s');
+  });
+
+  /**
+   * The minute/second split's own boundary: `60_000 / 1000 = 60` total
+   * seconds, and the failure mode this guards is `seconds % 60` never being
+   * taken — which would print "1m 60s" instead of rolling over into the
+   * next minute.
+   */
+  it('rolls a whole minute over into the minutes column, never "1m 60s"', () => {
+    expect(formatOffset(60_000)).toBe('1m 0s');
+  });
+
+  it('renders minutes and seconds together past the first minute', () => {
+    // The docstring's own worked example, and the value `SlaBanner.test.tsx`
+    // also renders through the component — pinned here directly, at the
+    // function, independent of anything React does with it.
+    expect(formatOffset(62_000)).toBe('1m 2s');
   });
 });

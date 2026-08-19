@@ -38,15 +38,41 @@ import { formatOffset } from './format';
  * not.
  *
  * Colour: the same `--color-status-failed` token `ASSERTION_OUTCOME.failed`
- * already carries for a failed assertion row, reached as DATA through an
- * inline `style` — the route `Login.tsx`'s own sign-in error takes, and the
- * reason this file needs no entry in `test/tokens.test.ts`'s exemption list
- * (that gate only catches the Tailwind arbitrary-value SPELLING of a token,
- * `[var(--…)]`, never a JS value read off `marks.tsx`'s own vocabulary).
- * `tint` (`styles/tokens.css`) turns that one colour into the wash and the
- * border, so there is no second failed-red hard-coded here.
+ * already carries for a failed assertion row, reached here as DATA through
+ * an inline `style` rather than a class — this file reads
+ * `ASSERTION_OUTCOME.failed.colour`, a JS value, never the literal token
+ * name. That is a DIFFERENT route from `Login.tsx`'s own sign-in error,
+ * which reaches the identical token by writing the Tailwind arbitrary-value
+ * form directly in its `className` string — the token's `var(…)` reference
+ * wrapped in a square-bracketed, `color:`-hinted utility — and is exactly
+ * why `Login.tsx` needs its own entry in `test/tokens.test.ts`'s
+ * `EXEMPT_PATHS`. This file needs no such entry: that gate's regex scans for
+ * a token reference wrapped in square brackets, and nothing in this file's
+ * source text is spelled that way (this docstring included — see
+ * `tokens.test.ts`'s own docstring on why it describes the shape rather
+ * than quoting it). `tint` (`styles/tokens.css`) turns the one colour into
+ * the wash and the border, so there is no second failed-red hard-coded here
+ * either way.
+ *
+ * `frozen` (TASK 9 C3's same flag, `Live`'s own `status !== 'running'`)
+ * governs one word, not the whole banner: once streaming stops the fold
+ * owner released this run and nothing evaluates it again, so "currently
+ * breaching" is no longer quite true — it is the LAST known state, not a
+ * live one. `LiveSummary`'s Duration tile already makes this exact
+ * distinction ("still streaming" vs. "when streaming stopped") for the same
+ * reason, and the two must never disagree about whether the run is live on
+ * the same render. Optional and defaulted to `false` rather than required,
+ * so a caller that genuinely has no notion of frozen (this component's own
+ * unit tests, which assert the CONDITION-vs-EVENT behaviour and do not care
+ * which tense the header reads in) is not forced to invent one.
  */
-export default function SlaBanner({ sla }: { readonly sla: LiveDelta['sla'] }) {
+export default function SlaBanner({
+  sla,
+  frozen = false,
+}: {
+  readonly sla: LiveDelta['sla'];
+  readonly frozen?: boolean;
+}) {
   if (sla.breaching.length === 0) return null;
 
   return (
@@ -58,7 +84,7 @@ export default function SlaBanner({ sla }: { readonly sla: LiveDelta['sla'] }) {
     >
       <p className="font-semibold">
         {sla.breaching.length} of {sla.evaluated} SLA {sla.evaluated === 1 ? 'rule' : 'rules'}{' '}
-        currently breaching
+        {frozen ? 'breaching when streaming stopped' : 'currently breaching'}
       </p>
       <ul className="flex flex-col gap-1">
         {sla.breaching.map((rule) => (

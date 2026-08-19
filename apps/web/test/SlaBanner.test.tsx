@@ -47,3 +47,31 @@ describe('SlaBanner', () => {
     expect(screen.getByRole('status')).toBeInTheDocument();
   });
 });
+
+/**
+ * `frozen` (review's optional finding, taken): once streaming stops the
+ * fold owner releases the run and nothing evaluates it again, so "currently
+ * breaching" is the last known state, not a live one — the same distinction
+ * `LiveSummary`'s own Duration tile makes (TASK 9 C3) for the same reason.
+ * Defaulted to `false`, which is why the three tests above never pass it.
+ */
+describe('SlaBanner — frozen', () => {
+  const sla = {
+    evaluated: 7,
+    breaching: [
+      { ruleId: 'a', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 62_000 },
+    ],
+  };
+
+  it('says the breach is current while the run is still streaming', () => {
+    render(<SlaBanner sla={sla} frozen={false} />);
+    expect(screen.getByRole('status')).toHaveTextContent(/currently breaching/);
+  });
+
+  it('says the breach is as of when streaming stopped, once frozen', () => {
+    render(<SlaBanner sla={sla} frozen />);
+    expect(screen.getByRole('status')).toHaveTextContent(/breaching when streaming stopped/);
+    // Not both tenses on the same render.
+    expect(screen.getByRole('status')).not.toHaveTextContent(/currently breaching/);
+  });
+});
