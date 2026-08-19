@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Node 22.** `nvm use` first. On Node 20 roughly two thirds of the unit suite silently does not load — every DOM file — while vitest prints a green summary above the errors.
-- **Baselines:** unit **103 files / 1150 tests**, integration **108 files / 1269 tests**, e2e **89**. A drop in any means something stopped loading.
+- **Baselines:** unit **103 files / 1150 tests**, integration **108 files / 1269 tests**, e2e **89** — measured before this branch. **`pnpm test:integration` runs the unit files too** (`vitest.integration.config.ts` includes every `test/**/*.test.ts` with no exclude), so a new unit file raises BOTH counts. A drop in any means something stopped loading.
 - **Full gate, in this order:** `pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e`. Integration BEFORE e2e.
 - **Run each suite as a single blocking foreground call, once, alone.** `pnpm test:integration` truncates every table on setup, so two overlapping runs sabotage each other and produce failures that reproduce on nothing. If you see unique-constraint violations on slugs, check `pgrep -f vitest` before believing them.
 - **The batch path must stay byte-identical.** `evaluateRules` called with two arguments produces exactly what it produces today; every existing SLA and verdict test is the proof. If one changes, the change is wrong.
@@ -617,7 +617,14 @@ const foldOwner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redis
 - [ ] **Step 7: Run the integration suite, alone, and watch it pass**
 
 Run: `pnpm test:integration`
-Expected: PASS, at least **108 files / 1272 tests**.
+Expected: PASS, at least **110 files / 1282 tests** — your three cases go into
+an existing file, so the file count does not move.
+
+**Note the baselines in Global Constraints are the WHOLE non-e2e suite, not a
+separate integration suite.** `vitest.integration.config.ts` includes
+`packages/*/test/**/*.test.ts` and `apps/*/test/**/*.test.ts` with **no
+exclude**, so `pnpm test:integration` runs every unit file as well. Adding a
+unit test file therefore raises this count too.
 
 - [ ] **Step 8: Typecheck, lint, full unit, commit**
 
