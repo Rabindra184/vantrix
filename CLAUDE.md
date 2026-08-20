@@ -22,20 +22,32 @@ all of it in service of a boundary that no longer exists.
 The `publish/*` branches and PRs #1–#9 are kept as history. Do not extend the
 pattern.
 
-### If you ever do stack a PR
+### Deleting merged branches, and the stacked-PR trap
 
-Merged branches are **not deleted** in this repository. GitHub only
-auto-retargets a stacked PR when its base branch is deleted, so here it does
-not: PR #8 sat pointing at `publish/parity-charts` after that branch had
-merged, and merging it would have landed the work on a side branch with no
-error. Retarget explicitly before merging:
+**Delete a `feat/*` or `fix/*` branch once its PR has merged**, locally and on
+`origin`. Nothing is lost: the merge commit keeps every commit reachable from
+`main`, which is what `git merge-base --is-ancestor <tip> main` proves before
+you delete. Deleting is also what makes GitHub **auto-retarget** any PR still
+stacked on it, which removes the trap below rather than leaving it armed.
+
+This reverses the older convention, and the reversal is the point. Branches
+used to be kept, and PR #8 sat pointing at `publish/parity-charts` after that
+branch had merged — merging it would have landed the work on a side branch,
+with no error. Its own description claimed the retarget would happen
+automatically; it was wrong, precisely because the base branch still existed.
+
+The `publish/*` branches and PRs #1–#9 stay as history — they record the
+stripped-publication era described above, and nothing points at them. Keeping
+those is not the same as keeping every merged branch.
+
+So: if you somehow have a PR stacked on a branch that has already merged and
+still exists, retarget it explicitly before merging:
 
 ```
 gh pr edit <N> --base main
 ```
 
-PR #8's own description claimed the retarget would happen automatically. It was
-wrong. Verify against the server (`git ls-remote origin refs/heads/main`)
+Either way, **verify against the server** (`git ls-remote origin refs/heads/main`)
 rather than trusting a PR body or a merge click.
 
 ## Verification
