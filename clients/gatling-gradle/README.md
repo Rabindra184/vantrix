@@ -98,8 +98,11 @@ different convention.
 Mint a token with the **`stream`** scope — that alone is enough to open,
 feed, and close a live run. Add **`read`** only if you intend to poll the
 run's own status yourself (for example, to assert on the final verdict from
-a CI script, the way `clients/gatling-gradle/e2e/run-e2e.sh` mints a second,
-separate read-scoped token to poll what the stream-scoped token opened).
+a CI script). One token can carry both scopes at once —
+`clients/gatling-gradle/e2e/run-e2e.sh` does exactly that: `e2e/seed.mjs`
+mints a single token with `scopes: ['stream', 'read']` and the script uses
+that same value both as `VANTRIX_TOKEN` for the plugin and to poll the run
+it opened.
 
 ## Liveness expectations
 
@@ -149,12 +152,45 @@ one blanket catch:
 | Situation | Response |
 |---|---|
 | Open fails (unreachable, 401, 403) | Warn with the API's own `remediation` (or the first 200 chars of the body); skip streaming for that simulation; the Gradle task proceeds untouched |
-| Stream POST fails (network, or a 5xx) | Retries up to 3 attempts total, waiting 1s / 2s / 4s between them; gives up quietly after that; `close` is still attempted at the end |
+| Stream POST fails (network, or a 5xx) | Retries up to 3 attempts total, sleeping 1s then 2s between them (no sleep after the third and final attempt); gives up quietly after that; `close` is still attempted at the end |
 | `409` on a stream POST | Not an error — resume from the `nextOffset` the response names, no retry needed |
 | Any other non-2xx/409/401/403 status (e.g. an unexpected `413`) | Should not occur in normal operation — reads are capped at 4 MiB, half the server's `MAX_STREAM_CHUNK_BYTES`. Logged loudly as a bug; that chunk is abandoned |
-| `401`/`403` on a stream POST | Stops streaming immediately for that run, no retry — a bad or revoked token will not fix itself on the next tick |
+| `401`/`403` on a stream POST | Stops immediately, no retry — a bad or revoked token will not fix itself on the next tick. This gates the tailer's whole tick loop, not just the current run: directory *discovery* is skipped too, so one auth failure halts streaming for every remaining simulation in that `gatlingRun` execution, not only the one being streamed when it happened |
 | Build killed (no graceful shutdown) | There is deliberately no JVM shutdown hook — a hook racing JVM teardown is worse than letting the designed path run. `close` never executes; the server's sweeper ages the run out of `running` on `stream_updated_at` and finalizes it `incomplete` |
 | A results directory's `open()` call fails | Recorded as an "open failure" for that directory; if `uploadIfLiveUnavailable` is on, its `simulation.log` is uploaded as a batch bundle once the task finishes (see below) |
+
+## Two things the real end-to-end run found
+
+Two behaviours only showed up once this plugin talked to a real Vantrix
+stack rather than the fake HTTP server the unit tests use — worth knowing
+before you file either as a bug.
+
+**The client pins HTTP/1.1, on purpose.** The platform's live endpoints are
+plain HTTP, served by Node today. `java.net.http.HttpClient`'s default
+version preference is HTTP_2, and for a cleartext `http://` URI that means
+every request first attempts an h2c (HTTP/2-over-cleartext) upgrade. Node's
+`http` server does not speak h2c and resets the connection on that exact
+upgrade attempt, after zero response bytes — on every single call, with no
+partial success. `LiveClient` therefore builds its shared `HttpClient` with
+`.version(HttpClient.Version.HTTP_1_1)` explicitly, which removes the
+upgrade attempt entirely. The one deliberate trade-off: pinning HTTP/1.1
+also forecloses ALPN-negotiated h2 against a possible future HTTPS
+endpoint — accepted because the live endpoints are plain HTTP today, and
+h2c is exactly what breaks against them; revisit the pin if the live
+endpoints ever move behind TLS.
+
+**Results-directory recognition is a snapshot taken once per task
+execution, not a wall-clock filter — so nothing needs cleaning between
+runs.** `RunTailer` records the *names* of every results directory already
+present under `resultsDir` the moment it is constructed (in `gatlingRun`'s
+`doFirst`, strictly before Gatling's own task action can create anything),
+and only a directory absent from that snapshot is ever treated as new. A
+stale directory left over from an earlier `gatlingRun` — including one from
+a previous JVM/CI run entirely — is never re-streamed, because it was
+already on disk (and therefore already in the snapshot) before this
+execution's tailer was constructed. You do not need to, and should not need
+to, delete `build/reports/gatling` between runs for the plugin to behave
+correctly.
 
 ## `uploadIfLiveUnavailable`
 
