@@ -104,6 +104,7 @@ class VantrixPlugin : Plugin<Project> {
                                     api = client,
                                     config = config,
                                     resultsRoot = resultsRoot,
+                                    logger = { msg -> project.logger.warn(msg) },
                                 )
                                 handleRef.set(TailerHandle(tailer, config))
                                 tailer.start()

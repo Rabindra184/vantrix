@@ -3,7 +3,9 @@ package dev.vantrix.gradle
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.*
 
@@ -24,6 +26,7 @@ class RunTailerTest {
 
         private val openOutcomes = ArrayDeque<Boolean>()
         private val streamOutcomes = ArrayDeque<StreamResult?>()
+        private var stickyStreamOutcome: StreamResult? = null
         private var runCounter = 0
 
         fun failNextOpen() {
@@ -32,6 +35,11 @@ class RunTailerTest {
 
         fun scriptNextStream(result: StreamResult) {
             streamOutcomes.addLast(result)
+        }
+
+        /** Every stream() call with no (or exhausted) scripted outcome returns this, forever. */
+        fun alwaysReturnFromStream(result: StreamResult) {
+            stickyStreamOutcome = result
         }
 
         fun streamCalls(): List<ApiCall.StreamCalled> = calls.filterIsInstance<ApiCall.StreamCalled>()
@@ -52,7 +60,7 @@ class RunTailerTest {
         override fun stream(run: OpenedRun, bytes: ByteArray): StreamResult {
             calls += ApiCall.StreamCalled(run.runId, run.nextOffset, bytes.size)
             val scripted = if (streamOutcomes.isNotEmpty()) streamOutcomes.removeFirst() else null
-            return scripted ?: StreamResult.Advanced(run.nextOffset + bytes.size)
+            return scripted ?: stickyStreamOutcome ?: StreamResult.Advanced(run.nextOffset + bytes.size)
         }
 
         override fun close(run: OpenedRun): Boolean {
@@ -322,5 +330,73 @@ class RunTailerTest {
 
         tailer.finish()
         assertTrue(api.calls.none { it is ApiCall.Closed }, "nothing was ever opened, so nothing should be closed")
+    }
+
+    // ── Critical 1: drain()'s progress guard ────────────────────────────────────────────────
+
+    @Test @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `drain abandons promptly when the server keeps rejecting at the same offset, but still closes`(@TempDir tmp: Path) {
+        val api = FakeApi()
+        api.alwaysReturnFromStream(StreamResult.Resume(0))
+        val logs = mutableListOf<String>()
+        val tailer = RunTailer(api, configFor(), tmp, logger = { logs.add(it) })
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        // Well more than one MAX_CHUNK_BYTES read on disk -- an unguarded loop, re-reading and
+        // re-sending the identical chunk from offset 0 forever because the server never lets the
+        // cursor move, would spin without end (this is exactly Critical 1: a 409 from a run the
+        // server no longer accepts writes for reports an UNCHANGED nextOffset).
+        writeLog(dir, RunTailer.MAX_CHUNK_BYTES * 3)
+
+        tailer.finish() // the @Timeout above is the backstop if this regresses
+
+        val streams = api.streamCalls()
+        assertTrue(streams.isNotEmpty(), "expected at least one stream attempt before the guard tripped")
+        assertTrue(streams.size <= 3, "expected the progress guard to trip within a couple of rounds, saw ${streams.size} stream calls")
+        assertTrue(streams.all { it.offset == 0L }, "every attempt should have read from offset 0, since the server never advanced it")
+
+        assertTrue(api.calls.any { it is ApiCall.Closed }, "close() must still run once drain gives up")
+        assertTrue(
+            logs.any { it.contains("abandoning drain", ignoreCase = true) },
+            "expected a warning that the drain was abandoned, got: $logs",
+        )
+    }
+
+    @Test @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `a single rewind mid-drain does not trip the progress guard -- drain completes normally`(@TempDir tmp: Path) {
+        val api = FakeApi()
+        val cap = RunTailer.MAX_CHUNK_BYTES.toLong()
+        val logs = mutableListOf<String>()
+        val tailer = RunTailer(api, configFor(), tmp, logger = { logs.add(it) })
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        val logFile = dir.resolve("simulation.log")
+        // Two full chunks plus a short tail: enough for tick() to consume the first chunk (cursor
+        // -> N == cap), drain() to read a second full chunk from N and get rewound, and a read
+        // from the rewound offset that proves drain resumed there rather than aborting.
+        val tailBytes = 777L
+        Files.write(logFile, ByteArray((2 * cap + tailBytes).toInt()))
+
+        tailer.tick() // opens the dir, streams [0, cap) -- cursor now N == cap
+        assertEquals(cap, api.streamCalls().single().let { it.offset + it.byteCount })
+
+        val rewindTarget = cap / 4 // a genuine rewind: 0 < rewindTarget < N
+        api.scriptNextStream(StreamResult.Resume(rewindTarget))
+
+        tailer.finish()
+
+        val streams = api.streamCalls()
+        assertTrue(streams.size >= 3, "expected the rewind round plus at least one read after it, got ${streams.size}")
+        assertEquals(cap, streams[1].offset, "drain's own first read should continue from N")
+        assertEquals(
+            rewindTarget, streams[2].offset,
+            "the read immediately after a legitimate rewind must start at the rewound offset -- " +
+                "the progress guard must not have discarded it",
+        )
+        assertTrue(
+            logs.none { it.contains("abandoning", ignoreCase = true) },
+            "a single, non-repeating rewind must never trip the abandon guard, got: $logs",
+        )
+        assertTrue(api.calls.any { it is ApiCall.Closed }, "drain completing normally must still close the run")
     }
 }

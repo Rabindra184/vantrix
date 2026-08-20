@@ -41,6 +41,7 @@ class RunTailer(
     private val config: PluginConfig,
     private val resultsRoot: Path,
     private val sleeper: (Long) -> Unit = Thread::sleep,
+    private val logger: (String) -> Unit = {},
 ) {
     private val lock = ReentrantLock()
 
@@ -122,21 +123,65 @@ class RunTailer(
         current = TailState(next.resolve("simulation.log"), opened)
     }
 
-    /** Reads and ships one chunk (whatever bytes exist right now, capped at [MAX_CHUNK_BYTES]). */
+    /**
+     * Reads and ships one chunk (whatever bytes exist right now, capped at [MAX_CHUNK_BYTES]).
+     * Audited for [drain]'s same hazard and found not to need its guard: this is a single
+     * read+stream, never a loop, so a server stuck answering the same [StreamResult.Resume]
+     * forever costs one wasted HTTP call per external `tick()` invocation -- gated by the daemon
+     * thread's own `sleeper` interval, never a tight loop, and never inside the build's own
+     * thread the way [drain] (called from `finish()`, synchronously, under [lock]) is.
+     */
     private fun pumpOnce(state: TailState) {
         val bytes = readChunk(state.logFile, state.run.nextOffset)
         if (bytes.isEmpty()) return
         applyResult(state, api.stream(state.run, bytes))
     }
 
-    /** Repeats reads+streams while each read fully saturated the cap -- there may be more behind it. */
+    /**
+     * Repeats reads+streams while each read fully saturated the cap -- there may be more behind
+     * it. Called synchronously from [finish], under [lock], inside `vantrixClose`'s `doLast` --
+     * i.e. on the build's own thread, with nothing downstream to catch a loop that never ends.
+     *
+     * Progress-guarded for exactly that reason. A run the server no longer accepts writes for
+     * (swept stale, or already closed -- see `apps/api/src/ingest/live.service.ts`'s `stream`)
+     * answers every POST with 409 and an UNCHANGED `nextOffset` equal to the offset it was given.
+     * The old loop treated that 409 as ordinary [StreamResult.Resume] progress and, with a full
+     * [MAX_CHUNK_BYTES] backlog still on disk, re-read and re-sent the identical chunk forever:
+     * the one outcome nothing here may ever produce. A round therefore counts as progress only
+     * when the resulting offset is STRICTLY GREATER than the offset that round's chunk was sent
+     * at; two CONSECUTIVE non-progress rounds abandon the drain (the caller still calls
+     * [LiveApi.close] -- see [finish]). One non-progress round alone does not abandon: a genuine
+     * rewind (offset negotiation resuming from an earlier point after a gap) also reports a
+     * `nextOffset` that is not strictly greater than what was just sent, and must be allowed to
+     * continue once the very next read -- now starting from that earlier offset -- moves forward
+     * again and resets the counter. [MAX_DRAIN_ROUNDS] is a second, independent guard against the
+     * same hang, for any future [StreamResult] shape this reasoning does not anticipate.
+     */
     private fun drain(state: TailState) {
+        var consecutiveNonProgress = 0
+        var rounds = 0
         while (!authFailedPermanently) {
-            val bytes = readChunk(state.logFile, state.run.nextOffset)
+            rounds++
+            if (rounds > MAX_DRAIN_ROUNDS) {
+                logger("drain exceeded $MAX_DRAIN_ROUNDS rounds for run ${state.run.runId}; abandoning drain")
+                return
+            }
+            val offsetBeforeSend = state.run.nextOffset
+            val bytes = readChunk(state.logFile, offsetBeforeSend)
             if (bytes.isEmpty()) return
             val full = bytes.size == MAX_CHUNK_BYTES
             val progressed = applyResult(state, api.stream(state.run, bytes))
-            if (!progressed || !full) return
+            if (!progressed) return
+            if (state.run.nextOffset > offsetBeforeSend) {
+                consecutiveNonProgress = 0
+            } else {
+                consecutiveNonProgress++
+                if (consecutiveNonProgress >= 2) {
+                    logger("server no longer accepting bytes for run ${state.run.runId}; abandoning drain")
+                    return
+                }
+            }
+            if (!full) return
         }
     }
 
@@ -203,6 +248,12 @@ class RunTailer(
 
     companion object {
         const val MAX_CHUNK_BYTES = 4 * 1024 * 1024
+
+        // Belt-and-braces cap on drain()'s round count -- independent of the progress guard, so a
+        // future StreamResult shape the guard doesn't anticipate still cannot hang the build.
+        // 1024 rounds at MAX_CHUNK_BYTES each is 4 GiB, comfortably above any real backlog (the
+        // server's own per-run size cap, MAX_BUNDLE_BYTES, defaults to 512 MiB -- 128 rounds).
+        const val MAX_DRAIN_ROUNDS = 1024
 
         // Gatling's own results-directory shape: <sim>-<digits>, digits taken from after the LAST
         // '-'. Matched only to recognise the SHAPE of a results directory -- the digits are never
