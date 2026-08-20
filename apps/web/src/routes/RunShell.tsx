@@ -31,6 +31,7 @@ import useDocumentTitle from '../useDocumentTitle';
 export default function RunShell({
   identity,
   status,
+  terminal,
   verdict,
   windowable,
   live,
@@ -45,6 +46,22 @@ export default function RunShell({
    */
   readonly identity: Partial<RunIdentity> & { readonly id: string };
   readonly status: RunResponse['status'];
+  /**
+   * RECEIVED, NOT RE-DERIVED (IMPORTANT 3). This used to be computed here as
+   * `status === 'complete' || status === 'incomplete' || status === 'failed'`
+   * — an allowlist that silently falls through to "not terminal" for any
+   * status it does not name, which is precisely the `statusFor` trap
+   * `CLAUDE.md` records: a future terminal status added to `RunStatusSchema`
+   * without a matching branch HERE would render terminal tab content (the
+   * metric queries below fire on `terminal`) under a live status strip and a
+   * still-disabled socket, with nothing failing loudly. `RunDetail.tsx`
+   * already computes this exact boolean two lines from its call here
+   * (`detail.state === 'ready'`, the SAME discriminant `useRunTerminal` uses
+   * for every tab) — passing it through means there is exactly one place in
+   * the app that decides what "terminal" means, not two that happen to agree
+   * today.
+   */
+  readonly terminal: boolean;
   /**
    * `undefined` means NOT EVALUATED YET and omits the badge; `null` means
    * evaluated with no verdict. `RunHeader`'s own prop draws the same
@@ -69,12 +86,12 @@ export default function RunShell({
   // truncated to uselessness in a tab strip anyway.
   useDocumentTitle(identity.simulation ?? `Run ${identity.id.slice(0, 8)}`);
 
-  // TERMINAL IS THE ONE GATE ON FETCHING. While a run streams, `useLiveRun`'s
-  // `applyDelta` already writes both of these keys directly; a REST fetch
-  // answers emptier for a run whose rows do not exist yet, and TanStack applies
-  // whichever write resolves last. A pending run has neither rows nor a socket,
-  // so `false` is right there too.
-  const terminal = status === 'complete' || status === 'incomplete' || status === 'failed';
+  // TERMINAL IS THE ONE GATE ON FETCHING, and it is now a PROP (see its own
+  // docstring, IMPORTANT 3) rather than derived from `status` here. While a
+  // run streams, `useLiveRun`'s `applyDelta` already writes both of these
+  // keys directly; a REST fetch answers emptier for a run whose rows do not
+  // exist yet, and TanStack applies whichever write resolves last. A pending
+  // run has neither rows nor a socket, so `false` is right there too.
 
   // The Errors tab's own count, not the statistics row's `koCount`: that
   // figure is failed REQUESTS, a different number from the DISTINCT error

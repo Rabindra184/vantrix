@@ -64,11 +64,25 @@ function renderShell() {
   return renderShellWith({});
 }
 
+/**
+ * The terminal statuses `RunShell` used to compute itself before IMPORTANT 3
+ * — kept here ONLY as the test helpers' own convenience default, never
+ * imported by `RunShell.tsx` again. A case that wants to prove the shell
+ * trusts the `terminal` PROP rather than re-deriving it passes `terminal`
+ * explicitly, diverging it from `status`; see the "trusts the terminal prop"
+ * cases below.
+ */
+const TERMINAL_STATUSES: ReadonlySet<RunResponse['status']> = new Set([
+  'complete', 'incomplete', 'failed',
+]);
+
 /** `RunShell`, with `RUN`'s own props as defaults and any prop overridden. */
 function renderShellWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const status = overrides.status ?? RUN.status;
   const props = {
-    identity: RUN, status: RUN.status, verdict: RUN.verdict, windowable: RUN.windowable,
+    identity: RUN, status, verdict: RUN.verdict, windowable: RUN.windowable,
+    terminal: TERMINAL_STATUSES.has(status),
     live: null, capReached: false, onRetry: () => {}, ...overrides,
   };
   return render(
@@ -93,8 +107,10 @@ function ContextProbe() {
 /** Same as `renderShellWith`, but mounts `<ContextProbe/>` as the index child. */
 function renderProbeWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const status = overrides.status ?? RUN.status;
   const props = {
-    identity: RUN, status: RUN.status, verdict: RUN.verdict, windowable: RUN.windowable,
+    identity: RUN, status, verdict: RUN.verdict, windowable: RUN.windowable,
+    terminal: TERMINAL_STATUSES.has(status),
     live: null, capReached: false, onRetry: () => {}, ...overrides,
   };
   return render(
@@ -264,6 +280,59 @@ describe('RunShell', () => {
     renderShellWith({ status: 'parsing', verdict: undefined, windowable: undefined, live });
     expect(screen.queryByText(/streaming has stopped/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
+  });
+
+  /**
+   * IMPORTANT 3. `RunShell` used to compute `terminal` itself from an
+   * allowlist of `status` values (`status === 'complete' || … === 'incomplete'
+   * || … === 'failed'`) — a future terminal status `RunStatusSchema` grew
+   * without a matching branch here would silently fall through to "not
+   * terminal", rendering terminal tab content under a live status strip and a
+   * socket that was never opened for it. These two cases prove the shell now
+   * obeys the `terminal` PROP exclusively: `status` alone predicts nothing
+   * about whether the metric queries fire or the strip renders.
+   */
+  it('trusts terminal=false over a `status` the old allowlist called terminal', () => {
+    // `status: 'complete'` used to be terminal on its own; `terminal: false`
+    // here proves the shell no longer looks at `status` to decide that. No
+    // fetch mock is needed: `enabled: terminal` is `false`, so neither query
+    // should call `fetch` at all regardless of `status`.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderShellWith({ status: 'complete', terminal: false });
+    // The non-terminal strip renders (its own "checks again" sentence for a
+    // run that is neither streaming, frozen nor capped) — impossible for a
+    // shell that still believed `status: 'complete'` meant terminal.
+    expect(
+      screen.getByText('This page checks again every few seconds; there is nothing to do.'),
+    ).toBeInTheDocument();
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('/users'))).toBe(false);
+    expect(urls.some((u) => u.includes('/errors'))).toBe(false);
+    fetchSpy.mockRestore();
+  });
+
+  it('trusts terminal=true over a `status` the old allowlist called non-terminal', () => {
+    // `status: 'running'` used to be non-terminal on its own; `terminal:
+    // true` here proves the shell fetches and hides the strip regardless.
+    vi.stubGlobal('fetch', (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes('/errors')) {
+        return Promise.resolve(new Response(JSON.stringify({ runId: RUN.id, errors: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 }));
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderShellWith({
+      status: 'running', verdict: undefined, windowable: undefined, terminal: true,
+    });
+    // No live status strip at all — `!terminal &&` above it is false.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    // The shell's own `users`/`errors` fetch fires — gated on `enabled:
+    // terminal`, which the old `status === 'running'` derivation would have
+    // forced to `false` regardless of what this test passes.
+    expect(urls.some((u) => u.includes('/users'))).toBe(true);
+    fetchSpy.mockRestore();
   });
 });
 

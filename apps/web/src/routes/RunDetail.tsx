@@ -213,6 +213,12 @@ export default function RunDetail() {
     <RunShell
       identity={identity}
       status={detail.run.status}
+      // THE ONE PLACE THIS BOOLEAN IS DECIDED (IMPORTANT 3) — the same
+      // discriminant `useRunTerminal` hands every tab, passed through rather
+      // than left for `RunShell` to re-derive from `status` against its own
+      // allowlist. See `RunShell`'s own `terminal` docstring for why the two
+      // deciding it separately is the trap.
+      terminal={detail.state === 'ready'}
       // `undefined`, not `null`, for a non-terminal run: the header omits the
       // badge rather than rendering "no verdict" over a run nobody has finished
       // measuring.
