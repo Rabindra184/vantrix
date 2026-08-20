@@ -35,6 +35,43 @@ describe('LiveStatusStrip', () => {
     expect(screen.queryByText(/stopped/i)).toBeNull();
   });
 
+  /**
+   * IMPORTANT 2. `streamed: false` here is the fixture's own default
+   * overridden — BASE sets `streamed: true` (see this file's own docstring
+   * on why), which is exactly why no case before this one caught the bug:
+   * every existing "not connected" case above ran with evidence a delta had
+   * arrived, and `Reconnecting` is true in that scenario. It is false for a
+   * run that has never streamed at all — no socket has ever delivered
+   * anything for a reconnect to be resuming.
+   */
+  it('says NOTHING about the connection for a run that has never streamed and is not connected', () => {
+    render(<LiveStatusStrip {...BASE} status="running" connected={false} streamed={false} />);
+    expect(screen.queryByText(/reconnect/i)).toBeNull();
+    expect(screen.queryByText(/^live/i)).toBeNull();
+    // Nothing else on this strip has anything to say for a plain `running`,
+    // non-frozen, non-capped, non-partial run either, so this is the "says
+    // nothing at all" case in full: no live region renders.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  /**
+   * THE EXACT PROP COMBINATION A COMPACT VIEWPORT PRODUCES (IMPORTANT 2).
+   * `LiveStatusStrip` itself has no notion of viewport — `RunDetail.tsx`
+   * passes `enabled: running && !compact` to `useLiveRun` (§22.6: a phone
+   * must not hold a socket open to draw nothing), so below 768px the hook
+   * never opens a socket and its returned state stays at its initial
+   * `connected: false, lastDelta: null` for the run's entire life on that
+   * viewport — i.e. exactly the props asserted here. Before this fix the
+   * strip told a phone reader "Reconnecting" for a connection that was never
+   * going to exist, sitting directly above `WaitingPanel`'s "This run is
+   * still processing."
+   */
+  it('renders no false reconnect claim for the props a compact viewport actually produces', () => {
+    render(<LiveStatusStrip {...BASE} status="running" connected={false} streamed={false} />);
+    expect(screen.queryByTestId('live-status-capped')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('says streaming stopped once the run leaves running, given evidence it streamed', () => {
     // Two live regions render here too — the connection sentence and the
     // `finalizing` notice both carry `role="status"` — so this is queried by

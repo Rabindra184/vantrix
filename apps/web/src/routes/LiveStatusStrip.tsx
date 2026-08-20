@@ -90,11 +90,28 @@ export default function LiveStatusStrip({
 
   return (
     <div className="flex flex-col gap-3">
-      {streaming && (
+      {streaming && connected && (
         <p role="status" className="text-[13px] text-muted">
-          {connected
-            ? 'Live — updating as the run streams.'
-            : 'Reconnecting — showing the last update received.'}
+          Live — updating as the run streams.
+        </p>
+      )}
+
+      {/* NEEDS `streamed`, NOT JUST `!connected` (IMPORTANT 2). Below 768px
+          `RunDetail` passes `enabled: false` to `useLiveRun` (§22.6) — a
+          phone must not hold a socket open to draw nothing — so `connected`
+          is permanently `false` and no delta will EVER arrive there, exactly
+          the identical class of defect `streamed` was introduced for on the
+          `frozen` branch below and, before this fix, simply was not applied
+          here too. Without this gate the strip claimed a reconnect that
+          would never happen on every phone, and also on a desktop's first
+          paint (before the socket has opened once) and while `unauthorized`
+          (which never sets a delta either) — all three read `connected:
+          false, streamed: false`, and the honest thing to say about a
+          connection this page never opened, or has not yet opened, is
+          nothing at all. */}
+      {streaming && !connected && streamed && (
+        <p role="status" className="text-[13px] text-muted">
+          Reconnecting — showing the last update received.
         </p>
       )}
 
