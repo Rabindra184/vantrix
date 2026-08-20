@@ -1,0 +1,8 @@
+.gradle/
+.kotlin/
+build/
+
+# The simulation source is copied in from the fixture by run-e2e.sh on every
+# run (never committed here, so it can never drift from the fixture it's
+# copied from -- see run-e2e.sh's own comment on this step).
+/src/

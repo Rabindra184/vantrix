@@ -77,6 +77,23 @@ class LiveClientTest {
         assertEquals("idem-key-1", bodyJson.get("idempotencyKey").asString)
     }
 
+    @Test fun `open success logs the run id and its portal URL`() {
+        val runId = UUID.randomUUID().toString()
+        val (srv, _) = startServer("/v1/runs/live" to { ex ->
+            respond(ex, 201, """{"runId":"$runId","streamUrl":"/v1/runs/$runId/stream","nextOffset":0}""")
+        })
+        val logs = mutableListOf<String>()
+        val client = LiveClient(configFor(srv), logger = { logs.add(it) })
+
+        val run = client.open("idem-key-1")
+
+        assertNotNull(run)
+        assertTrue(
+            logs.any { it.contains(runId) && it.contains("http://localhost:${srv.address.port}/runs/$runId") },
+            "expected a log line naming the run id and its portal URL, got: $logs",
+        )
+    }
+
     @Test fun `open failure returns null and logs the problem remediation`() {
         val remediation = "Mint a token with the stream scope."
         val (srv, _) = startServer("/v1/runs/live" to { ex ->

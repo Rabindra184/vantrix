@@ -45,7 +45,18 @@ class LiveClient(
     private val logger: (String) -> Unit,
     private val backoffMs: LongArray = longArrayOf(1000, 2000, 4000),
 ) : LiveApi {
+    // HTTP_1_1, explicitly -- java.net.http.HttpClient's DEFAULT version preference is HTTP_2,
+    // which for a cleartext "http://" URI means it first tries an h2c (HTTP/2-over-cleartext)
+    // upgrade: the initial request carries `Connection: Upgrade` / `HTTP2-Settings` on top of a
+    // plain HTTP/1.1 request. Node's http server (what NestJS's platform-express sits on) does
+    // not speak h2c and, against this exact upgrade attempt, resets the connection after zero
+    // response bytes -- observed as `IOException: http1_0 content, bytes received: 0` wrapping a
+    // `SocketException: Connection reset`, on EVERY call, against the real API. The plugin's own
+    // fake-server tests (LiveClientTest, VantrixPluginFunctionalTest) never caught this: both use
+    // `com.sun.net.httpserver.HttpServer`, which tolerates the same upgrade headers a real Node
+    // server does not. Forcing HTTP_1_1 here removes the upgrade attempt entirely.
     private val http: HttpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(Duration.ofSeconds(10))
         .build()
 
@@ -75,6 +86,10 @@ class LiveClient(
             val relativeStreamUrl = body.get("streamUrl").asString
             val nextOffset = body.get("nextOffset").asLong
             val resolvedStreamUrl = URI.create(config.baseUrl).resolve(relativeStreamUrl).toString()
+            // The one line a human (or an e2e script grepping the build log) can use to find
+            // this run without instrumenting the plugin further -- runId for exact matching,
+            // the web app's run-detail URL (`/runs/{id}`, apps/web's `runPath()`) for a click.
+            logger("run opened: $runId -> ${config.baseUrl}/runs/$runId")
             OpenedRun(runId, resolvedStreamUrl, nextOffset)
         } catch (e: Exception) {
             logger("open failed: ${e.message}")
