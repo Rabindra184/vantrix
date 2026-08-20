@@ -56,6 +56,12 @@ class RunTailer(
 
     private var current: TailState? = null
     private var authFailedPermanently = false
+
+    // Written under [lock] (finish()) but read both under it (tick()) and outside it (start()'s
+    // own loop, on the daemon thread, deciding whether to sleep and tick again). That outside
+    // read is safe today only via the lock's own happens-before on the writing side; @Volatile
+    // makes the visibility guarantee explicit rather than relying on that being true forever.
+    @Volatile
     private var finished = false
     private val openFailures = mutableListOf<Path>()
 

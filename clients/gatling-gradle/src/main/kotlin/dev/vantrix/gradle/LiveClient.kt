@@ -43,7 +43,12 @@ interface LiveApi {
 class LiveClient(
     private val config: PluginConfig,
     private val logger: (String) -> Unit,
-    private val backoffMs: LongArray = longArrayOf(1000, 2000, 4000),
+    // Only indices [0, MAX_ATTEMPTS - 2] are ever read (see stream()'s "attempt < MAX_ATTEMPTS -
+    // 1" guard around sleepBackoff) -- a third element here was dead with MAX_ATTEMPTS == 3.
+    // sleepBackoff itself is index-safe regardless of this array's length (getOrElse), so this
+    // default and MAX_ATTEMPTS cannot silently drift apart again the way [1000, 2000, 4000] and
+    // MAX_ATTEMPTS == 3 already had.
+    private val backoffMs: LongArray = longArrayOf(1000, 2000),
 ) : LiveApi {
     // HTTP_1_1, explicitly -- java.net.http.HttpClient's DEFAULT version preference is HTTP_2,
     // which for a cleartext "http://" URI means it first tries an h2c (HTTP/2-over-cleartext)
@@ -176,7 +181,7 @@ class LiveClient(
             .build()
 
     private fun sleepBackoff(attempt: Int) {
-        val ms = if (attempt < backoffMs.size) backoffMs[attempt] else backoffMs.lastOrNull() ?: 0L
+        val ms = backoffMs.getOrElse(attempt) { backoffMs.lastOrNull() ?: 0L }
         if (ms > 0) {
             try {
                 Thread.sleep(ms)
