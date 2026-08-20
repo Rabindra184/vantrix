@@ -240,4 +240,15 @@ jobs:
           KTS
           ./clients/gatling-gradle/gradlew -p "$SCRATCH" tasks --all --no-daemon -q | tee /tmp/tasks.out
           grep -q "vantrixClose" /tmp/tasks.out             && echo "CONSUME CHECK PASSED: plugin resolved from the registry and applied"             || { echo "CONSUME CHECK FAILED: plugin did not resolve or did not apply"; exit 1; }
+          # The shading guarantee, enforced where it matters -- on a CONSUMER's
+          # buildscript classpath. The jar-content check inside the plugin's own
+          # build cannot see this: a clean POM with live Gradle module metadata
+          # still leaks dependencies to consumers, which is exactly how the
+          # first shaded build failed (found by resolving as a real consumer;
+          # the fix disables module metadata generation outright).
+          ./clients/gatling-gradle/gradlew -p "$SCRATCH" buildEnvironment --no-daemon -q | tee /tmp/env.out
+          if grep -qE "com.google.code.gson|org.apache.commons:commons-compress" /tmp/env.out; then
+            echo "CONSUME CHECK FAILED: shaded dependencies leaked onto the consumer classpath"; exit 1
+          fi
+          echo "CONSUME CHECK PASSED: consumer classpath carries no shaded dependency"
 

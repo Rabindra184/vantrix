@@ -107,8 +107,16 @@ val verifyShadedJar by tasks.registering {
 }
 tasks.build { dependsOn(verifyShadedJar) }
 
-// The shaded deps are BUNDLED, so the published POM must not declare them:
-// a consumer resolving our POM should see zero runtime dependencies.
+// The shaded deps are BUNDLED, so nothing published may declare them. TWO
+// documents matter, and fixing only the POM is a trap this project fell into:
+// Gradle also publishes module metadata (.module) and CONSUMERS PREFER IT, so
+// a cleaned POM with live module metadata still leaks gson onto every
+// consumer's buildscript classpath -- found by resolving as a real consumer
+// (the Downloads demo), not by any of this module's own checks. Module
+// metadata is disabled outright; consumers fall back to the POM, which the
+// withXml below empties. A plugin needs no variant metadata.
+tasks.withType<GenerateModuleMetadata>().configureEach { enabled = false }
+
 publishing {
     publications.withType<MavenPublication>().configureEach {
         pom.withXml {
