@@ -53,11 +53,40 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **112 files / 1230 tests**, it
+`nvm use` first, and if a run reports fewer than **112 files / 1232 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the five-tab live
-page branch's own final whole-branch review fix wave, which fixed six
+silently-skipped run looks like a pass. Last measured on the two residual
+fixes left before the five-tab live page branch merges, which added no unit
+FILE and 2 unit cases: one each to `RunTelemetry.test.tsx` and
+`RunCompare.test.tsx`, both pinning the SAME shape of gap. Every hook in
+each component already sits above its own `!terminal` early return, correct
+today — but nothing PINNED that shape, and this branch has already shipped
+that exact class of bug twice, once in `RunTelemetry.tsx` itself. Each new
+case mounts the component RUNNING, then re-renders the SAME instance
+TERMINAL, the identical shape `RunTrends.live.test.tsx`'s own "survives a
+running run finishing while the reader is on this tab" already used for
+that tab; mounting each state SEPARATELY — what every other case in both
+files does — cannot catch this, because the defect
+("Rendered more hooks than during the previous render.") is in the
+TRANSITION, not in either state alone. Verified red: moving `!terminal`
+above one hook in each file (the `useState`/`useQuery` block that follows)
+turned the new case red with that exact error, and reverting made it green
+again. `RunTelemetry`'s case also re-proves CRITICAL 1 AT the transition
+rather than only at either endpoint — `enabled: terminal` means
+`/telemetry` never fires while running, so the flip has to trigger a FRESH
+fetch rather than surface a cached `available: false`, and the case asserts
+a `/telemetry` request lands only after the flip. The other half of this
+residual fix touched no test: two comments — `LiveStatusStrip.tsx`'s own
+docstring and `RunShell.tsx`'s echo of it — still claimed the strip "now
+always has something to say about polling, capped or not," false in
+exactly the state `streamed` was added for (a `running` run with no
+evidence yet renders NOTHING there, deliberately, on a compact viewport and
+on a desktop's first paint); both now say so instead. From a floor of
+112 / 1230. Its integration floor stays 111 files / 1297 tests and its e2e
+stays 90 — neither runs a `.tsx` file, and this fix touched no spec. Before
+that, the five-tab live page branch's own final whole-branch review fix
+wave, which fixed six
 findings in one pass before merge: `RunTelemetry` was the one tab whose
 query was never gated on `terminal` — `telemetryQuery` carries `staleTime:
 Infinity` (`api/metrics.ts`), so a live run's honest `available: false` got
