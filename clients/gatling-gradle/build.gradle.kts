@@ -5,7 +5,11 @@ plugins {
 }
 
 group = "dev.vantrix"
-version = "0.1.0-SNAPSHOT"
+// The tag-driven release workflow overrides this with -PreleaseVersion=<tag>;
+// every other build (local, CI snapshot publish) gets the -SNAPSHOT default.
+// A plain `version = "..."` assignment would silently win over -P flags, which
+// is why the override arrives through its own named property.
+version = providers.gradleProperty("releaseVersion").getOrElse("0.1.0-SNAPSHOT")
 
 kotlin { jvmToolchain(21) }
 
