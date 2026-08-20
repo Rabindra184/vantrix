@@ -86,19 +86,6 @@ export default function RunTelemetry() {
   // render, so a phone does not fetch a payload it has been told not to draw.
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
-  if (compact && !shown) {
-    return (
-      <DesktopOnly compact what="Load-generator telemetry" onShow={() => setShown(true)}>
-        {() => null}
-      </DesktopOnly>
-    );
-  }
-
-  const telemetry = useQuery({
-    ...telemetryQuery(runId ?? '', window),
-    enabled: runId !== undefined,
-  });
-
   // The reader's own pick, or `undefined` until they make one. Derived from
   // the payload at render time rather than synchronised with a `useEffect`:
   // `hosts.find(...) ?? hosts[0]!` below falls back to the first host on its
@@ -106,6 +93,30 @@ export default function RunTelemetry() {
   // selected name (a narrower window, a different run) — no effect needed to
   // notice the mismatch and no stale selection ever rendered.
   const [selectedHost, setSelectedHost] = useState<string | undefined>(undefined);
+
+  // EVERY HOOK ABOVE THIS LINE RUNS ON EVERY RENDER, UNCONDITIONALLY.
+  // `useQuery` used to sit AFTER the `compact && !shown` early return below,
+  // which is a hook-order bug: a phone reader pressing "Show it anyway"
+  // flips `shown` false -> true on the SAME mounted instance, so the render
+  // that follows calls a hook (`useQuery`, and `selectedHost`'s `useState`)
+  // that the previous render never reached — "Rendered more hooks than
+  // during the previous render." `wanted` is what used to be implicit in
+  // "the query is never even constructed while compact and not shown"; now
+  // that construction is unconditional, `wanted` has to say so explicitly
+  // through `enabled` instead.
+  const wanted = !compact || shown;
+  const telemetry = useQuery({
+    ...telemetryQuery(runId ?? '', window),
+    enabled: runId !== undefined && wanted,
+  });
+
+  if (compact && !shown) {
+    return (
+      <DesktopOnly compact what="Load-generator telemetry" onShow={() => setShown(true)}>
+        {() => null}
+      </DesktopOnly>
+    );
+  }
 
   return (
     <Payload query={telemetry} slots={TELEMETRY_SLOTS}>

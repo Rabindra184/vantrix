@@ -41,6 +41,24 @@ export default function RunTrends() {
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
 
+  // EVERY HOOK ABOVE THIS LINE RUNS ON EVERY RENDER, UNCONDITIONALLY —
+  // `useQuery` is hoisted above BOTH early returns below rather than gated
+  // behind either of them, because BOTH `terminal` and `wanted` can flip in
+  // place on an already-mounted instance: a reader sitting on this tab while
+  // the run they are watching finishes flips `terminal` false -> true (the
+  // shell's own poll writes the shared `runQueryKey` entry this hook reads),
+  // and a phone reader pressing "Show it anyway" flips `wanted` false ->
+  // true. Either transition changing how many hooks a render calls is
+  // exactly "Rendered more hooks than during the previous render" — a
+  // regression this file shipped with once already (fix round 1) by putting
+  // the `!terminal` return above this call. `enabled` is the only thing that
+  // may vary; the hook itself may not become conditional.
+  const wanted = !compact || shown;
+  const trends = useQuery({
+    ...trendsQuery(runId ?? ''),
+    enabled: runId !== undefined && terminal && wanted,
+  });
+
   // AHEAD OF THE COMPACT GATE BELOW, deliberately. This notice is cheap
   // text, not eight ECharts instances, so a phone is told the same thing a
   // desktop is rather than a SECOND withheld notice ("Comparing a run
@@ -57,8 +75,6 @@ export default function RunTrends() {
       </DesktopOnly>
     );
   }
-
-  const trends = useQuery({ ...trendsQuery(runId ?? ''), enabled: runId !== undefined });
 
   return (
     // ONE COLUMN, unlike the Charts tab's two. These three are read DOWN, as

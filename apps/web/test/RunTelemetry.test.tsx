@@ -8,6 +8,10 @@ import type { RunProcessing, RunResponse, TelemetryResponse } from '@perfportal/
 import { runQueryKey } from '../src/api/run';
 import RunTelemetry from '../src/routes/RunTelemetry';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import useIsCompact from '../src/useIsCompact';
+
+vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
+const useIsCompactMock = vi.mocked(useIsCompact);
 
 const COMPLETE_RUN: RunResponse = {
   id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
@@ -86,7 +90,11 @@ function renderRunTelemetry(
 
 // No global setup runs `afterEach(cleanup)` for us (see StatisticsTable.test.tsx)
 // — without it, a leftover tree from an earlier render collides with the next.
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useIsCompactMock.mockReset();
+  useIsCompactMock.mockReturnValue(false);
+});
 
 const RUN = 'a66548b7-2962-43ff-8b93-7149a6f2a1b8';
 
@@ -255,5 +263,34 @@ describe('RunTelemetry', () => {
     // instead and pass for the wrong reason.
     await waitForResolvedCpu(10);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  /**
+   * THE HOOK-ORDER BUG THIS FIX ROUND CLOSES (pre-existing, not introduced by
+   * Task 11 — `useRunTerminal` was correctly placed above this gate). The
+   * `compact && !shown` early return used to sit ABOVE `useQuery`/
+   * `useState(selectedHost)`, so a phone reader pressing "Show it anyway"
+   * flipped `shown` false -> true on the SAME mounted instance and the
+   * following render called two hooks the previous one never reached —
+   * "Rendered more hooks than during the previous render." A test that only
+   * mounted compact and non-compact SEPARATELY could not catch this: the bug
+   * is in the transition between two renders of the same fiber.
+   */
+  it('survives pressing "Show it anyway" on a narrow viewport', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    const user = userEvent.setup();
+    renderRunTelemetry({
+      runId: RUN,
+      available: true,
+      bucketWidthMs: 1000,
+      window: null,
+      hosts: [host('gen-1', 0, 10)],
+    });
+
+    const show = await screen.findByTestId('desktop-only-show');
+    await expect(user.click(show)).resolves.toBeUndefined();
+
+    expect(screen.queryByTestId('desktop-only')).not.toBeInTheDocument();
+    await waitForResolvedCpu(10);
   });
 });
