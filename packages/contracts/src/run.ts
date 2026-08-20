@@ -75,7 +75,25 @@ export const ProjectRefSchema = z.object({
 });
 export type ProjectRef = z.infer<typeof ProjectRefSchema>;
 
-export const RunResponseSchema = z.object({
+/**
+ * What a run knows about itself from the moment it exists, independent of
+ * whether anything has parsed it.
+ *
+ * ONE SCHEMA, EXTENDED TWICE — by `RunResponseSchema` below and by
+ * `RunProcessingSchema` further down. That is the anti-drift device and the
+ * reason this is not a copied field list: adding a chip to the run header is
+ * then one edit rather than two that can silently disagree about a field's
+ * nullability.
+ *
+ * NO `status` HERE, deliberately. The two consumers enumerate their own
+ * statuses independently (see `RunProcessingSchema`'s own comment), and
+ * hoisting the field would make widening one widen the other.
+ *
+ * NO `verdict`, `windowable`, `assertions` or `error` either: those are
+ * MEASUREMENTS, not identity, and keeping them off this schema is what stops
+ * a running run's type from being able to express one.
+ */
+export const RunIdentitySchema = z.object({
   id: z.string().uuid(),
   /**
    * The project this run belongs to. REQUIRED, not optional: run.project_id
@@ -85,8 +103,6 @@ export const RunResponseSchema = z.object({
    * where a project name belongs.
    */
   project: ProjectRefSchema,
-  status: RunStatusSchema,
-  verdict: RunVerdictSchema.nullable(),
   tool: z.string(),
   toolVersion: z.string().nullable().optional(),
   /**
@@ -102,6 +118,20 @@ export const RunResponseSchema = z.object({
   description: z.string().nullable().optional(),
   /** The load test's own span. Gatling's header renders this to whole seconds (G-04). */
   durationMs: z.number().int().nullable().optional(),
+  /** When the platform received this run's bundle — ingest time, not tool start. */
+  startedAt: z.string().datetime(),
+  /**
+   * The load test's own start, read from the tool's run header. Null until
+   * the worker finishes parsing (and forever for a run that never
+   * completes) — distinct from startedAt, which is always ingest time.
+   */
+  toolStartedAt: z.string().datetime().nullable().optional(),
+});
+export type RunIdentity = z.infer<typeof RunIdentitySchema>;
+
+export const RunResponseSchema = RunIdentitySchema.extend({
+  status: RunStatusSchema,
+  verdict: RunVerdictSchema.nullable(),
   /**
    * Whether this run's buckets carry the per-bucket histograms a time window is
    * re-aggregated from.
@@ -113,14 +143,6 @@ export const RunResponseSchema = z.object({
    * field existed still parses.
    */
   windowable: z.boolean().optional(),
-  /** When the platform received this run's bundle — ingest time, not tool start. */
-  startedAt: z.string().datetime(),
-  /**
-   * The load test's own start, read from the tool's run header. Null until
-   * the worker finishes parsing (and forever for a run that never
-   * completes) — distinct from startedAt, which is always ingest time.
-   */
-  toolStartedAt: z.string().datetime().nullable().optional(),
   ingestedAt: z.string().datetime().nullable().optional(),
   assertions: z.array(AssertionSchema),
   /**
@@ -164,8 +186,16 @@ export type RunResponse = z.infer<typeof RunResponseSchema>;
  * in-progress live run is still pending-shaped from a poller's point of
  * view, so it gets the same 202 treatment as pending/parsing and a CI script
  * needs no new branch to keep working once streaming exists.
+ *
+ * EVERY IDENTITY FIELD IS OPTIONAL HERE, INCLUDING `project` AND `tool` — and
+ * for a different reason than they are optional on a run body. During a
+ * rolling deploy a new browser polls an OLD pod and receives just
+ * `{ id, status, statusUrl }`. A required field would make `.parse()` throw
+ * and blank the run page for the whole rollout, the same failure
+ * `live-delta.test.ts` exists to prevent one endpoint over.
  */
-export const RunProcessingSchema = z.object({
+export const RunProcessingSchema = RunIdentitySchema.partial().extend({
+  // Re-required after `.partial()`: the API has always sent it, on every path.
   id: z.string().uuid(),
   status: z.enum(['pending', 'parsing', 'running']),
   statusUrl: z.string(),

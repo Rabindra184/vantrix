@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   OpenLiveRunRequestSchema, OpenLiveRunResponseSchema,
-  ProblemDetailsSchema, RunProcessingSchema, RunStatusSchema,
+  ProblemDetailsSchema, RunIdentitySchema, RunProcessingSchema, RunStatusSchema,
   StreamRejectedSchema, TokenScopeSchema,
 } from '../src/index.js';
 
@@ -89,5 +89,64 @@ describe('live contracts', () => {
 
   it('a stream rejection without nextOffset is invalid -- the field the resume loop depends on', () => {
     expect(() => StreamRejectedSchema.parse(PROBLEM_FIELDS)).toThrow();
+  });
+
+  it('accepts a 202 body carrying the run identity a header needs', () => {
+    const parsed = RunProcessingSchema.parse({
+      id: '0f9b1d4e-1111-2222-3333-444455556666',
+      status: 'running',
+      statusUrl: '/v1/runs/0f9b1d4e-1111-2222-3333-444455556666',
+      project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+      tool: 'gatling',
+      toolVersion: null,
+      environment: 'staging',
+      branch: 'main',
+      commitSha: 'deadbeefcafe',
+      simulation: null,
+      description: null,
+      durationMs: null,
+      startedAt: '2026-08-20T10:43:49.546Z',
+      toolStartedAt: null,
+    });
+    expect(parsed.project?.slug).toBe('checkout');
+    expect(parsed.environment).toBe('staging');
+  });
+
+  it('still accepts the NARROW 202 body an older API pod sends', () => {
+    // The rolling-deploy direction that matters most: a new browser polling an
+    // old pod. A required identity field here blanks the run page for the whole
+    // rollout, because the client parses with .parse() and drops what fails.
+    const parsed = RunProcessingSchema.parse({
+      id: '0f9b1d4e-1111-2222-3333-444455556666',
+      status: 'running',
+      statusUrl: '/v1/runs/0f9b1d4e-1111-2222-3333-444455556666',
+    });
+    expect(parsed.project).toBeUndefined();
+    expect(parsed.tool).toBeUndefined();
+  });
+
+  it('keeps a verdict off the 202 body entirely, however wide it gets', () => {
+    // Identity is what a run knows about ITSELF; a verdict is a measurement.
+    // z.object strips unknown keys, so this asserts the field is absent from
+    // the parsed result rather than merely unvalidated.
+    const parsed = RunProcessingSchema.parse({
+      id: '0f9b1d4e-1111-2222-3333-444455556666',
+      status: 'running',
+      statusUrl: '/v1/runs/0f9b1d4e-1111-2222-3333-444455556666',
+      verdict: 'passed',
+      assertions: [],
+    }) as Record<string, unknown>;
+    expect(parsed.verdict).toBeUndefined();
+    expect(parsed.assertions).toBeUndefined();
+  });
+
+  it('a run body still requires the project a run row cannot be missing', () => {
+    // RunResponseSchema extends the NON-partial identity, so extraction must
+    // not have loosened the required-ness its own comment argues for.
+    expect(() => RunIdentitySchema.parse({
+      id: '0f9b1d4e-1111-2222-3333-444455556666',
+      tool: 'gatling',
+      startedAt: '2026-08-20T10:43:49.546Z',
+    })).toThrow();
   });
 });
