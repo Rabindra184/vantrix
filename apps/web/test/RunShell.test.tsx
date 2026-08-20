@@ -213,4 +213,30 @@ describe('RunShell', () => {
     renderProbeWith({ status: 'running', live });
     expect(screen.getByTestId('context-probe').textContent).toContain('"liveDurationMs":42000');
   });
+
+  /**
+   * GAP-CLOSER (Task 7 fix round 2). `LiveStatusStrip.test.tsx` tests its own
+   * `streamed` GATE in both directions, but nothing pinned the DERIVATION
+   * that feeds it — `streamed={live?.lastDelta != null}` (`RunShell.tsx`).
+   * Regressing that back to `status === 'parsing'` alone would make every
+   * OTHER test in the repo stay green while silently restoring the worst bug
+   * this sub-project found: a batch-uploaded run that never streamed being
+   * told "Streaming has stopped" with no numbers on screen for the sentence
+   * to be about. These two cases are what would actually catch that.
+   */
+  it('renders the frozen sentence for a parsing run WITH a delta this session', () => {
+    const live = {
+      connected: false, unauthorized: false, partial: false,
+      lastDelta: { summary: { durationMs: 42_000 } },
+    } as LiveRunState;
+    renderShellWith({ status: 'parsing', verdict: undefined, windowable: undefined, live });
+    expect(screen.getByText(/streaming has stopped/i)).toBeInTheDocument();
+  });
+
+  it('renders NEITHER streaming sentence for a parsing run that never streamed', () => {
+    const live = { connected: false, unauthorized: false, partial: false, lastDelta: null };
+    renderShellWith({ status: 'parsing', verdict: undefined, windowable: undefined, live });
+    expect(screen.queryByText(/streaming has stopped/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
+  });
 });

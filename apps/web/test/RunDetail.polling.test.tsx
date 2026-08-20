@@ -196,6 +196,17 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
     expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
     expect(fetchRunMock).toHaveBeenCalledWith(second);
+
+    // AND it is genuinely uncapped, not merely mid-transition: polling for
+    // the second run keeps going rather than being silently capped already.
+    // Restored (fix round 2) after being dropped without a stated reason in
+    // fix round 1 -- this and the UI-text check above prove different
+    // things: the text proves the FLAG reset, this proves the TIMER is
+    // actually still running rather than the flag having reset while
+    // something else silently stopped polling.
+    const afterNavigate = fetchRunMock.mock.calls.length;
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchRunMock.mock.calls.length).toBeGreaterThan(afterNavigate);
   });
 
   /**
