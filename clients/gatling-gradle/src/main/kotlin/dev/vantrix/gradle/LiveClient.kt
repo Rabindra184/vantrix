@@ -22,6 +22,21 @@ sealed class StreamResult {
 }
 
 /**
+ * The subset of [LiveClient]'s surface a consumer needs to drive a live run -- extracted so
+ * [RunTailer] (and its tests) can depend on this instead of a concrete HTTP implementation.
+ */
+interface LiveApi {
+    /** POSTs `/v1/runs/live`. Returns null on ANY failure -- already logged, never throws. */
+    fun open(idempotencyKey: String): OpenedRun?
+
+    /** Streams one chunk against `run`'s current offset. See [LiveClient.stream] for the full contract. */
+    fun stream(run: OpenedRun, bytes: ByteArray): StreamResult
+
+    /** POSTs `/v1/runs/{id}/close`. True on success or if the run was already closed. */
+    fun close(run: OpenedRun): Boolean
+}
+
+/**
  * The only component that talks to the server: opens a live run, streams chunks against an
  * offset-negotiated cursor, and closes the run when done.
  */
@@ -29,13 +44,13 @@ class LiveClient(
     private val config: PluginConfig,
     private val logger: (String) -> Unit,
     private val backoffMs: LongArray = longArrayOf(1000, 2000, 4000),
-) {
+) : LiveApi {
     private val http: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build()
 
     /** POSTs `/v1/runs/live`. Returns null on ANY failure -- already logged, never throws. */
-    fun open(idempotencyKey: String): OpenedRun? {
+    override fun open(idempotencyKey: String): OpenedRun? {
         return try {
             val payload = JsonObject().apply {
                 addProperty("tool", "gatling")
@@ -73,7 +88,7 @@ class LiveClient(
      * 5xx response. Never retries 401/403 (-> [StreamResult.AuthFailed]) or 409 (-> [StreamResult.Resume]):
      * both return after exactly one request.
      */
-    fun stream(run: OpenedRun, bytes: ByteArray): StreamResult {
+    override fun stream(run: OpenedRun, bytes: ByteArray): StreamResult {
         for (attempt in 0 until MAX_ATTEMPTS) {
             val response = try {
                 http.send(buildStreamRequest(run, bytes), HttpResponse.BodyHandlers.ofString())
@@ -110,7 +125,7 @@ class LiveClient(
     }
 
     /** POSTs `/v1/runs/{id}/close`. True on 2xx, or on a 409 whose `code` is `RUN_NOT_RUNNING` (already closed). */
-    fun close(run: OpenedRun): Boolean {
+    override fun close(run: OpenedRun): Boolean {
         return try {
             val request = HttpRequest.newBuilder(URI.create("${config.baseUrl}/v1/runs/${run.runId}/close"))
                 .timeout(Duration.ofSeconds(30))
