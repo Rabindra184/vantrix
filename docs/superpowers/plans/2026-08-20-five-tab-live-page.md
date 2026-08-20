@@ -15,6 +15,7 @@
 - **Node from `.nvmrc` (22).** `nvm use` before any test run. On Node 20 roughly two thirds of the unit suite fails to LOAD and the run still prints a green `Test Files`/`Tests` summary above the error line.
 - **Verification floors before this plan:** unit **103 files / 1150 tests**, integration **108 files / 1269 tests**, e2e **89** — this branch's `CLAUDE.md:56`, reproduced by a clean baseline run. (An earlier draft quoted 106/1179/111/1297/90; those are `feat/live-sla`'s figures and that branch is unmerged, so they are NOT reachable from here.) A unit run reporting fewer than 103 files did not run everything. Task 13 raises all three from measured output.
 - **`pnpm test:unit` runs neither integration nor e2e.** `pnpm test:integration` RE-RUNS the unit `.ts` files but includes no `.tsx` at all, so a React component change verified only by `test:integration` has not been verified.
+- **Every task's final verification ends with `pnpm typecheck && pnpm lint`.** A `vitest`-only gate ships lint failures: Task 6 landed `as any` in a test helper and passed its own verification, because `@typescript-eslint/no-explicit-any` is `error` via `tseslint.configs.recommended` in `eslint.config.js` with no test-file override, and nothing but `pnpm lint` sees it.
 - **Gate order is integration BEFORE e2e**, never the reverse: `pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e`.
 - **Integration and e2e need the local stack** and cannot run concurrently with each other or with themselves — `createTestApp()` TRUNCATEs all 15 tables on every call. Before believing an integration failure, run `pgrep -f vitest` and confirm you are alone.
 - **No `uppercase` on anything queried by accessible name.** Playwright applies `text-transform` when computing a name; jsdom does not.
@@ -218,7 +219,7 @@ export type RunProcessing = z.infer<typeof RunProcessingSchema>;
 - [ ] **Step 6: Run the tests to verify they pass**
 
 ```bash
-nvm use && pnpm vitest run packages/contracts/test/ && pnpm typecheck
+nvm use && pnpm vitest run packages/contracts/test/ && pnpm typecheck && pnpm lint
 ```
 
 Expected: PASS, and typecheck clean — `RunResponse`'s inferred type is unchanged, so no consumer moves yet.
@@ -494,7 +495,7 @@ Task 6 replaces this component wholesale; this keeps the tree compiling in betwe
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-nvm use && pnpm vitest run apps/web/test/RunHeader.test.tsx apps/web/test/RunShell.test.tsx && pnpm typecheck
+nvm use && pnpm vitest run apps/web/test/RunHeader.test.tsx apps/web/test/RunShell.test.tsx && pnpm typecheck && pnpm lint
 ```
 
 Expected: PASS.
@@ -1306,7 +1307,7 @@ In `RunOverviewTab`, replace the `return null` guard:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-nvm use && pnpm vitest run apps/web/test/RunOverviewTab.live.test.tsx apps/web/test/RunStats.test.tsx
+nvm use && pnpm vitest run apps/web/test/RunOverviewTab.live.test.tsx apps/web/test/RunStats.test.tsx && pnpm typecheck && pnpm lint
 ```
 
 Expected: PASS.
@@ -1421,7 +1422,7 @@ identified, and the query re-enables the moment it resolves as ready.
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-nvm use && pnpm vitest run apps/web/test/RunChartsTab.live.test.tsx apps/web/test/timeAxis.test.ts
+nvm use && pnpm vitest run apps/web/test/RunChartsTab.live.test.tsx apps/web/test/timeAxis.test.ts && pnpm typecheck && pnpm lint
 ```
 
 Expected: PASS.
@@ -1507,7 +1508,7 @@ Set the two queries' `enabled` to `runId !== undefined && terminal` so neither r
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-nvm use && pnpm vitest run apps/web/test/RunErrorsTab.live.test.tsx apps/web/test/ErrorsTable.test.tsx
+nvm use && pnpm vitest run apps/web/test/RunErrorsTab.live.test.tsx apps/web/test/ErrorsTable.test.tsx && pnpm typecheck && pnpm lint
 ```
 
 Expected: PASS.
@@ -1560,7 +1561,7 @@ Create `apps/web/test/RunTrends.live.test.tsx`:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-nvm use && pnpm vitest run apps/web/test/RunTelemetry.test.tsx apps/web/test/RunTrends.live.test.tsx
+nvm use && pnpm vitest run apps/web/test/RunTelemetry.test.tsx apps/web/test/RunTrends.live.test.tsx && pnpm typecheck && pnpm lint
 ```
 
 Expected: FAIL — the telemetry copy is unconditional, and `RunTrends` has no live branch.
@@ -1586,7 +1587,7 @@ Expected: FAIL — the telemetry copy is unconditional, and `RunTrends` has no l
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-nvm use && pnpm vitest run apps/web/test/RunTelemetry.test.tsx apps/web/test/RunTrends.live.test.tsx
+nvm use && pnpm vitest run apps/web/test/RunTelemetry.test.tsx apps/web/test/RunTrends.live.test.tsx && pnpm typecheck && pnpm lint
 ```
 
 Expected: PASS.
