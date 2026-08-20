@@ -8,7 +8,7 @@ import TelemetryCharts from '../charts/TelemetryCharts';
 import { CLOCK_SKEW_WARN_MS } from './clockSkew';
 import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
-import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import useIsCompact from '../useIsCompact';
 
@@ -36,17 +36,27 @@ import useIsCompact from '../useIsCompact';
  * which actually assigns the group.
  *
  * ═══ THREE DIFFERENT "NOTHING TO SHOW", NOT ONE ═══
- * `available: false` means the agent never reported for this run's window at
- * all — `toolStartedAt` is null, or nothing overlapped it — and gets the one
- * `EmptyState` below, with **no figure on the page**: six empty charts would
- * read as "measured and found idle", which is the one claim `available`
- * exists to rule out (see `TelemetryResponseSchema`'s own doc comment).
- * `hosts.length === 0` while `available` is true is a NARROWER window over an
- * otherwise-recorded run — `MetricsController.telemetry` computes `available`
- * from the whole series before filtering `hosts` to the requested range — and
- * gets six `Undrawn` charts explaining themselves individually, the same
- * pattern `GroupDetail` uses for a series a run predates. A host with points
- * gets the real six `<Chart>`s via `TelemetryCharts`.
+ * `available: false` means there is no telemetry to place on this run's own
+ * elapsed axis — `toolStartedAt` is null, or nothing overlapped it — and gets
+ * the one `EmptyState` below, with **no figure on the page**: six empty
+ * charts would read as "measured and found idle", which is the one claim
+ * `available` exists to rule out (see `TelemetryResponseSchema`'s own doc
+ * comment). `hosts.length === 0` while `available` is true is a NARROWER
+ * window over an otherwise-recorded run — `MetricsController.telemetry`
+ * computes `available` from the whole series before filtering `hosts` to the
+ * requested range — and gets six `Undrawn` charts explaining themselves
+ * individually, the same pattern `GroupDetail` uses for a series a run
+ * predates. A host with points gets the real six `<Chart>`s via
+ * `TelemetryCharts`.
+ *
+ * ═══ `available: false` HAS TWO HONEST READINGS (Task 11) ═══
+ * `toolStartedAt` is null for EVERY non-terminal run — it is set from the
+ * parsed report, which does not exist until the run finishes — so
+ * `available: false` is the answer for a run still streaming as much as for
+ * a finished one the agent genuinely never reported for. Those are different
+ * facts: "wait, this arrives once the run finishes" versus "this run
+ * finished and nothing was ever recorded". `terminal` (`useRunTerminal`)
+ * decides which sentence the `EmptyState` below shows.
  */
 
 const TELEMETRY_SLOTS: readonly Slot[] = [
@@ -64,6 +74,10 @@ const NO_SAMPLES_IN_WINDOW =
 
 export default function RunTelemetry() {
   const { runId } = useParams<{ runId: string }>();
+  // Decides only which sentence `available: false` shows below — telemetry
+  // itself is never fetched while live (`available` is always `false` for a
+  // non-terminal run; there is nothing to gate a fetch AGAINST).
+  const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
   // The same time domain the run's other tabs draw on (§22.5) — these six
   // charts share `run-time` with the shell's own brush.
@@ -100,12 +114,18 @@ export default function RunTelemetry() {
           // Not an empty chart — that would read as an idle machine. This
           // exact phrase is load-bearing: Task 11's e2e suite matches
           // `/no telemetry was recorded/i` against it.
-          return (
-            <EmptyState
-              title="No telemetry was recorded for this run."
-              body="The load-generator agent has to be running on the machines driving this run for these charts to have anything to show."
-            />
-          );
+          //
+          // THE BODY DEPENDS ON WHETHER THE RUN IS DONE (Task 11). This
+          // branch is every non-terminal run too — the endpoint answers
+          // `available: false` whenever `toolStartedAt` is null, which is
+          // true until the parsed report exists — so the OLD, unconditional
+          // body blamed a silent agent for a window that had not opened yet.
+          // A terminal run with `available: false` really is the agent's own
+          // silence; a non-terminal one is just too early to ask.
+          const body = terminal
+            ? "No load generator reported for this run's window."
+            : "Load generator telemetry appears once the run finishes — it is placed on the run's own elapsed axis, which needs the tool's start time from the parsed report.";
+          return <EmptyState title="No telemetry was recorded for this run." body={body} />;
         }
 
         const hosts = data.hosts;

@@ -4,9 +4,25 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TelemetryResponse } from '@perfportal/contracts';
+import type { RunProcessing, RunResponse, TelemetryResponse } from '@perfportal/contracts';
+import { runQueryKey } from '../src/api/run';
 import RunTelemetry from '../src/routes/RunTelemetry';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+
+const COMPLETE_RUN: RunResponse = {
+  id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
+  project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+  status: 'complete',
+  verdict: 'not_evaluated',
+  tool: 'gatling',
+  toolVersion: '3.15.1',
+  simulation: 'example.ParitySimulation',
+  description: null,
+  durationMs: 63161,
+  startedAt: '2026-08-14T10:43:49.546Z',
+  toolStartedAt: '2026-08-07T05:30:02.171Z',
+  assertions: [],
+};
 
 /**
  * `RunTelemetry` reads its window through `useOutletContext` (`useRunWindow.ts`
@@ -14,17 +30,38 @@ import type { RunWindowContext } from '../src/routes/useRunWindow';
  * mounted under something that provides one, the way `RunShell`'s real
  * `<Outlet context={{ window }} />` does. This stands in for that shell with
  * the one value every test here needs: no window selected.
+ *
+ * `status` seeds the SAME `runQueryKey` cache `useRunTerminal`'s own read
+ * consumes, defaulting to `'complete'` — every case here before Task 11
+ * implicitly assumed a terminal run (there was no run-detail concept in this
+ * component at all), and that default keeps them all asserting the same
+ * thing they always did.
  */
-function renderRunTelemetry(response: TelemetryResponse) {
+function renderRunTelemetry(
+  response: TelemetryResponse,
+  options: { readonly status?: RunProcessing['status'] | 'complete' } = {},
+) {
+  const status = options.status ?? 'complete';
+  const detail =
+    status === 'complete'
+      ? { state: 'ready' as const, run: COMPLETE_RUN }
+      : { state: 'processing' as const, run: { id: RUN, status, statusUrl: `/v1/runs/${RUN}` } };
+
   vi.stubGlobal('fetch', (input: RequestInfo) => {
     const url = String(input);
     if (url.includes('/telemetry')) {
       return Promise.resolve(new Response(JSON.stringify(response), { status: 200 }));
     }
+    if (url === `/v1/runs/${RUN}`) {
+      return Promise.resolve(
+        new Response(JSON.stringify(detail.run), { status: detail.state === 'ready' ? 200 : 202 }),
+      );
+    }
     return Promise.resolve(new Response('{}', { status: 500 }));
   });
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(runQueryKey(RUN), detail);
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN}/load-generators`]}>
@@ -111,6 +148,19 @@ describe('RunTelemetry', () => {
     // the whole reason `available: false` gets a dedicated branch rather than
     // six charts each explaining themselves.
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
+  });
+
+  it('says telemetry arrives when the run finishes, not that the agent was silent', async () => {
+    // `available: false` is already what the endpoint answers for a run with
+    // a null `toolStartedAt` — every non-terminal run. The existing copy
+    // blames the agent, which is wrong here: nothing has failed, the window
+    // does not exist yet.
+    renderRunTelemetry(
+      { runId: RUN, available: false, bucketWidthMs: 1000, window: null, hosts: [] },
+      { status: 'running' },
+    );
+    expect(await screen.findByText(/once the run finishes/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no load generator reported/i)).toBeNull();
   });
 
   it('renders a "Load generator" combobox for two hosts, defaulting to the first', async () => {

@@ -4,8 +4,10 @@ import { Link, useParams } from 'react-router-dom';
 import { trendsQuery } from '../api/metrics';
 import TrendsCharts from '../charts/TrendsCharts';
 import { MAX_COMPARE } from './compareSelection';
+import LiveNotice from './LiveNotice';
 import { Payload, type Slot } from './payload';
 import { runComparePath } from './paths';
+import { useRunTerminal } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import useIsCompact from '../useIsCompact';
 
@@ -16,6 +18,12 @@ import useIsCompact from '../useIsCompact';
  * A run report answers "what happened". Only a trend answers "is it getting
  * worse", which is the question a performance engineer actually arrives with,
  * and the one nothing in this product could answer before.
+ *
+ * WITHHELD WHILE THE RUN IS LIVE (Task 11), for the same reason it always
+ * would have been: `/trends` reads the same `RunStat` rows every other
+ * metric endpoint does, and none exist until the parse pipeline runs — a
+ * running run has no statistics row of its OWN to plot a point from, cohort
+ * or no cohort.
  */
 
 const STATUS: Slot = { id: 'trend-status', title: 'Response status across runs' };
@@ -27,10 +35,21 @@ const THROUGHPUT: Slot = { id: 'trend-throughput', title: 'Throughput across run
 
 export default function RunTrends() {
   const { runId } = useParams<{ runId: string }>();
+  const { terminal } = useRunTerminal(runId);
   // §22.6: deep analysis is a desktop task. Gated on the QUERY as well as the
   // render, so a phone does not fetch a payload it has been told not to draw.
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
+
+  // AHEAD OF THE COMPACT GATE BELOW, deliberately. This notice is cheap
+  // text, not eight ECharts instances, so a phone is told the same thing a
+  // desktop is rather than a SECOND withheld notice ("Comparing a run
+  // against its history is a desktop task") for content that was never
+  // coming this session regardless of viewport.
+  if (!terminal) {
+    return <LiveNotice kind="withheld" subject="Trends" />;
+  }
+
   if (compact && !shown) {
     return (
       <DesktopOnly compact what="Comparing a run against its history" onShow={() => setShown(true)}>
