@@ -169,6 +169,15 @@ describe('RunTelemetry', () => {
     );
     expect(await screen.findByText(/once the run finishes/i)).toBeInTheDocument();
     expect(screen.queryByText(/no load generator reported/i)).toBeNull();
+
+    // THE HEADING, not just the body. Both branches used to open with "No
+    // telemetry was recorded for this run." — past tense and definitive — and
+    // only the body below it differed. So a live run announced a measurement
+    // of nothing and then immediately walked it back one line later. Nothing
+    // asserted the live heading, which is how the mismatch shipped and
+    // survived to a browser.
+    expect(await screen.findByText(/not available yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/was recorded for this run/i)).toBeNull();
   });
 
   it('renders a "Load generator" combobox for two hosts, defaulting to the first', async () => {
