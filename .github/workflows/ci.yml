@@ -154,3 +154,36 @@ jobs:
         with:
           name: perfportal-agent
           path: agent/dist/
+
+  # The Gatling Gradle plugin (clients/gatling-gradle) is a Kotlin/Gradle
+  # module outside the pnpm workspace (pnpm-workspace.yaml globs only
+  # packages/* and apps/*), so it gets its own job rather than a step bolted
+  # onto `build`. It needs no Postgres, Redis or MinIO, so as its own job it
+  # runs in parallel and a Gradle failure reports without waiting behind the
+  # whole Node gate.
+  #
+  # `permissions` is scoped to this job only, not the workflow, because this
+  # is the one job that needs to publish a package — `contents: read` is the
+  # default already implied for every job, spelled out here only because
+  # setting any key under `permissions` makes the whole map explicit.
+  plugin:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: clients/gatling-gradle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: ./gradlew build --no-daemon
+      - name: Publish snapshot to GitHub Packages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: ./gradlew publish --no-daemon
