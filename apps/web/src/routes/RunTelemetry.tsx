@@ -136,7 +136,19 @@ export default function RunTelemetry() {
   if (!terminal) {
     return (
       <EmptyState
-        title="No telemetry was recorded for this run."
+        // NOT the terminal branch's "No telemetry was recorded for this run."
+        // That sentence is past tense and definitive, and this run has not
+        // finished: the agent may be reporting right now. It reads as a
+        // measurement of nothing over a run nobody has finished measuring —
+        // and the body directly beneath it then walks the claim back, which
+        // is worse than either sentence alone.
+        //
+        // The terminal branch keeps that wording, and must: it is pinned by
+        // `RunTelemetry.test.tsx`'s "never reported" case and by
+        // `run-telemetry.spec.ts`, which is the one sentence distinguishing
+        // "never measured" from "measured and found idle". Only THIS branch
+        // changes.
+        title="Load generator telemetry is not available yet."
         body="Load generator telemetry appears once the run finishes — it is placed on the run's own elapsed axis, which needs the tool's start time from the parsed report."
       />
     );
