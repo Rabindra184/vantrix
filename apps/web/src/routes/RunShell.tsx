@@ -138,13 +138,21 @@ export default function RunShell({
       {/* WHAT THE PAGE IS DOING, above the tab content and below the strip
           that selects it, so it is on screen whichever tab is open. Rendered
           only while the run is not terminal — a terminal run should never
-          even be asked, and `LiveStatusStrip` now always has SOMETHING to
-          say for a non-terminal one (its own docstring). `streamed` is
-          EVIDENCE, not a derivation from `status`: `live?.lastDelta != null`
-          is the same "a delta arrived this session, and that fact is never
-          cleared" contract `useLiveRun` already documents elsewhere, and it
-          is what stops a batch-uploaded run's `parsing` status alone from
-          making this strip claim streaming ever happened. */}
+          even be asked — but `LiveStatusStrip` does NOT always have
+          something to say for a non-terminal one: a `running` run with no
+          evidence yet (not connected, no delta ever received, no cap
+          reached) renders nothing there, deliberately (its own docstring).
+          That is the correct rendering for a compact viewport, which never
+          enables the socket at all (§22.6), and for a desktop's first paint
+          before the socket has opened once. Mounting the strip unconditionally
+          for every non-terminal status is still right regardless — `partial`
+          and the capped/finalizing states need to appear the moment they
+          become true, whichever tab is open. `streamed` is EVIDENCE, not a
+          derivation from `status`: `live?.lastDelta != null` is the same "a
+          delta arrived this session, and that fact is never cleared" contract
+          `useLiveRun` already documents elsewhere, and it is what stops a
+          batch-uploaded run's `parsing` status alone from making this strip
+          claim streaming ever happened. */}
       {!terminal && (
         <LiveStatusStrip
           status={status as RunProcessing['status']}

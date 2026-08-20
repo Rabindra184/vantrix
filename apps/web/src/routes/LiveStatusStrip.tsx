@@ -42,10 +42,17 @@ import LiveNotice from './LiveNotice';
  * under this strip's OWN capped block once polling had, in fact, stopped.
  * One component owning both halves of "is this page still checking on its
  * own" makes them structurally exclusive instead — the reader is told one
- * story, never two contradictory ones on the same screen. And a pending run
- * is never blank because of it: this strip mounts for every non-terminal
- * status (`RunShell`'s own `!terminal` gate) and now always has something to
- * say about polling, capped or not.
+ * story, never two contradictory ones on the same screen. A pending or
+ * not-yet-evidenced `parsing` run is never blank because of it — that is
+ * exactly what this else branch (`!streaming && !frozen && !capReached`)
+ * catches. A `running` run with no evidence yet — `!connected && !streamed`,
+ * exactly the state a compact viewport is in (`useLiveRun` is never enabled
+ * below 768px, §22.6) and the state a desktop is in before its socket has
+ * opened even once — renders NOTHING here, and that silence is deliberate:
+ * there is nothing true yet to say about a connection this page has not
+ * evidenced, and inventing a reconnect sentence for a socket that was never
+ * open would be exactly the false claim `streamed` exists to prevent, one
+ * paragraph up.
  *
  * `partial` renders ALONGSIDE any of the above, because it is a fact about
  * the DATA (the seed this view was built from had a hole) and every other
