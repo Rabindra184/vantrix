@@ -63,6 +63,14 @@ export default tseslint.config(
       'spikes/**',
       'fixtures/**',
       '.claude/worktrees/**',
+      // `clients/**/build/**` is Gradle build output — the plugin's e2e run
+      // regenerates Gatling's HTML report there, complete with vendored
+      // Highcharts/Bootstrap minified JS (4000+ instant errors). Git already
+      // ignores it via the module .gitignore; eslint has to be told
+      // separately, exactly like the worktrees entry above. The COMMITTED
+      // JS in clients/ (e2e/seed.mjs) stays linted — this only excludes
+      // build output.
+      'clients/**/build/**',
     ],
   },
   ...tseslint.configs.recommended,
