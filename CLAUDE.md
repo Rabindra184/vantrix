@@ -53,11 +53,51 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **106 files / 1179 tests**, it
+`nvm use` first, and if a run reports fewer than **111 files / 1217 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on live SLA signals'
-whole-branch review fixes, which added no unit FILE and 9 unit cases: 6 to
+silently-skipped run looks like a pass. Last measured on the five-tab live
+page sub-project, which made a run page render its header and five tabs for
+EVERY run state rather than only a terminal one — deleting three standalone
+screens (`Processing`, `Live`, `LiveCapped`) and redistributing their
+content into `RunShell`, `WaitingPanel`, and per-tab live branches.
+`apps/web/test/run-detail.test.ts` is GONE: its four cases pinned the
+polling-cap UI of the deleted `Processing` component; three are now covered
+by `LiveStatusStrip.test.tsx`'s own capped-block cases, and the fourth —
+that the cap's two sentences never coexist — became a real assertion there
+("the capped block REPLACES the finalizing notice, never joins it").
+`RunDetail.live.test.tsx` shrank from 19 cases to 9 the same way, not by
+loss: most of what it pinned (a distinct `<h1>`, a standalone "still
+processing" screen) no longer exists to assert on, and the file's own
+docstring accounts for every remaining old case as moved, already covered
+elsewhere, or left as an `it.todo` naming the task that will re-cover it.
+Six new files carry what moved plus what is genuinely new:
+`WaitingPanel.test.tsx` (4, the pending/parsing distinction, and that it
+owns neither the page's `<h1>` nor its back link), `LiveStatusStrip.test.tsx`
+(10, the strip every tab now mounts unconditionally —
+streaming/reconnecting/frozen phrasing, the partial-seed notice ALONGSIDE
+the finalizing one, and the capped block REPLACING either streaming
+sentence rather than joining it), `RunOverviewTab.live.test.tsx` (5, the
+live tiles, the withheld statistics table stated rather than omitted, and
+`WaitingPanel` for a pending run with no delta yet),
+`RunChartsTab.live.test.tsx` (3, the five live figures with the two
+withheld ones named, gated behind `DesktopOnly`),
+`RunErrorsTab.live.test.tsx` (2, the errors table kept live while its own
+chart says it is not), and `RunTrends.live.test.tsx` (6, an `it.each` gate
+across pending/parsing/running plus surviving a running run finishing
+mid-read). Plus 13 cases to `RunShell.test.tsx` (mounting the strip above
+the outlet, gating the time brush and the shared-metric fetch behind
+liveness, and threading live state through the outlet context), 3 to
+`RunHeader.test.tsx` for rendering off bare identity now that the header no
+longer needs a whole run object, 2 to `RunTelemetry.test.tsx` for a
+non-terminal run, and 4 to `packages/contracts/test/live.test.ts` for the
+202 body's own identity fields — from a floor of 106 / 1179. Its
+integration floor is 110 files / 1298 tests — one FEWER file than the unit
+floor's rise would suggest, because `run-detail.test.ts` was the only
+deleted file integration also ran; every new file above is a `.tsx`
+component test integration never runs — and its e2e is 92. Before that, live
+SLA signals' whole-branch review fixes, which added no unit FILE and 9 unit
+cases: 6 to
 `apps/web/test/SlaBanner.test.tsx` (the denominator naming what it counts, the
 unchecked-rule count in both plurals and its absence at zero, and the two
 rules-could-not-be-loaded cases — the one state where that banner renders with
