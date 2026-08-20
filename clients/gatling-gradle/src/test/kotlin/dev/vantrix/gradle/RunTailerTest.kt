@@ -71,29 +71,93 @@ class RunTailerTest {
         Files.write(dir.resolve("simulation.log"), ByteArray(size))
     }
 
-    @Test fun `waits for a directory newer than task start`(@TempDir tmp: Path) {
-        val taskStart = 2_000_000L
-        // pre-existing old dir ignored
-        val oldDir = Files.createDirectory(tmp.resolve("BasicSimulation-1000000"))
-        writeLog(oldDir, 10)
+    // Real Gatling results-directory naming: <sim>-yyyyMMddHHmmssSSS -- a FORMATTED timestamp
+    // string, not raw epoch millis. These fixtures encode that shape throughout (rather than the
+    // old "fake-" + System.currentTimeMillis() the unit suite used to use, which happened to also
+    // be valid epoch millis and so never exercised the real-world mismatch).
+    private fun realDirName(suffix: String) = "paritysimulation-$suffix"
+
+    @Test fun `a pre-existing real-format directory is ignored forever, even though its numeric suffix dwarfs any real epoch millis`(
+        @TempDir tmp: Path,
+    ) {
+        // Astronomically "new" if that suffix were ever compared as epoch millis (~20 quadrillion
+        // vs. a real ~1.7 trillion) -- which is exactly the trap a wall-clock filter falls into.
+        // Snapshot-diff must ignore it purely because it already existed before construction.
+        val staleDir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        writeLog(staleDir, 10)
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        tailer.tick()
+        tailer.tick()
+
+        assertTrue(api.calls.isEmpty(), "a directory present before construction must never be opened, no matter how many ticks pass")
+
+        // A directory in the exact same naming shape, appearing AFTER construction, IS recognised.
+        val freshDir = Files.createDirectory(tmp.resolve(realDirName("20260820134512987")))
+        writeLog(freshDir, 5)
 
         tailer.tick()
 
-        assertTrue(api.calls.isEmpty(), "an older directory must never be opened")
-        assertTrue(tailer.openFailures().isEmpty())
+        val streams = api.streamCalls()
+        assertEquals(1, streams.size)
+        assertEquals(5, streams[0].byteCount)
+        assertEquals(0L, streams[0].offset)
 
         tailer.finish()
-        assertTrue(api.calls.isEmpty(), "finish must stay clean when nothing eligible ever appeared")
+        assertTrue(api.calls.any { it is ApiCall.Closed }, "the fresh directory's run must still be closed by finish()")
+        assertEquals(1, api.calls.count { it is ApiCall.OpenAttempt }, "exactly one open -- the stale directory must never generate one")
+    }
+
+    @Test fun `TestKit-style fake-millis naming is recognised too, so long as it appears after construction`(
+        @TempDir tmp: Path,
+    ) {
+        // The TestKit functional-test fixtures name their fake results dirs "fake-" +
+        // System.currentTimeMillis() -- a different shape from real Gatling's, but still
+        // `<something>-<digits>`, so it must still be recognised post-snapshot.
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve("fake-${System.currentTimeMillis()}"))
+        writeLog(dir, 7)
+
+        tailer.tick()
+
+        val streams = api.streamCalls()
+        assertEquals(1, streams.size)
+        assertEquals(7, streams[0].byteCount)
+        assertEquals(0L, streams[0].offset)
+    }
+
+    @Test fun `discovers multiple new directories within one tick and processes them in NAME order, not creation order`(
+        @TempDir tmp: Path,
+    ) {
+        // Created out of name order: "z-sim" hits disk before "a-sim". If creation order drove
+        // anything, z-sim would be processed first. Within a single tick, discovery order must be
+        // by NAME.
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dirZ = Files.createDirectory(tmp.resolve("z-sim-20260820134041213"))
+        writeLog(dirZ, 3)
+        val dirA = Files.createDirectory(tmp.resolve("a-sim-20260820134041213"))
+        writeLog(dirA, 4)
+
+        tailer.tick() // both are discovered this tick; the name-first one (a-sim) opens
+        tailer.tick() // switches to the second by name (z-sim)
+
+        val streams = api.streamCalls()
+        assertEquals(2, streams.size)
+        assertEquals(4, streams[0].byteCount, "a-sim (name-first) must be processed before z-sim despite z-sim existing on disk first")
+        assertEquals(3, streams[1].byteCount)
     }
 
     @Test fun `ships partial blocks -- whatever bytes exist at the tick`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dir = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
-        writeLog(dir, 5000)
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        writeLog(dir, 5000)
 
         tailer.tick()
 
@@ -104,12 +168,12 @@ class RunTailerTest {
     }
 
     @Test fun `caps a single read at 4 MiB and drains the rest next tick`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dir = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         val fiveMiB = 5 * 1024 * 1024
         writeLog(dir, fiveMiB)
-        val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
 
         tailer.tick()
         var streams = api.streamCalls()
@@ -125,11 +189,11 @@ class RunTailerTest {
     }
 
     @Test fun `a second directory closes the first run and opens a second`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dirA = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
-        Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dirA = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
 
         tailer.tick()
         val firstStream = api.streamCalls().single()
@@ -137,7 +201,9 @@ class RunTailerTest {
         assertEquals(0L, firstStream.offset)
         assertEquals(5, firstStream.byteCount)
 
-        val dirB = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 2}"))
+        // Appears strictly after the first tick -- appearance order, not name/millis order, is
+        // what governs processing order now.
+        val dirB = Files.createDirectory(tmp.resolve(realDirName("20260820134199987")))
         Files.write(dirB.resolve("simulation.log"), "world!!".toByteArray())
 
         tailer.tick()
@@ -155,12 +221,12 @@ class RunTailerTest {
     }
 
     @Test fun `409 resume rewinds the read position`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dir = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
-        writeLog(dir, 100)
         val api = FakeApi()
         api.scriptNextStream(StreamResult.Resume(0))
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        writeLog(dir, 100)
 
         tailer.tick() // first read from 0, server rejects with Resume(0)
         tailer.tick() // must read from 0 again, not from wherever a normal advance would have gone
@@ -173,12 +239,12 @@ class RunTailerTest {
     }
 
     @Test fun `finish drains the tail then closes -- including bytes written after the last tick`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dir = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
         val logFile = dir.resolve("simulation.log")
         Files.write(logFile, ByteArray(100))
-        val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
 
         tailer.tick() // streams the first 100 bytes, offset -> 100
 
@@ -204,20 +270,20 @@ class RunTailerTest {
     }
 
     @Test fun `auth failure stops streaming but finish still closes`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dir = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
-        val logFile = dir.resolve("simulation.log")
-        Files.write(logFile, ByteArray(10))
         val api = FakeApi()
         api.scriptNextStream(StreamResult.AuthFailed)
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        val logFile = dir.resolve("simulation.log")
+        Files.write(logFile, ByteArray(10))
 
         tailer.tick() // this stream attempt comes back AuthFailed
         assertEquals(1, api.streamCalls().size)
 
         // more bytes, and even a whole new simulation directory -- neither should provoke another call
         Files.write(logFile, ByteArray(20), StandardOpenOption.APPEND)
-        val dirB = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 2}"))
+        val dirB = Files.createDirectory(tmp.resolve(realDirName("20260820134199987")))
         writeLog(dirB, 5)
 
         tailer.tick()
@@ -230,9 +296,8 @@ class RunTailerTest {
     }
 
     @Test fun `no directory ever appearing means no open and a clean finish`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
         val api = FakeApi()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
 
         tailer.tick()
         tailer.tick()
@@ -243,12 +308,12 @@ class RunTailerTest {
     }
 
     @Test fun `open failure is recorded in openFailures with no stream calls, and finish stays clean`(@TempDir tmp: Path) {
-        val taskStart = 1_000_000L
-        val dir = Files.createDirectory(tmp.resolve("BasicSimulation-${taskStart + 1}"))
-        writeLog(dir, 10)
         val api = FakeApi()
         api.failNextOpen()
-        val tailer = RunTailer(api, configFor(), tmp, taskStart)
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dir = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        writeLog(dir, 10)
 
         tailer.tick()
 

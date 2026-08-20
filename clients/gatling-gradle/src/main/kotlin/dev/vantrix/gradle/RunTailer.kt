@@ -8,12 +8,29 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * Watches [resultsRoot] for Gatling results directories created at or after [taskStartMillis] and
- * streams each one's `simulation.log` through [api] as Gatling writes it -- one live run per
- * simulation directory, in creation order.
+ * Watches [resultsRoot] for Gatling results directories that appear AFTER this tailer is
+ * constructed, and streams each one's `simulation.log` through [api] as Gatling writes it -- one
+ * live run per simulation directory, in order of first appearance.
  *
- * A directory is recognised by Gatling's own `<sim>-<millis>` naming: the millis are parsed from
- * after the LAST `-`; a non-numeric suffix means it is not a results directory.
+ * Recognition is snapshot-diff, not wall-clock: the constructor records the NAMES of every
+ * directory already present under [resultsRoot], and a directory is treated as new iff its name
+ * is absent from that snapshot AND has the shape Gatling uses for a results directory --
+ * `<sim>-<digits>`, the digits taken from after the last `-` (a non-numeric suffix means it is
+ * not a results directory, snapshot or not).
+ *
+ * Deliberately NOT wall-clock based -- an earlier version parsed that trailing `<digits>` as raw
+ * epoch millis and excluded anything older than the task's start time. That looks reasonable but
+ * is wrong for a REAL Gatling run: Gatling names its directories `<sim>-yyyyMMddHHmmssSSS`, a
+ * *formatted* timestamp string (e.g. `paritysimulation-20260820134041213`) that still parses as a
+ * valid `Long`, just roughly 11,000x larger than any actual `System.currentTimeMillis()` value
+ * for the same instant. Every results directory a project has ever produced therefore parsed as
+ * "from the future" and was treated as new on every subsequent run -- proven empirically: one
+ * `gatlingRun` opened three separate platform runs from three accumulated stale directories.
+ * Parsing `yyyyMMddHHmmssSSS` "properly" with a formatter would only trade that bug for a
+ * timezone assumption (Gatling's formatting locale/zone across versions and machines is not a
+ * documented contract, and is exactly the kind of thing that breaks silently). Snapshot-diff
+ * sidesteps wall-clock reasoning entirely: the trailing digits are used only to recognise the
+ * SHAPE of a results directory, never interpreted as a point in time.
  *
  * Single-threaded by design: [start] launches one daemon thread that owns the tick loop, and
  * every state mutation ([tick], [finish]) is taken under [lock] so [finish] -- normally called
@@ -23,13 +40,20 @@ class RunTailer(
     private val api: LiveApi,
     private val config: PluginConfig,
     private val resultsRoot: Path,
-    private val taskStartMillis: Long,
     private val sleeper: (Long) -> Unit = Thread::sleep,
 ) {
     private val lock = ReentrantLock()
 
+    // Names present under resultsRoot at construction time -- i.e. strictly before VantrixPlugin's
+    // doFirst returns and Gatling's own task action can create anything new. Everything captured
+    // here is permanently excluded from recognition, no matter how "new" its suffix looks.
+    private val knownNames: MutableSet<String> = snapshotNames(resultsRoot).toMutableSet()
+
+    // Directories discovered (not in knownNames, shape-matching) but not yet opened, in the order
+    // they should be processed: order of first appearance across ticks, name-sorted within a tick.
+    private val pending = ArrayDeque<Path>()
+
     private var current: TailState? = null
-    private var lastConsideredMillis: Long = taskStartMillis - 1
     private var authFailedPermanently = false
     private var finished = false
     private val openFailures = mutableListOf<Path>()
@@ -90,13 +114,12 @@ class RunTailer(
             api.close(state.run)
             current = null
         }
-        lastConsideredMillis = next.first
         val opened = api.open(UUID.randomUUID().toString())
         if (opened == null) {
-            openFailures.add(next.second)
+            openFailures.add(next)
             return
         }
-        current = TailState(next.second.resolve("simulation.log"), opened)
+        current = TailState(next.resolve("simulation.log"), opened)
     }
 
     /** Reads and ships one chunk (whatever bytes exist right now, capped at [MAX_CHUNK_BYTES]). */
@@ -135,19 +158,34 @@ class RunTailer(
             StreamResult.GaveUp -> false
         }
 
-    private fun nextEligibleDir(): Pair<Long, Path>? =
-        listEligibleDirs().firstOrNull { it.first > lastConsideredMillis }
+    /**
+     * Pops the next directory to process, discovering any newly-appeared ones first (see
+     * [discoverNewDirs]). Returns null when nothing new has ever appeared beyond what's already
+     * been processed.
+     */
+    private fun nextEligibleDir(): Path? {
+        discoverNewDirs()
+        return if (pending.isNotEmpty()) pending.removeFirst() else null
+    }
 
-    private fun listEligibleDirs(): List<Pair<Long, Path>> {
-        if (!Files.isDirectory(resultsRoot)) return emptyList()
+    /**
+     * Scans [resultsRoot] for directories not yet known (absent from the construction-time
+     * snapshot AND never discovered before) whose name matches the results-dir shape, and
+     * enqueues them onto [pending] in name order. Every enqueued name is added to [knownNames]
+     * immediately, so it can never be rediscovered even after being dequeued and processed.
+     */
+    private fun discoverNewDirs() {
+        if (!Files.isDirectory(resultsRoot)) return
         val entries = Files.newDirectoryStream(resultsRoot).use { it.toList() }
-        return entries
+        entries
             .filter { Files.isDirectory(it) }
-            .mapNotNull { dir ->
-                val millis = parseMillis(dir.fileName.toString()) ?: return@mapNotNull null
-                if (millis < taskStartMillis) null else millis to dir
-            }
+            .map { it.fileName.toString() to it }
+            .filter { (name, _) -> name !in knownNames && matchesResultsDirShape(name) }
             .sortedBy { it.first }
+            .forEach { (name, path) ->
+                knownNames += name
+                pending.addLast(path)
+            }
     }
 
     private fun readChunk(logFile: Path, offset: Long): ByteArray {
@@ -166,10 +204,17 @@ class RunTailer(
     companion object {
         const val MAX_CHUNK_BYTES = 4 * 1024 * 1024
 
-        private fun parseMillis(dirName: String): Long? {
-            val idx = dirName.lastIndexOf('-')
-            if (idx < 0 || idx == dirName.length - 1) return null
-            return dirName.substring(idx + 1).toLongOrNull()
+        // Gatling's own results-directory shape: <sim>-<digits>, digits taken from after the LAST
+        // '-'. Matched only to recognise the SHAPE of a results directory -- the digits are never
+        // parsed as a number, let alone a timestamp; see the class doc for why.
+        private val RESULTS_DIR_SHAPE = Regex("^.+-\\d+$")
+
+        private fun matchesResultsDirShape(dirName: String): Boolean = RESULTS_DIR_SHAPE.matches(dirName)
+
+        private fun snapshotNames(resultsRoot: Path): Set<String> {
+            if (!Files.isDirectory(resultsRoot)) return emptySet()
+            val entries = Files.newDirectoryStream(resultsRoot).use { it.toList() }
+            return entries.filter { Files.isDirectory(it) }.map { it.fileName.toString() }.toSet()
         }
     }
 }

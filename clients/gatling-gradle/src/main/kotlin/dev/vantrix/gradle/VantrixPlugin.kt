@@ -95,11 +95,15 @@ class VantrixPlugin : Plugin<Project> {
                                     ?.let { project.file(it).toPath() }
                                     ?: project.layout.buildDirectory.dir("reports/gatling").get().asFile.toPath()
                                 val client = LiveClient(config, logger = { msg -> project.logger.warn("vantrix: $msg") })
+                                // Constructed here, in doFirst -- strictly BEFORE Gatling's own task
+                                // action runs -- so RunTailer's constructor snapshot (see its class
+                                // doc) captures every results directory left over from a previous
+                                // run, and never the directory this very invocation is about to
+                                // create.
                                 val tailer = RunTailer(
                                     api = client,
                                     config = config,
                                     resultsRoot = resultsRoot,
-                                    taskStartMillis = System.currentTimeMillis(),
                                 )
                                 handleRef.set(TailerHandle(tailer, config))
                                 tailer.start()

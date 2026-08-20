@@ -202,40 +202,6 @@ mkdir -p "$SIM_DEST_DIR"
 cp "$FIXTURE_DIR/ParitySimulation.kt" "$SIM_DEST_DIR/ParitySimulation.kt"
 
 # ===========================================================================
-# WORKAROUND for a real defect found by this e2e test, documented here rather
-# than fixed in the plugin (task-7-report.md has the full writeup; not fixed
-# in clients/gatling-gradle/src because the fix belongs to a reviewed task of
-# its own, not folded silently into this one):
-#
-# RunTailer.parseMillis() (clients/gatling-gradle/src/main/kotlin/dev/vantrix/gradle/RunTailer.kt)
-# parses a results directory's `<sim>-<suffix>` name assuming `<suffix>` is
-# raw System.currentTimeMillis() -- true of every unit/TestKit fixture (they
-# name their fake dirs "fake-" + System.currentTimeMillis()) but NOT of a
-# REAL Gatling run: Gatling names its directories `<sim>-yyyyMMddHHmmssSSS`,
-# a formatted timestamp STRING that still parses as a valid Long, just one
-# ~11,000x larger than any real epoch-millis value. listEligibleDirs()'s
-# `millis < taskStartMillis -> excluded` age check therefore never excludes
-# ANYTHING -- every results directory this e2e-project has EVER produced
-# looks "new" to every subsequent gatlingRun, and RunTailer dutifully opens,
-# streams (instantly, since they're static) and closes a live run for each
-# stale one before ever reaching the real, currently-writing directory. This
-# was caught directly by this script: run-e2e.sh's first two full passes
-# left the project with 3 result directories, and the THIRD pass opened
-# THREE live runs, not one (verified against `run.tool_started_at` in
-# Postgres -- three runs sharing the SAME `tool_started_at` per accumulated
-# directory, each closing within a tick or two once drain() finds nothing
-# further to stream). The run-e2e.sh assertions below still pass regardless
-# (the run id captured is always the LAST "run opened" line, which the fold
-# order above guarantees is the real, current one) but every accumulated
-# stale directory costs one extra open+stream+close round-trip per run.
-#
-# Cleaning this project's OWN results directory before every gatlingRun
-# keeps each invocation to the one real run it is actually testing, without
-# touching plugin source under this task.
-# ===========================================================================
-rm -rf "$E2E_PROJECT_DIR/build/reports/gatling"
-
-# ===========================================================================
 # Step 6: run gatlingRun. EXPECT NON-ZERO EXIT -- ParitySimulation carries
 # one deliberately failing assertion (Search's p50 < 100ms), so Gatling's
 # own assertion check fails the build; that is correct behaviour here, not a

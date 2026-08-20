@@ -55,6 +55,10 @@ class LiveClient(
     // fake-server tests (LiveClientTest, VantrixPluginFunctionalTest) never caught this: both use
     // `com.sun.net.httpserver.HttpServer`, which tolerates the same upgrade headers a real Node
     // server does not. Forcing HTTP_1_1 here removes the upgrade attempt entirely.
+    // Caveat: this also forecloses ALPN-negotiated h2 against a future HTTPS endpoint (ALPN, not
+    // h2c, is how a TLS connection would normally get HTTP/2) -- accepted because the platform's
+    // live endpoints are plain HTTP (Node) today, and h2c is exactly what resets the connection
+    // above. Revisit this pin if/when the live endpoints move behind TLS.
     private val http: HttpClient = HttpClient.newBuilder()
         .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(Duration.ofSeconds(10))
