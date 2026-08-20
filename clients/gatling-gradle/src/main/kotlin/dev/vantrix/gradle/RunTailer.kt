@@ -93,8 +93,13 @@ class RunTailer(
 
     /**
      * Final flush of the currently open run (looping while a full read means more may be behind
-     * it), then closes it. Idempotent -- a second call is a no-op -- and clean when no directory
-     * ever appeared.
+     * it), then closes it -- then does the SAME for every simulation directory that never got a
+     * tick of its own, including one whose directory appears only after `finish()` has already
+     * started (each loop iteration re-discovers via [nextEligibleDir], which rescans
+     * [resultsRoot]). Without this, a multi-simulation run whose last directory appears within one
+     * tick of the task ending would never be opened at all -- not streamed, and absent from
+     * [openFailures] too, so [uploadIfLiveUnavailable]'s fallback could not rescue it either.
+     * Idempotent -- a second call is a no-op -- and clean when no directory ever appeared.
      */
     fun finish() {
         lock.withLock {
@@ -105,6 +110,18 @@ class RunTailer(
                 api.close(state.run)
             }
             current = null
+
+            while (!authFailedPermanently) {
+                val next = nextEligibleDir() ?: break
+                val opened = api.open(UUID.randomUUID().toString())
+                if (opened == null) {
+                    openFailures.add(next)
+                    continue
+                }
+                val state = TailState(next.resolve("simulation.log"), opened)
+                drain(state)
+                api.close(state.run)
+            }
         }
     }
 

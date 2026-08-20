@@ -399,4 +399,61 @@ class RunTailerTest {
         )
         assertTrue(api.calls.any { it is ApiCall.Closed }, "drain completing normally must still close the run")
     }
+
+    // ── Important 4: finish() must not drop a never-opened last simulation ─────────────────
+
+    @Test fun `finish opens, drains and closes a directory that appears only after the last tick`(@TempDir tmp: Path) {
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dirA = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
+
+        tailer.tick() // opens and streams A; no further tick ever runs for B below
+        val runIdA = api.streamCalls().single().runId
+
+        // B appears strictly after the only tick that ran -- under the old finish(), it would
+        // never be discovered at all: not streamed, and not in openFailures() either, so the
+        // uploadIfLiveUnavailable fallback could not rescue it.
+        val dirB = Files.createDirectory(tmp.resolve(realDirName("20260820134199987")))
+        Files.write(dirB.resolve("simulation.log"), "world!!".toByteArray())
+
+        tailer.finish()
+
+        val closeIdxA = api.calls.indexOfFirst { it is ApiCall.Closed && it.runId == runIdA }
+        assertTrue(closeIdxA >= 0, "A must still be closed by finish()")
+
+        val streamForB = api.streamCalls().last()
+        assertNotEquals(runIdA, streamForB.runId, "B must be a distinct run from A")
+        assertEquals(0L, streamForB.offset)
+        assertEquals(7, streamForB.byteCount, "B's full simulation.log content must be streamed")
+
+        val openBIdx = api.calls.indexOfFirst { it is ApiCall.OpenSucceeded && it.runId != runIdA }
+        assertTrue(openBIdx >= 0, "B must have been opened")
+        assertTrue(closeIdxA < openBIdx, "A must close before B opens -- order preserved for the finish()-driven path too")
+
+        val closeIdxB = api.calls.indexOfFirst { it is ApiCall.Closed && it.runId == streamForB.runId }
+        assertTrue(closeIdxB >= 0, "B must also be closed once finish() drains it")
+        assertTrue(tailer.openFailures().isEmpty())
+    }
+
+    @Test fun `a directory whose open fails during finish lands in openFailures, and finish still completes cleanly`(@TempDir tmp: Path) {
+        val api = FakeApi()
+        val tailer = RunTailer(api, configFor(), tmp)
+
+        val dirA = Files.createDirectory(tmp.resolve(realDirName("20260820134041213")))
+        Files.write(dirA.resolve("simulation.log"), "hello".toByteArray())
+        tailer.tick()
+        val runIdA = api.streamCalls().single().runId
+
+        val dirB = Files.createDirectory(tmp.resolve(realDirName("20260820134199987")))
+        writeLog(dirB, 5)
+        api.failNextOpen() // B's open(), attempted during finish(), fails
+
+        tailer.finish()
+
+        assertTrue(api.calls.any { it is ApiCall.Closed && it.runId == runIdA }, "A must still be closed")
+        assertEquals(listOf(dirB), tailer.openFailures())
+        assertTrue(api.streamCalls().none { it.runId != runIdA }, "no stream calls should ever happen for a directory whose open failed")
+    }
 }
