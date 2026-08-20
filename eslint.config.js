@@ -46,7 +46,25 @@ const FORBIDDEN_ECHARTS_PATHS = [{ name: 'echarts', message: ECHARTS_MESSAGE }];
 const FORBIDDEN_ECHARTS_PATTERNS = [{ group: ['echarts/*'], message: ECHARTS_MESSAGE }];
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', 'spikes/**', 'fixtures/**'] },
+  // `.claude/worktrees/**` holds ENTIRE OTHER CHECKOUTS of this repository, not
+  // source. The harness creates a worktree there per background task, so while
+  // one exists a repo-wide `pnpm lint` walks into it and reports that
+  // checkout's files as if they were this one's — and the root `fixtures/**`
+  // entry above does not cover it, because that pattern is anchored at the
+  // config root and a nested copy lives at `.claude/worktrees/*/fixtures/**`.
+  // Observed as `pnpm lint` failing on a require() in a nested
+  // fixtures/gatling-*/simulation/target-server.js belonging to a different
+  // branch entirely. Git already ignores the directory; eslint has to be told
+  // separately.
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      'spikes/**',
+      'fixtures/**',
+      '.claude/worktrees/**',
+    ],
+  },
   ...tseslint.configs.recommended,
   {
     files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],
