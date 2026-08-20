@@ -9,15 +9,29 @@ import RunDetail from '../src/routes/RunDetail.js';
  * The polling cap's WIRING — the `useEffect` in `RunDetail` that flips
  * `capReached` from false to true — driven through a real mount.
  *
- * This is the hole `apps/web/test/run-detail.test.ts` documents at length and
- * could not close. That file renders `Processing` directly with `capReached`
- * passed in as a prop, so it covers the cap's COPY but never the thing that
- * sets the flag; `apps/web/test/run.test.ts` covers `pollIntervalFor` as a
- * pure function, so it covers the cap's DECISION but never the thing that
- * feeds it. Between them, deleting the `useEffect` left every suite green
- * while the page polled a stuck run until the tab closed.
+ * Historically this was the hole `apps/web/test/run-detail.test.ts` documented
+ * at length and could not close on its own; that file rendered `Processing`
+ * directly with `capReached` passed in as a prop, covering the cap's COPY but
+ * never the thing that sets the flag. `Processing` (and that whole file) is
+ * gone now (Task 7): `RunDetail` renders `RunShell` for every state, and BOTH
+ * halves of the cap's own copy — "checks again every few seconds…" before it,
+ * "stopped checking automatically…" plus the retry button after — live in
+ * `LiveStatusStrip` (fix round 1), which `RunShell` mounts unconditionally on
+ * which tab is open. This file can see both without nesting any tab route at
+ * all: `LiveStatusStrip` sits beside the `<Outlet/>`, not inside it.
  *
- * What makes it closeable now is the jsdom environment routed to this file by
+ * ONE COMPONENT OWNS BOTH SENTENCES DELIBERATELY (fix round 1). A first
+ * attempt put the "checks again" half in `WaitingPanel` instead, mounted by a
+ * tab under the `<Outlet/>` — which cannot see `capReached` (no tab's outlet
+ * context carries it) and so kept promising "there is nothing to do" directly
+ * under `LiveStatusStrip`'s OWN capped block once the cap had, in fact, fired.
+ * Putting both in `LiveStatusStrip` makes them structurally exclusive, which
+ * is exactly what this file's first case pins across the whole transition.
+ *
+ * `apps/web/test/run.test.ts` covers `pollIntervalFor` as a pure function, so
+ * it covers the cap's DECISION but never the thing that feeds it.
+ *
+ * What makes THIS closeable is the jsdom environment routed to this file by
  * `environmentMatchGlobs` in vitest.config.ts, plus fake timers: the two real
  * minutes the cap needs cost nothing when the clock is ours.
  */
@@ -116,7 +130,8 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     expect(fetchRunMock.mock.calls.length).toBeGreaterThan(0);
     expect(fetchRunMock).toHaveBeenCalledWith(RUN_ID);
 
-    // Before the cap the page is still asking on its own, and says so.
+    // Before the cap the page is still asking on its own, and says so —
+    // `LiveStatusStrip`'s own copy now (fix round 1), not `Processing`'s.
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
     expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
 
@@ -129,7 +144,11 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     await advance(POLL_CAP_MS + 1);
 
     // The cap's UI, reached through the component's own timer rather than
-    // handed in as a prop.
+    // handed in as a prop. The promise from the OTHER branch must be GONE,
+    // not merely joined — `LiveStatusStrip` makes the two mutually exclusive
+    // by construction (its own docstring), pinned here across a REAL
+    // transition rather than only in two separate `LiveStatusStrip.test.tsx`
+    // cases.
     expect(screen.getByText(/stopped checking automatically/i)).not.toBeNull();
     expect(screen.getByRole('button', { name: /check again/i })).not.toBeNull();
     expect(screen.queryByText(/checks again every few seconds/i)).toBeNull();
@@ -177,6 +196,17 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
     expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
     expect(fetchRunMock).toHaveBeenCalledWith(second);
+
+    // AND it is genuinely uncapped, not merely mid-transition: polling for
+    // the second run keeps going rather than being silently capped already.
+    // Restored (fix round 2) after being dropped without a stated reason in
+    // fix round 1 -- this and the UI-text check above prove different
+    // things: the text proves the FLAG reset, this proves the TIMER is
+    // actually still running rather than the flag having reset while
+    // something else silently stopped polling.
+    const afterNavigate = fetchRunMock.mock.calls.length;
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchRunMock.mock.calls.length).toBeGreaterThan(afterNavigate);
   });
 
   /**

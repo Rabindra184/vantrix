@@ -696,6 +696,52 @@ export async function seedCompleteRunWithoutMetrics(orgId: string): Promise<stri
 }
 
 /**
+ * A run that is genuinely LIVE — created directly via Prisma with
+ * `status: 'running'`, never posted through HTTP and never handed to a real
+ * ingest (there is no worker process anywhere in this stack; see
+ * `ingestAndProcess`'s own comment), so there is nothing to wait or sleep on:
+ * no producer will ever advance this row on its own.
+ *
+ * Neither seedPendingRun nor seedCompleteRunWithoutMetrics above can stand in
+ * for this, and 'running' is not "pending, but further along". `RunShell`
+ * groups pending/parsing/running under one `!terminal` branch for its
+ * fetches, but `RunDetail` opens a live socket ONLY for `running`
+ * (`run.data.run.status === 'running'`, the same check `LiveSummary`'s
+ * `frozen` prop reads the negation of), and `RunHeader`'s status badge has to
+ * read the word "running", which is a glyph and a colour `pending`'s row
+ * cannot produce. A spec asserting this run's IDENTITY — the header shows a
+ * breadcrumb and a `running` badge, never a verdict — would pass against a
+ * `pending` fixture for the wrong reason: both are non-terminal, but only one
+ * of them is what this sub-project actually built.
+ *
+ * `toolStartedAt` and `durationMs` are left unset — Prisma defaults both to
+ * null, and that is the honest value: schema.prisma documents both as
+ * populated by the WORKER once parsing completes, which a run that is still
+ * streaming has not reached. No RunStat, RunSeries or RunError rows either,
+ * for the identical reason: a running run has produced none of them, and
+ * every tab gates its metric fetches on `terminal` (`useRunTerminal`) so as
+ * never to ask for rows that do not exist yet.
+ */
+export async function seedLiveRun(orgId: string): Promise<string> {
+  const projectId = await projectFor(orgId);
+  const run = await prisma.run.create({
+    data: {
+      orgId,
+      projectId,
+      status: 'running',
+      tool: 'gatling',
+      bundleKey: `e2e-fixture/${randomUUID()}`,
+      bundleSha256: '0'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt: new Date(),
+      startedOn: new Date(),
+      engineOptions: {},
+    },
+  });
+  return run.id;
+}
+
+/**
  * Run rows with caller-chosen timestamps, created directly via Prisma —
  * never posted through HTTP and never handed to PipelineService, so there is
  * nothing to wait on, exactly like seedPendingRun above.

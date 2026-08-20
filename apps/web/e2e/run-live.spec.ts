@@ -2,18 +2,22 @@ import { expect, test } from '@playwright/test';
 import { Redis } from 'ioredis';
 import { openLiveRun, seedAdmin } from './fixtures.js';
 import { signIn } from './helpers.js';
-import { runPath } from '../src/routes/paths.js';
+import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
  * A RUNNING run's page — design part 2b §4.1, §4.3, §4.4, and FR-LIVE-4.
  *
- * WHAT ONLY EXISTS HERE. `apps/web/test/RunDetail.live.test.tsx` already
- * proves the branch decision and the `Live` component's own rendering
- * against a mocked `useLiveRun`/a QueryClient pre-populated by hand. What
- * that cannot reach is the REAL SOCKET: a real `POST /v1/runs/live` opening
- * a run, a real Redis-backed gateway seeding a real connection, and a real
- * browser drawing real ECharts SVGs from what it received — the whole path
- * FR-LIVE-4 is actually about.
+ * WHAT ONLY EXISTS HERE. `RunDetail.live.test.tsx` already proves the branch
+ * decision — what `identity`/`status`/`verdict`/`windowable`/`live`
+ * `RunDetail` hands `RunShell`, and the `running && !compact` gate on the
+ * socket itself; `RunShell.test.tsx` and the three per-tab `*.live.test.tsx`
+ * files (`RunOverviewTab`, `RunChartsTab`, `RunErrorsTab`) prove the live
+ * branches' own rendering — all of it against a mocked `useLiveRun`/a
+ * QueryClient pre-populated by hand. What none of those can reach is the
+ * REAL SOCKET: a real `POST /v1/runs/live` opening a run, a real
+ * Redis-backed gateway seeding a real connection, and a real browser drawing
+ * real ECharts SVGs from what it received — the whole path FR-LIVE-4 is
+ * actually about.
  *
  * `openLiveRun` (fixtures.ts) is the one seed in this file that creates a
  * ROW — everything the page renders beyond that comes from Redis, written
@@ -117,7 +121,27 @@ async function seedSnapshot(redis: Redis, runId: string, delta: ReturnType<typeo
 }
 
 test.describe('a running run draws its live dashboard', () => {
-  test('the live charts draw, the tiles read the delta, and the four withheld sections say what they are waiting for', async ({
+  /**
+   * RE-ENABLED (Task 11). This test used to prove the deleted `Live`
+   * component end to end on one URL: its `<h1>` ("Run in progress"),
+   * `LiveSummary`'s tiles, the five live charts, the live-fed errors table,
+   * and four withheld-section notices. `Live` no longer exists — `RunShell`
+   * renders for a running run instead, and its content is now split across
+   * three tabs (Overview, Charts, Errors), each wired in its own task
+   * (8, 9, 10). This rewrite keeps the ORIGINAL claims — same delta fixture,
+   * same tile values, same chart ids, same withheld-notice count — but
+   * points each one at the tab that now owns it, navigating between them
+   * with `page.goto` the same way `run-charts.spec.ts` does.
+   *
+   * The `<h1>` assertion is NOT carried forward: "Run in progress" is gone
+   * for good, not relocated — the header now carries the run's identity, the
+   * same as any other run state, and that is already proven by
+   * `run-detail.spec.ts`'s thin-identity case. Asserting a specific heading
+   * text here would duplicate that coverage for no claim this test is about.
+   *
+   * `openLiveRun`/Redis seeding is unchanged from the original test.
+   */
+  test('the live charts draw, the tiles read the delta, and the withheld sections say what they are waiting for', async ({
     page,
   }) => {
     const admin = await seedAdmin();
@@ -128,9 +152,11 @@ test.describe('a running run draws its live dashboard', () => {
     try {
       await seedSnapshot(redis, runId, delta);
       await signIn(page, admin);
+
+      /* ---- Overview: the streaming sentence, the headline tiles, one withheld notice ---- */
       await page.goto(runPath(runId));
 
-      await expect(page.getByRole('heading', { level: 1, name: 'Run in progress', exact: true })).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
       // Not the finished-run screen, and not the bare "please wait" spinner
       // this task replaces.
       await expect(page.getByText(/updating as the run streams/i)).toBeVisible();
@@ -144,44 +170,43 @@ test.describe('a running run draws its live dashboard', () => {
       await expect(page.getByTestId('live-stat-peak-users')).toContainText(String(delta.summary.maxUsers));
       await expect(page.getByTestId('live-stat-p95')).toContainText(`${delta.summary.percentiles.p95} ms`);
 
-      /* ---- the live charts really drew: exactly one svg per figure ----
-       *
-       * The same invariant nine other specs already rest on (CLAUDE.md): a
-       * decorative icon or a second drawing inside a chart's <figure> would
-       * break this count as much as a chart that failed to draw would. */
+      // ONE withheld notice here — the statistics table, which needs
+      // per-endpoint rows the live wire excludes on every path.
+      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(1);
+      await expect(page.getByText('Statistics', { exact: true })).toBeVisible();
+
+      /* ---- Charts: the live charts really drew, two withheld notices ---- */
+      await page.goto(runChartsPath(runId));
+
+      // Exactly one svg per figure — the same invariant nine other specs
+      // already rest on (CLAUDE.md): a decorative icon or a second drawing
+      // inside a chart's <figure> would break this count as much as a chart
+      // that failed to draw would.
       for (const id of ['concurrent-users', 'user-start-rate', 'percentiles', 'requests-per-second', 'responses-per-second']) {
         await expect(page.getByTestId(`chart-${id}`).locator('svg')).toHaveCount(1);
       }
 
-      /* ---- the errors table, live-fed from the SAME delta ---- */
+      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(2);
+      await expect(page.getByText('Response time distribution', { exact: true })).toBeVisible();
+      await expect(page.getByText('Response time percentiles distribution', { exact: true })).toBeVisible();
+      // Never here — its real chart is on the Errors tab.
+      await expect(page.getByText('Errors per second', { exact: true })).toHaveCount(0);
+
+      /* ---- Errors: the live-fed table, one withheld notice ---- */
+      await page.goto(runErrorsPath(runId));
+
       const errorsTable = page.getByRole('table', { name: /errors/i });
       await expect(errorsTable).toBeVisible();
       for (const row of delta.errors.rows) {
         await expect(page.getByTestId('error-row').filter({ hasText: row.message })).toBeVisible();
       }
 
-      /* ---- exactly four withheld sections, saying what they wait for ----
-       * Task 9 C2 added the errors-over-time chart's: it is fed by a
-       * separate endpoint (errorSeriesQuery) the live wire never carries,
-       * so it joined the statistics table, the distribution chart and the
-       * percentile-distribution chart as a STATED gap rather than a section
-       * that simply never appeared. */
-      const withheld = page.getByTestId('live-notice-withheld');
-      await expect(withheld).toHaveCount(4);
-      await expect(withheld).toContainText([
-        /available when the run finishes/i,
-        /available when the run finishes/i,
-        /available when the run finishes/i,
-        /available when the run finishes/i,
-      ]);
-      // Named, not a generic apology — the reader can tell the four apart.
-      await expect(page.getByText('Statistics', { exact: true })).toBeVisible();
-      await expect(page.getByText('Response time distribution', { exact: true })).toBeVisible();
-      await expect(page.getByText('Response time percentiles distribution', { exact: true })).toBeVisible();
+      await expect(page.getByTestId('live-notice-withheld')).toHaveCount(1);
       await expect(page.getByText('Errors per second', { exact: true })).toBeVisible();
-      // No progress indicator anywhere on the withheld sections — a spinner
-      // claims something is arriving, and nothing is, on any path, while
-      // this run streams.
+
+      // No progress indicator anywhere on the withheld sections, on any of
+      // the three tabs above — a spinner claims something is arriving, and
+      // nothing is, on any path, while this run streams.
       await expect(page.getByRole('progressbar')).toHaveCount(0);
       // This fixture's `sla.breaching` is empty — nothing is breaching, so
       // the banner must draw nothing at all, not an empty shell.
@@ -251,6 +276,18 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
       // specs already rest on (an <svg> inside one corrupts a drawn-chart
       // count), and this component carries no <svg> at all regardless.
       await expect(banner.locator('svg')).toHaveCount(0);
+
+      // ON EVERY TAB, not just the one the reader happened to land on. This
+      // banner used to live inside `Live`, the standalone live page that the
+      // five-tab work deleted; it now renders in `RunShell`, above the
+      // `<Outlet/>`, so a breach follows the reader across the tab strip.
+      // Charts is the tab that proves it — the furthest thing from Overview,
+      // and the one a reader watching a run in progress is most likely to
+      // sit on. Pushing the banner back down into a single tab would leave
+      // `SlaBanner.test.tsx` entirely green.
+      await page.goto(runChartsPath(runId));
+      await expect(page.getByTestId('sla-banner')).toBeVisible();
+      await expect(page.getByTestId('sla-banner')).toContainText('p95');
     } finally {
       await redis.del(`live:${runId}:snapshot`, `live:${runId}:deltas`);
       await redis.quit();

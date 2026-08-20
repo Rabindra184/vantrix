@@ -53,11 +53,113 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **106 files / 1179 tests**, it
+`nvm use` first, and if a run reports fewer than **112 files / 1232 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on live SLA signals'
-whole-branch review fixes, which added no unit FILE and 9 unit cases: 6 to
+silently-skipped run looks like a pass. Last measured on the two residual
+fixes left before the five-tab live page branch merges, which added no unit
+FILE and 2 unit cases: one each to `RunTelemetry.test.tsx` and
+`RunCompare.test.tsx`, both pinning the SAME shape of gap. Every hook in
+each component already sits above its own `!terminal` early return, correct
+today — but nothing PINNED that shape, and this branch has already shipped
+that exact class of bug twice, once in `RunTelemetry.tsx` itself. Each new
+case mounts the component RUNNING, then re-renders the SAME instance
+TERMINAL, the identical shape `RunTrends.live.test.tsx`'s own "survives a
+running run finishing while the reader is on this tab" already used for
+that tab; mounting each state SEPARATELY — what every other case in both
+files does — cannot catch this, because the defect
+("Rendered more hooks than during the previous render.") is in the
+TRANSITION, not in either state alone. Verified red: moving `!terminal`
+above one hook in each file (the `useState`/`useQuery` block that follows)
+turned the new case red with that exact error, and reverting made it green
+again. `RunTelemetry`'s case also re-proves CRITICAL 1 AT the transition
+rather than only at either endpoint — `enabled: terminal` means
+`/telemetry` never fires while running, so the flip has to trigger a FRESH
+fetch rather than surface a cached `available: false`, and the case asserts
+a `/telemetry` request lands only after the flip. The other half of this
+residual fix touched no test: two comments — `LiveStatusStrip.tsx`'s own
+docstring and `RunShell.tsx`'s echo of it — still claimed the strip "now
+always has something to say about polling, capped or not," false in
+exactly the state `streamed` was added for (a `running` run with no
+evidence yet renders NOTHING there, deliberately, on a compact viewport and
+on a desktop's first paint); both now say so instead. From a floor of
+112 / 1230. Its integration floor stays 111 files / 1297 tests and its e2e
+stays 90 — neither runs a `.tsx` file, and this fix touched no spec. Before
+that, the five-tab live page branch's own final whole-branch review fix
+wave, which fixed six
+findings in one pass before merge: `RunTelemetry` was the one tab whose
+query was never gated on `terminal` — `telemetryQuery` carries `staleTime:
+Infinity` (`api/metrics.ts`), so a live run's honest `available: false` got
+fetched, cached FOREVER, and silently relabelled as "no load generator
+reported" the moment the run went terminal, with nothing ever refetching it;
+`LiveStatusStrip` claimed "Reconnecting" with no evidence a socket had ever
+delivered anything, true on every phone (§22.6 disables the socket below
+768px) and on a desktop's first paint; `RunShell` re-derived `terminal` from
+a `status` allowlist instead of receiving it as a prop, the exact
+`statusFor` trap this file documents elsewhere; a stale doc comment in
+`api/metrics.ts` still claimed charts could only mount under a `ready` run;
+`RunCompare` — a sixth `<Outlet/>` child the five-tab audit missed — fired
+`/trends` with no `terminal` gate at all; and a widened-202 test consumer in
+`apps/api/test/telemetry.integration.test.ts` would have silently computed
+against the Unix epoch (`new Date(null)`) rather than failing loudly. One
+new file, `apps/web/test/RunCompare.test.tsx` (5: the withheld wording
+across pending/parsing/running, and that `/trends` fires only once the run
+is terminal), plus 2 cases each to `LiveStatusStrip.test.tsx` (a
+disconnected, never-streamed run says nothing at all, not "Reconnecting" —
+the exact prop combination a compact viewport produces) and
+`RunShell.test.tsx` (the shell trusts the `terminal` PROP over `status` in
+both directions, proving neither `complete` nor `running` predicts it any
+more), and 1 case each to `RunTelemetry.test.tsx`, `RunOverviewTab.live.test.tsx`,
+`RunChartsTab.live.test.tsx` and `RunErrorsTab.live.test.tsx` — the missing
+per-tab fetch spy the review itself called out (before this, the rule was
+pinned only in `RunShell.test.tsx` and `RunTrends.live.test.tsx`, and
+`RunTelemetry` was exactly the tab no spy was watching) — from a floor of
+111 / 1217. Its integration floor stays 110 files / 1298 tests: the one new
+file is a `.tsx` component test integration never runs, and the one `.ts`
+file this wave touched (`telemetry.integration.test.ts`) gained a defensive
+throw in its own setup, not a new case. Its e2e stays 92, unchanged. Before
+that, the five-tab live page sub-project itself, which made a run page
+render its header and five tabs for EVERY run state rather than only a
+terminal one — deleting three standalone
+screens (`Processing`, `Live`, `LiveCapped`) and redistributing their
+content into `RunShell`, `WaitingPanel`, and per-tab live branches.
+`apps/web/test/run-detail.test.ts` is GONE: its four cases pinned the
+polling-cap UI of the deleted `Processing` component; three are now covered
+by `LiveStatusStrip.test.tsx`'s own capped-block cases, and the fourth —
+that the cap's two sentences never coexist — became a real assertion there
+("the capped block REPLACES the finalizing notice, never joins it").
+`RunDetail.live.test.tsx` shrank from 19 cases to 9 the same way, not by
+loss: most of what it pinned (a distinct `<h1>`, a standalone "still
+processing" screen) no longer exists to assert on, and the file's own
+docstring accounts for every remaining old case as moved, already covered
+elsewhere, or left as an `it.todo` naming the task that will re-cover it.
+Six new files carry what moved plus what is genuinely new:
+`WaitingPanel.test.tsx` (4, the pending/parsing distinction, and that it
+owns neither the page's `<h1>` nor its back link), `LiveStatusStrip.test.tsx`
+(10, the strip every tab now mounts unconditionally —
+streaming/reconnecting/frozen phrasing, the partial-seed notice ALONGSIDE
+the finalizing one, and the capped block REPLACING either streaming
+sentence rather than joining it), `RunOverviewTab.live.test.tsx` (5, the
+live tiles, the withheld statistics table stated rather than omitted, and
+`WaitingPanel` for a pending run with no delta yet),
+`RunChartsTab.live.test.tsx` (3, the five live figures with the two
+withheld ones named, gated behind `DesktopOnly`),
+`RunErrorsTab.live.test.tsx` (2, the errors table kept live while its own
+chart says it is not), and `RunTrends.live.test.tsx` (6, an `it.each` gate
+across pending/parsing/running plus surviving a running run finishing
+mid-read). Plus 13 cases to `RunShell.test.tsx` (mounting the strip above
+the outlet, gating the time brush and the shared-metric fetch behind
+liveness, and threading live state through the outlet context), 3 to
+`RunHeader.test.tsx` for rendering off bare identity now that the header no
+longer needs a whole run object, 2 to `RunTelemetry.test.tsx` for a
+non-terminal run, and 4 to `packages/contracts/test/live.test.ts` for the
+202 body's own identity fields — from a floor of 106 / 1179. Its
+integration floor is 110 files / 1298 tests — one FEWER file than the unit
+floor's rise would suggest, because `run-detail.test.ts` was the only
+deleted file integration also ran; every new file above is a `.tsx`
+component test integration never runs — and its e2e is 92. Before that, live
+SLA signals' whole-branch review fixes, which added no unit FILE and 9 unit
+cases: 6 to
 `apps/web/test/SlaBanner.test.tsx` (the denominator naming what it counts, the
 unchecked-rule count in both plurals and its absence at zero, and the two
 rules-could-not-be-loaded cases — the one state where that banner renders with

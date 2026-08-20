@@ -1,6 +1,9 @@
 import { useCallback, useMemo } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { useQuery, type UseQueryOptions, type UseQueryResult } from '@tanstack/react-query';
 import type { Window } from '@perfportal/contracts';
+import type { LiveRunState } from '../api/live';
+import { fetchRun, runQueryKey, type RunDetail } from '../api/run';
 import { parseWindow, serialiseWindow } from './window';
 
 /**
@@ -74,31 +77,100 @@ export interface RunWindowContext {
    * left over from before it finished must never override it.
    */
   readonly liveDurationMs: number | null;
+  /**
+   * The live socket's state, or `null` for a run that is not streaming.
+   *
+   * ON THE CONTEXT RATHER THAN AS A PROP because the tabs are `<Outlet/>`
+   * children: they read `runId` from `useParams` and have no prop channel from
+   * the shell at all. This is the same argument `window` and `durationMs`
+   * already make one field up — the shell is where the run's state lives, and
+   * a tab that opened its own socket would be a second consumer of one run's
+   * stream.
+   */
+  readonly live: LiveRunState | null;
 }
 
 /** The window the shell parsed. Every tab reads it; none re-derives it. */
 export const useWindowFromShell = (): Window | null =>
   useOutletContext<RunWindowContext>().window;
 
+/** The live socket's state, as `RunShell` observed it. Every tab reads it
+ *  from here; none opens a second socket for the run it is already under. */
+export const useLiveFromShell = (): LiveRunState | null =>
+  useOutletContext<RunWindowContext>().live;
+
+/**
+ * ONE HOOK FOR THE `run` READ EVERY TAB (AND `RunDetail` ITSELF) NEEDS.
+ *
+ * Before this, `RunOverviewTab`, `RunChartsTab` and `RunErrorsTab` each wrote
+ * out the identical `useQuery({ queryKey: runQueryKey(runId ?? ''), queryFn:
+ * () => fetchRun(runId!), enabled: runId !== undefined })` by hand, and
+ * `RunDetail` itself carried a fourth copy — with its own `refetchInterval`
+ * on top, which is why that stays an OPTION here rather than being folded
+ * away entirely. Four identical reads of one run inside one file were about
+ * to become six once `RunTelemetry` and `RunTrends` learned to ask the same
+ * question (Task 11); this is the one place that question is asked now.
+ *
+ * PAINTS FROM THE SAME WARM CACHE ENTRY. `runQueryKey` never varies per tab —
+ * one run, one key — so whichever caller mounts first seeds the entry every
+ * later one reads synchronously on its own first render, exactly as each
+ * hand-written copy already did.
+ *
+ * `terminal` is the one gate every metric query on every tab needs:
+ * `useLiveRun`'s `applyDelta` already writes the shared metric cache keys
+ * directly while a run streams, and `apiFetch` has no 202 branch — so firing
+ * a metric query against a non-terminal run's rows, which do not exist yet,
+ * draws an error panel where `WaitingPanel` (or a live branch) belongs
+ * instead.
+ *
+ * NOT ALSO A `status` FIELD, deliberately. A caller that needs the run's own
+ * `RunProcessing['status']` (`WaitingPanel`'s prop, or `LiveSummary`'s
+ * `frozen`) reads it off `detail.data.run.status` after its own
+ * `detail.data.state === 'processing'` check — the same discriminated-union
+ * narrowing every one of those callers already needs for its OWN fields
+ * (`run.assertions`, `run.toolAssertions`, …), so a second, separately
+ * -computed `status` here would either duplicate that narrowing or need an
+ * unsafe assertion to use.
+ */
+export function useRunTerminal(
+  runId: string | undefined,
+  options: { readonly refetchInterval?: UseQueryOptions<RunDetail>['refetchInterval'] } = {},
+): {
+  readonly detail: UseQueryResult<RunDetail>;
+  readonly terminal: boolean;
+} {
+  const detail = useQuery({
+    queryKey: runQueryKey(runId ?? ''),
+    queryFn: () => fetchRun(runId!),
+    enabled: runId !== undefined,
+    ...(options.refetchInterval === undefined ? {} : { refetchInterval: options.refetchInterval }),
+  });
+  return { detail, terminal: detail.data?.state === 'ready' };
+}
+
 /**
  * `[0, durationMs]` — the domain a run without a narrowed window shares while
  * its span is still growing (or has just finished growing), factored out of
- * `useTimeDomainFromShell` below so it can be called from a SECOND site that
- * cannot reach that hook at all (TASK 9 C4).
+ * `useTimeDomainFromShell` below into its own named function rather than
+ * inlined at that hook's one call to it.
  *
- * `Live` in `RunDetail.tsx` computes this exact tuple directly rather than
- * through `useTimeDomainFromShell`, because that hook reads `RunWindowContext`
- * off an `<Outlet/>` — and a still-processing run renders no `RunShell`, so
- * there is no `<Outlet/>` for `Live` to be inside of at all (see that
- * component's own docstring). The two sites cannot be UNIFIED into one call,
- * since one needs the shell's outlet context and the other structurally
- * cannot have it — but the ARITHMETIC both apply once they have a span is the
- * same formula, and leaving it written out twice would let the two silently
- * diverge with nothing to notice. Routing both through this one function is
- * what actually closes that gap: `timeAxis.test.ts`'s "Live and
- * useTimeDomainFromShell agree on the growing-run domain formula" pins it,
- * and `RunDetail.tsx`'s own call site names this function in its comment the
- * same way this one names `RunDetail.tsx`.
+ * `useTimeDomainFromShell` IS THIS FUNCTION'S ONLY PRODUCTION CALLER NOW.
+ * TASK 9 C4 split this out for a SECOND site that could not reach that hook
+ * at all: the standalone `Live` component `RunDetail.tsx` used to render for
+ * a still-processing run computed this exact tuple directly, because it
+ * mounted no `<Outlet/>` — a still-processing run rendered no `RunShell` at
+ * all back then — and so had no `RunWindowContext` to read. `Live` is gone;
+ * `RunShell` now mounts for EVERY run status, processing included, so there
+ * is no longer a code path that needs this arithmetic and cannot reach the
+ * hook.
+ *
+ * The export survives that second call site's deletion anyway:
+ * `timeAxis.test.ts`'s "growingDomainMs and useTimeDomainFromShell agree on
+ * the growing-run domain formula" case imports this function and calls it
+ * directly, rather than hand-writing `[0, durationMs]` a second time as a
+ * literal the hook's own implementation could silently drift from. Inlining
+ * this back into `useTimeDomainFromShell` would leave that test pinning
+ * nothing but its own copy of the arithmetic.
  */
 export function growingDomainMs(durationMs: number): readonly [number, number] {
   return [0, durationMs];

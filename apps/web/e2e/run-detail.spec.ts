@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   seedAdmin,
+  seedLiveRun,
   seedPendingRun,
   seedRunInOtherOrg,
   seedRunWithData,
@@ -10,7 +11,13 @@ import {
   seedRunWithProvenance,
 } from './fixtures.js';
 import { apiJson, signIn } from './helpers.js';
-import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
+import {
+  runChartsPath,
+  runErrorsPath,
+  runPath,
+  runTelemetryPath,
+  runTrendsPath,
+} from '../src/routes/paths.js';
 
 /**
  * The run detail page — the last screen of the parity shell, and the one the
@@ -266,11 +273,20 @@ test('a pending run says so rather than showing zeros', async ({ page }) => {
 
   await expect(page.getByText(/still processing/i)).toBeVisible();
   // "rather than showing zeros" is the actual requirement, and it needs its
-  // own assertions: a 202 carries no duration, no verdict and no assertions,
-  // so a page that rendered the header shell anyway would show `0s`, "no
-  // verdict yet" and an empty assertions table as though they were facts
-  // about the run.
-  await expect(page.getByTestId('run-duration')).toHaveCount(0);
+  // own assertions: a 202 carries no duration and no verdict, so a page that
+  // fabricated either would show `0s` or "no verdict yet" as though they were
+  // facts about the run.
+  //
+  // `run-duration` is no longer ABSENT (fix round 1: `RunShell` renders
+  // `RunHeader` for every status, including `processing` — that is the whole
+  // point of Task 7). The chip itself is unconditional in `RunHeader`
+  // (`formatDuration`'s own `null`/`undefined` branch), so the requirement
+  // this line actually protects is that it reads the "not a measurement"
+  // dash, never a fabricated `0s`.
+  await expect(page.getByTestId('run-duration')).toHaveText('—');
+  // `run-verdict`, unlike duration, stays ABSENT — `RunHeader` omits that
+  // badge entirely rather than rendering one for `undefined` (Task 7's own
+  // `verdict={undefined}` for a non-terminal run).
   await expect(page.getByTestId('run-verdict')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
 });
@@ -427,17 +443,33 @@ test('switching tabs does not remount the shell', async ({ page }) => {
   await expect(heading).toHaveAttribute('data-remount-probe', 'still-here');
 });
 
-test('a processing run shows no tab strip', async ({ page }) => {
+/**
+ * INVERTED (Task 7 fix round 1, CRITICAL 3), deliberately, not deleted. This
+ * used to be named "a processing run shows no tab strip" and asserted
+ * `toHaveCount(0)` on the navigation — the exact opposite of this whole
+ * sub-project's purpose. Before Task 7, `RunDetail` rendered a standalone
+ * `Processing` screen with no `<Outlet/>` in it at all, so `/runs/:id/charts`
+ * repeated that same screen instead of resolving; that WAS "no tab strip",
+ * and it was the bug. `RunShell` mounts for a processing run now, so the
+ * strip is on screen and the tab URLs resolve to something real — this test
+ * proves both halves, not just the strip's presence.
+ */
+test('a processing run shows its tab strip, and the tabs resolve to something real', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedPendingRun(admin.orgId);
   await signIn(page, admin);
   await page.goto(runPath(runId));
 
-  // A tab strip over a run nobody has parsed yet is three doors onto three
-  // empty rooms — the same mistake the Processing branch already refuses to
-  // make with a table of dashes.
-  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   await expect(page.getByText(/still processing/i)).toBeVisible();
+
+  await page.getByRole('link', { name: 'Charts' }).click();
+  await expect(page).toHaveURL(runChartsPath(runId));
+  // Not blank, and not four error panels (CRITICAL 1's own fix, same round):
+  // the Charts tab shows the same `WaitingPanel` Overview does, rather than
+  // firing its metric queries against a run whose rows do not exist yet.
+  await expect(page.getByText(/still processing/i)).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
 });
 
 test('the errors tab counts distinct messages, not failed requests', async ({ page }) => {
@@ -494,4 +526,104 @@ test('the commit chip is named by the whole sha, not the seven visible character
   // observable in a real browser.
   await expect(page.getByTestId('run-commit')).toHaveAccessibleName('Commit: abc1234def5678');
   await expect(page.getByTestId('run-environment')).toHaveAccessibleName('Environment: staging');
+});
+
+/**
+ * The assertion this whole sub-project exists to make true, for the one
+ * status none of the specs above cover. "each tab is its own URL, reachable
+ * directly" above proves this for a TERMINAL run; "a processing run shows its
+ * tab strip" proves the strip renders for `pending`. Neither is `running`,
+ * and `running` is not "pending, but further along": `RunDetail` opens a real
+ * live socket only for it, and it is the one status a reader watches while a
+ * load test is actually in flight — the case a link pasted into an incident
+ * channel has to resolve for.
+ */
+test('each tab of a LIVE run is its own URL, reachable directly', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedLiveRun(admin.orgId);
+  await signIn(page, admin);
+
+  // A hard load of each tab, never a click — the same proof "each tab is its
+  // own URL, reachable directly" makes for a terminal run above, so a link
+  // pasted while the run is still streaming lands on something real too.
+  //
+  // The Errors case tolerates EITHER 'Errors' or 'Errors (0)' here
+  // (`/^Errors( \(0\))?$/`), not the pinned `Errors (0)` a fix round used to
+  // assert in this loop. `LiveGateway`'s `emptyDelta` seeds a fresh socket
+  // to a `running` run with a synthetic zero-activity delta as soon as it
+  // connects, and `RunShell`'s errors query picks that up on every tab once
+  // it lands — but THIS test's claim is URL reachability, not socket timing,
+  // and making one iteration of it depend on a WebSocket round trip landing
+  // inside the default expect timeout would fail it for a reason that has
+  // nothing to do with what it asserts. The exact post-seed shape — "Errors
+  // (0)", with the partial-seed disclosure that is what makes that zero
+  // honest — is pinned once, on its own, below.
+  for (const [path, heading] of [
+    [runPath(runId), 'Overview'],
+    [runChartsPath(runId), 'Charts'],
+    [runTelemetryPath(runId), 'Load generators'],
+    [runErrorsPath(runId), /^Errors( \(0\))?$/],
+    [runTrendsPath(runId), 'Trends'],
+  ] as const) {
+    await page.goto(path);
+    // `exact: true`: `ProjectRail` renders on every authenticated page — one
+    // link per project plus "All runs" — so a page-scoped link query can
+    // resolve against a rail row instead of the tab strip it meant to find.
+    // This org's one project is `seedAdmin`'s own "Checkout" (`projectFor`),
+    // which shares no word with any tab name, but `exact: true` is the belt
+    // as well as the braces and costs nothing to keep on every heading here.
+    // (It has no effect on the Errors case's RegExp — a regex already
+    // defines its own exact match — so it is left on for every entry rather
+    // than special-cased.)
+    await expect(page.getByRole('link', { name: heading, exact: true })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
+  }
+
+  // THE EXACT POST-SEED SHAPE, PINNED ONCE, OUTSIDE THE REACHABILITY LOOP.
+  // By now the socket has had five full page loads to deliver its seed, so
+  // this is not a race — it is the claim the Errors case in the loop above
+  // was deliberately left too loose to make. `Errors (0)` is honest only
+  // DISCLOSED: `live-notice-partial` is `LiveStatusStrip`'s relay of the
+  // gateway's own verdict on this seed ("neither key existed and the seed is
+  // emptyDelta, a full dashboard of zeros" — LiveNotice.tsx's own docstring),
+  // and it renders above the `<Outlet/>` so it is on screen on every tab,
+  // including this one. Asserting the zero without it would let a spec pass
+  // while `/errors` showed a bare, undisclosed "Errors (0)" over a fold
+  // nobody has ticked — indistinguishable from the run genuinely having
+  // zero errors.
+  await expect(page.getByRole('link', { name: 'Errors (0)', exact: true })).toBeVisible();
+  await expect(page.getByTestId('live-notice-partial')).toBeVisible();
+});
+
+test('a live run shows its identity in the header, not a bare id', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedLiveRun(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // No spec anywhere else proves this for a non-terminal run: "shows the run
+  // header" and "the header states the run's identity and its own peak"
+  // above both seed a COMPLETE run, and "a processing run shows its tab
+  // strip" asserts the nav strip and WaitingPanel but never reads the header
+  // at all.
+  const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' });
+  await expect(breadcrumb).toBeVisible();
+  // THE IDENTITY THIS TEST'S NAME PROMISES, ACTUALLY ASSERTED. `seedLiveRun`
+  // leaves `simulation` unset — honestly, since the worker only learns it by
+  // parsing, and this run never will — so `RunHeader`'s `<h1>` falls back to
+  // `Run ${id.slice(0, 8)}` (RunHeader.tsx), which genuinely IS a bare id.
+  // The real, non-bare identity a running run carries is its PROJECT, in the
+  // breadcrumb: `seedAdmin`'s own "Checkout" (`projectFor`). Scoped to the
+  // breadcrumb nav specifically, not page-scoped — `ProjectRail` renders the
+  // same project as a rail row too, but that row's own accessible name folds
+  // in a status badge ("Checkout running"), so it never collides with this
+  // `exact: true` query in practice; scoping removes the need to rely on that.
+  await expect(breadcrumb.getByRole('link', { name: 'Checkout', exact: true })).toBeVisible();
+  await expect(page.getByTestId('run-status')).toContainText(/running/i);
+  // `undefined` verdict, not `null` — `RunDetail` hands `RunShell` `verdict:
+  // undefined` for anything short of `state: 'ready'`, and `RunHeader` OMITS
+  // the badge entirely for `undefined` rather than rendering
+  // `VERDICT['none']`: "no verdict" reads as evaluated-and-nothing-found, a
+  // claim about a run nobody has finished measuring yet.
+  await expect(page.getByTestId('run-verdict')).toHaveCount(0);
 });

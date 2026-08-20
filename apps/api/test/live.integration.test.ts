@@ -754,4 +754,34 @@ describe('live streaming', () => {
       await sub.quit();
     }
   });
+
+  it('answers a running run with 202 carrying its identity but no verdict', async () => {
+    ctx = await createTestApp();
+    const opened = await open(ctx.streamToken, {
+      tool: 'gatling', environment: 'staging', branch: 'main',
+    });
+    const runId = opened.body.runId;
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${runId}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+    expect(res.status).toBe(202);
+
+    // Identity: what the header needs, all of it known at open time.
+    expect(res.body.project).toMatchObject({ slug: expect.any(String), name: expect.any(String) });
+    expect(res.body.tool).toBe('gatling');
+    expect(res.body.environment).toBe('staging');
+    expect(res.body.branch).toBe('main');
+    expect(typeof res.body.startedAt).toBe('string');
+
+    // Measurements: absent, because nothing has measured this run yet.
+    expect(res.body).not.toHaveProperty('verdict');
+    expect(res.body).not.toHaveProperty('assertions');
+    expect(res.body).not.toHaveProperty('windowable');
+
+    // The poll contract is untouched — this is still a 202 with Retry-After.
+    expect(res.headers['retry-after']).toBe('5');
+    expect(res.body.status).toBe('running');
+    expect(res.body.statusUrl).toBe(`/v1/runs/${runId}`);
+  });
 });

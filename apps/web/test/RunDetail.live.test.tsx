@@ -1,30 +1,41 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LiveDelta, SeriesResponse, UsersResponse, ErrorsResponse } from '@perfportal/contracts';
-import { errorsQuery, seriesQuery, usersQuery } from '../src/api/metrics';
-import { fetchRun } from '../src/api/run';
+import type { LiveDelta, RunProcessing, RunResponse } from '@perfportal/contracts';
+import { fetchRun, runQueryKey } from '../src/api/run';
 import { useLiveRun } from '../src/api/live';
 import useIsCompact from '../src/useIsCompact';
-import RunDetail, { Live } from '../src/routes/RunDetail';
+import RunDetail, { RunOverviewTab } from '../src/routes/RunDetail';
 
 /**
- * `RunDetail`'s branch decision for a non-`ready` run (part 2b §4.1, §4.3,
- * §4.4), and the `Live` page it now sometimes renders instead of
- * `Processing`.
+ * `RunDetail`'s own remaining job (Task 7, design part 2b): choosing what
+ * `identity`/`status`/`verdict`/`windowable`/`live` to hand `RunShell`, which
+ * it now renders for EVERY resolved, non-error state — and gating the live
+ * socket on the same `running && !compact` rule it always has.
  *
- * TWO FILES' WORTH OF CONCERN, ONE FILE. The first `describe` below drives
- * `RunDetail` itself, with `fetchRun` and `useLiveRun` both mocked, to prove
- * the BRANCH is chosen correctly — which of `Processing`/`Live`, and with
- * `useLiveRun` called with the RIGHT `enabled` boolean for every combination
- * of status and viewport. The second drives the exported `Live` component
- * directly, with a real `QueryClient` pre-populated the way `useLiveRun`'s
- * own `applyDelta` populates it, to prove what it draws from a real delta —
- * the tile values, the live charts, the three withheld notices, and what
- * §22.6 gates behind `DesktopOnly`.
+ * WHAT USED TO BE HERE. Before Task 7, a processing run rendered a whole
+ * standalone `Processing` or `Live` screen INSTEAD of `RunShell` — no
+ * `<Outlet/>` anywhere in either, which is what made the five tab URLs
+ * resolve to nothing while a run was live. Both components, and the branch
+ * that chose between them, are gone, and most of this file's old cases
+ * asserted on UI (a distinct `<h1>`, a "still processing" screen with no tab
+ * strip at all) that no longer exists to assert on.
+ *
+ * Every one of those old cases is accounted for in Task 7's report: moved
+ * into `LiveStatusStrip.test.tsx` where the behaviour it pinned now lives,
+ * confirmed already covered by an existing case there, or left below as an
+ * `it.todo` naming the task that will re-cover it once the corresponding tab
+ * (Overview/Charts/Errors) wires in `WaitingPanel`/`LiveSummary`/the live
+ * charts. None were silently dropped.
+ *
+ * FIX ROUND 1. `mountRun`'s index child is the REAL `RunOverviewTab`, not a
+ * placeholder — a placeholder could never have caught this tab rendering
+ * BLANK for a processing run, which is exactly what it did until this round
+ * wired `WaitingPanel` into it. Two of the `it.todo`s below are resolved by
+ * that wiring and replaced with real cases; the rest still have no tab to
+ * render against.
  */
 
 vi.mock('../src/api/run.js', async (importOriginal) => ({
@@ -44,26 +55,26 @@ function processingBody(status: 'pending' | 'parsing' | 'running') {
   return { state: 'processing' as const, run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` } };
 }
 
-function deltaFixture(overrides: Partial<LiveDelta> = {}): LiveDelta {
-  return {
-    runId: RUN_ID,
-    seq: 3,
-    summary: {
-      count: 240,
-      okCount: 228,
-      koCount: 12,
-      errorRate: 0.05,
-      percentiles: { p50: 110, p95: 420 },
-      maxUsers: 8,
-      durationMs: 42_000,
-    },
-    responseTime: { widthMs: 1000, replaces: false, buckets: [] },
-    users: { widthMs: 1000, buckets: [] },
-    errors: { rows: [{ message: 'boom', count: 12 }] },
-    sla: { evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] },
-    ...overrides,
-  };
-}
+const RUNNING_IDENTITY: RunProcessing = {
+  id: RUN_ID,
+  status: 'running',
+  statusUrl: `/v1/runs/${RUN_ID}`,
+};
+
+const COMPLETE_RUN: RunResponse = {
+  id: RUN_ID,
+  project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+  status: 'complete',
+  verdict: 'not_evaluated',
+  tool: 'gatling',
+  toolVersion: '3.15.1',
+  simulation: 'example.ParitySimulation',
+  description: null,
+  durationMs: 63161,
+  startedAt: '2026-08-14T10:43:49.546Z',
+  toolStartedAt: '2026-08-07T05:30:02.171Z',
+  assertions: [],
+};
 
 function liveState(
   overrides: Partial<{
@@ -76,17 +87,57 @@ function liveState(
   return { connected: true, lastDelta: null, unauthorized: false, partial: false, ...overrides };
 }
 
-function renderDetail() {
+/**
+ * Mounts `RunDetail` inside a route WITH tab children — the shape that
+ * actually exercises the reachability fix (Task 7's whole point): a tab URL
+ * that resolves to something is only provable if there is a child route for
+ * it to resolve TO. The index child is the REAL `RunOverviewTab` (fix round
+ * 1, IMPORTANT 4) — a placeholder div here could never catch this tab
+ * rendering blank for a processing run, which is exactly the regression this
+ * fix round closed by wiring `WaitingPanel` into it. `RunOverviewTab`'s own
+ * `run` query resolves from the SAME cache entry seeded below, so it does not
+ * need `fetchRun` mocked any differently than `RunDetail`'s own.
+ *
+ * The query cache is SEEDED with `body` before the first render, rather than
+ * mocking `fetchRun` and awaiting the fetch — `useQuery` reads pre-populated
+ * cache data synchronously on first paint, so the assertions in the three new
+ * cases below need no `await` at all, matching how they read in Task 7's
+ * brief. `fetchRunMock` is still set (to the same body) so the background
+ * refetch every un-`staleTime`'d query fires on mount resolves to something
+ * consistent rather than to a stale mock from an earlier test.
+ */
+function mountRun(body: { state: 'processing' | 'ready'; run: unknown }) {
+  fetchRunMock.mockResolvedValue(body as never);
+  useLiveRunMock.mockReturnValue(liveState());
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  client.setQueryData(runQueryKey(RUN_ID), body);
+  const utils = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}`]}>
         <Routes>
-          <Route path="/runs/:runId" element={<RunDetail />} />
+          <Route path="/runs/:runId" element={<RunDetail />}>
+            <Route index element={<RunOverviewTab />} />
+          </Route>
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+
+  return {
+    ...utils,
+    /**
+     * Re-seeds the SAME client's cache with a new body and flushes the
+     * resulting re-render — `runQueryKey` never changes (one run, one page),
+     * so this is exactly what a poll or a live-status transition does in the
+     * running app, just driven directly instead of through a fake timer.
+     */
+    async rerenderAs(nextBody: { state: 'processing' | 'ready'; run: unknown }) {
+      fetchRunMock.mockResolvedValue(nextBody as never);
+      await act(async () => {
+        client.setQueryData(runQueryKey(RUN_ID), nextBody);
+      });
+    },
+  };
 }
 
 afterEach(() => {
@@ -95,61 +146,54 @@ afterEach(() => {
   useLiveRunMock.mockReset();
   useIsCompactMock.mockReset();
   useIsCompactMock.mockReturnValue(false);
+  vi.unstubAllGlobals();
 });
 
-describe('RunDetail — choosing Processing vs. the live page', () => {
-  it('renders the live page once a delta has arrived for a running run', async () => {
-    fetchRunMock.mockResolvedValue(processingBody('running'));
-    useLiveRunMock.mockReturnValue(liveState({ lastDelta: deltaFixture() }));
-
-    renderDetail();
-
-    expect(await screen.findByRole('heading', { level: 1, name: 'Run in progress' })).toBeInTheDocument();
-    expect(screen.getByText(/updating as the run streams/i)).toBeInTheDocument();
-    expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
-    // Four withheld sections (Task 9 C2 added the errors-over-time chart's),
-    // and only four.
-    expect(screen.getAllByTestId('live-notice-withheld')).toHaveLength(4);
+describe('RunDetail — one shell, for every state', () => {
+  it('renders the tab strip for a run that is only pending', () => {
+    // Before Task 7 this rendered the standalone Processing screen and the
+    // tab URLs resolved to nothing at all.
+    mountRun({ state: 'processing', run: { id: RUN_ID, status: 'pending', statusUrl: '/x' } });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    // The tab is not BLANK either — the real `RunOverviewTab` this test
+    // mounts (fix round 1, IMPORTANT 4) shows `WaitingPanel`'s own sentence
+    // rather than nothing.
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
   });
 
-  it('keeps the ordinary Processing screen while running with no delta yet', async () => {
-    fetchRunMock.mockResolvedValue(processingBody('running'));
-    useLiveRunMock.mockReturnValue(liveState({ connected: false, lastDelta: null }));
+  it('keeps the tab strip across running -> parsing -> complete', async () => {
+    // A terminal run's shell fetches `/users` and `/errors` (RunShell's own
+    // `terminal` gate), and `RunOverviewTab`'s own `/stats` once `ready` —
+    // stubbed here so the `ready` transition below doesn't reach for a real
+    // network in jsdom.
+    vi.stubGlobal(
+      'fetch',
+      () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
+    );
 
-    renderDetail();
+    const { rerenderAs } = mountRun({ state: 'processing', run: RUNNING_IDENTITY });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
 
-    expect(await screen.findByText(/still processing/i)).toBeInTheDocument();
-    expect(screen.queryByText(/updating as the run streams/i)).not.toBeInTheDocument();
-    expect(screen.queryByTestId('live-notice-withheld')).not.toBeInTheDocument();
+    await rerenderAs({ state: 'processing', run: { ...RUNNING_IDENTITY, status: 'parsing' } });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
+
+    await rerenderAs({ state: 'ready', run: COMPLETE_RUN });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    // The tab has left `WaitingPanel` behind now that the run is `ready` —
+    // `Assertions`' own empty state renders instead (`COMPLETE_RUN` declares
+    // none), which is proof this is the real content branch, not a stale
+    // waiting screen.
+    expect(screen.queryByText(/still processing/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no sla rules were evaluated/i)).toBeInTheDocument();
   });
 
-  it('keeps the ordinary Processing screen for a run never live this session', async () => {
-    fetchRunMock.mockResolvedValue(processingBody('pending'));
-    useLiveRunMock.mockReturnValue(liveState({ connected: false, lastDelta: null }));
-
-    renderDetail();
-
-    expect(await screen.findByText(/still processing/i)).toBeInTheDocument();
-    expect(screen.queryByTestId('live-notice-withheld')).not.toBeInTheDocument();
-  });
-
-  /**
-   * Design §4.4: the run has stopped streaming (status left `running`) but
-   * the socket already delivered a delta this session, so the dashboard
-   * stays up under a banner rather than reverting to a bare spinner at the
-   * exact moment nothing has gone wrong.
-   */
-  it('freezes the dashboard under a finalizing banner once streaming stops', async () => {
-    fetchRunMock.mockResolvedValue(processingBody('parsing'));
-    useLiveRunMock.mockReturnValue(liveState({ connected: false, lastDelta: deltaFixture() }));
-
-    renderDetail();
-
-    expect(await screen.findByRole('heading', { level: 1, name: 'Run finished' })).toBeInTheDocument();
-    expect(screen.getByTestId('live-notice-finalizing')).toBeInTheDocument();
-    expect(screen.getByTestId('live-notice-finalizing')).toHaveTextContent(/finalizing/i);
-    // The dashboard itself is still there, not blanked.
-    expect(screen.getByTestId('live-stat-total-requests')).toHaveTextContent('240');
+  it('renders the shell even when the 202 carried no identity', () => {
+    // An old API pod mid-deploy. Thin header, real tabs, no crash.
+    mountRun({ state: 'processing', run: { id: RUN_ID, status: 'running', statusUrl: '/x' } });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Run /);
   });
 
   /**
@@ -157,6 +201,10 @@ describe('RunDetail — choosing Processing vs. the live page', () => {
    * !useIsCompact()`. Table-driven so the four combinations this boolean can
    * take are all pinned in one place, rather than trusted to hold by
    * induction from the one or two cases a narrower test would cover.
+   *
+   * KEPT FROM THE OLD FILE, adapted only in what it waits on: this claim is
+   * about the ARGUMENTS `RunDetail` calls `useLiveRun` with, a piece of
+   * wiring Task 7 left completely unchanged, not about which screen renders.
    */
   it.each([
     { status: 'running' as const, compact: false, expected: true },
@@ -168,273 +216,109 @@ describe('RunDetail — choosing Processing vs. the live page', () => {
     compact,
     expected,
   }) => {
-    fetchRunMock.mockResolvedValue(processingBody(status));
     useIsCompactMock.mockReturnValue(compact);
-    useLiveRunMock.mockReturnValue(liveState({ connected: false, lastDelta: null }));
+    mountRun(processingBody(status));
 
-    renderDetail();
-    await screen.findByText(/still processing/i);
+    await screen.findByRole('navigation', { name: 'Run sections' });
 
     expect(useLiveRunMock).toHaveBeenCalledWith(RUN_ID, expected);
+  });
+
+  /**
+   * Fix round 1's Ruling: `WaitingPanel` is wired into `RunOverviewTab` now,
+   * closing two of the `it.todo`s the original Task 7 report left behind —
+   * this and the case below replace them (their names are preserved in a
+   * comment at the old `it.todo` site so the history stays legible).
+   */
+  it('shows WaitingPanel, not a live summary, while running with no delta yet', () => {
+    useLiveRunMock.mockReturnValue(liveState({ lastDelta: null }));
+    mountRun({ state: 'processing', run: RUNNING_IDENTITY });
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
+    // No live tiles either — `LiveSummary` is not wired in yet (Task 8);
+    // asserting its absence here is what stops that wiring landing silently
+    // duplicated, unnoticed, beside `WaitingPanel`.
+    expect(screen.queryByTestId('live-stat-total-requests')).not.toBeInTheDocument();
+  });
+
+  it('shows WaitingPanel for a run never live this session (pending)', () => {
+    mountRun({ state: 'processing', run: { id: RUN_ID, status: 'pending', statusUrl: '/x' } });
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
   });
 });
 
 /* ======================================================================== *
- * `Live`, rendered directly against a real QueryClient
+ * Cases from the pre-Task-7 file, accounted for individually.
+ *
+ * Every one below asserted on `Processing` or `Live`, both deleted. None of
+ * them can be adapted to render the deleted component, so none can be
+ * literally "moved" the way a claim about `LiveStatusStrip` can — a target
+ * that does not exist yet cannot receive a test. Where the CLAIM is already
+ * proven by an existing case elsewhere, that is noted and the case is not
+ * reproduced (a passing duplicate is not extra coverage). Where it is not,
+ * it is left here as `it.todo`, named for the task that will give it a real
+ * home: Task 8 (Overview tab: `WaitingPanel`, `LiveSummary`), Task 9 (Charts
+ * tab: the live charts, the DesktopOnly-gated withheld notices for
+ * distribution/percentile-distribution), or Task 10 (Errors tab: the
+ * live-fed errors table, the errors-per-second withheld notice).
  * ======================================================================== */
 
-const USERS: UsersResponse = {
-  runId: RUN_ID,
-  window: null,
-  scenarios: [
-    { scenario: 'Checkout', buckets: [{ startOffsetMs: 0, started: 3, ended: 1, maxConcurrent: 3 }] },
-  ],
-  total: [{ startOffsetMs: 0, started: 3, ended: 1, maxConcurrent: 3 }],
-};
-
-const SERIES: SeriesResponse = {
-  runId: RUN_ID,
-  scope: 'run',
-  name: '',
-  family: 'response_time',
-  bucketWidthMs: 1000,
-  startedSplitAvailable: true,
-  groupSeriesAvailable: false,
-  window: null,
-  buckets: [
-    {
-      startOffsetMs: 0,
-      startedCount: 5,
-      endedCount: 5,
-      okCount: 4,
-      koCount: 1,
-      startedOkCount: 4,
-      startedKoCount: 1,
-      minMs: 10,
-      maxMs: 500,
-      meanMs: 120,
-      percentiles: { p50: 100 },
-      percentilesOk: { p50: 95 },
-      percentilesKo: { p50: 500 },
-    },
-  ],
-};
-
-const ERRORS: ErrorsResponse = { runId: RUN_ID, errors: [{ message: 'boom', count: 12 }] };
-
-function clientWithLiveCache(): QueryClient {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(usersQuery(RUN_ID).queryKey, USERS);
-  client.setQueryData(seriesQuery(RUN_ID, 'run', '', 'response_time').queryKey, SERIES);
-  client.setQueryData(errorsQuery(RUN_ID).queryKey, ERRORS);
-  return client;
-}
-
-function renderLive(
-  overrides: Partial<{
-    status: 'running' | 'pending' | 'parsing';
-    compact: boolean;
-    capReached: boolean;
-    onRetry: () => void;
-    partial: boolean;
-  }> = {},
-) {
-  const client = clientWithLiveCache();
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <Live
-          status={overrides.status ?? 'running'}
-          runId={RUN_ID}
-          live={liveState({ lastDelta: deltaFixture(), partial: overrides.partial ?? false })}
-          compact={overrides.compact ?? false}
-          capReached={overrides.capReached ?? false}
-          onRetry={overrides.onRetry ?? (() => undefined)}
-        />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-}
-
-describe('Live — the live page itself', () => {
-  afterEach(cleanup);
-
-  it('reads its headline tiles straight off the delta summary, not a StatRow', () => {
-    const delta = deltaFixture();
-    renderLive();
-
-    expect(screen.getByTestId('live-stat-total-requests')).toHaveTextContent(String(delta.summary.count));
-    expect(screen.getByTestId('live-stat-error-rate')).toHaveTextContent(
-      `${(delta.summary.errorRate * 100).toFixed(2)}%`,
-    );
-    expect(screen.getByTestId('live-stat-peak-users')).toHaveTextContent(String(delta.summary.maxUsers));
-    expect(screen.getByTestId('live-stat-p95')).toHaveTextContent(`${delta.summary.percentiles.p95} ms`);
-    // p99 was never configured on this fixture's percentiles — a dash, not a
-    // fabricated zero (the same "null, not zeroed" rule RunStats follows).
-    expect(screen.getByTestId('live-stat-p99')).toHaveTextContent('—');
-  });
-
-  it('draws the live charts from whatever the socket already wrote to the cache', () => {
-    renderLive();
-
-    for (const id of ['concurrent-users', 'user-start-rate', 'percentiles', 'requests-per-second', 'responses-per-second']) {
-      expect(screen.getByTestId(`chart-${id}`)).toBeInTheDocument();
-    }
-  });
-
-  it('shows exactly four withheld sections, and the errors table live-fed beside them', () => {
-    renderLive();
-
-    expect(screen.getAllByTestId('live-notice-withheld')).toHaveLength(4);
-    // Task 9 C2: errors-over-time is withheld (a different endpoint than the
-    // table below, which the errors table itself proves is still live-fed).
-    expect(screen.getByText('Errors per second')).toBeInTheDocument();
-    expect(screen.getByRole('table', { name: /errors/i })).toBeInTheDocument();
-    expect(screen.getByText('boom')).toBeInTheDocument();
-  });
-
-  it('gates the charts and the three withheld notices behind DesktopOnly on a narrow viewport', () => {
-    renderLive({ compact: true });
-
-    // The charts never mounted at all.
-    for (const id of ['concurrent-users', 'percentiles']) {
-      expect(screen.queryByTestId(`chart-${id}`)).not.toBeInTheDocument();
-    }
-    // DesktopOnly's own notice replaces them (two instances: the charts
-    // region and the statistics region each carry their own) -- unchanged by
-    // Task 9 C2, since the new notice joined the SAME "Live charts" region
-    // rather than opening a third.
-    expect(screen.getAllByTestId('desktop-only')).toHaveLength(2);
-    // The errors table is NOT gated — matching RunErrorsTab, which never
-    // gates it either, and §22.6's own "error summary" exemption.
-    expect(screen.getByRole('table', { name: /errors/i })).toBeInTheDocument();
-    // And the tiles are never withheld.
-    expect(screen.getByTestId('live-stat-total-requests')).toBeInTheDocument();
-  });
-
-  it('shows the finalizing banner only once status has left running', () => {
-    const { rerender } = render(
-      <QueryClientProvider client={clientWithLiveCache()}>
-        <MemoryRouter>
-          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
-
-    rerender(
-      <QueryClientProvider client={clientWithLiveCache()}>
-        <MemoryRouter>
-          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    expect(screen.getByTestId('live-notice-finalizing')).toBeInTheDocument();
-  });
-
-  /**
-   * TASK 9 C3. The "Duration So Far" tile used to say "still streaming"
-   * unconditionally -- including directly under `live-notice-finalizing`'s
-   * own banner, which on the same render says streaming has stopped. The
-   * hint now reads `frozen`, the same flag the banner is gated on, so the
-   * two can never disagree about whether this run is still live.
-   */
-  it('drops the "still streaming" hint once the run has frozen', () => {
-    // `StatTile`'s `data-testid` lands on the `<dd>` holding the VALUE only
-    // (its own docstring) -- the hint is a sibling `<p>`, so the tile's own
-    // bordered container (the label's closest `div`) is what a query for the
-    // hint text has to scope to. `screen.getByText('still streaming', ...)`
-    // unscoped would also match the withheld-notice bodies, which use the
-    // same phrase for an unrelated reason.
-    const { rerender } = render(
-      <QueryClientProvider client={clientWithLiveCache()}>
-        <MemoryRouter>
-          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    expect(screen.getByText('Duration So Far').closest('div')).toHaveTextContent(/still streaming/i);
-
-    rerender(
-      <QueryClientProvider client={clientWithLiveCache()}>
-        <MemoryRouter>
-          <Live status="parsing" runId={RUN_ID} live={liveState({ lastDelta: deltaFixture() })} compact={false} capReached={false} onRetry={() => undefined} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    const tile = screen.getByText('Duration So Far').closest('div');
-    expect(tile).not.toHaveTextContent(/still streaming/i);
-    expect(tile).toHaveTextContent(/stopped/i);
-  });
-
-  /**
-   * The gateway computes `partial` three ways — a seed assembled from the
-   * replay stream because the snapshot key was gone, a stream holed past the
-   * snapshot's seq, or neither key present at all — and every one of them
-   * draws a dashboard that looks complete. The last is a full grid of
-   * fabricated zeros, which is the zeroed-tiles claim this codebase forbids,
-   * reached from the other side.
-   */
-  it('says so when the seed it drew from was partial', () => {
-    renderLive({ partial: true });
-
-    expect(screen.getByTestId('live-notice-partial')).toHaveTextContent(/missing/i);
-    // Still a live dashboard, not an error screen: what arrived is real.
-    expect(screen.getByTestId('live-stat-total-requests')).toBeInTheDocument();
-  });
-
-  it('says nothing about a partial seed when the seed was complete', () => {
-    renderLive();
-    expect(screen.queryByTestId('live-notice-partial')).not.toBeInTheDocument();
-  });
-
-  /**
-   * `Live` shipped with NEITHER the cap message NOR the Retry button
-   * `Processing` has had since the parity shell — so a run that stopped
-   * streaming and then took longer than POLL_CAP_MS to finalize left the
-   * reader on a page that had silently stopped polling while its own banner
-   * promised to refresh itself.
-   */
-  it('says polling stopped, and offers a retry, once the cap is reached on a frozen run', async () => {
-    const onRetry = vi.fn();
-    renderLive({ status: 'parsing', capReached: true, onRetry });
-
-    expect(screen.getByTestId('live-notice-capped')).toHaveTextContent(/stopped checking automatically/i);
-    // The promise the finalizing banner makes ("will refresh … once they are
-    // ready") is false once polling has stopped, so the two are exclusive.
-    expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
-    // The dashboard is still there — the cap is a statement about requests,
-    // not a reason to blank what already arrived.
-    expect(screen.getByTestId('live-stat-total-requests')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: /check again/i }));
-    expect(onRetry).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * `pollIntervalFor` exempts a `running` run from the cap entirely, so while
-   * this run streams the page IS still polling — saying otherwise would be the
-   * "appears to be working while making no requests" failure inverted.
-   */
-  it('says nothing about the cap while the run is still streaming', () => {
-    renderLive({ status: 'running', capReached: true });
-
-    expect(screen.queryByTestId('live-notice-capped')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /check again/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/updating as the run streams/i)).toBeInTheDocument();
-  });
-
-  // Defensive: `RunDetail` only ever renders `Live` once `lastDelta` is
-  // non-null, but a future caller mistake should render nothing rather than
-  // throw on `delta.summary`.
-  it('renders nothing if handed a null lastDelta', () => {
-    const { container } = render(
-      <QueryClientProvider client={clientWithLiveCache()}>
-        <MemoryRouter>
-          <Live status="running" runId={RUN_ID} live={liveState({ lastDelta: null })} compact={false} capReached={false} onRetry={() => undefined} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    expect(container).toBeEmptyDOMElement();
-  });
-});
+/**
+ * Every claim below is now RESOLVED — Tasks 8, 9 and 10 each wired a real
+ * tab and each has its own `*.live.test.tsx` file, so nothing here still
+ * needs a target that does not exist. Kept as a plain comment block, not a
+ * `describe` with no `it`s inside it, so the history of what moved where
+ * stays legible without an empty suite in the file.
+ *
+ * Old: "renders the live page once a delta has arrived for a running run".
+ * Its connection-message and finalizing-notice-absent halves are now
+ * `LiveStatusStrip.test.tsx`'s "says the run is live while it streams and
+ * the socket is up" (extended in Task 7 to also assert the finalizing
+ * notice's absence). The remaining claim — exactly four withheld-chart
+ * notices appear once a delta has arrived — RESOLVED across the three tabs
+ * that now split it: `RunOverviewTab.live.test.tsx`'s "states that the
+ * statistics table is withheld" (1), `RunChartsTab.live.test.tsx`'s "draws
+ * the five live figures and states the two that are withheld" (2), and
+ * `RunErrorsTab.live.test.tsx`'s "keeps the errors table live and states
+ * that the chart is not" (1) — four, matching the original count, on three
+ * different URLs instead of one.
+ *
+ * Old: "keeps the ordinary Processing screen while running with no delta
+ * yet" / "...for a run never live this session". RESOLVED in fix round 1:
+ * `WaitingPanel` is wired into `RunOverviewTab` now — see "shows
+ * WaitingPanel, not a live summary, while running with no delta yet" and
+ * "shows WaitingPanel for a run never live this session (pending)" above.
+ *
+ * Old: "freezes the dashboard under a finalizing banner once streaming
+ * stops". The banner itself is `LiveStatusStrip.test.tsx`'s "says streaming
+ * stopped once the run leaves running"; the remaining claim — the live
+ * tiles (`LiveSummary`) stay on screen, unblanked, underneath that banner —
+ * RESOLVED in Task 8: `RunOverviewTab.live.test.tsx`'s "drops the 'still
+ * streaming' hint once the run has frozen, without blanking the tiles"
+ * mounts the real tab and asserts both halves at once.
+ *
+ * Old: "reads its headline tiles straight off the delta summary, not a
+ * StatRow" / "drops the 'still streaming' hint once the run has frozen".
+ * Both are `LiveSummary`'s own behaviour, exported in Task 7 specifically
+ * for Task 8 to wire in — RESOLVED: `RunOverviewTab.live.test.tsx`'s "shows
+ * the live tiles while a run streams" (reads `count`/`errorRate`/`maxUsers`
+ * straight off a `LiveDelta` fixture, never a `StatRow`) and "drops the
+ * 'still streaming' hint…" / "keeps the 'still streaming' hint…" above.
+ *
+ * Old: "draws the live charts from whatever the socket already wrote to the
+ * cache" / "gates the charts and the three withheld notices behind
+ * DesktopOnly on a narrow viewport". RESOLVED in Task 9:
+ * `RunChartsTab.live.test.tsx`'s "draws the five live figures and states the
+ * two that are withheld" (seeds the cache directly, at the SAME keys
+ * `applyDelta` writes, rather than mocking a fetch) and "gates the live
+ * charts behind DesktopOnly on a narrow viewport".
+ *
+ * Old: "draws the live-fed errors table" / "states the errors-over-time
+ * chart is withheld". RESOLVED in Task 10: `RunErrorsTab.live.test.tsx`'s
+ * "keeps the errors table live and states that the chart is not".
+ *
+ * NOT carried forward, and deliberately never given an `it.todo`: "renders
+ * nothing if handed a null lastDelta" defended `Live`'s own `if (delta ===
+ * null) return null` branch, which no longer exists anywhere — nothing in
+ * the new architecture renders a whole page conditionally on `lastDelta`, so
+ * there is no successor branch for any task to guard either.
+ */

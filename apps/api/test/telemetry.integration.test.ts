@@ -223,6 +223,26 @@ describe('GET /v1/runs/:id/telemetry', () => {
     const runRes = await request(ctx.app.getHttpServer())
       .get(`/v1/runs/${runId}`)
       .set('Authorization', `Bearer ${ctx.readToken}`);
+    // MINOR 6. The widened 202 sends `toolStartedAt: null` where the key
+    // used to be absent entirely — deliberately, and the wire shape is
+    // right (see RunTelemetry.tsx's own docstring on the two honest
+    // readings of `available: false`). But `new Date(null)` resolves to the
+    // Unix epoch, not `Invalid Date`, so a consumer that skips this check
+    // and blindly does what this line used to do would silently compute
+    // every sample offset below against 1970 instead of throwing — for
+    // instance if `runPipelineFor` above ever failed and left `runId`
+    // `parsing` rather than `complete` (its own failures are swallowed:
+    // "failures are recorded on the run"). Asserting here turns that into a
+    // loud, immediate setup failure instead of a confusing, silent one deep
+    // in whichever `it()` runs next.
+    if (runRes.body.toolStartedAt === null) {
+      throw new Error(
+        `telemetry.integration.test setup: run ${runId} has no toolStartedAt after ` +
+          'runPipelineFor — the ingest pipeline did not reach `complete`. Continuing would ' +
+          'compute every sample offset below against the Unix epoch (new Date(null)) instead ' +
+          'of failing loudly.',
+      );
+    }
     toolStartedAt = new Date(runRes.body.toolStartedAt);
 
     posted = [0, 1, 2, 3].map((s) => sampleAt(toolStartedAt, s));

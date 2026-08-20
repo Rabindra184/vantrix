@@ -308,11 +308,17 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  * on one screen. Reloading fixed it, which is why nothing caught it.
  *
  * INVALIDATE, NEVER REMOVE. `invalidateQueries` marks the entry stale and
- * refetches only ACTIVE observers; `Live`'s own three queries are
- * `enabled: false` (`RunDetail`), so the frozen dashboard (§4.4) keeps
- * drawing the last delta while the run finalizes, and the refetch happens
- * when `RunShell`'s observers mount on the finished page. `removeQueries`
- * would blank those charts at the exact moment nothing has gone wrong.
+ * refetches only ACTIVE observers; the three queries named above are each
+ * gated so none of them fetch while the run is non-terminal — `RunShell`'s
+ * `users`/`errors` read `enabled: terminal` directly, and `RunChartsTab`'s
+ * `series` folds the identical `terminal` check into its own `enabled: on`
+ * (`useRunTerminal`, `useRunWindow.ts`, is where that flag comes from) — so
+ * the frozen dashboard (§4.4) keeps drawing the last delta while the run
+ * finalizes, and the refetch fires the moment `terminal` flips true on the
+ * SAME shell that has been mounted, and reading these cache keys, since the
+ * run first opened — there is no separate finished-run page for observers to
+ * newly mount into any more. `removeQueries` would blank those charts at the
+ * exact moment nothing has gone wrong.
  */
 function invalidateLiveWrites(queryClient: QueryClient, runId: string): void {
   for (const queryKey of [liveSeriesKey(runId), usersQueryKey(runId), errorsQueryKey(runId)]) {

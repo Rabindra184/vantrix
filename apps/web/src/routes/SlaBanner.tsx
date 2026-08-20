@@ -7,6 +7,11 @@ import { formatOffset } from './format';
  * Task 6's fold owner exists to feed. Fed straight from a delta's own
  * `sla` field; nothing here re-derives or re-evaluates anything.
  *
+ * RENDERED BY `RunShell`, once, above the `<Outlet/>` — not by any one tab.
+ * It shipped inside `Live`, the standalone live page, and moved when the
+ * five-tab work deleted that page: a breaching rule is a fact about the RUN,
+ * so it has to be on screen whichever of the five tabs the reader has open.
+ *
  * ═══ A CONDITION, NOT AN EVENT ═══
  *
  * This is a banner, never a toast. A toast fires once, on arrival, and two
@@ -26,8 +31,8 @@ import { formatOffset } from './format';
  * would cut a screen reader off mid-sentence to announce a condition that
  * was already true before this render started.
  *
- * NO `<svg>`. This banner sits above the chart grid in `Live`
- * (`RunDetail.tsx`), outside every chart's own `<figure>` — but
+ * NO `<svg>`. This banner sits at shell level in `RunShell.tsx`, above the
+ * `<Outlet/>` and so outside every chart's own `<figure>` — but
  * `run-charts.spec.ts` and `request-detail.spec.ts` prove a chart drew by
  * counting `<svg>` elements INSIDE its `<figure>`, and a decorative icon
  * here would be one accidental DOM move away from corrupting that count.
@@ -81,7 +86,7 @@ import { formatOffset } from './format';
  * therefore the one case where this component renders with NOTHING breaching
  * -- because "no breaches" is precisely what it cannot honestly say.
  *
- * `frozen` (TASK 9 C3's same flag, `Live`'s own `status !== 'running'`)
+ * `frozen` (TASK 9 C3's same flag, `RunShell`'s own `status !== 'running'`)
  * governs one word, not the whole banner: once streaming stops the fold
  * owner released this run and nothing evaluates it again, so "currently
  * breaching" is no longer quite true — it is the LAST known state, not a

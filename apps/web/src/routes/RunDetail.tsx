@@ -2,18 +2,18 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
-  Assertion, LiveDelta, RunProcessing, RunResponse, SeriesResponse, ToolAssertion,
+  Assertion, LiveDelta, SeriesResponse, ToolAssertion,
 } from '@perfportal/contracts';
-import Button, { linkButtonClasses } from '../components/Button';
+import { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import StatTile from '../components/StatTile';
 import TableFrame from '../components/TableFrame';
-import { ChevronLeftIcon, RefreshIcon } from '../components/icons';
+import { ChevronLeftIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
-import { useLiveRun, type LiveRunState } from '../api/live';
+import { useLiveRun } from '../api/live';
 import {
   distributionQuery,
   errorSeriesQuery,
@@ -22,7 +22,7 @@ import {
   statsQuery,
   usersQuery,
 } from '../api/metrics';
-import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
+import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
 import { formatCell } from '../charts/DataTable';
 import DistributionChart from '../charts/DistributionChart';
 import ErrorsChart from '../charts/ErrorsChart';
@@ -35,41 +35,50 @@ import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
 import { formatDuration } from './format';
-import { ASSERTION_OUTCOME, Marked, STATUS } from './marks';
+import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
-import { growingDomainMs, useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import {
+  useLiveFromShell,
+  useRunTerminal,
+  useTimeDomainFromShell,
+  useWindowFromShell,
+} from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import LiveNotice from './LiveNotice';
 import RunShell from './RunShell';
-import SlaBanner from './SlaBanner';
 import useIsCompact from '../useIsCompact';
 import RunStats from './RunStats';
+import WaitingPanel from './WaitingPanel';
 
 /**
- * This module's default export decides WHICH of a run's three states is on
- * screen; it renders neither a header nor the SLA rules itself any more.
- * Those moved out when the run page grew tabs: the header is `RunHeader`,
- * rendered by `RunShell` below, and the assertions live on `RunOverviewTab`.
- * What is left here is four route components sharing one run — `RunDetail`
- * itself (the three-state branch), `RunOverviewTab`, `RunChartsTab` and
- * `RunErrorsTab` (`RunShell`'s tab children) — plus the pieces they share:
- * `Assertions`, the Charts tab's chart-slot constants, and `describeRule`.
+ * This module's default export renders ONE SHELL for every run state; it
+ * renders neither a header nor the SLA rules itself any more. Those moved out
+ * when the run page grew tabs: the header is `RunHeader`, rendered by
+ * `RunShell`, and the assertions live on `RunOverviewTab`. What is left here
+ * is four route components sharing one run — `RunDetail` itself, `RunOverviewTab`,
+ * `RunChartsTab` and `RunErrorsTab` (`RunShell`'s tab children) — plus the
+ * pieces they share: `Assertions`, the Charts tab's chart-slot constants, and
+ * `describeRule`.
  *
  * The last screen of the parity shell, and the end of the definition of done
  * — a person signs in, sees their org's runs, opens one, and reads it.
  *
- * Three states, not two, because `GET /v1/runs/:id` has three answers (see
- * `fetchRun`): a readable run, a run still being processed, and a problem.
- * Collapsing the middle one into the first is what would put `0s` and "no
- * verdict yet" on screen as though they were measurements.
- *
- * THE MIDDLE STATE ITSELF NOW SPLITS IN TWO (Task 8, design part 2b). A
- * `processing` run renders `Live` once `useLiveRun` has delivered at least
- * one delta THIS SESSION — whether it is streaming right now or has just
- * stopped (§4.4's frozen dashboard) — and the unmodified `Processing`
- * screen otherwise: a run never live this session, or a compact viewport,
- * which never opens the socket at all (§4.1, §22.6).
+ * `GET /v1/runs/:id` has three answers (see `fetchRun`): a readable run, a
+ * run still being processed, and a problem. Loading and error still get their
+ * own early returns below — there is no header to show and no tabs to hand a
+ * window to until a run has resolved one way or the other. But a resolved,
+ * non-error run — `ready` OR `processing` — now renders the SAME `RunShell`,
+ * on the SAME code path, differing only in what `identity`/`status`/`verdict`/
+ * `windowable`/`live` it is handed. `RunShell` is a layout route: mounting it
+ * for a processing run is what makes `/runs/:id/charts` and the other four tab
+ * URLs resolve to anything at all while a run is live, which they could not
+ * do when a processing run rendered a standalone `Processing`/`Live` screen
+ * with no `<Outlet/>` in it. `verdict`/`windowable` are `undefined` for a
+ * processing run rather than branched on — a non-terminal run genuinely has
+ * neither, and `undefined` is what `RunShell`/`RunHeader` already read as "not
+ * evaluated yet" rather than "no verdict", which is what stops `0s` and "no
+ * verdict yet" from appearing on screen as though they were measurements.
  */
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>();
@@ -82,14 +91,13 @@ export default function RunDetail() {
   // rather than at the next unrelated render.
   const [capReached, setCapReached] = useState(false);
 
-  const run = useQuery({
-    queryKey: runQueryKey(runId ?? ''),
-    queryFn: () => fetchRun(runId!),
-    enabled: runId !== undefined,
-    // The decision lives in api/run.ts as a pure function so the cap is
-    // testable without waiting two real minutes in a browser. That function
-    // also holds the OTHER half of the live exemption below: a `running` run
-    // is polled whatever `capReached` says.
+  // `useRunTerminal` is every tab's own read of this same query (see its own
+  // docstring, `useRunWindow.ts`); this is the one copy that also needs
+  // `refetchInterval` — the decision lives in api/run.ts as a pure function
+  // so the cap is testable without waiting two real minutes in a browser.
+  // That function also holds the OTHER half of the live exemption below: a
+  // `running` run is polled whatever `capReached` says.
+  const { detail: run } = useRunTerminal(runId, {
     refetchInterval: (query) => pollIntervalFor(query.state.data, capReached),
   });
 
@@ -190,36 +198,37 @@ export default function RunDetail() {
     );
   }
 
-  if (run.data.state === 'processing') {
-    const status = run.data.run.status;
+  // ONE SHELL FOR EVERY STATE. `RunDetail` used to return `Processing` or
+  // `Live` INSTEAD of the shell, which is what made the five tab URLs resolve
+  // to nothing while a run was live — `RunShell` is the layout route, so no
+  // `<Outlet/>` mounted for them at all. Rendering it here is the whole
+  // reachability fix, and it needs no router change.
+  const detail = run.data;
+  // Both arms of the union satisfy `Partial<RunIdentity> & { id }` — a ready
+  // run supplies every field, a processing one supplies what it knows — so
+  // this needs no branch, only the shared type.
+  const identity = detail.run;
 
-    // A RETAINED DELTA — from this run being live right now, or from it
-    // having been live earlier in this session — means there is a populated
-    // dashboard to show, whatever `status` currently says. `live.lastDelta`
-    // is never cleared on its own (`useLiveRun`'s own contract), so once a
-    // delta has arrived this branch keeps rendering `Live` straight through
-    // `running` -> `parsing` (design §4.4's frozen banner) -> `complete`
-    // (where the render above already stops reaching this branch at all,
-    // once `run.data.state` flips to `'ready'`). A run that never streamed
-    // in this session — `pending`/`parsing` with no socket ever opened, or a
-    // compact viewport where one never opens at all — falls straight
-    // through to the unmodified `Processing` screen below.
-    if (live.lastDelta !== null) {
-      return (
-        <Live
-          status={status}
-          runId={runId}
-          live={live}
-          compact={compact}
-          capReached={capReached}
-          onRetry={() => void run.refetch()}
-        />
-      );
-    }
-    return <Processing status={status} capReached={capReached} onRetry={() => void run.refetch()} />;
-  }
-
-  return <Ready run={run.data.run} />;
+  return (
+    <RunShell
+      identity={identity}
+      status={detail.run.status}
+      // THE ONE PLACE THIS BOOLEAN IS DECIDED (IMPORTANT 3) — the same
+      // discriminant `useRunTerminal` hands every tab, passed through rather
+      // than left for `RunShell` to re-derive from `status` against its own
+      // allowlist. See `RunShell`'s own `terminal` docstring for why the two
+      // deciding it separately is the trap.
+      terminal={detail.state === 'ready'}
+      // `undefined`, not `null`, for a non-terminal run: the header omits the
+      // badge rather than rendering "no verdict" over a run nobody has finished
+      // measuring.
+      verdict={detail.state === 'ready' ? detail.run.verdict : undefined}
+      windowable={detail.state === 'ready' ? detail.run.windowable : undefined}
+      live={detail.state === 'processing' ? live : null}
+      capReached={capReached}
+      onRetry={() => void run.refetch()}
+    />
+  );
 }
 
 function NotARun() {
@@ -249,350 +258,6 @@ function BackToRuns() {
 }
 
 /**
- * A run the platform has accepted but not finished parsing (HTTP 202).
- *
- * Deliberately renders NO header shell: there is no duration, no verdict and
- * no assertion to show, and a table of dashes reads as a run that was
- * measured and found empty rather than one nobody has looked at yet.
- *
- * EXPORTED for `apps/web/test/run-detail.test.ts`, which renders it directly
- * to static markup with both values of `capReached` — a cheap, node-environment
- * check that the two branches say different things. The cap's WIRING (the
- * timer in `RunDetail` that sets the flag) is covered separately, and through a
- * real mount, by `apps/web/test/RunDetail.polling.test.tsx`.
- *
- * Taking `capReached` as a prop rather than reading the timer itself is still
- * the right shape: it keeps this component renderable without a clock.
- */
-export function Processing({
-  status,
-  capReached,
-  onRetry,
-}: {
-  // `RunProcessing['status']` — 'pending' | 'parsing' — not `string`. The
-  // contract's own union is what makes a future third processing status a
-  // compile error here rather than a silent render of the 'pending' mark.
-  status: RunProcessing['status'];
-  capReached: boolean;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-xl border border-dashed border-default px-6 py-14 text-center">
-      {/* The status mark IS the illustration — a pulsing ring in the pending
-          colour, with the word beside it — rather than a generic spinner. A
-          spinner says "something is happening"; this says which of `pending`
-          and `parsing` is happening, which is the one fact the reader can act
-          on (a run stuck in `pending` never reached the worker). The pulse is
-          decorative and `tokens.css` turns it off under reduced-motion. */}
-      {/* The colour arrives as DATA on the `Mark`, through an inline `style`,
-          which is the same route `Marked` and `Badge` already take and the
-          reason `routes/marks.tsx` is exempt from the arbitrary-value gate in
-          `test/tokens.test.ts`. Reaching for the pending token as a Tailwind
-          arbitrary value instead would trip that gate — correctly, and not
-          only on a technicality: a token written in here would be a second
-          place to edit on the day `parsing` and `pending` stop sharing a
-          colour. `tint` then derives the wash and the ring from
-          `currentColor`, so all three follow the one value.
-
-          (The gate greps the raw file, comments included, which is why this
-          paragraph describes the spelling rather than quoting it.) */}
-      <span
-        className="tint relative flex h-11 w-11 items-center justify-center rounded-full border"
-        style={{ color: STATUS[status].colour }}
-      >
-        <span className="absolute inset-0 animate-ping rounded-full bg-current opacity-20" />
-        <span aria-hidden="true" className="relative text-lg leading-none">
-          {STATUS[status].glyph}
-        </span>
-      </span>
-
-      <h1 className="text-[15px] font-semibold tracking-tight text-primary">Run in progress</h1>
-      {/* `role="status"` on the sentence that changes, so a screen reader
-          hears the transition rather than only the first paint. */}
-      <p role="status" className="text-[13px] text-muted">
-        This run is still processing.
-      </p>
-      <p className="text-[13px]">
-        <Marked mark={STATUS[status]} />
-      </p>
-
-      {capReached ? (
-        // The cap has been reached: the page has stopped asking on its own.
-        // Saying so — and handing the reader the control — is the difference
-        // between a page that gave up and a page that appears to be working
-        // while making no requests at all.
-        <>
-          <p className="max-w-sm text-[13px] leading-relaxed text-muted">
-            PerfPortal stopped checking automatically after two minutes. The run has not finished
-            yet.
-          </p>
-          {/* `primary`: on a page whose only other control is "Back to all
-              runs", re-checking is what the reader came to do. */}
-          <Button variant="primary" size="sm" onClick={onRetry}>
-            <RefreshIcon className="h-3.5 w-3.5" />
-            Check again
-          </Button>
-        </>
-      ) : (
-        <p className="max-w-sm text-[13px] leading-relaxed text-muted">
-          This page checks again every few seconds; there is nothing to do.
-        </p>
-      )}
-      <BackToRuns />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * The live page — design part 2b §4.1, §4.3, §4.4
- * ------------------------------------------------------------------ */
-
-/**
- * A run currently streaming, or one that just stopped and is still showing
- * its last delta while REST finishes the report (design §4.3, §4.4).
- *
- * RENDERED ONLY ONCE A DELTA HAS ARRIVED. `RunDetail`'s own branch makes
- * that guarantee — a run that has never delivered a delta this session
- * (including every compact viewport, which never opens the socket at all)
- * still renders `Processing`, completely unmodified. Once a delta HAS
- * arrived it is never cleared (`useLiveRun`'s own contract), which is what
- * lets this one component also cover the FROZEN case — `status !==
- * 'running'` — with nothing more than a banner: the dashboard underneath it
- * does not need a separate "it just ended" render, because nothing about it
- * needs to change.
- *
- * NO `RunShell`, NO `RunHeader`, NO TABS. `GET /v1/runs/:id` answers 202 for
- * anything short of `complete` (`RunsService.statusFor`), so a running run
- * has no `RunResponse` at all — no project, no tool, no verdict — on any
- * path, for as long as it streams. `RunShell`'s header needs exactly those
- * fields; building it from invented placeholders would be the fabrication
- * this codebase's "null tiles, never zeroed ones" rule exists to forbid, one
- * level up from a stat tile.
- */
-export function Live({
-  status,
-  runId,
-  live,
-  compact,
-  capReached,
-  onRetry,
-}: {
-  // `RunProcessing['status']`, not `string` — see `Processing`'s own prop
-  // for the same reasoning.
-  readonly status: RunProcessing['status'];
-  readonly runId: string;
-  readonly live: LiveRunState;
-  readonly compact: boolean;
-  /**
-   * `RunDetail`'s own polling cap, carried here for the same reason
-   * `Processing` takes it: a page that has stopped asking on its own must say
-   * so and hand the reader the control. It can only be ACTED on once this run
-   * has stopped streaming — `pollIntervalFor` exempts a `running` run from the
-   * cap entirely, so while `status === 'running'` the page is still polling
-   * whatever this flag says, and claiming otherwise would be the "appears to
-   * be working while making no requests" failure inverted.
-   */
-  readonly capReached: boolean;
-  readonly onRetry: () => void;
-}) {
-  const delta = live.lastDelta;
-  // Unreachable through `RunDetail`'s own guard (this component is only ever
-  // rendered once `live.lastDelta !== null`). Typed defensively rather than
-  // asserted non-null, so a future caller mistake renders nothing instead of
-  // throwing.
-  if (delta === null) return null;
-
-  const frozen = status !== 'running';
-  // THE GROWING DOMAIN, computed through `growingDomainMs` directly rather
-  // than through `useTimeDomainFromShell` (`useRunWindow.ts`): that hook
-  // reads `RunWindowContext` off an `<Outlet/>` this page never mounts (there
-  // is no `RunShell` here — see this component's own docstring), so it
-  // cannot be called from here. The two sites cannot be unified into one
-  // CALL, but they share one FORMULA — see `growingDomainMs`'s own comment,
-  // which names this call site the way this one names it, and
-  // `timeAxis.test.ts`'s "Live and useTimeDomainFromShell agree on the
-  // growing-run domain formula", which pins the two to the same result for
-  // the same input. No window to prefer over it here either: a live view is
-  // never narrowed (`useLiveRun`'s own module docstring).
-  const domainMs = growingDomainMs(delta.summary.durationMs);
-
-  // OBSERVE THE CACHE; NEVER FETCH IT. `useLiveRun` already writes every one
-  // of these three keys directly (`applyDelta`, `api/live.ts`) on every
-  // delta. A normal `enabled: true` query here would ALSO hit REST — which,
-  // for a run with no persisted rows yet (`MetricWriter` has not run this
-  // run's pipeline), answers with an emptier payload that would then win the
-  // race against whichever delta landed first, for no benefit: `staleTime:
-  // Infinity` means it would only ever fire once, and TanStack still applies
-  // whichever write — REST's or the socket's — resolves last.
-  const users = useQuery({ ...usersQuery(runId), enabled: false });
-  const series = useQuery({ ...seriesQuery(runId, 'run', '', 'response_time'), enabled: false });
-  const errors = useQuery({ ...errorsQuery(runId), enabled: false });
-
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-          {frozen ? 'Run finished' : 'Run in progress'}
-        </h1>
-        {/* `role="status"`, not `alert`: nothing here is a problem, the same
-            distinction `Processing`'s own sentence and `DesktopOnly`'s own
-            notice make. */}
-        <p role="status" className="text-[13px] text-muted">
-          {frozen
-            ? 'Streaming has stopped. The numbers below are its last update.'
-            : live.connected
-              ? 'Live — updating as the run streams.'
-              : 'Reconnecting — showing the last update received.'}
-        </p>
-      </div>
-
-      {/* A banner ABOVE the still-populated dashboard, not a replacement for
-          it — see `LiveNotice`'s own docstring on why falling back to
-          `Processing` here was rejected.
-
-          ONE OR THE OTHER, never both: `LiveNotice[kind="finalizing"]`
-          promises "this page will refresh with the full report once they are
-          ready", which is a lie the moment polling has stopped. The capped
-          variant makes the same situation readable and gives the reader the
-          Retry `Processing` has had all along. */}
-      {frozen &&
-        (capReached ? <LiveCapped onRetry={onRetry} /> : <LiveNotice kind="finalizing" />)}
-
-      {/* THE SEED THIS VIEW WAS BUILT FROM WAS INCOMPLETE, and the gateway
-          said so in the snapshot frame. Independent of `frozen` — a partial
-          seed is just as partial while the run is still streaming, and the
-          deltas that follow it never fill the hole in `responseTime` (an
-          upsert with a short lookback). Below the finalizing banner rather
-          than above it: what the page IS doing comes first, then what is
-          missing from what it drew. */}
-      {live.partial && <LiveNotice kind="partial" />}
-
-      <LiveSummary summary={delta.summary} frozen={frozen} />
-
-      {/* Which SLA rules this run is breaching right now, above the charts
-          rather than beside `LiveNotice`'s own banners — those say something
-          about the CONNECTION (frozen, partial seed); this says something
-          about the NUMBERS the tiles just above it report. Never desktop-gated:
-          `SlaBanner`'s own docstring is the reason a phone still needs to see
-          this exactly as much as a phone needs the tiles, and it is cheap — a
-          few strings off the delta already in hand, not a chart. */}
-      <SlaBanner sla={delta.sla} frozen={frozen} />
-
-      {/* §22.6: mounting five ECharts instances costs real work a phone
-          should not pay for, even though the three withheld notices beside
-          them cost nothing — so the whole grid is gated together, the same
-          scope `RunChartsTab` gates its own eight figures at. No `onShow`:
-          nothing behind this content is a query this page has NOT already
-          fired (`users`/`series` above are cache reads, not fetches), so
-          there is no second flag to keep in sync. */}
-      <DesktopOnly compact={compact} what="Live charts">
-        {() => (
-          <section
-            aria-labelledby="live-charts-heading"
-            className="grid grid-cols-1 gap-6 2xl:grid-cols-2"
-          >
-            <h2 id="live-charts-heading" className="sr-only">
-              Charts
-            </h2>
-            {users.data !== undefined && (
-              <>
-                {/* Its OWN chart, sharing the crosshair — never an overlay on
-                    requests/s. Same rule `RunChartsTab` follows; see its own
-                    `RUN_TIME` docstring above. */}
-                <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
-                <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
-              </>
-            )}
-            {series.data !== undefined && (
-              <>
-                <PercentilesChart series={series.data} domainMs={domainMs} />
-                <RequestRateChart series={series.data} domainMs={domainMs} />
-                <ResponseRateChart series={series.data} domainMs={domainMs} />
-              </>
-            )}
-            {/* THREE OF THE FOUR WITHHELD SECTIONS THAT ARE CHARTS. The first
-                two fold the SAME `/distribution` payload on a finished run
-                (`RunChartsTab`'s own `DISTRIBUTION`/`PERCENTILE_DISTRIBUTION`
-                slots) and neither has ANY live source — §4.3: they need
-                per-request or full-sketch data no delta carries, on any
-                path, while the run streams.
-
-                TASK 9 C2: errors-over-time is the same shape of gap, just
-                fed by a DIFFERENT endpoint (`errorSeriesQuery`,
-                `RunErrorsTab`'s own chart) that the live wire also never
-                carries — §1.3 scopes the live `errors` envelope to run-scope
-                TOTALS only (`LiveErrorsSchema`), with no time series. Before
-                this notice the chart was simply never rendered here at all:
-                silent absence, exactly what the withheld-notice pattern
-                exists to replace with a stated one. The errors TABLE right
-                below this section is unaffected — `delta.errors.rows` feeds
-                it live, same as it always has. */}
-            <LiveNotice kind="withheld" subject="Response time distribution" />
-            <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
-            <LiveNotice kind="withheld" subject="Errors per second" />
-          </section>
-        )}
-      </DesktopOnly>
-
-      {/* NOT desktop-gated — matching `RunErrorsTab`, which never gates the
-          errors table either. §22.6 names "error summary" as exactly the
-          kind of thing a phone's read-only view should still carry. */}
-      <TableSection title="Errors" query={errors}>
-        {(data) => <ErrorsTable errors={data} />}
-      </TableSection>
-
-      {/* THE FOURTH WITHHELD SECTION. Gated the same way the REAL statistics
-          table is on a finished run (`RunOverviewTab`'s own `DesktopOnly`,
-          same `what` text) — the table itself needs per-endpoint rows §1.3
-          excludes from the live wire entirely, so there is no live version
-          of it at any viewport width. */}
-      <DesktopOnly compact={compact} what="The per-request statistics table">
-        {() => <LiveNotice kind="withheld" subject="Statistics" />}
-      </DesktopOnly>
-    </div>
-  );
-}
-
-/**
- * The frozen live page's version of `Processing`'s cap block — the affordance
- * `Live` shipped without.
- *
- * `Processing` has said "PerfPortal stopped checking automatically" with a
- * Check again button since the parity shell; `Live` replaced that whole screen
- * for a run that streamed, and inherited neither. So a run that finished
- * streaming and then took longer than the cap to finalize left the reader on a
- * page that had silently stopped polling while promising to refresh itself.
- *
- * NOT `LiveNotice`, and not a third `kind` on it: this one carries a `<button>`
- * (with an icon), and `LiveNotice`'s own docstring earns its "safe wherever a
- * caller places it" precisely by having no `<svg>` — nine e2e specs count SVG
- * elements inside chart `<figure>`s. Keeping the button out here keeps that
- * guarantee true for the component that needs it.
- *
- * The copy shares `Processing`'s "stopped checking automatically after two
- * minutes" sentence deliberately — one page state, one wording — and the two
- * screens are mutually exclusive branches, so no query can resolve both.
- */
-function LiveCapped({ onRetry }: { readonly onRetry: () => void }) {
-  return (
-    <div
-      role="status"
-      data-testid="live-notice-capped"
-      className="flex flex-col items-start gap-2.5 rounded-xl border border-default bg-surface px-4 py-3 text-[13px] text-muted"
-    >
-      <p className="leading-relaxed">
-        This run has finished streaming. PerfPortal stopped checking automatically after two
-        minutes, so the numbers below are its last live update rather than the full report.
-      </p>
-      <Button variant="primary" size="sm" onClick={onRetry}>
-        <RefreshIcon className="h-3.5 w-3.5" />
-        Check again
-      </Button>
-    </div>
-  );
-}
-
-/**
  * The live wire's own headline numbers, read DIRECTLY from a delta's
  * `summary` — never laundered through a `StatRow`.
  *
@@ -611,14 +276,16 @@ function LiveCapped({ onRetry }: { readonly onRetry: () => void }) {
  * the socket, not by this component) numbers, and it is the per-request
  * TABLE a phone cannot usefully render, not a handful of tiles.
  *
- * `frozen` (TASK 9 C3) is `Live`'s own `status !== 'running'` — the same
- * flag that decides whether `LiveNotice[kind="finalizing"]` renders directly
- * above this section. Without it the "Duration So Far" tile said "still
- * streaming" unconditionally, including in the exact render where the
- * banner one section up says streaming has stopped — the tile and the
+ * `frozen` is the same `status !== 'running'` flag that decides whether
+ * `LiveNotice[kind="finalizing"]` renders — without it the "Duration So Far"
+ * tile said "still streaming" unconditionally, including in a render where a
+ * banner elsewhere on the page says streaming has stopped, the tile and the
  * banner disagreeing about the run's own state on the same screen.
+ *
+ * EXPORTED for the tab that wires it in (design part 2b's Overview tab); this
+ * module no longer renders it itself.
  */
-function LiveSummary({
+export function LiveSummary({
   summary,
   frozen,
 }: {
@@ -685,21 +352,6 @@ function livePercentileValue(summary: LiveDelta['summary'], key: string): string
   return `${formatMs(raw)} ms`;
 }
 
-function Ready({ run }: { run: RunResponse }) {
-  // The header — identity, tool, timing, duration, status and verdict — now
-  // lives in `RunHeader`, rendered by `RunShell` above its tab strip (Task 3;
-  // design §4). `RunShell` is a LAYOUT ROUTE: it mounts once here, inside
-  // this branch only, and its `<Outlet/>` is what swaps between
-  // `RunOverviewTab`, `RunChartsTab` and `RunErrorsTab` as the URL's last
-  // segment changes. A processing run (202) renders `Processing` instead and
-  // never reaches here — which is what keeps the tab content's metric
-  // queries (and the header's own `/users` fetch) from firing against a run
-  // whose rows do not exist yet (design §3c), and is why `api/metrics.ts`
-  // can use `apiFetch` rather than `fetchRun`'s three-way status branch
-  // (design §6).
-  return <RunShell run={run} />;
-}
-
 /* ------------------------------------------------------------------ *
  * The Overview tab (index), §13.2 ⑤ and the assertions — design §6
  * ------------------------------------------------------------------ */
@@ -735,42 +387,90 @@ function Ready({ run }: { run: RunResponse }) {
  * run's stats never change). This key is not a candidate for the same fix —
  * a pending run's status is precisely a value that changes — so the sentence
  * was wrong rather than merely stale, and is corrected instead of matched.
+ *
+ * GENUINELY REACHABLE FOR A PROCESSING RUN NOW, too (Task 7) — `RunShell`
+ * mounts this index tab for every status, not only `ready`. `WaitingPanel` is
+ * what it shows there (fix round 1): Task 7 first left this tab rendering
+ * `null` for a processing run, because wiring `WaitingPanel` in required a
+ * `capReached` flag it could not safely learn without contradicting
+ * `LiveStatusStrip`'s own capped block. `capReached`'s own "checks again" /
+ * "stopped checking" copy moved INTO `LiveStatusStrip` instead (fix round 1),
+ * which is what makes it safe to mount `WaitingPanel` here: it now says only
+ * "this run is still processing" and carries no polling claim of its own to
+ * contradict anything.
+ *
+ * ALSO WHY THIS TAB'S OTHER QUERIES ARE GATED ON `terminal`, NOT MERELY
+ * `runId !== undefined` — `apiFetch` has no 202 branch, so before this fix
+ * round `statsQuery`/`seriesQuery` fired against a processing run's rows,
+ * which do not exist yet, and the reader got error panels instead of
+ * `WaitingPanel`. `RunChartsTab` and `RunErrorsTab` carry the identical gate
+ * for the identical reason.
+ *
+ * `WaitingPanel` IS NOT THE ONLY NON-TERMINAL BRANCH ANY MORE (Task 8). Once
+ * a delta has arrived this session (`live?.lastDelta`), this tab draws
+ * `LiveSummary` — the same six headline tiles the deleted standalone `Live`
+ * page drew — under a real header on a real tab, plus a stated notice that
+ * the statistics table is withheld rather than a silent gap: it needs
+ * per-endpoint rows the live wire excludes on every path, so there is no live
+ * version of it at any width.
  */
 export function RunOverviewTab() {
   const { runId } = useParams<{ runId: string }>();
-  const run = useQuery({
-    queryKey: runQueryKey(runId ?? ''),
-    queryFn: () => fetchRun(runId!),
-    enabled: runId !== undefined,
-  });
+  const { detail: run, terminal } = useRunTerminal(runId);
+  // The live socket's state, as `RunShell` observed it — read here rather
+  // than opened again, per `useLiveFromShell`'s own docstring.
+  const live = useLiveFromShell();
   const window = useWindowFromShell();
   const compact = useIsCompact();
-  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
+  // `terminal`, not merely `runId !== undefined` (fix round 1, Critical 1's
+  // fix applied here too) — `apiFetch` has no 202 branch, so firing `/stats`
+  // (and, when compact, `/series`) against a processing run's rows, which do
+  // not exist yet, is the same defect the brief flagged on `RunChartsTab` and
+  // `RunErrorsTab`. This tab was simply unreachable for a processing run
+  // before Task 7, which is why the bug had no chance to surface here first.
+  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: terminal });
   // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
   // tab uses, so a reader who widens the window pays for it once.
   const series = useQuery({
     ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: runId !== undefined && compact,
+    enabled: terminal && compact,
   });
 
-  // Not reachable through the router: `RunShell` mounts this tab only once
-  // `RunDetail` has already resolved a `ready` run for this `runId`, and the
-  // query above is then served from that same warm cache entry. Guarded
-  // anyway so a render that somehow beat the cache is a blank tab rather than
-  // a crash on `run.data.run`.
-  if (runId === undefined || run.data === undefined || run.data.state !== 'ready') return null;
+  // Not reachable through the router with `run.data` still `undefined` past
+  // first paint — `RunShell` mounts this tab only once `RunDetail` has
+  // resolved SOME state for this `runId`, and the query above is then served
+  // from that same warm cache entry.
+  if (runId === undefined || run.data === undefined) return null;
+
+  // NOT TERMINAL (Task 8): either an honest wait, or the live wire's own
+  // headline numbers. `run.data.state === 'processing'`, not `!terminal`,
+  // narrows `run.data` to `RunProcessing` directly, which is what lets
+  // `run.data.run.status` below type as `RunProcessing['status']` with no
+  // assertion — see `useRunTerminal`'s own docstring on why it does not also
+  // expose a separate `status` field.
+  if (run.data.state === 'processing') {
+    const delta = live?.lastDelta ?? null;
+    // No delta this session: the ordinary wait, same as any other tab.
+    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
+    return (
+      <div className="flex flex-col gap-6">
+        <LiveSummary summary={delta.summary} frozen={run.data.run.status !== 'running'} />
+        {/* Gated exactly as the REAL statistics table is on a finished run
+            below — same `what` text — because the table needs per-endpoint
+            rows the live wire excludes, so there is no live version of it at
+            any width. */}
+        <DesktopOnly compact={compact} what="The per-request statistics table">
+          {() => <LiveNotice kind="withheld" subject="Statistics" />}
+        </DesktopOnly>
+      </div>
+    );
+  }
 
   return (
     <>
       <Assertions assertions={run.data.run.assertions} />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
-      {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
-          from the SAME `data` the statistics table reads below it, rather
-          than behind a `TableSection` of its own: a failed or still-pending
-          `/stats` then explains itself once, in the one place this page
-          already says so, instead of the stat row silently rendering six
-          dashes above an error the reader has to notice separately. */}
       {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
           from the SAME `data` the statistics table reads below it, rather
           than behind a `TableSection` of its own: a failed or still-pending
@@ -829,17 +529,56 @@ function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse
  * run-scope stats row is failed REQUESTS, a different number from the count
  * of DISTINCT error messages this tab is about, and only `/errors` knows the
  * second one.
+ *
+ * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and its own `run` read below
+ * is what this component uses to notice — `errorsQuery`/`errorSeriesQuery`
+ * are gated on `terminal`, not merely `runId !== undefined` (fix round 1,
+ * CRITICAL 1): `apiFetch` has no 202 branch, so before this fix a pending or
+ * parsing run's `/errors` and `/errors/series` fired anyway and the reader
+ * got error panels where `WaitingPanel` now renders instead.
+ *
+ * THE TABLE STAYS LIVE, THE CHART DOES NOT (Task 10). Once a delta has
+ * arrived, `errors` above reads straight off it — `useLiveRun`'s
+ * `applyDelta` writes this SAME `errorsQuery` cache key directly, a
+ * field-for-field copy of `delta.errors.rows` (`errorsResponseFrom`,
+ * `api/live.ts`) — so `TableSection` needs no live branch of its own. The
+ * chart has no live source at all: §1.3 scopes the live errors envelope to
+ * run-scope TOTALS with no time series, so it gets a stated `LiveNotice`
+ * where its figure would be.
  */
 export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
-  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: runId !== undefined });
+  const live = useLiveFromShell();
+  const { detail: run, terminal } = useRunTerminal(runId);
+  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: terminal });
   const window = useWindowFromShell();
   // One time axis across the page (§22.5) — see `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
   const series = useQuery({
     ...errorSeriesQuery(runId ?? '', window),
-    enabled: runId !== undefined,
+    enabled: terminal,
   });
+
+  // Same guard `RunOverviewTab` carries, for the same reason: not reachable
+  // through the router with `run.data` still `undefined` past first paint.
+  if (runId === undefined || run.data === undefined) return null;
+
+  if (run.data.state === 'processing') {
+    const delta = live?.lastDelta ?? null;
+    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
+    return (
+      <div className="flex flex-col gap-6">
+        {/* §1.3 scopes the live errors envelope to run-scope TOTALS — no time
+            series — so the table has a live source (fed by `delta.errors.rows`
+            through the SAME `errorsQuery` cache key `applyDelta` writes) and
+            the chart, which needs a time series, does not. */}
+        <LiveNotice kind="withheld" subject="Errors per second" />
+        <TableSection title="Errors" query={errors}>
+          {(data) => <ErrorsTable errors={data} />}
+        </TableSection>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -942,9 +681,33 @@ const RESPONSES_PER_SECOND: Slot = {
  * the same trade `RunHeader`'s badges and countless real sites make
  * routinely, and a smaller cost than a heading level a screen reader cannot
  * jump to at all.
+ *
+ * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and gated the same way
+ * `RunOverviewTab` and `RunErrorsTab` are (fix round 1, CRITICAL 1): `on`
+ * below requires `terminal` in addition to `runId`/`wanted`, because
+ * `apiFetch` has no 202 branch — before this fix, opening this tab on a
+ * pending run fired all four queries against rows that do not exist yet and
+ * the reader got four error panels instead of `WaitingPanel`.
+ *
+ * DRAWS FIVE LIVE FIGURES NOW TOO (Task 9), once a delta has arrived for a
+ * non-terminal run. `users`/`series` below stay `enabled: on` — never
+ * fetched while live — and are READ anyway: `useLiveRun`'s `applyDelta`
+ * writes these SAME `usersQuery`/`seriesQuery` cache keys directly while the
+ * run streams (`window` is always `null` for a live view, which is exactly
+ * what makes the keys agree), and a `useQuery` still subscribes to its cache
+ * entry regardless of `enabled`. Two of the eight terminal charts have no
+ * live source on any path — the response-time distribution and its
+ * percentile companion both fold the same `/distribution` payload, which
+ * needs per-request or full-sketch data no delta carries — and get a stated
+ * `LiveNotice` instead. Errors per second is the same shape of gap but
+ * belongs on the Errors tab, where its real chart is (Task 10); the old
+ * standalone page stacked all three withheld notices together only because
+ * it had no tabs to distribute them across.
  */
 export function RunChartsTab() {
   const { runId } = useParams<{ runId: string }>();
+  const live = useLiveFromShell();
+  const { detail: run, terminal } = useRunTerminal(runId);
   // ONE WINDOW FOR THE WHOLE PAGE, from the shell — so every figure below
   // describes the same stretch of the run, and so the shell's own fetches
   // share their cache keys with these rather than quietly duplicating them.
@@ -960,7 +723,7 @@ export function RunChartsTab() {
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
   const wanted = !compact || shown;
-  const on = runId !== undefined && wanted;
+  const on = runId !== undefined && wanted && terminal;
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: on });
   const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: on });
   const distribution = useQuery({
@@ -971,6 +734,58 @@ export function RunChartsTab() {
     ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
     enabled: on,
   });
+
+  // Same guard `RunOverviewTab` and `RunErrorsTab` carry, for the same
+  // reason: not reachable through the router with `run.data` still
+  // `undefined` past first paint.
+  if (runId === undefined || run.data === undefined) return null;
+
+  if (run.data.state === 'processing') {
+    const delta = live?.lastDelta ?? null;
+    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
+
+    // §22.6 applies here exactly as it does to the terminal 8-chart grid
+    // below: five real figures plus two withheld notices is still "deep
+    // analysis", and a phone that has not asked to see it should not pay to
+    // build five ECharts instances for a screen too narrow to read them.
+    if (compact && !shown) {
+      return (
+        <DesktopOnly compact what="Reading five charts" onShow={() => setShown(true)}>
+          {() => null}
+        </DesktopOnly>
+      );
+    }
+
+    return (
+      <section
+        aria-labelledby="live-charts-heading"
+        className="grid grid-cols-1 gap-6 2xl:grid-cols-2"
+      >
+        <h2 id="live-charts-heading" className="sr-only">
+          Charts
+        </h2>
+        {users.data !== undefined && (
+          <>
+            {/* Its OWN chart, sharing the crosshair — never an overlay on
+                requests/s. See RUN_TIME above. */}
+            <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+            <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+          </>
+        )}
+        {series.data !== undefined && (
+          <>
+            <PercentilesChart series={series.data} domainMs={domainMs} />
+            <RequestRateChart series={series.data} domainMs={domainMs} />
+            <ResponseRateChart series={series.data} domainMs={domainMs} />
+          </>
+        )}
+        {/* THE TWO CHART SLOTS WITH NO LIVE SOURCE ON ANY PATH — see this
+            function's own docstring. */}
+        <LiveNotice kind="withheld" subject="Response time distribution" />
+        <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
+      </section>
+    );
+  }
 
   if (compact && !shown) {
     return (
