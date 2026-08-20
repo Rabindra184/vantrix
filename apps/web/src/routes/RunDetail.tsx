@@ -660,18 +660,30 @@ const RESPONSES_PER_SECOND: Slot = {
  *
  * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and gated the same way
  * `RunOverviewTab` and `RunErrorsTab` are (fix round 1, CRITICAL 1): `on`
- * below requires `state === 'ready'` in addition to `runId`/`wanted`, because
+ * below requires `terminal` in addition to `runId`/`wanted`, because
  * `apiFetch` has no 202 branch — before this fix, opening this tab on a
  * pending run fired all four queries against rows that do not exist yet and
  * the reader got four error panels instead of `WaitingPanel`.
+ *
+ * DRAWS FIVE LIVE FIGURES NOW TOO (Task 9), once a delta has arrived for a
+ * non-terminal run. `users`/`series` below stay `enabled: on` — never
+ * fetched while live — and are READ anyway: `useLiveRun`'s `applyDelta`
+ * writes these SAME `usersQuery`/`seriesQuery` cache keys directly while the
+ * run streams (`window` is always `null` for a live view, which is exactly
+ * what makes the keys agree), and a `useQuery` still subscribes to its cache
+ * entry regardless of `enabled`. Two of the eight terminal charts have no
+ * live source on any path — the response-time distribution and its
+ * percentile companion both fold the same `/distribution` payload, which
+ * needs per-request or full-sketch data no delta carries — and get a stated
+ * `LiveNotice` instead. Errors per second is the same shape of gap but
+ * belongs on the Errors tab, where its real chart is (Task 10); the old
+ * standalone page stacked all three withheld notices together only because
+ * it had no tabs to distribute them across.
  */
 export function RunChartsTab() {
   const { runId } = useParams<{ runId: string }>();
-  const run = useQuery({
-    queryKey: runQueryKey(runId ?? ''),
-    queryFn: () => fetchRun(runId!),
-    enabled: runId !== undefined,
-  });
+  const live = useLiveFromShell();
+  const { detail: run, terminal } = useRunTerminal(runId);
   // ONE WINDOW FOR THE WHOLE PAGE, from the shell — so every figure below
   // describes the same stretch of the run, and so the shell's own fetches
   // share their cache keys with these rather than quietly duplicating them.
@@ -687,8 +699,7 @@ export function RunChartsTab() {
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
   const wanted = !compact || shown;
-  const ready = run.data?.state === 'ready';
-  const on = runId !== undefined && wanted && ready;
+  const on = runId !== undefined && wanted && terminal;
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: on });
   const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: on });
   const distribution = useQuery({
@@ -706,7 +717,50 @@ export function RunChartsTab() {
   if (runId === undefined || run.data === undefined) return null;
 
   if (run.data.state === 'processing') {
-    return <WaitingPanel status={run.data.run.status} />;
+    const delta = live?.lastDelta ?? null;
+    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
+
+    // §22.6 applies here exactly as it does to the terminal 8-chart grid
+    // below: five real figures plus two withheld notices is still "deep
+    // analysis", and a phone that has not asked to see it should not pay to
+    // build five ECharts instances for a screen too narrow to read them.
+    if (compact && !shown) {
+      return (
+        <DesktopOnly compact what="Reading five charts" onShow={() => setShown(true)}>
+          {() => null}
+        </DesktopOnly>
+      );
+    }
+
+    return (
+      <section
+        aria-labelledby="live-charts-heading"
+        className="grid grid-cols-1 gap-6 2xl:grid-cols-2"
+      >
+        <h2 id="live-charts-heading" className="sr-only">
+          Charts
+        </h2>
+        {users.data !== undefined && (
+          <>
+            {/* Its OWN chart, sharing the crosshair — never an overlay on
+                requests/s. See RUN_TIME above. */}
+            <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+            <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+          </>
+        )}
+        {series.data !== undefined && (
+          <>
+            <PercentilesChart series={series.data} domainMs={domainMs} />
+            <RequestRateChart series={series.data} domainMs={domainMs} />
+            <ResponseRateChart series={series.data} domainMs={domainMs} />
+          </>
+        )}
+        {/* THE TWO CHART SLOTS WITH NO LIVE SOURCE ON ANY PATH — see this
+            function's own docstring. */}
+        <LiveNotice kind="withheld" subject="Response time distribution" />
+        <LiveNotice kind="withheld" subject="Response time percentiles distribution" />
+      </section>
+    );
   }
 
   if (compact && !shown) {

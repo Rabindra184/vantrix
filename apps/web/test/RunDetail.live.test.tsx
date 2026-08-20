@@ -299,9 +299,11 @@ describe('deferred to Tasks 8-10 (no tab exists yet to host these)', () => {
 
   // Old: "draws the live charts from whatever the socket already wrote to
   // the cache" / "gates the charts and the three withheld notices behind
-  // DesktopOnly on a narrow viewport". Charts-tab territory.
-  it.todo('Task 9: draws the live charts from whatever the socket already wrote to the cache');
-  it.todo('Task 9: gates the live charts and their withheld notices behind DesktopOnly');
+  // DesktopOnly on a narrow viewport". RESOLVED in Task 9:
+  // `RunChartsTab.live.test.tsx`'s "draws the five live figures and states
+  // the two that are withheld" (seeds the cache directly, at the SAME keys
+  // `applyDelta` writes, rather than mocking a fetch) and "gates the live
+  // charts behind DesktopOnly on a narrow viewport".
 
   // NOT carried forward, and deliberately not an `it.todo`: "renders nothing
   // if handed a null lastDelta" defended `Live`'s own `if (delta === null)
