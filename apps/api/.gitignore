@@ -1,0 +1,6 @@
+# clients/gatling-gradle/e2e/run-e2e.sh copies its seed script in here (so
+# @perfportal/core and @perfportal/persistence resolve as workspace deps) and
+# removes the copy in its own cleanup trap -- but a SIGKILLed run skips that
+# trap, and this directory is otherwise tracked, so the leftover copy would
+# show up as untracked litter in `git status` without this.
+__vantrix_e2e_seed_*.mjs
