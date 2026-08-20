@@ -55,6 +55,13 @@ literally named `gatlingRun`, and every other setting has an env-var
 fallback (see the config table below), so a build file that applies the
 plugin and nothing else is a valid, fully-CI-driven configuration.
 
+**The plugin bundles its two runtime libraries (gson, commons-compress)
+relocated under `dev.vantrix.gradle.shaded.*`** — its published POM declares
+zero dependencies, so nothing it uses can conflict with any other plugin on
+your build classpath, whatever versions they carry. A build-time check
+(`verifyShadedJar`) fails the plugin's own CI if an unrelocated third-party
+class ever leaks into the jar.
+
 **Today, `https://maven.pkg.github.com/Rabindra184/vantrix` is a GitHub
 Packages repository, and it REQUIRES authentication to download — measured,
 not assumed: an unauthenticated (or under-scoped) request answers 401 even
