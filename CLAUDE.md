@@ -53,12 +53,45 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **111 files / 1217 tests**, it
+`nvm use` first, and if a run reports fewer than **112 files / 1230 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. Last measured on the five-tab live
-page sub-project, which made a run page render its header and five tabs for
-EVERY run state rather than only a terminal one — deleting three standalone
+page branch's own final whole-branch review fix wave, which fixed six
+findings in one pass before merge: `RunTelemetry` was the one tab whose
+query was never gated on `terminal` — `telemetryQuery` carries `staleTime:
+Infinity` (`api/metrics.ts`), so a live run's honest `available: false` got
+fetched, cached FOREVER, and silently relabelled as "no load generator
+reported" the moment the run went terminal, with nothing ever refetching it;
+`LiveStatusStrip` claimed "Reconnecting" with no evidence a socket had ever
+delivered anything, true on every phone (§22.6 disables the socket below
+768px) and on a desktop's first paint; `RunShell` re-derived `terminal` from
+a `status` allowlist instead of receiving it as a prop, the exact
+`statusFor` trap this file documents elsewhere; a stale doc comment in
+`api/metrics.ts` still claimed charts could only mount under a `ready` run;
+`RunCompare` — a sixth `<Outlet/>` child the five-tab audit missed — fired
+`/trends` with no `terminal` gate at all; and a widened-202 test consumer in
+`apps/api/test/telemetry.integration.test.ts` would have silently computed
+against the Unix epoch (`new Date(null)`) rather than failing loudly. One
+new file, `apps/web/test/RunCompare.test.tsx` (5: the withheld wording
+across pending/parsing/running, and that `/trends` fires only once the run
+is terminal), plus 2 cases each to `LiveStatusStrip.test.tsx` (a
+disconnected, never-streamed run says nothing at all, not "Reconnecting" —
+the exact prop combination a compact viewport produces) and
+`RunShell.test.tsx` (the shell trusts the `terminal` PROP over `status` in
+both directions, proving neither `complete` nor `running` predicts it any
+more), and 1 case each to `RunTelemetry.test.tsx`, `RunOverviewTab.live.test.tsx`,
+`RunChartsTab.live.test.tsx` and `RunErrorsTab.live.test.tsx` — the missing
+per-tab fetch spy the review itself called out (before this, the rule was
+pinned only in `RunShell.test.tsx` and `RunTrends.live.test.tsx`, and
+`RunTelemetry` was exactly the tab no spy was watching) — from a floor of
+111 / 1217. Its integration floor stays 110 files / 1298 tests: the one new
+file is a `.tsx` component test integration never runs, and the one `.ts`
+file this wave touched (`telemetry.integration.test.ts`) gained a defensive
+throw in its own setup, not a new case. Its e2e stays 92, unchanged. Before
+that, the five-tab live page sub-project itself, which made a run page
+render its header and five tabs for EVERY run state rather than only a
+terminal one — deleting three standalone
 screens (`Processing`, `Live`, `LiveCapped`) and redistributing their
 content into `RunShell`, `WaitingPanel`, and per-tab live branches.
 `apps/web/test/run-detail.test.ts` is GONE: its four cases pinned the
