@@ -146,6 +146,11 @@ function emptyDelta(runId: string): LiveDelta {
     responseTime: { widthMs: 1000, replaces: true, buckets: [] },
     users: { widthMs: 1000, buckets: [] },
     errors: { rows: [] },
+    // Nothing has been evaluated yet -- the owner hasn't ticked, so there is
+    // no assertion result to report either way, and no rule has been withheld
+    // for want of evidence. `rulesUnavailable: false` because this frame says
+    // nothing about whether the rules loaded: the owner has not got that far.
+    sla: { evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] },
   };
 }
 

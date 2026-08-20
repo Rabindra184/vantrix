@@ -1,0 +1,29 @@
+{
+  // apps/worker/tsconfig.json includes only `src`, so until this file existed
+  // NOTHING typechecked apps/worker/test — the same gap apps/api/test/tsconfig.json
+  // and apps/web/test/tsconfig.json were created to close, left open on the
+  // worker side, and the only one of the three still open on this branch.
+  //
+  // It is not hypothetical. `LiveFoldOwner` grew a fifth constructor argument
+  // during live-sla-signals, across 34 call sites in
+  // fold-owner.integration.test.ts alone; the only thing that checked them was
+  // a reviewer's grep. A test file that does not compile is a test file whose
+  // compile-time assertions have been erased before it ever runs.
+  //
+  // Mirrors apps/api/test/tsconfig.json field for field, and like it is wired
+  // into the root `typecheck` script.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "noEmit": true
+  },
+  "include": ["."]
+}

@@ -53,11 +53,44 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **103 files / 1150 tests**, it
+`nvm use` first, and if a run reports fewer than **106 files / 1179 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on live run monitoring
-part 2b — the fan-out and the live dashboard — which added
+silently-skipped run looks like a pass. Last measured on live SLA signals'
+whole-branch review fixes, which added no unit FILE and 9 unit cases: 6 to
+`apps/web/test/SlaBanner.test.tsx` (the denominator naming what it counts, the
+unchecked-rule count in both plurals and its absence at zero, and the two
+rules-could-not-be-loaded cases — the one state where that banner renders with
+nothing breaching), 2 to `packages/contracts/test/live-delta.test.ts` (a delta
+written before `sla` existed, and an `sla` written before its two newer
+fields did — a required field there blanks the live page for a whole rolling
+deploy, because the browser drops any frame that fails the schema and the
+gateway forwards stored bodies without validating them) and 2 to
+`apps/worker/test/live-delta.test.ts`, MINUS one: `packages/sla/test/stats.test.ts`
+lost the case claiming to pin batch/live agreement, whose two sides were the
+identical expression. Its replacement is an integration file — see that
+file's own note. Its integration floor is 111 files / 1297 tests and its e2e
+is 90. Before that, live SLA signals itself —
+the run page's own SLA breach banner — which added
+`packages/sla/test/stats.test.ts` (4 at the time, `toEvaluableStats`'s field
+mapping and its "does not carry an unrelated field" boundary — the fourth was
+the tautology the whole-branch review removed),
+`packages/sla/test/evidence-gate.test.ts` (6, the evidence floor a live tick
+judges a metric against before it counts as evaluated — `not_applicable`
+below the floor, a real breach once it clears, and absent by default for the
+batch path) and `apps/web/test/SlaBanner.test.tsx` (5: the three
+condition-not-event cases — renders on any non-empty `breaching`, nothing on
+an empty one, and survives a re-render carrying the identical breach — plus
+two the review's own fix round added, pinning that `frozen` flips the
+banner's tense without ever showing both at once) as new files, plus 1 case
+to `apps/worker/test/live-delta.test.ts` — the built delta carrying only the
+breaching rules and a count of those evaluated — and, from that same fix
+round, 4 cases to `apps/web/test/format.test.ts` for `formatOffset`'s own
+boundaries (zero, sub-second rounding, and the minute rollover that must
+never read "1m 60s") — from a floor of 103 / 1150. Its integration floor was
+110 files / 1286 tests and its e2e 90 — neither of which `pnpm test:unit`
+counts. Earlier: live run monitoring part 2b — the fan-out and the live
+dashboard — which added
 `packages/statistics/test/bucket-latency.test.ts` (4),
 `apps/web/test/useLiveRun.test.tsx` (15), `apps/web/test/LiveNotice.test.tsx`
 (4) and `apps/web/test/RunDetail.live.test.tsx` (14) as new files, plus cases
@@ -118,6 +151,23 @@ break `apps/api/test`. Before claiming a sub-project complete:
 ```
 pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e
 ```
+
+**THE CONVERSE IS NOT TRUE, AND IT COSTS TIME: `pnpm test:integration`
+RE-RUNS THE UNIT `.ts` FILES.** `vitest.integration.config.ts` includes
+`packages/*/test/**/*.test.ts` and `apps/*/test/**/*.test.ts` with **no
+`exclude` at all**, so its 111 files are 78 ordinary unit files, 32
+`*.integration.test.ts`, and `apps/api/test/parity.e2e.test.ts` — which is why
+its count is the unit count plus the integration one and not a separate
+number, and why a unit-only change still moves the integration floor. Waiting
+for an eight-minute integration run to re-prove a pure function is the
+avoidable half of it; reading its total as "the integration tests" is the
+expensive half.
+
+It is **not** a superset either. That config's `include` has no `.tsx` entry
+(the unit config lists `apps/*/test/**/*.test.tsx` separately, because those
+28 files need jsdom), so every React component test runs under `test:unit`
+ALONE. A component change verified only by `pnpm test:integration` has not
+been verified at all.
 
 `test:integration` and `test:e2e` need the local stack:
 

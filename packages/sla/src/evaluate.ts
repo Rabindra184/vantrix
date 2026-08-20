@@ -17,7 +17,12 @@ export type Verdict = 'passed' | 'failed' | 'not_evaluated';
 export interface EvaluatedAssertion {
   ruleId: string;
   outcome: AssertionOutcome;
-  /** null when not_applicable — there was nothing to measure. */
+  /**
+   * null when there was nothing to measure; POPULATED when there was too
+   * little to trust (the live evidence gate). Both are `not_applicable` --
+   * "we did not check" is one outcome with two reasons, and the message says
+   * which.
+   */
   actualValue: number | null;
   message: string;
   /** The rule as it read at evaluation time. Editing a threshold later must
@@ -30,9 +35,45 @@ function describe(rule: EvaluableRule): string {
   return `${rule.metric} of ${target} (${rule.family}) ${rule.comparator === 'lte' ? '≤' : '≥'} ${rule.threshold}`;
 }
 
+/**
+ * How many observations a rule needs before a LIVE evaluation will judge it.
+ *
+ * The batch evaluator runs once, on a finished run. The live one runs every
+ * few seconds, including at second six when a p99 rests on a handful of
+ * requests -- and ungated, the first minute of every run would breach almost
+ * any latency threshold. A banner that is wrong for the first minute of every
+ * run is worse than no banner, because readers learn to ignore it.
+ *
+ * SCALED TO HOW DEEP IN THE TAIL THE METRIC READS. A flat number is wrong in
+ * both directions: 100 observations is generous for a p50 and meaningless for
+ * a p99, where it is a single sample past the quantile. `pXX` therefore asks
+ * for ten expected observations beyond the quantile -- p50 wants 20, p95 wants
+ * 200, p99 wants 1000 -- and the scalar metrics take a flat 100.
+ *
+ * The factor of ten is a judgement, not a derivation. It is one constant in
+ * one file, and it is meant to be revised against real runs.
+ */
+export function liveEvidenceFloor(rule: EvaluableRule): number {
+  const m = /^p(\d+(?:\.\d+)?)$/.exec(rule.metric);
+  if (!m) return 100;
+  const q = Number(m[1]);
+  if (!Number.isFinite(q) || q <= 0 || q >= 100) return 100;
+  return Math.ceil((100 / (100 - q)) * 10);
+}
+
+export interface EvaluateOptions {
+  /**
+   * Minimum observations before a rule is judged. Omitted, no rule is gated
+   * and behaviour is exactly as it was -- which is what keeps the batch path
+   * and its suites untouched.
+   */
+  minObservations?: (rule: EvaluableRule) => number;
+}
+
 export function evaluateRules(
   rules: readonly EvaluableRule[],
   stats: readonly EvaluableStat[],
+  opts: EvaluateOptions = {},
 ): { assertions: EvaluatedAssertion[]; verdict: Verdict } {
   const assertions: EvaluatedAssertion[] = [];
 
@@ -109,6 +150,25 @@ export function evaluateRules(
         outcome: 'not_applicable',
         actualValue: null,
         message: `Metric "${rule.metric}" could not be resolved for ${rule.targetName ?? 'the run'}, so ${describe(rule)} was not checked.`,
+        ruleSnapshot: snapshot,
+      });
+      continue;
+    }
+
+    // AFTER the metric resolves, so the value can be reported. A rule that
+    // could not resolve a stat at all is already not_applicable above, for a
+    // better reason, and that branch keeps its own message.
+    const floor = opts.minObservations?.(rule) ?? 0;
+    if (stat.count < floor) {
+      assertions.push({
+        ruleId: rule.id,
+        outcome: 'not_applicable',
+        // NOT null. There was something to measure -- just not enough of it,
+        // and "900 on 40 observations" tells a reader more than a blank does.
+        actualValue: actual,
+        message:
+          `${describe(rule)} was not checked yet — ${stat.count} of ${floor} observations. ` +
+          `Actual so far: ${actual}.`,
         ruleSnapshot: snapshot,
       });
       continue;

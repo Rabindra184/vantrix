@@ -46,3 +46,25 @@ export function formatDuration(durationMs: number | null | undefined): string {
   if (durationMs == null) return '—';
   return `${Math.round(durationMs / 1000)}s`;
 }
+
+/**
+ * `Xm Ys` past a minute, `Xs` below it — the unit `SlaBanner` reads a
+ * breaching rule's `sinceOffsetMs` in.
+ *
+ * Deliberately not `formatDuration`: that one is a run's OWN length,
+ * matching Gatling's own header, and a bare seconds count is the right shape
+ * for a number that tops out around the length of one run. This value is an
+ * OFFSET into the run at which a breach began, which a reader is scanning
+ * for "roughly how far in" rather than comparing to another duration —
+ * `3722s` is not a shape most people subitize, `1h 2m 2s`'s sibling `1m 2s`
+ * is.
+ *
+ * `Math.round`, matching `formatDuration`'s own reasoning: flooring is wrong
+ * in the one direction a reader is least likely to question.
+ */
+export function formatOffset(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}

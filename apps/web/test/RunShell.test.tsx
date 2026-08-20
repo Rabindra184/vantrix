@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RunResponse } from '@perfportal/contracts';
+import type { LiveDelta, RunResponse } from '@perfportal/contracts';
 import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
@@ -27,6 +27,32 @@ const RUN: RunResponse = {
 };
 
 const EMPTY_USERS = { runId: RUN.id, scenarios: [], total: [] };
+
+/**
+ * A wire `sla` field with nothing to report. Every partial `lastDelta` below
+ * needs one: `RunShell` now reads `live.lastDelta.sla` unconditionally and
+ * hands it to `SlaBanner`, which dereferences `sla.breaching` on its first
+ * line — so a fixture omitting it does not fail a type check (these deltas
+ * are deliberately partial, behind an `as LiveRunState`), it throws at render.
+ */
+const NO_SLA: LiveDelta['sla'] = {
+  evaluated: 7, notJudged: 0, rulesUnavailable: false, breaching: [],
+};
+
+const BREACHING_SLA: LiveDelta['sla'] = {
+  evaluated: 7,
+  notJudged: 0,
+  rulesUnavailable: false,
+  breaching: [{ ruleId: 'a', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 62_000 }],
+};
+
+/** A partial live state carrying a delta with the given `sla`. */
+function liveWithSla(sla: LiveDelta['sla'], connected = true): LiveRunState {
+  return {
+    connected, unauthorized: false, partial: false,
+    lastDelta: { summary: { durationMs: 42_000 }, sla },
+  } as LiveRunState;
+}
 
 /**
  * Renders `RunShell` with `RUN`'s own identity/status/verdict/windowable and
@@ -208,7 +234,7 @@ describe('RunShell', () => {
     // to the real type, not `any`, for a fixture that is genuinely partial.
     const live = {
       connected: true, unauthorized: false, partial: false,
-      lastDelta: { summary: { durationMs: 42_000 } },
+      lastDelta: { summary: { durationMs: 42_000 }, sla: NO_SLA },
     } as LiveRunState;
     renderProbeWith({ status: 'running', live });
     expect(screen.getByTestId('context-probe').textContent).toContain('"liveDurationMs":42000');
@@ -227,7 +253,7 @@ describe('RunShell', () => {
   it('renders the frozen sentence for a parsing run WITH a delta this session', () => {
     const live = {
       connected: false, unauthorized: false, partial: false,
-      lastDelta: { summary: { durationMs: 42_000 } },
+      lastDelta: { summary: { durationMs: 42_000 }, sla: NO_SLA },
     } as LiveRunState;
     renderShellWith({ status: 'parsing', verdict: undefined, windowable: undefined, live });
     expect(screen.getByText(/streaming has stopped/i)).toBeInTheDocument();
@@ -238,5 +264,88 @@ describe('RunShell', () => {
     renderShellWith({ status: 'parsing', verdict: undefined, windowable: undefined, live });
     expect(screen.queryByText(/streaming has stopped/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * WHERE THE SLA BANNER LIVES, which is the only thing about it this file
+ * tests. `SlaBanner.test.tsx` owns the component's own behaviour — what the
+ * denominator counts, the condition-not-event rule, both tenses of `frozen`,
+ * the rules-could-not-be-loaded state — and none of that is re-asserted here.
+ *
+ * What has no other home is the PLACEMENT, and it needs one because the
+ * banner moved. It shipped inside `Live`, the standalone live page, whose
+ * only route was `/runs/:runId` — so it was reachable on exactly one screen.
+ * `Live` is gone; the shell mounts once above the `<Outlet/>` and the five
+ * tabs swap underneath it, which is what puts a breach in front of a reader
+ * watching Charts as much as one watching Overview. A future change that
+ * pushed this down into `RunOverviewTab` would leave every case in
+ * `SlaBanner.test.tsx` green while making the banner invisible on four tabs
+ * out of five; these cases are what would catch it.
+ */
+describe('RunShell — the SLA breach banner', () => {
+  it('renders the banner above the outlet, so it is on screen whichever tab is open', () => {
+    // The index child is a bare `<div/>` — i.e. NOT the Overview tab, and not
+    // any tab at all. The banner still renders, which is the assertion: it
+    // belongs to the shell, not to whatever the outlet happens to be showing.
+    renderShellWith({
+      status: 'running', verdict: undefined, windowable: undefined,
+      live: liveWithSla(BREACHING_SLA),
+    });
+    expect(screen.getByTestId('sla-banner')).toBeInTheDocument();
+    expect(screen.getByText(/p95 ≤ 100 — actual 900/)).toBeInTheDocument();
+  });
+
+  it('reads in the present tense while the run is still running', () => {
+    renderShellWith({
+      status: 'running', verdict: undefined, windowable: undefined,
+      live: liveWithSla(BREACHING_SLA),
+    });
+    expect(screen.getByText(/currently breaching/i)).toBeInTheDocument();
+    expect(screen.queryByText(/when streaming stopped/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * `frozen` is `status !== 'running'`, computed HERE — a run that has stopped
+   * streaming but is still `parsing` keeps its last delta, and the fold owner
+   * has already released it, so nothing will ever re-evaluate those rules.
+   * "currently breaching" would be a claim about a live evaluation that is no
+   * longer running. `LiveSummary`'s Duration tile draws the same distinction
+   * off the same flag and the two must never disagree on one render.
+   */
+  it('switches to the past tense once the run has stopped streaming', () => {
+    renderShellWith({
+      status: 'parsing', verdict: undefined, windowable: undefined,
+      live: liveWithSla(BREACHING_SLA, false),
+    });
+    expect(screen.getByText(/breaching when streaming stopped/i)).toBeInTheDocument();
+    expect(screen.queryByText(/currently breaching/i)).not.toBeInTheDocument();
+  });
+
+  it('renders no banner for a run whose delta reports nothing breaching', () => {
+    renderShellWith({
+      status: 'running', verdict: undefined, windowable: undefined,
+      live: liveWithSla(NO_SLA),
+    });
+    expect(screen.queryByTestId('sla-banner')).not.toBeInTheDocument();
+  });
+
+  /**
+   * A run still streaming that has produced no delta YET has no `sla` to read
+   * — the guard is `live?.lastDelta != null`, not `live != null`. Without it
+   * this reads `.sla` off `null` and the whole shell throws, taking the header
+   * and the tab strip down with it for every live run's first paint.
+   */
+  it('renders no banner before the first delta has arrived', () => {
+    const live = { connected: true, lastDelta: null, unauthorized: false, partial: false };
+    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined, live });
+    expect(screen.queryByTestId('sla-banner')).not.toBeInTheDocument();
+  });
+
+  it('renders no banner for a terminal run, which has no live state at all', () => {
+    // `RunDetail` passes `live: null` the moment the run leaves the processing
+    // union. The finished report's own assertions replace this.
+    renderShellWith({});
+    expect(screen.queryByTestId('sla-banner')).not.toBeInTheDocument();
   });
 });

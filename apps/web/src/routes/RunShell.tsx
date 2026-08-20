@@ -8,6 +8,7 @@ import RunHeader from './RunHeader';
 import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
 import LiveStatusStrip from './LiveStatusStrip';
+import SlaBanner from './SlaBanner';
 import type { LiveRunState } from '../api/live';
 import useDocumentTitle from '../useDocumentTitle';
 
@@ -136,6 +137,30 @@ export default function RunShell({
           streamed={live?.lastDelta != null}
           onRetry={onRetry}
         />
+      )}
+
+      {/* WHAT THE NUMBERS SAY, where the strip above says what the CONNECTION
+          is doing. At shell level rather than on Overview: a rule breaching
+          right now is a fact about the RUN, not about the tab in front of the
+          reader, and someone watching Charts needs it as much as someone on
+          Overview — which is the whole reason it moved here when `Live`, the
+          standalone page it used to sit inside, stopped existing.
+
+          NEVER VIEWPORT-GATED, the same call `LiveSummary` makes one component
+          over: this is a few strings off a delta already in hand, not a chart,
+          so §22.6's "a phone should not pay to mount ECharts" reasoning simply
+          does not reach it. A phone watching a run needs to know a rule is
+          breaching exactly as much as a desktop does.
+
+          `live` is non-null only for a run in the processing union
+          (`RunDetail`'s own `detail.state === 'processing' ? live : null`), so
+          this needs no `terminal` gate of its own: a completed run has the
+          finished report's assertions instead, and this disappears with the
+          socket state that fed it. `frozen` is the same `status !== 'running'`
+          flag `LiveSummary`'s Duration tile reads, and the two must never
+          disagree about whether the run is still live on one render. */}
+      {live?.lastDelta != null && (
+        <SlaBanner sla={live.lastDelta.sla} frozen={status !== 'running'} />
       )}
 
       {/* ABOVE THE TABS' CONTENT, in the shell rather than in any one tab, so

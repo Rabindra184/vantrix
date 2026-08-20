@@ -49,6 +49,10 @@ function liveWith(overrides: { errors?: LiveErrorRow[] } = {}): LiveRunState {
       responseTime: { widthMs: 1000, replaces: true, buckets: [] },
       users: { widthMs: 1000, buckets: [] },
       errors: { rows: overrides.errors ?? [] },
+      // Required by `LiveDeltaSchema` since the live-SLA merge; empty because
+      // nothing in this file asserts on the banner. `RunShell.test.tsx` owns
+      // that, since `RunShell` is where `SlaBanner` renders.
+      sla: { evaluated: 0, notJudged: 0, rulesUnavailable: false, breaching: [] },
     } satisfies LiveDelta,
   };
 }
