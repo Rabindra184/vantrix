@@ -26,9 +26,16 @@ import { rangeSuffix } from '../routes/window';
  * Every one of these goes through `apiFetch` with its contract schema — the
  * same schema the API validates its own output against. `fetchRun`'s exception
  * (see `./run.ts`) does not apply here: these endpoints answer 200 or an
- * error, never a run body at 202/422, and charts mount only under the run
- * detail page's existing `state === 'ready'` branch, so the processing case
- * cannot arise (design §6).
+ * error, never a run body at 202/422 — so a query built from one of these
+ * factories must never be `enabled` for a non-terminal run, or `apiFetch`
+ * has no 202 branch to hand it. MINOR 4: this used to claim "charts mount
+ * only under the run detail page's existing `state === 'ready'` branch, so
+ * the processing case cannot arise" — no longer true since Task 7/9:
+ * `RunChartsTab` (and every other tab) now mounts for a `state ===
+ * 'processing'` run too (design §6), and draws its own live figures there.
+ * What actually prevents the processing case from reaching these queries is
+ * each tab's own `enabled: terminal` gate (`useRunTerminal`,
+ * `useRunWindow.ts`) — not which branch of the page rendered the tab.
  *
  * KEYS extend the convention `runQueryKey` established: `['run', id, …]`,
  * never `['runs', …]`, which is the LIST's prefix keyed by cursor. Colliding
