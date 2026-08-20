@@ -136,6 +136,25 @@ importers:
         specifier: ^7.0.0
         version: 7.2.2
 
+  apps/runner:
+    dependencies:
+      '@perfportal/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@perfportal/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      bullmq:
+        specifier: ^5.34.0
+        version: 5.81.3
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
+    devDependencies:
+      '@prisma/client':
+        specifier: ^6.19.3
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+
   apps/web:
     dependencies:
       '@perfportal/contracts':

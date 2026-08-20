@@ -1,0 +1,162 @@
+import { createHash } from 'node:crypto';
+import {
+  ProjectRepository,
+  RunRepository,
+  type RunnerJobWithArtifact,
+} from '@perfportal/persistence';
+import { BlobStore, LiveChunkStore } from '@perfportal/storage';
+import type { RunnerConfig } from './config.js';
+import { engineOptionsFrom } from './engine-options.js';
+import { RunnerExecutionError } from './errors.js';
+import type { RunnerIngestQueue } from './ingest-queue.js';
+import type { RunnerLiveNotifier } from './live-notifier.js';
+
+export class RunnerLiveSink {
+  readonly #config: RunnerConfig;
+  readonly #projects: ProjectRepository;
+  readonly #runs: RunRepository;
+  readonly #blobs: BlobStore;
+  readonly #chunks: LiveChunkStore;
+  readonly #queue: RunnerIngestQueue;
+  readonly #notifier: RunnerLiveNotifier;
+  #runId: string | null = null;
+  #offset = 0;
+  #closed = false;
+
+  constructor(opts: {
+    config: RunnerConfig;
+    projects: ProjectRepository;
+    runs: RunRepository;
+    blobs: BlobStore;
+    chunks: LiveChunkStore;
+    queue: RunnerIngestQueue;
+    notifier: RunnerLiveNotifier;
+  }) {
+    this.#config = opts.config;
+    this.#projects = opts.projects;
+    this.#runs = opts.runs;
+    this.#blobs = opts.blobs;
+    this.#chunks = opts.chunks;
+    this.#queue = opts.queue;
+    this.#notifier = opts.notifier;
+  }
+
+  get runId(): string | null {
+    return this.#runId;
+  }
+
+  get bytesWritten(): number {
+    return this.#offset;
+  }
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  async open(job: RunnerJobWithArtifact): Promise<string> {
+    const settings = await this.#projects.settings({
+      orgId: job.job.orgId,
+      projectId: job.job.projectId,
+    });
+    const run = await this.#runs.createLive({
+      orgId: job.job.orgId,
+      projectId: job.job.projectId,
+      tool: 'gatling',
+      ...(job.job.environment ? { environment: job.job.environment } : {}),
+      ...(job.job.branch ? { branch: job.job.branch } : {}),
+      ...(job.job.commitSha ? { commitSha: job.job.commitSha } : {}),
+      idempotencyKey: `runner:${job.job.id}`,
+      startedAt: new Date(),
+      engineOptions: engineOptionsFrom(settings),
+    });
+    this.#runId = run.id;
+    const state = await this.#runs.liveState(run.id);
+    this.#offset = state?.streamOffset ?? 0;
+    this.#notifier.opened(run.id);
+    return run.id;
+  }
+
+  async append(bytes: Buffer): Promise<void> {
+    if (bytes.length === 0) return;
+    const runId = this.#requireRunId();
+    if (this.#offset + bytes.length > this.#config.maxLogBytes) {
+      throw new RunnerExecutionError(
+        'SIMULATION_LOG_TOO_LARGE',
+        `simulation.log exceeded the ${this.#config.maxLogBytes}-byte live run limit.`,
+        'Reduce Gatling result volume for this run or raise MAX_BUNDLE_BYTES.',
+      );
+    }
+    await this.#chunks.put(runId, this.#offset, bytes);
+    const advanced = await this.#runs.advanceOffset(runId, this.#offset, this.#offset + bytes.length);
+    if (!advanced) {
+      throw new RunnerExecutionError(
+        'LIVE_STREAM_REJECTED',
+        'The live run stopped accepting chunks before the runner finished streaming simulation.log.',
+        'Check whether the run was closed by another process or swept as stale, then retry.',
+      );
+    }
+    this.#offset += bytes.length;
+    this.#notifier.advanced(runId);
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    const runId = this.#requireRunId();
+    const claimed = await this.#runs.claimForClose(runId);
+    if (!claimed) {
+      this.#closed = true;
+      return;
+    }
+
+    this.#notifier.closed(runId);
+    let committed = false;
+    try {
+      if (this.#offset === 0) {
+        await this.#runs.markIncomplete(runId);
+        committed = true;
+        this.#closed = true;
+        return;
+      }
+
+      const bundleKey = `runs/${runId}/simulation.log`;
+      await this.#chunks.finalize(runId, bundleKey);
+      const bundle = await this.#blobs.get(bundleKey);
+      const sha256 = createHash('sha256').update(bundle).digest('hex');
+      await this.#runs.finalizeLive(runId, sha256, bundle.length);
+      committed = true;
+      await this.#queue.add(runId);
+      this.#closed = true;
+    } catch (err) {
+      if (!committed) {
+        await this.#runs.releaseClose(runId).catch((releaseErr: unknown) => {
+          console.error('failed to release live close claim', releaseErr);
+        });
+      }
+      throw err;
+    }
+  }
+
+  async abortIncomplete(): Promise<void> {
+    if (this.#closed) return;
+    const runId = this.#requireRunId();
+    const claimed = await this.#runs.claimForClose(runId);
+    if (!claimed) {
+      this.#closed = true;
+      return;
+    }
+    this.#notifier.closed(runId);
+    await this.#runs.markIncomplete(runId);
+    this.#closed = true;
+  }
+
+  #requireRunId(): string {
+    if (!this.#runId) {
+      throw new RunnerExecutionError(
+        'LIVE_RUN_NOT_OPEN',
+        'The runner tried to stream before opening a live run.',
+        'Check the runner process logs and retry the job.',
+      );
+    }
+    return this.#runId;
+  }
+}

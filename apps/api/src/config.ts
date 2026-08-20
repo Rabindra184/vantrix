@@ -11,6 +11,10 @@ export interface AppConfig {
   };
   defaultWaitMs: number;
   maxBundleBytes: number;
+  runner: {
+    artifactDir: string;
+    maxArtifactBytes: number;
+  };
   /**
    * The cap on a SINGLE `POST /v1/runs/:id/stream` body, distinct from
    * maxBundleBytes above and much smaller.
@@ -54,6 +58,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     defaultWaitMs: Number(env.INGEST_WAIT_MS ?? 25_000),
     maxBundleBytes: Number(env.MAX_BUNDLE_BYTES ?? 512 * 1024 * 1024),
+    runner: {
+      artifactDir: env.RUNNER_ARTIFACT_DIR ?? '.perfportal/runner-artifacts',
+      maxArtifactBytes: Number(env.MAX_RUNNER_ARTIFACT_BYTES ?? 512 * 1024 * 1024),
+    },
     maxStreamChunkBytes: Number(env.MAX_STREAM_CHUNK_BYTES ?? 8 * 1024 * 1024),
     // Optional with a default, never required(): a new mandatory environment
     // variable would break M0's "a stranger deploys a running instance and

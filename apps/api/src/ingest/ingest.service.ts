@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { Inject, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { ingestError } from '@perfportal/core';
 import {
   ProjectRepository,
@@ -147,7 +146,7 @@ export class IngestService {
 
 /** Robust to message-text changes in Prisma: keys on the stable error code. */
 function isUniqueConstraintViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
 }
 
 /**

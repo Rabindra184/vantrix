@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import type { ProjectScope, TenantScope } from './tenant.js';
 
 export interface RunRecord {
@@ -180,7 +180,7 @@ function startedOnFrom(startedAt: Date): Date {
  * boundary is not available. Same one-line check, kept in sync by hand.
  */
 function isUniqueConstraintViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
 }
 
 export class RunRepository {
@@ -564,7 +564,23 @@ export class RunRepository {
       cursorKey = { effective: cursorRun.toolStartedAt ?? cursorRun.startedAt, id: cursorRun.id };
     }
 
-    const rows = await this.prisma.$queryRaw<RunSqlRow[]>`
+    const filters: string[] = ['r.org_id = $1::uuid'];
+    const params: unknown[] = [scope.orgId];
+    if (scope.projectId) {
+      params.push(scope.projectId);
+      filters.push(`r.project_id = $${params.length}::uuid`);
+    }
+    if (cursorKey) {
+      params.push(cursorKey.effective, cursorKey.id);
+      filters.push(
+        `(COALESCE(r.tool_started_at, r.started_at), r.id) < ` +
+          `($${params.length - 1}::timestamptz(3), $${params.length}::uuid)`,
+      );
+    }
+    params.push(opts.limit + 1);
+
+    const rows = await this.prisma.$queryRawUnsafe(
+      `
       SELECT
         r.id, r.org_id AS "orgId", r.project_id AS "projectId", r.status, r.verdict, r.tool,
         r.tool_version AS "toolVersion", r.environment, r.branch, r.commit_sha AS "commitSha",
@@ -578,16 +594,12 @@ export class RunRepository {
         p.slug AS "projectSlug", p.name AS "projectName"
       FROM run r
       JOIN project p ON p.id = r.project_id
-      WHERE r.org_id = ${scope.orgId}::uuid
-      ${scope.projectId ? Prisma.sql`AND r.project_id = ${scope.projectId}::uuid` : Prisma.empty}
-      ${
-        cursorKey
-          ? Prisma.sql`AND (COALESCE(r.tool_started_at, r.started_at), r.id) < (${cursorKey.effective}::timestamp(3), ${cursorKey.id}::uuid)`
-          : Prisma.empty
-      }
+      WHERE ${filters.join(' AND ')}
       ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
-      LIMIT ${opts.limit + 1}
-    `;
+      LIMIT $${params.length}
+      `,
+      ...params,
+    ) as RunSqlRow[];
     const page = rows.slice(0, opts.limit);
     const next = rows.length > opts.limit ? (page[page.length - 1]?.id ?? null) : null;
     return { items: page.map(fromSqlRow), nextCursor: next };

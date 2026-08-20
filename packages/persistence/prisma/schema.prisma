@@ -34,9 +34,59 @@ model Project {
   tokens    ApiToken[]
   runs      Run[]
   slaRules  SlaRule[]
+  runnerArtifacts RunnerArtifact[]
+  runnerJobs RunnerJob[]
 
   @@unique([orgId, slug])
   @@map("project")
+}
+
+model RunnerArtifact {
+  id              String   @id @default(uuid()) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  name            String
+  filename        String
+  kind            String
+  simulationClass String   @map("simulation_class")
+  gatlingVersion  String?  @map("gatling_version")
+  sha256          String
+  bytes           BigInt
+  storagePath     String   @map("storage_path")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  jobs    RunnerJob[]
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@map("runner_artifact")
+}
+
+model RunnerJob {
+  id               String   @id @default(uuid()) @db.Uuid
+  orgId            String   @map("org_id") @db.Uuid
+  projectId        String   @map("project_id") @db.Uuid
+  artifactId       String   @map("artifact_id") @db.Uuid
+  runId            String?  @map("run_id") @db.Uuid
+  status           String
+  requestedBy      String   @map("requested_by")
+  environment      String?
+  branch           String?
+  commitSha        String?  @map("commit_sha")
+  javaOptions      String?  @map("java_options")
+  systemProperties Json     @default("{}") @map("system_properties")
+  logPath          String?  @map("log_path")
+  error            Json?
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  artifact RunnerArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  run      Run?           @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("runner_job")
 }
 
 model ApiToken {
@@ -198,6 +248,7 @@ model Run {
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assertions RunAssertion[]
+  runnerJobs RunnerJob[]
 
   @@unique([projectId, idempotencyKey])
   @@index([projectId, startedAt(sort: Desc)])

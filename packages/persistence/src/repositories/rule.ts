@@ -19,7 +19,15 @@ export class RuleRepository {
       where: { orgId: scope.orgId, projectId: scope.projectId, enabled: true },
       orderBy: { id: 'asc' },
     });
-    return rows.map((r) => ({
+    return rows.map((r: {
+      id: string;
+      scope: string;
+      targetName: string | null;
+      family: string;
+      metric: string;
+      comparator: string;
+      threshold: number;
+    }) => ({
       id: r.id,
       scope: r.scope as SlaRuleRecord['scope'],
       targetName: r.targetName,

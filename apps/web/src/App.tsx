@@ -5,6 +5,7 @@ import GroupDetail from './routes/GroupDetail';
 import Login from './routes/Login';
 import NoOrg from './routes/NoOrg';
 import ProjectRuns from './routes/ProjectRuns';
+import NewRunnerRun from './routes/NewRunnerRun';
 import RequestDetail from './routes/RequestDetail';
 import RunCompare from './routes/RunCompare';
 import RunTelemetry from './routes/RunTelemetry';
@@ -27,6 +28,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/runs" element={<RunList />} />
           <Route path="/projects/:slug" element={<ProjectRuns />} />
+          <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
           <Route path="/runs/:runId" element={<RunDetail />}>
             <Route index element={<RunOverviewTab />} />
             <Route path="charts" element={<RunChartsTab />} />

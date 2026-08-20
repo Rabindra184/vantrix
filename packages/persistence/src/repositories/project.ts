@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import type { ProjectScope } from './tenant.js';
 
 /**
@@ -122,7 +122,8 @@ export class ProjectRepository {
    * scoped to exactly one. Absent for a session, which sees the whole org.
    */
   async listForOrg(orgId: string, projectId?: string): Promise<ProjectListRow[]> {
-    const rows = await this.prisma.$queryRaw<RawProjectRow[]>`
+    const rows = await this.prisma.$queryRawUnsafe(
+      `
       SELECT p.id, p.slug, p.name,
              r.id AS "latestRunId", r.status AS "latestRunStatus",
              r.verdict AS "latestRunVerdict"
@@ -134,11 +135,13 @@ export class ProjectRepository {
         ORDER BY COALESCE(tool_started_at, started_at) DESC, id DESC
         LIMIT 1
       ) r ON true
-      WHERE p.org_id = ${orgId}::uuid
-      ${projectId ? Prisma.sql`AND p.id = ${projectId}::uuid` : Prisma.empty}
+      WHERE p.org_id = $1::uuid
+      ${projectId ? 'AND p.id = $2::uuid' : ''}
       ORDER BY p.name ASC
-    `;
-    return rows.map((row) => ({
+      `,
+      ...(projectId ? [orgId, projectId] : [orgId]),
+    ) as RawProjectRow[];
+    return rows.map((row: RawProjectRow) => ({
       id: row.id,
       slug: row.slug,
       name: row.name,

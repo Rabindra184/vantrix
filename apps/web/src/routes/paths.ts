@@ -53,6 +53,10 @@ export function projectPath(slug: string): string {
   return `/projects/${encodeURIComponent(slug)}`;
 }
 
+export function projectNewRunnerRunPath(slug: string): string {
+  return `${projectPath(slug)}/run/new`;
+}
+
 /**
  * `/login`, carrying the destination the user was actually trying to reach.
  *

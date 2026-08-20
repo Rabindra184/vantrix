@@ -116,6 +116,8 @@ export const SCHEMA_TABLES = [
   'telemetry_sample',
   'sla_rule',
   'run_assertion',
+  'runner_artifact',
+  'runner_job',
   'user',
   'session',
   'account',

@@ -95,6 +95,7 @@ uncredentialed.
 
     pnpm --filter @perfportal/api start &
     pnpm --filter @perfportal/worker start &
+    pnpm --filter @perfportal/runner start &
 
 Then post the reference fixture, using the token from the previous step:
 
@@ -103,3 +104,27 @@ Then post the reference fixture, using the token from the previous step:
       -H "Authorization: Bearer $PERFPORTAL_TOKEN" \
       -F 'metadata={"tool":"gatling"}' \
       -F bundle=@/tmp/bundle.tgz
+
+## Running Gatling from the UI
+
+The on-prem runner uses the same local services as the API and worker. It also
+needs Java on the host and shared artifact/log directories:
+
+    export RUNNER_ARTIFACT_DIR='.perfportal/runner-artifacts'
+    export RUNNER_WORK_DIR='.perfportal/runner-work'
+    export RUNNER_LOG_DIR='.perfportal/runner-logs'
+    export JAVA_BIN='java'
+
+Start `apps/runner` beside `apps/api` and `apps/worker`. From the project runs
+page, choose **New on-prem run**, upload a Gatling fat jar or runnable bundle,
+and queue the job. The runner claims one queued job at a time, streams the
+generated `simulation.log` into a live run, then hands it to the worker so the
+normal reports appear under the attached run id. Runner stdout/stderr is
+written under `RUNNER_LOG_DIR` and can be tailed from the same UI.
+
+For a containerized single-node deployment, use the `onprem` compose profile:
+
+    docker compose -f infra/docker-compose.yml --profile onprem up --build
+
+The app services share named volumes for uploaded artifacts and runner logs;
+the profile also runs Prisma migrations before starting API, worker and runner.

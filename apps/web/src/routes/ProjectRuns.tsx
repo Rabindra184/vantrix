@@ -1,7 +1,11 @@
 import { useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { linkButtonClasses } from '../components/Button';
+import { PlayIcon } from '../components/icons';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import RunList from './RunList';
+import { projectNewRunnerRunPath } from './paths';
 
 /**
  * One project's runs.
@@ -25,5 +29,17 @@ export default function ProjectRuns() {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
 
-  return <RunList key={slug} projectSlug={slug} heading={project?.name ?? slug} />;
+  return (
+    <RunList
+      key={slug}
+      projectSlug={slug}
+      heading={project?.name ?? slug}
+      action={
+        <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
+          <PlayIcon className="h-3.5 w-3.5" />
+          New on-prem run
+        </Link>
+      }
+    />
+  );
 }
