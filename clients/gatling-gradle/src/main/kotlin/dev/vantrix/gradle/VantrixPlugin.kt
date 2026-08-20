@@ -4,6 +4,10 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import java.util.concurrent.atomic.AtomicReference
 
+/** The `doFirst`-to-finalizer handoff: the tailer plus the resolved config it was opened with,
+ *  so the finalizer can read `uploadIfLiveUnavailable` without re-resolving anything. */
+private data class TailerHandle(val tailer: RunTailer, val config: PluginConfig)
+
 /**
  * Wires [RunTailer] into the `gatlingRun` task lifecycle, whatever plugin (real Gatling, or a
  * TestKit fake) actually registers that task -- we key off the NAME, never a dependency on the
@@ -13,8 +17,10 @@ import java.util.concurrent.atomic.AtomicReference
  * A `doFirst` resolves config and, if present, opens a tailer for the run; a `vantrixClose`
  * task -- registered once per project, unconditionally -- is `finalizedBy`'d onto `gatlingRun` so
  * it closes the run EVEN WHEN gatlingRun fails. State crosses from the `doFirst` to the finalizer
- * through a plain [AtomicReference] captured by both closures: scoped to this one `apply()` call
- * (i.e. per project), which a companion-object holder would not be in a multi-project build.
+ * through a plain [AtomicReference] (holding a [TailerHandle]) captured by both closures: scoped
+ * to this one `apply()` call (i.e. per project), which a companion-object holder would not be in
+ * a multi-project build. The same finalizer, after closing the run, is also where the opt-in
+ * `uploadIfLiveUnavailable` fallback runs -- see [BundleUploader].
  *
  * Every action body below is wrapped in `try/catch(Throwable)` that logs and swallows -- this
  * plugin must never be the reason a build fails. Configuration-cache compatibility is explicitly
@@ -49,13 +55,24 @@ class VantrixPlugin : Plugin<Project> {
             }
 
             val ext = project.extensions.create("vantrix", VantrixExtension::class.java)
-            val tailerRef = AtomicReference<RunTailer?>(null)
+            val handleRef = AtomicReference<TailerHandle?>(null)
 
             val closeTask = project.tasks.register("vantrixClose") { task ->
                 task.doLast {
                     try {
                         // No-op when doFirst never ran (missing config, task skipped/UP-TO-DATE): nothing in the holder.
-                        tailerRef.get()?.finish()
+                        val handle = handleRef.get()
+                        handle?.tailer?.finish()
+
+                        // Fallback: strictly opt-in, and only for a simulation whose live open
+                        // actually failed -- everything else already streamed successfully.
+                        if (handle != null && handle.config.uploadIfLiveUnavailable) {
+                            val failures = handle.tailer.openFailures()
+                            if (failures.isNotEmpty()) {
+                                val uploader = BundleUploader(logger = { msg -> project.logger.warn("vantrix: $msg") })
+                                failures.forEach { dir -> uploader.upload(handle.config, dir) }
+                            }
+                        }
                     } catch (t: Throwable) {
                         project.logger.warn("vantrix: close failed: ${t.message}")
                     }
@@ -84,7 +101,7 @@ class VantrixPlugin : Plugin<Project> {
                                     resultsRoot = resultsRoot,
                                     taskStartMillis = System.currentTimeMillis(),
                                 )
-                                tailerRef.set(tailer)
+                                handleRef.set(TailerHandle(tailer, config))
                                 tailer.start()
                             }
                         }

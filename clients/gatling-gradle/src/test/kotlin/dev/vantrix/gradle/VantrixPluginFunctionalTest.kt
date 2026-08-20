@@ -42,20 +42,46 @@ class VantrixPluginFunctionalTest {
 
     private class FakeServerState {
         val events = CopyOnWriteArrayList<RecordedEvent>()
+        val runsPostMarkerPresent = CopyOnWriteArrayList<Boolean>()
         var runCounter = 0
     }
 
-    /** Starts a fake portal recording open/stream/close events in the order requests arrive. */
-    private fun startServer(): Pair<HttpServer, FakeServerState> {
+    /**
+     * Starts a fake portal recording open/stream/close/upload events in the order requests
+     * arrive. [openStatusCode] lets a test make `open` fail (e.g. 403) to exercise the
+     * fallback-upload path; [projectDir], when given, lets the `/v1/runs` (bundle upload) handler
+     * check -- at the moment it receives the request -- whether a marker file the fake
+     * `gatlingRun` task writes as the LAST thing it does already exists, proving the upload
+     * arrived after the task itself finished rather than mid-task.
+     */
+    private fun startServer(openStatusCode: Int = 201, projectDir: File? = null): Pair<HttpServer, FakeServerState> {
         val state = FakeServerState()
         val srv = HttpServer.create(InetSocketAddress(0), 0)
 
         srv.createContext("/v1/runs/live") { exchange ->
             exchange.requestBody.readBytes()
-            val n = synchronized(state) { ++state.runCounter }
-            val runId = "run-$n"
-            state.events.add(RecordedEvent("open"))
-            respond(exchange, 201, """{"runId":"$runId","streamUrl":"/v1/runs/$runId/stream","nextOffset":0}""")
+            if (openStatusCode == 201) {
+                val n = synchronized(state) { ++state.runCounter }
+                val runId = "run-$n"
+                state.events.add(RecordedEvent("open"))
+                respond(exchange, 201, """{"runId":"$runId","streamUrl":"/v1/runs/$runId/stream","nextOffset":0}""")
+            } else {
+                state.events.add(RecordedEvent("open-failed"))
+                respond(
+                    exchange, openStatusCode,
+                    """{"type":"t","title":"t","status":$openStatusCode,"code":"FORBIDDEN","detail":"d","remediation":"r"}""",
+                )
+            }
+        }
+        // Exact context: only matches a POST to precisely "/v1/runs" (the fallback bundle
+        // upload), never "/v1/runs/live" or "/v1/runs/{id}/..." -- HttpServer resolves those to
+        // their own, longer-prefix contexts registered separately.
+        srv.createContext("/v1/runs") { exchange ->
+            exchange.requestBody.readBytes()
+            val markerPresent = projectDir?.let { File(it, "build/reports/gatling/task-finished.marker").exists() } ?: false
+            state.events.add(RecordedEvent("runs-post"))
+            state.runsPostMarkerPresent.add(markerPresent)
+            respond(exchange, 202, "{}")
         }
         srv.createContext("/v1/runs/") { exchange ->
             val path = exchange.requestURI.path
@@ -332,6 +358,81 @@ class VantrixPluginFunctionalTest {
         assertTrue(
             state.events.isEmpty(),
             "expected zero requests to the portal -- the plugin should have gone fully inert rather than half-wiring, got: ${state.events}",
+        )
+    }
+
+    /** [fakeTaskBody] used by the two fallback-upload tests below: writes a results dir with a log,
+     * sleeps long enough for a tick to discover it and attempt (and fail) an open, then writes a
+     * marker file as the LAST thing it does -- outside the results dir, so it never pollutes the
+     * tarred bundle -- so the fake portal can tell whether an upload arrived before or after. */
+    private fun fallbackUploadTaskBody(): String =
+        """
+        |    doLast {
+        |        val dir = layout.buildDirectory.dir("reports/gatling/fake-" + System.currentTimeMillis()).get().asFile
+        |        dir.mkdirs()
+        |        val log = java.io.File(dir, "simulation.log")
+        |        log.appendBytes(ByteArray(200) { 'a'.code.toByte() })
+        |        Thread.sleep(1500)
+        |        java.io.File(dir.parentFile, "task-finished.marker").writeText("done")
+        |    }
+        """.trimMargin()
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    fun `flag off -- an open failure never triggers a fallback upload`(@TempDir tmp: File) {
+        val (srv, state) = startServer(openStatusCode = 403, projectDir = tmp)
+        writeSettings(tmp)
+        writeBuildFile(tmp, fallbackUploadTaskBody())
+        // Deliberately no VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE -- default is false.
+        val env = envFor(
+            "VANTRIX_URL" to "http://localhost:${srv.address.port}",
+            "VANTRIX_TOKEN" to "tok",
+            "VANTRIX_TICK_SECONDS" to "1",
+        )
+
+        val result = runner(tmp, env).build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        assertEquals(TaskOutcome.SUCCESS, result.task(":vantrixClose")?.outcome)
+
+        val events = pollUntil(condition = { it: List<RecordedEvent> -> it.any { e -> e.type == "open-failed" } }) {
+            state.events.toList()
+        }
+        assertTrue(events.any { it.type == "open-failed" }, "expected an open-failed event, got: $events")
+        assertTrue(
+            state.events.none { it.type == "runs-post" },
+            "expected zero POSTs to /v1/runs when the flag is off, got: ${state.events}",
+        )
+    }
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    fun `flag on -- an open failure uploads the finished log exactly once, after the task itself finished`(@TempDir tmp: File) {
+        val (srv, state) = startServer(openStatusCode = 403, projectDir = tmp)
+        writeSettings(tmp)
+        writeBuildFile(tmp, fallbackUploadTaskBody())
+        val env = envFor(
+            "VANTRIX_URL" to "http://localhost:${srv.address.port}",
+            "VANTRIX_TOKEN" to "tok",
+            "VANTRIX_TICK_SECONDS" to "1",
+            "VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE" to "true",
+        )
+
+        val result = runner(tmp, env).build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        assertEquals(TaskOutcome.SUCCESS, result.task(":vantrixClose")?.outcome)
+
+        val events = pollUntil(condition = { it: List<RecordedEvent> -> it.any { e -> e.type == "runs-post" } }) {
+            state.events.toList()
+        }
+        val uploadEvents = events.filter { it.type == "runs-post" }
+        assertEquals(1, uploadEvents.size, "expected exactly one POST to /v1/runs, got: $events")
+        assertEquals(1, state.runsPostMarkerPresent.size)
+        assertTrue(
+            state.runsPostMarkerPresent[0],
+            "expected the upload to arrive after the task's own doLast (marker file) had already run, " +
+                "got marker-present=${state.runsPostMarkerPresent}",
         )
     }
 }

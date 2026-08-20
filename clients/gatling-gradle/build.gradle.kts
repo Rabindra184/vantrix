@@ -13,6 +13,7 @@ repositories { mavenCentral() }
 
 dependencies {
     implementation("com.google.code.gson:gson:2.11.0")
+    implementation("org.apache.commons:commons-compress:1.26.2")
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation(gradleTestKit())
