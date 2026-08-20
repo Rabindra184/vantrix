@@ -293,4 +293,64 @@ describe('RunTelemetry', () => {
     expect(screen.queryByTestId('desktop-only')).not.toBeInTheDocument();
     await waitForResolvedCpu(10);
   });
+
+  /**
+   * CRITICAL 1, and its own regression test. `RunTelemetry` was the one tab
+   * whose query was never gated on `terminal` — `telemetryQuery` carries
+   * `staleTime: Infinity` (`api/metrics.ts`), so a live run's honest
+   * `available: false` used to be fetched, cached FOREVER under
+   * `telemetryQueryKey`, and then silently relabelled as "no load generator
+   * reported" the moment the run went terminal, with nothing ever
+   * refetching it. No per-tab fetch spy existed anywhere in the repo before
+   * this fix round — the no-fetch-while-live rule was pinned only in
+   * `RunShell.test.tsx` and `RunTrends.live.test.tsx` — which is exactly why
+   * this specific bug shipped with no test failing red for it. This case is
+   * the regression test for that whole class, on the one tab that actually
+   * had it wrong.
+   */
+  it('does not fetch /telemetry while the run is not terminal', () => {
+    const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>((input) => {
+      const url = String(input);
+      if (url === `/v1/runs/${RUN}`) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ id: RUN, status: 'running', statusUrl: `/v1/runs/${RUN}` }),
+            { status: 202 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response('{}', { status: 500 }));
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(runQueryKey(RUN), {
+      state: 'processing',
+      run: { id: RUN, status: 'running', statusUrl: `/v1/runs/${RUN}` },
+    });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN}/load-generators`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <Outlet
+                  context={
+                    { window: null, durationMs: null, liveDurationMs: null, live: null } satisfies RunWindowContext
+                  }
+                />
+              }
+            >
+              <Route path="load-generators" element={<RunTelemetry />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('/telemetry'))).toBe(false);
+  });
 });

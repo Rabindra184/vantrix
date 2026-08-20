@@ -49,14 +49,24 @@ import useIsCompact from '../useIsCompact';
  * predates. A host with points gets the real six `<Chart>`s via
  * `TelemetryCharts`.
  *
- * ═══ `available: false` HAS TWO HONEST READINGS (Task 11) ═══
+ * ═══ `available: false` HAS TWO HONEST READINGS, AND ONLY ONE OF THEM IS
+ * EVER FETCHED (Task 11, fix round — CRITICAL 1) ═══
  * `toolStartedAt` is null for EVERY non-terminal run — it is set from the
  * parsed report, which does not exist until the run finishes — so
  * `available: false` is the answer for a run still streaming as much as for
  * a finished one the agent genuinely never reported for. Those are different
  * facts: "wait, this arrives once the run finishes" versus "this run
- * finished and nothing was ever recorded". `terminal` (`useRunTerminal`)
- * decides which sentence the `EmptyState` below shows.
+ * finished and nothing was ever recorded". `terminal` (`useRunTerminal`) used
+ * to decide only which sentence the `EmptyState` showed, AFTER letting the
+ * query run either way — and `telemetryQuery` carries `staleTime: Infinity`
+ * (`api/metrics.ts`), so the honest "wait" answer for a live run got fetched,
+ * cached forever under `telemetryQueryKey`, and then silently relabelled as
+ * the dishonest "nothing was ever recorded" once the run went terminal and
+ * nothing re-fetched it (`invalidateLiveWrites` never touches this key — it
+ * is not one of the three the socket writes). The `!terminal` branch below
+ * now returns the "wait" `EmptyState` directly, and `enabled` carries
+ * `terminal` too, so a live run's tab never asks `/telemetry` at all — there
+ * is nothing for a later terminal transition to have left stale.
  */
 
 const TELEMETRY_SLOTS: readonly Slot[] = [
@@ -74,9 +84,11 @@ const NO_SAMPLES_IN_WINDOW =
 
 export default function RunTelemetry() {
   const { runId } = useParams<{ runId: string }>();
-  // Decides only which sentence `available: false` shows below — telemetry
-  // itself is never fetched while live (`available` is always `false` for a
-  // non-terminal run; there is nothing to gate a fetch AGAINST).
+  // Gates BOTH the query's `enabled` and the early return below (CRITICAL 1):
+  // telemetry is never fetched while live, and the live wording never comes
+  // from a fetch at all — `available` would always read `false` for a
+  // non-terminal run, and caching that under `staleTime: Infinity` is
+  // exactly the bug this gate exists to prevent.
   const { terminal } = useRunTerminal(runId);
   const window = useWindowFromShell();
   // The same time domain the run's other tabs draw on (§22.5) — these six
@@ -103,12 +115,32 @@ export default function RunTelemetry() {
   // during the previous render." `wanted` is what used to be implicit in
   // "the query is never even constructed while compact and not shown"; now
   // that construction is unconditional, `wanted` has to say so explicitly
-  // through `enabled` instead.
+  // through `enabled` instead. `terminal` joins it in `enabled` for a
+  // different reason — see CRITICAL 1's note above `RunTelemetry`'s own
+  // docstring: a non-terminal run's `available: false` must never be
+  // fetched, because `staleTime: Infinity` would cache that honest "wait"
+  // answer forever, past the moment the run actually finishes.
   const wanted = !compact || shown;
   const telemetry = useQuery({
     ...telemetryQuery(runId ?? '', window),
-    enabled: runId !== undefined && wanted,
+    enabled: runId !== undefined && wanted && terminal,
   });
+
+  // NOT TERMINAL (CRITICAL 1 fix): the live wording, returned BEFORE the
+  // query above is ever consulted — the same shape `RunTrends.tsx` uses for
+  // its own `!terminal` return, and AHEAD OF THE COMPACT GATE BELOW for the
+  // same reason that file states: this is a few sentences, not six ECharts
+  // instances, so a phone reader is told the same thing a desktop is rather
+  // than a SECOND withheld notice ("Show it anyway") for content that was
+  // never coming this session regardless of viewport.
+  if (!terminal) {
+    return (
+      <EmptyState
+        title="No telemetry was recorded for this run."
+        body="Load generator telemetry appears once the run finishes — it is placed on the run's own elapsed axis, which needs the tool's start time from the parsed report."
+      />
+    );
+  }
 
   if (compact && !shown) {
     return (
@@ -126,17 +158,17 @@ export default function RunTelemetry() {
           // exact phrase is load-bearing: Task 11's e2e suite matches
           // `/no telemetry was recorded/i` against it.
           //
-          // THE BODY DEPENDS ON WHETHER THE RUN IS DONE (Task 11). This
-          // branch is every non-terminal run too — the endpoint answers
-          // `available: false` whenever `toolStartedAt` is null, which is
-          // true until the parsed report exists — so the OLD, unconditional
-          // body blamed a silent agent for a window that had not opened yet.
-          // A terminal run with `available: false` really is the agent's own
-          // silence; a non-terminal one is just too early to ask.
-          const body = terminal
-            ? "No load generator reported for this run's window."
-            : "Load generator telemetry appears once the run finishes — it is placed on the run's own elapsed axis, which needs the tool's start time from the parsed report.";
-          return <EmptyState title="No telemetry was recorded for this run." body={body} />;
+          // ALWAYS THE TERMINAL SENTENCE HERE NOW (CRITICAL 1 fix). The
+          // `!terminal` branch above already returned the "wait" wording for
+          // a live run, so by the time this callback runs the run is
+          // terminal and `available: false` really is the agent's own
+          // silence — there is no ternary left to get wrong.
+          return (
+            <EmptyState
+              title="No telemetry was recorded for this run."
+              body="No load generator reported for this run's window."
+            />
+          );
         }
 
         const hosts = data.hosts;
