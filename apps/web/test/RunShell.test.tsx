@@ -1,9 +1,11 @@
 import '@testing-library/jest-dom/vitest';
+import type { ComponentProps } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunResponse } from '@perfportal/contracts';
+import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 
@@ -37,7 +39,7 @@ function renderShell() {
 }
 
 /** `RunShell`, with `RUN`'s own props as defaults and any prop overridden. */
-function renderShellWith(overrides: Record<string, unknown>) {
+function renderShellWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const props = {
     identity: RUN, status: RUN.status, verdict: RUN.verdict, windowable: RUN.windowable,
@@ -47,7 +49,7 @@ function renderShellWith(overrides: Record<string, unknown>) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
         <Routes>
-          <Route path="/runs/:runId" element={<RunShell {...(props as any)} />}>
+          <Route path="/runs/:runId" element={<RunShell {...props} />}>
             <Route index element={<div />} />
           </Route>
         </Routes>
@@ -63,7 +65,7 @@ function ContextProbe() {
 }
 
 /** Same as `renderShellWith`, but mounts `<ContextProbe/>` as the index child. */
-function renderProbeWith(overrides: Record<string, unknown>) {
+function renderProbeWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const props = {
     identity: RUN, status: RUN.status, verdict: RUN.verdict, windowable: RUN.windowable,
@@ -73,7 +75,7 @@ function renderProbeWith(overrides: Record<string, unknown>) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
         <Routes>
-          <Route path="/runs/:runId" element={<RunShell {...(props as any)} />}>
+          <Route path="/runs/:runId" element={<RunShell {...props} />}>
             <Route index element={<ContextProbe />} />
           </Route>
         </Routes>
@@ -201,10 +203,13 @@ describe('RunShell', () => {
   });
 
   it('reports the growing domain from the live delta, not from a null duration', () => {
+    // `LiveDelta` carries `responseTime`/`users`/`errors`/`seq` beyond
+    // `summary`, none of which this assertion reads — a specific assertion
+    // to the real type, not `any`, for a fixture that is genuinely partial.
     const live = {
       connected: true, unauthorized: false, partial: false,
       lastDelta: { summary: { durationMs: 42_000 } },
-    };
+    } as LiveRunState;
     renderProbeWith({ status: 'running', live });
     expect(screen.getByTestId('context-probe').textContent).toContain('"liveDurationMs":42000');
   });
