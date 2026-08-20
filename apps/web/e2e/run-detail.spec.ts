@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   seedAdmin,
+  seedLiveRun,
   seedPendingRun,
   seedRunInOtherOrg,
   seedRunWithData,
@@ -10,7 +11,13 @@ import {
   seedRunWithProvenance,
 } from './fixtures.js';
 import { apiJson, signIn } from './helpers.js';
-import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
+import {
+  runChartsPath,
+  runErrorsPath,
+  runPath,
+  runTelemetryPath,
+  runTrendsPath,
+} from '../src/routes/paths.js';
 
 /**
  * The run detail page — the last screen of the parity shell, and the one the
@@ -519,4 +526,75 @@ test('the commit chip is named by the whole sha, not the seven visible character
   // observable in a real browser.
   await expect(page.getByTestId('run-commit')).toHaveAccessibleName('Commit: abc1234def5678');
   await expect(page.getByTestId('run-environment')).toHaveAccessibleName('Environment: staging');
+});
+
+/**
+ * The assertion this whole sub-project exists to make true, for the one
+ * status none of the specs above cover. "each tab is its own URL, reachable
+ * directly" above proves this for a TERMINAL run; "a processing run shows its
+ * tab strip" proves the strip renders for `pending`. Neither is `running`,
+ * and `running` is not "pending, but further along": `RunDetail` opens a real
+ * live socket only for it, and it is the one status a reader watches while a
+ * load test is actually in flight — the case a link pasted into an incident
+ * channel has to resolve for.
+ */
+test('each tab of a LIVE run is its own URL, reachable directly', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedLiveRun(admin.orgId);
+  await signIn(page, admin);
+
+  // A hard load of each tab, never a click — the same proof "each tab is its
+  // own URL, reachable directly" makes for a terminal run above, so a link
+  // pasted while the run is still streaming lands on something real too.
+  for (const [path, heading] of [
+    [runPath(runId), 'Overview'],
+    [runChartsPath(runId), 'Charts'],
+    [runTelemetryPath(runId), 'Load generators'],
+    // NOT the bare string 'Errors'. `LiveGateway`'s `emptyDelta` seeds every
+    // fresh socket to a `running` run with a synthetic zero-activity delta
+    // the instant it connects, even though `seedLiveRun` never wrote a
+    // single chunk (live.gateway.ts's own comment: "the seed for a run whose
+    // owner has not ticked yet"). `RunShell`'s errors query subscribes to
+    // that SAME delta-fed cache key regardless of which tab is open
+    // (RunChartsTab's own docstring), so by the time this assertion settles
+    // the tab already reads its real, live count — deterministically 0, since
+    // nothing ever streams to this run — never the plain "Errors" a
+    // `pending`/`parsing` run (no socket at all) would still show.
+    [runErrorsPath(runId), /^Errors \(0\)$/],
+    [runTrendsPath(runId), 'Trends'],
+  ] as const) {
+    await page.goto(path);
+    // `exact: true`: `ProjectRail` renders on every authenticated page — one
+    // link per project plus "All runs" — so a page-scoped link query can
+    // resolve against a rail row instead of the tab strip it meant to find.
+    // This org's one project is `seedAdmin`'s own "Checkout" (`projectFor`),
+    // which shares no word with any tab name, but `exact: true` is the belt
+    // as well as the braces and costs nothing to keep on every heading here.
+    // (It has no effect on the Errors case's RegExp — a regex already
+    // defines its own exact match — so it is left on for every entry rather
+    // than special-cased.)
+    await expect(page.getByRole('link', { name: heading, exact: true })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
+  }
+});
+
+test('a live run shows its identity in the header, not a bare id', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedLiveRun(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // No spec anywhere else proves this for a non-terminal run: "shows the run
+  // header" and "the header states the run's identity and its own peak"
+  // above both seed a COMPLETE run, and "a processing run shows its tab
+  // strip" asserts the nav strip and WaitingPanel but never reads the header
+  // at all.
+  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible();
+  await expect(page.getByTestId('run-status')).toContainText(/running/i);
+  // `undefined` verdict, not `null` — `RunDetail` hands `RunShell` `verdict:
+  // undefined` for anything short of `state: 'ready'`, and `RunHeader` OMITS
+  // the badge entirely for `undefined` rather than rendering
+  // `VERDICT['none']`: "no verdict" reads as evaluated-and-nothing-found, a
+  // claim about a run nobody has finished measuring yet.
+  await expect(page.getByTestId('run-verdict')).toHaveCount(0);
 });
