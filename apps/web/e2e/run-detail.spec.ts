@@ -546,21 +546,23 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
   // A hard load of each tab, never a click — the same proof "each tab is its
   // own URL, reachable directly" makes for a terminal run above, so a link
   // pasted while the run is still streaming lands on something real too.
+  //
+  // The Errors case tolerates EITHER 'Errors' or 'Errors (0)' here
+  // (`/^Errors( \(0\))?$/`), not the pinned `Errors (0)` a fix round used to
+  // assert in this loop. `LiveGateway`'s `emptyDelta` seeds a fresh socket
+  // to a `running` run with a synthetic zero-activity delta as soon as it
+  // connects, and `RunShell`'s errors query picks that up on every tab once
+  // it lands — but THIS test's claim is URL reachability, not socket timing,
+  // and making one iteration of it depend on a WebSocket round trip landing
+  // inside the default expect timeout would fail it for a reason that has
+  // nothing to do with what it asserts. The exact post-seed shape — "Errors
+  // (0)", with the partial-seed disclosure that is what makes that zero
+  // honest — is pinned once, on its own, below.
   for (const [path, heading] of [
     [runPath(runId), 'Overview'],
     [runChartsPath(runId), 'Charts'],
     [runTelemetryPath(runId), 'Load generators'],
-    // NOT the bare string 'Errors'. `LiveGateway`'s `emptyDelta` seeds every
-    // fresh socket to a `running` run with a synthetic zero-activity delta
-    // the instant it connects, even though `seedLiveRun` never wrote a
-    // single chunk (live.gateway.ts's own comment: "the seed for a run whose
-    // owner has not ticked yet"). `RunShell`'s errors query subscribes to
-    // that SAME delta-fed cache key regardless of which tab is open
-    // (RunChartsTab's own docstring), so by the time this assertion settles
-    // the tab already reads its real, live count — deterministically 0, since
-    // nothing ever streams to this run — never the plain "Errors" a
-    // `pending`/`parsing` run (no socket at all) would still show.
-    [runErrorsPath(runId), /^Errors \(0\)$/],
+    [runErrorsPath(runId), /^Errors( \(0\))?$/],
     [runTrendsPath(runId), 'Trends'],
   ] as const) {
     await page.goto(path);
@@ -576,6 +578,21 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
     await expect(page.getByRole('link', { name: heading, exact: true })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   }
+
+  // THE EXACT POST-SEED SHAPE, PINNED ONCE, OUTSIDE THE REACHABILITY LOOP.
+  // By now the socket has had five full page loads to deliver its seed, so
+  // this is not a race — it is the claim the Errors case in the loop above
+  // was deliberately left too loose to make. `Errors (0)` is honest only
+  // DISCLOSED: `live-notice-partial` is `LiveStatusStrip`'s relay of the
+  // gateway's own verdict on this seed ("neither key existed and the seed is
+  // emptyDelta, a full dashboard of zeros" — LiveNotice.tsx's own docstring),
+  // and it renders above the `<Outlet/>` so it is on screen on every tab,
+  // including this one. Asserting the zero without it would let a spec pass
+  // while `/errors` showed a bare, undisclosed "Errors (0)" over a fold
+  // nobody has ticked — indistinguishable from the run genuinely having
+  // zero errors.
+  await expect(page.getByRole('link', { name: 'Errors (0)', exact: true })).toBeVisible();
+  await expect(page.getByTestId('live-notice-partial')).toBeVisible();
 });
 
 test('a live run shows its identity in the header, not a bare id', async ({ page }) => {
@@ -589,7 +606,19 @@ test('a live run shows its identity in the header, not a bare id', async ({ page
   // above both seed a COMPLETE run, and "a processing run shows its tab
   // strip" asserts the nav strip and WaitingPanel but never reads the header
   // at all.
-  await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible();
+  const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' });
+  await expect(breadcrumb).toBeVisible();
+  // THE IDENTITY THIS TEST'S NAME PROMISES, ACTUALLY ASSERTED. `seedLiveRun`
+  // leaves `simulation` unset — honestly, since the worker only learns it by
+  // parsing, and this run never will — so `RunHeader`'s `<h1>` falls back to
+  // `Run ${id.slice(0, 8)}` (RunHeader.tsx), which genuinely IS a bare id.
+  // The real, non-bare identity a running run carries is its PROJECT, in the
+  // breadcrumb: `seedAdmin`'s own "Checkout" (`projectFor`). Scoped to the
+  // breadcrumb nav specifically, not page-scoped — `ProjectRail` renders the
+  // same project as a rail row too, but that row's own accessible name folds
+  // in a status badge ("Checkout running"), so it never collides with this
+  // `exact: true` query in practice; scoping removes the need to rely on that.
+  await expect(breadcrumb.getByRole('link', { name: 'Checkout', exact: true })).toBeVisible();
   await expect(page.getByTestId('run-status')).toContainText(/running/i);
   // `undefined` verdict, not `null` — `RunDetail` hands `RunShell` `verdict:
   // undefined` for anything short of `state: 'ready'`, and `RunHeader` OMITS
