@@ -72,16 +72,22 @@ class BundleUploaderTest {
         return contentType.substring(idx + marker.length)
     }
 
+    /** A parsed multipart part: its raw header block (verbatim, CRLF-joined) and its raw body bytes. */
+    private data class ParsedPart(val headers: String, val body: ByteArray)
+
     /**
-     * Splits a raw multipart body into name -> raw part bytes via an ISO-8859-1 round trip, which
-     * is lossless for every byte 0-255 -- safe even though the `bundle` part is binary gzip data.
+     * Splits a raw multipart body into name -> [ParsedPart] via an ISO-8859-1 round trip, which is
+     * lossless for every byte 0-255 -- safe even though the `bundle` part is binary gzip data.
      * Also enforces the CRLF discipline the brief calls out: each part must open with a CRLF right
      * after its boundary line, and its body must end with a CRLF right before the next boundary.
+     * Retains the FULL header block (not just `name=`) so a caller can assert `filename=`/
+     * `Content-Type` on the `bundle` part -- a refactor that dropped either would otherwise turn
+     * busboy's file field into a plain field on the real server while this suite stayed green.
      */
-    private fun parseMultipart(raw: ByteArray, boundary: String): Map<String, ByteArray> {
+    private fun parseMultipart(raw: ByteArray, boundary: String): Map<String, ParsedPart> {
         val text = raw.toString(Charsets.ISO_8859_1)
         val delimiter = "--$boundary"
-        val result = mutableMapOf<String, ByteArray>()
+        val result = mutableMapOf<String, ParsedPart>()
         for (rawSegment in text.split(delimiter)) {
             if (rawSegment.isEmpty() || rawSegment == "--\r\n" || rawSegment == "--") continue
             assertTrue(rawSegment.startsWith("\r\n"), "expected each part to open with a CRLF right after its boundary line")
@@ -94,7 +100,7 @@ class BundleUploaderTest {
             val partBody = rawBody.substring(0, rawBody.length - 2)
             val name = Regex("name=\"([^\"]+)\"").find(headers)?.groupValues?.get(1)
                 ?: fail("no name= found in part headers: $headers")
-            result[name] = partBody.toByteArray(Charsets.ISO_8859_1)
+            result[name] = ParsedPart(headers, partBody.toByteArray(Charsets.ISO_8859_1))
         }
         return result
     }
@@ -145,11 +151,24 @@ class BundleUploaderTest {
         val parts = parseMultipart(req.body, boundary)
         assertEquals(setOf("metadata", "bundle"), parts.keys, "expected exactly the two named parts")
 
-        val metadataJson = JsonParser.parseString(parts.getValue("metadata").toString(StandardCharsets.UTF_8)).asJsonObject
+        val metadataJson = JsonParser.parseString(parts.getValue("metadata").body.toString(StandardCharsets.UTF_8)).asJsonObject
         assertEquals("gatling", metadataJson.get("tool").asString)
         assertEquals(0, metadataJson.get("waitMs").asInt)
 
-        val bundleBytes = parts.getValue("bundle")
+        val bundlePart = parts.getValue("bundle")
+        // The two headers that make this a FILE field on the real (busboy) server, not a plain
+        // one -- dropping either would silently break ingestion while this suite stayed green if
+        // it only checked the bytes.
+        assertTrue(
+            bundlePart.headers.contains("filename=\"bundle.tgz\""),
+            "expected the bundle part's Content-Disposition to carry filename=\"bundle.tgz\", got: ${bundlePart.headers}",
+        )
+        assertTrue(
+            bundlePart.headers.contains("Content-Type: application/gzip"),
+            "expected the bundle part to declare Content-Type: application/gzip, got: ${bundlePart.headers}",
+        )
+
+        val bundleBytes = bundlePart.body
         assertTrue(bundleBytes.isNotEmpty())
         val untarred = untarGzip(bundleBytes)
         assertEquals(setOf("run-1/simulation.log"), untarred.keys)
@@ -170,7 +189,7 @@ class BundleUploaderTest {
         val contentType = requests[0].headers.getFirst("Content-Type")
         val boundary = extractBoundary(contentType!!)
         val parts = parseMultipart(requests[0].body, boundary)
-        val metadataJson = JsonParser.parseString(parts.getValue("metadata").toString(StandardCharsets.UTF_8)).asJsonObject
+        val metadataJson = JsonParser.parseString(parts.getValue("metadata").body.toString(StandardCharsets.UTF_8)).asJsonObject
 
         assertFalse(metadataJson.has("environment"), "expected no 'environment' key when null, got: $metadataJson")
         assertEquals("main", metadataJson.get("branch").asString)
