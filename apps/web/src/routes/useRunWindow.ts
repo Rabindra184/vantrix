@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import type { Window } from '@perfportal/contracts';
+import type { LiveRunState } from '../api/live';
 import { parseWindow, serialiseWindow } from './window';
 
 /**
@@ -74,11 +75,27 @@ export interface RunWindowContext {
    * left over from before it finished must never override it.
    */
   readonly liveDurationMs: number | null;
+  /**
+   * The live socket's state, or `null` for a run that is not streaming.
+   *
+   * ON THE CONTEXT RATHER THAN AS A PROP because the tabs are `<Outlet/>`
+   * children: they read `runId` from `useParams` and have no prop channel from
+   * the shell at all. This is the same argument `window` and `durationMs`
+   * already make one field up — the shell is where the run's state lives, and
+   * a tab that opened its own socket would be a second consumer of one run's
+   * stream.
+   */
+  readonly live: LiveRunState | null;
 }
 
 /** The window the shell parsed. Every tab reads it; none re-derives it. */
 export const useWindowFromShell = (): Window | null =>
   useOutletContext<RunWindowContext>().window;
+
+/** The live socket's state, as `RunShell` observed it. Every tab reads it
+ *  from here; none opens a second socket for the run it is already under. */
+export const useLiveFromShell = (): LiveRunState | null =>
+  useOutletContext<RunWindowContext>().live;
 
 /**
  * `[0, durationMs]` — the domain a run without a narrowed window shares while

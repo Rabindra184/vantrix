@@ -33,7 +33,9 @@ function renderRunTelemetry(response: TelemetryResponse) {
             path="/runs/:runId"
             element={
               <Outlet
-                context={{ window: null, durationMs: null, liveDurationMs: null } satisfies RunWindowContext}
+                context={
+                  { window: null, durationMs: null, liveDurationMs: null, live: null } satisfies RunWindowContext
+                }
               />
             }
           >

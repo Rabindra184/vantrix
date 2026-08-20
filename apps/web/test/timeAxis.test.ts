@@ -151,7 +151,7 @@ describe('useTimeDomainFromShell', () => {
   // other.
   it('takes the domain from the live duration while a run is streaming', () => {
     const { result } = renderHook(() => useTimeDomainFromShell(), {
-      wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: 42_000 }),
+      wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: 42_000, live: null }),
     });
     expect(result.current).toEqual([0, 42_000]);
   });
@@ -162,14 +162,14 @@ describe('useTimeDomainFromShell', () => {
     // only so this object typechecks as one.
     const window = { fromMs: 5_000, toMs: 9_000, bucketWidthMs: 1_000 };
     const { result } = renderHook(() => useTimeDomainFromShell(), {
-      wrapper: wrapperFor({ window, durationMs: null, liveDurationMs: 42_000 }),
+      wrapper: wrapperFor({ window, durationMs: null, liveDurationMs: 42_000, live: null }),
     });
     expect(result.current).toEqual([5_000, 9_000]);
   });
 
   it('is undefined when a run reports no duration at all', () => {
     const { result } = renderHook(() => useTimeDomainFromShell(), {
-      wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: null }),
+      wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: null, live: null }),
     });
     expect(result.current).toBeUndefined();
   });
@@ -179,7 +179,7 @@ describe('useTimeDomainFromShell', () => {
   // just because a caller forgot to clear it.
   it('prefers the settled duration over a stale live one', () => {
     const { result } = renderHook(() => useTimeDomainFromShell(), {
-      wrapper: wrapperFor({ window: null, durationMs: 60_000, liveDurationMs: 42_000 }),
+      wrapper: wrapperFor({ window: null, durationMs: 60_000, liveDurationMs: 42_000, live: null }),
     });
     expect(result.current).toEqual([0, 60_000]);
   });
@@ -211,7 +211,7 @@ it('Live and useTimeDomainFromShell agree on the growing-run domain formula', ()
   // `useTimeDomainFromShell`'s own growing-domain branch (no window, no
   // settled duration) resolves through the identical function.
   const { result } = renderHook(() => useTimeDomainFromShell(), {
-    wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: durationMs }),
+    wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: durationMs, live: null }),
   });
   expect(result.current).toEqual(growingDomainMs(durationMs));
 });

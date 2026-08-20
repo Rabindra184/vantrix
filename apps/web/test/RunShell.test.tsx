@@ -26,13 +26,28 @@ const RUN: RunResponse = {
 
 const EMPTY_USERS = { runId: RUN.id, scenarios: [], total: [] };
 
+/**
+ * Renders `RunShell` with `RUN`'s own identity/status/verdict/windowable and
+ * no live state — the terminal-run shape every pre-existing test here was
+ * written against, before `RunShell` took `identity`/`status`/... instead of
+ * a whole `RunResponse`.
+ */
 function renderShell() {
+  return renderShellWith({});
+}
+
+/** `RunShell`, with `RUN`'s own props as defaults and any prop overridden. */
+function renderShellWith(overrides: Record<string, unknown>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const props = {
+    identity: RUN, status: RUN.status, verdict: RUN.verdict, windowable: RUN.windowable,
+    live: null, capReached: false, onRetry: () => {}, ...overrides,
+  };
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
         <Routes>
-          <Route path="/runs/:runId" element={<RunShell run={RUN} />}>
+          <Route path="/runs/:runId" element={<RunShell {...(props as any)} />}>
             <Route index element={<div />} />
           </Route>
         </Routes>
@@ -47,13 +62,18 @@ function ContextProbe() {
   return <div data-testid="context-probe">{JSON.stringify(context)}</div>;
 }
 
-function renderShellWithProbe() {
+/** Same as `renderShellWith`, but mounts `<ContextProbe/>` as the index child. */
+function renderProbeWith(overrides: Record<string, unknown>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const props = {
+    identity: RUN, status: RUN.status, verdict: RUN.verdict, windowable: RUN.windowable,
+    live: null, capReached: false, onRetry: () => {}, ...overrides,
+  };
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
         <Routes>
-          <Route path="/runs/:runId" element={<RunShell run={RUN} />}>
+          <Route path="/runs/:runId" element={<RunShell {...(props as any)} />}>
             <Route index element={<ContextProbe />} />
           </Route>
         </Routes>
@@ -123,23 +143,69 @@ describe('RunShell', () => {
   });
 
   /**
-   * TASK 9 C1. `RunShell` used to call its own `useLiveRun(run.id,
-   * run.status === 'running' && !compact)` to fill this field -- a call
-   * that could never actually fire, since `RunShell`'s one caller
-   * (`RunDetail`'s `Ready` branch) only ever renders a run that has already
-   * left `running`. Removed; `liveDurationMs` is now a hard-coded `null` on
-   * the context this shell provides. Pinned directly rather than trusted to
-   * stay dead by induction from the fact that no test exercised it before.
+   * A terminal run passes `live: null` (there is no socket for a run that
+   * has already finished), so `liveDurationMs` — `live?.lastDelta?.summary
+   * .durationMs ?? null` — stays `null` for exactly the run this test
+   * renders. This used to pin a hard-coded `null` that could never become
+   * anything else, because `RunShell`'s one caller could never reach it with
+   * a running run at all; now it pins the terminal branch of a value that
+   * genuinely varies — see the two live-run cases below for the other one.
    */
-  it('always hands liveDurationMs: null through the outlet context', async () => {
+  it('hands liveDurationMs: null through the outlet context for a terminal run with no live state', async () => {
     vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })));
 
-    renderShellWithProbe();
+    renderProbeWith({});
 
     const probe = await screen.findByTestId('context-probe');
     const context = JSON.parse(probe.textContent ?? '{}') as RunWindowContext;
     expect(context.liveDurationMs).toBeNull();
-    // `durationMs` is unaffected -- this pins ONLY the field Task 9 C1 touched.
+    // `durationMs` is unaffected -- this pins ONLY the field this case is about.
     expect(context.durationMs).toBe(RUN.durationMs);
+  });
+
+  it('mounts header and tabs for a running run', () => {
+    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined });
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Trends' })).toBeInTheDocument();
+  });
+
+  it('offers no time brush while a run is live', () => {
+    // A live view is never narrowed (useLiveRun's own rule), and identity
+    // carries no `windowable`, so the brush cannot be offered. Pinned here so
+    // nobody later "fixes" it by threading windowable onto identity.
+    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined });
+    expect(screen.queryByRole('slider')).toBeNull();
+  });
+
+  it('does not FETCH the shared metric keys while a run is live', () => {
+    // useLiveRun's applyDelta already writes usersQuery and errorsQuery
+    // directly. A live REST fetch answers emptier for a run whose rows do not
+    // exist yet, and TanStack applies whichever write resolves last — so the
+    // socket's own numbers would lose a race to an empty payload.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined });
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    // `.some(...)`, NOT `expect(urls).not.toContain(expect.stringContaining(...))` —
+    // toContain does not meaningfully take an asymmetric matcher, so that
+    // spelling passes whether or not the fetch happened.
+    expect(urls.some((u) => u.includes('/users'))).toBe(false);
+    expect(urls.some((u) => u.includes('/errors'))).toBe(false);
+    fetchSpy.mockRestore();
+  });
+
+  it('hands its children the live state through the outlet context', () => {
+    const live = { connected: true, lastDelta: null, unauthorized: false, partial: false };
+    renderProbeWith({ status: 'running', live });
+    expect(screen.getByTestId('context-probe').textContent).toContain('"connected":true');
+  });
+
+  it('reports the growing domain from the live delta, not from a null duration', () => {
+    const live = {
+      connected: true, unauthorized: false, partial: false,
+      lastDelta: { summary: { durationMs: 42_000 } },
+    };
+    renderProbeWith({ status: 'running', live });
+    expect(screen.getByTestId('context-probe').textContent).toContain('"liveDurationMs":42000');
   });
 });
