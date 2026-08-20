@@ -11,6 +11,11 @@ describe('LiveStatusStrip', () => {
   it('says the run is live while it streams and the socket is up', () => {
     render(<LiveStatusStrip {...BASE} status="running" />);
     expect(screen.getByRole('status')).toHaveTextContent(/live/i);
+    // Moved from RunDetail.live.test.tsx (Task 7): the finalizing notice is
+    // gated on `frozen` (`status === 'parsing'`), so it cannot render while
+    // `status` is still `running` — pinned here rather than left to follow
+    // from the component's control flow alone.
+    expect(screen.queryByTestId('live-notice-finalizing')).not.toBeInTheDocument();
   });
 
   it('says it is reconnecting, not that the run stopped', () => {
@@ -73,4 +78,23 @@ describe('LiveStatusStrip', () => {
     render(<LiveStatusStrip {...BASE} status="pending" connected={false} capReached />);
     expect(screen.getByRole('button', { name: /check again/i })).toBeInTheDocument();
   });
+
+  // Moved from RunDetail.live.test.tsx (Task 7), adapted to this component's
+  // own props — the claim is unchanged, only its address.
+  it('says nothing about a partial seed when the seed was complete', () => {
+    render(<LiveStatusStrip {...BASE} status="running" partial={false} />);
+    expect(screen.queryByTestId('live-notice-partial')).not.toBeInTheDocument();
+  });
+
+  // NOT moved: "says nothing about the cap while the run is still streaming"
+  // held for the OLD `Live` component, whose own `frozen` gated the capped
+  // block on `status !== 'running'` as well as on `capReached`. This
+  // component's capped block is gated on `capReached` ALONE (see its own
+  // docstring's precedence section) — Task 5/6's reviewed, accepted trade-off,
+  // relying on `capReached && status === 'running'` being a caller invariant
+  // RunDetail's own effect never produces (it resets `capReached` and arms no
+  // timer while `running`). Asserting the old claim here would fail against
+  // the current, accepted implementation; asserting the new behaviour would
+  // just restate the invariant note already on this file's sibling ledger
+  // entry, so it is left undone rather than added as a false or vacuous test.
 });

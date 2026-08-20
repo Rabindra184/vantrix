@@ -9,15 +9,32 @@ import RunDetail from '../src/routes/RunDetail.js';
  * The polling cap's WIRING — the `useEffect` in `RunDetail` that flips
  * `capReached` from false to true — driven through a real mount.
  *
- * This is the hole `apps/web/test/run-detail.test.ts` documents at length and
- * could not close. That file renders `Processing` directly with `capReached`
- * passed in as a prop, so it covers the cap's COPY but never the thing that
- * sets the flag; `apps/web/test/run.test.ts` covers `pollIntervalFor` as a
- * pure function, so it covers the cap's DECISION but never the thing that
- * feeds it. Between them, deleting the `useEffect` left every suite green
- * while the page polled a stuck run until the tab closed.
+ * Historically this was the hole `apps/web/test/run-detail.test.ts` documented
+ * at length and could not close on its own; that file rendered `Processing`
+ * directly with `capReached` passed in as a prop, covering the cap's COPY but
+ * never the thing that sets the flag. `Processing` (and that whole file) is
+ * gone now (Task 7): `RunDetail` renders `RunShell` for every state, and the
+ * cap's OWN copy — "PerfPortal stopped checking automatically…" plus the
+ * retry button — lives in `LiveStatusStrip`, which `RunShell` mounts
+ * unconditionally on which tab is open, so this file can still see it without
+ * nesting any tab route at all.
  *
- * What makes it closeable now is the jsdom environment routed to this file by
+ * THE "still checking on its own" REASSURANCE, BEFORE THE CAP, IS NOT ON
+ * SCREEN YET. That sentence moved to `WaitingPanel` (Task 7), which is not
+ * wired into any tab yet — that is a later task's job (design part 2b), and
+ * deliberately not this one's: `WaitingPanel` takes no `capReached` prop, and
+ * `RunShell`'s outlet context does not carry that flag either, so mounting it
+ * from here would show its unconditional sentence directly under
+ * `LiveStatusStrip`'s capped block once the cap is reached — two
+ * contradictory claims on screen at once. `WaitingPanel.test.tsx` proves the
+ * sentence exists and renders correctly in isolation; this file no longer
+ * asserts that a reader SEES it live, only that the cap's own copy and the
+ * request-count behaviour it gates are correct.
+ *
+ * `apps/web/test/run.test.ts` covers `pollIntervalFor` as a pure function, so
+ * it covers the cap's DECISION but never the thing that feeds it.
+ *
+ * What makes THIS closeable is the jsdom environment routed to this file by
  * `environmentMatchGlobs` in vitest.config.ts, plus fake timers: the two real
  * minutes the cap needs cost nothing when the clock is ours.
  */
@@ -116,9 +133,14 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     expect(fetchRunMock.mock.calls.length).toBeGreaterThan(0);
     expect(fetchRunMock).toHaveBeenCalledWith(RUN_ID);
 
-    // Before the cap the page is still asking on its own, and says so.
+    // Before the cap, the cap's OWN UI has not appeared — `LiveStatusStrip`
+    // renders nothing at all for a pending run that has never streamed and
+    // is not capped (its own, separately-pinned behaviour). The reassurance
+    // sentence this used to check for here ("checks again every few
+    // seconds…") moved to `WaitingPanel`, which is not wired into any tab
+    // yet (see this file's own docstring) — `WaitingPanel.test.tsx` pins that
+    // sentence in isolation instead.
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
-    expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
 
     // It really is polling — otherwise "polling stops" below would be
     // vacuously true of a page that never polled at all.
@@ -132,7 +154,6 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     // handed in as a prop.
     expect(screen.getByText(/stopped checking automatically/i)).not.toBeNull();
     expect(screen.getByRole('button', { name: /check again/i })).not.toBeNull();
-    expect(screen.queryByText(/checks again every few seconds/i)).toBeNull();
 
     // And the requests have actually stopped, which is the point of the cap.
     // A page that said "stopped checking" while still checking would be
@@ -174,9 +195,17 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     });
     await advance(0);
 
+    // The capped block is gone — the reassurance sentence that used to sit
+    // here too moved to `WaitingPanel`, not wired into any tab yet (see this
+    // file's own docstring), so it is not asserted from this file any more.
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
-    expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
     expect(fetchRunMock).toHaveBeenCalledWith(second);
+
+    // AND it is genuinely uncapped, not merely mid-transition: polling for
+    // the second run keeps going rather than being silently capped already.
+    const afterNavigate = fetchRunMock.mock.calls.length;
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchRunMock.mock.calls.length).toBeGreaterThan(afterNavigate);
   });
 
   /**

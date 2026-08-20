@@ -29,4 +29,15 @@ describe('WaitingPanel', () => {
     render(<WaitingPanel status="pending" />);
     expect(screen.queryByRole('link')).toBeNull();
   });
+
+  it('says the page checks again on its own, and that there is nothing to do', () => {
+    // The one sentence `Processing` used to carry that nothing else on the new
+    // shell says: this is about the PAGE's own polling, not about a socket —
+    // which is why it lives here rather than on `LiveStatusStrip` (that strip
+    // renders nothing at all for a pending run that has never streamed).
+    render(<WaitingPanel status="pending" />);
+    expect(
+      screen.getByText('This page checks again every few seconds; there is nothing to do.'),
+    ).toBeInTheDocument();
+  });
 });
