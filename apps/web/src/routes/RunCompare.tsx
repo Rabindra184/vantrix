@@ -14,6 +14,8 @@ import CompareMatrix from '../tables/CompareMatrix';
 import type { CompareStats } from '../tables/buildCompareMatrix';
 import { Payload, type Slot } from './payload';
 import DesktopOnly from './DesktopOnly';
+import LiveNotice from './LiveNotice';
+import { useRunTerminal } from './useRunWindow';
 import useIsCompact from '../useIsCompact';
 import {
   MAX_COMPARE,
@@ -43,6 +45,15 @@ export default function RunCompare() {
   const [params, setParams] = useSearchParams();
   const [metric, setMetric] = useState<CompareMetric>('p95');
 
+  // MINOR 5: gated the same way every tab is — a live run has no `RunStat`
+  // rows of its own to plot a cohort point from (`RunTrends.tsx`'s own
+  // docstring makes the identical argument for `/trends`), and before
+  // `RunShell` mounted for every status this route was unreachable for one
+  // anyway (`RunTrends` only ever links here once it has cleared its own
+  // `!terminal` return). It is reachable now, by a hand-typed URL, so it
+  // gets the same `terminal` gate rather than a bespoke live view of its own.
+  const { terminal } = useRunTerminal(runId);
+
   // The cohort is the set of runs that can legitimately be compared, and the
   // only source of it — a client-supplied list would let a reader compare
   // runs of different simulations by editing a URL.
@@ -50,7 +61,7 @@ export default function RunCompare() {
   // render, so a phone does not fetch a payload it has been told not to draw.
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
-  const cohort = useQuery({ ...trendsQuery(runId ?? ''), enabled: runId !== undefined });
+  const cohort = useQuery({ ...trendsQuery(runId ?? ''), enabled: runId !== undefined && terminal });
 
   const cohortIds = useMemo(
     () => (cohort.data?.runs ?? []).map((run) => run.id),
@@ -136,8 +147,20 @@ export default function RunCompare() {
 
   // AFTER the hooks, never before one: an early return above a `useQueries`
   // would change the hook count between renders the moment the viewport
-  // crossed 768px. The queries here key off `selected`, which is empty until a
+  // crossed 768px, or the run this page is comparing FROM went terminal
+  // mid-visit. The queries here key off `selected`, which is empty until a
   // reader picks a run, so nothing heavy is fetched merely by arriving.
+  //
+  // NOT TERMINAL (MINOR 5): the same withheld wording `RunTrends` shows for
+  // the identical reason, and — matching that file's own ordering — AHEAD OF
+  // THE COMPACT GATE below: this is cheap text, not a comparison chart and
+  // matrix, so a phone reader is told the same thing a desktop is rather
+  // than a second withheld notice for content that was never coming this
+  // session regardless of viewport.
+  if (!terminal) {
+    return <LiveNotice kind="withheld" subject="Compare runs" />;
+  }
+
   if (compact && !shown) {
     return (
       <DesktopOnly compact what="Comparing runs" onShow={() => setShown(true)}>
