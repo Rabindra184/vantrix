@@ -58,7 +58,12 @@ export default function RunShell({ run }: { readonly run: RunResponse }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <RunHeader run={run} peakUsers={users.data ? peakConcurrentUsers(users.data) : null} />
+      <RunHeader
+        identity={run}
+        status={run.status}
+        verdict={run.verdict}
+        peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
+      />
       {/* `null`, not `0`, until the errors payload has actually resolved —
           the same "zero is a measurement" rule `peakUsers` above already
           follows (`runUsers.ts`). `errors.data?.errors.length ?? 0` used to

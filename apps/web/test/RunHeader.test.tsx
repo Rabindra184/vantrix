@@ -30,13 +30,23 @@ const RUN: RunResponse = {
 // The header now contains a <Link> (to its project), which throws outside a
 // router context — every render in this file needs the wrapper, so it lives
 // in exactly one place rather than at each of the call sites below.
+//
+// Takes a whole RunResponse and splits it into the header's new prop shape —
+// identity/status/verdict/peakUsers — so the existing terminal-run cases
+// below stay expressed the way they always were: a full run in, an assertion
+// on the render out.
 function renderHeader(run: RunResponse, peakUsers: number | null = null) {
   return render(
     <MemoryRouter>
-      <RunHeader run={run} peakUsers={peakUsers} />
+      <RunHeader identity={run} status={run.status} verdict={run.verdict} peakUsers={peakUsers} />
     </MemoryRouter>,
   );
 }
+
+// A terminal run's identity is every RunIdentity field — RunResponse is a
+// structural superset — so the full fixture doubles as FULL_IDENTITY with no
+// separate literal to drift from RUN.
+const FULL_IDENTITY = { ...RUN };
 
 describe('RunHeader', () => {
   it('names the run by its fully-qualified simulation', () => {
@@ -97,5 +107,47 @@ describe('RunHeader', () => {
   it('does not make the commit a link — the platform does not know the repo host', () => {
     renderHeader({ ...RUN, commitSha: 'abc1234def5678' });
     expect(screen.getByTestId('run-commit').querySelector('a')).toBeNull();
+  });
+
+  it('renders identity-only, omitting what an old pod did not send', () => {
+    // The rolling-deploy render: a new browser polling an old API pod gets
+    // { id, status, statusUrl } and nothing else. Thin, but coherent — and it
+    // self-heals at the next poll that reaches a new pod.
+    render(
+      <MemoryRouter>
+        <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8' }}
+                   status="running" verdict={undefined} peakUsers={null} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
+    expect(screen.getByTestId('run-status')).toHaveTextContent(/running/i);
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(screen.queryByTestId('run-verdict')).toBeNull();
+  });
+
+  it('omits the verdict badge entirely while a run is non-terminal', () => {
+    // NOT `VERDICT['none']`. "No verdict" reads as evaluated-and-nothing-found,
+    // which is a claim about a run nobody has finished measuring. Same argument
+    // RunTabs' `errorCount: number | null` already makes one line away.
+    render(
+      <MemoryRouter>
+        <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
+                               project: { id: '11111111-1111-4111-8111-111111111111',
+                                          slug: 'checkout', name: 'Checkout' },
+                               tool: 'gatling', startedAt: '2026-08-20T10:43:49.546Z' }}
+                   status="running" verdict={undefined} peakUsers={null} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('run-verdict')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Checkout' })).toBeInTheDocument();
+  });
+
+  it('still renders the verdict badge for a terminal run', () => {
+    render(
+      <MemoryRouter>
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} peakUsers={8} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('run-verdict')).toBeInTheDocument();
   });
 });

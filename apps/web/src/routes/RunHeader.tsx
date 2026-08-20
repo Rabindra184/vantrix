@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { RunResponse } from '@perfportal/contracts';
+import type { RunIdentity, RunResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { ChevronRightIcon } from '../components/icons';
@@ -39,18 +39,40 @@ import { projectPath } from './paths';
  * because none of it is text.
  */
 export default function RunHeader({
-  run,
+  identity,
+  status,
+  verdict,
   peakUsers,
 }: {
-  readonly run: RunResponse;
+  /**
+   * PARTIAL, and the partiality is the point. A terminal run supplies every
+   * field; a non-terminal one supplies what it knows at open time; a run read
+   * from an API pod that predates the widened 202 supplies only its id. Each
+   * part below renders only when its field is present — the same rule the
+   * environment/branch/commit chips already followed, extended to the
+   * breadcrumb and the tool chip.
+   */
+  readonly identity: Partial<RunIdentity> & { readonly id: string };
+  readonly status: RunResponse['status'];
+  /**
+   * `undefined` means NOT EVALUATED YET and omits the badge; `null` means
+   * evaluated with no verdict and renders `VERDICT['none']` as before.
+   *
+   * Collapsing the two would put "no verdict" on a running run, which reads as
+   * evaluated-and-nothing-found — a claim about a run nobody has finished
+   * measuring. Same distinction `RunTabs`' `errorCount: number | null` draws.
+   */
+  readonly verdict: RunResponse['verdict'] | undefined;
   readonly peakUsers: number | null;
 }) {
   // The tool's own start when the parser has produced it, ingest time
   // otherwise — the same rule, spelled the same way, as the run list's
   // `startedAt` (RunList.tsx's RunRow). The two screens must not disagree
-  // about when a run started.
-  const startedAt = run.toolStartedAt ?? run.startedAt;
-  const isIngestTime = run.toolStartedAt == null;
+  // about when a run started. Both are optional on a partial identity, so a
+  // run that has told us neither yet renders no chip at all rather than a
+  // dash — see the Started/Received chip below.
+  const startedAt = identity.toolStartedAt ?? identity.startedAt ?? null;
+  const isIngestTime = identity.toolStartedAt == null;
 
   return (
     <header className="flex flex-col gap-3">
@@ -65,19 +87,27 @@ export default function RunHeader({
           never a link to the page you are already on, and it carries the id
           because the `<h1>` beneath carries the SIMULATION: two runs of the
           same simulation are otherwise indistinguishable at a glance, and the
-          id is the only thing on this page that tells them apart. */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[13px] text-muted">
-        <Link
-          to={projectPath(run.project.slug)}
-          className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
-        >
-          {run.project.name}
-        </Link>
-        <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
-        <code aria-current="page" className="text-[12px]">
-          {run.id.slice(0, 8)}
-        </code>
-      </nav>
+          id is the only thing on this page that tells them apart.
+
+          OMITTED ENTIRELY when the identity carries no project — the
+          rolling-deploy render, where an old pod's 202 body sent only
+          `{ id, status, statusUrl }`. A breadcrumb to nowhere is worse than
+          no breadcrumb, and the next poll that reaches a new pod fills it
+          back in. */}
+      {identity.project != null && (
+        <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[13px] text-muted">
+          <Link
+            to={projectPath(identity.project.slug)}
+            className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
+          >
+            {identity.project.name}
+          </Link>
+          <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
+          <code aria-current="page" className="text-[12px]">
+            {identity.id.slice(0, 8)}
+          </code>
+        </nav>
+      )}
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
         <div className="flex min-w-0 flex-col gap-1.5">
@@ -87,27 +117,37 @@ export default function RunHeader({
               the class name: two simulations in different packages can share a
               class name, and truncating identity to save a few characters is
               how two different runs come to look like the same one. Falls back
-              to the short id for a run whose header carried no simulation.
+              to the short id for a run whose header carried no simulation —
+              including a run whose identity is nothing but that id.
 
               `break-all` rather than `truncate`: a fully-qualified class name
               is long by design, and hiding the END of it — which is the part
               that distinguishes two simulations in the same package — is the
               one truncation this heading cannot afford. */}
           <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">
-            {run.simulation ?? `Run ${run.id.slice(0, 8)}`}
+            {identity.simulation ?? `Run ${identity.id.slice(0, 8)}`}
           </h1>
-          {run.description != null && run.description !== '' && (
-            <p className="max-w-2xl text-[13px] leading-relaxed text-muted">{run.description}</p>
+          {identity.description != null && identity.description !== '' && (
+            <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+              {identity.description}
+            </p>
           )}
         </div>
 
         {/* The verdict is what the reader came for, so on a wide screen it
             sits at the top right where the eye lands after the heading, and
             on a narrow one it falls back into the flow above the metadata.
-            `shrink-0` so a long simulation name never squeezes it. */}
+            `shrink-0` so a long simulation name never squeezes it.
+
+            The verdict badge is OMITTED — not rendered as `VERDICT['none']`
+            — while `verdict` is `undefined`: that is a run nobody has
+            finished measuring yet, and "no verdict" reads as
+            evaluated-and-nothing-found, a claim about a run that has not
+            been judged at all. `null` still renders `VERDICT['none']`, as
+            before — that is a real, evaluated absence. */}
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <NamedBadge mark={STATUS[run.status]} testId="run-status" />
-          <NamedBadge mark={VERDICT[run.verdict ?? 'none']} testId="run-verdict" />
+          <NamedBadge mark={STATUS[status]} testId="run-status" />
+          {verdict !== undefined && <NamedBadge mark={VERDICT[verdict ?? 'none']} testId="run-verdict" />}
         </div>
       </div>
 
@@ -134,9 +174,13 @@ export default function RunHeader({
           where the vertical dividers disappear, which is correct, because
           stacked chips need no separator. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-default bg-surface px-3 py-2 text-[12px] text-muted shadow-panel sm:gap-x-0 sm:divide-x sm:divide-default">
-        <Chip label={`Tool: ${run.tool}${run.toolVersion ? ` ${run.toolVersion}` : ''}`}>
-          {run.toolVersion ? `${run.tool} ${run.toolVersion}` : run.tool}
-        </Chip>
+        {/* Omitted entirely when the identity carries no tool — same
+            rolling-deploy render as the breadcrumb above. */}
+        {identity.tool != null && (
+          <Chip label={`Tool: ${identity.tool}${identity.toolVersion ? ` ${identity.toolVersion}` : ''}`}>
+            {identity.toolVersion ? `${identity.tool} ${identity.toolVersion}` : identity.tool}
+          </Chip>
+        )}
         {/* Provenance from ingest metadata. Each renders only when the run
             carries it: a run submitted without them looks exactly as it did
             before this existed, rather than growing three dashes. The
@@ -145,44 +189,49 @@ export default function RunHeader({
             role="group" + aria-label for the same reason every other chip
             here has them: a bare <span>'s implicit role is "generic", which
             is Name-from-PROHIBITED, so aria-label alone does nothing. */}
-        {run.environment != null && run.environment !== '' && (
-          <Chip label={`Environment: ${run.environment}`} testId="run-environment">
-            {run.environment}
+        {identity.environment != null && identity.environment !== '' && (
+          <Chip label={`Environment: ${identity.environment}`} testId="run-environment">
+            {identity.environment}
           </Chip>
         )}
-        {run.branch != null && run.branch !== '' && (
-          <Chip label={`Branch: ${run.branch}`} testId="run-branch">
-            {run.branch}
+        {identity.branch != null && identity.branch !== '' && (
+          <Chip label={`Branch: ${identity.branch}`} testId="run-branch">
+            {identity.branch}
           </Chip>
         )}
-        {run.commitSha != null && run.commitSha !== '' && (
+        {identity.commitSha != null && identity.commitSha !== '' && (
           // Seven characters visible, the WHOLE sha in the accessible name —
           // the same short-versus-full treatment the run list gives a run id.
           // NOT a link: the platform does not know the repository host, and a
           // chip that looks like a link but is not is worse than plain text.
-          <Chip label={`Commit: ${run.commitSha}`} testId="run-commit">
-            <code>{run.commitSha.slice(0, 7)}</code>
+          <Chip label={`Commit: ${identity.commitSha}`} testId="run-commit">
+            <code>{identity.commitSha.slice(0, 7)}</code>
           </Chip>
         )}
-        <Chip
-          label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${
-            isIngestTime ? ' (ingest time — the tool reported no start)' : ''
-          }`}
-        >
-          {/* <time dateTime> carries the machine-readable instant beside the
-              human one; the text itself is localised. Same treatment as the
-              run list. The wrapping `role="group"` + `aria-label` is what
-              says this timestamp is a START (or, when the tool reported
-              none, a RECEIVED) time — the `Started`/`Received` distinction
-              the old `<dl>`'s `Field` label carried, restated here since a
-              bare `<time>` names nothing on its own either. */}
-          <time dateTime={startedAt} className="tabular-nums">
-            {formatStarted(startedAt)}
-          </time>
-          {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
-        </Chip>
-        <Chip label={`Duration: ${formatDuration(run.durationMs)}`} testId="run-duration">
-          <span className="tabular-nums">{formatDuration(run.durationMs)}</span>
+        {/* Omitted entirely when neither the tool's own start nor an ingest
+            time is known yet — a run read from a pod old enough to send only
+            an id has neither. */}
+        {startedAt !== null && (
+          <Chip
+            label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${
+              isIngestTime ? ' (ingest time — the tool reported no start)' : ''
+            }`}
+          >
+            {/* <time dateTime> carries the machine-readable instant beside the
+                human one; the text itself is localised. Same treatment as the
+                run list. The wrapping `role="group"` + `aria-label` is what
+                says this timestamp is a START (or, when the tool reported
+                none, a RECEIVED) time — the `Started`/`Received` distinction
+                the old `<dl>`'s `Field` label carried, restated here since a
+                bare `<time>` names nothing on its own either. */}
+            <time dateTime={startedAt} className="tabular-nums">
+              {formatStarted(startedAt)}
+            </time>
+            {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
+          </Chip>
+        )}
+        <Chip label={`Duration: ${formatDuration(identity.durationMs)}`} testId="run-duration">
+          <span className="tabular-nums">{formatDuration(identity.durationMs)}</span>
         </Chip>
         {peakUsers !== null && (
           // The aria-label restates the visible text exactly, rather than
