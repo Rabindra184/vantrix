@@ -151,4 +151,58 @@ describe('RunOverviewTab — live', () => {
     expect(durationTile).toHaveTextContent(/still streaming/i);
     expect(durationTile).not.toHaveTextContent(/when streaming stopped/i);
   });
+
+  /**
+   * TEST GAP CLOSER (whole-branch review). No per-tab fetch spy existed
+   * before this fix round — the no-fetch-while-live rule was pinned only in
+   * `RunShell.test.tsx` and `RunTrends.live.test.tsx`, and `RunTelemetry.tsx`
+   * (CRITICAL 1) turned out to be exactly the one tab no spy was watching.
+   * This is Overview's own: `stats` is gated on `enabled: terminal` and
+   * `series` (the §22.6 sparkline source) on `enabled: terminal && compact`,
+   * so neither should ever reach `fetch` while this tab renders its live
+   * branch.
+   */
+  it('does not fetch /stats while the run is not terminal', () => {
+    const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ id: RUN_ID, status: 'running', statusUrl: `/v1/runs/${RUN_ID}` }),
+          { status: 202 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const run: RunProcessing = { id: RUN_ID, status: 'running', statusUrl: `/v1/runs/${RUN_ID}` };
+    client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN_ID}`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <Outlet
+                  context={
+                    {
+                      window: null, durationMs: null, liveDurationMs: null,
+                      live: liveWith({ count: 1 }),
+                    } satisfies RunWindowContext
+                  }
+                />
+              }
+            >
+              <Route index element={<RunOverviewTab />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('/stats'))).toBe(false);
+    expect(urls.some((u) => u.includes('/series'))).toBe(false);
+  });
 });

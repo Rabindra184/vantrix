@@ -119,4 +119,55 @@ describe('RunErrorsTab — live', () => {
     expect(screen.getByText(/still processing/i)).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
   });
+
+  /**
+   * TEST GAP CLOSER (whole-branch review). No per-tab fetch spy existed
+   * before this fix round — the no-fetch-while-live rule was pinned only in
+   * `RunShell.test.tsx` and `RunTrends.live.test.tsx`, and `RunTelemetry.tsx`
+   * (CRITICAL 1) turned out to be exactly the one tab no spy was watching.
+   * This is Errors' own: both `errors` and `errors/series` are gated on
+   * `enabled: terminal` — the table stays live off the seeded cache alone
+   * (see this file's own docstring), so neither REST call should fire.
+   */
+  it('does not fetch /errors or /errors/series while the run is not terminal', () => {
+    const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ id: RUN_ID, status: 'running', statusUrl: `/v1/runs/${RUN_ID}` }),
+          { status: 202 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const run: RunProcessing = { id: RUN_ID, status: 'running', statusUrl: `/v1/runs/${RUN_ID}` };
+    client.setQueryData(runQueryKey(RUN_ID), { state: 'processing', run });
+    const live = liveWith({ errors: [{ message: 'timeout', count: 3 }] });
+    client.setQueryData(errorsQuery(RUN_ID).queryKey, { runId: RUN_ID, errors: live.lastDelta!.errors.rows });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN_ID}/errors`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <Outlet
+                  context={
+                    { window: null, durationMs: null, liveDurationMs: null, live } satisfies RunWindowContext
+                  }
+                />
+              }
+            >
+              <Route path="errors" element={<RunErrorsTab />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('/errors'))).toBe(false);
+  });
 });
