@@ -350,6 +350,20 @@ writing to a bounded buffer a sender goroutine drains; a data race in that pair
 is the one defect class its tests exist to catch, and the race detector is what
 makes those tests able to catch it.
 
+**There is now a third toolchain, and `pnpm` is equally blind to it.** The
+Gatling Gradle plugin lives at `clients/gatling-gradle/` — JVM/Kotlin, also
+outside the pnpm workspace, so `pnpm lint`, `pnpm typecheck` and every
+`pnpm test:*` see none of it, same as the Go agent above. Its gate:
+
+```
+cd clients/gatling-gradle && ./gradlew build --no-daemon
+```
+
+`build` runs its 38-test suite. Its real-stack e2e,
+`clients/gatling-gradle/e2e/run-e2e.sh`, is manual and on demand — it needs
+the local Docker stack plus the API and worker both running against it, and
+is not part of any `pnpm` gate or the CI `plugin` job for that reason.
+
 
 ## Conventions that bite
 
