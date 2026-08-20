@@ -690,8 +690,12 @@ describe('LiveStatusStrip', () => {
   });
 
   it('says streaming stopped once the run leaves running', () => {
-    render(<LiveStatusStrip {...BASE} status="parsing" />);
-    expect(screen.getByRole('status')).toHaveTextContent(/stopped/i);
+    // Queried by TEXT, not by a singular `getByRole('status')`: the connection
+    // sentence and the `finalizing` notice both carry role="status", so the
+    // singular query throws on finding two. Same reason the partial case below
+    // asserts a COUNT.
+    const { getByText } = render(<LiveStatusStrip {...BASE} status="parsing" />);
+    expect(getByText(/stopped/i)).toBeInTheDocument();
     expect(screen.getByTestId('live-notice-finalizing')).toBeInTheDocument();
   });
 
@@ -720,7 +724,6 @@ describe('LiveStatusStrip', () => {
     // count IS the claim — `getByRole('status')` would throw on finding two,
     // and `{ name: '' }` is not a meaningful query for an unnamed region.
     expect(screen.getAllByRole('status').length).toBeGreaterThan(1);
-    expect(screen.getByRole('status')).toBeDefined;
   });
 
   it('renders nothing for a pending run that has never streamed', () => {
