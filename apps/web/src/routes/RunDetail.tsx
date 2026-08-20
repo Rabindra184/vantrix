@@ -22,7 +22,7 @@ import {
   statsQuery,
   usersQuery,
 } from '../api/metrics';
-import { POLL_CAP_MS, fetchRun, pollIntervalFor, runQueryKey } from '../api/run';
+import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
 import { formatCell } from '../charts/DataTable';
 import DistributionChart from '../charts/DistributionChart';
 import ErrorsChart from '../charts/ErrorsChart';
@@ -524,28 +524,33 @@ function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse
  * of DISTINCT error messages this tab is about, and only `/errors` knows the
  * second one.
  *
- * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and its own `run` fetch below
+ * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and its own `run` read below
  * is what this component uses to notice — `errorsQuery`/`errorSeriesQuery`
- * are gated on `state === 'ready'`, not merely `runId !== undefined` (fix
- * round 1, CRITICAL 1): `apiFetch` has no 202 branch, so before this fix a
- * pending or parsing run's `/errors` and `/errors/series` fired anyway and
- * the reader got error panels where `WaitingPanel` now renders instead.
+ * are gated on `terminal`, not merely `runId !== undefined` (fix round 1,
+ * CRITICAL 1): `apiFetch` has no 202 branch, so before this fix a pending or
+ * parsing run's `/errors` and `/errors/series` fired anyway and the reader
+ * got error panels where `WaitingPanel` now renders instead.
+ *
+ * THE TABLE STAYS LIVE, THE CHART DOES NOT (Task 10). Once a delta has
+ * arrived, `errors` above reads straight off it — `useLiveRun`'s
+ * `applyDelta` writes this SAME `errorsQuery` cache key directly, a
+ * field-for-field copy of `delta.errors.rows` (`errorsResponseFrom`,
+ * `api/live.ts`) — so `TableSection` needs no live branch of its own. The
+ * chart has no live source at all: §1.3 scopes the live errors envelope to
+ * run-scope TOTALS with no time series, so it gets a stated `LiveNotice`
+ * where its figure would be.
  */
 export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
-  const run = useQuery({
-    queryKey: runQueryKey(runId ?? ''),
-    queryFn: () => fetchRun(runId!),
-    enabled: runId !== undefined,
-  });
-  const ready = run.data?.state === 'ready';
-  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: ready });
+  const live = useLiveFromShell();
+  const { detail: run, terminal } = useRunTerminal(runId);
+  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: terminal });
   const window = useWindowFromShell();
   // One time axis across the page (§22.5) — see `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
   const series = useQuery({
     ...errorSeriesQuery(runId ?? '', window),
-    enabled: ready,
+    enabled: terminal,
   });
 
   // Same guard `RunOverviewTab` carries, for the same reason: not reachable
@@ -553,7 +558,20 @@ export function RunErrorsTab() {
   if (runId === undefined || run.data === undefined) return null;
 
   if (run.data.state === 'processing') {
-    return <WaitingPanel status={run.data.run.status} />;
+    const delta = live?.lastDelta ?? null;
+    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
+    return (
+      <div className="flex flex-col gap-6">
+        {/* §1.3 scopes the live errors envelope to run-scope TOTALS — no time
+            series — so the table has a live source (fed by `delta.errors.rows`
+            through the SAME `errorsQuery` cache key `applyDelta` writes) and
+            the chart, which needs a time series, does not. */}
+        <LiveNotice kind="withheld" subject="Errors per second" />
+        <TableSection title="Errors" query={errors}>
+          {(data) => <ErrorsTable errors={data} />}
+        </TableSection>
+      </div>
+    );
   }
 
   return (

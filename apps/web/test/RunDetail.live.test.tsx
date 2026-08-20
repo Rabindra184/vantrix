@@ -262,52 +262,63 @@ describe('RunDetail — one shell, for every state', () => {
  * live-fed errors table, the errors-per-second withheld notice).
  * ======================================================================== */
 
-describe('deferred to Tasks 8-10 (no tab exists yet to host these)', () => {
-  // Old: "renders the live page once a delta has arrived for a running run".
-  // Its connection-message and finalizing-notice-absent halves are now
-  // `LiveStatusStrip.test.tsx`'s "says the run is live while it streams and
-  // the socket is up" (extended in Task 7 to also assert the finalizing
-  // notice's absence). The remaining claim — exactly four withheld-chart
-  // notices appear once a delta has arrived — splits across three future
-  // tabs (two on Charts, one each on Errors and Overview) and has no single
-  // home to move to.
-  it.todo(
-    'Task 9/10: shows the (now-split) withheld-chart notices once a live delta has arrived for a running run',
-  );
-
-  // Old: "keeps the ordinary Processing screen while running with no delta
-  // yet" / "...for a run never live this session". RESOLVED in fix round 1:
-  // `WaitingPanel` is wired into `RunOverviewTab` now — see "shows
-  // WaitingPanel, not a live summary, while running with no delta yet" and
-  // "shows WaitingPanel for a run never live this session (pending)" above.
-
-  // Old: "freezes the dashboard under a finalizing banner once streaming
-  // stops". The banner itself is `LiveStatusStrip.test.tsx`'s "says
-  // streaming stopped once the run leaves running"; the remaining claim —
-  // the live tiles (`LiveSummary`) stay on screen, unblanked, underneath
-  // that banner — RESOLVED in Task 8: `RunOverviewTab.live.test.tsx`'s
-  // "drops the 'still streaming' hint once the run has frozen, without
-  // blanking the tiles" mounts the real tab and asserts both halves at once.
-
-  // Old: "reads its headline tiles straight off the delta summary, not a
-  // StatRow" / "drops the 'still streaming' hint once the run has frozen".
-  // Both are `LiveSummary`'s own behaviour, exported in Task 7 specifically
-  // for Task 8 to wire in — RESOLVED: `RunOverviewTab.live.test.tsx`'s "shows
-  // the live tiles while a run streams" (reads `count`/`errorRate`/`maxUsers`
-  // straight off a `LiveDelta` fixture, never a `StatRow`) and "drops the
-  // 'still streaming' hint…" / "keeps the 'still streaming' hint…" above.
-
-  // Old: "draws the live charts from whatever the socket already wrote to
-  // the cache" / "gates the charts and the three withheld notices behind
-  // DesktopOnly on a narrow viewport". RESOLVED in Task 9:
-  // `RunChartsTab.live.test.tsx`'s "draws the five live figures and states
-  // the two that are withheld" (seeds the cache directly, at the SAME keys
-  // `applyDelta` writes, rather than mocking a fetch) and "gates the live
-  // charts behind DesktopOnly on a narrow viewport".
-
-  // NOT carried forward, and deliberately not an `it.todo`: "renders nothing
-  // if handed a null lastDelta" defended `Live`'s own `if (delta === null)
-  // return null` branch, which no longer exists anywhere — nothing in the
-  // new architecture renders a whole page conditionally on `lastDelta`, so
-  // there is no successor branch for a future task to guard either.
-});
+/**
+ * Every claim below is now RESOLVED — Tasks 8, 9 and 10 each wired a real
+ * tab and each has its own `*.live.test.tsx` file, so nothing here still
+ * needs a target that does not exist. Kept as a plain comment block, not a
+ * `describe` with no `it`s inside it, so the history of what moved where
+ * stays legible without an empty suite in the file.
+ *
+ * Old: "renders the live page once a delta has arrived for a running run".
+ * Its connection-message and finalizing-notice-absent halves are now
+ * `LiveStatusStrip.test.tsx`'s "says the run is live while it streams and
+ * the socket is up" (extended in Task 7 to also assert the finalizing
+ * notice's absence). The remaining claim — exactly four withheld-chart
+ * notices appear once a delta has arrived — RESOLVED across the three tabs
+ * that now split it: `RunOverviewTab.live.test.tsx`'s "states that the
+ * statistics table is withheld" (1), `RunChartsTab.live.test.tsx`'s "draws
+ * the five live figures and states the two that are withheld" (2), and
+ * `RunErrorsTab.live.test.tsx`'s "keeps the errors table live and states
+ * that the chart is not" (1) — four, matching the original count, on three
+ * different URLs instead of one.
+ *
+ * Old: "keeps the ordinary Processing screen while running with no delta
+ * yet" / "...for a run never live this session". RESOLVED in fix round 1:
+ * `WaitingPanel` is wired into `RunOverviewTab` now — see "shows
+ * WaitingPanel, not a live summary, while running with no delta yet" and
+ * "shows WaitingPanel for a run never live this session (pending)" above.
+ *
+ * Old: "freezes the dashboard under a finalizing banner once streaming
+ * stops". The banner itself is `LiveStatusStrip.test.tsx`'s "says streaming
+ * stopped once the run leaves running"; the remaining claim — the live
+ * tiles (`LiveSummary`) stay on screen, unblanked, underneath that banner —
+ * RESOLVED in Task 8: `RunOverviewTab.live.test.tsx`'s "drops the 'still
+ * streaming' hint once the run has frozen, without blanking the tiles"
+ * mounts the real tab and asserts both halves at once.
+ *
+ * Old: "reads its headline tiles straight off the delta summary, not a
+ * StatRow" / "drops the 'still streaming' hint once the run has frozen".
+ * Both are `LiveSummary`'s own behaviour, exported in Task 7 specifically
+ * for Task 8 to wire in — RESOLVED: `RunOverviewTab.live.test.tsx`'s "shows
+ * the live tiles while a run streams" (reads `count`/`errorRate`/`maxUsers`
+ * straight off a `LiveDelta` fixture, never a `StatRow`) and "drops the
+ * 'still streaming' hint…" / "keeps the 'still streaming' hint…" above.
+ *
+ * Old: "draws the live charts from whatever the socket already wrote to the
+ * cache" / "gates the charts and the three withheld notices behind
+ * DesktopOnly on a narrow viewport". RESOLVED in Task 9:
+ * `RunChartsTab.live.test.tsx`'s "draws the five live figures and states the
+ * two that are withheld" (seeds the cache directly, at the SAME keys
+ * `applyDelta` writes, rather than mocking a fetch) and "gates the live
+ * charts behind DesktopOnly on a narrow viewport".
+ *
+ * Old: "draws the live-fed errors table" / "states the errors-over-time
+ * chart is withheld". RESOLVED in Task 10: `RunErrorsTab.live.test.tsx`'s
+ * "keeps the errors table live and states that the chart is not".
+ *
+ * NOT carried forward, and deliberately never given an `it.todo`: "renders
+ * nothing if handed a null lastDelta" defended `Live`'s own `if (delta ===
+ * null) return null` branch, which no longer exists anywhere — nothing in
+ * the new architecture renders a whole page conditionally on `lastDelta`, so
+ * there is no successor branch for any task to guard either.
+ */
