@@ -1,44 +1,51 @@
 import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import type { JobLogger } from './job-logger.js';
 
 export class SimulationLogTailer {
   readonly #resultsDir: string;
   readonly #onBytes: (bytes: Buffer) => Promise<void>;
   readonly #pollMs: number;
+  readonly #logger?: JobLogger;
   #timer: NodeJS.Timeout | null = null;
   #file: string | null = null;
   #offset = 0;
   #reading: Promise<void> | null = null;
+  #failure: unknown = null;
 
   constructor(opts: {
     resultsDir: string;
     pollMs: number;
     onBytes: (bytes: Buffer) => Promise<void>;
+    logger?: JobLogger;
   }) {
     this.#resultsDir = opts.resultsDir;
     this.#pollMs = opts.pollMs;
     this.#onBytes = opts.onBytes;
+    this.#logger = opts.logger;
   }
 
   start(): void {
     if (this.#timer) return;
     this.#timer = setInterval(() => {
-      void this.flush().catch((err) => console.error('simulation.log tail failed', err));
+      void this.flush().catch((err) => this.#rememberFailure(err));
     }, this.#pollMs);
-    void this.flush().catch((err) => console.error('simulation.log initial tail failed', err));
+    void this.flush().catch((err) => this.#rememberFailure(err));
   }
 
   async stop(): Promise<void> {
     if (this.#timer) clearInterval(this.#timer);
     this.#timer = null;
     await this.flush();
+    if (this.#failure) throw this.#failure;
   }
 
   async flush(): Promise<void> {
+    if (this.#failure) throw this.#failure;
     if (this.#reading) {
       await this.#reading;
-      return;
+      if (this.#failure) throw this.#failure;
     }
 
     this.#reading = this.#readAvailable();
@@ -47,6 +54,14 @@ export class SimulationLogTailer {
     } finally {
       this.#reading = null;
     }
+  }
+
+  #rememberFailure(err: unknown): void {
+    if (this.#failure) return;
+    this.#failure = err;
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = null;
+    this.#logger?.error(`simulation.log tail failed: ${String(err)}`);
   }
 
   async #readAvailable(): Promise<void> {

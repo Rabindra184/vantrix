@@ -5,6 +5,9 @@ export class RunnerLiveNotifier {
 
   constructor(redisUrl: string) {
     this.#redis = new Redis(redisUrl);
+    this.#redis.on('error', (err) => {
+      console.error('runner live notifier redis error', err);
+    });
   }
 
   opened(runId: string): void {
@@ -20,6 +23,8 @@ export class RunnerLiveNotifier {
   }
 
   async close(): Promise<void> {
-    await this.#redis.quit();
+    await this.#redis.quit().catch(() => {
+      this.#redis.disconnect();
+    });
   }
 }

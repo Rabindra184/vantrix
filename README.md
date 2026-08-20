@@ -56,6 +56,9 @@ Quick path:
 
 ```bash
 nvm use
+export PERFPORTAL_DB_PASSWORD='change-me'
+export PERFPORTAL_S3_ACCESS_KEY='change-me'
+export PERFPORTAL_S3_SECRET_KEY='change-me-too'
 docker compose -f infra/docker-compose.yml up -d
 pnpm install
 pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma

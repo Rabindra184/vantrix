@@ -47,10 +47,6 @@ export class RunnerExecutor {
 
   async run(job: RunnerJobWithArtifact): Promise<void> {
     const jobId = job.job.id;
-    const logger = await JobLogger.create(this.#config.logDir, jobId);
-    await this.#runner.setLogPath(jobId, logger.path);
-    logger.info(`claimed job ${jobId} (${job.artifact.name})`);
-
     const sink = new RunnerLiveSink({
       config: this.#config,
       projects: this.#projects,
@@ -60,9 +56,18 @@ export class RunnerExecutor {
       queue: this.#queue,
       notifier: this.#notifier,
     });
+    let logger: JobLogger | null = null;
     let tailer: SimulationLogTailer | null = null;
+    const logError = (message: string) => {
+      if (logger) logger.error(message);
+      else console.error(`[runner] [error] ${message}`);
+    };
 
     try {
+      logger = await JobLogger.create(this.#config.logDir, jobId);
+      await this.#runner.setLogPath(jobId, logger.path);
+      logger.info(`claimed job ${jobId} (${job.artifact.name})`);
+
       const runId = await sink.open(job);
       await this.#runner.markRunOpened(jobId, runId);
       logger.info(`opened live run ${runId}`);
@@ -72,7 +77,7 @@ export class RunnerExecutor {
         return;
       }
 
-      const prepared = await prepareGatlingRun(this.#config, job.job, job.artifact);
+      const prepared = await prepareGatlingRun(this.#config, job.job, job.artifact, () => this.#isCancelled(jobId));
       if (await this.#isCancelled(jobId)) {
         await sink.abortIncomplete();
         logger.info(`cancelled job ${jobId} before process launch`);
@@ -82,6 +87,7 @@ export class RunnerExecutor {
         resultsDir: prepared.resultsDir,
         pollMs: this.#config.logPollIntervalMs,
         onBytes: (bytes) => sink.append(bytes),
+        logger,
       });
       tailer.start();
 
@@ -128,19 +134,19 @@ export class RunnerExecutor {
       logger.info(`completed job ${jobId} as run ${sink.runId}`);
     } catch (err) {
       if (tailer) {
-        await tailer.stop().catch((tailErr) => logger.error(`failed to stop simulation.log tailer: ${String(tailErr)}`));
+        await tailer.stop().catch((tailErr) => logError(`failed to stop simulation.log tailer: ${String(tailErr)}`));
       }
       if (sink.runId && !sink.closed) {
         await this.#runner.markClosing(jobId).catch(() => undefined);
         await sink.abortIncomplete().catch((abortErr) => {
-          logger.error(`failed to mark run ${sink.runId} incomplete after runner failure: ${String(abortErr)}`);
+          logError(`failed to mark run ${sink.runId} incomplete after runner failure: ${String(abortErr)}`);
         });
       }
       const jobError = toRunnerJobError(err);
       await this.#runner.markFailed(jobId, jobError);
-      logger.error(`failed job ${jobId}: ${jobError.code}: ${jobError.message}`);
+      logError(`failed job ${jobId}: ${jobError.code}: ${jobError.message}`);
     } finally {
-      await logger.close().catch((err) => console.error('failed to close runner job log', err));
+      await logger?.close().catch((err) => console.error('failed to close runner job log', err));
     }
   }
 

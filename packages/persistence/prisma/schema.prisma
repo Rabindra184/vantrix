@@ -37,6 +37,7 @@ model Project {
   runnerArtifacts RunnerArtifact[]
   runnerJobs RunnerJob[]
 
+  @@unique([id, orgId])
   @@unique([orgId, slug])
   @@map("project")
 }
@@ -55,9 +56,10 @@ model RunnerArtifact {
   storagePath     String   @map("storage_path")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
   jobs    RunnerJob[]
 
+  @@unique([id, orgId, projectId])
   @@index([projectId, createdAt(sort: Desc)])
   @@map("runner_artifact")
 }
@@ -80,12 +82,14 @@ model RunnerJob {
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
 
-  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  artifact RunnerArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  project  Project        @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
+  artifact RunnerArtifact @relation(fields: [artifactId, orgId, projectId], references: [id, orgId, projectId], onDelete: Restrict)
   run      Run?           @relation(fields: [runId], references: [id], onDelete: SetNull)
 
   @@index([projectId, createdAt(sort: Desc)])
   @@index([status, createdAt])
+  @@index([artifactId])
+  @@index([runId])
   @@map("runner_job")
 }
 

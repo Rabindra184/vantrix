@@ -20,9 +20,10 @@ export function readRunnerMultipart(
   maxBytes: number,
 ): Promise<RunnerUpload> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     let bb: busboy.Busboy;
     try {
-      bb = busboy({ headers: req.headers, limits: { files: 1, fields: 20 } });
+      bb = busboy({ headers: req.headers, limits: { files: 1, fields: 20, fileSize: maxBytes } });
     } catch {
       reject(
         ingestError('BUNDLE_NOT_ARCHIVE', {
@@ -40,6 +41,31 @@ export function readRunnerMultipart(
     const hash = createHash('sha256');
     let fileWritten: Promise<void> | null = null;
     let fileSeen = false;
+    let fileTooLarge = false;
+
+    const tooLargeError = () =>
+      ingestError('BUNDLE_TOO_LARGE', {
+        message: `This runner artifact exceeds the ${maxBytes}-byte upload limit.`,
+        remediation:
+          'Upload a smaller runnable Gatling artifact, or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
+        detail: { maxBytes },
+      });
+
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      req.unpipe(bb);
+      req.resume();
+      void unlink(targetPath).catch(() => undefined).finally(() => {
+        reject(err);
+      });
+    };
+
+    const complete = (upload: RunnerUpload) => {
+      if (settled) return;
+      settled = true;
+      resolve(upload);
+    };
 
     bb.on('field', (name, value) => {
       if (name === 'metadata') metadataRaw = value;
@@ -52,18 +78,15 @@ export function readRunnerMultipart(
       }
       fileSeen = true;
       filename = info.filename;
+      stream.once('limit', () => {
+        fileTooLarge = true;
+        fail(tooLargeError());
+      });
       const meter = new Transform({
         transform(chunk: Buffer, _encoding, callback) {
           bytes += chunk.length;
           if (bytes > maxBytes) {
-            callback(
-              ingestError('BUNDLE_TOO_LARGE', {
-                message: `This runner artifact exceeds the ${maxBytes}-byte upload limit.`,
-                remediation:
-                  'Upload a smaller runnable Gatling artifact, or raise MAX_RUNNER_ARTIFACT_BYTES for this on-prem node.',
-                detail: { maxBytes },
-              }),
-            );
+            callback(tooLargeError());
             return;
           }
           hash.update(chunk);
@@ -71,11 +94,13 @@ export function readRunnerMultipart(
         },
       });
       fileWritten = pipeline(stream, meter, createWriteStream(targetPath));
+      void fileWritten.catch((err) => fail(err));
     });
 
     bb.on('close', () => {
       void (async () => {
         try {
+          if (settled) return;
           if (!fileSeen || fileWritten === null) {
             throw ingestError('BUNDLE_EMPTY', {
               message: 'The request contained no "artifact" file part.',
@@ -84,15 +109,17 @@ export function readRunnerMultipart(
             });
           }
           await fileWritten;
-          resolve({ metadataRaw, filename, sha256: hash.digest('hex'), bytes });
+          if (fileTooLarge) throw tooLargeError();
+          complete({ metadataRaw, filename, sha256: hash.digest('hex'), bytes });
         } catch (err) {
-          await unlink(targetPath).catch(() => undefined);
-          reject(err);
+          fail(err);
         }
       })();
     });
 
-    bb.on('error', reject);
+    bb.on('error', fail);
+    req.on('aborted', () => fail(new Error('Runner artifact upload was aborted by the client.')));
+    req.on('error', fail);
     req.pipe(bb);
   });
 }

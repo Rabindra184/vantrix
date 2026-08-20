@@ -15,19 +15,6 @@ export interface ProcessResult {
   stopped: boolean;
 }
 
-export function pipeWithPrefix(stream: NodeJS.ReadableStream, output: Writable, prefix: string): void {
-  let pending = '';
-  stream.on('data', (chunk: Buffer) => {
-    pending += chunk.toString('utf8');
-    const lines = pending.split(/\r?\n/);
-    pending = lines.pop() ?? '';
-    for (const line of lines) output.write(`${prefix}${line}\n`);
-  });
-  stream.on('end', () => {
-    if (pending) output.write(`${prefix}${pending}\n`);
-  });
-}
-
 function writeAll(outputs: readonly Writable[], line: string): void {
   for (const output of outputs) output.write(line);
 }
@@ -40,13 +27,21 @@ export function spawnAndWait(
     logOutput?: Writable;
     stopPollMs?: number;
     shouldStop?: () => Promise<boolean>;
+    timeoutMs?: number;
   } = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     let child: ChildProcessByStdio<null, Readable, Readable>;
     let stopTimer: NodeJS.Timeout | null = null;
+    let timeoutTimer: NodeJS.Timeout | null = null;
     let stopCheckRunning = false;
     let stopped = false;
+    const clearTimers = () => {
+      if (stopTimer) clearInterval(stopTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      stopTimer = null;
+      timeoutTimer = null;
+    };
     try {
       child = spawn(command.command, command.args, {
         cwd: command.cwd,
@@ -63,7 +58,10 @@ export function spawnAndWait(
     pipeWithPrefixToMany(child.stdout, stdoutOutputs, opts.stdoutPrefix ?? '');
     pipeWithPrefixToMany(child.stderr, stderrOutputs, opts.stderrPrefix ?? '');
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      clearTimers();
+      reject(err);
+    });
     if (opts.shouldStop) {
       stopTimer = setInterval(() => {
         if (stopCheckRunning) return;
@@ -83,9 +81,19 @@ export function spawnAndWait(
           });
       }, opts.stopPollMs ?? 1000);
     }
+    if (opts.timeoutMs !== undefined) {
+      timeoutTimer = setTimeout(() => {
+        if (child.killed) return;
+        stopped = true;
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        }, 5000).unref();
+      }, opts.timeoutMs);
+    }
 
     child.on('close', (code, signal) => {
-      if (stopTimer) clearInterval(stopTimer);
+      clearTimers();
       resolve({ code, signal, stopped });
     });
   });

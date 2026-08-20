@@ -15,6 +15,9 @@ export class JobLogger {
     await mkdir(logDir, { recursive: true });
     const logPath = path.resolve(logDir, `${jobId}.log`);
     const stream = createWriteStream(logPath, { flags: 'a' });
+    stream.on('error', (err) => {
+      console.error(`runner job log stream failed for ${jobId}`, err);
+    });
     return new JobLogger(logPath, stream);
   }
 
@@ -32,10 +35,9 @@ export class JobLogger {
 
   close(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.stream.end((err?: Error | null) => {
-        if (err) reject(err);
-        else resolve();
-      });
+      this.stream.once('finish', resolve);
+      this.stream.once('error', reject);
+      this.stream.end();
     });
   }
 

@@ -1,5 +1,6 @@
 export class Shutdown {
   #stopping = false;
+  #stopPromise: Promise<void> | null = null;
   readonly #callbacks: Array<() => Promise<void> | void> = [];
 
   get stopping(): boolean {
@@ -19,15 +20,18 @@ export class Shutdown {
   }
 
   async stop(reason: string): Promise<void> {
-    if (this.#stopping) return;
+    if (this.#stopPromise) return this.#stopPromise;
     this.#stopping = true;
-    console.log(`runner shutdown requested: ${reason}`);
-    for (const callback of [...this.#callbacks].reverse()) {
-      try {
-        await callback();
-      } catch (err) {
-        console.error('runner shutdown step failed', err);
+    this.#stopPromise = (async () => {
+      console.log(`runner shutdown requested: ${reason}`);
+      for (const callback of [...this.#callbacks].reverse()) {
+        try {
+          await callback();
+        } catch (err) {
+          console.error('runner shutdown step failed', err);
+        }
       }
-    }
+    })();
+    return this.#stopPromise;
   }
 }

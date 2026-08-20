@@ -44,6 +44,14 @@ function required(env: NodeJS.ProcessEnv, key: string): string {
   return v;
 }
 
+function positiveInteger(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const parsed = Number(env[key] ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+  return parsed;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     port: Number(env.PORT ?? 3000),
@@ -60,7 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxBundleBytes: Number(env.MAX_BUNDLE_BYTES ?? 512 * 1024 * 1024),
     runner: {
       artifactDir: env.RUNNER_ARTIFACT_DIR ?? '.perfportal/runner-artifacts',
-      maxArtifactBytes: Number(env.MAX_RUNNER_ARTIFACT_BYTES ?? 512 * 1024 * 1024),
+      maxArtifactBytes: positiveInteger(env, 'MAX_RUNNER_ARTIFACT_BYTES', 512 * 1024 * 1024),
     },
     maxStreamChunkBytes: Number(env.MAX_STREAM_CHUNK_BYTES ?? 8 * 1024 * 1024),
     // Optional with a default, never required(): a new mandatory environment

@@ -14,6 +14,7 @@ import type {
   RunnerJob,
   RunnerJobListResponse,
   RunnerJobLogsResponse,
+  RunnerJobStatus,
   RunnerStartMetadata,
   RunnerStartResponse,
 } from '@perfportal/contracts';
@@ -61,18 +62,60 @@ const initialForm: FormState = {
   systemProperties: '',
 };
 
+const activeRunnerStatuses = new Set<RunnerJobStatus>(['queued', 'starting', 'running', 'closing']);
+
 export default function NewRunnerRun() {
   const { slug = '' } = useParams<{ slug: string }>();
-  const queryClient = useQueryClient();
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
+  const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
+  const title = project?.name ? `New run · ${project.name}` : 'New on-prem run';
+  useDocumentTitle(title);
+
+  if (projects.isPending) {
+    return <LoadingState label="Loading project…" />;
+  }
+
+  if (projects.isError) {
+    const error = projects.error;
+    const problem = error instanceof ProblemError ? error : null;
+    return (
+      <ErrorState
+        titleAs="h1"
+        title="The project could not be loaded"
+        detail={problem?.detail ?? error.message}
+        remediation={problem?.remediation}
+      />
+    );
+  }
+
+  if (project === null) {
+    return (
+      <ErrorState
+        titleAs="h1"
+        title="Project not found"
+        detail={`No project "${slug}" is visible to this session.`}
+        action={<BackToProject slug={slug} />}
+      />
+    );
+  }
+
+  return <NewRunnerRunProject key={slug} slug={slug} projectName={project.name} />;
+}
+
+function NewRunnerRunProject({
+  slug,
+  projectName,
+}: {
+  readonly slug: string;
+  readonly projectName: string;
+}) {
+  const queryClient = useQueryClient();
   const jobs = useQuery({
     queryKey: runnerJobsQueryKey(slug),
     queryFn: () => fetchRunnerJobs(slug),
     enabled: slug !== '',
+    refetchInterval: (query) => hasActiveRunnerJobs(query.state.data) ? 2000 : false,
   });
-  const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
-  const title = project?.name ? `New run · ${project.name}` : 'New on-prem run';
-  useDocumentTitle(title);
 
   const [form, setForm] = useState<FormState>(initialForm);
   const [artifact, setArtifact] = useState<File | null>(null);
@@ -122,34 +165,6 @@ export default function NewRunnerRun() {
     });
   };
 
-  if (projects.isPending) {
-    return <LoadingState label="Loading project…" />;
-  }
-
-  if (projects.isError) {
-    const error = projects.error;
-    const problem = error instanceof ProblemError ? error : null;
-    return (
-      <ErrorState
-        titleAs="h1"
-        title="The project could not be loaded"
-        detail={problem?.detail ?? error.message}
-        remediation={problem?.remediation}
-      />
-    );
-  }
-
-  if (project === null) {
-    return (
-      <ErrorState
-        titleAs="h1"
-        title="Project not found"
-        detail={`No project "${slug}" is visible to this session.`}
-        action={<BackToProject slug={slug} />}
-      />
-    );
-  }
-
   const mutationError = mutation.error;
   const problem = mutationError instanceof ProblemError ? mutationError : null;
 
@@ -159,7 +174,7 @@ export default function NewRunnerRun() {
         <div className="flex min-w-0 flex-col gap-1">
           <Link to={projectPath(slug)} className="inline-flex items-center gap-1 text-[13px] font-medium text-muted hover:text-primary">
             <ChevronLeftIcon className="h-3.5 w-3.5" />
-            {project.name}
+            {projectName}
           </Link>
           <h1 className="text-xl font-semibold tracking-tight">New on-prem run</h1>
         </div>
@@ -271,7 +286,7 @@ export default function NewRunnerRun() {
       </div>
 
       {created !== null && <QueuedJob response={created} />}
-      <RecentJobs query={jobs} />
+      <RecentJobs slug={slug} query={jobs} />
     </div>
   );
 }
@@ -324,8 +339,7 @@ function QueuedJob({ response }: { readonly response: RunnerStartResponse }) {
   );
 }
 
-function RecentJobs({ query }: { readonly query: UseQueryResult<RunnerJobListResponse, Error> }) {
-  const { slug = '' } = useParams<{ slug: string }>();
+function RecentJobs({ slug, query }: { readonly slug: string; readonly query: UseQueryResult<RunnerJobListResponse, Error> }) {
   const queryClient = useQueryClient();
   const [selectedLogJobId, setSelectedLogJobId] = useState<string | null>(null);
   const logs = useQuery({
@@ -362,11 +376,12 @@ function RecentJobs({ query }: { readonly query: UseQueryResult<RunnerJobListRes
   if (query.data.items.length === 0) {
     return <EmptyState title="No on-prem runs yet" body="Queued runner jobs for this project will appear here." />;
   }
+  const caption = 'Most recent on-prem runner jobs for this project.';
   return (
     <div className="flex flex-col gap-4">
-      <TableFrame caption="Most recent on-prem runner jobs for this project." label="On-prem runner jobs table">
+      <TableFrame caption={caption} label="On-prem runner jobs table">
         <table className={TABLE}>
-          <caption className="sr-only">Most recent on-prem runner jobs for this project.</caption>
+          <caption className="sr-only">{caption}</caption>
           <thead className={THEAD}>
             <tr>
               <th scope="col" className={TH}>Created</th>
@@ -412,6 +427,10 @@ function RecentJobs({ query }: { readonly query: UseQueryResult<RunnerJobListRes
       {selectedLogJobId !== null && <RunnerLogsPanel jobId={selectedLogJobId} query={logs} />}
     </div>
   );
+}
+
+function hasActiveRunnerJobs(data: RunnerJobListResponse | undefined): boolean {
+  return data?.items.some(({ job }) => activeRunnerStatuses.has(job.status)) ?? false;
 }
 
 function RunnerJobActions({

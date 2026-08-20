@@ -21,6 +21,7 @@ export class RunnerLiveSink {
   readonly #notifier: RunnerLiveNotifier;
   #runId: string | null = null;
   #offset = 0;
+  #attemptBytes = 0;
   #closed = false;
 
   constructor(opts: {
@@ -46,7 +47,7 @@ export class RunnerLiveSink {
   }
 
   get bytesWritten(): number {
-    return this.#offset;
+    return this.#attemptBytes;
   }
 
   get closed(): boolean {
@@ -96,6 +97,7 @@ export class RunnerLiveSink {
       );
     }
     this.#offset += bytes.length;
+    this.#attemptBytes += bytes.length;
     this.#notifier.advanced(runId);
   }
 
@@ -124,8 +126,8 @@ export class RunnerLiveSink {
       const sha256 = createHash('sha256').update(bundle).digest('hex');
       await this.#runs.finalizeLive(runId, sha256, bundle.length);
       committed = true;
-      await this.#queue.add(runId);
       this.#closed = true;
+      await this.#enqueueForParsing(runId);
     } catch (err) {
       if (!committed) {
         await this.#runs.releaseClose(runId).catch((releaseErr: unknown) => {
@@ -158,5 +160,23 @@ export class RunnerLiveSink {
       );
     }
     return this.#runId;
+  }
+
+  async #enqueueForParsing(runId: string): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await this.#queue.add(runId);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+      }
+    }
+    throw new RunnerExecutionError(
+      'INGEST_QUEUE_UNAVAILABLE',
+      `Run ${runId} was finalized but could not be queued for parsing: ${String(lastError)}`,
+      'Check Redis and queue workers, then retry queueing or inspect the finalized run object.',
+    );
   }
 }

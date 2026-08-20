@@ -3,6 +3,7 @@ import {
   ProjectRepository,
   RunnerRepository,
   RunRepository,
+  type RunnerJobWithArtifact,
 } from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { loadRunnerConfig } from './config.js';
@@ -35,20 +36,42 @@ const executor = new RunnerExecutor({
   notifier,
 });
 
+let activeJob: RunnerJobWithArtifact | null = null;
+let activeRun: Promise<void> | null = null;
 shutdown.onStop(() => notifier.close());
 shutdown.onStop(() => queue.close());
 shutdown.onStop(() => prisma.$disconnect());
+shutdown.onStop(async () => {
+  const job = activeJob;
+  const run = activeRun;
+  if (!job || !run) return;
+  await runner.cancel(job.job.orgId, job.job.projectId, job.job.id).catch((err: unknown) => {
+    console.error(`failed to cancel active runner job ${job.job.id} during shutdown`, err);
+  });
+  await run;
+});
 
 await blobs.ensureBucket();
 console.log('on-prem runner started');
 
 while (!shutdown.stopping) {
-  const job = await runner.claimNext();
+  let job: RunnerJobWithArtifact | null;
+  try {
+    job = await runner.claimNext();
+  } catch (err) {
+    console.error('failed to claim runner job', err);
+    await sleep(config.pollIntervalMs);
+    continue;
+  }
   if (!job) {
     await sleep(config.pollIntervalMs);
     continue;
   }
-  await executor.run(job);
+  activeJob = job;
+  activeRun = executor.run(job);
+  await activeRun;
+  activeJob = null;
+  activeRun = null;
 }
 
 await shutdown.stop('loop exited');

@@ -114,73 +114,77 @@ export class RunnerRepository {
 
   async createQueued(input: CreateRunnerJobInput): Promise<RunnerJobWithArtifact> {
     const systemProperties = JSON.stringify(input.job.systemProperties);
-    await this.prisma.$executeRaw`
-      INSERT INTO runner_artifact (
-        id, org_id, project_id, name, filename, kind, simulation_class,
-        gatling_version, sha256, bytes, storage_path
-      )
-      VALUES (
-        ${input.artifact.id}::uuid,
-        ${input.artifact.orgId}::uuid,
-        ${input.artifact.projectId}::uuid,
-        ${input.artifact.name},
-        ${input.artifact.filename},
-        ${input.artifact.kind},
-        ${input.artifact.simulationClass},
-        ${input.artifact.gatlingVersion},
-        ${input.artifact.sha256},
-        ${input.artifact.bytes},
-        ${input.artifact.storagePath}
-      )
-    `;
-
     const [row] = await this.prisma.$queryRaw<RunnerRow[]>`
-      INSERT INTO runner_job (
-        id, org_id, project_id, artifact_id, status, requested_by,
-        environment, branch, commit_sha, java_options, system_properties
+      WITH artifact AS (
+        INSERT INTO runner_artifact (
+          id, org_id, project_id, name, filename, kind, simulation_class,
+          gatling_version, sha256, bytes, storage_path
+        )
+        VALUES (
+          ${input.artifact.id}::uuid,
+          ${input.artifact.orgId}::uuid,
+          ${input.artifact.projectId}::uuid,
+          ${input.artifact.name},
+          ${input.artifact.filename},
+          ${input.artifact.kind},
+          ${input.artifact.simulationClass},
+          ${input.artifact.gatlingVersion},
+          ${input.artifact.sha256},
+          ${input.artifact.bytes},
+          ${input.artifact.storagePath}
+        )
+        RETURNING *
+      ),
+      job AS (
+        INSERT INTO runner_job (
+          id, org_id, project_id, artifact_id, status, requested_by,
+          environment, branch, commit_sha, java_options, system_properties
+        )
+        SELECT
+          ${input.job.id}::uuid,
+          artifact.org_id,
+          artifact.project_id,
+          artifact.id,
+          'queued',
+          ${input.job.requestedBy},
+          ${input.job.environment},
+          ${input.job.branch},
+          ${input.job.commitSha},
+          ${input.job.javaOptions},
+          ${systemProperties}::jsonb
+        FROM artifact
+        RETURNING *
       )
-      VALUES (
-        ${input.job.id}::uuid,
-        ${input.artifact.orgId}::uuid,
-        ${input.artifact.projectId}::uuid,
-        ${input.artifact.id}::uuid,
-        'queued',
-        ${input.job.requestedBy},
-        ${input.job.environment},
-        ${input.job.branch},
-        ${input.job.commitSha},
-        ${input.job.javaOptions},
-        ${systemProperties}::jsonb
-      )
-      RETURNING
-        (SELECT id FROM runner_artifact WHERE id = ${input.artifact.id}::uuid) AS "artifactId",
-        ${input.artifact.orgId}::uuid AS "artifactOrgId",
-        ${input.artifact.projectId}::uuid AS "artifactProjectId",
-        ${input.artifact.name} AS name,
-        ${input.artifact.filename} AS filename,
-        ${input.artifact.kind} AS kind,
-        ${input.artifact.simulationClass} AS "simulationClass",
-        ${input.artifact.gatlingVersion} AS "gatlingVersion",
-        ${input.artifact.sha256} AS sha256,
-        ${input.artifact.bytes}::bigint AS bytes,
-        ${input.artifact.storagePath} AS "storagePath",
-        (SELECT created_at FROM runner_artifact WHERE id = ${input.artifact.id}::uuid) AS "artifactCreatedAt",
-        id AS "jobId",
-        org_id AS "jobOrgId",
-        project_id AS "jobProjectId",
-        artifact_id AS "jobArtifactId",
-        run_id AS "runId",
-        status,
-        requested_by AS "requestedBy",
-        environment,
-        branch,
-        commit_sha AS "commitSha",
-        java_options AS "javaOptions",
-        system_properties AS "systemProperties",
-        NULL::text AS "logPath",
-        error,
-        created_at AS "jobCreatedAt",
-        updated_at AS "updatedAt"
+      SELECT
+        artifact.id AS "artifactId",
+        artifact.org_id AS "artifactOrgId",
+        artifact.project_id AS "artifactProjectId",
+        artifact.name,
+        artifact.filename,
+        artifact.kind,
+        artifact.simulation_class AS "simulationClass",
+        artifact.gatling_version AS "gatlingVersion",
+        artifact.sha256,
+        artifact.bytes,
+        artifact.storage_path AS "storagePath",
+        artifact.created_at AS "artifactCreatedAt",
+        job.id AS "jobId",
+        job.org_id AS "jobOrgId",
+        job.project_id AS "jobProjectId",
+        job.artifact_id AS "jobArtifactId",
+        job.run_id AS "runId",
+        job.status,
+        job.requested_by AS "requestedBy",
+        job.environment,
+        job.branch,
+        job.commit_sha AS "commitSha",
+        job.java_options AS "javaOptions",
+        job.system_properties AS "systemProperties",
+        job.log_path AS "logPath",
+        job.error,
+        job.created_at AS "jobCreatedAt",
+        job.updated_at AS "updatedAt"
+      FROM artifact, job
     `;
     if (!row) throw new Error('runner job insert returned no row');
     return mapRow(row);
@@ -241,8 +245,8 @@ export class RunnerRepository {
         FROM runner_job
         WHERE status = 'queued'
         ORDER BY created_at ASC, id ASC
-        FOR UPDATE SKIP LOCKED
         LIMIT 1
+        FOR UPDATE SKIP LOCKED
       )
       UPDATE runner_job j
       SET status = 'starting', updated_at = now()

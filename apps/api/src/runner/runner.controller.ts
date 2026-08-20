@@ -43,7 +43,7 @@ export class RunnerController {
     const dir = path.resolve(this.config.runner.artifactDir, tenant.orgId, project.id);
     await mkdir(dir, { recursive: true });
     const tmpPath = path.join(dir, `${artifactId}.part`);
-const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes);
+    const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArtifactBytes);
 
     let rawMetadata: unknown;
     try {
@@ -63,34 +63,52 @@ const upload = await readRunnerMultipart(req, tmpPath, this.config.runner.maxArt
       );
     }
 
-    const ext = extensionFor(upload.filename, metadata.data.artifactKind);
+    const filename = sanitizeFilename(upload.filename);
+    let ext: string;
+    try {
+      ext = extensionFor(filename, metadata.data.artifactKind);
+    } catch (err) {
+      await unlink(tmpPath).catch(() => undefined);
+      throw err;
+    }
     const finalPath = path.join(dir, `${artifactId}${ext}`);
-    await rename(tmpPath, finalPath);
+    try {
+      await rename(tmpPath, finalPath);
+    } catch (err) {
+      await unlink(tmpPath).catch(() => undefined);
+      throw err;
+    }
 
-    const created = await this.runner.createQueued({
-      artifact: {
-        id: artifactId,
-        orgId: tenant.orgId,
-        projectId: project.id,
-        name: metadata.data.name,
-        filename: sanitizeFilename(upload.filename),
-        kind: metadata.data.artifactKind,
-        simulationClass: metadata.data.simulationClass,
-        gatlingVersion: metadata.data.gatlingVersion ?? null,
-        sha256: upload.sha256,
-        bytes: upload.bytes,
-        storagePath: finalPath,
-      },
-      job: {
-        id: jobId,
-        requestedBy: tenant.tokenId,
-        environment: metadata.data.environment ?? null,
-        branch: metadata.data.branch ?? null,
-        commitSha: metadata.data.commitSha ?? null,
-        javaOptions: metadata.data.javaOptions ?? null,
-        systemProperties: metadata.data.systemProperties,
-      },
-    });
+    let created: Awaited<ReturnType<RunnerRepository['createQueued']>>;
+    try {
+      created = await this.runner.createQueued({
+        artifact: {
+          id: artifactId,
+          orgId: tenant.orgId,
+          projectId: project.id,
+          name: metadata.data.name,
+          filename,
+          kind: metadata.data.artifactKind,
+          simulationClass: metadata.data.simulationClass,
+          gatlingVersion: metadata.data.gatlingVersion ?? null,
+          sha256: upload.sha256,
+          bytes: upload.bytes,
+          storagePath: finalPath,
+        },
+        job: {
+          id: jobId,
+          requestedBy: tenant.tokenId,
+          environment: metadata.data.environment ?? null,
+          branch: metadata.data.branch ?? null,
+          commitSha: metadata.data.commitSha ?? null,
+          javaOptions: metadata.data.javaOptions ?? null,
+          systemProperties: metadata.data.systemProperties,
+        },
+      });
+    } catch (err) {
+      await unlink(finalPath).catch(() => undefined);
+      throw err;
+    }
 
     return RunnerStartResponseSchema.parse({
       artifact: toArtifact(created.artifact),
@@ -198,9 +216,18 @@ function parseMetadata(raw: string): unknown {
 }
 
 function extensionFor(filename: string, kind: string): string {
-  const ext = path.extname(filename).toLowerCase();
-  if (ext) return ext;
-  return kind === 'gatling_jar' ? '.jar' : '.zip';
+  const lower = filename.toLowerCase();
+  const ext = lower.endsWith('.tar.gz') ? '.tar.gz' : path.extname(lower);
+  const allowed = kind === 'gatling_jar' ? new Set(['.jar']) : new Set(['.zip', '.tgz', '.tar.gz']);
+  if (ext === '') return kind === 'gatling_jar' ? '.jar' : '.zip';
+  if (allowed.has(ext)) return ext;
+  throw badRequest(
+    'UNSUPPORTED_RUNNER_ARTIFACT_EXTENSION',
+    `Runner artifact "${filename}" is not a supported ${kind} upload.`,
+    kind === 'gatling_jar'
+      ? 'Upload a .jar file, or choose the runnable bundle artifact type.'
+      : 'Upload a .zip, .tgz, or .tar.gz runnable bundle, or choose the Gatling jar artifact type.',
+  );
 }
 
 function sanitizeFilename(filename: string): string {
@@ -220,9 +247,9 @@ async function readLogTail(
   if (!handle) return null;
   try {
     const buffer = Buffer.alloc(bytesToRead);
-    await handle.read(buffer, 0, bytesToRead, start);
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, start);
     return {
-      text: buffer.toString('utf8'),
+      text: buffer.subarray(0, bytesRead).toString('utf8'),
       truncated: start > 0,
       updatedAt: info.mtime,
     };

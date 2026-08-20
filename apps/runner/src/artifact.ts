@@ -1,11 +1,17 @@
-import { access, chmod, mkdir, readdir, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { access, lstat, mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { RunnerArtifactRecord, RunnerJobRecord } from '@perfportal/persistence';
 import type { RunnerConfig } from './config.js';
 import { RunnerExecutionError } from './errors.js';
 import type { ProcessCommand } from './process.js';
 import { spawnAndWait } from './process.js';
 import { splitArgs, systemPropertyArgs } from './args.js';
+
+const execFileAsync = promisify(execFile);
+const EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
+const MAX_EXTRACTED_BUNDLE_BYTES = 1024 * 1024 * 1024;
 
 export interface PreparedGatlingRun {
   command: ProcessCommand;
@@ -16,6 +22,7 @@ export async function prepareGatlingRun(
   config: RunnerConfig,
   job: RunnerJobRecord,
   artifact: RunnerArtifactRecord,
+  shouldStop: () => Promise<boolean>,
 ): Promise<PreparedGatlingRun> {
   await access(artifact.storagePath).catch(() => {
     throw new RunnerExecutionError(
@@ -47,6 +54,7 @@ export async function prepareGatlingRun(
           '-rf',
           resultsDir,
         ],
+        env: runnerChildEnv(config),
       },
     };
   }
@@ -54,20 +62,29 @@ export async function prepareGatlingRun(
   if (artifact.kind === 'gatling_bundle') {
     const bundleDir = path.join(workDir, 'bundle');
     await mkdir(bundleDir, { recursive: true });
-    await extractBundle(artifact.storagePath, bundleDir, workDir);
-    const script = await findGatlingScript(bundleDir);
-    await chmod(script, 0o755).catch(() => undefined);
-    const javaOpts = [
+    await extractBundle(artifact.storagePath, bundleDir, workDir, shouldStop);
+    await assertSafeExtractedTree(bundleDir, Date.now() + EXTRACT_TIMEOUT_MS);
+    const gatlingHome = await findGatlingHome(bundleDir);
+    const javaArgs = [
       ...splitArgs(job.javaOptions),
       ...systemPropertyArgs(job.systemProperties),
-    ].join(' ');
+    ];
     return {
       resultsDir,
       command: {
-        command: script,
-        cwd: path.dirname(script),
-        args: ['-s', artifact.simulationClass, '-rf', resultsDir],
-        env: { ...process.env, JAVA_OPTS: javaOpts },
+        command: config.javaBin,
+        cwd: gatlingHome,
+        args: [
+          ...javaArgs,
+          '-cp',
+          path.join(gatlingHome, 'lib', '*'),
+          'io.gatling.app.Gatling',
+          '-s',
+          artifact.simulationClass,
+          '-rf',
+          resultsDir,
+        ],
+        env: runnerChildEnv(config),
       },
     };
   }
@@ -79,12 +96,22 @@ export async function prepareGatlingRun(
   );
 }
 
-async function extractBundle(artifactPath: string, bundleDir: string, workDir: string): Promise<void> {
+async function extractBundle(
+  artifactPath: string,
+  bundleDir: string,
+  workDir: string,
+  shouldStop: () => Promise<boolean>,
+): Promise<void> {
   const lower = artifactPath.toLowerCase();
+  await assertArchiveHasNoLinks(artifactPath, lower);
   const command = lower.endsWith('.zip')
     ? { command: 'unzip', args: ['-q', artifactPath, '-d', bundleDir], cwd: workDir }
     : lower.endsWith('.tgz') || lower.endsWith('.tar.gz')
-      ? { command: 'tar', args: ['-xzf', artifactPath, '-C', bundleDir], cwd: workDir }
+      ? {
+          command: 'tar',
+          args: ['--no-same-owner', '--no-same-permissions', '-xzf', artifactPath, '-C', bundleDir],
+          cwd: workDir,
+        }
       : null;
 
   if (!command) {
@@ -98,6 +125,8 @@ async function extractBundle(artifactPath: string, bundleDir: string, workDir: s
   const result = await spawnAndWait(command, {
     stdoutPrefix: '[runner extract] ',
     stderrPrefix: '[runner extract] ',
+    timeoutMs: EXTRACT_TIMEOUT_MS,
+    shouldStop,
   });
   if (result.code !== 0) {
     throw new RunnerExecutionError(
@@ -108,7 +137,62 @@ async function extractBundle(artifactPath: string, bundleDir: string, workDir: s
   }
 }
 
-async function findGatlingScript(root: string): Promise<string> {
+async function assertArchiveHasNoLinks(artifactPath: string, lowerPath: string): Promise<void> {
+  const listing =
+    lowerPath.endsWith('.zip')
+      ? await execFileAsync('zipinfo', ['-l', artifactPath], { maxBuffer: 8 * 1024 * 1024 })
+      : lowerPath.endsWith('.tgz') || lowerPath.endsWith('.tar.gz')
+        ? await execFileAsync('tar', ['-tzvf', artifactPath], { maxBuffer: 8 * 1024 * 1024 })
+        : null;
+  if (listing === null) return;
+  const link = listing.stdout.split(/\r?\n/).find((line) => /^[lh]/.test(line));
+  if (link !== undefined) {
+    throw new RunnerExecutionError(
+      'UNSAFE_BUNDLE_ENTRY',
+      'Runnable Gatling bundles cannot contain symbolic links or hard links.',
+      'Repackage the bundle with regular files only, then queue a new run.',
+    );
+  }
+}
+
+async function assertSafeExtractedTree(root: string, deadlineMs: number): Promise<void> {
+  let totalBytes = 0;
+  async function visit(dir: string): Promise<void> {
+    if (Date.now() > deadlineMs) {
+      throw new RunnerExecutionError(
+        'BUNDLE_EXTRACT_TIMEOUT',
+        'Bundle validation exceeded the extraction time limit.',
+        'Upload a smaller runnable bundle or use the Gatling jar artifact type.',
+      );
+    }
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      const info = await lstat(full);
+      if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) {
+        throw new RunnerExecutionError(
+          'UNSAFE_BUNDLE_ENTRY',
+          'Runnable Gatling bundles cannot contain symbolic links or hard links.',
+          'Repackage the bundle with regular files only, then queue a new run.',
+        );
+      }
+      if (info.isFile()) {
+        totalBytes += info.size;
+        if (totalBytes > MAX_EXTRACTED_BUNDLE_BYTES) {
+          throw new RunnerExecutionError(
+            'BUNDLE_TOO_LARGE_AFTER_EXTRACT',
+            `Bundle extraction exceeded the ${MAX_EXTRACTED_BUNDLE_BYTES}-byte uncompressed limit.`,
+            'Upload a smaller runnable bundle or use the Gatling jar artifact type.',
+          );
+        }
+      }
+      if (info.isDirectory()) await visit(full);
+    }
+  }
+  await visit(root);
+}
+
+async function findGatlingHome(root: string): Promise<string> {
   const direct = [
     path.join(root, 'bin', 'gatling.sh'),
     path.join(root, 'gatling', 'bin', 'gatling.sh'),
@@ -116,14 +200,14 @@ async function findGatlingScript(root: string): Promise<string> {
   for (const candidate of direct) {
     try {
       await access(candidate);
-      return candidate;
+      return path.dirname(path.dirname(candidate));
     } catch {
       // Try the recursive search below.
     }
   }
 
   const found = await findFile(root, 'gatling.sh', 4);
-  if (found) return found;
+  if (found) return path.dirname(path.dirname(found));
   throw new RunnerExecutionError(
     'GATLING_SCRIPT_NOT_FOUND',
     'The bundle did not contain a bin/gatling.sh script.',
@@ -143,4 +227,16 @@ async function findFile(dir: string, basename: string, depth: number): Promise<s
     }
   }
   return null;
+}
+
+function runnerChildEnv(config: RunnerConfig): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    HOME: path.resolve(config.workDir),
+    TMPDIR: path.resolve(config.workDir),
+    LANG: process.env.LANG ?? 'C.UTF-8',
+    LC_ALL: process.env.LC_ALL ?? 'C.UTF-8',
+  };
+  if (process.env.JAVA_HOME) env.JAVA_HOME = process.env.JAVA_HOME;
+  return env;
 }

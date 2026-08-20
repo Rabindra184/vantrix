@@ -1,5 +1,8 @@
 # Local infrastructure
 
+    export PERFPORTAL_DB_PASSWORD='change-me'
+    export PERFPORTAL_S3_ACCESS_KEY='change-me'
+    export PERFPORTAL_S3_SECRET_KEY='change-me-too'
     docker compose -f infra/docker-compose.yml up -d
 
 Ports are deliberately offset so an existing local Postgres or Redis is never
@@ -7,17 +10,20 @@ shadowed:
 
 | Service    | Port | Credentials              |
 |------------|------|--------------------------|
-| PostgreSQL | 5433 | perfportal / perfportal  |
+| PostgreSQL | 5433 | perfportal / `$PERFPORTAL_DB_PASSWORD` |
 | Redis      | 6380 | —                        |
-| MinIO      | 9000 | perfportal / perfportal123 |
+| MinIO      | 9000 | `$PERFPORTAL_S3_ACCESS_KEY` / `$PERFPORTAL_S3_SECRET_KEY` |
 
 ## Environment
 
-    export DATABASE_URL='postgresql://perfportal:perfportal@localhost:5433/perfportal'
+    export PERFPORTAL_DB_PASSWORD='change-me'
+    export PERFPORTAL_S3_ACCESS_KEY='change-me'
+    export PERFPORTAL_S3_SECRET_KEY='change-me-too'
+    export DATABASE_URL="postgresql://perfportal:${PERFPORTAL_DB_PASSWORD}@localhost:5433/perfportal"
     export REDIS_URL='redis://localhost:6380'
     export S3_ENDPOINT='http://localhost:9000'
-    export S3_ACCESS_KEY='perfportal'
-    export S3_SECRET_KEY='perfportal123'
+    export S3_ACCESS_KEY="$PERFPORTAL_S3_ACCESS_KEY"
+    export S3_SECRET_KEY="$PERFPORTAL_S3_SECRET_KEY"
     export BETTER_AUTH_URL='http://localhost:3000'   # optional — defaults to
                                                        # http://localhost:<PORT>;
                                                        # set to the public origin
@@ -124,7 +130,13 @@ written under `RUNNER_LOG_DIR` and can be tailed from the same UI.
 
 For a containerized single-node deployment, use the `onprem` compose profile:
 
+    export PERFPORTAL_DB_PASSWORD='change-me'
+    export PERFPORTAL_S3_ACCESS_KEY='change-me'
+    export PERFPORTAL_S3_SECRET_KEY='change-me-too'
     docker compose -f infra/docker-compose.yml --profile onprem up --build
 
 The app services share named volumes for uploaded artifacts and runner logs;
 the profile also runs Prisma migrations before starting API, worker and runner.
+Gatling child processes run with a sanitized environment, so the database,
+Redis and S3 credentials above stay in the runner control plane rather than in
+uploaded simulations.
