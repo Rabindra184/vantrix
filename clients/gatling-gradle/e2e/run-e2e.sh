@@ -47,6 +47,14 @@ fail() {
   exit 1
 }
 
+# Prints seed.mjs's JSON output with the bearer-token fields masked -- used only in failure
+# paths that would otherwise print the raw seed (which carries a live, usable token) to the
+# console/CI log. Falls back to the raw file if it isn't parseable JSON (e.g. seed.mjs crashed
+# before writing anything useful), since a redaction failure must never hide the real problem.
+redact_seed_json() {
+  jq '.token = "[REDACTED]" | .readToken = "[REDACTED]"' "$1" 2>/dev/null || cat "$1"
+}
+
 # ---------------------------------------------------------------------------
 # Cleanup: target-server, the seed-copy that was placed in apps/api/, and any
 # background pollers still running. Runs on every exit path (pass or fail).
@@ -143,6 +151,15 @@ log "published."
 # ===========================================================================
 log "seeding org/project/token..."
 [ -n "${DATABASE_URL:-}" ] || export DATABASE_URL="postgresql://perfportal:perfportal@localhost:5433/perfportal"
+# This script seeds (writes org/project/token rows) and, via gatlingRun's live stream, writes
+# run data too -- refuse to point either of those at a non-local database, whether the default
+# above or an inherited env var, rather than silently seeding/writing wherever DATABASE_URL
+# happens to point.
+DB_HOST="$(printf '%s' "$DATABASE_URL" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://([^@/]*@)?([^:/]+).*#\2#')"
+case "$DB_HOST" in
+  localhost|127.0.0.1) ;;
+  *) fail "this script seeds and writes; refusing non-local DATABASE_URL (host: \"$DB_HOST\")" ;;
+esac
 cp "$SEED_SRC" "$SEED_COPY"
 ( cd "$API_DIR" && node "$(basename "$SEED_COPY")" ) >"$SEED_JSON" 2>"$WORK_DIR/seed.stderr"
 SEED_EC=$?
@@ -154,7 +171,7 @@ cat "$WORK_DIR/seed.stderr" >&2 || true
 TOKEN="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).token)' "$SEED_JSON")"
 READ_TOKEN="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).readToken)' "$SEED_JSON")"
 PROJECT_SLUG="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).projectSlug)' "$SEED_JSON")"
-[ -n "$TOKEN" ] && [ -n "$READ_TOKEN" ] || fail "seed.mjs produced no token -- got: $(cat "$SEED_JSON")"
+[ -n "$TOKEN" ] && [ -n "$READ_TOKEN" ] || fail "seed.mjs produced no token -- got: $(redact_seed_json "$SEED_JSON")"
 log "seeded project '$PROJECT_SLUG', token minted (stream+read)."
 
 # ===========================================================================
