@@ -7,8 +7,12 @@ five-tab live page (all merged).
 receive incremental batches, and be closed explicitly or by inactivity
 timeout." The server half of that has shipped. This is the client.
 
+*(Vantrix is this application — the repo still brands its UI and `@perfportal/*`
+package scope with the old name; that rebrand is a separate task. Everything the
+PLUGIN owns is named Vantrix from birth.)*
+
 A Gradle plugin, applied beside `io.gatling.gradle`, that opens a live run
-when `gatlingRun` starts, streams `simulation.log` to PerfPortal as Gatling
+when `gatlingRun` starts, streams `simulation.log` to Vantrix as Gatling
 writes it, and closes the run when the task finishes. The reader watches the
 run on the five-tab live page while it happens, and reads the finished report
 on the same page when it ends.
@@ -114,7 +118,7 @@ racing JVM teardown is a worse failure than letting the designed path run.
 
 ---
 
-## 3. One PerfPortal run per simulation
+## 3. One Vantrix run per simulation
 
 `gatlingRun` with no `--simulation` runs every simulation, producing several
 results directories in sequence. Each gets its own open/stream/close cycle.
@@ -131,8 +135,8 @@ The watcher therefore looks for each new directory in turn, not once.
 ## 4. Configuration, and where the token is not
 
 ```kotlin
-perfportal {
-    url = "https://perf.example"     // or PERFPORTAL_URL
+vantrix {
+    url = "https://perf.example"     // or VANTRIX_URL
     environment = "staging"           // optional
     branch = "main"                   // optional
     commitSha = "a1b2c3d"             // optional
@@ -144,7 +148,7 @@ perfportal {
 Every value falls back to an env var of the same name, so CI configures the
 build file not at all.
 
-**The token is `PERFPORTAL_TOKEN`, and nothing else.** Not a config value —
+**The token is `VANTRIX_TOKEN`, and nothing else.** Not a config value —
 `build.gradle.kts` is committed to git. Not a CLI flag — flags land in the
 process list, which is why the agent's `main.go` deliberately has no `--token`
 and carries a comment saying so. One token bearing the `stream` scope is the
@@ -225,7 +229,7 @@ in the documented order; that a multi-simulation run opens one run per
 simulation.
 
 **One end-to-end against the real stack.** The `gatling-gradle-plugin-demo`
-project streaming into a running PerfPortal, asserting the run reaches
+project streaming into a running Vantrix, asserting the run reaches
 `complete` and that its re-evaluated assertion actuals equal what Gatling
 itself printed. That comparison was performed by hand during this design —
 `11494`, `85.8457997698504` and `179`, matching to the last decimal — and this
@@ -242,4 +246,4 @@ test is what turns it into a gate.
   once the run finishes" notice meanwhile.
 - **Non-Gatling tools**, and Maven or any other build system.
 - **Hooking Gatling's `DataWriter` SPI** (§1).
-- **Executing tests from PerfPortal** (§0, PRD §5.3).
+- **Executing tests from Vantrix** (§0, PRD §5.3).
