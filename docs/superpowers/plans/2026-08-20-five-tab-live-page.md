@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Node from `.nvmrc` (22).** `nvm use` before any test run. On Node 20 roughly two thirds of the unit suite fails to LOAD and the run still prints a green `Test Files`/`Tests` summary above the error line.
-- **Verification floors before this plan:** unit **106 files / 1179 tests**, integration **111 files / 1297 tests**, e2e **90**. A unit run reporting fewer than the unit floor did not run everything. Task 13 raises all three from measured output.
+- **Verification floors before this plan:** unit **103 files / 1150 tests**, integration **108 files / 1269 tests**, e2e **89** — this branch's `CLAUDE.md:56`, reproduced by a clean baseline run. (An earlier draft quoted 106/1179/111/1297/90; those are `feat/live-sla`'s figures and that branch is unmerged, so they are NOT reachable from here.) A unit run reporting fewer than 103 files did not run everything. Task 13 raises all three from measured output.
 - **`pnpm test:unit` runs neither integration nor e2e.** `pnpm test:integration` RE-RUNS the unit `.ts` files but includes no `.tsx` at all, so a React component change verified only by `test:integration` has not been verified.
 - **Gate order is integration BEFORE e2e**, never the reverse: `pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e`.
 - **Integration and e2e need the local stack** and cannot run concurrently with each other or with themselves — `createTestApp()` TRUNCATEs all 15 tables on every call. Before believing an integration failure, run `pgrep -f vitest` and confirm you are alone.
@@ -716,7 +716,11 @@ describe('LiveStatusStrip', () => {
     // about the connection. Neither displaces the other.
     render(<LiveStatusStrip {...BASE} status="running" partial />);
     expect(screen.getByTestId('live-notice-partial')).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: '' })).toBeInTheDocument();
+    // Two live regions: the connection sentence AND the partial notice. That
+    // count IS the claim — `getByRole('status')` would throw on finding two,
+    // and `{ name: '' }` is not a meaningful query for an unnamed region.
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(1);
+    expect(screen.getByRole('status')).toBeDefined;
   });
 
   it('renders nothing for a pending run that has never streamed', () => {
@@ -911,9 +915,12 @@ Add to `apps/web/test/RunShell.test.tsx`, adapting `renderShell` to the new prop
     // socket's own numbers would lose a race to an empty payload.
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderShellWith({ status: 'running', verdict: undefined, windowable: undefined });
-    expect(fetchSpy.mock.calls.map((c) => String(c[0]))).not.toContain(
-      expect.stringContaining('/users'),
-    );
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    // `.some(...)`, NOT `expect(urls).not.toContain(expect.stringContaining(...))` —
+    // toContain does not meaningfully take an asymmetric matcher, so that
+    // spelling passes whether or not the fetch happened.
+    expect(urls.some((u) => u.includes('/users'))).toBe(false);
+    expect(urls.some((u) => u.includes('/errors'))).toBe(false);
     fetchSpy.mockRestore();
   });
 
@@ -1353,14 +1360,21 @@ Expected: FAIL — the tab fetches unconditionally and draws eight slots regardl
 
 - [ ] **Step 3: Add the live branch**
 
-In `RunChartsTab`, after the existing `compact`/`shown` block, insert:
+In `RunChartsTab`, put these three declarations at the TOP of the component,
+immediately after `useParams` and **before any `useQuery`** — the metric queries
+below reference `terminal` in their `enabled`, so declaring it later is a
+temporal-dead-zone error:
 
 ```tsx
   const live = useLiveFromShell();
   const detail = useQuery({ queryKey: runQueryKey(runId ?? ''), queryFn: () => fetchRun(runId!),
                             enabled: runId !== undefined });
   const terminal = detail.data?.state === 'ready';
+```
 
+Then, after the existing `compact`/`shown` block, insert:
+
+```tsx
   if (detail.data !== undefined && !terminal) {
     const delta = live?.lastDelta ?? null;
     if (delta === null) return <WaitingPanel status={detail.data.run.status} />;
@@ -1455,14 +1469,21 @@ Expected: FAIL — the tab renders `Payload` for the chart unconditionally.
 
 - [ ] **Step 3: Add the live branch**
 
-In `RunErrorsTab`, before the existing return:
+In `RunErrorsTab`, put these three declarations at the TOP of the component,
+immediately after `useParams` and **before the `errors` and `series` queries** —
+both reference `terminal` in their `enabled`, so declaring it later is a
+temporal-dead-zone error:
 
 ```tsx
   const live = useLiveFromShell();
   const detail = useQuery({ queryKey: runQueryKey(runId ?? ''), queryFn: () => fetchRun(runId!),
                             enabled: runId !== undefined });
   const terminal = detail.data?.state === 'ready';
+```
 
+Then, before the existing return:
+
+```tsx
   if (detail.data !== undefined && !terminal) {
     if ((live?.lastDelta ?? null) === null) return <WaitingPanel status={detail.data.run.status} />;
     return (
@@ -1586,7 +1607,18 @@ statistics rows to plot a point from."
 
 **Files:**
 - Modify: `apps/web/e2e/run-detail.spec.ts`
-- Reference: `apps/web/e2e/fixtures.ts` for the live-run seed helper
+- Modify: `apps/web/e2e/fixtures.ts` — **`seedLiveRun` does not exist and this task must write it**
+
+**Before Step 1:** add `seedLiveRun(orgId: string): Promise<string>` to
+`apps/web/e2e/fixtures.ts`, following `seedRunWithData`'s shape (line 273) but
+inserting a run row with `status: 'running'`, a null `toolStartedAt`, a null
+`durationMs`, and **no** statistics, series or error rows — a running run has
+none. Give it a project name and a simulation name that share **no distinctive
+word with any tab name** (`Overview`, `Charts`, `Load generators`, `Errors`,
+`Trends`): `ProjectRail` renders on every authenticated page and Playwright
+matches accessible names as a case-insensitive substring, so a project called
+"Trends Demo" would satisfy the Trends tab query and break the spec below in a
+way that looks like a product bug.
 
 - [ ] **Step 1: Write the failing spec**
 
@@ -1662,7 +1694,7 @@ header carries its real identity and NO verdict badge — the two halves of
 nvm use && pnpm test:unit 2>&1 | tail -20
 ```
 
-Record the reported `Test Files` and `Tests` totals. Confirm the file count is at or above **106** — below that, the run did not load everything and the number is worthless.
+Record the reported `Test Files` and `Tests` totals. Confirm the file count is at or above **103** — below that, the run did not load everything and the number is worthless.
 
 - [ ] **Step 2: Measure the other two**
 
@@ -1673,7 +1705,7 @@ nvm use && pnpm test:e2e 2>&1 | tail -20
 
 - [ ] **Step 3: Update the floors**
 
-In `CLAUDE.md`, replace `106 files / 1179 tests` with the measured unit figures, and update the integration (`111 files / 1297 tests`) and e2e (`90`) figures in the same paragraph. Add a sentence naming this sub-project and what it added, in the style of the entries already there: which files are new (`WaitingPanel.test.tsx`, `LiveStatusStrip.test.tsx`, `RunOverviewTab.live.test.tsx`, `RunChartsTab.live.test.tsx`, `RunErrorsTab.live.test.tsx`, `RunTrends.live.test.tsx`), which cases MOVED rather than being added, and which were deleted with `Processing`.
+In `CLAUDE.md`, replace `103 files / 1150 tests` with the measured unit figures, and update the integration (`108 files / 1269 tests`) and e2e (`89`) figures in the same paragraph. Add a sentence naming this sub-project and what it added, in the style of the entries already there: which files are new (`WaitingPanel.test.tsx`, `LiveStatusStrip.test.tsx`, `RunOverviewTab.live.test.tsx`, `RunChartsTab.live.test.tsx`, `RunErrorsTab.live.test.tsx`, `RunTrends.live.test.tsx`), which cases MOVED rather than being added, and which were deleted with `Processing`.
 
 - [ ] **Step 4: Commit**
 
