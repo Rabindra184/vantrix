@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -352,5 +352,98 @@ describe('RunTelemetry', () => {
 
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => u.includes('/telemetry'))).toBe(false);
+  });
+
+  /**
+   * THE TRANSITION THIS FIX ROUND'S GAP LEFT UNGUARDED. Every hook in
+   * `RunTelemetry` sits above its `!terminal` early return today, but
+   * nothing PINS that shape — every other case in this file mounts a
+   * single, fixed state, so moving the return above even one hook (e.g.
+   * `useState(selectedHost)`) would still pass all of them and only break
+   * on an already-mounted instance whose `terminal` flips false -> true,
+   * "Rendered more hooks than during the previous render."
+   * `RunTrends.live.test.tsx`'s "survives a running run finishing while the
+   * reader is on this tab" is the identical guard for that tab; this is
+   * `RunTelemetry`'s own.
+   *
+   * It doubles as CRITICAL 1's own regression test for the TRANSITION
+   * itself, not just the running state alone: `enabled: terminal` means
+   * `/telemetry` never fires while running, so the flip has to trigger a
+   * FRESH fetch rather than surface a stale `available: false` cached from
+   * before the fix existed — a bare "does not throw" would miss that
+   * regression precisely because the old caching bug never threw either.
+   */
+  it('survives a running run finishing while the reader is on this tab', async () => {
+    const readyTelemetry: TelemetryResponse = {
+      runId: RUN,
+      available: true,
+      bucketWidthMs: 1000,
+      window: null,
+      hosts: [host('gen-1', 0, 42)],
+    };
+
+    // `current` is what the `/v1/runs/:id` stub answers with — a MUTABLE
+    // reference, not a value closed over at call time, for the same reason
+    // `RunTrends.live.test.tsx`'s `renderTrends` documents: `runQueryKey`
+    // carries no `staleTime`, so mounting fires a background refetch
+    // immediately, and reading `current` only after a microtask is what lets
+    // the synchronous cache write below land first instead of losing to that
+    // stale in-flight response resolving after it.
+    let current: { state: 'processing'; run: { id: string; status: RunProcessing['status']; statusUrl: string } } | {
+      state: 'ready';
+      run: RunResponse;
+    } = { state: 'processing', run: { id: RUN, status: 'running', statusUrl: `/v1/runs/${RUN}` } };
+
+    const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>(async (input) => {
+      const url = String(input);
+      if (url.includes('/telemetry')) {
+        return new Response(JSON.stringify(readyTelemetry), { status: 200 });
+      }
+      if (url === `/v1/runs/${RUN}`) {
+        await Promise.resolve();
+        return new Response(JSON.stringify(current.run), { status: current.state === 'ready' ? 200 : 202 });
+      }
+      return new Response('{}', { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(runQueryKey(RUN), current);
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN}/load-generators`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <Outlet
+                  context={
+                    { window: null, durationMs: null, liveDurationMs: null, live: null } satisfies RunWindowContext
+                  }
+                />
+              }
+            >
+              <Route path="load-generators" element={<RunTelemetry />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/once the run finishes/i)).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/telemetry'))).toBe(false);
+
+    current = { state: 'ready', run: COMPLETE_RUN };
+    await act(async () => {
+      client.setQueryData(runQueryKey(RUN), current);
+    });
+
+    // Past the "wait" wording now, and — CRITICAL 1's own regression — a
+    // FRESH fetch actually landed, not a stale `available: false` cached
+    // from the running state.
+    await waitFor(() => expect(screen.queryByText(/once the run finishes/i)).toBeNull());
+    await waitForResolvedCpu(42);
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/telemetry'))).toBe(true);
   });
 });

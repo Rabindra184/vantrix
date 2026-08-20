@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunProcessing, RunResponse } from '@perfportal/contracts';
@@ -50,14 +50,27 @@ function renderCompare(body: ReturnType<typeof processing> | { state: 'ready'; r
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
 
-  const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>((input) => {
+  // `current` is what the `/v1/runs/:id` stub answers with — a MUTABLE
+  // reference, not the `body` parameter closed over at call time, because
+  // `runQueryKey` has no `staleTime` (`pollIntervalFor` needs it
+  // refetchable) and mounting this component fires a background refetch
+  // immediately. Without this, that refetch resolves with the ORIGINAL body
+  // some time after `rerenderAs` has already written the NEW one, and
+  // "whichever write resolves last" wins — silently reverting the
+  // transition `rerenderAs` exists to prove survives.
+  // `RunTrends.live.test.tsx`'s `renderTrends` solves the identical race the
+  // identical way.
+  let current = body;
+  const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>(async (input) => {
     const url = String(input);
     if (url.includes('/trends')) {
-      return Promise.resolve(new Response(JSON.stringify(EMPTY_TRENDS), { status: 200 }));
+      return new Response(JSON.stringify(EMPTY_TRENDS), { status: 200 });
     }
-    return Promise.resolve(
-      new Response(JSON.stringify(body.run), { status: body.state === 'ready' ? 200 : 202 }),
-    );
+    // Reads `current` AFTER a microtask, not at call time — see the comment
+    // above on why the read has to be deferred for a same-tick `rerenderAs`
+    // to win the race.
+    await Promise.resolve();
+    return new Response(JSON.stringify(current.run), { status: current.state === 'ready' ? 200 : 202 });
   });
   vi.stubGlobal('fetch', fetchSpy);
 
@@ -82,7 +95,19 @@ function renderCompare(body: ReturnType<typeof processing> | { state: 'ready'; r
     </QueryClientProvider>,
   );
 
-  return { ...utils, fetchSpy };
+  return {
+    ...utils,
+    client,
+    fetchSpy,
+    /** Re-seeds the SAME client's cache and flushes the resulting re-render —
+     *  exactly what `RunDetail`'s own poll does when a run's status changes. */
+    async rerenderAs(nextBody: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse }) {
+      current = nextBody;
+      await act(async () => {
+        client.setQueryData(runQueryKey(RUN_ID), nextBody);
+      });
+    },
+  };
 }
 
 afterEach(cleanup);
@@ -107,5 +132,28 @@ describe('RunCompare — terminal gate (MINOR 5)', () => {
     await screen.findByText(/nothing to compare yet/i);
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => u.includes('/trends'))).toBe(true);
+  });
+
+  /**
+   * THE TRANSITION THIS FIX ROUND'S GAP LEFT UNGUARDED. Every hook in
+   * `RunCompare` sits above its `!terminal` early return today, but nothing
+   * PINS that shape — each case above mounts a single, fixed state, so
+   * moving the return above even one hook (e.g. `useQueries` for
+   * `seriesResults`) would still pass all of them and only break on an
+   * already-mounted instance whose `terminal` flips false -> true,
+   * "Rendered more hooks than during the previous render."
+   * `RunTrends.live.test.tsx`'s "survives a running run finishing while the
+   * reader is on this tab" is the identical guard for that tab; this is
+   * `RunCompare`'s own — the sixth route the five-tab audit missed.
+   */
+  it('survives a running run finishing while the reader is on this tab', async () => {
+    const { rerenderAs } = renderCompare(processing('running'));
+    expect(screen.getByTestId('live-notice-withheld')).toHaveTextContent(/compare/i);
+
+    await expect(rerenderAs({ state: 'ready', run: COMPLETE_RUN })).resolves.toBeUndefined();
+
+    // Past the withheld notice now — the real (empty-cohort) content.
+    await waitFor(() => expect(screen.queryByTestId('live-notice-withheld')).toBeNull());
+    expect(await screen.findByText(/nothing to compare yet/i)).toBeInTheDocument();
   });
 });
