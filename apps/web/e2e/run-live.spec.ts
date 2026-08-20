@@ -86,7 +86,30 @@ async function seedSnapshot(redis: Redis, runId: string, delta: ReturnType<typeo
 }
 
 test.describe('a running run draws its live dashboard', () => {
-  test('the live charts draw, the tiles read the delta, and the four withheld sections say what they are waiting for', async ({
+  /**
+   * FIXME (Task 7 fix round 1) — DEFERRED, NOT REPOINTED. This test proved
+   * the deleted `Live` component end to end: its `<h1>` ("Run in progress"),
+   * `LiveSummary`'s tiles, the five live charts, the live-fed errors table,
+   * and the four withheld-section notices. Every one of those was `Live`'s
+   * own rendering, and `Live` no longer exists — `RunShell` now renders for
+   * a running run instead, and today that means a header carrying the run's
+   * IDENTITY (never "Run in progress"; that heading is gone for good, not
+   * relocated) plus `WaitingPanel`'s bare "still processing" sentence on the
+   * Overview tab. None of `LiveSummary`, the live charts, the live errors
+   * table, or the withheld notices are wired into any tab yet — that is
+   * Tasks 8, 9 and 10's job (Overview, Charts, Errors respectively).
+   *
+   * Repointing only the `<h1>` assertion (as a first read of this test might
+   * suggest) would leave it red on the very next line — `live-stat-*`
+   * testids render nowhere today. Left as `test.fixme` with the ORIGINAL
+   * body intact rather than gutted or half-rewritten: once Tasks 8-10 wire
+   * their tabs, whichever one owns each assertion can be lifted back out
+   * verbatim (most will need to move to their own tab's URL first, since
+   * this content will no longer all be on one page — see this file's own
+   * `openLiveRun`/Redis seeding, which is unaffected and still the right way
+   * to seed a real live run for whichever new specs replace this one).
+   */
+  test.fixme('the live charts draw, the tiles read the delta, and the four withheld sections say what they are waiting for', async ({
     page,
   }) => {
     const admin = await seedAdmin();

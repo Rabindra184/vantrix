@@ -7,7 +7,7 @@ import type { LiveDelta, RunProcessing, RunResponse } from '@perfportal/contract
 import { fetchRun, runQueryKey } from '../src/api/run';
 import { useLiveRun } from '../src/api/live';
 import useIsCompact from '../src/useIsCompact';
-import RunDetail from '../src/routes/RunDetail';
+import RunDetail, { RunOverviewTab } from '../src/routes/RunDetail';
 
 /**
  * `RunDetail`'s own remaining job (Task 7, design part 2b): choosing what
@@ -29,6 +29,13 @@ import RunDetail from '../src/routes/RunDetail';
  * `it.todo` naming the task that will re-cover it once the corresponding tab
  * (Overview/Charts/Errors) wires in `WaitingPanel`/`LiveSummary`/the live
  * charts. None were silently dropped.
+ *
+ * FIX ROUND 1. `mountRun`'s index child is the REAL `RunOverviewTab`, not a
+ * placeholder — a placeholder could never have caught this tab rendering
+ * BLANK for a processing run, which is exactly what it did until this round
+ * wired `WaitingPanel` into it. Two of the `it.todo`s below are resolved by
+ * that wiring and replaced with real cases; the rest still have no tab to
+ * render against.
  */
 
 vi.mock('../src/api/run.js', async (importOriginal) => ({
@@ -84,8 +91,12 @@ function liveState(
  * Mounts `RunDetail` inside a route WITH tab children — the shape that
  * actually exercises the reachability fix (Task 7's whole point): a tab URL
  * that resolves to something is only provable if there is a child route for
- * it to resolve TO. The index child is a bare probe div; the tab strip and
- * header are what these tests assert on, not the tab's own content.
+ * it to resolve TO. The index child is the REAL `RunOverviewTab` (fix round
+ * 1, IMPORTANT 4) — a placeholder div here could never catch this tab
+ * rendering blank for a processing run, which is exactly the regression this
+ * fix round closed by wiring `WaitingPanel` into it. `RunOverviewTab`'s own
+ * `run` query resolves from the SAME cache entry seeded below, so it does not
+ * need `fetchRun` mocked any differently than `RunDetail`'s own.
  *
  * The query cache is SEEDED with `body` before the first render, rather than
  * mocking `fetchRun` and awaiting the fetch — `useQuery` reads pre-populated
@@ -105,7 +116,7 @@ function mountRun(body: { state: 'processing' | 'ready'; run: unknown }) {
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}`]}>
         <Routes>
           <Route path="/runs/:runId" element={<RunDetail />}>
-            <Route index element={<div data-testid="tab-content" />} />
+            <Route index element={<RunOverviewTab />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -144,12 +155,17 @@ describe('RunDetail — one shell, for every state', () => {
     // tab URLs resolved to nothing at all.
     mountRun({ state: 'processing', run: { id: RUN_ID, status: 'pending', statusUrl: '/x' } });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    // The tab is not BLANK either — the real `RunOverviewTab` this test
+    // mounts (fix round 1, IMPORTANT 4) shows `WaitingPanel`'s own sentence
+    // rather than nothing.
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
   });
 
   it('keeps the tab strip across running -> parsing -> complete', async () => {
     // A terminal run's shell fetches `/users` and `/errors` (RunShell's own
-    // `terminal` gate) — stubbed here so the `ready` transition below doesn't
-    // reach for a real network in jsdom.
+    // `terminal` gate), and `RunOverviewTab`'s own `/stats` once `ready` —
+    // stubbed here so the `ready` transition below doesn't reach for a real
+    // network in jsdom.
     vi.stubGlobal(
       'fetch',
       () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
@@ -157,12 +173,20 @@ describe('RunDetail — one shell, for every state', () => {
 
     const { rerenderAs } = mountRun({ state: 'processing', run: RUNNING_IDENTITY });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
 
     await rerenderAs({ state: 'processing', run: { ...RUNNING_IDENTITY, status: 'parsing' } });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
 
     await rerenderAs({ state: 'ready', run: COMPLETE_RUN });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    // The tab has left `WaitingPanel` behind now that the run is `ready` —
+    // `Assertions`' own empty state renders instead (`COMPLETE_RUN` declares
+    // none), which is proof this is the real content branch, not a stale
+    // waiting screen.
+    expect(screen.queryByText(/still processing/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no sla rules were evaluated/i)).toBeInTheDocument();
   });
 
   it('renders the shell even when the 202 carried no identity', () => {
@@ -199,6 +223,27 @@ describe('RunDetail — one shell, for every state', () => {
 
     expect(useLiveRunMock).toHaveBeenCalledWith(RUN_ID, expected);
   });
+
+  /**
+   * Fix round 1's Ruling: `WaitingPanel` is wired into `RunOverviewTab` now,
+   * closing two of the `it.todo`s the original Task 7 report left behind —
+   * this and the case below replace them (their names are preserved in a
+   * comment at the old `it.todo` site so the history stays legible).
+   */
+  it('shows WaitingPanel, not a live summary, while running with no delta yet', () => {
+    useLiveRunMock.mockReturnValue(liveState({ lastDelta: null }));
+    mountRun({ state: 'processing', run: RUNNING_IDENTITY });
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
+    // No live tiles either — `LiveSummary` is not wired in yet (Task 8);
+    // asserting its absence here is what stops that wiring landing silently
+    // duplicated, unnoticed, beside `WaitingPanel`.
+    expect(screen.queryByTestId('live-stat-total-requests')).not.toBeInTheDocument();
+  });
+
+  it('shows WaitingPanel for a run never live this session (pending)', () => {
+    mountRun({ state: 'processing', run: { id: RUN_ID, status: 'pending', statusUrl: '/x' } });
+    expect(screen.getByText(/still processing/i)).toBeInTheDocument();
+  });
 });
 
 /* ======================================================================== *
@@ -231,11 +276,10 @@ describe('deferred to Tasks 8-10 (no tab exists yet to host these)', () => {
   );
 
   // Old: "keeps the ordinary Processing screen while running with no delta
-  // yet" / "...for a run never live this session". `WaitingPanel` carries
-  // the "still processing" indicator now, but nothing wires it into a tab
-  // yet — that is Task 8's job for the Overview tab.
-  it.todo('Task 8: shows WaitingPanel (not the live summary) while running with no delta yet');
-  it.todo('Task 8: shows WaitingPanel for a run never live this session');
+  // yet" / "...for a run never live this session". RESOLVED in fix round 1:
+  // `WaitingPanel` is wired into `RunOverviewTab` now — see "shows
+  // WaitingPanel, not a live summary, while running with no delta yet" and
+  // "shows WaitingPanel for a run never live this session (pending)" above.
 
   // Old: "freezes the dashboard under a finalizing banner once streaming
   // stops". The banner itself is `LiveStatusStrip.test.tsx`'s "says

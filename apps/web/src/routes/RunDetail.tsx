@@ -43,6 +43,7 @@ import DesktopOnly from './DesktopOnly';
 import RunShell from './RunShell';
 import useIsCompact from '../useIsCompact';
 import RunStats from './RunStats';
+import WaitingPanel from './WaitingPanel';
 
 /**
  * This module's default export renders ONE SHELL for every run state; it
@@ -377,19 +378,22 @@ function livePercentileValue(summary: LiveDelta['summary'], key: string): string
  * was wrong rather than merely stale, and is corrected instead of matched.
  *
  * GENUINELY REACHABLE FOR A PROCESSING RUN NOW, too (Task 7) — `RunShell`
- * mounts this index tab for every status, not only `ready`. It still renders
- * NOTHING for one: wiring `WaitingPanel` in here belongs to a later task
- * (design part 2b), deliberately, not to an oversight. `WaitingPanel` takes
- * no `capReached` prop (Task 7's own ruling), and this component has no way
- * to learn `capReached` at all — `RunShell`'s outlet context carries
- * `window`/`durationMs`/`liveDurationMs`/`live`, never the polling cap flag —
- * so wiring it in now would show its unconditional "checks again every few
- * seconds" sentence RIGHT UNDER `LiveStatusStrip`'s "stopped checking
- * automatically" block once the cap is reached, two contradictory claims on
- * screen at once. The task that wires this in has to solve that (most likely
- * by threading `capReached` through the context, or by having its own caller
- * decide), which is real design work Task 7's brief does not ask for and
- * this component must not shortcut.
+ * mounts this index tab for every status, not only `ready`. `WaitingPanel` is
+ * what it shows there (fix round 1): Task 7 first left this tab rendering
+ * `null` for a processing run, because wiring `WaitingPanel` in required a
+ * `capReached` flag it could not safely learn without contradicting
+ * `LiveStatusStrip`'s own capped block. `capReached`'s own "checks again" /
+ * "stopped checking" copy moved INTO `LiveStatusStrip` instead (fix round 1),
+ * which is what makes it safe to mount `WaitingPanel` here: it now says only
+ * "this run is still processing" and carries no polling claim of its own to
+ * contradict anything.
+ *
+ * ALSO WHY THIS TAB'S OTHER QUERIES ARE GATED ON `state === 'ready'`, NOT
+ * MERELY `runId !== undefined` — `apiFetch` has no 202 branch, so before this
+ * fix round `statsQuery`/`seriesQuery` fired against a processing run's rows,
+ * which do not exist yet, and the reader got error panels instead of
+ * `WaitingPanel`. `RunChartsTab` and `RunErrorsTab` carry the identical gate
+ * for the identical reason.
  */
 export function RunOverviewTab() {
   const { runId } = useParams<{ runId: string }>();
@@ -400,20 +404,30 @@ export function RunOverviewTab() {
   });
   const window = useWindowFromShell();
   const compact = useIsCompact();
-  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: runId !== undefined });
+  // READY, not merely `runId !== undefined` (fix round 1, Critical 1's fix
+  // applied here too) — `apiFetch` has no 202 branch, so firing `/stats`
+  // (and, when compact, `/series`) against a processing run's rows, which do
+  // not exist yet, is the same defect the brief flagged on `RunChartsTab` and
+  // `RunErrorsTab`. This tab was simply unreachable for a processing run
+  // before Task 7, which is why the bug had no chance to surface here first.
+  const ready = run.data?.state === 'ready';
+  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: ready });
   // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
   // tab uses, so a reader who widens the window pays for it once.
   const series = useQuery({
     ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: runId !== undefined && compact,
+    enabled: ready && compact,
   });
 
-  // Not reachable through the router: `RunShell` mounts this tab for every
-  // status now, including `processing` — but with nothing yet to show for
-  // one (see this docstring's own note), so the guard below still returns
-  // `null` for it. Guarded anyway so a render that somehow beat the cache is
-  // a blank tab rather than a crash on `run.data.run`.
-  if (runId === undefined || run.data === undefined || run.data.state !== 'ready') return null;
+  // Not reachable through the router with `run.data` still `undefined` past
+  // first paint — `RunShell` mounts this tab only once `RunDetail` has
+  // resolved SOME state for this `runId`, and the query above is then served
+  // from that same warm cache entry.
+  if (runId === undefined || run.data === undefined) return null;
+
+  if (run.data.state === 'processing') {
+    return <WaitingPanel status={run.data.run.status} />;
+  }
 
   return (
     <>
@@ -484,17 +498,38 @@ function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse
  * run-scope stats row is failed REQUESTS, a different number from the count
  * of DISTINCT error messages this tab is about, and only `/errors` knows the
  * second one.
+ *
+ * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and its own `run` fetch below
+ * is what this component uses to notice — `errorsQuery`/`errorSeriesQuery`
+ * are gated on `state === 'ready'`, not merely `runId !== undefined` (fix
+ * round 1, CRITICAL 1): `apiFetch` has no 202 branch, so before this fix a
+ * pending or parsing run's `/errors` and `/errors/series` fired anyway and
+ * the reader got error panels where `WaitingPanel` now renders instead.
  */
 export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
-  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: runId !== undefined });
+  const run = useQuery({
+    queryKey: runQueryKey(runId ?? ''),
+    queryFn: () => fetchRun(runId!),
+    enabled: runId !== undefined,
+  });
+  const ready = run.data?.state === 'ready';
+  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: ready });
   const window = useWindowFromShell();
   // One time axis across the page (§22.5) — see `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
   const series = useQuery({
     ...errorSeriesQuery(runId ?? '', window),
-    enabled: runId !== undefined,
+    enabled: ready,
   });
+
+  // Same guard `RunOverviewTab` carries, for the same reason: not reachable
+  // through the router with `run.data` still `undefined` past first paint.
+  if (runId === undefined || run.data === undefined) return null;
+
+  if (run.data.state === 'processing') {
+    return <WaitingPanel status={run.data.run.status} />;
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -597,9 +632,21 @@ const RESPONSES_PER_SECOND: Slot = {
  * the same trade `RunHeader`'s badges and countless real sites make
  * routinely, and a smaller cost than a heading level a screen reader cannot
  * jump to at all.
+ *
+ * REACHABLE FOR A PROCESSING RUN NOW (Task 7), and gated the same way
+ * `RunOverviewTab` and `RunErrorsTab` are (fix round 1, CRITICAL 1): `on`
+ * below requires `state === 'ready'` in addition to `runId`/`wanted`, because
+ * `apiFetch` has no 202 branch — before this fix, opening this tab on a
+ * pending run fired all four queries against rows that do not exist yet and
+ * the reader got four error panels instead of `WaitingPanel`.
  */
 export function RunChartsTab() {
   const { runId } = useParams<{ runId: string }>();
+  const run = useQuery({
+    queryKey: runQueryKey(runId ?? ''),
+    queryFn: () => fetchRun(runId!),
+    enabled: runId !== undefined,
+  });
   // ONE WINDOW FOR THE WHOLE PAGE, from the shell — so every figure below
   // describes the same stretch of the run, and so the shell's own fetches
   // share their cache keys with these rather than quietly duplicating them.
@@ -615,7 +662,8 @@ export function RunChartsTab() {
   const compact = useIsCompact();
   const [shown, setShown] = useState(false);
   const wanted = !compact || shown;
-  const on = runId !== undefined && wanted;
+  const ready = run.data?.state === 'ready';
+  const on = runId !== undefined && wanted && ready;
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: on });
   const users = useQuery({ ...usersQuery(runId ?? '', window), enabled: on });
   const distribution = useQuery({
@@ -626,6 +674,15 @@ export function RunChartsTab() {
     ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
     enabled: on,
   });
+
+  // Same guard `RunOverviewTab` and `RunErrorsTab` carry, for the same
+  // reason: not reachable through the router with `run.data` still
+  // `undefined` past first paint.
+  if (runId === undefined || run.data === undefined) return null;
+
+  if (run.data.state === 'processing') {
+    return <WaitingPanel status={run.data.run.status} />;
+  }
 
   if (compact && !shown) {
     return (

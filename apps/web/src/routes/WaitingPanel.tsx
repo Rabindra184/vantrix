@@ -12,6 +12,17 @@ import { Marked, STATUS } from './marks';
  * component takes no `capReached` prop, and never will; that affordance is
  * `LiveStatusStrip`'s alone.
  *
+ * THE "CHECKS AGAIN" REASSURANCE LIVES IN `LiveStatusStrip` TOO, not here —
+ * that was tried once (Task 7) and reverted (Task 7 fix round 1). This panel
+ * has no way to learn `capReached` (no tab's outlet context carries it), so
+ * showing "there is nothing to do" here unconditionally would keep saying so
+ * directly under `LiveStatusStrip`'s OWN capped block once polling actually
+ * had stopped — two contradictory claims on the same screen, which the old,
+ * deleted `Processing` never produced (it showed exactly one or the other).
+ * `LiveStatusStrip` owns both the reassurance and the capped block now, which
+ * makes them structurally exclusive by construction rather than by two
+ * components staying in sync some other way.
+ *
  * THE STATUS MARK IS THE ILLUSTRATION, not a generic spinner. A spinner says
  * "something is happening"; this says which of `pending` and `parsing` is
  * happening, which is the one fact a reader can act on — a run stuck in
@@ -23,15 +34,6 @@ import { Marked, STATUS } from './marks';
  * written in here as a Tailwind arbitrary value would trip that gate, and not
  * only on a technicality — it would be a second place to edit on the day
  * `pending` and `parsing` stop sharing a colour.
- *
- * CARRIES THE OLD `Processing` SCREEN'S "checks again" SENTENCE TOO, because
- * this is the component a pending run actually shows once its tab is wired up,
- * and the claim is about THIS PAGE's own polling — never about a socket, which
- * is why it does not belong to `LiveStatusStrip` (that strip correctly renders
- * nothing at all for a pending run that has never streamed). Without it, a
- * reader watching a still-pending run has no sentence anywhere telling them
- * the page is still checking on its own and that there is nothing for them to
- * do — which reads as a stalled page, not a quiet one.
  */
 export default function WaitingPanel({ status }: { readonly status: RunProcessing['status'] }) {
   return (
@@ -53,9 +55,6 @@ export default function WaitingPanel({ status }: { readonly status: RunProcessin
       </p>
       <p className="text-[13px]">
         <Marked mark={STATUS[status]} />
-      </p>
-      <p className="max-w-sm text-[13px] leading-relaxed text-muted">
-        This page checks again every few seconds; there is nothing to do.
       </p>
     </div>
   );

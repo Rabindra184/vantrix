@@ -119,15 +119,21 @@ export default function RunShell({
 
       {/* WHAT THE PAGE IS DOING, above the tab content and below the strip
           that selects it, so it is on screen whichever tab is open. Rendered
-          only while the run is not terminal — `LiveStatusStrip` itself
-          returns `null` for a run that has never streamed and is not capped,
-          but a terminal run should never even be asked. */}
+          only while the run is not terminal — a terminal run should never
+          even be asked, and `LiveStatusStrip` now always has SOMETHING to
+          say for a non-terminal one (its own docstring). `streamed` is
+          EVIDENCE, not a derivation from `status`: `live?.lastDelta != null`
+          is the same "a delta arrived this session, and that fact is never
+          cleared" contract `useLiveRun` already documents elsewhere, and it
+          is what stops a batch-uploaded run's `parsing` status alone from
+          making this strip claim streaming ever happened. */}
       {!terminal && (
         <LiveStatusStrip
           status={status as RunProcessing['status']}
           connected={live?.connected ?? false}
           partial={live?.partial ?? false}
           capReached={capReached}
+          streamed={live?.lastDelta != null}
           onRetry={onRetry}
         />
       )}

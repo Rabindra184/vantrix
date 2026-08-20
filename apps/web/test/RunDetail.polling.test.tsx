@@ -13,23 +13,20 @@ import RunDetail from '../src/routes/RunDetail.js';
  * at length and could not close on its own; that file rendered `Processing`
  * directly with `capReached` passed in as a prop, covering the cap's COPY but
  * never the thing that sets the flag. `Processing` (and that whole file) is
- * gone now (Task 7): `RunDetail` renders `RunShell` for every state, and the
- * cap's OWN copy — "PerfPortal stopped checking automatically…" plus the
- * retry button — lives in `LiveStatusStrip`, which `RunShell` mounts
- * unconditionally on which tab is open, so this file can still see it without
- * nesting any tab route at all.
+ * gone now (Task 7): `RunDetail` renders `RunShell` for every state, and BOTH
+ * halves of the cap's own copy — "checks again every few seconds…" before it,
+ * "stopped checking automatically…" plus the retry button after — live in
+ * `LiveStatusStrip` (fix round 1), which `RunShell` mounts unconditionally on
+ * which tab is open. This file can see both without nesting any tab route at
+ * all: `LiveStatusStrip` sits beside the `<Outlet/>`, not inside it.
  *
- * THE "still checking on its own" REASSURANCE, BEFORE THE CAP, IS NOT ON
- * SCREEN YET. That sentence moved to `WaitingPanel` (Task 7), which is not
- * wired into any tab yet — that is a later task's job (design part 2b), and
- * deliberately not this one's: `WaitingPanel` takes no `capReached` prop, and
- * `RunShell`'s outlet context does not carry that flag either, so mounting it
- * from here would show its unconditional sentence directly under
- * `LiveStatusStrip`'s capped block once the cap is reached — two
- * contradictory claims on screen at once. `WaitingPanel.test.tsx` proves the
- * sentence exists and renders correctly in isolation; this file no longer
- * asserts that a reader SEES it live, only that the cap's own copy and the
- * request-count behaviour it gates are correct.
+ * ONE COMPONENT OWNS BOTH SENTENCES DELIBERATELY (fix round 1). A first
+ * attempt put the "checks again" half in `WaitingPanel` instead, mounted by a
+ * tab under the `<Outlet/>` — which cannot see `capReached` (no tab's outlet
+ * context carries it) and so kept promising "there is nothing to do" directly
+ * under `LiveStatusStrip`'s OWN capped block once the cap had, in fact, fired.
+ * Putting both in `LiveStatusStrip` makes them structurally exclusive, which
+ * is exactly what this file's first case pins across the whole transition.
  *
  * `apps/web/test/run.test.ts` covers `pollIntervalFor` as a pure function, so
  * it covers the cap's DECISION but never the thing that feeds it.
@@ -133,14 +130,10 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     expect(fetchRunMock.mock.calls.length).toBeGreaterThan(0);
     expect(fetchRunMock).toHaveBeenCalledWith(RUN_ID);
 
-    // Before the cap, the cap's OWN UI has not appeared — `LiveStatusStrip`
-    // renders nothing at all for a pending run that has never streamed and
-    // is not capped (its own, separately-pinned behaviour). The reassurance
-    // sentence this used to check for here ("checks again every few
-    // seconds…") moved to `WaitingPanel`, which is not wired into any tab
-    // yet (see this file's own docstring) — `WaitingPanel.test.tsx` pins that
-    // sentence in isolation instead.
+    // Before the cap the page is still asking on its own, and says so —
+    // `LiveStatusStrip`'s own copy now (fix round 1), not `Processing`'s.
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
+    expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
 
     // It really is polling — otherwise "polling stops" below would be
     // vacuously true of a page that never polled at all.
@@ -151,9 +144,14 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     await advance(POLL_CAP_MS + 1);
 
     // The cap's UI, reached through the component's own timer rather than
-    // handed in as a prop.
+    // handed in as a prop. The promise from the OTHER branch must be GONE,
+    // not merely joined — `LiveStatusStrip` makes the two mutually exclusive
+    // by construction (its own docstring), pinned here across a REAL
+    // transition rather than only in two separate `LiveStatusStrip.test.tsx`
+    // cases.
     expect(screen.getByText(/stopped checking automatically/i)).not.toBeNull();
     expect(screen.getByRole('button', { name: /check again/i })).not.toBeNull();
+    expect(screen.queryByText(/checks again every few seconds/i)).toBeNull();
 
     // And the requests have actually stopped, which is the point of the cap.
     // A page that said "stopped checking" while still checking would be
@@ -195,17 +193,9 @@ describe('RunDetail — the polling cap, through a real mount', () => {
     });
     await advance(0);
 
-    // The capped block is gone — the reassurance sentence that used to sit
-    // here too moved to `WaitingPanel`, not wired into any tab yet (see this
-    // file's own docstring), so it is not asserted from this file any more.
     expect(screen.queryByText(/stopped checking automatically/i)).toBeNull();
+    expect(screen.getByText(/checks again every few seconds/i)).not.toBeNull();
     expect(fetchRunMock).toHaveBeenCalledWith(second);
-
-    // AND it is genuinely uncapped, not merely mid-transition: polling for
-    // the second run keeps going rather than being silently capped already.
-    const afterNavigate = fetchRunMock.mock.calls.length;
-    await advance(POLL_INTERVAL_MS * 3);
-    expect(fetchRunMock.mock.calls.length).toBeGreaterThan(afterNavigate);
   });
 
   /**

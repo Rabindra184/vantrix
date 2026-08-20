@@ -266,11 +266,20 @@ test('a pending run says so rather than showing zeros', async ({ page }) => {
 
   await expect(page.getByText(/still processing/i)).toBeVisible();
   // "rather than showing zeros" is the actual requirement, and it needs its
-  // own assertions: a 202 carries no duration, no verdict and no assertions,
-  // so a page that rendered the header shell anyway would show `0s`, "no
-  // verdict yet" and an empty assertions table as though they were facts
-  // about the run.
-  await expect(page.getByTestId('run-duration')).toHaveCount(0);
+  // own assertions: a 202 carries no duration and no verdict, so a page that
+  // fabricated either would show `0s` or "no verdict yet" as though they were
+  // facts about the run.
+  //
+  // `run-duration` is no longer ABSENT (fix round 1: `RunShell` renders
+  // `RunHeader` for every status, including `processing` — that is the whole
+  // point of Task 7). The chip itself is unconditional in `RunHeader`
+  // (`formatDuration`'s own `null`/`undefined` branch), so the requirement
+  // this line actually protects is that it reads the "not a measurement"
+  // dash, never a fabricated `0s`.
+  await expect(page.getByTestId('run-duration')).toHaveText('—');
+  // `run-verdict`, unlike duration, stays ABSENT — `RunHeader` omits that
+  // badge entirely rather than rendering one for `undefined` (Task 7's own
+  // `verdict={undefined}` for a non-terminal run).
   await expect(page.getByTestId('run-verdict')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
 });
@@ -427,17 +436,33 @@ test('switching tabs does not remount the shell', async ({ page }) => {
   await expect(heading).toHaveAttribute('data-remount-probe', 'still-here');
 });
 
-test('a processing run shows no tab strip', async ({ page }) => {
+/**
+ * INVERTED (Task 7 fix round 1, CRITICAL 3), deliberately, not deleted. This
+ * used to be named "a processing run shows no tab strip" and asserted
+ * `toHaveCount(0)` on the navigation — the exact opposite of this whole
+ * sub-project's purpose. Before Task 7, `RunDetail` rendered a standalone
+ * `Processing` screen with no `<Outlet/>` in it at all, so `/runs/:id/charts`
+ * repeated that same screen instead of resolving; that WAS "no tab strip",
+ * and it was the bug. `RunShell` mounts for a processing run now, so the
+ * strip is on screen and the tab URLs resolve to something real — this test
+ * proves both halves, not just the strip's presence.
+ */
+test('a processing run shows its tab strip, and the tabs resolve to something real', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedPendingRun(admin.orgId);
   await signIn(page, admin);
   await page.goto(runPath(runId));
 
-  // A tab strip over a run nobody has parsed yet is three doors onto three
-  // empty rooms — the same mistake the Processing branch already refuses to
-  // make with a table of dashes.
-  await expect(page.getByRole('navigation', { name: 'Run sections' })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   await expect(page.getByText(/still processing/i)).toBeVisible();
+
+  await page.getByRole('link', { name: 'Charts' }).click();
+  await expect(page).toHaveURL(runChartsPath(runId));
+  // Not blank, and not four error panels (CRITICAL 1's own fix, same round):
+  // the Charts tab shows the same `WaitingPanel` Overview does, rather than
+  // firing its metric queries against a run whose rows do not exist yet.
+  await expect(page.getByText(/still processing/i)).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
 });
 
 test('the errors tab counts distinct messages, not failed requests', async ({ page }) => {
