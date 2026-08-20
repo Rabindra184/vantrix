@@ -285,15 +285,17 @@ describe('deferred to Tasks 8-10 (no tab exists yet to host these)', () => {
   // stops". The banner itself is `LiveStatusStrip.test.tsx`'s "says
   // streaming stopped once the run leaves running"; the remaining claim —
   // the live tiles (`LiveSummary`) stay on screen, unblanked, underneath
-  // that banner — needs `LiveSummary` wired into a tab first (Task 8).
-  it.todo('Task 8: keeps LiveSummary on screen under the finalizing banner once streaming stops');
+  // that banner — RESOLVED in Task 8: `RunOverviewTab.live.test.tsx`'s
+  // "drops the 'still streaming' hint once the run has frozen, without
+  // blanking the tiles" mounts the real tab and asserts both halves at once.
 
   // Old: "reads its headline tiles straight off the delta summary, not a
   // StatRow" / "drops the 'still streaming' hint once the run has frozen".
   // Both are `LiveSummary`'s own behaviour, exported in Task 7 specifically
-  // for Task 8 to wire in and test against a real mount.
-  it.todo("Task 8: LiveSummary's tiles read straight off the delta summary, not a StatRow");
-  it.todo('Task 8: LiveSummary drops the "still streaming" hint once the run has frozen');
+  // for Task 8 to wire in — RESOLVED: `RunOverviewTab.live.test.tsx`'s "shows
+  // the live tiles while a run streams" (reads `count`/`errorRate`/`maxUsers`
+  // straight off a `LiveDelta` fixture, never a `StatRow`) and "drops the
+  // 'still streaming' hint…" / "keeps the 'still streaming' hint…" above.
 
   // Old: "draws the live charts from whatever the socket already wrote to
   // the cache" / "gates the charts and the three withheld notices behind

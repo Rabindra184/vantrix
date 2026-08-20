@@ -38,8 +38,14 @@ import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
-import { useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
+import {
+  useLiveFromShell,
+  useRunTerminal,
+  useTimeDomainFromShell,
+  useWindowFromShell,
+} from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
+import LiveNotice from './LiveNotice';
 import RunShell from './RunShell';
 import useIsCompact from '../useIsCompact';
 import RunStats from './RunStats';
@@ -85,14 +91,13 @@ export default function RunDetail() {
   // rather than at the next unrelated render.
   const [capReached, setCapReached] = useState(false);
 
-  const run = useQuery({
-    queryKey: runQueryKey(runId ?? ''),
-    queryFn: () => fetchRun(runId!),
-    enabled: runId !== undefined,
-    // The decision lives in api/run.ts as a pure function so the cap is
-    // testable without waiting two real minutes in a browser. That function
-    // also holds the OTHER half of the live exemption below: a `running` run
-    // is polled whatever `capReached` says.
+  // `useRunTerminal` is every tab's own read of this same query (see its own
+  // docstring, `useRunWindow.ts`); this is the one copy that also needs
+  // `refetchInterval` — the decision lives in api/run.ts as a pure function
+  // so the cap is testable without waiting two real minutes in a browser.
+  // That function also holds the OTHER half of the live exemption below: a
+  // `running` run is polled whatever `capReached` says.
+  const { detail: run } = useRunTerminal(runId, {
     refetchInterval: (query) => pollIntervalFor(query.state.data, capReached),
   });
 
@@ -388,35 +393,41 @@ function livePercentileValue(summary: LiveDelta['summary'], key: string): string
  * "this run is still processing" and carries no polling claim of its own to
  * contradict anything.
  *
- * ALSO WHY THIS TAB'S OTHER QUERIES ARE GATED ON `state === 'ready'`, NOT
- * MERELY `runId !== undefined` — `apiFetch` has no 202 branch, so before this
- * fix round `statsQuery`/`seriesQuery` fired against a processing run's rows,
+ * ALSO WHY THIS TAB'S OTHER QUERIES ARE GATED ON `terminal`, NOT MERELY
+ * `runId !== undefined` — `apiFetch` has no 202 branch, so before this fix
+ * round `statsQuery`/`seriesQuery` fired against a processing run's rows,
  * which do not exist yet, and the reader got error panels instead of
  * `WaitingPanel`. `RunChartsTab` and `RunErrorsTab` carry the identical gate
  * for the identical reason.
+ *
+ * `WaitingPanel` IS NOT THE ONLY NON-TERMINAL BRANCH ANY MORE (Task 8). Once
+ * a delta has arrived this session (`live?.lastDelta`), this tab draws
+ * `LiveSummary` — the same six headline tiles the deleted standalone `Live`
+ * page drew — under a real header on a real tab, plus a stated notice that
+ * the statistics table is withheld rather than a silent gap: it needs
+ * per-endpoint rows the live wire excludes on every path, so there is no live
+ * version of it at any width.
  */
 export function RunOverviewTab() {
   const { runId } = useParams<{ runId: string }>();
-  const run = useQuery({
-    queryKey: runQueryKey(runId ?? ''),
-    queryFn: () => fetchRun(runId!),
-    enabled: runId !== undefined,
-  });
+  const { detail: run, terminal } = useRunTerminal(runId);
+  // The live socket's state, as `RunShell` observed it — read here rather
+  // than opened again, per `useLiveFromShell`'s own docstring.
+  const live = useLiveFromShell();
   const window = useWindowFromShell();
   const compact = useIsCompact();
-  // READY, not merely `runId !== undefined` (fix round 1, Critical 1's fix
-  // applied here too) — `apiFetch` has no 202 branch, so firing `/stats`
+  // `terminal`, not merely `runId !== undefined` (fix round 1, Critical 1's
+  // fix applied here too) — `apiFetch` has no 202 branch, so firing `/stats`
   // (and, when compact, `/series`) against a processing run's rows, which do
   // not exist yet, is the same defect the brief flagged on `RunChartsTab` and
   // `RunErrorsTab`. This tab was simply unreachable for a processing run
   // before Task 7, which is why the bug had no chance to surface here first.
-  const ready = run.data?.state === 'ready';
-  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: ready });
+  const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: terminal });
   // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
   // tab uses, so a reader who widens the window pays for it once.
   const series = useQuery({
     ...seriesQuery(runId ?? '', 'run', '', 'response_time', window),
-    enabled: ready && compact,
+    enabled: terminal && compact,
   });
 
   // Not reachable through the router with `run.data` still `undefined` past
@@ -425,8 +436,28 @@ export function RunOverviewTab() {
   // from that same warm cache entry.
   if (runId === undefined || run.data === undefined) return null;
 
+  // NOT TERMINAL (Task 8): either an honest wait, or the live wire's own
+  // headline numbers. `run.data.state === 'processing'`, not `!terminal`,
+  // narrows `run.data` to `RunProcessing` directly, which is what lets
+  // `run.data.run.status` below type as `RunProcessing['status']` with no
+  // assertion — see `useRunTerminal`'s own docstring on why it does not also
+  // expose a separate `status` field.
   if (run.data.state === 'processing') {
-    return <WaitingPanel status={run.data.run.status} />;
+    const delta = live?.lastDelta ?? null;
+    // No delta this session: the ordinary wait, same as any other tab.
+    if (delta === null) return <WaitingPanel status={run.data.run.status} />;
+    return (
+      <div className="flex flex-col gap-6">
+        <LiveSummary summary={delta.summary} frozen={run.data.run.status !== 'running'} />
+        {/* Gated exactly as the REAL statistics table is on a finished run
+            below — same `what` text — because the table needs per-endpoint
+            rows the live wire excludes, so there is no live version of it at
+            any width. */}
+        <DesktopOnly compact={compact} what="The per-request statistics table">
+          {() => <LiveNotice kind="withheld" subject="Statistics" />}
+        </DesktopOnly>
+      </div>
+    );
   }
 
   return (
@@ -434,12 +465,6 @@ export function RunOverviewTab() {
       <Assertions assertions={run.data.run.assertions} />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
-      {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
-          from the SAME `data` the statistics table reads below it, rather
-          than behind a `TableSection` of its own: a failed or still-pending
-          `/stats` then explains itself once, in the one place this page
-          already says so, instead of the stat row silently rendering six
-          dashes above an error the reader has to notice separately. */}
       {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
           from the SAME `data` the statistics table reads below it, rather
           than behind a `TableSection` of its own: a failed or still-pending
