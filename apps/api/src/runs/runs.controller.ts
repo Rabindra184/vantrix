@@ -120,10 +120,32 @@ export async function respondWithRun(
   const status = runs.statusFor(run);
 
   if (status === 202) {
+    // IDENTITY, NOT MEASUREMENTS. Every field here is already on the
+    // RunRecord this function was handed — `project` is joined (see
+    // RunRecord's own comment on why the worker pays that indexed join), so
+    // the wider body costs no additional query. That is the whole reason this
+    // is a widened 202 rather than a full `toResponse` at every status:
+    // toResponse runs runAssertion.findMany and the isWindowable EXISTS, which
+    // a poller would pay for every five seconds, per watcher, per live run.
     res
       .status(202)
       .set('Retry-After', String(retryAfterSeconds))
-      .json({ id: run.id, status: run.status, statusUrl: `/v1/runs/${run.id}` });
+      .json({
+        id: run.id,
+        status: run.status,
+        statusUrl: `/v1/runs/${run.id}`,
+        project: run.project,
+        tool: run.tool,
+        toolVersion: run.toolVersion,
+        environment: run.environment,
+        branch: run.branch,
+        commitSha: run.commitSha,
+        simulation: run.simulation,
+        description: run.description,
+        durationMs: run.durationMs,
+        startedAt: run.startedAt.toISOString(),
+        toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
+      });
     return;
   }
 
