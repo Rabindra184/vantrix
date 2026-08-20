@@ -11,6 +11,18 @@ today. It only ships bytes. See
 `docs/superpowers/specs/2026-08-20-gatling-gradle-live-streaming-design.md`
 §0 for why that boundary matters.
 
+## Requirements
+
+- **JDK 21+.** The plugin ships Java-21 bytecode (class-file version 65). A
+  Gradle daemon running on JDK 17 fails at `apply` with
+  `UnsupportedClassVersionError` — before any of the plugin's own error
+  handling exists to catch it, so this is the one failure mode that is *not*
+  covered by the "never fails the build" guarantee below.
+- **Gradle 8.x.**
+- **Gradle configuration-cache builds are not supported in 0.1.** Running
+  with `--configuration-cache` fails at store time, outside this plugin's
+  control — see Failure semantics below.
+
 ## Apply it
 
 ```kotlin
@@ -98,9 +110,16 @@ different convention.
 Mint a token with the **`stream`** scope — that alone is enough to open,
 feed, and close a live run. Add **`read`** only if you intend to poll the
 run's own status yourself (for example, to assert on the final verdict from
-a CI script). One token can carry both scopes at once —
-`clients/gatling-gradle/e2e/run-e2e.sh` does exactly that: `e2e/seed.mjs`
-mints a single token with `scopes: ['stream', 'read']` and the script uses
+a CI script). **If `uploadIfLiveUnavailable` is on, the SAME token also
+needs the `ingest` scope** — the fallback POSTs to `/v1/runs`, the batch
+ingest endpoint, which the server guards with `@Scopes('ingest')`
+independently of `stream`; a `stream`-only token streams live runs fine but
+gets a 403 the first time the fallback actually fires. See
+`uploadIfLiveUnavailable` below for the full failure shape. One token can
+carry any combination of these scopes at once —
+`clients/gatling-gradle/e2e/run-e2e.sh` mints a single token with
+`scopes: ['stream', 'read']` (it never exercises the fallback, so it has no
+need of `ingest`) and the script uses
 that same value both as `VANTRIX_TOKEN` for the plugin and to poll the run
 it opened.
 
@@ -143,11 +162,11 @@ record at a chunk boundary, so a partial flush is not a new case.
 
 ## Failure semantics
 
-**The build never fails because of this plugin.** Every action the tailer
-and its finalizer take is wrapped in a swallowed `try/catch` — streaming is
-best-effort observability, and losing it must never cost anyone a 40-minute
-soak or a blocked deploy. Each situation gets its own response rather than
-one blanket catch:
+**The build never fails because of this plugin's own runtime behaviour.**
+Every action the tailer and its finalizer take is wrapped in a swallowed
+`try/catch` — streaming is best-effort observability, and losing it must
+never cost anyone a 40-minute soak or a blocked deploy. Each situation gets
+its own response rather than one blanket catch:
 
 | Situation | Response |
 |---|---|
@@ -158,6 +177,16 @@ one blanket catch:
 | `401`/`403` on a stream POST | Stops immediately, no retry — a bad or revoked token will not fix itself on the next tick. This gates the tailer's whole tick loop, not just the current run: directory *discovery* is skipped too, so one auth failure halts streaming for every remaining simulation in that `gatlingRun` execution, not only the one being streamed when it happened |
 | Build killed (no graceful shutdown) | There is deliberately no JVM shutdown hook — a hook racing JVM teardown is worse than letting the designed path run. `close` never executes; the server's sweeper ages the run out of `running` on `stream_updated_at` and finalizes it `incomplete` |
 | A results directory's `open()` call fails | Recorded as an "open failure" for that directory; if `uploadIfLiveUnavailable` is on, its `simulation.log` is uploaded as a batch bundle once the task finishes (see below) |
+
+This guarantee covers the plugin's own code paths only — it does not cover
+the Requirements above. A JDK 17 daemon fails with
+`UnsupportedClassVersionError` before the plugin's `apply()` ever runs, so
+there is no `try/catch` here to catch it, and **Gradle configuration-cache
+builds are not supported in 0.1**: `VantrixPlugin` reads `System.getenv()`
+and resolves `resultsRoot` from inside a task action rather than at
+configuration time (see its class doc), so a build run with
+`--configuration-cache` fails at store time — after the task graph has
+already executed, outside this plugin's own error handling entirely.
 
 ## Two things the real end-to-end run found
 
@@ -200,6 +229,25 @@ null), this flag tells the plugin's finalizer to tar and gzip that
 simulation's finished `simulation.log` and POST it to `/v1/runs` — the same
 batch-ingest endpoint a manual upload would use — after `gatlingRun`
 completes. The run then shows up late instead of not at all.
+
+**This POST needs the `ingest` scope, separately from `stream`.** `/v1/runs`
+is guarded by `@Scopes('ingest')` (`apps/api/src/ingest/ingest.controller.ts`),
+which a token minted for streaming alone does not have — see the token rule
+above. Turning this flag on without also adding `ingest` to the token means
+the fallback fires, 403s, and the simulation is lost exactly as before,
+just with an extra failed HTTP call and a warning in the log.
+
+**A duplicate is possible, and that is a known, accepted trade-off, not
+silent data loss.** If a live `open()` call actually succeeds on the server
+but its 201 response is lost in transit (a rare but real failure mode —
+timeout, connection reset after the response was sent), the plugin sees
+`open()` return null, records an open failure, and — with this flag on —
+uploads the completed `simulation.log` as a batch bundle. Meanwhile the
+platform still holds the orphaned live run it already opened; its sweeper
+eventually finalizes that one `incomplete` once `stream_updated_at` goes
+stale. The result is two runs for one simulation: one `incomplete` (empty),
+one `complete` (from the fallback). Know to expect this rather than treat
+it as a bug when it shows up.
 
 It is off by default deliberately, not by oversight: it is a **second code
 path with its own failure mode** (a separate HTTP call, a separate

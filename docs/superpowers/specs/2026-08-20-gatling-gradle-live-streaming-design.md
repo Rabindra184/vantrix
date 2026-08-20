@@ -158,10 +158,22 @@ whole requirement.
 HEAD in CI makes branch detection confidently wrong, and all three fields are
 optional in `OpenLiveRunRequestSchema` — absent is better than wrong.
 
-`idempotencyKey` is one UUID per task execution, reused across retries of that
-same open call. That is the case the contract names: a generator that opened,
-lost the response, and asked again must resume its run rather than open a
-second.
+`idempotencyKey` is one UUID per RESULTS DIRECTORY, not one per task
+execution -- minted fresh (`UUID.randomUUID()`) each time the watcher opens a
+new simulation directory. A single `gatlingRun` execution can carry several
+directories (§3), and a per-task key would be wrong for exactly that case: it
+would dedupe simulation #2's `open()` into simulation #1's already-opened
+run, merging two distinct simulations into one. The per-directory key is the
+safer semantic because it scopes the "same open call" question to the thing
+that actually needs to be the same run -- one directory, one simulation, one
+key -- while still leaving room for the case the contract exists to protect:
+a generator that opened for a given directory, lost the response, and asked
+again for that SAME directory must resume its run rather than open a second.
+(0.1's `open()` itself never retries -- see §5 -- so today the per-directory
+key's reuse-on-retry case is not yet exercised in this codebase; the schema
+still requires it because a future retrying caller, or a hand-written script
+replaying `open()` for a directory whose response was lost, must be able to
+resume rather than duplicate.)
 
 ---
 
