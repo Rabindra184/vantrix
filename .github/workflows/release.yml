@@ -1,0 +1,46 @@
+# Tag-driven releases for the Vantrix Gradle plugin (clients/gatling-gradle).
+#
+# Pushing a tag `v<semver>` builds the full 42-test suite, publishes
+# dev.vantrix:gatling-gradle-plugin:<semver> to GitHub Packages, and creates a
+# GitHub Release — so a real version is a deliberate act, while main's own CI
+# keeps republishing 0.1.0-SNAPSHOT on every push for the bleeding edge.
+#
+# The version reaches Gradle through -PreleaseVersion (see the comment on
+# `version` in clients/gatling-gradle/build.gradle.kts for why it is a named
+# property rather than -Pversion).
+name: release-plugin
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # gh release create
+      packages: write   # the versioned publish
+    defaults:
+      run:
+        working-directory: clients/gatling-gradle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Build and test at the release version
+        run: ./gradlew build --no-daemon -PreleaseVersion="${GITHUB_REF_NAME#v}"
+      - name: Publish to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: ./gradlew publish --no-daemon -PreleaseVersion="${GITHUB_REF_NAME#v}"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "gatling-gradle-plugin ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            build/libs/gatling-gradle-plugin-"${GITHUB_REF_NAME#v}".jar

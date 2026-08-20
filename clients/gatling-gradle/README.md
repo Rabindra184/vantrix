@@ -31,6 +31,10 @@ pluginManagement {
     repositories {
         maven {
             url = uri("https://maven.pkg.github.com/Rabindra184/vantrix")
+            credentials {
+                username = System.getenv("GH_PKG_USER")
+                password = System.getenv("GH_PKG_TOKEN") // PAT with read:packages
+            }
         }
         gradlePluginPortal()
         mavenCentral()
@@ -52,9 +56,17 @@ fallback (see the config table below), so a build file that applies the
 plugin and nothing else is a valid, fully-CI-driven configuration.
 
 **Today, `https://maven.pkg.github.com/Rabindra184/vantrix` is a GitHub
-Packages repository** — resolving from it may require the consumer to be
-authenticated to GitHub Packages themselves, same as any other GitHub
-Packages consumer. **The local-dev path** is `mavenLocal()` plus
+Packages repository, and it REQUIRES authentication to download — measured,
+not assumed: an unauthenticated (or under-scoped) request answers 401 even
+though the repository is public.** A consumer needs a personal access token
+carrying `read:packages`; a `gh` CLI login is typically NOT enough, because
+its token lacks that scope. Inside GitHub Actions, the workflow's own
+`GITHUB_TOKEN` suffices with `permissions: packages: read` — CI's
+`plugin-consume` job is the standing demonstration.
+
+Versioned releases are published by pushing a `v<semver>` tag
+(`.github/workflows/release.yml`); `main` republishes `0.1.0-SNAPSHOT` on
+every push. **The local-dev path** is `mavenLocal()` plus
 `./gradlew publishToMavenLocal` run once from `clients/gatling-gradle/` —
 that publishes `dev.vantrix:gatling-gradle-plugin:0.1.0-SNAPSHOT` (and its
 plugin marker) to your local Maven cache, which is exactly what
