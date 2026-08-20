@@ -7,13 +7,17 @@ import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
 /**
  * A RUNNING run's page — design part 2b §4.1, §4.3, §4.4, and FR-LIVE-4.
  *
- * WHAT ONLY EXISTS HERE. `apps/web/test/RunDetail.live.test.tsx` already
- * proves the branch decision and the `Live` component's own rendering
- * against a mocked `useLiveRun`/a QueryClient pre-populated by hand. What
- * that cannot reach is the REAL SOCKET: a real `POST /v1/runs/live` opening
- * a run, a real Redis-backed gateway seeding a real connection, and a real
- * browser drawing real ECharts SVGs from what it received — the whole path
- * FR-LIVE-4 is actually about.
+ * WHAT ONLY EXISTS HERE. `RunDetail.live.test.tsx` already proves the branch
+ * decision — what `identity`/`status`/`verdict`/`windowable`/`live`
+ * `RunDetail` hands `RunShell`, and the `running && !compact` gate on the
+ * socket itself; `RunShell.test.tsx` and the three per-tab `*.live.test.tsx`
+ * files (`RunOverviewTab`, `RunChartsTab`, `RunErrorsTab`) prove the live
+ * branches' own rendering — all of it against a mocked `useLiveRun`/a
+ * QueryClient pre-populated by hand. What none of those can reach is the
+ * REAL SOCKET: a real `POST /v1/runs/live` opening a run, a real
+ * Redis-backed gateway seeding a real connection, and a real browser drawing
+ * real ECharts SVGs from what it received — the whole path FR-LIVE-4 is
+ * actually about.
  *
  * `openLiveRun` (fixtures.ts) is the one seed in this file that creates a
  * ROW — everything the page renders beyond that comes from Redis, written

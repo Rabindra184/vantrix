@@ -186,26 +186,30 @@ describe('useTimeDomainFromShell', () => {
 });
 
 /**
- * ═══ TASK 9 C4: ONE FORMULA, TWO SITES THAT CANNOT SHARE ONE CALL ═══
+ * ═══ TASK 9 C4's FORMULA, NOW PINNED FOR ITS OWN SAKE ═══
  *
- * `Live` in `RunDetail.tsx` computes its own growing domain directly —
- * `growingDomainMs(delta.summary.durationMs)` — because it mounts no
- * `<Outlet/>` (a still-processing run renders no `RunShell`) and so cannot
- * call `useTimeDomainFromShell`, which reads `RunWindowContext` off one. The
- * shell cannot be added just to unify the two: a still-streaming run
- * genuinely has no `RunResponse` to build one from (`Live`'s own docstring).
+ * This used to guard TWO production call sites that could not share one
+ * call: the standalone `Live` component `RunDetail.tsx` used to render for a
+ * still-processing run computed its own growing domain directly —
+ * `growingDomainMs(delta.summary.durationMs)` — because it mounted no
+ * `<Outlet/>` (a still-processing run rendered no `RunShell` at all back
+ * then) and so could not call `useTimeDomainFromShell`, which reads
+ * `RunWindowContext` off one.
  *
- * What CAN be shared, and now is, is the arithmetic: both sites hand a
- * duration to the same `growingDomainMs`, so the two can never silently
- * diverge on what `[0, x]` means. This case is the guard — without a shared
- * function there would be nothing here to test, and a typo in either
- * inlined `[0, ...]` would only ever show up as two charts disagreeing on
- * screen.
+ * `Live` is gone — `RunShell` now mounts for every run status, processing
+ * included, so `useTimeDomainFromShell` is `growingDomainMs`'s only
+ * production caller. What this case still guards is narrower but real: it
+ * calls `growingDomainMs` directly rather than hand-writing `[0, durationMs]`
+ * as a second literal, so a change to the formula that this file did not
+ * also make cannot silently pass by coincidence — and it exercises
+ * `useTimeDomainFromShell`'s growing-domain branch (no window, no settled
+ * duration) against that same call, so the hook and the exported formula are
+ * proven to agree rather than merely assumed to.
  */
-it('Live and useTimeDomainFromShell agree on the growing-run domain formula', () => {
+it('growingDomainMs and useTimeDomainFromShell agree on the growing-run domain formula', () => {
   const durationMs = 42_000;
 
-  // The formula itself, independent of either call site.
+  // The formula itself, independent of how useTimeDomainFromShell calls it below.
   expect(growingDomainMs(durationMs)).toEqual([0, durationMs]);
 
   // `useTimeDomainFromShell`'s own growing-domain branch (no window, no
