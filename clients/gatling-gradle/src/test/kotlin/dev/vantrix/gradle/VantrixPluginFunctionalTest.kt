@@ -97,6 +97,27 @@ class VantrixPluginFunctionalTest {
         File(projectDir, "settings.gradle.kts").writeText("rootProject.name = \"functional-test\"\n")
     }
 
+    /**
+     * `plugins {}` is required to be the FIRST statement in a Kotlin DSL build script, so a task
+     * registered later in the same `build.gradle.kts` would always run AFTER our plugin's
+     * `apply()` -- too late to exercise the collision guard (it would instead blow up on the
+     * user's own registration line, a different failure). `gradle.rootProject { ... }` in
+     * `settings.gradle.kts` runs before the root project's build script is evaluated at all,
+     * which is the only way to genuinely pre-exist a task ahead of `apply()`. Confirmed
+     * empirically: against the unguarded plugin this reproduces exactly the reviewer's failure --
+     * "Failed to apply plugin 'dev.vantrix.gatling' > Cannot add task 'vantrixClose'...".
+     */
+    private fun writeSettingsWithPreexistingVantrixCloseTask(projectDir: File) {
+        File(projectDir, "settings.gradle.kts").writeText(
+            """
+            |rootProject.name = "functional-test"
+            |gradle.rootProject {
+            |    tasks.register("vantrixClose") { doLast { println("USER-DEFINED-VANTRIXCLOSE") } }
+            |}
+            """.trimMargin(),
+        )
+    }
+
     /** [fakeTaskBody] is the body of `tasks.register("gatlingRun") { <body> }` -- e.g. a `doLast { ... }`. */
     private fun writeBuildFile(projectDir: File, fakeTaskBody: String) {
         File(projectDir, "build.gradle.kts").writeText(
@@ -279,6 +300,38 @@ class VantrixPluginFunctionalTest {
         assertTrue(
             result.output.contains("vantrix:") && result.output.contains("failed", ignoreCase = true),
             "expected a vantrix warning about the unreachable portal in output, got:\n${result.output}",
+        )
+    }
+
+    @Test
+    @Timeout(value = 90, unit = TimeUnit.SECONDS)
+    fun `a pre-existing vantrixClose task disables the plugin instead of crashing the build`(@TempDir tmp: File) {
+        val (srv, state) = startServer()
+        writeSettingsWithPreexistingVantrixCloseTask(tmp)
+        writeBuildFile(
+            tmp,
+            """
+            |    doLast {
+            |        println("fake gatlingRun ran")
+            |    }
+            """.trimMargin(),
+        )
+        // Full, valid env -- if the plugin wired anything at all here, it would have everything it needs to.
+        val env = envFor(
+            "VANTRIX_URL" to "http://localhost:${srv.address.port}",
+            "VANTRIX_TOKEN" to "tok",
+        )
+
+        val result = runner(tmp, env).build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":gatlingRun")?.outcome)
+        assertTrue(
+            result.output.contains("a task named 'vantrixClose' already exists"),
+            "expected the disabled-plugin warning in output, got:\n${result.output}",
+        )
+        assertTrue(
+            state.events.isEmpty(),
+            "expected zero requests to the portal -- the plugin should have gone fully inert rather than half-wiring, got: ${state.events}",
         )
     }
 }
