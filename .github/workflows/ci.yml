@@ -1,30 +1,38 @@
 name: ci
-on: [push, pull_request]
 
-# ONE RUN PER REF, NOT TWO.
+# ONE RUN PER COMMIT, NOT TWO.
 #
-# `on: [push, pull_request]` fires BOTH triggers for a branch that has a PR
-# open, so every push ran the whole ~13-minute `build` job twice, on two
-# separate VMs, against one SHA. That is not just double the minutes: each
-# run is an independent chance to hit a flake, and ONE red run out of two is
-# enough to make the PR's mergeStateStatus UNSTABLE and block the merge
-# button. Observed on PR #56, where the `push` run passed and the
-# `pull_request` run failed on a single 120s timeout in an unrelated
-# integration test.
+# This used to be `on: [push, pull_request]`, which fires BOTH triggers for a
+# branch that has a PR open — so every push ran the whole ~13-minute `build`
+# job twice, on two separate VMs, against one SHA. That is not just double the
+# minutes: each run is an independent chance to hit a flake, and ONE red run
+# out of two is enough to make the PR's mergeStateStatus UNSTABLE and block
+# the merge button. Observed on PR #56, where the `push` run passed and the
+# `pull_request` run failed on a single 120s timeout in an unrelated test.
 #
-# The group keys on the WORKFLOW plus the ref so the two triggers for one
-# branch collapse into one another, and `cancel-in-progress` means a second
-# push supersedes the first rather than queueing behind it.
+# A `concurrency` group CANNOT fix that on its own, which is worth knowing
+# before reaching for one: on a `pull_request` event `github.ref` is
+# `refs/pull/N/merge`, not the branch, so the push run and the PR run for the
+# same commit land in different groups however the key is spelled. (Tried on
+# PR #57; both jobs still ran.) Restricting `push` to the default branch is
+# what actually removes the duplicate.
 #
-# `github.run_id` for the default branch: pushes to `main` must NOT cancel
-# each other, because each merge commit is a distinct thing to prove green
-# and a cancelled one leaves no record that it was ever built.
+# The two triggers now cover disjoint things: `pull_request` proves a change
+# before it lands, `push` proves `main` after it does. A branch with no PR
+# open gets no run, which is the point — there is nothing to prove yet.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Supersede, do not queue: a second push to a PR makes the first run's answer
+# irrelevant. `github.run_id` on `main` instead, because each merge commit is
+# a distinct thing to prove green and a cancelled one leaves no record that it
+# was ever built.
 concurrency:
   group: >-
     ${{ github.workflow }}-${{
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        && github.run_id
-        || github.ref
+      github.ref == 'refs/heads/main' && github.run_id || github.ref
     }}
   cancel-in-progress: true
 
