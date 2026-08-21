@@ -49,8 +49,14 @@ export const buttonVariants = cva(
     // deliberately absent: the second would also suppress the title/tooltip
     // that explains WHY a control is unavailable.
     'disabled:cursor-not-allowed disabled:opacity-50',
-    // An icon inside a button tracks the size variant's gap; `shrink-0` so a
-    // narrow toolbar squeezes the label, never the glyph into an ellipse.
+    // `shrink-0` so a narrow toolbar squeezes the label, never the glyph
+    // into an ellipse. DELIBERATELY NO `[&_svg]:h-*` SIZE RULES, though the
+    // shadcn original has them: `[&_svg]:h-4` compiles to a DESCENDANT
+    // selector (`.\[\&_svg\]\:h-4 svg`, specificity 0-1-1) that outranks the
+    // icon's own `.h-3\.5` utility (0-1-0) — so it silently overrode the
+    // authored size at seven call sites, and `cn`'s conflict resolution
+    // cannot see it because the conflict spans two elements. Call sites size
+    // their icons explicitly instead, which is this codebase's habit anyway.
     '[&_svg]:shrink-0',
   ],
   {
@@ -73,10 +79,10 @@ export const buttonVariants = cva(
         ghost: 'text-muted hover:bg-sunken hover:text-primary',
       },
       size: {
-        sm: 'h-8 gap-1.5 px-2.5 text-[13px] [&_svg]:h-3.5 [&_svg]:w-3.5',
+        sm: 'h-8 gap-1.5 px-2.5 text-[13px]',
         // 36px, not 44 — see the coarse-pointer rule above for why the
         // desktop height stays dense.
-        md: 'h-9 gap-2 px-3 text-sm [&_svg]:h-4 [&_svg]:w-4',
+        md: 'h-9 gap-2 px-3 text-sm',
       },
     },
     defaultVariants: { variant: 'secondary', size: 'md' },
@@ -127,5 +133,18 @@ export default function Button({
  *
  * Not a component: wrapping `<Link>` would either lose its props or
  * re-declare them, and the one thing callers need is the class string.
+ *
+ * NOT DERIVED FROM `buttonVariants`, though one line of cva would do it and
+ * an earlier draft did exactly that. The variant map's base is button
+ * behaviour, not just button looks: it carries `select-none` (right on a
+ * control, wrong on a link whose label a reader may want to copy),
+ * `whitespace-nowrap` (a button never wraps; a link in a wrapping flex row
+ * on a phone must be allowed to), and `disabled:` styles a link can never
+ * enter. Deriving imported all three silently. The LOOK is kept in step by
+ * eye and by the e2e suite that sees both; the behaviours are the part that
+ * must not be shared.
  */
-export const linkButtonClasses = buttonVariants({ variant: 'secondary', size: 'md' });
+export const linkButtonClasses =
+  'transition-ui inline-flex h-9 touch-manipulation items-center justify-center gap-2 rounded-lg border ' +
+  'border-default bg-surface px-3 text-sm font-medium text-primary shadow-panel hover:bg-sunken ' +
+  '[@media(pointer:coarse)]:min-h-11';

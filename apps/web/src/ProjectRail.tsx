@@ -5,6 +5,7 @@ import type { ProjectListResponse } from '@perfportal/contracts';
 import Badge from './components/Badge';
 import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
+import { cn } from './lib/cn';
 import { DEFAULT_ROUTE, projectPath } from './routes/paths';
 import { STATUS, VERDICT, type Mark } from './routes/marks';
 
@@ -74,9 +75,10 @@ export default function ProjectRail() {
   const items = projects.data?.items ?? [];
 
   // DESKTOP-ONLY STATE. Below `lg` the rail is a horizontal strip and every
-  // `collapsed` class below is `lg:`-scoped, so on a phone this boolean is
-  // inert — the strip never collapses, which is what keeps
-  // `project-rail.spec.ts`'s 480px click-the-last-row case meaningful.
+  // `collapsed` CLASS below is `lg:`-scoped, so on a phone the strip never
+  // collapses — which is what keeps `project-rail.spec.ts`'s 480px
+  // click-the-last-row case meaningful. (The one non-class treatment, the
+  // row `title`, is documented at its own site below.)
   // Initialised from storage the same way `ThemeToggle` reads its choice: in
   // the `useState` initialiser, never an effect, so the first render already
   // agrees with the stored preference.
@@ -84,11 +86,15 @@ export default function ProjectRail() {
     typeof document === 'undefined' ? false : readCollapsed(),
   );
 
+  // The storage write lives in the EVENT HANDLER, not the state updater:
+  // React requires updater functions to be pure — StrictMode double-invokes
+  // them and concurrent renders may replay them, so a side effect there runs
+  // an unpredictable number of times. Computing `next` from the rendered
+  // value is safe here because this is the only place that sets it.
   function toggleCollapsed() {
-    setCollapsed((value) => {
-      storeCollapsed(!value);
-      return !value;
-    });
+    const next = !collapsed;
+    storeCollapsed(next);
+    setCollapsed(next);
   }
 
   // TanStack Query keeps the last-known-good `data` across a failed refetch,
@@ -114,13 +120,14 @@ export default function ProjectRail() {
     // is the viewport WITHOUT browser chrome, which would make the rail taller
     // than the screen and hide its last project behind the address bar.
     <div
-      className={`z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:border-b-0 lg:border-r ${
+      className={cn(
+        'z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:border-b-0 lg:border-r',
         // NO width transition, deliberately, though the reference design has
         // one: this repo's motion rule (`tokens.css`'s `transition-ui`) is
         // colour-ish properties only — width is laid out on the main thread
         // and drops frames on a page already drawing eight ECharts instances.
-        collapsed ? 'lg:w-14' : 'lg:w-[17rem]'
-      }`}
+        collapsed ? 'lg:w-14' : 'lg:w-[17rem]',
+      )}
     >
       {/* An overline, not a heading: the `<nav>` below is already named
           "Projects" for assistive tech by its own `aria-label`, and a real
@@ -135,9 +142,10 @@ export default function ProjectRail() {
           strip and a section label (or a collapse control for a strip that
           cannot collapse) would cost a whole row. */}
       <div
-        className={`hidden items-center pt-3 pb-1.5 lg:flex ${
-          collapsed ? 'justify-center px-0' : 'justify-between pl-4 pr-2'
-        }`}
+        className={cn(
+          'hidden items-center pt-3 pb-1.5 lg:flex',
+          collapsed ? 'justify-center px-0' : 'justify-between pl-4 pr-2',
+        )}
       >
         {!collapsed && (
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
@@ -172,25 +180,28 @@ export default function ProjectRail() {
             for /runs/:runId too, so the rail would claim the reader is on the
             org-wide list while they are reading one run.
 
-            EVERY `collapsed` TREATMENT BELOW IS CSS-ONLY AND `lg:`-SCOPED.
+            EVERY `collapsed` CLASS TREATMENT BELOW IS CSS-ONLY AND `lg:`-SCOPED.
             The label spans go `lg:sr-only` rather than unmounting, so a
             collapsed row keeps its accessible name (an icon-only link with no
             name is a WCAG failure, and `title` alone is not a name in every
             AT) and the row's textContent — which `ProjectRail.test.tsx` pins
             verbatim — is identical in both states. */}
-        {/* `title` moves UP to the link while collapsed: the name span is
-            `sr-only` then, and a 1px clipped element cannot be hovered, so a
-            tooltip left there answers nobody. Expanded, the span's own
-            `title` (below) keeps serving the truncated-name case exactly as
-            before. */}
+        {/* `title` moves UP to the link while collapsed — the name span is
+            `sr-only` then, and a 1px clipped element cannot be hovered — and
+            the span's own `title` moves OFF at the same moment, so a row
+            never carries two nested tooltip sources. An attribute cannot be
+            media-scoped, so this is the one collapse treatment that is not
+            `lg:`-scoped: below `lg` with a stored collapsed preference the
+            strip's rows carry a tooltip that merely repeats their visible
+            label — redundancy, accepted, where the nesting was not. */}
         <NavLink
           to={DEFAULT_ROUTE}
           end
           title={collapsed ? 'All runs' : undefined}
-          className={rowClasses(collapsed)}
+          className={({ isActive }) => rowClasses(collapsed, isActive)}
         >
           <LayersIcon className="h-4 w-4 shrink-0 opacity-70" />
-          <span className={collapsed ? 'lg:sr-only' : undefined}>All runs</span>
+          <span className={cn(collapsed && 'lg:sr-only')}>All runs</span>
         </NavLink>
 
         {items.map((project) => (
@@ -198,7 +209,7 @@ export default function ProjectRail() {
             key={project.id}
             to={projectPath(project.slug)}
             title={collapsed ? project.name : undefined}
-            className={rowClasses(collapsed)}
+            className={({ isActive }) => rowClasses(collapsed, isActive)}
           >
             <CubeIcon className="h-4 w-4 shrink-0 opacity-70" />
             {/* Truncated, not wrapped: a rail whose rows are two lines tall
@@ -207,7 +218,10 @@ export default function ProjectRail() {
                 specifically — a screen reader already gets the whole name,
                 since truncation is CSS-only and the accessible name is the
                 untouched `project.name`. */}
-            <span className={`truncate ${collapsed ? 'lg:sr-only' : ''}`} title={project.name}>
+            <span
+              className={cn('truncate', collapsed && 'lg:sr-only')}
+              title={collapsed ? undefined : project.name}
+            >
               {project.name}
             </span>
             {/* The badge is the FIXED element and the name is the flexible
@@ -233,9 +247,7 @@ export default function ProjectRail() {
                 name, while the badge is supplementary state a collapsed rail
                 legitimately does not carry — the expanded rail and the page
                 the row links to both still do. */}
-            <span
-              className={`ml-auto shrink-0 whitespace-nowrap ${collapsed ? 'lg:hidden' : ''}`}
-            >
+            <span className={cn('ml-auto shrink-0 whitespace-nowrap', collapsed && 'lg:hidden')}>
               {badgeFor(project.latestRun)}
             </span>
           </NavLink>
@@ -257,11 +269,7 @@ export default function ProjectRail() {
             // silences a live region, and a projects-failed announcement is
             // exactly the kind of transition the wrapper above exists to
             // announce whatever state the rail is drawn in.
-            <p
-              className={`px-3 py-2 text-[12px] leading-snug text-muted ${
-                collapsed ? 'lg:sr-only' : ''
-              }`}
-            >
+            <p className={cn('px-3 py-2 text-[12px] leading-snug text-muted', collapsed && 'lg:sr-only')}>
               {message}
             </p>
           )}
@@ -286,25 +294,22 @@ export default function ProjectRail() {
  * visibly instead of silently growing its row, so the failure mode is one
  * somebody notices.
  */
-function rowClasses(collapsed: boolean) {
-  return ({ isActive }: { isActive: boolean }) =>
-    [
-      'transition-ui flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
-      // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
-      // horizontal strip and "All runs" breaking after "All" is what it looks
-      // like without it.
-      'whitespace-nowrap',
-      // A collapsed row is its icon, centred — the label is `sr-only` and the
-      // badge `hidden`, both of which leave flex layout, so with the padding
-      // gone the icon sits in the middle of the 56px column. `lg:`-scoped like
-      // every other collapsed treatment; the phone strip never collapses.
-      collapsed ? 'lg:justify-center lg:px-0' : '',
-      isActive
-        ? 'bg-accent/10 font-semibold text-accent'
-        : 'font-medium text-muted hover:bg-sunken hover:text-primary',
-    ]
-      .filter(Boolean)
-      .join(' ');
+function rowClasses(collapsed: boolean, isActive: boolean) {
+  return cn(
+    'transition-ui flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
+    // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
+    // horizontal strip and "All runs" breaking after "All" is what it looks
+    // like without it.
+    'whitespace-nowrap',
+    // A collapsed row is its icon, centred — the label is `sr-only` and the
+    // badge `hidden`, both of which leave flex layout, so with the padding
+    // gone the icon sits in the middle of the 56px column. `lg:`-scoped like
+    // every other collapsed treatment; the phone strip never collapses.
+    collapsed && 'lg:justify-center lg:px-0',
+    isActive
+      ? 'bg-accent/10 font-semibold text-accent'
+      : 'font-medium text-muted hover:bg-sunken hover:text-primary',
+  );
 }
 
 /**

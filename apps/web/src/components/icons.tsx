@@ -17,7 +17,6 @@ import {
   PanelLeftOpen,
   Play,
   RefreshCw,
-  Search,
   Server,
   Square,
   Sun,
@@ -28,8 +27,19 @@ import {
 } from 'lucide-react';
 
 /**
- * The app's icons — lucide-react glyphs behind the same names and contract
- * the hand-rolled set had, so a call site cannot tell the difference.
+ * The app's icons — lucide-react glyphs behind the same names and prop
+ * contract the hand-rolled set had. What a call site WRITES is unchanged;
+ * what it DRAWS is deliberately not: every glyph now renders at lucide's
+ * 2px stroke where the hand-drawn set used 1.5, a single consistent step
+ * heavier, chosen because it is the weight the reference design language
+ * uses and it survives 14px rendering better on low-DPI screens. If the
+ * weight ever needs to come back down, `icon()` below is the one place a
+ * `strokeWidth` would go.
+ *
+ * lucide emits `width="24" height="24"` ATTRIBUTES on the svg, which the
+ * old set did not. The `className` default below REPLACES rather than
+ * merges — pass a `className` without `h-*`/`w-*` and the icon is a hard
+ * 24px box, not an inherited size — so every call site states its size.
  *
  * ONE MODULE, NOT PER-FILE IMPORTS FROM `lucide-react`. The set was nine
  * hand-drawn glyphs precisely so every icon shared one grid and one stroke;
@@ -75,7 +85,6 @@ export const LayersIcon = icon(Layers);
 /** One project. */
 export const CubeIcon = icon(Box);
 
-export const SearchIcon = icon(Search);
 export const SunIcon = icon(Sun);
 export const MoonIcon = icon(Moon);
 

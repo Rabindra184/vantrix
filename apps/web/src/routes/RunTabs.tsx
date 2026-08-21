@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   ChartsTabIcon,
@@ -7,6 +7,7 @@ import {
   TelemetryTabIcon,
   TrendsTabIcon,
 } from '../components/icons';
+import { cn } from '../lib/cn';
 import { runChartsPath, runErrorsPath, runPath, runTelemetryPath, runTrendsPath } from './paths';
 
 /**
@@ -75,17 +76,19 @@ export default function RunTabs({
       {/* Each tab carries a lucide glyph beside its word. All five icons are
           `aria-hidden` (icons.tsx's default), so every tab's accessible name
           stays exactly its text — `RunTabs.test.tsx` asserts those names
-          verbatim, and `run-detail.spec.ts` selects by them. */}
-      <Tab to={runPath(runId)} end icon={<OverviewTabIcon className="h-3.5 w-3.5" />}>
+          verbatim, and `run-detail.spec.ts` selects by them. The COMPONENT is
+          passed, not an element, so `Tab` sizes all five in one place and a
+          sixth tab cannot drift to the icon module's larger default. */}
+      <Tab to={runPath(runId)} end icon={OverviewTabIcon}>
         Overview
       </Tab>
-      <Tab to={runChartsPath(runId)} icon={<ChartsTabIcon className="h-3.5 w-3.5" />}>
+      <Tab to={runChartsPath(runId)} icon={ChartsTabIcon}>
         Charts
       </Tab>
-      <Tab to={runTelemetryPath(runId)} icon={<TelemetryTabIcon className="h-3.5 w-3.5" />}>
+      <Tab to={runTelemetryPath(runId)} icon={TelemetryTabIcon}>
         Load generators
       </Tab>
-      <Tab to={runErrorsPath(runId)} icon={<ErrorsTabIcon className="h-3.5 w-3.5" />}>
+      <Tab to={runErrorsPath(runId)} icon={ErrorsTabIcon}>
         {/* One text node, so the tab's accessible name is "Errors (2)" rather
             than a name assembled from two children — `run-detail.spec.ts`
             matches it with `getByRole('link', { name: /Errors/ })`, which
@@ -98,7 +101,7 @@ export default function RunTabs({
           it looked like, what went wrong. Trends is the only one that leaves
           the run, so it sits at the end rather than beside Charts, which it
           superficially resembles. */}
-      <Tab to={runTrendsPath(runId)} icon={<TrendsTabIcon className="h-3.5 w-3.5" />}>
+      <Tab to={runTrendsPath(runId)} icon={TrendsTabIcon}>
         Trends
       </Tab>
     </nav>
@@ -118,13 +121,13 @@ export default function RunTabs({
 function Tab({
   to,
   end = false,
-  icon,
+  icon: Icon,
   children,
 }: {
   readonly to: string;
   readonly end?: boolean;
   /** Decorative — always `aria-hidden`, so it never touches the name. */
-  readonly icon?: ReactNode;
+  readonly icon?: ComponentType<{ className?: string }>;
   readonly children: ReactNode;
 }) {
   return (
@@ -132,18 +135,18 @@ function Tab({
       to={to}
       end={end}
       className={({ isActive }) =>
-        [
+        cn(
           'transition-ui -mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px]',
           isActive
             ? 'border-accent font-semibold text-accent'
             : 'border-transparent font-medium text-muted hover:border-default hover:text-primary',
-        ].join(' ')
+        )
       }
     >
-      {/* `opacity` rather than a second colour: the icon reads a step quieter
-          than the word at rest and matches it exactly when active, without a
-          fourth state to keep in step with the three the docstring names. */}
-      {icon != null && <span className="opacity-80">{icon}</span>}
+      {/* No opacity of its own: the icon draws in `currentColor`, so the tab's
+          text colour — muted at rest, accent when active — is already the
+          icon's whole state treatment, with nothing extra to keep in step. */}
+      {Icon != null && <Icon className="h-3.5 w-3.5" />}
       {children}
     </NavLink>
   );

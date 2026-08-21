@@ -197,7 +197,7 @@ export default function RunList({
               both buttons keep the accessible names the e2e suite clicks. */}
           {cursor !== null && (
             <Button size="sm" onClick={() => setCursor(null)}>
-              <ChevronLeftIcon />
+              <ChevronLeftIcon className="h-3.5 w-3.5" />
               First page
             </Button>
           )}
@@ -212,7 +212,7 @@ export default function RunList({
             onClick={() => setCursor(nextCursor)}
           >
             Next
-            <ChevronRightIcon />
+            <ChevronRightIcon className="h-3.5 w-3.5" />
           </Button>
           {/* Disabled rather than hidden: a control that vanishes at the end
               of the list leaves the reader wondering whether it was ever
