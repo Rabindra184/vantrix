@@ -65,10 +65,33 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **123 files / 1293 tests**, it
+`nvm use` first, and if a run reports fewer than **124 files / 1297 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the enterprise run
+silently-skipped run looks like a pass. Last measured on the second review-followup
+branch, which added ONE unit file — `RunSectionNotFound.test.tsx` (3) — plus a
+route-declaration guard in `paths.test.ts`, from a floor of 123 / 1293. Its
+integration floor is 117 files / 1347 tests (three cases in
+`repositories.integration.test.ts`: a project-name search, an id-prefix
+search, and a PLAN assertion) and its e2e rises to 94 — the first e2e case
+added in several sub-projects, for a stale run-section URL, which only a real
+router resolving a real URL can see.
+
+THE PLAN ASSERTION IS THE ONE WORTH KNOWING ABOUT. Two ordinary-looking
+things silently made the run search's indexes unreachable while every row
+assertion stayed green: wrapping a nullable column in `COALESCE(col, '')`
+(an expression a plain-column index cannot serve — and the COALESCE was a
+no-op anyway, since `NULL ILIKE x` is NULL and NULL in a positive OR is
+already false to a WHERE clause), and matching the project through the JOIN.
+That second one is the subtle half: PostgreSQL can only fold an OR into a
+BitmapOr while it can index EVERY branch, and a branch on a JOINED table is
+never indexable — so one cross-table clause cost the six run columns beside
+it their indexes too. The project match is resolved by its own query now and
+arrives as `project_id = ANY($n::uuid[])`. Adding a column to that OR means
+adding an index for it, or the whole predicate goes back to a sequential
+scan.
+
+Before that, the enterprise run
 dashboard branch and the fifteen-finding review wave that followed it, which
 between them added FIVE unit files — `RunDecisionBand.test.tsx` (7),
 `assertionExport.test.ts` (2), `compareSummary.test.ts` (3),
@@ -92,6 +115,21 @@ the `FOR UPDATE` rows the sweeper polls while the suite tried to truncate
 underneath it. `pgrep -f vitest` is not enough on its own; check for a worker
 and an API too (`pgrep -f 'perfportal/worker'`). Stopping it turned the same
 tree green, 1344/1344, with no code change.
+
+IT IS NOT ONLY POSTGRES. A running worker also holds a `LiveFoldOwner`
+subscribed to `live:opened` on the SAME Redis, and that owner CLAIMS runs —
+so it can win the claim a test is waiting for. Seen as
+`fold-owner.integration.test.ts`'s "evaluates a rule for a run claimed via a
+live:opened ping" failing with `expected null not to be null` from
+`owner.snapshotOf(runId)`, deterministically, on a tree whose only change was
+in an unrelated test. Nothing in that message points at a second worker. The
+loop that finds it:
+
+```
+for p in $(pgrep -f "dist/main.js"); do
+  printf '%s %s\n' "$p" "$(lsof -a -p "$p" -d cwd -Fn | sed -n 's/^n//p')"
+done
+```
 
 SECOND, A SHELL COMPONENT MUST NOT CONTRIBUTE AN `<h2>`. `run-tables.spec.ts`
 asserts the Overview tab's heading outline is EXACTLY

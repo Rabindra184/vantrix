@@ -209,22 +209,45 @@ function escapeLike(value: string): string {
 }
 
 /**
- * Does this query look like the start of a run id?
+ * A query that could be the start of a run id, as a `[low, high]` uuid pair —
+ * or null when it could not be one.
  *
- * THE RUN ID IS MATCHED BY PREFIX, NEVER BY SUBSTRING, and this is the
- * guard that keeps it out of the free-text search entirely for anything
- * that is not plausibly an id. `r.id::text ILIKE '%3%'` matches almost
- * every UUID ever generated, so folding the id into the same
- * contains-anywhere OR as simulation and branch made every short query
- * return the whole org — a search that answers "everything" is not a
- * search.
+ * THE ID IS A RANGE ON THE PRIMARY KEY, NOT A PATTERN ON ITS TEXT. Two
+ * separate problems pushed it here.
  *
- * Four characters, hex and dashes only, is the shortest thing that can be
- * the beginning of a UUID and cannot be an ordinary word. It also matches
- * what the UI actually shows a reader to copy: `RunList` renders
- * `id.slice(0, 8)` for a run with no simulation name yet.
+ * The first was correctness: `r.id::text ILIKE '%3%'` matches almost every
+ * uuid ever generated, so folding the id into a contains-anywhere search made
+ * every short query return the whole org.
+ *
+ * The second is that `r.id::text ILIKE 'prefix%'` is not indexable either —
+ * the cast alone defeats the primary key, and in an OR that matters far more
+ * than it looks: PostgreSQL can only BitmapOr branches it can index, so ONE
+ * unindexable branch forces a sequential scan of the WHOLE predicate,
+ * including the six trigram-indexed columns beside it. Widening the prefix to
+ * a uuid range compares `uuid` to `uuid` and lands on `run_pkey`.
+ *
+ * Dashes are cosmetic in a uuid's text form, so they are stripped and the
+ * remaining hex is padded with `0` for the low bound and `f` for the high
+ * one: `19c46616-c525` becomes `19c46616-c525-0000-0000-000000000000` through
+ * `19c46616-c525-ffff-ffff-ffffffffffff`. Four hex digits is the shortest
+ * thing that cannot also be an ordinary word — and it is what the UI puts on
+ * screen to copy, since `RunList` renders `id.slice(0, 8)` for a run with no
+ * simulation name yet.
  */
-const RUN_ID_PREFIX = /^[0-9a-f][0-9a-f-]{3,}$/i;
+function runIdPrefixRange(query: string): { low: string; high: string } | null {
+  const hex = query.replace(/-/g, '');
+  if (hex.length < 4 || hex.length > 32 || !/^[0-9a-f]+$/i.test(hex)) return null;
+  const lower = hex.toLowerCase();
+  return { low: asUuid(lower.padEnd(32, '0')), high: asUuid(lower.padEnd(32, 'f')) };
+}
+
+/** 32 hex characters, dashed into the 8-4-4-4-12 form Postgres parses. */
+function asUuid(hex32: string): string {
+  return (
+    `${hex32.slice(0, 8)}-${hex32.slice(8, 12)}-${hex32.slice(12, 16)}-` +
+    `${hex32.slice(16, 20)}-${hex32.slice(20)}`
+  );
+}
 
 export class RunRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -573,6 +596,31 @@ export class RunRepository {
   }
 
   /**
+   * The org's projects whose slug or name matches a free-text search, as ids.
+   *
+   * A SEPARATE QUERY ON PURPOSE — see the `opts.q` block in `list()` for the
+   * whole argument. In short: a joined column cannot take part in a
+   * BitmapOr, so matching the project inside the run query's own OR would
+   * cost every other branch its index. This one is itself indexed, by
+   * `project_slug_trgm` / `project_name_trgm`.
+   *
+   * Unbounded by design. It returns ids within ONE org, so its size is that
+   * tenant's project count; a cap here would silently drop matching runs from
+   * a page that claims to be the whole answer, which is the failure mode the
+   * search's own docstring in the API exists to avoid.
+   */
+  private async projectIdsMatching(orgId: string, like: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT id FROM project
+        WHERE org_id = $1::uuid
+          AND (slug ILIKE $2 ESCAPE '\\' OR name ILIKE $2 ESCAPE '\\')`,
+      orgId,
+      like,
+    );
+    return rows.map((row) => row.id);
+  }
+
+  /**
    * Ordered by the run's real start when known — coalesce(tool_started_at,
    * started_at) — falling back to ingest time for a run the worker has not
    * yet completed. `id DESC` is the tiebreaker so cursor pagination stays
@@ -632,32 +680,61 @@ export class RunRepository {
         filters.push(`r.verdict = $${params.length}`);
       }
     }
-    // FREE TEXT OVER THE RUN'S OWN WORDS, plus the id BY PREFIX.
+    // FREE TEXT OVER THE RUN'S OWN WORDS, plus the id AS A KEY RANGE.
     //
-    // Every clause here is a leading-wildcard ILIKE, which no B-tree can
-    // serve, so this is a scan — bounded by `r.org_id` (and by
-    // `r.project_id` when the caller is token-scoped) rather than by the
-    // whole table, which is what keeps it proportional to one tenant's
-    // history. A trigram index is the answer if a tenant ever outgrows
-    // that; it needs its own migration and the pg_trgm extension, so it is
-    // deliberately not smuggled in here.
+    // ONE TABLE'S COLUMNS, SO THE WHOLE `OR` CAN BE A BitmapOr.
+    //
+    // PostgreSQL can only combine an OR into a bitmap while it can index
+    // EVERY branch — and a branch on a JOINED table is not one it can index
+    // at all. Spelling the project match as `p.slug ILIKE …` therefore cost
+    // the six run columns beside it their indexes too: measured on the real
+    // table, the cross-table version plans as a nested loop filtering every
+    // run in the org, while the shape below plans as a BitmapOr over
+    // `run_project_id_started_at_idx` and one trigram index per column.
+    //
+    // So the projects are resolved FIRST, by their own trigram indexes, and
+    // arrive here as an id array. The result set is identical — a run whose
+    // project matches is exactly a run whose `project_id` is in that list —
+    // and it costs one small indexed query, only when `q` is present, and
+    // never when the caller is already scoped to a single project (an
+    // `r.project_id = $n` filter is ANDed above, so no other project's runs
+    // can enter the page however the name matches).
+    //
+    // NO `COALESCE(col, '')`, AND ITS ABSENCE IS LOAD-BEARING. It was there
+    // to make a null column compare as an empty string, which reads as
+    // defensive and is in fact a no-op: `NULL ILIKE '%x%'` is NULL, and NULL
+    // in a positive OR is indistinguishable from false to a WHERE clause. It
+    // was not free, though — wrapping the column in an expression put it out
+    // of reach of a plain-column index, so all five nullable columns fell
+    // back to a sequential scan. Measured: bare columns plan as a BitmapOr
+    // over trigram index scans, the same predicate with COALESCE plans as
+    // `Seq Scan on run`.
     if (opts.q) {
-      params.push(`%${escapeLike(opts.q)}%`);
+      const like = `%${escapeLike(opts.q)}%`;
+      params.push(like);
       const at = `$${params.length}`;
       const clauses = [
-        `p.slug ILIKE ${at} ESCAPE '\\'`,
-        `p.name ILIKE ${at} ESCAPE '\\'`,
-        `COALESCE(r.simulation, '') ILIKE ${at} ESCAPE '\\'`,
-        `COALESCE(r.description, '') ILIKE ${at} ESCAPE '\\'`,
-        `COALESCE(r.environment, '') ILIKE ${at} ESCAPE '\\'`,
-        `COALESCE(r.branch, '') ILIKE ${at} ESCAPE '\\'`,
-        `COALESCE(r.commit_sha, '') ILIKE ${at} ESCAPE '\\'`,
+        `r.simulation ILIKE ${at} ESCAPE '\\'`,
+        `r.description ILIKE ${at} ESCAPE '\\'`,
+        `r.environment ILIKE ${at} ESCAPE '\\'`,
+        `r.branch ILIKE ${at} ESCAPE '\\'`,
+        `r.commit_sha ILIKE ${at} ESCAPE '\\'`,
       ];
-      // See RUN_ID_PREFIX: anchored, and only for a query that could be the
-      // start of an id at all.
-      if (RUN_ID_PREFIX.test(opts.q)) {
-        params.push(`${escapeLike(opts.q)}%`);
-        clauses.push(`r.id::text ILIKE $${params.length} ESCAPE '\\'`);
+
+      if (!scope.projectId) {
+        const matched = await this.projectIdsMatching(scope.orgId, like);
+        if (matched.length > 0) {
+          params.push(matched);
+          clauses.push(`r.project_id = ANY($${params.length}::uuid[])`);
+        }
+      }
+
+      const range = runIdPrefixRange(opts.q);
+      if (range) {
+        params.push(range.low, range.high);
+        clauses.push(
+          `r.id BETWEEN $${params.length - 1}::uuid AND $${params.length}::uuid`,
+        );
       }
       filters.push(`(${clauses.join(' OR ')})`);
     }

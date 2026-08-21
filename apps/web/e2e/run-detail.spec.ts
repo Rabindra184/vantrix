@@ -601,6 +601,42 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
   await expect(page.getByTestId('live-notice-partial')).toBeVisible();
 });
 
+/**
+ * A STALE LINK TO A RENAMED SECTION KEEPS THE RUN.
+ *
+ * The Load generators tab lived at `/telemetry` before it was
+ * `/load-generators`, and any such URL used to match nothing under
+ * `/runs/:runId` and fall through to `App.tsx`'s global `<Route path="*">`,
+ * which redirects to `/runs`. The reader was silently moved from the run they
+ * had open to the top of the run list.
+ *
+ * ONLY A BROWSER CAN SEE THIS. It is a claim about the real router resolving
+ * a real URL — jsdom tests mount one component under a stand-in route table,
+ * which is exactly the layer the bug lived above.
+ */
+test('an unknown run section keeps the run on screen instead of redirecting to the list', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`${runPath(runId)}/telemetry`);
+
+  // Still on the run's own URL — the assertion the redirect used to break.
+  await expect(page).toHaveURL(new RegExp(`${runId}/telemetry$`));
+  await expect(page.getByText('This run has no such section')).toBeVisible();
+
+  // And still INSIDE the shell: the header and the tab strip are what make
+  // this a recoverable wrong turn rather than a dead end, so the panel alone
+  // is not the requirement.
+  await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+
+  // The real tab is one click away, from the strip rather than from the copy.
+  await page.getByRole('link', { name: 'Load generators', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${runId}/load-generators$`));
+});
+
 test('a live run shows its identity in the header, not a bare id', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedLiveRun(admin.orgId);

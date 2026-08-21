@@ -458,15 +458,41 @@ describe('LiveFoldOwner', () => {
 
     const STORAGE_CHUNK = 4;      // smaller than every record in the fixture (min ~10 bytes)
     const TICK_BATCH = 4096;      // bytes newly available between ticks; not record-aligned
+    const PUT_CONCURRENCY = 32;   // see the batch loop below
 
     const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
     try {
       let written = 0;
       while (written < log.length) {
         const batchEnd = Math.min(written + TICK_BATCH, log.length);
-        for (let at = written; at < batchEnd; at += STORAGE_CHUNK) {
-          const end = Math.min(at + STORAGE_CHUNK, batchEnd);
-          await chunks.put(runId, at, log.subarray(at, end));
+        // CONCURRENT WITHIN A BATCH, SEQUENTIAL BETWEEN BATCHES — and the
+        // difference is the whole reason this test used to time out on CI.
+        //
+        // The fixture is 37,769 bytes and STORAGE_CHUNK is 4, so writing it
+        // one awaited `put` at a time is 9,442 round trips to the object
+        // store. That is not slow-but-fine: at the ~12ms per call a loaded
+        // shared runner gives, it lands at ~113s against this test's 120s
+        // timeout, so the test was passing on headroom rather than on
+        // budget and fell over the moment the runner was busy. It failed
+        // exactly once on PR #56, passed on re-run, and named no cause.
+        //
+        // The writes inside one batch are INDEPENDENT: `LiveChunkStore` keys
+        // each object by its own start offset, and nothing reads any of them
+        // until the `tick()` below. What must stay ordered is batch → tick →
+        // batch, which is what makes this several ticks rather than one, and
+        // that is unchanged.
+        //
+        // Bounded rather than one `Promise.all` over the whole batch: 1024
+        // simultaneous requests would be testing the S3 client's socket pool
+        // instead of the fold.
+        const offsets: number[] = [];
+        for (let at = written; at < batchEnd; at += STORAGE_CHUNK) offsets.push(at);
+        for (let i = 0; i < offsets.length; i += PUT_CONCURRENCY) {
+          await Promise.all(
+            offsets.slice(i, i + PUT_CONCURRENCY).map((at) =>
+              chunks.put(runId, at, log.subarray(at, Math.min(at + STORAGE_CHUNK, batchEnd))),
+            ),
+          );
         }
         written = batchEnd;
         await owner.tick();
@@ -485,7 +511,12 @@ describe('LiveFoldOwner', () => {
     } finally {
       await owner.close();
     }
-  }, 120_000);
+    // 60s, DOWN FROM 120s, and the reduction is the regression guard. With
+    // the batch writes concurrent this finishes in single-digit seconds even
+    // on a busy runner; at 120s a change back to one awaited `put` per chunk
+    // would go unnoticed until it started failing intermittently again,
+    // which is precisely how it was found the first time.
+  }, 60_000);
 
   /**
    * Fix round 1, Important 3. `tick()` used to await `#fold` for each owned
