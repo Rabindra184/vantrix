@@ -30,8 +30,12 @@ import type { Mark } from '../routes/marks';
  */
 export default function Badge({ mark }: { readonly mark: Mark }) {
   return (
+    // `rounded-full`: a status is a stamp, not a box — the pill silhouette is
+    // what separates it at a glance from the rectangular controls (buttons,
+    // inputs) that share these rows, and it is the shape every status chip in
+    // the reference design language uses.
     <span
-      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 text-[12px] font-medium"
+      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[12px] font-medium"
       style={{ color: mark.colour }}
     >
       {/* `aria-hidden`, and the word beside it carries the meaning — a screen

@@ -1,5 +1,12 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
+import {
+  ChartsTabIcon,
+  ErrorsTabIcon,
+  OverviewTabIcon,
+  TelemetryTabIcon,
+  TrendsTabIcon,
+} from '../components/icons';
 import { runChartsPath, runErrorsPath, runPath, runTelemetryPath, runTrendsPath } from './paths';
 
 /**
@@ -51,16 +58,34 @@ export default function RunTabs({
     // stops reading as one control. `-mb-px` pulls the strip's own bottom
     // border onto the container's, so the active tab's underline meets the
     // rule rather than floating a pixel above it.
+    //
+    // STICKY BENEATH THE SHELL HEADER (`top-14` matches its `h-14`), because
+    // the pages under these tabs are the longest in the app — ten charts, a
+    // 200-row statistics table — and reaching a different section used to
+    // mean scrolling all the way back up. The negative margins re-span
+    // `<main>`'s own `p-4 sm:p-6` gutter so content scrolling underneath
+    // disappears at the viewport edge, not mid-gutter; the translucent page
+    // fill plus blur is the same treatment the header uses one layer up.
+    // `z-20` stays below the rail (30) and header (40), and far below the
+    // tooltips ECharts portals at its own index.
     <nav
       aria-label="Run sections"
-      className="flex gap-1 overflow-x-auto border-b border-default"
+      className="sticky top-14 z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-default bg-page/90 px-4 backdrop-blur-md sm:-mx-6 sm:px-6"
     >
-      <Tab to={runPath(runId)} end>
+      {/* Each tab carries a lucide glyph beside its word. All five icons are
+          `aria-hidden` (icons.tsx's default), so every tab's accessible name
+          stays exactly its text — `RunTabs.test.tsx` asserts those names
+          verbatim, and `run-detail.spec.ts` selects by them. */}
+      <Tab to={runPath(runId)} end icon={<OverviewTabIcon className="h-3.5 w-3.5" />}>
         Overview
       </Tab>
-      <Tab to={runChartsPath(runId)}>Charts</Tab>
-      <Tab to={runTelemetryPath(runId)}>Load generators</Tab>
-      <Tab to={runErrorsPath(runId)}>
+      <Tab to={runChartsPath(runId)} icon={<ChartsTabIcon className="h-3.5 w-3.5" />}>
+        Charts
+      </Tab>
+      <Tab to={runTelemetryPath(runId)} icon={<TelemetryTabIcon className="h-3.5 w-3.5" />}>
+        Load generators
+      </Tab>
+      <Tab to={runErrorsPath(runId)} icon={<ErrorsTabIcon className="h-3.5 w-3.5" />}>
         {/* One text node, so the tab's accessible name is "Errors (2)" rather
             than a name assembled from two children — `run-detail.spec.ts`
             matches it with `getByRole('link', { name: /Errors/ })`, which
@@ -73,7 +98,9 @@ export default function RunTabs({
           it looked like, what went wrong. Trends is the only one that leaves
           the run, so it sits at the end rather than beside Charts, which it
           superficially resembles. */}
-      <Tab to={runTrendsPath(runId)}>Trends</Tab>
+      <Tab to={runTrendsPath(runId)} icon={<TrendsTabIcon className="h-3.5 w-3.5" />}>
+        Trends
+      </Tab>
     </nav>
   );
 }
@@ -91,10 +118,13 @@ export default function RunTabs({
 function Tab({
   to,
   end = false,
+  icon,
   children,
 }: {
   readonly to: string;
   readonly end?: boolean;
+  /** Decorative — always `aria-hidden`, so it never touches the name. */
+  readonly icon?: ReactNode;
   readonly children: ReactNode;
 }) {
   return (
@@ -103,13 +133,17 @@ function Tab({
       end={end}
       className={({ isActive }) =>
         [
-          'transition-ui -mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px]',
+          'transition-ui -mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px]',
           isActive
             ? 'border-accent font-semibold text-accent'
             : 'border-transparent font-medium text-muted hover:border-default hover:text-primary',
         ].join(' ')
       }
     >
+      {/* `opacity` rather than a second colour: the icon reads a step quieter
+          than the word at rest and matches it exactly when active, without a
+          fourth state to keep in step with the three the docstring names. */}
+      {icon != null && <span className="opacity-80">{icon}</span>}
       {children}
     </NavLink>
   );
