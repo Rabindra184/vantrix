@@ -83,6 +83,7 @@ function ProjectSetupLoaded({
   const [scopes, setScopes] = useState<Set<TokenScopeName>>(() => new Set(DEFAULT_SCOPES));
   const [minted, setMinted] = useState<MintedToken | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const selectedScopes = useMemo(() => TOKEN_SCOPES.filter((scope) => scopes.has(scope)), [scopes]);
 
   const mintMutation = useMutation({
@@ -105,10 +106,36 @@ function ProjectSetupLoaded({
     mintMutation.mutate();
   };
 
+  /**
+   * NEVER CLAIM A COPY THAT DID NOT HAPPEN, which the optional chain used to
+   * do. `await navigator.clipboard?.writeText(token)` evaluates to
+   * `await undefined` wherever the Clipboard API is absent — any page not in
+   * a secure context, i.e. plain http on anything but localhost, which is an
+   * ordinary way to reach an on-prem install. That resolves, `setCopied(true)`
+   * runs, the button says "Copied" with a tick, and the reader navigates away
+   * from a secret they will never be shown again.
+   *
+   * The explicit guard turns the absent API into the same branch as a
+   * rejected write (permission denied, or a document that is not focused),
+   * so both surface as one honest failure with a real alternative: the token
+   * is on screen in a <pre>, so selecting it by hand always works.
+   */
   const copyToken = async () => {
     if (minted === null) return;
-    await navigator.clipboard?.writeText(minted.token);
-    setCopied(true);
+    try {
+      if (typeof navigator.clipboard?.writeText !== 'function') {
+        throw new Error('The clipboard is not available on this page.');
+      }
+      await navigator.clipboard.writeText(minted.token);
+      setCopied(true);
+      setCopyFailed(false);
+    } catch {
+      // The message is the same either way, so the reason is not worth
+      // surfacing: what the reader needs is "it did not copy, select it
+      // yourself", not a DOMException name.
+      setCopyFailed(true);
+      setCopied(false);
+    }
   };
 
   const problem = mintMutation.error instanceof ProblemError ? mintMutation.error : null;
@@ -189,6 +216,18 @@ function ProjectSetupLoaded({
               <pre className="mt-3 overflow-x-auto rounded-md border border-default bg-surface p-3 font-mono text-xs text-primary">
                 {minted.token}
               </pre>
+              {/* Announced, because the reader may already be reaching for the
+                  next thing — and this is their one chance at the secret. It
+                  points at the `<pre>` above rather than apologising: the
+                  token is on screen and selectable whatever the clipboard
+                  does. */}
+              {copyFailed && (
+                <p role="alert" className="mt-2 text-[12px] leading-snug text-muted">
+                  The token could not be copied automatically — a browser only
+                  allows that on a secure (https) page. Select it above and copy
+                  it by hand before you leave.
+                </p>
+              )}
             </div>
           )}
         </Card>
@@ -254,6 +293,22 @@ function ProjectSetupLoaded({
   );
 }
 
+/**
+ * The token list, and the app's ONLY destructive control.
+ *
+ * REVOKING TAKES TWO DELIBERATE CLICKS, and the reason it is a two-step
+ * button rather than a modal is the same one `ProjectRail` gives for not
+ * being a drawer: a dialog needs focus capture, an escape handler, a scrim
+ * and return-focus-on-close to be correct, and this repo runs Playwright with
+ * a single Desktop Chrome project — so every one of those would ship
+ * unverified. A button that changes its own label needs none of it, is
+ * reachable by keyboard for free, and announces the change because the
+ * accessible name really is different.
+ *
+ * `window.confirm` was the other candidate and is worse: it blocks the event
+ * loop, cannot be styled, and reads as a browser malfunction rather than as
+ * part of the page.
+ */
 function TokenTable({
   query,
   revoking,
@@ -263,6 +318,11 @@ function TokenTable({
   readonly revoking: string | null;
   readonly onRevoke: (prefix: string) => void;
 }) {
+  // The prefix awaiting confirmation, or null. ONE at a time: arming a second
+  // row disarms the first, so there is never more than one primed destructive
+  // control on screen to mis-click.
+  const [confirming, setConfirming] = useState<string | null>(null);
+
   if (query.isPending) return <LoadingState label="Loading tokens…" />;
   if (query.isError) {
     const problem = query.error instanceof ProblemError ? query.error : null;
@@ -303,15 +363,58 @@ function TokenTable({
               <td className={TD}>{token.lastUsedAt === null ? 'Never' : formatDate(token.lastUsedAt)}</td>
               <td className={TD}>{token.revokedAt === null ? 'Active' : 'Revoked'}</td>
               <td className={TD}>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={revoking === token.prefix}
-                  disabled={token.revokedAt !== null}
-                  onClick={() => onRevoke(token.prefix)}
-                >
-                  Revoke
-                </Button>
+                {confirming === token.prefix ? (
+                  // ARMED. The accessible name changes from "Revoke" to
+                  // "Confirm revoke", so a screen reader announces that the
+                  // control now does something different — which is the whole
+                  // point of the step, and something a modal would have had
+                  // to arrange by hand.
+                  <div className="flex flex-col gap-1.5">
+                    {/* THE CONSEQUENCE AS VISIBLE TEXT, and never as a
+                        `title` on the button. A tooltip is hover-only, so a
+                        touch user never sees it — and putting one on a
+                        control that already has a label makes the ACCESSIBLE
+                        NAME ambiguous: with both present, Chromium's
+                        accessibility tree reported this button as
+                        "Revoking is permanent…" rather than "Revoke", while
+                        jsdom kept reading the text content, so the unit suite
+                        saw nothing wrong. That is the exact class of defect
+                        CLAUDE.md records as visible only in a browser.
+                        Sibling text carries the warning without touching any
+                        button's name. */}
+                    <p className="text-[12px] leading-snug text-muted">
+                      Permanent. Anything still using it starts failing.
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        loading={revoking === token.prefix}
+                        onClick={() => {
+                          setConfirming(null);
+                          onRevoke(token.prefix);
+                        }}
+                      >
+                        Confirm revoke
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={revoking === token.prefix}
+                    disabled={token.revokedAt !== null}
+                    // NO `title` here — see the armed branch above for why a
+                    // tooltip on a labelled control is not a free addition.
+                    onClick={() => setConfirming(token.prefix)}
+                  >
+                    Revoke
+                  </Button>
+                )}
               </td>
             </tr>
           ))}

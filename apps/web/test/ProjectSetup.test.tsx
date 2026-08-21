@@ -111,7 +111,9 @@ describe('ProjectSetup', () => {
     renderSetup();
 
     expect(await screen.findByText('pp_existing')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /revoke/i }));
+    // Two clicks, because revoking is now deliberate: arm, then confirm.
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
 
     const alert = await screen.findByRole('alert');
     // Names the token, and does NOT overclaim: a request that failed on the
@@ -126,9 +128,60 @@ describe('ProjectSetup', () => {
     renderSetup();
 
     expect(await screen.findByText('Existing CI')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /revoke/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
     await waitFor(() => {
       expect(revokeProjectTokenMock).toHaveBeenCalledWith('alpha', 'pp_existing');
     });
+  });
+
+  /**
+   * THE CONFIRMATION IS THE TEST, not the revoke.
+   *
+   * This is the app's only destructive control, and it used to fire on one
+   * click of a `ghost` button sitting in a dense table row: a misclick
+   * revoked a live credential, every CI job using it began failing 401, and
+   * there is no undo — only minting a replacement and redistributing it.
+   *
+   * Asserting the NEGATIVE is the whole point: arming the control must not
+   * call the API. A test that only clicked twice and checked the call would
+   * pass against the original one-click code.
+   */
+  it('does not revoke on the first click, and can be cancelled', async () => {
+    renderSetup();
+
+    expect(await screen.findByText('Existing CI')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    expect(revokeProjectTokenMock).not.toHaveBeenCalled();
+
+    // Cancel disarms it and puts the original control back, so nothing is
+    // left primed in the row.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm revoke' })).toBeNull();
+    expect(revokeProjectTokenMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The clipboard is absent on any page that is not a secure context —
+   * plain http on anything but localhost, i.e. an ordinary way to reach an
+   * on-prem install. The old code optional-chained it, so `await undefined`
+   * resolved and the button said "Copied" over a secret that had gone
+   * nowhere, shown once and never again.
+   */
+  it('admits it when the token could not be copied', async () => {
+    Object.assign(navigator, { clipboard: undefined });
+    renderSetup();
+
+    expect(await screen.findByRole('heading', { name: 'Project setup' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
+    expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be copied/i);
+    // And it must NOT claim success.
+    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
   });
 });
