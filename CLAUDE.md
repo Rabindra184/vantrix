@@ -65,10 +65,56 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **118 files / 1265 tests**, it
+`nvm use` first, and if a run reports fewer than **123 files / 1293 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on three review
+silently-skipped run looks like a pass. Last measured on the enterprise run
+dashboard branch and the fifteen-finding review wave that followed it, which
+between them added FIVE unit files — `RunDecisionBand.test.tsx` (7),
+`assertionExport.test.ts` (2), `compareSummary.test.ts` (3),
+`runBaseline.test.ts` (6) and `RunOverviewTab.baseline.test.tsx` (2) — plus
+cases across `RunList.test.tsx`, `RunStats.test.tsx` and
+`RunDetail.live.test.tsx`, from a floor of 118 / 1265. Its integration floor is
+117 files / 1344 tests: no `.tsx` file runs there, but `assertionExport`,
+`compareSummary` and `runBaseline` are all `.ts`, and
+`apps/api/test/read.integration.test.ts` gained six cases for the new list
+filters. Its e2e stays 93 — that suite gained no case, and the one spec it
+touched was hardened rather than added to.
+
+THREE THINGS FROM THAT REVIEW WAVE ARE WORTH KNOWING, and none of them was
+visible to `pnpm test:unit`. FIRST, THE INTEGRATION SUITE CANNOT SHARE ITS
+DATABASE WITH A RUNNING WORKER, which is the same hazard as the
+cannot-race-itself rule below and reads identically: 73 failures across 13
+files, `deadlock detected` on the setup `TRUNCATE`, unique-constraint
+violations, and timeouts — none of them naming a cause. A `pnpm --filter
+@perfportal/worker start` left running from an earlier session was holding
+the `FOR UPDATE` rows the sweeper polls while the suite tried to truncate
+underneath it. `pgrep -f vitest` is not enough on its own; check for a worker
+and an API too (`pgrep -f 'perfportal/worker'`). Stopping it turned the same
+tree green, 1344/1344, with no code change.
+
+SECOND, A SHELL COMPONENT MUST NOT CONTRIBUTE AN `<h2>`. `run-tables.spec.ts`
+asserts the Overview tab's heading outline is EXACTLY
+`['Assertions', 'Simulation assertions', 'Statistics']` and the Errors tab's
+is exactly `['Errors']`. `RunShell` renders above the `<Outlet/>`, so
+anything it draws is on all five tabs — `RunDecisionBand` shipped with an
+`<h2>` carrying its verdict sentence and broke that outline on every one of
+them, with a heading whose WORDS changed per run. `SlaBanner` and
+`LiveStatusStrip` contribute no heading for exactly this reason; `RunHeader`
+owns the one `<h1>`. Shell chrome is named by `aria-label` on its `<section>`.
+
+THIRD, `page.mouse` DOES NOT SCROLL AND `locator.click()` DOES. The scrubber
+drag in `run-charts.spec.ts` is the suite's only raw-mouse gesture, and it
+takes VIEWPORT coordinates — as do `boundingBox()` and the in-page
+`getBoundingClientRect()` it locates the handle with. Adding one more band of
+chrome above the tab content pushed the brush below the fold at the default
+1280x720, so the query still found the handle, the measurement still returned
+a box, the drag landed on empty page, and the only symptom was the URL
+assertion timing out five seconds later. It now calls
+`scrollIntoViewIfNeeded()` before taking any geometry. Any test that drives
+`page.mouse` needs the same line.
+
+Before that, three review
 follow-ups, which added ONE unit file —
 `packages/persistence/test/project-repository.test.ts` (6) — and 4 cases to
 the existing 409 case in `apps/api/test/projects.integration.test.ts`. Its

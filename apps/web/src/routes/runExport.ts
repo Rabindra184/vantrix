@@ -1,4 +1,5 @@
 import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
+import { downloadBlob } from '../download';
 
 export type RunSummaryExport = {
   readonly exportedAt: string;
@@ -10,6 +11,19 @@ export type RunSummaryExport = {
   readonly assertions?: readonly Assertion[];
 };
 
+/**
+ * The decision band's own contents as a file: the run's identity, the state
+ * it was in, and the SLA rules that produced (or did not produce) its
+ * verdict.
+ *
+ * `assertions` IS OMITTED, NOT EMPTIED, when the caller has none to give.
+ * `undefined` there means "this run has not been evaluated" — the same
+ * distinction `verdict: undefined` draws — and an empty array would assert
+ * that it was evaluated and produced no rules, which is a different fact.
+ *
+ * `exportedAt` is a parameter with a default rather than a bare
+ * `new Date()` so a test can pin it.
+ */
 export function runSummaryJson({
   identity,
   status,
@@ -32,12 +46,7 @@ export function runSummaryJson({
   return JSON.stringify(payload, null, 2);
 }
 
+/** `downloadBlob` with this format's own MIME type; see `../download`. */
 export function downloadRunSummary(filename: string, json: string): void {
-  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(filename, new Blob([json], { type: 'application/json;charset=utf-8' }));
 }

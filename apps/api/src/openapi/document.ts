@@ -261,8 +261,12 @@ const parameters: Record<string, ParameterObject> = {
     name: 'q',
     in: 'query',
     description:
-      'Searches run id, project slug/name, simulation, description, environment, branch, and commit SHA. ' +
-      'Applied by the API before cursor pagination, never as a client-side page filter.',
+      'Case-insensitive substring search over project slug/name, simulation, description, ' +
+      'environment, branch and commit SHA. The run id is matched by PREFIX instead, and only ' +
+      'when "q" could be the start of one (four or more hex characters or dashes) — a UUID ' +
+      'contains almost every hex digit, so matching it anywhere would make every short query ' +
+      'return the whole org. Applied by the API before cursor pagination, never as a ' +
+      'client-side page filter.',
     schema: { type: 'string' },
   },
   RunStatusFilter: {
@@ -382,14 +386,16 @@ const responses: Record<string, ResponseObject> = {
   },
   BadRequest: {
     description:
-      'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID). ' +
-      'application/problem+json with a required "remediation" that says what a valid value ' +
-      'looks like.',
+      'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID), or ' +
+      '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
+      'outside its enum. application/problem+json with a required "remediation" that says ' +
+      'what a valid value looks like.',
     content: problem(),
   },
   ProjectRunsBadRequest: {
     description:
       'Either a query parameter was malformed (e.g. "cursor" is not a valid cursor), or (code ' +
+      'RUN_FILTER_INVALID) "status" or "verdict" named a value outside its enum, or (code ' +
       'PROJECT_REQUIRED) the caller authenticated with a session, which names no project — ' +
       'only a project-scoped token can list a project\'s runs by slug. The remediation names ' +
       'GET /v1/runs as the session-reachable equivalent. application/problem+json with a ' +

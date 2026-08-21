@@ -987,6 +987,22 @@ test('dragging the scrubber commits a window in milliseconds, not axis noise', a
   const strip = page.getByTestId('chart-time-window').locator('svg');
   await expect(strip).toHaveCount(1);
 
+  // SCROLLED INTO VIEW BEFORE ANY GEOMETRY IS TAKEN, because this is the one
+  // test in the suite that drives `page.mouse` directly. `locator.click()`
+  // scrolls for you; the raw mouse API does not — it takes VIEWPORT
+  // coordinates — and both the box below and the handle's own
+  // `getBoundingClientRect()` are viewport-relative too. So a strip below the
+  // fold is still "found" by the query and by the measurement, and the drag
+  // then lands on empty page with nothing failing until the URL assertion
+  // times out 5 seconds later.
+  //
+  // It went below the fold the moment the run page grew another band of
+  // chrome above the tab content, at the default 1280x720 — which is a thing
+  // this page's layout may do again. Scrolling first makes the test about
+  // the units it claims to be about rather than about how tall the header
+  // happens to be.
+  await strip.scrollIntoViewIfNeeded();
+
   // The run's real extent, from the run itself — the reference bundle's
   // duration moves on re-capture.
   const series = await apiJson<{ buckets: { startOffsetMs: number }[] }>(

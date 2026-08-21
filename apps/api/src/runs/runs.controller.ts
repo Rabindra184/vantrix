@@ -8,9 +8,12 @@ import {
   RunVerdictSchema,
   type RunListResponse,
   type RunStatus,
-  type RunVerdict,
 } from '@perfportal/contracts';
-import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
+import {
+  ProjectRepository,
+  type RunRecord,
+  type RunVerdictFilter,
+} from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { RunsService } from './runs.service.js';
 
@@ -247,8 +250,25 @@ export class ProjectRunsController {
   }
 }
 
-type RunVerdictFilter = RunVerdict | 'none';
-
+/**
+ * The three list filters, validated once for both list routes.
+ *
+ * VALIDATED RATHER THAN PASSED THROUGH, even though `RunRepository.list`
+ * binds every one of them as a query parameter and so cannot be injected.
+ * An unknown status reaching the SQL returns an empty page, which reads as
+ * "there are no runs like that" — a wrong answer with a 200 on it. 400
+ * `RUN_FILTER_INVALID` says which value was not understood and lists the
+ * ones that are, and `RunListOptions` types the fields so the guard and the
+ * repository agree in the type system rather than by habit.
+ *
+ * `verdict=none` IS NOT A VERDICT and never reaches `RunVerdictSchema`: it
+ * selects rows whose verdict is NULL, which is a different question from
+ * `not_evaluated` (evaluated, and nothing to say). The repository draws the
+ * same distinction with `r.verdict IS NULL`.
+ *
+ * An EMPTY string is not an error — `?status=` is how a form submits "any",
+ * and refusing it would make the UI special-case its own controls.
+ */
 function parseRunListFilters(input: {
   readonly q?: string;
   readonly status?: string;

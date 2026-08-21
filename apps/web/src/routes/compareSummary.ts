@@ -1,6 +1,6 @@
 import type { StatsResponse } from '@perfportal/contracts';
 import type { CompareMetric } from '../charts/transforms/compare';
-import type { CompareStats } from '../tables/buildCompareMatrix';
+import { metricValue, type CompareStats } from '../tables/buildCompareMatrix';
 
 export interface CompareSummaryModel {
   readonly selectedCount: number;
@@ -14,15 +14,20 @@ export interface CompareSummaryModel {
   readonly bestValue: number | null;
 }
 
+/**
+ * The run-scope row's value for one metric.
+ *
+ * THE PER-METRIC MEANING IS `metricValue`'s, NOT A SECOND COPY OF IT. This
+ * function used to restate all four branches — including
+ * `throughputRps * errorRate` for "Errors" — beside the matrix that already
+ * declares them, which is exactly the divergence `buildCompareMatrix`'s own
+ * docstring argues against: the same word above the overlay, the matrix and
+ * these tiles has to mean the same number in all three. All that is left
+ * here is WHICH ROW to read.
+ */
 export function runMetricValue(stats: StatsResponse, metric: CompareMetric): number | null {
   const row = stats.stats.find((candidate) => candidate.scope === 'run');
-  if (!row) return null;
-  if (metric === 'throughput') return row.throughputRps;
-  if (metric === 'errors') return row.throughputRps * row.errorRate;
-  if (metric === 'max') return row.maxMs;
-
-  const value = row.percentiles[metric];
-  return value === undefined || !Number.isFinite(value) ? null : value;
+  return row === undefined ? null : metricValue(row, metric);
 }
 
 export function buildCompareSummary(

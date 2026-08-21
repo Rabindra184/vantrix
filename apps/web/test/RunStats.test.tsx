@@ -113,6 +113,60 @@ describe('RunStats', () => {
     expect(screen.getAllByText('-50.0% vs previous').length).toBeGreaterThan(0);
   });
 
+  /**
+   * THE TILE AND THE PERCENTAGE UNDER IT READ THE SAME NUMBER.
+   *
+   * The p95/p99 tiles display `clampPercentile(raw, row)` — an estimate
+   * projected onto the sample's own exactly-tracked [min, max], for the
+   * reasons `StatisticsTable`'s own docstring gives — while the delta was
+   * computed from the RAW map on both sides. `StatisticsTable` records the
+   * reference run reporting p99 2515.4 against a max of 2503, so this was a
+   * tile reading "2503 ms" over a percentage derived from 2515.4.
+   *
+   * The fixture below is built so the clamp BITES on the baseline: its raw
+   * p95 sits above its own `maxMs`, and its clamped value is exactly half
+   * this run's clamped one. Both expectations are computed from the fixture,
+   * not written down.
+   */
+  it('computes percentile deltas from the clamped values the tiles show', () => {
+    const clamped = Math.min(Math.max(runRow.percentiles.p95!, runRow.minMs), runRow.maxMs);
+    // Raw double the target, but a max that clamps it back down to it — so a
+    // delta read off the raw map and one read off the clamp differ, loudly.
+    const baselineClamped = clamped * 2;
+    render(
+      <RunStats
+        stats={stats}
+        baseline={{
+          id: '11111111-1111-4111-8111-111111111111',
+          startedAt: '2026-08-07T05:30:02.171Z',
+          toolStartedAt: '2026-08-07T05:30:02.171Z',
+          durationMs: 60_000,
+          verdict: 'passed',
+          count: runRow.count,
+          okCount: runRow.okCount,
+          koCount: runRow.koCount,
+          errorRate: runRow.errorRate,
+          minMs: runRow.minMs,
+          maxMs: baselineClamped,
+          meanMs: runRow.meanMs,
+          throughputRps: runRow.throughputRps,
+          percentiles: { p95: baselineClamped * 4, p99: baselineClamped * 4 },
+        }}
+      />,
+    );
+
+    // Guard first: the fixture only proves anything if the raw and clamped
+    // baselines really do disagree.
+    expect(baselineClamped * 4).toBeGreaterThan(baselineClamped);
+    // `.parentElement`: `stat-p95` names the <dd> that holds the VALUE, and
+    // the delta is its sibling inside the tile — so the assertion has to be
+    // scoped to the tile to be about this metric rather than any of the six.
+    const tile = screen.getByTestId('stat-p95').parentElement!;
+    // clamped vs 2 * clamped is -50.0%. Read off the raw map it would be
+    // about -87.5%, a number matching neither value on screen.
+    expect(tile).toHaveTextContent('-50.0% vs previous');
+  });
+
   it('renders nothing when the payload has no run-scope row', () => {
     const { container } = render(<RunStats stats={{ ...stats, stats: [] }} />);
     expect(container).toBeEmptyDOMElement();

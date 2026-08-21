@@ -86,8 +86,19 @@ const GLOBAL_GROUP_FAMILY: MetricFamily = 'group_cumulated';
  * API, the charts, any future export — would benefit. Recorded as follow-up in
  * the ruling; doing it in the browser fixes one surface, which is this one.
  */
-export function clampPercentile(value: number, row: StatRow): number {
+export function clampPercentile(value: number, row: PercentileRange): number {
   return Math.min(Math.max(value, row.minMs), row.maxMs);
+}
+
+/**
+ * The two exactly-tracked extremes an estimate is clamped against — narrower
+ * than `StatRow` on purpose, so `TrendRun` (which carries the same pair, from
+ * the same rollup) can be clamped by the same function rather than by a
+ * second copy of `Math.min(Math.max(...))` in `RunStats`.
+ */
+export interface PercentileRange {
+  readonly minMs: number;
+  readonly maxMs: number;
 }
 
 /* ======================================================================== *

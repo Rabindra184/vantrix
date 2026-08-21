@@ -1,6 +1,12 @@
 import type { StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
-import { clampPercentile, formatCount, formatMs, formatRate } from '../tables/StatisticsTable';
+import {
+  clampPercentile,
+  formatCount,
+  formatMs,
+  formatRate,
+  type PercentileRange,
+} from '../tables/StatisticsTable';
 
 /**
  * §13.2's headline numbers, above the tables.
@@ -93,14 +99,14 @@ export default function RunStats({
           label="95th Percentile"
           value={percentileValue(run, 'p95')}
           hint="an estimate, accurate to within 1%"
-          delta={deltaFor(run.percentiles.p95, baseline?.percentiles.p95, 'lower')}
+          delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
           data-testid="stat-p95"
         />
         <StatTile
           label="99th Percentile"
           value={percentileValue(run, 'p99')}
           hint="an estimate, accurate to within 1%"
-          delta={deltaFor(run.percentiles.p99, baseline?.percentiles.p99, 'lower')}
+          delta={deltaFor(percentileMs(run, 'p99'), percentileMs(baseline, 'p99'), 'lower')}
           data-testid="stat-p99"
         />
       </dl>
@@ -125,6 +131,32 @@ function percentileValue(row: StatRow, key: string): string {
   const raw = row.percentiles[key];
   if (raw === undefined || !Number.isFinite(raw)) return '—';
   return `${formatMs(clampPercentile(raw, row))} ms`;
+}
+
+/**
+ * A percentile the way the TILE SHOWS IT — clamped onto its own row's
+ * exactly-tracked [min, max], exactly as `percentileValue` does two
+ * functions above.
+ *
+ * The delta used to read the RAW map on both sides while the value above it
+ * read the clamped one, so the two disagreed by however much the estimator
+ * was out: `StatisticsTable`'s own docstring records the reference run
+ * reporting p99 2515.4 against a max of 2503, which is a tile displaying
+ * "2503 ms" over a percentage computed from 2515.4. A reader dividing the
+ * two numbers on screen could not reproduce the figure between them, and on
+ * a sparse tail the clamp can flip the sign of a small delta outright.
+ *
+ * `TrendRun` carries the same `minMs`/`maxMs` pair from the same rollup, so
+ * the baseline is clamped against its OWN range rather than this run's.
+ */
+function percentileMs(
+  row: (PercentileRange & { readonly percentiles: Record<string, number> }) | null | undefined,
+  key: string,
+): number | undefined {
+  if (row === null || row === undefined) return undefined;
+  const raw = row.percentiles[key];
+  if (raw === undefined || !Number.isFinite(raw)) return undefined;
+  return clampPercentile(raw, row);
 }
 
 function deltaFor(

@@ -48,8 +48,13 @@ export interface CompareMatrix {
  * A missing percentile key yields `null` rather than a neighbouring one. The
  * set is a project setting, so a run whose project does not configure `p99`
  * genuinely has no answer, and the nearest percentile is a different question.
+ *
+ * EXPORTED, because the compare page's summary tiles sit between this matrix
+ * and the overlay and have to mean the same thing by "Errors" as both. They
+ * shipped with a line-for-line copy of this function, which is the third
+ * copy of the decision this docstring exists to protect.
  */
-function valueOf(row: StatRow, metric: CompareMetric): number | null {
+export function metricValue(row: StatRow, metric: CompareMetric): number | null {
   if (metric === 'throughput') return row.throughputRps;
   if (metric === 'errors') return row.throughputRps * row.errorRate;
   if (metric === 'max') return row.maxMs;
@@ -108,7 +113,7 @@ export function toCompareMatrix(
     cells: requests.map((name) =>
       perRun.map((lookup) => {
         const row = lookup.get(name);
-        return row === undefined ? null : valueOf(row, metric);
+        return row === undefined ? null : metricValue(row, metric);
       }),
     ),
   };

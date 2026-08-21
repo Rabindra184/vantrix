@@ -82,11 +82,20 @@ describe('RunList columns', () => {
       },
     ]);
 
-    const health = await screen.findByRole('region', { name: 'Run list health' });
+    const health = await screen.findByRole('region', { name: 'Run health on this page' });
     expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('1');
     expect(within(health).getByText('In flight').closest('div')).toHaveTextContent('1');
     expect(within(health).getByText('Passed gates').closest('div')).toHaveTextContent('1');
     expect(within(health).getByText('Unjudged').closest('div')).toHaveTextContent('1');
+
+    // THE COUNTS SAY WHAT THEY COUNT. They reduce over one keyset page, and
+    // shipped under the name "Run list health" with only the fourth tile
+    // disclosing that — so an org with 90 failed runs read "Needs attention:
+    // 2" off its first page. The denominator is derived from the rows on
+    // screen rather than written down, so a fixture change moves both sides.
+    const rows = screen.getAllByTestId('run-row');
+    expect(within(health).getByText(new RegExp(`Counted over the ${rows.length} runs on this page`, 'i')))
+      .toBeInTheDocument();
 
     expect(screen.getByRole('columnheader', { name: 'Focus' })).toBeInTheDocument();
     expect(screen.getByText('investigate')).toBeInTheDocument();
@@ -130,6 +139,42 @@ describe('RunList columns', () => {
       expect(urls.some((url) => url.includes('status=complete'))).toBe(true);
       expect(urls.some((url) => url.includes('verdict=failed'))).toBe(true);
     });
+  });
+
+  /**
+   * A FILTER THE LIST CANNOT HONOUR IS STATED, NOT DROPPED.
+   *
+   * `?status=completed` (a plausible typo for `complete`) used to be parsed
+   * to `null`, left in the address bar, and reported as no active filter —
+   * so the page rendered the whole unfiltered list with no Clear control,
+   * and a shared link read as "there are no other completed runs". The API
+   * answers the identical value with a 400 RUN_FILTER_INVALID; the two must
+   * not disagree about one input.
+   */
+  it('says so when the URL names a filter value this list cannot use', async () => {
+    const { fetchSpy } = renderList(ROWS, '/runs?status=completed');
+
+    expect(await screen.findByTestId('run-filter-ignored')).toHaveTextContent(
+      /ignored status=completed/i,
+    );
+    // Offered a way out, which is the half that was missing: `hasActiveFilters`
+    // was false, so no Clear button rendered at all.
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
+
+    // And the value never reaches the API, which would refuse it.
+    await waitFor(() => expect(fetchSpy.mock.calls.length).toBeGreaterThan(0));
+    for (const call of fetchSpy.mock.calls) {
+      expect(String(call[0])).not.toContain('status=');
+    }
+  });
+
+  it('says nothing when every filter in the URL is one it can use', async () => {
+    renderList(ROWS, '/runs?status=complete');
+    // Waits for the LOADED state: the notice renders above the table in
+    // every branch, so asserting its absence before the rows arrive would
+    // pass against a page that had not rendered the controls at all.
+    await screen.findByRole('table');
+    expect(screen.queryByTestId('run-filter-ignored')).toBeNull();
   });
 
   it('can clear active filters from the no-match state', async () => {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
-  Assertion, LiveDelta, SeriesResponse, ToolAssertion, TrendRun, TrendsResponse,
+  Assertion, LiveDelta, SeriesResponse, ToolAssertion,
 } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
@@ -36,7 +36,9 @@ import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
 import { downloadCsv } from '../tables/csv';
-import { assertionsCsv, describeAssertionRule } from './assertionExport';
+import { assertionsCsv } from './assertionExport';
+import { countAssertions, describeAssertionRule, firstFailedAssertion } from './assertions';
+import { baselineRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE } from './paths';
@@ -433,7 +435,30 @@ export function RunOverviewTab() {
   // `RunErrorsTab`. This tab was simply unreachable for a processing run
   // before Task 7, which is why the bug had no chance to surface here first.
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: terminal });
-  const trends = useQuery({ ...trendsQuery(runId ?? ''), enabled: terminal });
+  // THE COHORT, FOR ONE NEIGHBOUR — and deliberately NOT on this file's
+  // default terms.
+  //
+  // `trendsQuery` is the one factory in `api/metrics.ts` with no
+  // `staleTime`, and its docstring argues that correctly: the Trends TAB
+  // draws the whole cohort, and a cohort answer changes when any run of the
+  // same simulation is ingested. This consumer wants one entry out of it —
+  // the run immediately before this one — which cannot change once it
+  // exists. Left on the default, every switch back to Overview re-issued the
+  // heaviest read in the app (up to 21 DDSketch blobs deserialised and
+  // re-quantiled server-side) to relabel six tiles.
+  //
+  // `staleTime` is per-OBSERVER in TanStack, so this override buys Overview
+  // its cache without touching the Trends tab's own refetch-on-mount, even
+  // though both observe the identical key.
+  //
+  // `window === null` in `enabled`: the deltas are withheld under a brush
+  // (see `RunStats` below), so a brushed reader should not pay for the
+  // payload either.
+  const trends = useQuery({
+    ...trendsQuery(runId ?? ''),
+    enabled: terminal && window === null,
+    staleTime: OVERVIEW_TRENDS_STALE_MS,
+  });
   // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
   // tab uses, so a reader who widens the window pays for it once.
   const series = useQuery({
@@ -486,12 +511,23 @@ export function RunOverviewTab() {
         {(data) => (
           <>
             {/*
-                The baseline is the cohort neighbour `/compare` would choose
-                by default: the older run when one exists, otherwise the newer
-                one. If `/trends` is still loading or the cohort has no
-                neighbour, the tiles simply omit deltas rather than inventing
+                NO BASELINE UNDER A BRUSH. `stats` above is window-scoped and
+                `/trends` is not, so comparing them across a brushed window
+                measured a tenth of this run against the whole of the
+                previous one — dragging the brush to 10s of a 63s run made
+                every tile read about -84% "vs previous", a regression the
+                run does not have. There is no windowed cohort endpoint to
+                compare against, so the honest answer is to withhold the
+                deltas rather than to restate them with a caveat.
+
+                Otherwise: the cohort run immediately BEFORE this one. If
+                `/trends` is still loading, or this run is the oldest in its
+                window, the tiles omit deltas rather than inventing
                 comparison copy. */}
-            <RunStats stats={data} baseline={baselineRun(trends.data, runId)} />
+            <RunStats
+              stats={data}
+              baseline={window === null ? baselineRun(trends.data, runId) : null}
+            />
             {/* THE TILES ARE NEVER WITHHELD. They are the whole point of the
                 mobile summary — §22.6 names "key tiles, sparklines, verdict,
                 error summary" — and they are already responsive. It is the
@@ -508,13 +544,8 @@ export function RunOverviewTab() {
   );
 }
 
-function baselineRun(trends: TrendsResponse | undefined, current: string): TrendRun | null {
-  if (trends === undefined) return null;
-  const ids = trends.runs.map((run) => run.id);
-  const here = ids.indexOf(current);
-  if (here < 0) return null;
-  return trends.runs[here + 1] ?? trends.runs[here - 1] ?? null;
-}
+/** Overview keeps its cohort page for five minutes; see the `trends` query. */
+const OVERVIEW_TRENDS_STALE_MS = 5 * 60_000;
 
 /**
  * §22.6's sparklines: the shape behind two of the tiles above them.
@@ -960,7 +991,7 @@ function Assertions({
 
 function AssertionEvidencePanel({ assertions }: { assertions: readonly Assertion[] }) {
   const counts = countAssertions(assertions);
-  const firstFailed = assertions.find((assertion) => assertion.outcome === 'failed');
+  const firstFailed = firstFailedAssertion(assertions);
 
   return (
     <div
@@ -1038,16 +1069,6 @@ function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
         />
       </div>
     </article>
-  );
-}
-
-function countAssertions(assertions: readonly Assertion[]) {
-  return assertions.reduce(
-    (counts, assertion) => {
-      counts[assertion.outcome] += 1;
-      return counts;
-    },
-    { passed: 0, failed: 0, not_applicable: 0 },
   );
 }
 

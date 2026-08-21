@@ -78,8 +78,36 @@ export default function RunList({
   // walk forward lives where the walk happens.
   const [cursor, setCursor] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
+  const { filters, ignored } = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const filtersActive = hasActiveFilters(filters);
+
+  // ONE PAIR OF HANDLERS, not one pair per return branch. The controls
+  // render above the loading, error and loaded states alike — they must, or
+  // the filter you just applied disappears while its own request is in
+  // flight — and three inline copies of "reset the cursor, then write the
+  // URL" is three places for them to drift apart.
+  //
+  // `setCursor(null)` FIRST, in both: a cursor is the id of a row on the
+  // previous page of the PREVIOUS filter (see the cursor's own comment
+  // above), so carrying it across a filter change asks the API to continue a
+  // walk through a list that no longer exists.
+  const applyFilters = (next: RunListFilters) => {
+    setCursor(null);
+    setSearchParams(paramsFromFilters(next), { replace: true });
+  };
+  const clearFilters = () => {
+    setCursor(null);
+    setSearchParams({}, { replace: true });
+  };
+  const controls = (
+    <RunListControls
+      filters={filters}
+      ignored={ignored}
+      active={filtersActive || ignored.length > 0}
+      onApply={applyFilters}
+      onClear={clearFilters}
+    />
+  );
   const headingAction = action ?? (projectSlug === null ? (
     <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
       <PlusIcon className="h-3.5 w-3.5" />
@@ -105,18 +133,7 @@ export default function RunList({
     return (
       <div className="flex flex-col gap-4">
         <PageHeading heading={heading} action={headingAction} />
-        <RunListControls
-          filters={filters}
-          active={filtersActive}
-          onApply={(next) => {
-            setCursor(null);
-            setSearchParams(paramsFromFilters(next), { replace: true });
-          }}
-          onClear={() => {
-            setCursor(null);
-            setSearchParams({}, { replace: true });
-          }}
-        />
+        {controls}
         <LoadingState label="Loading runs…">
           <SkeletonTable columns={6} rows={6} />
         </LoadingState>
@@ -138,18 +155,7 @@ export default function RunList({
     return (
       <div className="flex flex-col gap-4">
         <PageHeading heading={heading} action={headingAction} />
-        <RunListControls
-          filters={filters}
-          active={filtersActive}
-          onApply={(next) => {
-            setCursor(null);
-            setSearchParams(paramsFromFilters(next), { replace: true });
-          }}
-          onClear={() => {
-            setCursor(null);
-            setSearchParams({}, { replace: true });
-          }}
-        />
+        {controls}
         <ErrorState
           title="The runs could not be loaded"
           detail={problem?.detail ?? error.message}
@@ -173,18 +179,7 @@ export default function RunList({
   return (
     <div className="flex flex-col gap-4">
       <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} action={headingAction} />
-      <RunListControls
-        filters={filters}
-        active={filtersActive}
-        onApply={(next) => {
-          setCursor(null);
-          setSearchParams(paramsFromFilters(next), { replace: true });
-        }}
-        onClear={() => {
-          setCursor(null);
-          setSearchParams({}, { replace: true });
-        }}
-      />
+      {controls}
 
       {items.length === 0 ? (
         <EmptyPage
@@ -192,14 +187,11 @@ export default function RunList({
           projectSlug={projectSlug}
           filtered={filtersActive}
           onFirstPage={() => setCursor(null)}
-          onClearFilters={() => {
-            setCursor(null);
-            setSearchParams({}, { replace: true });
-          }}
+          onClearFilters={clearFilters}
         />
       ) : (
         <>
-          <RunListHealth items={items} hasMore={nextCursor !== null} />
+          <RunListHealth items={items} />
           {/* ONE `caption` NODE, rendered visibly outside the scroll box and
               programmatically inside the table — see `TableFrame`'s docstring for
               why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
@@ -313,11 +305,21 @@ const VERDICT_FILTERS: readonly { value: RunListVerdictFilter; label: string }[]
 
 function RunListControls({
   filters,
+  ignored,
   active,
   onApply,
   onClear,
 }: {
   readonly filters: RunListFilters;
+  /**
+   * Query parameters this list understands the NAME of but not the VALUE —
+   * `?status=completed`, say. Stated rather than dropped: silently ignoring
+   * one rendered the whole unfiltered list under a URL that claimed a
+   * filter, with no Clear control to explain it, while the API answers the
+   * same value with a 400 RUN_FILTER_INVALID. Two components disagreeing
+   * about one input is the part that had to go.
+   */
+  readonly ignored: readonly string[];
   readonly active: boolean;
   readonly onApply: (filters: RunListFilters) => void;
   readonly onClear: () => void;
@@ -351,6 +353,19 @@ function RunListControls({
         <FilterIcon className="h-3.5 w-3.5" />
         Filter runs
       </div>
+
+      {ignored.length > 0 && (
+        // NO `role="status"`, deliberately. This is not an announcement — it
+        // is present on first paint, because it describes the URL the page
+        // was opened with. `LoadingState` already owns the one live region
+        // on this screen, and a second `status` in the same document while
+        // the list loads is two things a screen reader has to arbitrate
+        // between for no gain.
+        <p data-testid="run-filter-ignored" className="text-[12px] leading-relaxed text-muted">
+          Ignored {ignored.join(' and ')} in the address bar — not {ignored.length > 1 ? 'values' : 'a value'} this
+          list can filter by. Everything else on this page is unfiltered.
+        </p>
+      )}
 
       <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto] md:items-end">
         <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
@@ -410,44 +425,63 @@ function RunListControls({
   );
 }
 
-function RunListHealth({
-  items,
-  hasMore,
-}: {
-  readonly items: readonly RunListItem[];
-  readonly hasMore: boolean;
-}) {
+/**
+ * The four counts, and THE SENTENCE THAT MAKES THEM TRUE.
+ *
+ * These reduce over `items` — one keyset page — and nothing about a page of
+ * 25 rows tells you anything about the 400 behind it. Shipped as "Run list
+ * health" with only the fourth tile disclosing its scope, this said "Needs
+ * attention: 2" over an org with 90 failed runs. That is the same defect as
+ * the client-side search this component's own docstring rejects: a
+ * page-local number presented as a statement about the list.
+ *
+ * The scope is stated ONCE, in the section's accessible name and in a line
+ * above the tiles, rather than repeated into four `detail` strings — the
+ * details are what each count MEANS, and a caveat repeated four times reads
+ * as decoration by the third.
+ *
+ * `hasMore` is deliberately gone. It only says whether a NEXT page exists,
+ * so it was never the right test anyway: on page three of five it is true
+ * and on page five it is false, and the counts are page-local in both.
+ */
+function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
   const summary = healthSummary(items);
 
   return (
     <section
-      aria-label="Run list health"
-      className="grid gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel sm:grid-cols-2 xl:grid-cols-4"
+      aria-label="Run health on this page"
+      className="rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
-      <HealthTile
-        label="Needs attention"
-        value={summary.needsAttention}
-        detail="Failed, incomplete, or SLA failed"
-        colour="var(--color-status-failed)"
-      />
-      <HealthTile
-        label="In flight"
-        value={summary.inFlight}
-        detail="Pending, parsing, or live"
-        colour="var(--color-status-pending)"
-      />
-      <HealthTile
-        label="Passed gates"
-        value={summary.passed}
-        detail="SLA verdict passed"
-        colour="var(--color-status-passed)"
-      />
-      <HealthTile
-        label="Unjudged"
-        value={summary.unjudged}
-        detail={hasMore ? 'This page only; more available' : 'No verdict on this page'}
-        colour="var(--color-status-not-applicable)"
-      />
+      <p className="text-[12px] leading-relaxed text-muted">
+        Counted over the {items.length} {items.length === 1 ? 'run' : 'runs'} on this page. Paging or
+        filtering changes them; they are not totals for the whole list.
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <HealthTile
+          label="Needs attention"
+          value={summary.needsAttention}
+          detail="Failed, incomplete, or SLA failed"
+          colour="var(--color-status-failed)"
+        />
+        <HealthTile
+          label="In flight"
+          value={summary.inFlight}
+          detail="Pending, parsing, or live"
+          colour="var(--color-status-pending)"
+        />
+        <HealthTile
+          label="Passed gates"
+          value={summary.passed}
+          detail="SLA verdict passed"
+          colour="var(--color-status-passed)"
+        />
+        <HealthTile
+          label="Unjudged"
+          value={summary.unjudged}
+          detail="No verdict, or not evaluated"
+          colour="var(--color-status-not-applicable)"
+        />
+      </div>
     </section>
   );
 }
@@ -584,13 +618,30 @@ function EmptyPage({
   );
 }
 
-function filtersFromParams(params: URLSearchParams): RunListFilters {
+/**
+ * The URL's filters, plus WHAT THIS DROPPED. The second half is the point:
+ * an unrecognised `?status=completed` used to become `null` while staying in
+ * the address bar, so the page rendered the full unfiltered list, reported
+ * no active filters, and offered no Clear — a shared link that reads as
+ * "there are no other completed runs". The API rejects the identical value
+ * with a 400, and the two must not disagree about one input.
+ */
+function filtersFromParams(params: URLSearchParams): {
+  filters: RunListFilters;
+  ignored: string[];
+} {
   const status = params.get('status');
   const verdict = params.get('verdict');
+  const ignored: string[] = [];
+  if (status !== null && !isStatusFilter(status)) ignored.push(`status=${status}`);
+  if (verdict !== null && !isVerdictFilter(verdict)) ignored.push(`verdict=${verdict}`);
   return {
-    q: params.get('q') ?? undefined,
-    status: isStatusFilter(status) ? status : null,
-    verdict: isVerdictFilter(verdict) ? verdict : null,
+    filters: {
+      q: params.get('q') ?? undefined,
+      status: isStatusFilter(status) ? status : null,
+      verdict: isVerdictFilter(verdict) ? verdict : null,
+    },
+    ignored,
   };
 }
 

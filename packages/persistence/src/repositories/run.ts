@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
+import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import type { ProjectScope, TenantScope } from './tenant.js';
 
 export interface RunRecord {
@@ -159,11 +160,23 @@ interface RunSqlRow extends Omit<RunRow, 'project'> {
   projectName: string;
 }
 
+/** A verdict filter, plus the one value that is the ABSENCE of a verdict. */
+export type RunVerdictFilter = RunVerdict | 'none';
+
+/**
+ * TYPED, NOT `string`. These reach `list()`'s raw SQL as bound parameters,
+ * so a bad value cannot inject — but it can silently return an empty page
+ * that reads as "no such runs", which is why the API validates them
+ * (`parseRunListFilters`) and answers 400 `RUN_FILTER_INVALID` instead.
+ * Declaring them as plain strings here made that guard the only thing
+ * standing between a typo and a wrong answer, with nothing in the type
+ * system agreeing.
+ */
 export interface RunListOptions {
   readonly limit: number;
   readonly cursor?: string;
-  readonly status?: string;
-  readonly verdict?: string;
+  readonly status?: RunStatus;
+  readonly verdict?: RunVerdictFilter;
   readonly q?: string;
 }
 
@@ -194,6 +207,24 @@ function isUniqueConstraintViolation(err: unknown): boolean {
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
+
+/**
+ * Does this query look like the start of a run id?
+ *
+ * THE RUN ID IS MATCHED BY PREFIX, NEVER BY SUBSTRING, and this is the
+ * guard that keeps it out of the free-text search entirely for anything
+ * that is not plausibly an id. `r.id::text ILIKE '%3%'` matches almost
+ * every UUID ever generated, so folding the id into the same
+ * contains-anywhere OR as simulation and branch made every short query
+ * return the whole org — a search that answers "everything" is not a
+ * search.
+ *
+ * Four characters, hex and dashes only, is the shortest thing that can be
+ * the beginning of a UUID and cannot be an ordinary word. It also matches
+ * what the UI actually shows a reader to copy: `RunList` renders
+ * `id.slice(0, 8)` for a run with no simulation name yet.
+ */
+const RUN_ID_PREFIX = /^[0-9a-f][0-9a-f-]{3,}$/i;
 
 export class RunRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -601,19 +632,34 @@ export class RunRepository {
         filters.push(`r.verdict = $${params.length}`);
       }
     }
+    // FREE TEXT OVER THE RUN'S OWN WORDS, plus the id BY PREFIX.
+    //
+    // Every clause here is a leading-wildcard ILIKE, which no B-tree can
+    // serve, so this is a scan — bounded by `r.org_id` (and by
+    // `r.project_id` when the caller is token-scoped) rather than by the
+    // whole table, which is what keeps it proportional to one tenant's
+    // history. A trigram index is the answer if a tenant ever outgrows
+    // that; it needs its own migration and the pg_trgm extension, so it is
+    // deliberately not smuggled in here.
     if (opts.q) {
       params.push(`%${escapeLike(opts.q)}%`);
       const at = `$${params.length}`;
-      filters.push(`(
-        r.id::text ILIKE ${at} ESCAPE '\\' OR
-        p.slug ILIKE ${at} ESCAPE '\\' OR
-        p.name ILIKE ${at} ESCAPE '\\' OR
-        COALESCE(r.simulation, '') ILIKE ${at} ESCAPE '\\' OR
-        COALESCE(r.description, '') ILIKE ${at} ESCAPE '\\' OR
-        COALESCE(r.environment, '') ILIKE ${at} ESCAPE '\\' OR
-        COALESCE(r.branch, '') ILIKE ${at} ESCAPE '\\' OR
-        COALESCE(r.commit_sha, '') ILIKE ${at} ESCAPE '\\'
-      )`);
+      const clauses = [
+        `p.slug ILIKE ${at} ESCAPE '\\'`,
+        `p.name ILIKE ${at} ESCAPE '\\'`,
+        `COALESCE(r.simulation, '') ILIKE ${at} ESCAPE '\\'`,
+        `COALESCE(r.description, '') ILIKE ${at} ESCAPE '\\'`,
+        `COALESCE(r.environment, '') ILIKE ${at} ESCAPE '\\'`,
+        `COALESCE(r.branch, '') ILIKE ${at} ESCAPE '\\'`,
+        `COALESCE(r.commit_sha, '') ILIKE ${at} ESCAPE '\\'`,
+      ];
+      // See RUN_ID_PREFIX: anchored, and only for a query that could be the
+      // start of an id at all.
+      if (RUN_ID_PREFIX.test(opts.q)) {
+        params.push(`${escapeLike(opts.q)}%`);
+        clauses.push(`r.id::text ILIKE $${params.length} ESCAPE '\\'`);
+      }
+      filters.push(`(${clauses.join(' OR ')})`);
     }
     params.push(opts.limit + 1);
 
