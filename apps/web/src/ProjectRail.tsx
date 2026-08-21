@@ -114,14 +114,18 @@ export default function ProjectRail() {
 
   return (
     // STICKY BENEATH THE HEADER, not from the top of the viewport: the shell's
-    // header is a 56px sticky bar above both columns, so `top-0` here would
-    // slide the rail's first row under it. `h-[calc(100dvh-3.5rem)]` is the
-    // matching height — `dvh` rather than `vh` because on mobile Safari `100vh`
-    // is the viewport WITHOUT browser chrome, which would make the rail taller
-    // than the screen and hide its last project behind the address bar.
+    // header is a sticky bar above both columns, so `top-0` here would slide
+    // the rail's first row under it. Both the offset and the matching height
+    // read the header's own token (`tokens.css`'s `--header-height`, published
+    // as the `header` spacing name), so resizing the header moves this with
+    // it. The height is an arbitrary value because no spacing utility can
+    // express `calc(100dvh - token)` — `dvh` rather than `vh` because on
+    // mobile Safari `100vh` is the viewport WITHOUT browser chrome, which
+    // would make the rail taller than the screen and hide its last project
+    // behind the address bar.
     <div
       className={cn(
-        'z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:border-b-0 lg:border-r',
+        'z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-header lg:h-[calc(100dvh-var(--header-height))] lg:border-b-0 lg:border-r',
         // NO width transition, deliberately, though the reference design has
         // one: this repo's motion rule (`tokens.css`'s `transition-ui`) is
         // colour-ish properties only — width is laid out on the main thread

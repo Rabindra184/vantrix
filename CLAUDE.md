@@ -65,10 +65,43 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **115 files / 1243 tests**, it
+`nvm use` first, and if a run reports fewer than **115 files / 1245 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the UI
+silently-skipped run looks like a pass. Last measured on the header-height
+token, which added no unit FILE and 2 cases to `tokens.test.ts` — the shell
+header's 56px had been three hard-coded spellings in three files
+(`AppShell`'s height, `ProjectRail`'s sticky offset AND its
+`calc(100dvh - …)`, `RunTabs`' sticky offset) that had to agree with nothing
+making them, and the failure when they stop is invisible to jsdom: the
+tab strip slides UNDER a resized header as a blurry ghost band only a
+scrolling browser shows. The two cases gate the declaration (once, and
+aliased into the spacing namespace under a DIFFERENT name — `@theme`'s
+self-reference trap) and the consumption (each dependent reads the token;
+none still contains `h-14`, `top-14` or `3.5rem`). That second case scans
+WHOLE FILES, comments included, which is deliberate — stale prose naming
+the old spelling is exactly as misleading as a stale class, and it caught
+its own author's comment first. Verified for real by BUILDING and grepping
+the emitted CSS rather than trusting the token: `.h-header`,
+`.top-header`, `.lg\:top-header` and `calc(100dvh - var(--header-height))`
+all present. A token absent from `@theme` generates NO utility, silently,
+so a source-only assertion would have passed against a page with no
+height at all. The same build revealed a second thing worth knowing:
+Tailwind v4 SCANS `apps/web/test`, so every class string a test quotes as
+DATA became a real rule in the shipped bundle — the gate forbidding
+`top-14` was itself emitting `.top-14`. `tokens.css` now carries
+`@source not '../../test'`; the rebuild dropped exactly six rules, all six
+verified test-injected by diffing the selector sets, with nothing from
+`src` lost. From a floor of 115 / 1243. Its integration floor is 113 files
+/ 1312 tests — the file count is unchanged but the TEST count moved,
+because `tokens.test.ts` is a `.ts` file and the integration config runs
+every one of those; its e2e stays 92, which runs no `.ts` unit file at
+all. THE e2e-BEFORE-INTEGRATION TRAP BELOW CLAIMED THIS BRANCH TOO, which
+is worth a second datapoint since the first cost two sessions: run in that
+reverse order, integration came back `1 failed | 1311 passed` with no
+failing assertion anywhere in the output, and re-run alone against an
+untouched tree it was 1312/1312 green. Nothing about the failure named
+itself; only the ORDER did. Before that, the UI
 modernization branch (shadcn-style cva/cn foundation, lucide-react behind
 `components/icons.tsx`'s unchanged exports, and the rail's desktop
 collapse), which added no unit FILE and 3 cases to `ProjectRail.test.tsx`,

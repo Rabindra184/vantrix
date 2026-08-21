@@ -60,10 +60,15 @@ export default function RunTabs({
     // border onto the container's, so the active tab's underline meets the
     // rule rather than floating a pixel above it.
     //
-    // STICKY BENEATH THE SHELL HEADER (`top-14` matches its `h-14`), because
-    // the pages under these tabs are the longest in the app — ten charts, a
-    // 200-row statistics table — and reaching a different section used to
-    // mean scrolling all the way back up. The negative margins re-span
+    // STICKY BENEATH THE SHELL HEADER — `top-header` here and `h-header` on
+    // the header itself are the SAME token (`tokens.css`'s `--header-height`),
+    // so the offset cannot drift from the thing it clears. The two were
+    // separate hard-coded numbers in separate files first, agreeing only by
+    // coincidence: resize the header and this strip slid under it, a blurry
+    // ghost band visible while scrolling and invisible to jsdom. Sticky at
+    // all because the pages under these tabs are the longest in the app —
+    // ten charts, a 200-row statistics table — and reaching a different
+    // section used to mean scrolling all the way back up. The margins re-span
     // `<main>`'s own `p-4 sm:p-6` gutter so content scrolling underneath
     // disappears at the viewport edge, not mid-gutter; the translucent page
     // fill plus blur is the same treatment the header uses one layer up.
@@ -71,7 +76,7 @@ export default function RunTabs({
     // tooltips ECharts portals at its own index.
     <nav
       aria-label="Run sections"
-      className="sticky top-14 z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-default bg-page/90 px-4 backdrop-blur-md sm:-mx-6 sm:px-6"
+      className="sticky top-header z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-default bg-page/90 px-4 backdrop-blur-md sm:-mx-6 sm:px-6"
     >
       {/* Each tab carries a lucide glyph beside its word. All five icons are
           `aria-hidden` (icons.tsx's default), so every tab's accessible name
