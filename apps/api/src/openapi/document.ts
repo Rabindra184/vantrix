@@ -257,6 +257,27 @@ const parameters: Record<string, ParameterObject> = {
       'idle". A bearer token naming a project other than its own gets a 400 PROJECT_MISMATCH.',
     schema: { type: 'string' },
   },
+  RunSearch: {
+    name: 'q',
+    in: 'query',
+    description:
+      'Searches run id, project slug/name, simulation, description, environment, branch, and commit SHA. ' +
+      'Applied by the API before cursor pagination, never as a client-side page filter.',
+    schema: { type: 'string' },
+  },
+  RunStatusFilter: {
+    name: 'status',
+    in: 'query',
+    description: 'Restrict the list to runs in one lifecycle status.',
+    schema: { type: 'string', enum: ['pending', 'parsing', 'running', 'complete', 'failed', 'incomplete'] },
+  },
+  RunVerdictFilter: {
+    name: 'verdict',
+    in: 'query',
+    description:
+      'Restrict the list to one SLA verdict. "none" means the run has no verdict yet.',
+    schema: { type: 'string', enum: ['passed', 'failed', 'not_evaluated', 'none'] },
+  },
   TelemetryFrom: {
     name: 'from',
     in: 'query',
@@ -526,7 +547,14 @@ const paths: Record<string, PathItemObject> = {
         'session names no project and sees every run across its whole org instead, unless ' +
         '"project" below narrows it to one. This is the session-reachable list route named by ' +
         'GET /v1/projects/{slug}/runs\'s PROJECT_REQUIRED remediation.',
-      parameters: [parameters['Limit']!, parameters['Cursor']!, parameters['ProjectFilter']!],
+      parameters: [
+        parameters['Limit']!,
+        parameters['Cursor']!,
+        parameters['ProjectFilter']!,
+        parameters['RunSearch']!,
+        parameters['RunStatusFilter']!,
+        parameters['RunVerdictFilter']!,
+      ],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
         '400': ref('BadRequest'),
@@ -946,7 +974,14 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. 404s if "slug" does not name the project the bearer ' +
         'token belongs to — a token cannot list a project by naming a different one.',
-      parameters: [parameters['ProjectSlug']!, parameters['Limit']!, parameters['Cursor']!],
+      parameters: [
+        parameters['ProjectSlug']!,
+        parameters['Limit']!,
+        parameters['Cursor']!,
+        parameters['RunSearch']!,
+        parameters['RunStatusFilter']!,
+        parameters['RunVerdictFilter']!,
+      ],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
         '400': ref('ProjectRunsBadRequest'),

@@ -1,4 +1,4 @@
-import type { StatRow, StatsResponse } from '@perfportal/contracts';
+import type { StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
 import { clampPercentile, formatCount, formatMs, formatRate } from '../tables/StatisticsTable';
 
@@ -35,7 +35,15 @@ import { clampPercentile, formatCount, formatMs, formatRate } from '../tables/St
  * reading 0/0.00%/— above that sentence would assert measurements nobody
  * took.
  */
-export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
+type DeltaTone = 'better' | 'worse' | 'neutral';
+
+export default function RunStats({
+  stats,
+  baseline,
+}: {
+  readonly stats: StatsResponse;
+  readonly baseline?: TrendRun | null;
+}) {
   const run = stats.stats.find((row) => row.scope === 'run');
   if (run === undefined) return null;
 
@@ -53,6 +61,7 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
           label="Total Requests"
           value={formatCount(run.count)}
           hint={`${formatCount(run.okCount)} OK, ${formatCount(run.koCount)} KO`}
+          delta={deltaFor(run.count, baseline?.count, 'neutral')}
           data-testid="stat-total-requests"
         />
         <StatTile
@@ -63,30 +72,35 @@ export default function RunStats({ stats }: { readonly stats: StatsResponse }) {
           // number sitting a few hundred pixels from the first.
           value={`${(run.errorRate * 100).toFixed(2)}%`}
           hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
+          delta={deltaFor(run.errorRate, baseline?.errorRate, 'lower')}
           data-testid="stat-error-rate"
         />
         <StatTile
           label="Mean Throughput"
           value={`${formatRate(run.throughputRps)} req/s`}
           hint={`${formatCount(run.count)} requests over the run`}
+          delta={deltaFor(run.throughputRps, baseline?.throughputRps, 'higher')}
           data-testid="stat-throughput"
         />
         <StatTile
           label="Mean Response"
           value={`${formatMs(run.meanMs)} ms`}
           hint={`up to ${formatMs(run.maxMs)} ms`}
+          delta={deltaFor(run.meanMs, baseline?.meanMs, 'lower')}
           data-testid="stat-mean-response"
         />
         <StatTile
           label="95th Percentile"
           value={percentileValue(run, 'p95')}
           hint="an estimate, accurate to within 1%"
+          delta={deltaFor(run.percentiles.p95, baseline?.percentiles.p95, 'lower')}
           data-testid="stat-p95"
         />
         <StatTile
           label="99th Percentile"
           value={percentileValue(run, 'p99')}
           hint="an estimate, accurate to within 1%"
+          delta={deltaFor(run.percentiles.p99, baseline?.percentiles.p99, 'lower')}
           data-testid="stat-p99"
         />
       </dl>
@@ -111,4 +125,35 @@ function percentileValue(row: StatRow, key: string): string {
   const raw = row.percentiles[key];
   if (raw === undefined || !Number.isFinite(raw)) return '—';
   return `${formatMs(clampPercentile(raw, row))} ms`;
+}
+
+function deltaFor(
+  current: number | undefined,
+  previous: number | undefined,
+  better: 'higher' | 'lower' | 'neutral',
+): { label: string; tone: DeltaTone } | undefined {
+  if (
+    current === undefined ||
+    previous === undefined ||
+    !Number.isFinite(current) ||
+    !Number.isFinite(previous) ||
+    previous === 0
+  ) {
+    return undefined;
+  }
+
+  const change = ((current - previous) / previous) * 100;
+  if (!Number.isFinite(change)) return undefined;
+  const rounded = Number(change.toFixed(1));
+  const sign = rounded > 0 ? '+' : '';
+  return {
+    label: `${sign}${rounded.toFixed(1)}% vs previous`,
+    tone: deltaTone(rounded, better),
+  };
+}
+
+function deltaTone(change: number, better: 'higher' | 'lower' | 'neutral'): DeltaTone {
+  if (Math.abs(change) < 0.05 || better === 'neutral') return 'neutral';
+  if (better === 'higher') return change > 0 ? 'better' : 'worse';
+  return change < 0 ? 'better' : 'worse';
 }

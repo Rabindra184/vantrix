@@ -26,11 +26,16 @@ export default function StatTile({
   label,
   value,
   hint,
+  delta,
   'data-testid': testId,
 }: {
   readonly label: string;
   readonly value: string;
   readonly hint?: string;
+  readonly delta?: {
+    readonly label: string;
+    readonly tone: 'better' | 'worse' | 'neutral';
+  };
   readonly 'data-testid'?: string;
 }) {
   return (
@@ -49,10 +54,24 @@ export default function StatTile({
       >
         {value}
       </dd>
+      {delta !== undefined && (
+        <p
+          className="mt-2 text-[11px] font-medium leading-none"
+          style={{ color: deltaColour(delta.tone) }}
+        >
+          {delta.label}
+        </p>
+      )}
       {/* `mt-auto` pins the hint to the bottom, so six tiles of differing hint
           lengths in one grid row keep their VALUES on a common baseline
           instead of each floating below its own label. */}
       {hint !== undefined && <p className="mt-auto pt-2 text-[11px] leading-snug text-muted">{hint}</p>}
     </div>
   );
+}
+
+function deltaColour(tone: 'better' | 'worse' | 'neutral'): string | undefined {
+  if (tone === 'better') return 'var(--color-status-passed)';
+  if (tone === 'worse') return 'var(--color-status-failed)';
+  return undefined;
 }

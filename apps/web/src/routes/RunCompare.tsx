@@ -5,10 +5,12 @@ import { seriesQuery, statsQuery, trendsQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
 import {
   COMPARE_METRICS,
+  compareUnit,
   compareLabels,
   type CompareMetric,
   type CompareRun,
 } from '../charts/transforms/compare';
+import { formatCell } from '../charts/DataTable';
 import { EmptyState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
 import type { CompareStats } from '../tables/buildCompareMatrix';
@@ -22,6 +24,7 @@ import {
   parseCompareSelection,
   serialiseCompareSelection,
 } from './compareSelection';
+import { buildCompareSummary, type CompareSummaryModel } from './compareSummary';
 
 /**
  * Compare runs — two to five runs of one simulation, overlaid.
@@ -256,6 +259,14 @@ export default function RunCompare() {
                   </div>
                 </fieldset>
 
+                {matrixRuns.length > 0 && (
+                  <CompareSummary
+                    summary={buildCompareSummary(matrixRuns, runId ?? '', metric)}
+                    metricLabel={metricLabel}
+                    unit={compareUnit(metric)}
+                  />
+                )}
+
                 <CompareChart runs={overlayRuns} metric={metric} onMetricChange={setMetric} />
 
                 <CompareMatrix runs={matrixRuns} metric={metric} metricLabel={metricLabel} />
@@ -281,4 +292,72 @@ function countRequested(raw: string | null, current: string): number {
     .map((id) => id.trim())
     .filter((id) => id !== '');
   return new Set([current, ...asked]).size;
+}
+
+function CompareSummary({
+  summary,
+  metricLabel,
+  unit,
+}: {
+  readonly summary: CompareSummaryModel;
+  readonly metricLabel: string;
+  readonly unit: string;
+}) {
+  const deltaText =
+    summary.deltaPercent === null
+      ? 'Waiting for baseline'
+      : `${summary.deltaPercent > 0 ? '+' : ''}${formatCell(summary.deltaPercent)}%`;
+  const deltaColour =
+    summary.deltaGood === null
+      ? 'var(--color-status-not-applicable)'
+      : summary.deltaGood
+        ? 'var(--color-status-passed)'
+        : 'var(--color-status-failed)';
+
+  return (
+    <section aria-label="Comparison summary" className="grid gap-3 md:grid-cols-3">
+      <CompareSummaryTile
+        label="Selected runs"
+        value={String(summary.selectedCount)}
+        detail={`${metricLabel} across the active selection`}
+      />
+      <CompareSummaryTile
+        label="Current vs baseline"
+        value={deltaText}
+        detail={
+          summary.baselineLabel === null
+            ? 'Select another run to establish a baseline'
+            : `${summary.currentLabel} against ${summary.baselineLabel}`
+        }
+        colour={deltaColour}
+      />
+      <CompareSummaryTile
+        label="Best selected"
+        value={summary.bestValue === null ? '-' : `${formatCell(summary.bestValue)} ${unit}`}
+        detail={summary.bestLabel ?? 'Waiting for run statistics'}
+      />
+    </section>
+  );
+}
+
+function CompareSummaryTile({
+  label,
+  value,
+  detail,
+  colour = 'var(--color-text-primary)',
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail: string;
+  readonly colour?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-default bg-surface px-3 py-3 shadow-panel">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</p>
+      <p className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums" style={{ color: colour }}>
+        {value}
+      </p>
+      <p className="mt-2 text-[11px] leading-snug text-muted">{detail}</p>
+    </div>
+  );
 }

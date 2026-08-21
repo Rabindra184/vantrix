@@ -11,6 +11,8 @@ import {
   Inbox,
   Check,
   Clipboard,
+  Download,
+  Funnel,
   KeyRound,
   Layers,
   LoaderCircle,
@@ -112,6 +114,8 @@ export const TokenIcon = icon(KeyRound);
 export const SetupIcon = icon(Settings);
 export const CopyIcon = icon(Clipboard);
 export const CheckIcon = icon(Check);
+export const DownloadIcon = icon(Download);
+export const FilterIcon = icon(Funnel);
 
 /** Something the reader has to act on: a failed fetch, a failed sign-out. */
 export const AlertIcon = icon(TriangleAlert);

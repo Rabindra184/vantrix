@@ -137,6 +137,35 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
     const seen = [first.items[0]?.id, second.items[0]?.id].sort();
     expect(seen).toEqual([runInA, runInB].sort());
   });
+
+  it('filters by status, verdict, and searchable run metadata', async () => {
+    const { orgId, a, b } = await seed();
+    const repo = new RunRepository(prisma);
+    const checkout = await repo.create(runInput(orgId, a, { branch: 'main' }));
+    const catalog = await repo.create(runInput(orgId, b, { branch: 'release/search' }));
+
+    await prisma.run.update({
+      where: { id: checkout.id },
+      data: { status: 'complete', verdict: 'failed', simulation: 'CheckoutSimulation' },
+    });
+    await prisma.run.update({
+      where: { id: catalog.id },
+      data: { status: 'running', verdict: null, simulation: 'CatalogSimulation' },
+    });
+
+    await expect(repo.list({ orgId }, { limit: 10, status: 'complete' })).resolves.toMatchObject({
+      items: [{ id: checkout.id }],
+    });
+    await expect(repo.list({ orgId }, { limit: 10, verdict: 'none' })).resolves.toMatchObject({
+      items: [{ id: catalog.id }],
+    });
+    await expect(repo.list({ orgId }, { limit: 10, q: 'catalog' })).resolves.toMatchObject({
+      items: [{ id: catalog.id }],
+    });
+    await expect(repo.list({ orgId }, { limit: 10, q: 'release/search' })).resolves.toMatchObject({
+      items: [{ id: catalog.id }],
+    });
+  });
 });
 
 describe('RunRepository idempotency', () => {

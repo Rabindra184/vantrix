@@ -3,7 +3,13 @@ import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
 import { badRequest, parseCursor, parseLimit, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
-import type { RunListResponse } from '@perfportal/contracts';
+import {
+  RunStatusSchema,
+  RunVerdictSchema,
+  type RunListResponse,
+  type RunStatus,
+  type RunVerdict,
+} from '@perfportal/contracts';
 import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { RunsService } from './runs.service.js';
@@ -39,6 +45,9 @@ export class RunsController {
     @Query('limit') limit = '25',
     @Query('cursor') cursor?: string,
     @Query('project') project?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+    @Query('verdict') verdict?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
     let projectId = tenant.projectId;
@@ -65,9 +74,14 @@ export class RunsController {
     }
 
     const parsedCursor = parseCursor(cursor);
+    const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
       { orgId: tenant.orgId, ...(projectId ? { projectId } : {}) },
-      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+      {
+        limit: parseLimit(limit),
+        ...(parsedCursor ? { cursor: parsedCursor } : {}),
+        ...filters,
+      },
     );
     return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
@@ -191,6 +205,9 @@ export class ProjectRunsController {
     @Req() req: Request,
     @Query('limit') limit = '25',
     @Query('cursor') cursor?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+    @Query('verdict') verdict?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
     // A session names no project, but this route names one in its URL and
@@ -217,10 +234,59 @@ export class ProjectRunsController {
     }
 
     const parsedCursor = parseCursor(cursor);
+    const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
       { orgId: tenant.orgId, projectId },
-      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+      {
+        limit: parseLimit(limit),
+        ...(parsedCursor ? { cursor: parsedCursor } : {}),
+        ...filters,
+      },
     );
     return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
+}
+
+type RunVerdictFilter = RunVerdict | 'none';
+
+function parseRunListFilters(input: {
+  readonly q?: string;
+  readonly status?: string;
+  readonly verdict?: string;
+}): { q?: string; status?: RunStatus; verdict?: RunVerdictFilter } {
+  const q = input.q?.trim();
+  const status = input.status?.trim();
+  const verdict = input.verdict?.trim();
+  const filters: { q?: string; status?: RunStatus; verdict?: RunVerdictFilter } = {};
+  if (q) filters.q = q;
+
+  if (status) {
+    const parsed = RunStatusSchema.safeParse(status);
+    if (!parsed.success) {
+      throw badRequest(
+        'RUN_FILTER_INVALID',
+        `Unknown run status "${status}".`,
+        'Use pending, parsing, running, complete, failed, or incomplete.',
+      );
+    }
+    filters.status = parsed.data;
+  }
+
+  if (verdict) {
+    if (verdict === 'none') {
+      filters.verdict = 'none';
+      return filters;
+    }
+    const parsed = RunVerdictSchema.safeParse(verdict);
+    if (!parsed.success) {
+      throw badRequest(
+        'RUN_FILTER_INVALID',
+        `Unknown run verdict "${verdict}".`,
+        'Use passed, failed, not_evaluated, or none.',
+      );
+    }
+    filters.verdict = parsed.data;
+  }
+
+  return filters;
 }

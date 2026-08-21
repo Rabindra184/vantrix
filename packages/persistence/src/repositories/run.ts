@@ -159,6 +159,14 @@ interface RunSqlRow extends Omit<RunRow, 'project'> {
   projectName: string;
 }
 
+export interface RunListOptions {
+  readonly limit: number;
+  readonly cursor?: string;
+  readonly status?: string;
+  readonly verdict?: string;
+  readonly q?: string;
+}
+
 function fromSqlRow(row: RunSqlRow): RunRecord {
   const { projectSlug, projectName, ...rest } = row;
   return toRecord({ ...rest, project: { id: row.projectId, slug: projectSlug, name: projectName } });
@@ -181,6 +189,10 @@ function startedOnFrom(startedAt: Date): Date {
  */
 function isUniqueConstraintViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 export class RunRepository {
@@ -544,7 +556,7 @@ export class RunRepository {
    */
   async list(
     scope: TenantScope,
-    opts: { limit: number; cursor?: string },
+    opts: RunListOptions,
   ): Promise<{ items: RunRecord[]; nextCursor: string | null }> {
     let cursorKey: { effective: Date; id: string } | null = null;
     if (opts.cursor) {
@@ -576,6 +588,32 @@ export class RunRepository {
         `(COALESCE(r.tool_started_at, r.started_at), r.id) < ` +
           `($${params.length - 1}::timestamptz(3), $${params.length}::uuid)`,
       );
+    }
+    if (opts.status) {
+      params.push(opts.status);
+      filters.push(`r.status = $${params.length}`);
+    }
+    if (opts.verdict) {
+      if (opts.verdict === 'none') {
+        filters.push('r.verdict IS NULL');
+      } else {
+        params.push(opts.verdict);
+        filters.push(`r.verdict = $${params.length}`);
+      }
+    }
+    if (opts.q) {
+      params.push(`%${escapeLike(opts.q)}%`);
+      const at = `$${params.length}`;
+      filters.push(`(
+        r.id::text ILIKE ${at} ESCAPE '\\' OR
+        p.slug ILIKE ${at} ESCAPE '\\' OR
+        p.name ILIKE ${at} ESCAPE '\\' OR
+        COALESCE(r.simulation, '') ILIKE ${at} ESCAPE '\\' OR
+        COALESCE(r.description, '') ILIKE ${at} ESCAPE '\\' OR
+        COALESCE(r.environment, '') ILIKE ${at} ESCAPE '\\' OR
+        COALESCE(r.branch, '') ILIKE ${at} ESCAPE '\\' OR
+        COALESCE(r.commit_sha, '') ILIKE ${at} ESCAPE '\\'
+      )`);
     }
     params.push(opts.limit + 1);
 

@@ -83,6 +83,36 @@ describe('RunStats', () => {
     expect(screen.getByTestId('stat-error-rate')).toHaveTextContent(expected);
   });
 
+  it('shows comparison deltas when a previous cohort run is provided', () => {
+    render(
+      <RunStats
+        stats={stats}
+        baseline={{
+          id: '11111111-1111-4111-8111-111111111111',
+          startedAt: '2026-08-07T05:30:02.171Z',
+          toolStartedAt: '2026-08-07T05:30:02.171Z',
+          durationMs: 60_000,
+          verdict: 'passed',
+          count: runRow.count,
+          okCount: runRow.okCount,
+          koCount: runRow.koCount,
+          errorRate: runRow.errorRate / 2,
+          minMs: runRow.minMs,
+          maxMs: runRow.maxMs,
+          meanMs: runRow.meanMs * 2,
+          throughputRps: runRow.throughputRps / 2,
+          percentiles: {
+            p95: (runRow.percentiles.p95 ?? 0) * 2,
+            p99: (runRow.percentiles.p99 ?? 0) * 2,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText('+100.0% vs previous').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('-50.0% vs previous').length).toBeGreaterThan(0);
+  });
+
   it('renders nothing when the payload has no run-scope row', () => {
     const { container } = render(<RunStats stats={{ ...stats, stats: [] }} />);
     expect(container).toBeEmptyDOMElement();

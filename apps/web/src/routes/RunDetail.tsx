@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
-  Assertion, LiveDelta, SeriesResponse, ToolAssertion,
+  Assertion, LiveDelta, SeriesResponse, ToolAssertion, TrendRun, TrendsResponse,
 } from '@perfportal/contracts';
-import { linkButtonClasses } from '../components/Button';
+import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import StatTile from '../components/StatTile';
 import TableFrame from '../components/TableFrame';
-import { ChevronLeftIcon } from '../components/icons';
+import { ChevronLeftIcon, DownloadIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import { useLiveRun } from '../api/live';
@@ -20,6 +20,7 @@ import {
   errorsQuery,
   seriesQuery,
   statsQuery,
+  trendsQuery,
   usersQuery,
 } from '../api/metrics';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
@@ -34,6 +35,8 @@ import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
+import { downloadCsv } from '../tables/csv';
+import { assertionsCsv, describeAssertionRule } from './assertionExport';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE } from './paths';
@@ -223,6 +226,7 @@ export default function RunDetail() {
       // badge rather than rendering "no verdict" over a run nobody has finished
       // measuring.
       verdict={detail.state === 'ready' ? detail.run.verdict : undefined}
+      assertions={detail.state === 'ready' ? detail.run.assertions : undefined}
       windowable={detail.state === 'ready' ? detail.run.windowable : undefined}
       live={detail.state === 'processing' ? live : null}
       capReached={capReached}
@@ -429,6 +433,7 @@ export function RunOverviewTab() {
   // `RunErrorsTab`. This tab was simply unreachable for a processing run
   // before Task 7, which is why the bug had no chance to surface here first.
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: terminal });
+  const trends = useQuery({ ...trendsQuery(runId ?? ''), enabled: terminal });
   // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
   // tab uses, so a reader who widens the window pays for it once.
   const series = useQuery({
@@ -468,7 +473,7 @@ export function RunOverviewTab() {
 
   return (
     <>
-      <Assertions assertions={run.data.run.assertions} />
+      <Assertions runId={runId} assertions={run.data.run.assertions} />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
       {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
@@ -480,7 +485,13 @@ export function RunOverviewTab() {
       <TableSection title="Statistics" query={stats}>
         {(data) => (
           <>
-            <RunStats stats={data} />
+            {/*
+                The baseline is the cohort neighbour `/compare` would choose
+                by default: the older run when one exists, otherwise the newer
+                one. If `/trends` is still loading or the cohort has no
+                neighbour, the tiles simply omit deltas rather than inventing
+                comparison copy. */}
+            <RunStats stats={data} baseline={baselineRun(trends.data, runId)} />
             {/* THE TILES ARE NEVER WITHHELD. They are the whole point of the
                 mobile summary — §22.6 names "key tiles, sparklines, verdict,
                 error summary" — and they are already responsive. It is the
@@ -495,6 +506,14 @@ export function RunOverviewTab() {
       </TableSection>
     </>
   );
+}
+
+function baselineRun(trends: TrendsResponse | undefined, current: string): TrendRun | null {
+  if (trends === undefined) return null;
+  const ids = trends.runs.map((run) => run.id);
+  const here = ids.indexOf(current);
+  if (here < 0) return null;
+  return trends.runs[here + 1] ?? trends.runs[here - 1] ?? null;
 }
 
 /**
@@ -865,7 +884,13 @@ export function RunChartsTab() {
  * puts `failed` first. The thing a reader opened an SLA-failed run to see is
  * at the top of the table without this component sorting anything.
  */
-function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
+function Assertions({
+  runId,
+  assertions,
+}: {
+  readonly runId: string;
+  readonly assertions: readonly Assertion[];
+}) {
   if (assertions.length === 0) {
     return (
       <section className="flex flex-col gap-3">
@@ -880,7 +905,17 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionHeading>Assertions</SectionHeading>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SectionHeading>Assertions</SectionHeading>
+        <Button
+          size="sm"
+          onClick={() => downloadCsv(`run-${runId}-assertions.csv`, assertionsCsv(assertions))}
+        >
+          <DownloadIcon className="h-3.5 w-3.5" />
+          Export CSV
+        </Button>
+      </div>
+      <AssertionEvidencePanel assertions={assertions} />
       <TableFrame caption={ASSERTIONS_CAPTION} label="Assertions table">
           <table className={TABLE}>
             {/* `sr-only`, with the same node drawn visibly outside the scroll
@@ -908,7 +943,7 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
                   <td data-testid="assertion-outcome" className={`${TD} whitespace-nowrap`}>
                     <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
                   </td>
-                  <td className={`${TD} font-mono text-[12px]`}>{describeRule(assertion.rule)}</td>
+                  <td className={`${TD} font-mono text-[12px]`}>{describeAssertionRule(assertion.rule)}</td>
                   {/* Null for a not_applicable assertion — there was nothing to
                       measure (AssertionSchema). A dash, never `0`: zero is a
                       measurement, and this is the absence of one. */}
@@ -921,6 +956,118 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
       </TableFrame>
     </section>
   );
+}
+
+function AssertionEvidencePanel({ assertions }: { assertions: readonly Assertion[] }) {
+  const counts = countAssertions(assertions);
+  const firstFailed = assertions.find((assertion) => assertion.outcome === 'failed');
+
+  return (
+    <div
+      data-testid="assertion-evidence-panel"
+      className="grid gap-4 rounded-xl border border-default bg-surface p-4 shadow-panel lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]"
+    >
+      <div className="flex min-w-0 flex-col gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+            SLA evidence
+          </p>
+          <p className="mt-1 text-[13px] leading-relaxed text-muted">
+            {firstFailed?.message ?? 'Every evaluated rule is within its configured threshold.'}
+          </p>
+        </div>
+        <dl className="grid grid-cols-3 gap-2">
+          <AssertionCount label="Passed" value={counts.passed} mark={ASSERTION_OUTCOME.passed} />
+          <AssertionCount label="Failed" value={counts.failed} mark={ASSERTION_OUTCOME.failed} />
+          <AssertionCount
+            label="N/A"
+            value={counts.not_applicable}
+            mark={ASSERTION_OUTCOME.not_applicable}
+          />
+        </dl>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2">
+        {assertions.map((assertion) => (
+          <AssertionEvidenceRow key={assertion.ruleId} assertion={assertion} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssertionCount({
+  label,
+  value,
+  mark,
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly mark: (typeof ASSERTION_OUTCOME)[Assertion['outcome']];
+}) {
+  return (
+    <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: mark.colour }}>
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</dt>
+      <dd className="mt-1 font-mono text-lg font-semibold leading-none tabular-nums text-primary">
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
+  const mark = ASSERTION_OUTCOME[assertion.outcome];
+  const width = assertionProgress(assertion);
+
+  return (
+    <article className="rounded-lg border border-default bg-sunken px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-mono text-[12px] leading-relaxed text-primary">{describeAssertionRule(assertion.rule)}</p>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-muted">
+            Actual {formatAssertionValue(assertion.actualValue)}
+          </p>
+        </div>
+        <span className="shrink-0 text-[12px] font-medium" style={{ color: mark.colour }}>
+          <Marked mark={mark} />
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" aria-hidden="true">
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${width}%`, backgroundColor: assertionBarColour(assertion.outcome) }}
+        />
+      </div>
+    </article>
+  );
+}
+
+function countAssertions(assertions: readonly Assertion[]) {
+  return assertions.reduce(
+    (counts, assertion) => {
+      counts[assertion.outcome] += 1;
+      return counts;
+    },
+    { passed: 0, failed: 0, not_applicable: 0 },
+  );
+}
+
+function assertionProgress(assertion: Assertion): number {
+  const actual = assertion.actualValue;
+  const { comparator, threshold } = assertion.rule;
+  if (actual === null || actual === undefined || !Number.isFinite(actual) || threshold <= 0) {
+    return assertion.outcome === 'passed' ? 100 : 0;
+  }
+
+  const ratio = comparator === 'lte' ? threshold / Math.max(actual, threshold) : actual / threshold;
+  return Math.max(4, Math.min(100, ratio * 100));
+}
+
+function assertionBarColour(outcome: Assertion['outcome']): string {
+  return ASSERTION_OUTCOME[outcome].colour;
+}
+
+function formatAssertionValue(value: number | null): string {
+  return value === null ? '—' : formatCell(value);
 }
 
 /**
@@ -1044,16 +1191,3 @@ const ASSERTIONS_CAPTION = (
     <em>Not applicable</em> means the rule could not be checked at all — it is not a pass.
   </>
 );
-
-/**
- * The rule in the same words the evaluator used when it wrote the assertion's
- * message (`describe` in packages/sla/src/evaluate.ts). Restated here rather
- * than parsed back out of that message: the structured `rule` snapshot is the
- * fact, and a UI that read prose to recover data it already has would break
- * the day the prose was reworded.
- */
-function describeRule(rule: Assertion['rule']): string {
-  const target = rule.targetName ?? 'the run';
-  const comparator = rule.comparator === 'lte' ? '≤' : '≥';
-  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${rule.threshold}`;
-}

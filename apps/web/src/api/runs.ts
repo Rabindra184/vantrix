@@ -10,6 +10,24 @@ import { apiFetch } from './fetch';
  */
 export const PAGE_SIZE = 25;
 
+export type RunListStatusFilter = 'pending' | 'parsing' | 'running' | 'complete' | 'failed' | 'incomplete';
+export type RunListVerdictFilter = 'passed' | 'failed' | 'not_evaluated' | 'none';
+
+export interface RunListFilters {
+  readonly q?: string;
+  readonly status?: RunListStatusFilter | null;
+  readonly verdict?: RunListVerdictFilter | null;
+}
+
+function normaliseFilters(filters: RunListFilters = {}) {
+  const q = filters.q?.trim();
+  return {
+    ...(q ? { q } : {}),
+    ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.verdict ? { verdict: filters.verdict } : {}),
+  };
+}
+
 /**
  * ONE query key for the run list, exported rather than spelled out at each
  * call site — and a FUNCTION of the cursor AND the project slug, because
@@ -17,11 +35,10 @@ export const PAGE_SIZE = 25;
  * key, and a filtered and an unfiltered list are different data under the
  * same cursor: sharing a key would serve one as the other.
  *
- * `runsQueryKey()` with no arguments is `['runs', null, null]`: the first
- * page of the org-wide list, and the exact key `AuthGate`'s membership probe
- * uses. That identity is deliberate — the list's first page renders from the
- * bootstrap's cached result instead of showing a second loading state on
- * first paint.
+ * `runsQueryKey()` with no arguments is the first unfiltered page of the
+ * org-wide list, and the exact key `AuthGate`'s membership probe uses. That
+ * identity is deliberate — the list's first page renders from the bootstrap's
+ * cached result instead of showing a second loading state on first paint.
  *
  * It does NOT mean the first page fires zero requests. `staleTime` is unset
  * (default `0`) and `AuthGate` stays mounted as a layout route, so the list
@@ -32,8 +49,11 @@ export const PAGE_SIZE = 25;
  * likely to be out of date by the time the user is looking at it. The win is
  * the instant paint, not a saved GET.
  */
-export const runsQueryKey = (cursor: string | null = null, projectSlug: string | null = null) =>
-  ['runs', cursor, projectSlug] as const;
+export const runsQueryKey = (
+  cursor: string | null = null,
+  projectSlug: string | null = null,
+  filters: RunListFilters = {},
+) => ['runs', cursor, projectSlug, normaliseFilters(filters)] as const;
 
 /**
  * `GET /v1/runs`, org-scoped by the session cookie (the API derives the org
@@ -56,9 +76,14 @@ export const runsQueryKey = (cursor: string | null = null, projectSlug: string |
 export function fetchRuns(
   cursor: string | null = null,
   projectSlug: string | null = null,
+  filters: RunListFilters = {},
 ): Promise<RunListResponse> {
   const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
+  const activeFilters = normaliseFilters(filters);
   if (cursor !== null) query.set('cursor', cursor);
   if (projectSlug !== null) query.set('project', projectSlug);
+  if (activeFilters.q) query.set('q', activeFilters.q);
+  if (activeFilters.status) query.set('status', activeFilters.status);
+  if (activeFilters.verdict) query.set('verdict', activeFilters.verdict);
   return apiFetch(RunListResponseSchema, `/v1/runs?${query.toString()}`);
 }

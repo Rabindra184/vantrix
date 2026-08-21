@@ -2,13 +2,14 @@ import { Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
-import type { RunIdentity, RunProcessing, RunResponse } from '@perfportal/contracts';
+import type { Assertion, RunIdentity, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
 import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
 import LiveStatusStrip from './LiveStatusStrip';
 import SlaBanner from './SlaBanner';
+import RunDecisionBand from './RunDecisionBand';
 import type { LiveRunState } from '../api/live';
 import useDocumentTitle from '../useDocumentTitle';
 
@@ -33,6 +34,7 @@ export default function RunShell({
   status,
   terminal,
   verdict,
+  assertions,
   windowable,
   live,
   capReached,
@@ -68,6 +70,7 @@ export default function RunShell({
    * distinction, for the same reason.
    */
   readonly verdict: RunResponse['verdict'] | undefined;
+  readonly assertions?: readonly Assertion[];
   /**
    * `RunResponse` only — identity carries no such field, which is exactly why
    * a live run is never offered a brush (see the `TimeBrush` block below).
@@ -126,6 +129,7 @@ export default function RunShell({
         verdict={verdict}
         peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
       />
+      <RunDecisionBand identity={identity} status={status} verdict={verdict} assertions={assertions} />
       {/* `null`, not `0`, until the errors payload has actually resolved —
           the same "zero is a measurement" rule `peakUsers` above already
           follows (`runUsers.ts`). `errors.data?.errors.length ?? 0` used to
