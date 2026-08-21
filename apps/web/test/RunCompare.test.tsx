@@ -10,13 +10,10 @@ import type { RunWindowContext } from '../src/routes/useRunWindow';
 
 /**
  * MINOR 5. `/runs/:runId/compare` is a sixth `<Outlet/>` child under
- * `RunShell` that the five-tab audit missed — reachable only by a
- * hand-typed URL (`RunTrends`'s own "Compare these runs" link only ever
- * renders once IT has cleared its own `!terminal` return), but reachable
- * now that `RunShell` mounts for every run status. Before this fix,
- * `trendsQuery` fired with no `terminal` gate at all — the same class of
- * defect the five tabs were audited for, just on a sixth route nobody had
- * looked at yet.
+ * `RunShell`, and it has to follow the same terminal gate as the rest of the
+ * run sections. Before this fix, `trendsQuery` fired with no `terminal` gate
+ * at all — the same class of defect the other sections were audited for, just
+ * on the compare route.
  *
  * Mounted the same way `RunTrends.live.test.tsx` mounts its own tab, under a
  * stand-in for `RunShell`'s `<Outlet context={{...}} />` with the `run`
@@ -144,7 +141,7 @@ describe('RunCompare — terminal gate (MINOR 5)', () => {
    * "Rendered more hooks than during the previous render."
    * `RunTrends.live.test.tsx`'s "survives a running run finishing while the
    * reader is on this tab" is the identical guard for that tab; this is
-   * `RunCompare`'s own — the sixth route the five-tab audit missed.
+   * `RunCompare`'s own — the compare route needs the same hook-order guard.
    */
   it('survives a running run finishing while the reader is on this tab', async () => {
     const { rerenderAs } = renderCompare(processing('running'));

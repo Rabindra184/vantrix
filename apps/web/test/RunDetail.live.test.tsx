@@ -17,7 +17,7 @@ import RunDetail, { RunOverviewTab } from '../src/routes/RunDetail';
  *
  * WHAT USED TO BE HERE. Before Task 7, a processing run rendered a whole
  * standalone `Processing` or `Live` screen INSTEAD of `RunShell` — no
- * `<Outlet/>` anywhere in either, which is what made the five tab URLs
+ * `<Outlet/>` anywhere in either, which is what made the run-section URLs
  * resolve to nothing while a run was live. Both components, and the branch
  * that chose between them, are gone, and most of this file's old cases
  * asserted on UI (a distinct `<h1>`, a "still processing" screen with no tab

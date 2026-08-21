@@ -13,6 +13,7 @@ import {
 import { apiJson, signIn } from './helpers.js';
 import {
   runChartsPath,
+  runComparePath,
   runErrorsPath,
   runPath,
   runTelemetryPath,
@@ -390,6 +391,10 @@ test('each tab is its own URL, reachable directly', async ({ page }) => {
   await expect(page.getByTestId('error-row').first()).toBeVisible();
   await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
 
+  await page.goto(runComparePath(runId));
+  await expect(page.getByText(/nothing to compare yet|runs to compare/i)).toBeVisible();
+  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+
   // The bare path is Overview, so every link that predates tabs still works.
   await page.goto(runPath(runId));
   await expect(page.getByTestId('stat-row-total')).toBeVisible();
@@ -564,6 +569,7 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
     [runTelemetryPath(runId), 'Load generators'],
     [runErrorsPath(runId), /^Errors( \(0\))?$/],
     [runTrendsPath(runId), 'Trends'],
+    [runComparePath(runId), 'Compare'],
   ] as const) {
     await page.goto(path);
     // `exact: true`: `ProjectRail` renders on every authenticated page — one

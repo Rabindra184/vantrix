@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { trendsQuery } from '../api/metrics';
 import TrendsCharts from '../charts/TrendsCharts';
+import { linkButtonClasses } from '../components/Button';
+import { CompareTabIcon } from '../components/icons';
 import { MAX_COMPARE } from './compareSelection';
 import LiveNotice from './LiveNotice';
 import { Payload, type Slot } from './payload';
@@ -121,15 +123,18 @@ export default function RunTrends() {
                 usually useless teaches a reader to stop seeing it — and a
                 cohort of one has no comparison to offer.
 
-                Here rather than in the tab strip because a comparison needs a
-                SELECTION, and this page is where the runs are listed. */}
+                The tab strip exposes Compare now, so the feature is not hidden
+                from the app's top-level run navigation. This contextual link
+                still belongs here because Trends is where the cohort is
+                explained before the reader starts choosing runs. */}
             {data.runs.length > 1 && (
-              <p className="text-[13px]">
-                <Link to={runComparePath(data.runId)} className="text-accent underline">
+              <p className="flex flex-wrap items-center gap-2 text-[13px]">
+                <Link to={runComparePath(data.runId)} className={linkButtonClasses}>
+                  <CompareTabIcon className="h-3.5 w-3.5" />
                   Compare these runs
                 </Link>{' '}
                 <span className="text-muted">
-                  — overlay up to {MAX_COMPARE} of them on one metric.
+                  Overlay up to {MAX_COMPARE} of them on one metric.
                 </span>
               </p>
             )}

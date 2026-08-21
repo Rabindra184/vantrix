@@ -13,7 +13,7 @@ import type { LiveRunState } from '../api/live';
 import useDocumentTitle from '../useDocumentTitle';
 
 /**
- * The chrome around one run's identity and its five tabs.
+ * The chrome around one run's identity and its run-section navigation.
  *
  * A LAYOUT ROUTE, not sibling routes each rendering the page with a `tab`
  * prop. The sibling shape looks simpler and remounts this component on every

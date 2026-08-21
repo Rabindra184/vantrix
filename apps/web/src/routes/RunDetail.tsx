@@ -199,7 +199,7 @@ export default function RunDetail() {
   }
 
   // ONE SHELL FOR EVERY STATE. `RunDetail` used to return `Processing` or
-  // `Live` INSTEAD of the shell, which is what made the five tab URLs resolve
+  // `Live` INSTEAD of the shell, which is what made the run-section URLs resolve
   // to nothing while a run was live — `RunShell` is the layout route, so no
   // `<Outlet/>` mounted for them at all. Rendering it here is the whole
   // reachability fix, and it needs no router change.
@@ -1057,4 +1057,3 @@ function describeRule(rule: Assertion['rule']): string {
   const comparator = rule.comparator === 'lte' ? '≤' : '≥';
   return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${rule.threshold}`;
 }
-

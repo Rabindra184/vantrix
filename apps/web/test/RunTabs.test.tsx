@@ -28,17 +28,24 @@ describe('RunTabs', () => {
    */
   it('renders navigation links, not ARIA tabs', () => {
     renderAt(`/runs/${RUN}`, 2);
-    expect(screen.getAllByRole('link')).toHaveLength(5);
+    expect(screen.getAllByRole('link')).toHaveLength(6);
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('puts Trends last, after the four that are about this run alone', () => {
+  it('puts Trends and Compare last, after the four that are about this run alone', () => {
     // The order is the argument, so it is asserted rather than left to the
     // reading order of the JSX: Overview, Charts, Load generators and Errors
-    // narrow in on THIS run; Trends is the only tab that leaves it.
+    // narrow in on THIS run; Trends and Compare leave it for the cohort.
     renderAt(`/runs/${RUN}`, 2);
     const names = screen.getAllByRole('link').map((link) => link.textContent);
-    expect(names).toEqual(['Overview', 'Charts', 'Load generators', 'Errors (2)', 'Trends']);
+    expect(names).toEqual([
+      'Overview',
+      'Charts',
+      'Load generators',
+      'Errors (2)',
+      'Trends',
+      'Compare',
+    ]);
   });
 
   it('marks Trends current on its own URL', () => {
@@ -46,6 +53,12 @@ describe('RunTabs', () => {
     expect(screen.getByRole('link', { name: 'Trends' })).toHaveAttribute('aria-current', 'page');
     // `end` on Overview is what stops the run's own path matching this one.
     expect(screen.getByRole('link', { name: 'Overview' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('marks Compare current on its own URL', () => {
+    renderAt(`/runs/${RUN}/compare`, 2);
+    expect(screen.getByRole('link', { name: 'Compare' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Trends' })).not.toHaveAttribute('aria-current');
   });
 
   it('marks the current tab with aria-current', () => {

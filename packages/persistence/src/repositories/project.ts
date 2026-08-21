@@ -49,6 +49,37 @@ export interface ProjectListRow {
 export class ProjectRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
+  async createInOrg({
+    orgId,
+    slug,
+    name,
+  }: {
+    orgId: string;
+    slug: string;
+    name: string;
+  }): Promise<ProjectRecord | null> {
+    try {
+      const row = await this.prisma.project.create({
+        data: { orgId, slug, name, settings: {} },
+      });
+      return {
+        id: row.id,
+        orgId: row.orgId,
+        slug: row.slug,
+        name: row.name,
+        settings: (row.settings ?? {}) as Record<string, unknown>,
+      };
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async findBySlug(orgSlug: string, projectSlug: string): Promise<ProjectRecord | null> {
     const row = await this.prisma.project.findFirst({
       where: { slug: projectSlug, org: { slug: orgSlug } },

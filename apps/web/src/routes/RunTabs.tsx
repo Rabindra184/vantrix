@@ -2,16 +2,24 @@ import type { ComponentType, ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   ChartsTabIcon,
+  CompareTabIcon,
   ErrorsTabIcon,
   OverviewTabIcon,
   TelemetryTabIcon,
   TrendsTabIcon,
 } from '../components/icons';
 import { cn } from '../lib/cn';
-import { runChartsPath, runErrorsPath, runPath, runTelemetryPath, runTrendsPath } from './paths';
+import {
+  runChartsPath,
+  runComparePath,
+  runErrorsPath,
+  runPath,
+  runTelemetryPath,
+  runTrendsPath,
+} from './paths';
 
 /**
- * A run's five sections, as navigation.
+ * A run's six sections, as navigation.
  *
  * `NavLink` supplies `aria-current="page"` itself when its `to` matches — and
  * `end` on the Overview link is what stops it matching `/charts` and
@@ -20,8 +28,8 @@ import { runChartsPath, runErrorsPath, runPath, runTelemetryPath, runTrendsPath 
  * Load generators sits between Charts and Errors: it answers a question about
  * THIS run (which is what the first tabs do), and it is the one a reader turns
  * to when the charts look wrong — so it belongs beside them, not after the
- * failures. Trends stays last for the reason below: it is the only tab that
- * leaves the run.
+ * failures. Trends and Compare stay at the end because both leave the run:
+ * first the cohort story, then the selected overlay built from that cohort.
  *
  * STILL LINKS IN A `<nav>`, NOT AN ARIA TAB PATTERN, and the design pass did
  * not change that. `role="tablist"`/`role="tab"` is what this LOOKS like and
@@ -78,12 +86,12 @@ export default function RunTabs({
       aria-label="Run sections"
       className="sticky top-header z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-default bg-page/90 px-4 backdrop-blur-md sm:-mx-6 sm:px-6"
     >
-      {/* Each tab carries a lucide glyph beside its word. All five icons are
+      {/* Each tab carries a lucide glyph beside its word. All section icons are
           `aria-hidden` (icons.tsx's default), so every tab's accessible name
           stays exactly its text — `RunTabs.test.tsx` asserts those names
           verbatim, and `run-detail.spec.ts` selects by them. The COMPONENT is
-          passed, not an element, so `Tab` sizes all five in one place and a
-          sixth tab cannot drift to the icon module's larger default. */}
+          passed, not an element, so `Tab` sizes all six in one place and a
+          future section cannot drift to the icon module's larger default. */}
       <Tab to={runPath(runId)} end icon={OverviewTabIcon}>
         Overview
       </Tab>
@@ -101,13 +109,17 @@ export default function RunTabs({
             a `getByText('2')` target on a page full of numbers. */}
         {errorCount === null ? 'Errors' : `Errors (${errorCount})`}
       </Tab>
-      {/* LAST, AND THE POSITION IS THE ARGUMENT. The first three tabs answer
+      {/* LAST PAIR, AND THE POSITION IS THE ARGUMENT. The first four tabs answer
           questions about THIS run, narrowing as they go — what happened, what
-          it looked like, what went wrong. Trends is the only one that leaves
-          the run, so it sits at the end rather than beside Charts, which it
-          superficially resembles. */}
+          it looked like, what generated the load, what went wrong. Trends is
+          the cohort view, and Compare is the editable overlay that follows
+          from it, so they sit together at the end rather than beside Charts,
+          which they superficially resemble. */}
       <Tab to={runTrendsPath(runId)} icon={TrendsTabIcon}>
         Trends
+      </Tab>
+      <Tab to={runComparePath(runId)} icon={CompareTabIcon}>
+        Compare
       </Tab>
     </nav>
   );

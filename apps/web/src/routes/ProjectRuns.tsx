@@ -2,10 +2,10 @@ import { useParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { linkButtonClasses } from '../components/Button';
-import { PlayIcon } from '../components/icons';
+import { PlayIcon, SetupIcon } from '../components/icons';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import RunList from './RunList';
-import { projectNewRunnerRunPath } from './paths';
+import { projectNewRunnerRunPath, projectSetupPath } from './paths';
 
 /**
  * One project's runs.
@@ -35,10 +35,16 @@ export default function ProjectRuns() {
       projectSlug={slug}
       heading={project?.name ?? slug}
       action={
-        <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-          <PlayIcon className="h-3.5 w-3.5" />
-          New on-prem run
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to={projectSetupPath(slug)} className={linkButtonClasses}>
+            <SetupIcon className="h-3.5 w-3.5" />
+            Setup
+          </Link>
+          <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
+            <PlayIcon className="h-3.5 w-3.5" />
+            New on-prem run
+          </Link>
+        </div>
       }
     />
   );

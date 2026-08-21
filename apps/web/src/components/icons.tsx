@@ -7,7 +7,11 @@ import {
   ChevronRight,
   CircleAlert,
   Gauge,
+  GitCompareArrows,
   Inbox,
+  Check,
+  Clipboard,
+  KeyRound,
   Layers,
   LoaderCircle,
   LogOut,
@@ -16,8 +20,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  Plus,
   RefreshCw,
   Server,
+  Settings,
   Square,
   Sun,
   TrendingUp,
@@ -101,6 +107,11 @@ export const RefreshIcon = icon(RefreshCw);
 export const PlayIcon = icon(Play);
 export const StopIcon = icon(Square);
 export const UploadIcon = icon(Upload);
+export const PlusIcon = icon(Plus);
+export const TokenIcon = icon(KeyRound);
+export const SetupIcon = icon(Settings);
+export const CopyIcon = icon(Clipboard);
+export const CheckIcon = icon(Check);
 
 /** Something the reader has to act on: a failed fetch, a failed sign-out. */
 export const AlertIcon = icon(TriangleAlert);
@@ -111,13 +122,14 @@ export const InboxIcon = icon(Inbox);
 /** An action in flight — pair with `animate-spin` and `aria-busy`. */
 export const SpinnerIcon = icon(LoaderCircle);
 
-/* The run page's five tabs, in tab order (`routes/RunTabs.tsx`). Decorative
+/* The run page's six sections, in tab order (`routes/RunTabs.tsx`). Decorative
  * like everything else here: the tab's accessible name stays its text. */
 export const OverviewTabIcon = icon(Gauge);
 export const ChartsTabIcon = icon(ChartSpline);
 export const TelemetryTabIcon = icon(Server);
 export const ErrorsTabIcon = icon(CircleAlert);
 export const TrendsTabIcon = icon(TrendingUp);
+export const CompareTabIcon = icon(GitCompareArrows);
 
 /* The project rail's desktop collapse control (`ProjectRail.tsx`). */
 export const PanelCollapseIcon = icon(PanelLeftClose);

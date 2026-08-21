@@ -1,8 +1,18 @@
-import { Controller, Get, Req } from '@nestjs/common';
+import { Body, ConflictException, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
-import { ProjectListResponseSchema, type ProjectListResponse, type RunStatus, type RunVerdict } from '@perfportal/contracts';
+import {
+  CreateProjectRequestSchema,
+  ProjectListResponseSchema,
+  ProjectSummarySchema,
+  type ProjectListResponse,
+  type ProjectSummary,
+  type RunStatus,
+  type RunVerdict,
+} from '@perfportal/contracts';
 import { ProjectRepository } from '@perfportal/persistence';
+import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { Scopes } from '../auth/scopes.decorator.js';
+import { badRequest } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default. @Scopes('read') is still required
@@ -47,6 +57,37 @@ export class ProjectsController {
                 verdict: r.latestRun.verdict as RunVerdict | null,
               },
       })),
+    });
+  }
+
+  @Post()
+  @HttpCode(201)
+  @UseGuards(SessionOnlyGuard)
+  async create(@Req() req: Request, @Body() body: unknown): Promise<ProjectSummary> {
+    const tenant = req.tenant!;
+    const parsed = CreateProjectRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      throw badRequest(
+        'INVALID_PROJECT_REQUEST',
+        `The project request is not valid: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        'Send a non-empty "name" and a lowercase URL slug such as "checkout-api".',
+      );
+    }
+
+    const project = await this.projects.createInOrg({
+      orgId: tenant.orgId,
+      name: parsed.data.name,
+      slug: parsed.data.slug,
+    });
+    if (project === null) {
+      throw new ConflictException(`A project with slug "${parsed.data.slug}" already exists in this organisation.`);
+    }
+
+    return ProjectSummarySchema.parse({
+      id: project.id,
+      slug: project.slug,
+      name: project.name,
+      latestRun: null,
     });
   }
 }

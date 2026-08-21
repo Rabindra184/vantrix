@@ -18,13 +18,13 @@ import { signOut } from './api/session';
  * and sending the user to /login while they are in fact still signed in
  * tells them the opposite of the truth.
  *
- * THE LABEL IS TEXT AT EVERY WIDTH, and the icon is decoration beside it. An
- * icon-only sign-out is the classic discoverability failure — but the reason
- * it is not even hidden below `sm` here is narrower and harder: the e2e suite
- * resolves this control by `getByRole('button', { name: 'Sign out', exact:
- * true })`, and a label hidden with `sr-only` keeps that name while a label
- * hidden with `hidden sm:inline` silently changes it to whatever the icon
- * contributes. Text that is always present cannot get that wrong.
+ * THE LABEL IS VISIBLE FROM `sm` UP, and accessibly hidden below it. The
+ * smallest phone width cannot hold the brand, three-way theme control and the
+ * full "Sign out" label without pushing the page sideways; the icon is enough
+ * visually in that one cramped slot, while the `sr-only sm:not-sr-only` text
+ * preserves the exact accessible name the e2e suite resolves by
+ * (`getByRole('button', { name: 'Sign out', exact: true })`). `hidden
+ * sm:inline` would be wrong here: it removes the name below `sm`.
  *
  * `submitting` guards the double-click. Two sign-out posts race, the second
  * one 401s against the cookie the first already cleared, and this component
@@ -57,7 +57,7 @@ export default function SignOutButton() {
             "Sign out" beside it is the name, and an icon that contributed its
             own would append to it. */}
         {!submitting && <SignOutIcon className="h-3.5 w-3.5" />}
-        Sign out
+        <span className="sr-only sm:not-sr-only">Sign out</span>
       </Button>
       {failed && (
         // `role="alert"` is announced the moment it appears. The icon is

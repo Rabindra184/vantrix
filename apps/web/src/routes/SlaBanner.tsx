@@ -9,8 +9,8 @@ import { formatOffset } from './format';
  *
  * RENDERED BY `RunShell`, once, above the `<Outlet/>` — not by any one tab.
  * It shipped inside `Live`, the standalone live page, and moved when the
- * five-tab work deleted that page: a breaching rule is a fact about the RUN,
- * so it has to be on screen whichever of the five tabs the reader has open.
+ * run-tab work deleted that page: a breaching rule is a fact about the RUN,
+ * so it has to be on screen whichever section the reader has open.
  *
  * ═══ A CONDITION, NOT AN EVENT ═══
  *
