@@ -65,10 +65,31 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **115 files / 1245 tests**, it
+`nvm use` first, and if a run reports fewer than **117 files / 1258 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the header-height
+silently-skipped run looks like a pass. Last measured on the project setup
+and token-management UI, which added two unit FILES —
+`apps/web/test/NewProject.test.tsx` and `apps/web/test/ProjectSetup.test.tsx`
+— covering the create-project form and the API-token screen, plus the
+review-fix cases those two grew: a slug field that ate every typed hyphen
+(the full `slugify` ran per keystroke and trims a trailing `-`, so
+`checkout-api` became `checkoutapi`), a revoke that failed silently, a copy
+button that claimed success with no clipboard, a one-click destructive
+revoke, and `paths.test.ts`'s new guard that reads `App.tsx` and rejects any
+literal segment under `/projects/` matching the slug grammar — `/projects/new`
+had been permanently shadowing a project legitimately slugged `new`. Its
+integration floor is 113 files / 1319 tests: no integration FILE was added,
+but `apps/api/test/openapi.integration.test.ts` gained a third exception to
+the never-declare-201 rule, and the two new `.tsx` files are unit-only, so
+the file count holds while the test count moves. THAT 201 GATE IS WORTH
+KNOWING ABOUT: it went red on CI for `POST /v1/projects` and is not
+cosmetic — 201 is reserved here for operations that really do create
+synchronously, and every other create is a 202 over a state machine. A new
+201 has to be argued for, and it only runs under `test:integration`, so a
+green `pnpm test:unit` says nothing about it. Its e2e stays 92: the specs
+gained cases inside existing `test(` blocks (the Compare tab), not new ones.
+From a floor of 115 / 1245. Before that, the header-height
 token, which added no unit FILE and 2 cases to `tokens.test.ts` — the shell
 header's 56px had been three hard-coded spellings in three files
 (`AppShell`'s height, `ProjectRail`'s sticky offset AND its

@@ -62,22 +62,33 @@ describe('OpenAPI document', () => {
     expect(schemas['ProblemDetails']).toBeTruthy();
   });
 
-  // The blanket loop below carves out exactly two exceptions:
-  // POST /v1/projects/{slug}/tokens (Task 3) and POST /v1/runs/live
-  // (Task 9), both of which really do create synchronously — the row
-  // exists (and, for token minting, the plaintext token is returned) before
-  // the response is sent, the ordinary case 201 exists for. Every other
-  // operation keeps the original reasoning: POST /v1/runs ingests
+  // The blanket loop below carves out exactly three exceptions:
+  // POST /v1/projects/{slug}/tokens (Task 3), POST /v1/runs/live (Task 9)
+  // and POST /v1/projects, all of which really do create synchronously — the
+  // row exists (and, for token minting, the plaintext token is returned)
+  // before the response is sent, the ordinary case 201 exists for. Every
+  // other operation keeps the original reasoning: POST /v1/runs ingests
   // asynchronously and shares its run's own state machine (200/202/400/413/422)
   // with GET /v1/runs/{id} — there is no "created, still processing" state
   // distinct from 202 — and nothing else in this document creates a resource
   // at all. A future operation that starts returning 201 without being one
-  // of these two legitimate exceptions should still fail here.
-  it('never declares a 201 response on any operation except token minting and opening a live run, which really do create synchronously', async () => {
+  // of these legitimate exceptions should still fail here.
+  //
+  // POST /v1/projects EARNED its place rather than being waved through: the
+  // handler awaits a single Prisma insert and returns the project it just
+  // wrote (`ProjectsController.create` → `ProjectRepository.createInOrg`),
+  // so the resource is complete and addressable at `/projects/{slug}` the
+  // instant the response is sent. That is the same shape as token minting,
+  // and the opposite of `POST /v1/runs`, whose row is a promise to parse
+  // something later. This gate went red when the project-creation UI landed,
+  // which is exactly what it is for — a new 201 has to be argued for, not
+  // absorbed.
+  it('never declares a 201 response on any operation except token minting, opening a live run, and creating a project, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
       { path: '/v1/runs/live', method: 'post' },
+      { path: '/v1/projects', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
