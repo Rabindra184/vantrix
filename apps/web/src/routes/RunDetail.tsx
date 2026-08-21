@@ -4,13 +4,13 @@ import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
   Assertion, LiveDelta, SeriesResponse, ToolAssertion,
 } from '@perfportal/contracts';
-import { linkButtonClasses } from '../components/Button';
+import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import StatTile from '../components/StatTile';
 import TableFrame from '../components/TableFrame';
-import { ChevronLeftIcon } from '../components/icons';
+import { ChevronLeftIcon, DownloadIcon } from '../components/icons';
 import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import { useLiveRun } from '../api/live';
@@ -20,6 +20,7 @@ import {
   errorsQuery,
   seriesQuery,
   statsQuery,
+  trendsQuery,
   usersQuery,
 } from '../api/metrics';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
@@ -34,6 +35,10 @@ import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
+import { downloadCsv } from '../tables/csv';
+import { assertionsCsv } from './assertionExport';
+import { countAssertions, describeAssertionRule, firstFailedAssertion } from './assertions';
+import { baselineRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE } from './paths';
@@ -223,6 +228,7 @@ export default function RunDetail() {
       // badge rather than rendering "no verdict" over a run nobody has finished
       // measuring.
       verdict={detail.state === 'ready' ? detail.run.verdict : undefined}
+      assertions={detail.state === 'ready' ? detail.run.assertions : undefined}
       windowable={detail.state === 'ready' ? detail.run.windowable : undefined}
       live={detail.state === 'processing' ? live : null}
       capReached={capReached}
@@ -429,6 +435,30 @@ export function RunOverviewTab() {
   // `RunErrorsTab`. This tab was simply unreachable for a processing run
   // before Task 7, which is why the bug had no chance to surface here first.
   const stats = useQuery({ ...statsQuery(runId ?? '', window), enabled: terminal });
+  // THE COHORT, FOR ONE NEIGHBOUR — and deliberately NOT on this file's
+  // default terms.
+  //
+  // `trendsQuery` is the one factory in `api/metrics.ts` with no
+  // `staleTime`, and its docstring argues that correctly: the Trends TAB
+  // draws the whole cohort, and a cohort answer changes when any run of the
+  // same simulation is ingested. This consumer wants one entry out of it —
+  // the run immediately before this one — which cannot change once it
+  // exists. Left on the default, every switch back to Overview re-issued the
+  // heaviest read in the app (up to 21 DDSketch blobs deserialised and
+  // re-quantiled server-side) to relabel six tiles.
+  //
+  // `staleTime` is per-OBSERVER in TanStack, so this override buys Overview
+  // its cache without touching the Trends tab's own refetch-on-mount, even
+  // though both observe the identical key.
+  //
+  // `window === null` in `enabled`: the deltas are withheld under a brush
+  // (see `RunStats` below), so a brushed reader should not pay for the
+  // payload either.
+  const trends = useQuery({
+    ...trendsQuery(runId ?? ''),
+    enabled: terminal && window === null,
+    staleTime: OVERVIEW_TRENDS_STALE_MS,
+  });
   // §22.6's summary needs a SHAPE beside the numbers. The same key the charts
   // tab uses, so a reader who widens the window pays for it once.
   const series = useQuery({
@@ -468,7 +498,7 @@ export function RunOverviewTab() {
 
   return (
     <>
-      <Assertions assertions={run.data.run.assertions} />
+      <Assertions runId={runId} assertions={run.data.run.assertions} />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
       {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
@@ -480,7 +510,24 @@ export function RunOverviewTab() {
       <TableSection title="Statistics" query={stats}>
         {(data) => (
           <>
-            <RunStats stats={data} />
+            {/*
+                NO BASELINE UNDER A BRUSH. `stats` above is window-scoped and
+                `/trends` is not, so comparing them across a brushed window
+                measured a tenth of this run against the whole of the
+                previous one — dragging the brush to 10s of a 63s run made
+                every tile read about -84% "vs previous", a regression the
+                run does not have. There is no windowed cohort endpoint to
+                compare against, so the honest answer is to withhold the
+                deltas rather than to restate them with a caveat.
+
+                Otherwise: the cohort run immediately BEFORE this one. If
+                `/trends` is still loading, or this run is the oldest in its
+                window, the tiles omit deltas rather than inventing
+                comparison copy. */}
+            <RunStats
+              stats={data}
+              baseline={window === null ? baselineRun(trends.data, runId) : null}
+            />
             {/* THE TILES ARE NEVER WITHHELD. They are the whole point of the
                 mobile summary — §22.6 names "key tiles, sparklines, verdict,
                 error summary" — and they are already responsive. It is the
@@ -496,6 +543,9 @@ export function RunOverviewTab() {
     </>
   );
 }
+
+/** Overview keeps its cohort page for five minutes; see the `trends` query. */
+const OVERVIEW_TRENDS_STALE_MS = 5 * 60_000;
 
 /**
  * §22.6's sparklines: the shape behind two of the tiles above them.
@@ -865,7 +915,13 @@ export function RunChartsTab() {
  * puts `failed` first. The thing a reader opened an SLA-failed run to see is
  * at the top of the table without this component sorting anything.
  */
-function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
+function Assertions({
+  runId,
+  assertions,
+}: {
+  readonly runId: string;
+  readonly assertions: readonly Assertion[];
+}) {
   if (assertions.length === 0) {
     return (
       <section className="flex flex-col gap-3">
@@ -880,7 +936,17 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionHeading>Assertions</SectionHeading>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SectionHeading>Assertions</SectionHeading>
+        <Button
+          size="sm"
+          onClick={() => downloadCsv(`run-${runId}-assertions.csv`, assertionsCsv(assertions))}
+        >
+          <DownloadIcon className="h-3.5 w-3.5" />
+          Export CSV
+        </Button>
+      </div>
+      <AssertionEvidencePanel assertions={assertions} />
       <TableFrame caption={ASSERTIONS_CAPTION} label="Assertions table">
           <table className={TABLE}>
             {/* `sr-only`, with the same node drawn visibly outside the scroll
@@ -908,7 +974,7 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
                   <td data-testid="assertion-outcome" className={`${TD} whitespace-nowrap`}>
                     <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
                   </td>
-                  <td className={`${TD} font-mono text-[12px]`}>{describeRule(assertion.rule)}</td>
+                  <td className={`${TD} font-mono text-[12px]`}>{describeAssertionRule(assertion.rule)}</td>
                   {/* Null for a not_applicable assertion — there was nothing to
                       measure (AssertionSchema). A dash, never `0`: zero is a
                       measurement, and this is the absence of one. */}
@@ -921,6 +987,108 @@ function Assertions({ assertions }: { assertions: readonly Assertion[] }) {
       </TableFrame>
     </section>
   );
+}
+
+function AssertionEvidencePanel({ assertions }: { assertions: readonly Assertion[] }) {
+  const counts = countAssertions(assertions);
+  const firstFailed = firstFailedAssertion(assertions);
+
+  return (
+    <div
+      data-testid="assertion-evidence-panel"
+      className="grid gap-4 rounded-xl border border-default bg-surface p-4 shadow-panel lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]"
+    >
+      <div className="flex min-w-0 flex-col gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+            SLA evidence
+          </p>
+          <p className="mt-1 text-[13px] leading-relaxed text-muted">
+            {firstFailed?.message ?? 'Every evaluated rule is within its configured threshold.'}
+          </p>
+        </div>
+        <dl className="grid grid-cols-3 gap-2">
+          <AssertionCount label="Passed" value={counts.passed} mark={ASSERTION_OUTCOME.passed} />
+          <AssertionCount label="Failed" value={counts.failed} mark={ASSERTION_OUTCOME.failed} />
+          <AssertionCount
+            label="N/A"
+            value={counts.not_applicable}
+            mark={ASSERTION_OUTCOME.not_applicable}
+          />
+        </dl>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2">
+        {assertions.map((assertion) => (
+          <AssertionEvidenceRow key={assertion.ruleId} assertion={assertion} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssertionCount({
+  label,
+  value,
+  mark,
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly mark: (typeof ASSERTION_OUTCOME)[Assertion['outcome']];
+}) {
+  return (
+    <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: mark.colour }}>
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</dt>
+      <dd className="mt-1 font-mono text-lg font-semibold leading-none tabular-nums text-primary">
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
+  const mark = ASSERTION_OUTCOME[assertion.outcome];
+  const width = assertionProgress(assertion);
+
+  return (
+    <article className="rounded-lg border border-default bg-sunken px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-mono text-[12px] leading-relaxed text-primary">{describeAssertionRule(assertion.rule)}</p>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-muted">
+            Actual {formatAssertionValue(assertion.actualValue)}
+          </p>
+        </div>
+        <span className="shrink-0 text-[12px] font-medium" style={{ color: mark.colour }}>
+          <Marked mark={mark} />
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" aria-hidden="true">
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${width}%`, backgroundColor: assertionBarColour(assertion.outcome) }}
+        />
+      </div>
+    </article>
+  );
+}
+
+function assertionProgress(assertion: Assertion): number {
+  const actual = assertion.actualValue;
+  const { comparator, threshold } = assertion.rule;
+  if (actual === null || actual === undefined || !Number.isFinite(actual) || threshold <= 0) {
+    return assertion.outcome === 'passed' ? 100 : 0;
+  }
+
+  const ratio = comparator === 'lte' ? threshold / Math.max(actual, threshold) : actual / threshold;
+  return Math.max(4, Math.min(100, ratio * 100));
+}
+
+function assertionBarColour(outcome: Assertion['outcome']): string {
+  return ASSERTION_OUTCOME[outcome].colour;
+}
+
+function formatAssertionValue(value: number | null): string {
+  return value === null ? '—' : formatCell(value);
 }
 
 /**
@@ -1044,16 +1212,3 @@ const ASSERTIONS_CAPTION = (
     <em>Not applicable</em> means the rule could not be checked at all — it is not a pass.
   </>
 );
-
-/**
- * The rule in the same words the evaluator used when it wrote the assertion's
- * message (`describe` in packages/sla/src/evaluate.ts). Restated here rather
- * than parsed back out of that message: the structured `rule` snapshot is the
- * fact, and a UI that read prose to recover data it already has would break
- * the day the prose was reworded.
- */
-function describeRule(rule: Assertion['rule']): string {
-  const target = rule.targetName ?? 'the run';
-  const comparator = rule.comparator === 'lte' ? '≤' : '≥';
-  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${rule.threshold}`;
-}

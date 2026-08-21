@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, RunProcessing, RunResponse } from '@perfportal/contracts';
@@ -243,6 +243,73 @@ describe('RunDetail — one shell, for every state', () => {
   it('shows WaitingPanel for a run never live this session (pending)', () => {
     mountRun({ state: 'processing', run: { id: RUN_ID, status: 'pending', statusUrl: '/x' } });
     expect(screen.getByText(/still processing/i)).toBeInTheDocument();
+  });
+
+  it('summarizes SLA evidence above the assertion table without replacing the table', () => {
+    vi.stubGlobal(
+      'fetch',
+      () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
+    );
+
+    mountRun({
+      state: 'ready',
+      run: {
+        ...COMPLETE_RUN,
+        verdict: 'failed',
+        assertions: [
+          {
+            ruleId: '22222222-2222-4222-8222-222222222222',
+            outcome: 'failed',
+            actualValue: 1830,
+            message: 'p99 breached its threshold.',
+            rule: {
+              scope: 'run',
+              targetName: null,
+              family: 'response_time',
+              metric: 'p99',
+              comparator: 'lte',
+              threshold: 750,
+            },
+          },
+          {
+            ruleId: '33333333-3333-4333-8333-333333333333',
+            outcome: 'passed',
+            actualValue: 92,
+            message: 'Throughput stayed above target.',
+            rule: {
+              scope: 'run',
+              targetName: null,
+              family: 'response_time',
+              metric: 'throughput_rps',
+              comparator: 'gte',
+              threshold: 80,
+            },
+          },
+          {
+            ruleId: '44444444-4444-4444-8444-444444444444',
+            outcome: 'not_applicable',
+            actualValue: null,
+            message: 'No matching request was measured.',
+            rule: {
+              scope: 'request',
+              targetName: 'POST /checkout',
+              family: 'response_time',
+              metric: 'p95',
+              comparator: 'lte',
+              threshold: 500,
+            },
+          },
+        ],
+      },
+    });
+
+    const panel = screen.getByTestId('assertion-evidence-panel');
+    expect(within(panel).getByText('SLA evidence')).toBeInTheDocument();
+    expect(within(panel).getByText('p99 breached its threshold.')).toBeInTheDocument();
+    expect(within(panel).getByText('Passed')).toBeInTheDocument();
+    expect(within(panel).getByText('Failed')).toBeInTheDocument();
+    expect(within(panel).getByText('N/A')).toBeInTheDocument();
+    expect(screen.getAllByTestId('assertion-outcome')).toHaveLength(3);
   });
 });
 

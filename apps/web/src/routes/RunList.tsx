@@ -1,16 +1,22 @@
-import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
 import Badge from '../components/Badge';
 import Button, { linkButtonClasses } from '../components/Button';
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
+import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
-import { ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
+import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
-import { fetchRuns, runsQueryKey } from '../api/runs';
+import {
+  fetchRuns,
+  runsQueryKey,
+  type RunListFilters,
+  type RunListStatusFilter,
+  type RunListVerdictFilter,
+} from '../api/runs';
 // Status and verdict share one vocabulary with the run detail page — the
 // same Mark data, from the same STATUS/VERDICT tables in ./marks — so a
 // status that changes a word or a glyph updates both screens from one edit
@@ -50,11 +56,9 @@ type RunListItem = RunListResponse['items'][number];
  * by staying the table's first child with `caption-side: top` stated
  * explicitly (`CAPTION`), because the default side varies by engine.
  *
- * NO CLIENT-SIDE FILTER BOX, deliberately. The obvious addition to a run list
- * is a search field, and it would be wrong here: the list is KEYSET-PAGINATED
- * six rows at a time, so a filter could only narrow the page in hand and would
- * silently hide matching runs on every other page — a search that lies. It
- * belongs in the API's query, not in this component.
+ * Filters are URL state and API parameters. That is the important boundary:
+ * the list is keyset-paginated, so narrowing only the page in hand would
+ * silently hide matching runs on every other page.
  */
 export default function RunList({
   projectSlug = null,
@@ -73,6 +77,37 @@ export default function RunList({
   // URL stays honest about what it can address — the list itself — and the
   // walk forward lives where the walk happens.
   const [cursor, setCursor] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { filters, ignored } = useMemo(() => filtersFromParams(searchParams), [searchParams]);
+  const filtersActive = hasActiveFilters(filters);
+
+  // ONE PAIR OF HANDLERS, not one pair per return branch. The controls
+  // render above the loading, error and loaded states alike — they must, or
+  // the filter you just applied disappears while its own request is in
+  // flight — and three inline copies of "reset the cursor, then write the
+  // URL" is three places for them to drift apart.
+  //
+  // `setCursor(null)` FIRST, in both: a cursor is the id of a row on the
+  // previous page of the PREVIOUS filter (see the cursor's own comment
+  // above), so carrying it across a filter change asks the API to continue a
+  // walk through a list that no longer exists.
+  const applyFilters = (next: RunListFilters) => {
+    setCursor(null);
+    setSearchParams(paramsFromFilters(next), { replace: true });
+  };
+  const clearFilters = () => {
+    setCursor(null);
+    setSearchParams({}, { replace: true });
+  };
+  const controls = (
+    <RunListControls
+      filters={filters}
+      ignored={ignored}
+      active={filtersActive || ignored.length > 0}
+      onApply={applyFilters}
+      onClear={clearFilters}
+    />
+  );
   const headingAction = action ?? (projectSlug === null ? (
     <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
       <PlusIcon className="h-3.5 w-3.5" />
@@ -87,8 +122,8 @@ export default function RunList({
   useDocumentTitle(heading);
 
   const runs = useQuery({
-    queryKey: runsQueryKey(cursor, projectSlug),
-    queryFn: () => fetchRuns(cursor, projectSlug),
+    queryKey: runsQueryKey(cursor, projectSlug, filters),
+    queryFn: () => fetchRuns(cursor, projectSlug, filters),
     // Keeps the current page on screen while the next one loads, instead of
     // blanking the table back to a loading state on every click of Next.
     placeholderData: keepPreviousData,
@@ -98,8 +133,9 @@ export default function RunList({
     return (
       <div className="flex flex-col gap-4">
         <PageHeading heading={heading} action={headingAction} />
+        {controls}
         <LoadingState label="Loading runs…">
-          <SkeletonTable columns={5} rows={6} />
+          <SkeletonTable columns={6} rows={6} />
         </LoadingState>
       </div>
     );
@@ -119,6 +155,7 @@ export default function RunList({
     return (
       <div className="flex flex-col gap-4">
         <PageHeading heading={heading} action={headingAction} />
+        {controls}
         <ErrorState
           title="The runs could not be loaded"
           detail={problem?.detail ?? error.message}
@@ -135,54 +172,67 @@ export default function RunList({
       {projectSlug === null ? 'Every run in your organisation' : 'Every run in this project'},
       newest first, with the project it belongs to. “Started” is the load test’s own start time;
       rows marked <em>ingest time</em> have not been parsed yet, so they fall back to when
-      PerfPortal received the run.
+      PerfPortal received the run. Focus is the first operational action to take from the row.
     </>
   );
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} action={headingAction} />
+      {controls}
 
       {items.length === 0 ? (
-        <EmptyPage cursor={cursor} projectSlug={projectSlug} onFirstPage={() => setCursor(null)} />
+        <EmptyPage
+          cursor={cursor}
+          projectSlug={projectSlug}
+          filtered={filtersActive}
+          onFirstPage={() => setCursor(null)}
+          onClearFilters={clearFilters}
+        />
       ) : (
-        // ONE `caption` NODE, rendered visibly outside the scroll box and
-        // programmatically inside the table — see `TableFrame`'s docstring for
-        // why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
-        // off the side of a phone.
-        <TableFrame caption={caption} label={`${heading} table`}>
-            <table className={TABLE}>
-              <caption className="sr-only">{caption}</caption>
-              {/* No Tool column. TOOL_IDS has exactly one member, so it read
-                  "gatling" on every row this platform can produce. It returns
-                  the day a second tool ships, at which point it carries
-                  information; the field stays in the contract meanwhile. */}
-              <thead className={THEAD}>
-                <tr>
-                  <th scope="col" className={TH}>
-                    Started
-                  </th>
-                  <th scope="col" className={TH}>
-                    Project
-                  </th>
-                  <th scope="col" className={TH}>
-                    Simulation
-                  </th>
-                  <th scope="col" className={TH}>
-                    Status
-                  </th>
-                  <th scope="col" className={TH}>
-                    Verdict
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((run) => (
-                  <RunRow key={run.id} run={run} />
-                ))}
-              </tbody>
-            </table>
-        </TableFrame>
+        <>
+          <RunListHealth items={items} />
+          {/* ONE `caption` NODE, rendered visibly outside the scroll box and
+              programmatically inside the table — see `TableFrame`'s docstring for
+              why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
+              off the side of a phone. */}
+          <TableFrame caption={caption} label={`${heading} table`}>
+              <table className={TABLE}>
+                <caption className="sr-only">{caption}</caption>
+                {/* No Tool column. TOOL_IDS has exactly one member, so it read
+                    "gatling" on every row this platform can produce. It returns
+                    the day a second tool ships, at which point it carries
+                    information; the field stays in the contract meanwhile. */}
+                <thead className={THEAD}>
+                  <tr>
+                    <th scope="col" className={TH}>
+                      Started
+                    </th>
+                    <th scope="col" className={TH}>
+                      Project
+                    </th>
+                    <th scope="col" className={TH}>
+                      Simulation
+                    </th>
+                    <th scope="col" className={TH}>
+                      Status
+                    </th>
+                    <th scope="col" className={TH}>
+                      Verdict
+                    </th>
+                    <th scope="col" className={TH}>
+                      Focus
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((run) => (
+                    <RunRow key={run.id} run={run} />
+                  ))}
+                </tbody>
+              </table>
+          </TableFrame>
+        </>
       )}
 
       {/* Page controls exist only when there is a page to control. Rendering
@@ -237,6 +287,237 @@ export default function RunList({
   );
 }
 
+const STATUS_FILTERS: readonly { value: RunListStatusFilter; label: string }[] = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'parsing', label: 'Parsing' },
+  { value: 'running', label: 'Running' },
+  { value: 'complete', label: 'Complete' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'incomplete', label: 'Incomplete' },
+];
+
+const VERDICT_FILTERS: readonly { value: RunListVerdictFilter; label: string }[] = [
+  { value: 'passed', label: 'Passed' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'not_evaluated', label: 'Not evaluated' },
+  { value: 'none', label: 'No verdict' },
+];
+
+function RunListControls({
+  filters,
+  ignored,
+  active,
+  onApply,
+  onClear,
+}: {
+  readonly filters: RunListFilters;
+  /**
+   * Query parameters this list understands the NAME of but not the VALUE —
+   * `?status=completed`, say. Stated rather than dropped: silently ignoring
+   * one rendered the whole unfiltered list under a URL that claimed a
+   * filter, with no Clear control to explain it, while the API answers the
+   * same value with a 400 RUN_FILTER_INVALID. Two components disagreeing
+   * about one input is the part that had to go.
+   */
+  readonly ignored: readonly string[];
+  readonly active: boolean;
+  readonly onApply: (filters: RunListFilters) => void;
+  readonly onClear: () => void;
+}) {
+  const [q, setQ] = useState(filters.q ?? '');
+  const [status, setStatus] = useState(filters.status ?? '');
+  const [verdict, setVerdict] = useState(filters.verdict ?? '');
+
+  useEffect(() => {
+    setQ(filters.q ?? '');
+    setStatus(filters.status ?? '');
+    setVerdict(filters.verdict ?? '');
+  }, [filters]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onApply({
+      q,
+      status: status === '' ? null : (status as RunListStatusFilter),
+      verdict: verdict === '' ? null : (verdict as RunListVerdictFilter),
+    });
+  }
+
+  return (
+    <form
+      aria-label="Run filters"
+      onSubmit={submit}
+      className="flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
+    >
+      <div className="flex items-center gap-2 text-[13px] font-medium text-primary">
+        <FilterIcon className="h-3.5 w-3.5" />
+        Filter runs
+      </div>
+
+      {ignored.length > 0 && (
+        // NO `role="status"`, deliberately. This is not an announcement — it
+        // is present on first paint, because it describes the URL the page
+        // was opened with. `LoadingState` already owns the one live region
+        // on this screen, and a second `status` in the same document while
+        // the list loads is two things a screen reader has to arbitrate
+        // between for no gain.
+        <p data-testid="run-filter-ignored" className="text-[12px] leading-relaxed text-muted">
+          Ignored {ignored.join(' and ')} in the address bar — not {ignored.length > 1 ? 'values' : 'a value'} this
+          list can filter by. Everything else on this page is unfiltered.
+        </p>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto] md:items-end">
+        <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+          Search runs
+          <input
+            className={INPUT}
+            value={q}
+            onChange={(event) => setQ(event.currentTarget.value)}
+            placeholder="Simulation, project, branch"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+          Status
+          <select
+            className={INPUT}
+            value={status}
+            onChange={(event) => setStatus(event.currentTarget.value)}
+          >
+            <option value="">Any status</option>
+            {STATUS_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+          Verdict
+          <select
+            className={INPUT}
+            value={verdict}
+            onChange={(event) => setVerdict(event.currentTarget.value)}
+          >
+            <option value="">Any verdict</option>
+            {VERDICT_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="submit" size="sm" variant="primary">
+            Apply
+          </Button>
+          {active && (
+            <Button size="sm" onClick={onClear}>
+              Clear
+            </Button>
+          )}
+        </div>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * The four counts, and THE SENTENCE THAT MAKES THEM TRUE.
+ *
+ * These reduce over `items` — one keyset page — and nothing about a page of
+ * 25 rows tells you anything about the 400 behind it. Shipped as "Run list
+ * health" with only the fourth tile disclosing its scope, this said "Needs
+ * attention: 2" over an org with 90 failed runs. That is the same defect as
+ * the client-side search this component's own docstring rejects: a
+ * page-local number presented as a statement about the list.
+ *
+ * The scope is stated ONCE, in the section's accessible name and in a line
+ * above the tiles, rather than repeated into four `detail` strings — the
+ * details are what each count MEANS, and a caveat repeated four times reads
+ * as decoration by the third.
+ *
+ * `hasMore` is deliberately gone. It only says whether a NEXT page exists,
+ * so it was never the right test anyway: on page three of five it is true
+ * and on page five it is false, and the counts are page-local in both.
+ */
+function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
+  const summary = healthSummary(items);
+
+  return (
+    <section
+      aria-label="Run health on this page"
+      className="rounded-xl border border-default bg-surface p-4 shadow-panel"
+    >
+      <p className="text-[12px] leading-relaxed text-muted">
+        Counted over the {items.length} {items.length === 1 ? 'run' : 'runs'} on this page. Paging or
+        filtering changes them; they are not totals for the whole list.
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <HealthTile
+          label="Needs attention"
+          value={summary.needsAttention}
+          detail="Failed, incomplete, or SLA failed"
+          colour="var(--color-status-failed)"
+        />
+        <HealthTile
+          label="In flight"
+          value={summary.inFlight}
+          detail="Pending, parsing, or live"
+          colour="var(--color-status-pending)"
+        />
+        <HealthTile
+          label="Passed gates"
+          value={summary.passed}
+          detail="SLA verdict passed"
+          colour="var(--color-status-passed)"
+        />
+        <HealthTile
+          label="Unjudged"
+          value={summary.unjudged}
+          detail="No verdict, or not evaluated"
+          colour="var(--color-status-not-applicable)"
+        />
+      </div>
+    </section>
+  );
+}
+
+function HealthTile({
+  label,
+  value,
+  detail,
+  colour,
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly detail: string;
+  readonly colour: string;
+}) {
+  return (
+    <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: colour }}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</p>
+      <p className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums text-primary">{value}</p>
+      <p className="mt-2 text-[11px] leading-snug text-muted">{detail}</p>
+    </div>
+  );
+}
+
+function healthSummary(items: readonly RunListItem[]) {
+  return items.reduce(
+    (next, run) => ({
+      needsAttention: next.needsAttention + (needsAttention(run) ? 1 : 0),
+      inFlight: next.inFlight + (isInFlight(run) ? 1 : 0),
+      passed: next.passed + (run.verdict === 'passed' ? 1 : 0),
+      unjudged: next.unjudged + (run.verdict === null || run.verdict === 'not_evaluated' ? 1 : 0),
+    }),
+    { needsAttention: 0, inFlight: 0, passed: 0, unjudged: 0 },
+  );
+}
+
 /**
  * The page's `<h1>` and, when there is a list under it, how much of one.
  *
@@ -281,11 +562,15 @@ function PageHeading({
 function EmptyPage({
   cursor,
   projectSlug,
+  filtered,
   onFirstPage,
+  onClearFilters,
 }: {
   cursor: string | null;
   projectSlug: string | null;
+  filtered: boolean;
   onFirstPage: () => void;
+  onClearFilters: () => void;
 }) {
   if (cursor !== null) {
     // Reachable only if rows vanished between the request that produced this
@@ -298,6 +583,20 @@ function EmptyPage({
         action={
           <Button size="sm" variant="primary" onClick={onFirstPage}>
             Back to the first page
+          </Button>
+        }
+      />
+    );
+  }
+
+  if (filtered) {
+    return (
+      <EmptyState
+        title="No runs match these filters"
+        body="The filters are applied across the run history, not just this page."
+        action={
+          <Button size="sm" variant="primary" onClick={onClearFilters}>
+            Clear filters
           </Button>
         }
       />
@@ -317,6 +616,54 @@ function EmptyPage({
       }
     />
   );
+}
+
+/**
+ * The URL's filters, plus WHAT THIS DROPPED. The second half is the point:
+ * an unrecognised `?status=completed` used to become `null` while staying in
+ * the address bar, so the page rendered the full unfiltered list, reported
+ * no active filters, and offered no Clear — a shared link that reads as
+ * "there are no other completed runs". The API rejects the identical value
+ * with a 400, and the two must not disagree about one input.
+ */
+function filtersFromParams(params: URLSearchParams): {
+  filters: RunListFilters;
+  ignored: string[];
+} {
+  const status = params.get('status');
+  const verdict = params.get('verdict');
+  const ignored: string[] = [];
+  if (status !== null && !isStatusFilter(status)) ignored.push(`status=${status}`);
+  if (verdict !== null && !isVerdictFilter(verdict)) ignored.push(`verdict=${verdict}`);
+  return {
+    filters: {
+      q: params.get('q') ?? undefined,
+      status: isStatusFilter(status) ? status : null,
+      verdict: isVerdictFilter(verdict) ? verdict : null,
+    },
+    ignored,
+  };
+}
+
+function paramsFromFilters(filters: RunListFilters): Record<string, string> {
+  const params: Record<string, string> = {};
+  const q = filters.q?.trim();
+  if (q) params.q = q;
+  if (filters.status) params.status = filters.status;
+  if (filters.verdict) params.verdict = filters.verdict;
+  return params;
+}
+
+function hasActiveFilters(filters: RunListFilters): boolean {
+  return Boolean(filters.q?.trim() || filters.status || filters.verdict);
+}
+
+function isStatusFilter(value: string | null): value is RunListStatusFilter {
+  return STATUS_FILTERS.some((option) => option.value === value);
+}
+
+function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
+  return VERDICT_FILTERS.some((option) => option.value === value);
 }
 
 function RunRow({ run }: { run: RunListItem }) {
@@ -370,6 +717,35 @@ function RunRow({ run }: { run: RunListItem }) {
       <td className={TD}>
         <Badge mark={VERDICT[run.verdict ?? 'none']} />
       </td>
+      <td className={TD}>
+        <Badge mark={FOCUS_MARKS[focusFor(run)]} />
+      </td>
     </tr>
   );
+}
+
+type Focus = 'investigate' | 'watch' | 'processing' | 'clear' | 'review';
+
+const FOCUS_MARKS: Record<Focus, { glyph: string; label: string; colour: string }> = {
+  investigate: { glyph: '!', label: 'investigate', colour: 'var(--color-status-failed)' },
+  watch: { glyph: '◕', label: 'watch live', colour: 'var(--color-status-pending)' },
+  processing: { glyph: '◐', label: 'processing', colour: 'var(--color-status-pending)' },
+  clear: { glyph: '✓', label: 'clear', colour: 'var(--color-status-passed)' },
+  review: { glyph: '○', label: 'review', colour: 'var(--color-status-not-applicable)' },
+};
+
+function focusFor(run: RunListItem): Focus {
+  if (needsAttention(run)) return 'investigate';
+  if (run.status === 'running') return 'watch';
+  if (isInFlight(run)) return 'processing';
+  if (run.verdict === 'passed') return 'clear';
+  return 'review';
+}
+
+function needsAttention(run: RunListItem): boolean {
+  return run.status === 'failed' || run.status === 'incomplete' || run.verdict === 'failed';
+}
+
+function isInFlight(run: RunListItem): boolean {
+  return run.status === 'pending' || run.status === 'parsing' || run.status === 'running';
 }

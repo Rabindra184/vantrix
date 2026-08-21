@@ -505,6 +505,133 @@ describe('GET /v1/runs?project=', () => {
   });
 });
 
+/**
+ * The three list filters, on both routes that offer them.
+ *
+ * THESE ONLY EXIST AT THIS LEVEL. `RunRepository.list` binds every filter as
+ * a query parameter, so an unknown status cannot inject — it comes back as
+ * an EMPTY PAGE, which a caller reads as "there are no runs like that". A
+ * wrong answer with a 200 on it is exactly what a repository test cannot
+ * see, and `parseRunListFilters` is the only thing standing between the two.
+ */
+describe('GET /v1/runs — status, verdict and search filters', () => {
+  it('narrows to a status, and to the runs with no verdict yet', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+
+    const complete = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?status=complete')
+      .set(auth());
+    expect(complete.status).toBe(200);
+    expect(RunListResponseSchema.parse(complete.body).items.map((i) => i.id)).toContain(runId);
+
+    // Derived from the run this test just ingested rather than written down:
+    // whatever verdict the pipeline gave it, asking for a DIFFERENT status
+    // must not return it.
+    const running = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?status=running')
+      .set(auth());
+    expect(running.status).toBe(200);
+    expect(running.body.items.map((i: { id: string }) => i.id)).not.toContain(runId);
+  });
+
+  it('treats verdict=none as "no verdict recorded", not as a verdict', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+    const { verdict } = await ctx.prisma.run.findUniqueOrThrow({
+      where: { id: runId },
+      select: { verdict: true },
+    });
+    // The fixture must actually HAVE a verdict, or the negative below is
+    // vacuous.
+    expect(verdict).not.toBeNull();
+
+    const none = await request(ctx.app.getHttpServer()).get('/v1/runs?verdict=none').set(auth());
+    expect(none.status).toBe(200);
+    expect(none.body.items.map((i: { id: string }) => i.id)).not.toContain(runId);
+
+    const own = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs?verdict=${verdict}`)
+      .set(auth());
+    expect(own.status).toBe(200);
+    expect(own.body.items.map((i: { id: string }) => i.id)).toContain(runId);
+  });
+
+  it('searches the run’s own words, and the id by prefix only', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested({ branch: 'release/checkout-v2' });
+
+    const byBranch = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?q=checkout-v2')
+      .set(auth());
+    expect(byBranch.body.items.map((i: { id: string }) => i.id)).toContain(runId);
+
+    const byPrefix = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs?q=${runId.slice(0, 8)}`)
+      .set(auth());
+    expect(byPrefix.body.items.map((i: { id: string }) => i.id)).toContain(runId);
+
+    // A single hex character READ OFF this run's own id. Matched anywhere in
+    // the id it would return the run (and, on a real tenant, everything
+    // else); matched by prefix it is not an id query at all.
+    const noisy = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs?q=${runId[14]}`)
+      .set(auth());
+    expect(noisy.status).toBe(200);
+    expect(noisy.body.items.map((i: { id: string }) => i.id)).not.toContain(runId);
+  });
+
+  /**
+   * 400 WITH A REMEDIATION, never an empty 200. `ProblemFilter`'s fallback
+   * ("consult the OpenAPI description") is useless for a request the
+   * document describes perfectly, so the code names the value it did not
+   * understand and lists the ones it does.
+   */
+  it('refuses an unknown status and an unknown verdict, on both list routes', async () => {
+    ctx = await createTestApp();
+    await ingested();
+
+    for (const url of [
+      '/v1/runs?status=completed',
+      '/v1/runs?verdict=pass',
+      '/v1/projects/checkout/runs?status=completed',
+      '/v1/projects/checkout/runs?verdict=pass',
+    ]) {
+      const res = await request(ctx.app.getHttpServer()).get(url).set(auth());
+      expect(res.status, url).toBe(400);
+      expect(res.body.code, url).toBe('RUN_FILTER_INVALID');
+      // The remediation is the actionable half — it must list the values
+      // that WOULD work, not say "retry".
+      expect(res.body.remediation, url).toMatch(/complete|passed/);
+      expect(res.body.remediation, url).not.toMatch(/retry/i);
+    }
+  });
+
+  it('reads an empty filter as "any", so a form can submit its own controls', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?status=&verdict=&q=')
+      .set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((i: { id: string }) => i.id)).toContain(runId);
+  });
+
+  it('applies the filter before the cursor, not to the page in hand', async () => {
+    ctx = await createTestApp();
+    const runId = await ingested();
+    // limit=1 with a filter that excludes the only run must be an EMPTY
+    // page, not a page of one filtered down to nothing after the fact.
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?limit=1&q=no-such-simulation-anywhere')
+      .set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(0);
+    expect(res.body.nextCursor).toBeNull();
+    expect(runId).toBeTruthy();
+  });
+});
+
 describe('ingest provenance', () => {
   it('stores environment, branch and commitSha from ingest metadata', async () => {
     ctx = await createTestApp();

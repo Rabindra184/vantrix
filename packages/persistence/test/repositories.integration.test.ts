@@ -137,6 +137,74 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
     const seen = [first.items[0]?.id, second.items[0]?.id].sort();
     expect(seen).toEqual([runInA, runInB].sort());
   });
+
+  it('filters by status, verdict, and searchable run metadata', async () => {
+    const { orgId, a, b } = await seed();
+    const repo = new RunRepository(prisma);
+    const checkout = await repo.create(runInput(orgId, a, { branch: 'main' }));
+    const catalog = await repo.create(runInput(orgId, b, { branch: 'release/search' }));
+
+    await prisma.run.update({
+      where: { id: checkout.id },
+      data: { status: 'complete', verdict: 'failed', simulation: 'CheckoutSimulation' },
+    });
+    await prisma.run.update({
+      where: { id: catalog.id },
+      data: { status: 'running', verdict: null, simulation: 'CatalogSimulation' },
+    });
+
+    await expect(repo.list({ orgId }, { limit: 10, status: 'complete' })).resolves.toMatchObject({
+      items: [{ id: checkout.id }],
+    });
+    await expect(repo.list({ orgId }, { limit: 10, verdict: 'none' })).resolves.toMatchObject({
+      items: [{ id: catalog.id }],
+    });
+    await expect(repo.list({ orgId }, { limit: 10, q: 'catalog' })).resolves.toMatchObject({
+      items: [{ id: catalog.id }],
+    });
+    await expect(repo.list({ orgId }, { limit: 10, q: 'release/search' })).resolves.toMatchObject({
+      items: [{ id: catalog.id }],
+    });
+  });
+
+  /**
+   * THE RUN ID IS MATCHED BY PREFIX, NOT ANYWHERE IN THE STRING.
+   *
+   * Folded into the same contains-anywhere OR as simulation and branch, a
+   * uuid makes every short query match almost everything: `%3%` is in nearly
+   * every uuid ever generated, so a reader narrowing to a branch containing
+   * `3` got their whole org back. The prefix is the useful half anyway —
+   * `RunList` renders `id.slice(0, 8)` as a run's fallback name, so the
+   * prefix is exactly the string a reader has on screen to copy.
+   *
+   * Both directions, and the negative one derived rather than assumed: the
+   * single hex character asserted on is READ OFF the id being searched for,
+   * so this cannot go stale against a re-seeded fixture.
+   */
+  it('matches a run id by prefix, and does not match one anywhere in the middle', async () => {
+    const { orgId, a, b } = await seed();
+    const repo = new RunRepository(prisma);
+    const target = await repo.create(runInput(orgId, a, { branch: 'main' }));
+    const other = await repo.create(runInput(orgId, b, { branch: 'other' }));
+
+    const prefix = target.id.slice(0, 8);
+    await expect(repo.list({ orgId }, { limit: 10, q: prefix })).resolves.toMatchObject({
+      items: [{ id: target.id }],
+    });
+
+    // A single character out of the target's own id. Under substring
+    // matching this returned both runs — a uuid pair almost always shares
+    // every hex digit — and under prefix matching it is not an id query at
+    // all (too short to be one), so it matches on nothing.
+    const oneChar = target.id[14]!;
+    const noisy = await repo.list({ orgId }, { limit: 10, q: oneChar });
+    expect(noisy.items).toHaveLength(0);
+
+    // The guard that keeps the negative meaningful: both runs really are in
+    // this org and reachable with no query at all.
+    const all = await repo.list({ orgId }, { limit: 10 });
+    expect(all.items.map((r) => r.id).sort()).toEqual([target.id, other.id].sort());
+  });
 });
 
 describe('RunRepository idempotency', () => {

@@ -3,8 +3,17 @@ import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
 import { badRequest, parseCursor, parseLimit, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
-import type { RunListResponse } from '@perfportal/contracts';
-import { ProjectRepository, type RunRecord } from '@perfportal/persistence';
+import {
+  RunStatusSchema,
+  RunVerdictSchema,
+  type RunListResponse,
+  type RunStatus,
+} from '@perfportal/contracts';
+import {
+  ProjectRepository,
+  type RunRecord,
+  type RunVerdictFilter,
+} from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { RunsService } from './runs.service.js';
 
@@ -39,6 +48,9 @@ export class RunsController {
     @Query('limit') limit = '25',
     @Query('cursor') cursor?: string,
     @Query('project') project?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+    @Query('verdict') verdict?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
     let projectId = tenant.projectId;
@@ -65,9 +77,14 @@ export class RunsController {
     }
 
     const parsedCursor = parseCursor(cursor);
+    const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
       { orgId: tenant.orgId, ...(projectId ? { projectId } : {}) },
-      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+      {
+        limit: parseLimit(limit),
+        ...(parsedCursor ? { cursor: parsedCursor } : {}),
+        ...filters,
+      },
     );
     return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
@@ -191,6 +208,9 @@ export class ProjectRunsController {
     @Req() req: Request,
     @Query('limit') limit = '25',
     @Query('cursor') cursor?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+    @Query('verdict') verdict?: string,
   ): Promise<RunListResponse> {
     const tenant = req.tenant!;
     // A session names no project, but this route names one in its URL and
@@ -217,10 +237,76 @@ export class ProjectRunsController {
     }
 
     const parsedCursor = parseCursor(cursor);
+    const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
       { orgId: tenant.orgId, projectId },
-      { limit: parseLimit(limit), ...(parsedCursor ? { cursor: parsedCursor } : {}) },
+      {
+        limit: parseLimit(limit),
+        ...(parsedCursor ? { cursor: parsedCursor } : {}),
+        ...filters,
+      },
     );
     return { items: page.items.map(toListItem), nextCursor: page.nextCursor };
   }
+}
+
+/**
+ * The three list filters, validated once for both list routes.
+ *
+ * VALIDATED RATHER THAN PASSED THROUGH, even though `RunRepository.list`
+ * binds every one of them as a query parameter and so cannot be injected.
+ * An unknown status reaching the SQL returns an empty page, which reads as
+ * "there are no runs like that" — a wrong answer with a 200 on it. 400
+ * `RUN_FILTER_INVALID` says which value was not understood and lists the
+ * ones that are, and `RunListOptions` types the fields so the guard and the
+ * repository agree in the type system rather than by habit.
+ *
+ * `verdict=none` IS NOT A VERDICT and never reaches `RunVerdictSchema`: it
+ * selects rows whose verdict is NULL, which is a different question from
+ * `not_evaluated` (evaluated, and nothing to say). The repository draws the
+ * same distinction with `r.verdict IS NULL`.
+ *
+ * An EMPTY string is not an error — `?status=` is how a form submits "any",
+ * and refusing it would make the UI special-case its own controls.
+ */
+function parseRunListFilters(input: {
+  readonly q?: string;
+  readonly status?: string;
+  readonly verdict?: string;
+}): { q?: string; status?: RunStatus; verdict?: RunVerdictFilter } {
+  const q = input.q?.trim();
+  const status = input.status?.trim();
+  const verdict = input.verdict?.trim();
+  const filters: { q?: string; status?: RunStatus; verdict?: RunVerdictFilter } = {};
+  if (q) filters.q = q;
+
+  if (status) {
+    const parsed = RunStatusSchema.safeParse(status);
+    if (!parsed.success) {
+      throw badRequest(
+        'RUN_FILTER_INVALID',
+        `Unknown run status "${status}".`,
+        'Use pending, parsing, running, complete, failed, or incomplete.',
+      );
+    }
+    filters.status = parsed.data;
+  }
+
+  if (verdict) {
+    if (verdict === 'none') {
+      filters.verdict = 'none';
+      return filters;
+    }
+    const parsed = RunVerdictSchema.safeParse(verdict);
+    if (!parsed.success) {
+      throw badRequest(
+        'RUN_FILTER_INVALID',
+        `Unknown run verdict "${verdict}".`,
+        'Use passed, failed, not_evaluated, or none.',
+      );
+    }
+    filters.verdict = parsed.data;
+  }
+
+  return filters;
 }

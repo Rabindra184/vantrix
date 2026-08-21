@@ -1,3 +1,5 @@
+import { downloadBlob } from '../download';
+
 /**
  * CSV for the statistics table.
  *
@@ -46,22 +48,15 @@ export function toCsv(
 /**
  * Hand the file to the browser.
  *
- * A Blob and an object URL, NOT an `<a download>` carrying a data: URI — data
- * URIs hit length limits a large statistics table will reach, and browsers
- * disagree about whether they honour `download` on one. The object URL is
- * revoked immediately: the click has already been dispatched synchronously, so
- * the browser has what it needs.
- *
  * THE BOM IS DELIBERATE. Without it Excel reads the file as the system
  * codepage and mangles any non-ASCII request name — and request names are
- * exactly the column most likely to carry one.
+ * exactly the column most likely to carry one. It is also what lets
+ * `describeAssertionRule` write a real `≤` into the Rule column instead of
+ * keeping an ASCII spelling in step with the on-screen one.
+ *
+ * The object-URL mechanics live in `../download`, shared with the run-summary
+ * export; only the MIME type and the BOM are this format's own.
  */
 export function downloadCsv(filename: string, csv: string): void {
-  const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  downloadBlob(filename, new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
 }

@@ -257,6 +257,31 @@ const parameters: Record<string, ParameterObject> = {
       'idle". A bearer token naming a project other than its own gets a 400 PROJECT_MISMATCH.',
     schema: { type: 'string' },
   },
+  RunSearch: {
+    name: 'q',
+    in: 'query',
+    description:
+      'Case-insensitive substring search over project slug/name, simulation, description, ' +
+      'environment, branch and commit SHA. The run id is matched by PREFIX instead, and only ' +
+      'when "q" could be the start of one (four or more hex characters or dashes) — a UUID ' +
+      'contains almost every hex digit, so matching it anywhere would make every short query ' +
+      'return the whole org. Applied by the API before cursor pagination, never as a ' +
+      'client-side page filter.',
+    schema: { type: 'string' },
+  },
+  RunStatusFilter: {
+    name: 'status',
+    in: 'query',
+    description: 'Restrict the list to runs in one lifecycle status.',
+    schema: { type: 'string', enum: ['pending', 'parsing', 'running', 'complete', 'failed', 'incomplete'] },
+  },
+  RunVerdictFilter: {
+    name: 'verdict',
+    in: 'query',
+    description:
+      'Restrict the list to one SLA verdict. "none" means the run has no verdict yet.',
+    schema: { type: 'string', enum: ['passed', 'failed', 'not_evaluated', 'none'] },
+  },
   TelemetryFrom: {
     name: 'from',
     in: 'query',
@@ -361,14 +386,16 @@ const responses: Record<string, ResponseObject> = {
   },
   BadRequest: {
     description:
-      'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID). ' +
-      'application/problem+json with a required "remediation" that says what a valid value ' +
-      'looks like.',
+      'A path or query parameter was malformed (e.g. "id" or "cursor" is not a UUID), or ' +
+      '(code RUN_FILTER_INVALID, on the run list routes) "status" or "verdict" named a value ' +
+      'outside its enum. application/problem+json with a required "remediation" that says ' +
+      'what a valid value looks like.',
     content: problem(),
   },
   ProjectRunsBadRequest: {
     description:
       'Either a query parameter was malformed (e.g. "cursor" is not a valid cursor), or (code ' +
+      'RUN_FILTER_INVALID) "status" or "verdict" named a value outside its enum, or (code ' +
       'PROJECT_REQUIRED) the caller authenticated with a session, which names no project — ' +
       'only a project-scoped token can list a project\'s runs by slug. The remediation names ' +
       'GET /v1/runs as the session-reachable equivalent. application/problem+json with a ' +
@@ -526,7 +553,14 @@ const paths: Record<string, PathItemObject> = {
         'session names no project and sees every run across its whole org instead, unless ' +
         '"project" below narrows it to one. This is the session-reachable list route named by ' +
         'GET /v1/projects/{slug}/runs\'s PROJECT_REQUIRED remediation.',
-      parameters: [parameters['Limit']!, parameters['Cursor']!, parameters['ProjectFilter']!],
+      parameters: [
+        parameters['Limit']!,
+        parameters['Cursor']!,
+        parameters['ProjectFilter']!,
+        parameters['RunSearch']!,
+        parameters['RunStatusFilter']!,
+        parameters['RunVerdictFilter']!,
+      ],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
         '400': ref('BadRequest'),
@@ -946,7 +980,14 @@ const paths: Record<string, PathItemObject> = {
       description:
         'Requires the "read" scope. 404s if "slug" does not name the project the bearer ' +
         'token belongs to — a token cannot list a project by naming a different one.',
-      parameters: [parameters['ProjectSlug']!, parameters['Limit']!, parameters['Cursor']!],
+      parameters: [
+        parameters['ProjectSlug']!,
+        parameters['Limit']!,
+        parameters['Cursor']!,
+        parameters['RunSearch']!,
+        parameters['RunStatusFilter']!,
+        parameters['RunVerdictFilter']!,
+      ],
       responses: {
         '200': { description: 'Newest-first page of runs.', content: json(schemaRef('RunListResponse')) },
         '400': ref('ProjectRunsBadRequest'),
