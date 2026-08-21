@@ -6,6 +6,7 @@ export * from './repositories/token.js';
 export * from './repositories/membership.js';
 export * from './repositories/run.js';
 export * from './repositories/rule.js';
+export * from './repositories/runner.js';
 export * from './metrics/write.js';
 export * from './metrics/read.js';
 /** The cohort SQL, public for the same reason `SERIES_SQL` is: a test asserts

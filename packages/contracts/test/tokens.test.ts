@@ -7,6 +7,11 @@ describe('MintTokenRequestSchema', () => {
     expect(r.success).toBe(true);
   });
 
+  it('knows the runner scope', () => {
+    const r = MintTokenRequestSchema.safeParse({ name: 'on-prem runner', scopes: ['runner'] });
+    expect(r.success).toBe(true);
+  });
+
   it('rejects an unknown scope', () => {
     // A garbage scope would authenticate and match nothing, producing a token
     // that fails every request for a reason no message explains.

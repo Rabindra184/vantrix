@@ -4,6 +4,14 @@ import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persist
 import { PrismaClient } from '@prisma/client';
 import { statusForCode } from '../common/problem.js';
 
+interface RunAssertionRow {
+  ruleId: string;
+  outcome: string;
+  actualValue: number | null;
+  message: string;
+  ruleSnapshot: unknown;
+}
+
 @Injectable()
 export class RunsService {
   constructor(
@@ -38,7 +46,7 @@ export class RunsService {
     const assertions = await this.prisma.runAssertion.findMany({
       where: { runId: run.id },
       orderBy: { outcome: 'asc' },   // 'failed' sorts before 'not_applicable' and 'passed'
-    });
+    }) as RunAssertionRow[];
 
     return {
       id: run.id,
@@ -76,7 +84,7 @@ export class RunsService {
             outcome: a.outcome as ToolAssertionOutcome,
           })),
       error: run.error,
-      assertions: assertions.map((a) => {
+      assertions: assertions.map((a: RunAssertionRow) => {
         const snap = a.ruleSnapshot as {
           scope: string; targetName: string | null; family: string;
           metric: string; comparator: string; threshold: number;

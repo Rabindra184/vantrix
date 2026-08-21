@@ -6,6 +6,7 @@ import {
   createPrisma,
   OrgMemberRepository,
   ProjectRepository,
+  RunnerRepository,
   RunRepository,
   RuleRepository,
   TokenRepository,
@@ -26,6 +27,7 @@ export const CONFIG = Symbol('CONFIG');
     { provide: TokenRepository, useFactory: (p: PrismaClient) => new TokenRepository(p), inject: [PrismaClient] },
     { provide: OrgMemberRepository, useFactory: (p: PrismaClient) => new OrgMemberRepository(p), inject: [PrismaClient] },
     { provide: ProjectRepository, useFactory: (p: PrismaClient) => new ProjectRepository(p), inject: [PrismaClient] },
+    { provide: RunnerRepository, useFactory: (p: PrismaClient) => new RunnerRepository(p), inject: [PrismaClient] },
     { provide: RunRepository, useFactory: (p: PrismaClient) => new RunRepository(p), inject: [PrismaClient] },
     { provide: RuleRepository, useFactory: (p: PrismaClient) => new RuleRepository(p), inject: [PrismaClient] },
     AuthGuard,
@@ -36,6 +38,6 @@ export const CONFIG = Symbol('CONFIG');
     // AuthGuard provider above, not a second one.
     { provide: APP_GUARD, useExisting: AuthGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunRepository, RuleRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}

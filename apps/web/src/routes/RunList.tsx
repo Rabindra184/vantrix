@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
@@ -58,10 +58,12 @@ type RunListItem = RunListResponse['items'][number];
 export default function RunList({
   projectSlug = null,
   heading = 'Runs',
+  action,
 }: {
   /** Narrows the list to one project. Null is the org-wide list. */
   readonly projectSlug?: string | null;
   readonly heading?: string;
+  readonly action?: ReactNode;
 } = {}) {
   // The cursor is component state, not a URL query parameter. Keyset
   // pagination has no stable notion of "page 3": a cursor is the id of a row
@@ -88,7 +90,7 @@ export default function RunList({
   if (runs.isPending) {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeading heading={heading} />
+        <PageHeading heading={heading} action={action} />
         <LoadingState label="Loading runs…">
           <SkeletonTable columns={5} rows={6} />
         </LoadingState>
@@ -109,7 +111,7 @@ export default function RunList({
     // a second one.
     return (
       <div className="flex flex-col gap-4">
-        <PageHeading heading={heading} />
+        <PageHeading heading={heading} action={action} />
         <ErrorState
           title="The runs could not be loaded"
           detail={problem?.detail ?? error.message}
@@ -132,7 +134,7 @@ export default function RunList({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} />
+      <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} action={action} />
 
       {items.length === 0 ? (
         <EmptyPage cursor={cursor} projectSlug={projectSlug} onFirstPage={() => setCursor(null)} />
@@ -237,20 +239,25 @@ function PageHeading({
   heading,
   count,
   hasMore = false,
+  action,
 }: {
   readonly heading: string;
   readonly count?: number;
   readonly hasMore?: boolean;
+  readonly action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
-      {count !== undefined && count > 0 && (
-        <p className="text-[13px] text-muted">
-          {count} {count === 1 ? 'run' : 'runs'}
-          {hasMore && ', more available'}
-        </p>
-      )}
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
+        {count !== undefined && count > 0 && (
+          <p className="text-[13px] text-muted">
+            {count} {count === 1 ? 'run' : 'runs'}
+            {hasMore && ', more available'}
+          </p>
+        )}
+      </div>
+      {action}
     </div>
   );
 }

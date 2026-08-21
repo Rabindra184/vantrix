@@ -1,4 +1,5 @@
 import { LiveSlaSchema } from '@perfportal/contracts';
+import { LIVE_CHANNELS } from '@perfportal/core';
 import type { Redis } from 'ioredis';
 import { RuleRepository, type ProjectScope } from '@perfportal/persistence';
 import { StreamingLogDecoder } from '@perfportal/plugin-gatling';
@@ -596,11 +597,11 @@ export class LiveFoldOwner {
     // the routing table exists as soon as the instance does, regardless of
     // whether or when a caller ever calls listen() at all.
     this.#sub.on('message', (channel: string, message: string) => {
-      if (channel === 'live:opened') {
+      if (channel === LIVE_CHANNELS.opened) {
         void this.#guarded('claim (ping)', message, () => this.#onOpened(message));
-      } else if (channel === 'live:advance') {
+      } else if (channel === LIVE_CHANNELS.advance) {
         void this.#guarded('fold (ping)', message, () => this.#onAdvance(message));
-      } else if (channel === 'live:closed') {
+      } else if (channel === LIVE_CHANNELS.closed) {
         void this.#guarded('release (ping)', message, () => this.#onClosed(message));
       }
     });
@@ -621,7 +622,7 @@ export class LiveFoldOwner {
    * scheduled tick instead of immediately.
    */
   async listen(): Promise<void> {
-    await this.#sub.subscribe('live:opened', 'live:advance', 'live:closed');
+    await this.#sub.subscribe(LIVE_CHANNELS.opened, LIVE_CHANNELS.advance, LIVE_CHANNELS.closed);
   }
 
   /**

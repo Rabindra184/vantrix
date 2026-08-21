@@ -1,4 +1,5 @@
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { LIVE_CHANNELS } from '@perfportal/core';
 import { Redis } from 'ioredis';
 
 /**
@@ -53,7 +54,7 @@ export class LiveNotifier implements OnModuleDestroy {
    * discovery poll to notice the new `running` row.
    */
   opened(runId: string): void {
-    void this.#redis.publish('live:opened', runId).catch(() => {});
+    void this.#redis.publish(LIVE_CHANNELS.opened, runId).catch(() => {});
   }
 
   /**
@@ -71,7 +72,7 @@ export class LiveNotifier implements OnModuleDestroy {
    * nobody.
    */
   advanced(runId: string): void {
-    void this.#redis.publish('live:advance', runId).catch(() => {});
+    void this.#redis.publish(LIVE_CHANNELS.advance, runId).catch(() => {});
   }
 
   /**
@@ -100,7 +101,7 @@ export class LiveNotifier implements OnModuleDestroy {
    * latency is the whole defect.
    */
   closed(runId: string): void {
-    void this.#redis.publish('live:closed', runId).catch(() => {});
+    void this.#redis.publish(LIVE_CHANNELS.closed, runId).catch(() => {});
   }
 
   async onModuleDestroy(): Promise<void> {

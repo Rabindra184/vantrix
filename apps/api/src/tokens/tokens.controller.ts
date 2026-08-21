@@ -44,7 +44,7 @@ export class TokensController {
       throw badRequest(
         'INVALID_TOKEN_REQUEST',
         `The token request is not valid: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-        'Send a non-empty "name" and at least one scope from ["ingest", "read", "telemetry"].',
+        'Send a non-empty "name" and at least one scope from ["ingest", "read", "telemetry", "stream", "runner"].',
       );
     }
 

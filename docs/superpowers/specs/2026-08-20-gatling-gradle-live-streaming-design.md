@@ -31,6 +31,13 @@ anything.
 R-9 also says the ingest contract "keeps it a separable future product". This
 plugin is a client OF that contract, which is the shape §5.3 leaves open.
 
+**On-prem runner UI amendment.** The single-node on-prem runner is the explicit
+product exception to this boundary. It may execute a user-uploaded Gatling jar
+or bundle from the UI, but only as a simplified, single-tenant on-prem
+deployment with documented operator responsibility for stronger per-job
+sandboxing. This Gradle plugin remains on the original side of the line: it
+observes a build-managed Gatling run and does not execute tests.
+
 **It does not launch the telemetry agent.** Deferred, §8.
 
 **It reads no Gatling internals.** It watches a directory and drives our own
@@ -258,4 +265,5 @@ test is what turns it into a gate.
   once the run finishes" notice meanwhile.
 - **Non-Gatling tools**, and Maven or any other build system.
 - **Hooking Gatling's `DataWriter` SPI** (§1).
-- **Executing tests from Vantrix** (§0, PRD §5.3).
+- **Executing tests from Vantrix**, except for the separately scoped single-node
+  on-prem runner UI amendment in §0.

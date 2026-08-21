@@ -144,6 +144,32 @@ export function RefreshIcon({ className = 'h-4 w-4', ...props }: IconProps) {
   );
 }
 
+export function PlayIcon({ className = 'h-4 w-4', ...props }: IconProps) {
+  return (
+    <svg {...base} className={className} {...props}>
+      <path d="M8 5.5v13l10.5-6.5L8 5.5Z" />
+    </svg>
+  );
+}
+
+export function StopIcon({ className = 'h-4 w-4', ...props }: IconProps) {
+  return (
+    <svg {...base} className={className} {...props}>
+      <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+    </svg>
+  );
+}
+
+export function UploadIcon({ className = 'h-4 w-4', ...props }: IconProps) {
+  return (
+    <svg {...base} className={className} {...props}>
+      <path d="M12 16V4.5" />
+      <path d="m7.5 9 4.5-4.5L16.5 9" />
+      <path d="M4.5 15.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
 /** Something the reader has to act on: a failed fetch, a failed sign-out. */
 export function AlertIcon({ className = 'h-4 w-4', ...props }: IconProps) {
   return (

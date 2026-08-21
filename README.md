@@ -21,8 +21,12 @@ HTTP.
   aggregation engine and SLA evaluation behind an async contract, and
   persists the result. It runs in its own process and event loop, so a slow
   parse can never block API latency.
+- **`apps/runner`** — single-node on-prem Gatling executor. The UI queues an
+  uploaded fat jar or runnable bundle; this process claims one queued job at a
+  time, starts Gatling locally, tails `simulation.log` while it is written, and
+  closes the live run into the normal worker/report pipeline.
 
-Both apps are built from, and depend on, the packages below; `api` cannot
+These apps are built from, and depend on, the packages below; `api` cannot
 import the parsing or aggregation packages directly — ingestion happens only
 in the worker.
 
@@ -52,6 +56,9 @@ Quick path:
 
 ```bash
 nvm use
+export PERFPORTAL_DB_PASSWORD='change-me'
+export PERFPORTAL_S3_ACCESS_KEY='change-me'
+export PERFPORTAL_S3_SECRET_KEY='change-me-too'
 docker compose -f infra/docker-compose.yml up -d
 pnpm install
 pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma

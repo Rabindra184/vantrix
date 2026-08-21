@@ -11,12 +11,11 @@ import { SetMetadata } from '@nestjs/common';
  * `stream` is the same reasoning applied to a live run: the token that opens
  * one and posts its batches lives on that same generator, and `ingest` would
  * let it upload a finished bundle for the whole project instead of feeding
- * only the one run it opened. It stays out of `authenticateSession`'s granted
- * scopes (auth.middleware.ts) for the same reason `telemetry` does -- a
- * browser session has no reason to stream a run, and widening it there would
- * make the scope decorative.
+ * only the one run it opened. `runner` is separate again: it authorizes
+ * uploading executable on-prem artifacts, cancelling them and retrying them.
+ * Browser sessions receive `runner`; generic ingest tokens do not.
  */
-export type TokenScope = 'ingest' | 'read' | 'telemetry' | 'stream';
+export type TokenScope = 'ingest' | 'read' | 'telemetry' | 'stream' | 'runner';
 export const SCOPES_KEY = 'perfportal:scopes';
 export const Scopes = (...scopes: TokenScope[]) => SetMetadata(SCOPES_KEY, scopes);
 

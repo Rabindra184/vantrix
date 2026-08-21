@@ -122,6 +122,7 @@ export class ProjectRepository {
    * scoped to exactly one. Absent for a session, which sees the whole org.
    */
   async listForOrg(orgId: string, projectId?: string): Promise<ProjectListRow[]> {
+    const projectFilter = projectId === undefined ? Prisma.empty : Prisma.sql`AND p.id = ${projectId}::uuid`;
     const rows = await this.prisma.$queryRaw<RawProjectRow[]>`
       SELECT p.id, p.slug, p.name,
              r.id AS "latestRunId", r.status AS "latestRunStatus",
@@ -135,10 +136,10 @@ export class ProjectRepository {
         LIMIT 1
       ) r ON true
       WHERE p.org_id = ${orgId}::uuid
-      ${projectId ? Prisma.sql`AND p.id = ${projectId}::uuid` : Prisma.empty}
+      ${projectFilter}
       ORDER BY p.name ASC
     `;
-    return rows.map((row) => ({
+    return rows.map((row: RawProjectRow) => ({
       id: row.id,
       slug: row.slug,
       name: row.name,

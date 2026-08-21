@@ -548,7 +548,7 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       // frequently fractional value - which is what actually distinguishes
       // Math.trunc from Math.round. Needs its own ingest (like PT-K-03):
       // maxBucketsEndpoint is captured into engineOptions at POST /v1/runs
-      // time (apps/api/src/ingest/ingest.service.ts's ENGINE_KEYS), not
+      // time (packages/core/src/engine-options.ts's ENGINE_KEYS), not
       // read live - via a sibling project, not a second app (see
       // createSiblingProject's comment for why).
       // The request-scope series (own p95) and the run-scope series (the
