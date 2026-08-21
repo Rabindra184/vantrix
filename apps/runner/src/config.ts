@@ -17,6 +17,7 @@ export interface RunnerConfig {
   };
   childUid: number | null;
   childGid: number | null;
+  allowSameUidExecution: boolean;
   blob: {
     endpoint: string;
     region: string;
@@ -72,6 +73,11 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
     },
     childUid: optionalNumber(env.RUNNER_CHILD_UID),
     childGid: optionalNumber(env.RUNNER_CHILD_GID),
+    // Fail-closed by default: the runner refuses to execute an uploaded
+    // simulation as its own uid (which would give attacker code the
+    // control-plane process's credentials and network reach). A trusted
+    // single-tenant host may opt out with RUNNER_ALLOW_SAME_UID=true.
+    allowSameUidExecution: env.RUNNER_ALLOW_SAME_UID === 'true',
     blob: {
       endpoint: env.S3_ENDPOINT ?? 'http://localhost:9000',
       region: env.S3_REGION ?? 'us-east-1',

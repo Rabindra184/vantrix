@@ -70,6 +70,12 @@ export class RunnerExecutor {
       await this.#runner.setLogPath(jobId, logger.path);
       logger.info(`claimed job ${jobId} (${job.artifact.name})`);
 
+      // Fail closed BEFORE opening a live run: never execute uploaded code as
+      // the runner's own uid. Throwing here marks the job failed with an
+      // actionable remediation rather than silently running attacker code
+      // alongside the control-plane credentials.
+      this.#assertUidIsolation();
+
       const runId = await sink.open(job);
       const opened = await this.#runner.markRunOpened(jobId, runId);
       if (!opened) {
@@ -161,6 +167,30 @@ export class RunnerExecutor {
 
   async #isCancelled(jobId: string): Promise<boolean> {
     return (await this.#runner.status(jobId)) === 'cancelled';
+  }
+
+  // Refuse to launch an uploaded simulation under the runner's own user. With
+  // no child uid configured, `spawn`'s `uid` is `undefined` and the child
+  // inherits this process's uid — and therefore its ambient access to the
+  // control-plane network and any credentials reachable from it. This is a
+  // hardening step, not full isolation: it closes the fail-OPEN default, but a
+  // genuinely multi-tenant install still needs per-job container/namespace and
+  // network isolation (tracked separately). Opt out only on a trusted
+  // single-tenant host via RUNNER_ALLOW_SAME_UID=true.
+  #assertUidIsolation(): void {
+    if (this.#config.allowSameUidExecution) return;
+    const selfUid = typeof process.getuid === 'function' ? process.getuid() : null;
+    const childUid = this.#config.childUid;
+    if (childUid === null || (selfUid !== null && childUid === selfUid)) {
+      throw new RunnerExecutionError(
+        'RUNNER_UID_ISOLATION_REQUIRED',
+        "Refusing to execute an uploaded simulation as the runner's own user; " +
+          'uploaded code would share the control-plane process credentials and network reach.',
+        'Set RUNNER_CHILD_UID (and RUNNER_CHILD_GID) to an unprivileged user distinct ' +
+          'from the runner process, or set RUNNER_ALLOW_SAME_UID=true only on a trusted ' +
+          'single-tenant host.',
+      );
+    }
   }
 
   async #heartbeatAndCheckCancelled(jobId: string): Promise<boolean> {
