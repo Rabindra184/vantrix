@@ -20,7 +20,11 @@ plugins {
     // The plugin under test. Pure env config (VANTRIX_URL / VANTRIX_TOKEN /
     // VANTRIX_TICK_SECONDS, set by run-e2e.sh) -- no vantrix{} block needed,
     // see ResolvedConfig.from's fallback to System.getenv().
-    id("dev.vantrix.gatling") version "0.1.0-SNAPSHOT"
+    //
+    // NO VERSION HERE. It is declared once, in settings.gradle.kts, from the
+    // -PvantrixPluginVersion that run-e2e.sh derives from the plugin build --
+    // see that file for what a written-down version cost.
+    id("dev.vantrix.gatling")
 }
 
 tasks.withType(JavaCompile::class) {

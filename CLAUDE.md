@@ -71,7 +71,7 @@ suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. Last measured on the second review-followup
 branch, which added ONE unit file — `RunSectionNotFound.test.tsx` (3) — plus a
 route-declaration guard in `paths.test.ts`, from a floor of 123 / 1293. Its
-integration floor is 117 files / 1347 tests (three cases in
+integration floor is 117 files / 1348 tests (four cases in
 `repositories.integration.test.ts`: a project-name search, an id-prefix
 search, and a PLAN assertion) and its e2e rises to 94 — the first e2e case
 added in several sub-projects, for a stale run-section URL, which only a real
@@ -551,6 +551,22 @@ cd clients/gatling-gradle && ./gradlew build --no-daemon
 `clients/gatling-gradle/e2e/run-e2e.sh`, is manual and on demand — it needs
 the local Docker stack plus the API and worker both running against it, and
 is not part of any `pnpm` gate or the CI `plugin` job for that reason.
+
+**BEING IN NO GATE IS EXACTLY WHY IT ROTTED.** That script hard-coded the
+plugin version (`0.1.0-SNAPSHOT`) in its own log line and in
+`e2e-project/build.gradle.kts`, while the plugin's default version had moved
+to `0.2.0-SNAPSHOT`. Every invocation then died in Gradle's plugin-RESOLUTION
+phase — "Plugin [id: 'dev.vantrix.gatling', version: '0.1.0-SNAPSHOT'] was not
+found" — before Gatling, the platform, or anything this gate exists to prove.
+The script now DERIVES the version from the plugin build the same way CI's own
+`plugin-consume` job already did (`awk '/^version:/{print $2}'`) and passes it
+as `-PvantrixPluginVersion`; `e2e-project` declares no version at all. It also
+checks that the plugin MARKER artifact landed in `~/.m2`, because a missing
+marker fails with the SAME message a wrong version does.
+
+Anything else written down in two places here has the same half-life. Run
+this gate after touching the plugin, its publishing, or the fixture
+simulation.
 
 
 ## Conventions that bite

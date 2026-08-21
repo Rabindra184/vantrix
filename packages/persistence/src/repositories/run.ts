@@ -695,10 +695,17 @@ export class RunRepository {
     // So the projects are resolved FIRST, by their own trigram indexes, and
     // arrive here as an id array. The result set is identical — a run whose
     // project matches is exactly a run whose `project_id` is in that list —
-    // and it costs one small indexed query, only when `q` is present, and
-    // never when the caller is already scoped to a single project (an
-    // `r.project_id = $n` filter is ANDed above, so no other project's runs
-    // can enter the page however the name matches).
+    // and it costs one small indexed query, only when `q` is present.
+    //
+    // IT RUNS FOR A PROJECT-SCOPED CALLER TOO, and skipping it there was a
+    // real bug, caught by searching a live token's own project by name. The
+    // reasoning for skipping sounded right — an `r.project_id = $n` filter is
+    // ANDed above, so no OTHER project's runs can enter the page however the
+    // name matches — but it answers the wrong question. When the caller's OWN
+    // project is what matches, every row in scope should match and the branch
+    // is the only thing that says so. Without it, a token scoped to
+    // `parity-run-c6bcd6a5` searching `parity-run` got zero runs while the
+    // org-scoped session got both.
     //
     // NO `COALESCE(col, '')`, AND ITS ABSENCE IS LOAD-BEARING. It was there
     // to make a null column compare as an empty string, which reads as
@@ -721,12 +728,10 @@ export class RunRepository {
         `r.commit_sha ILIKE ${at} ESCAPE '\\'`,
       ];
 
-      if (!scope.projectId) {
-        const matched = await this.projectIdsMatching(scope.orgId, like);
-        if (matched.length > 0) {
-          params.push(matched);
-          clauses.push(`r.project_id = ANY($${params.length}::uuid[])`);
-        }
+      const matched = await this.projectIdsMatching(scope.orgId, like);
+      if (matched.length > 0) {
+        params.push(matched);
+        clauses.push(`r.project_id = ANY($${params.length}::uuid[])`);
       }
 
       const range = runIdPrefixRange(opts.q);
