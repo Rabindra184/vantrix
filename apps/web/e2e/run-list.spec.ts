@@ -172,3 +172,42 @@ test('a row link is named by the whole run id, not by its visible text', async (
   // pollute or replace the name the aria-label supplies.
   await expect(page.getByRole('link', { name: `View run ${runId}` })).toBeVisible();
 });
+
+/**
+ * ONE "New project" LINK IN THE DOCUMENT, not two.
+ *
+ * `ProjectRail` renders on every authenticated page, so when it also carried
+ * a "New project" row the `/runs` document held two links with the identical
+ * accessible name — the rail's and the run list heading's. Playwright matches
+ * `name` as a case-insensitive SUBSTRING and enforces strict mode, so this
+ * very query resolved two elements and threw; a screen-reader user heard the
+ * same action announced twice in one view.
+ *
+ * IT HAS TO BE AN E2E ASSERTION. jsdom renders one component at a time, so
+ * neither `ProjectRail.test.tsx` nor a run-list unit test can see two
+ * components colliding in one document — the unit suite stayed green for the
+ * whole life of the bug. This is the same reason CLAUDE.md puts
+ * accessible-name assertions in Playwright.
+ *
+ * `toHaveCount(1)`, never `toBeVisible()`: a duplicate that CSS happens to
+ * hide is still in the accessibility tree and still breaks the query, so
+ * counting is what actually pins the invariant.
+ */
+test('offers exactly one New project link on the org-wide list', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  // Paired positive: the rail is present, so this is about a duplicate name
+  // rather than about a page that failed to render its chrome.
+  await expect(page.getByRole('navigation', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'New project' })).toHaveCount(1);
+
+  // And the one that survives is the page heading's, which actually goes to
+  // the create form.
+  await expect(page.getByRole('link', { name: 'New project' })).toHaveAttribute(
+    'href',
+    '/projects/_new',
+  );
+});

@@ -138,6 +138,30 @@ describe('ProjectRail', () => {
     expect(checkout.textContent).not.toBe('Checkout Flow');
   });
 
+  /**
+   * THE RAIL MUST NOT OFFER "New project", because `RunList` already does.
+   *
+   * The rail renders on EVERY authenticated page, so a row here put a second
+   * link with the identical accessible name into the `/runs` document.
+   * Playwright matches names as a case-insensitive substring under strict
+   * mode, so the first spec to reach for that link resolves two elements and
+   * fails on a page nobody touched — and a screen-reader user hears one
+   * action announced twice in a single view.
+   *
+   * Asserted here as well as in `run-list.spec.ts` because the two catch
+   * different halves: the e2e case proves there is exactly ONE in a real
+   * document, this one proves WHICH component dropped it, so a re-add to the
+   * rail fails with the cause attached rather than as a strict-mode error
+   * somewhere else.
+   */
+  it('offers no New project row — the run list heading owns that action', async () => {
+    renderRail(PROJECTS);
+    // Paired positive first: the rail really did render, so the absence
+    // below is about this row and not about an empty rail.
+    expect(await screen.findByRole('link', { name: 'All runs' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /new project/i })).toBeNull();
+  });
+
   it('marks All runs as the current page on /runs', async () => {
     renderRail(PROJECTS, { route: '/runs' });
     expect(await screen.findByRole('link', { name: 'All runs' })).toHaveAttribute(

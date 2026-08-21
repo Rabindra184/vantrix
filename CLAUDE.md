@@ -65,10 +65,24 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **117 files / 1258 tests**, it
+`nvm use` first, and if a run reports fewer than **117 files / 1259 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the project setup
+silently-skipped run looks like a pass. Last measured on the duplicate
+"New project" link fix, which added no unit FILE and 1 unit case to
+`ProjectRail.test.tsx` plus 1 E2E case to `run-list.spec.ts` — so its e2e
+floor rises to 93, the first time that number has moved in several
+sub-projects, and its integration floor stays 113 files / 1319 tests
+(neither file is a `.ts` integration runs). The rail carried a "New project"
+row while `RunList`'s heading rendered the same action, and because the rail
+is on EVERY authenticated page the `/runs` document held two links with one
+accessible name. THE UNIT SUITE COULD NOT SEE IT AND NEVER WILL: jsdom
+renders one component at a time, so a collision BETWEEN two components in
+one document is invisible there — the e2e case is the guard, and it failed
+with "locator resolved to 2 elements" when verified red. The unit case
+pins WHICH component dropped the row, so a re-add fails with its cause
+attached rather than as a strict-mode error in an unrelated spec. From a
+floor of 117 / 1258. Before that, the project setup
 and token-management UI, which added two unit FILES —
 `apps/web/test/NewProject.test.tsx` and `apps/web/test/ProjectSetup.test.tsx`
 — covering the create-project form and the API-token screen, plus the
