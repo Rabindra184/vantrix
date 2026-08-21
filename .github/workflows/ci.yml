@@ -1,6 +1,33 @@
 name: ci
 on: [push, pull_request]
 
+# ONE RUN PER REF, NOT TWO.
+#
+# `on: [push, pull_request]` fires BOTH triggers for a branch that has a PR
+# open, so every push ran the whole ~13-minute `build` job twice, on two
+# separate VMs, against one SHA. That is not just double the minutes: each
+# run is an independent chance to hit a flake, and ONE red run out of two is
+# enough to make the PR's mergeStateStatus UNSTABLE and block the merge
+# button. Observed on PR #56, where the `push` run passed and the
+# `pull_request` run failed on a single 120s timeout in an unrelated
+# integration test.
+#
+# The group keys on the WORKFLOW plus the ref so the two triggers for one
+# branch collapse into one another, and `cancel-in-progress` means a second
+# push supersedes the first rather than queueing behind it.
+#
+# `github.run_id` for the default branch: pushes to `main` must NOT cancel
+# each other, because each merge commit is a distinct thing to prove green
+# and a cancelled one leaves no record that it was ever built.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        && github.run_id
+        || github.ref
+    }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

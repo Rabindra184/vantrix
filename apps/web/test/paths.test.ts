@@ -92,6 +92,31 @@ describe('safeNext', () => {
 describe('static routes cannot shadow a project slug', () => {
   const APP = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 
+  /**
+   * A RUN SUB-PATH MUST NOT FALL THROUGH TO THE GLOBAL CATCH-ALL.
+   *
+   * `App.tsx` ends with `<Route path="*">` redirecting to `/runs`, so before
+   * this child route existed a stale link to a renamed section — the Load
+   * generators tab lived at `/telemetry` before `/load-generators` — silently
+   * teleported the reader from the run they had open to the top of the run
+   * list, with nothing on screen accounting for it.
+   *
+   * Read out of `App.tsx` for the same reason the project scan below is: the
+   * failure this guards against is somebody deleting the child route later,
+   * and a test that only rendered the component could not see that.
+   */
+  it('handles an unknown run section inside the run shell, not via the global redirect', () => {
+    const runBlock = APP.slice(
+      APP.indexOf('<Route path="/runs/:runId"'),
+      APP.indexOf('<Route path="/runs/:runId/requests/'),
+    );
+    // Guard: the slice really found the run route block, so the assertion
+    // below is about its contents rather than about an empty string.
+    expect(runBlock).toContain('RunOverviewTab');
+    expect(runBlock).toContain('path="*"');
+    expect(runBlock).toContain('RunSectionNotFound');
+  });
+
   it('declares at least one project route, so the scan below is not vacuous', () => {
     expect(APP).toMatch(/path=(?:"|\{)[^\n]*projects/);
   });

@@ -39,6 +39,14 @@ model Project {
 
   @@unique([id, orgId])
   @@unique([orgId, slug])
+  // TRIGRAM, FOR THE RUN LIST'S `?q=` SEARCH — see
+  // `RunRepository.list` and migration 20260821200000_run_search_trigram.
+  // A leading-wildcard ILIKE cannot use the b-tree above it; these can, and
+  // they have to exist for EVERY column in that predicate's OR, because
+  // PostgreSQL falls back to a sequential scan of the whole thing the moment
+  // one branch is unindexable.
+  @@index([slug(ops: raw("gin_trgm_ops"))], type: Gin, map: "project_slug_trgm")
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "project_name_trgm")
   @@map("project")
 }
 
@@ -257,6 +265,13 @@ model Run {
   @@unique([projectId, idempotencyKey])
   @@index([projectId, startedAt(sort: Desc)])
   @@index([status, createdAt])
+  // The other six columns of the run list's `?q=` search. See the pair on
+  // `Project` above for why every one of them needs its own index.
+  @@index([simulation(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_simulation_trgm")
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_description_trgm")
+  @@index([environment(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_environment_trgm")
+  @@index([branch(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_branch_trgm")
+  @@index([commitSha(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_commit_sha_trgm")
   @@map("run")
 }
 

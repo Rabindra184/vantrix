@@ -100,8 +100,34 @@ describe('baselineRun', () => {
     expect(baselineRun(trends([NEWEST, MIDDLE]), 'not-in-this-cohort')).toBeNull();
   });
 
-  it('skips a run sharing this one’s instant rather than calling it previous', () => {
-    const twin = trendRun('twin', MIDDLE.toolStartedAt, MIDDLE.startedAt);
-    expect(baselineRun(trends([NEWEST, MIDDLE, twin]), 'middle')).toBeNull();
+  /**
+   * TIES ARE BROKEN BY ID, THE WAY THE RUN LIST BREAKS THEM.
+   *
+   * Not a corner case: `tool_started_at` comes from the LOG, not from ingest,
+   * so every run of one re-ingested simulation shares an instant — which is
+   * exactly what a CI replay, a re-capture, or a demo seeded from the
+   * reference bundle produces. Comparing instants alone gave all of them a
+   * null baseline and no deltas at all, while the run list above went on
+   * showing them in a definite sequence. `TRENDS_SQL` and
+   * `RunRepository.list` both order by `(effective DESC, id DESC)`; this
+   * follows the same key, so "previous" means "the row below this one".
+   */
+  it('breaks a tied instant by id, exactly as the run list orders it', () => {
+    const lower = trendRun('aaaa', MIDDLE.toolStartedAt, MIDDLE.startedAt);
+    const higher = trendRun('zzzz', MIDDLE.toolStartedAt, MIDDLE.startedAt);
+    const page = trends([NEWEST, higher, MIDDLE, lower]);
+
+    // Guard: these three really are simultaneous, so the assertion below is
+    // about the tiebreak and not about the instants.
+    const instants = new Set(
+      [higher, MIDDLE, lower].map((r) => Date.parse(r.toolStartedAt ?? r.startedAt)),
+    );
+    expect(instants.size).toBe(1);
+
+    // Descending by (instant, id): zzzz, middle, aaaa. So middle's previous
+    // is aaaa, and the last of them has none.
+    expect(baselineRun(page, 'middle')).toBe(lower);
+    expect(baselineRun(page, 'zzzz')).toBe(MIDDLE);
+    expect(baselineRun(page, 'aaaa')).toBeNull();
   });
 });

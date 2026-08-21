@@ -205,6 +205,82 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
     const all = await repo.list({ orgId }, { limit: 10 });
     expect(all.items.map((r) => r.id).sort()).toEqual([target.id, other.id].sort());
   });
+
+  it('finds a run by its project name as well as by its own columns', async () => {
+    const { orgId, a, b } = await seed();
+    const repo = new RunRepository(prisma);
+    const inA = await repo.create(runInput(orgId, a, { branch: 'main' }));
+    await repo.create(runInput(orgId, b, { branch: 'main' }));
+
+    // The project match is resolved by a SEPARATE query and applied as
+    // `project_id = ANY(...)` (see `projectIdsMatching`), so this is the case
+    // that proves lifting it out of the join did not lose the capability.
+    const project = await prisma.project.findUniqueOrThrow({ where: { id: a } });
+    const { items } = await repo.list({ orgId }, { limit: 10, q: project.name });
+    expect(items.map((r) => r.id)).toContain(inA.id);
+  });
+
+  /**
+   * THE PLAN, NOT JUST THE ROWS — the same reason the series suite asserts
+   * partition pruning.
+   *
+   * Every correctness case above passes just as well against a sequential
+   * scan, so nothing else here can tell a working index from a decorative
+   * one. Two real changes have already made these indexes unreachable while
+   * every row assertion stayed green: wrapping a column in `COALESCE(col,
+   * '')`, and matching the project through the JOIN so the OR spanned two
+   * tables (PostgreSQL cannot BitmapOr a branch on a joined table, and one
+   * such branch costs every other branch its index too).
+   *
+   * `enable_seqscan = off` does not fake the result. It removes the planner's
+   * preference for a scan on a table too small to have one — the indexes must
+   * still be USABLE for the plan to mention them at all, and an expression
+   * the index cannot serve still plans as `Seq Scan` with seqscan disabled,
+   * which is exactly what the COALESCE version did.
+   */
+  it('can serve the search from its trigram indexes, not a sequential scan', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    await repo.create(runInput(orgId, a, { branch: 'release/search-plan' }));
+
+    // Same predicate shape `list()` builds, spelled here against the same
+    // columns so a change to one is visible as a failure in the other.
+    // `SET LOCAL` inside a transaction, never a bare `SET`: Prisma hands out
+    // a POOLED connection, so a bare one would leave seqscan disabled on it
+    // for whichever unrelated test drew that connection next — a leak of
+    // exactly the shape `TZ` already caused in the trends suite. `SET LOCAL`
+    // reverts at commit.
+    const plan = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+      return tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
+        `EXPLAIN (COSTS OFF)
+       SELECT r.id FROM run r
+        WHERE r.org_id = $1::uuid
+          AND (r.simulation ILIKE $2 ESCAPE '\\'
+            OR r.description ILIKE $2 ESCAPE '\\'
+            OR r.environment ILIKE $2 ESCAPE '\\'
+            OR r.branch ILIKE $2 ESCAPE '\\'
+            OR r.commit_sha ILIKE $2 ESCAPE '\\')`,
+        orgId,
+        '%search-plan%',
+      );
+    });
+    const text = plan.map((row) => row['QUERY PLAN']).join('\n');
+
+    // Guard first: EXPLAIN really did return a plan, so the assertions below
+    // are about its contents and not about an empty string.
+    expect(text.length).toBeGreaterThan(0);
+    for (const index of [
+      'run_simulation_trgm',
+      'run_description_trgm',
+      'run_environment_trgm',
+      'run_branch_trgm',
+      'run_commit_sha_trgm',
+    ]) {
+      expect(text, `${index} is not reachable by the search predicate`).toContain(index);
+    }
+    expect(text).toContain('BitmapOr');
+  });
 });
 
 describe('RunRepository idempotency', () => {

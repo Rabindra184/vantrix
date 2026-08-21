@@ -12,6 +12,7 @@ import RequestDetail from './routes/RequestDetail';
 import RunCompare from './routes/RunCompare';
 import RunTelemetry from './routes/RunTelemetry';
 import RunTrends from './routes/RunTrends';
+import RunSectionNotFound from './routes/RunSectionNotFound';
 import RunDetail, { RunChartsTab, RunErrorsTab, RunOverviewTab } from './routes/RunDetail';
 import RunList from './routes/RunList';
 import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
@@ -43,6 +44,19 @@ export default function App() {
             <Route path="errors" element={<RunErrorsTab />} />
             <Route path="trends" element={<RunTrends />} />
             <Route path="compare" element={<RunCompare />} />
+            {/* A section this run does not have — a stale link to a renamed
+                tab, most often. Handled HERE rather than by the catch-all at
+                the bottom of this file, which would redirect to `/runs` and
+                lose the run the reader was looking at. See
+                `RunSectionNotFound`.
+
+                It cannot shadow the two `/runs/:runId/...` routes below: a
+                splat is the lowest-ranked segment type in React Router's
+                match ordering, so `/requests/:name` and `/groups/:name` — two
+                real segments each — are still preferred. `request-detail.spec.ts`
+                and `run-tables.spec.ts` both navigate to those and would fail
+                loudly if that ever stopped being true. */}
+            <Route path="*" element={<RunSectionNotFound />} />
           </Route>
           {/* G-16's destinations. Inside the gate and the shell like every
               other run page: these are addresses of the product, not of a
