@@ -8,6 +8,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
+    "@perfportal/core": "workspace:*",
     "@perfportal/persistence": "workspace:*",
     "@perfportal/storage": "workspace:*",
     "bullmq": "^5.34.0",

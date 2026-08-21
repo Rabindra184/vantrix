@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import { ingestError } from '@perfportal/core';
+import { engineOptionsFrom, ingestError } from '@perfportal/core';
 import {
   ProjectRepository,
   RunRepository,
@@ -12,7 +12,6 @@ import type { OpenLiveRunRequest } from '@perfportal/contracts';
 import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { TerminalWaiter } from '../runs/terminal-waiter.js';
-import { engineOptionsFrom } from './ingest.service.js';
 import { LiveNotifier } from './live-notifier.js';
 import { IngestQueue } from './queue.js';
 

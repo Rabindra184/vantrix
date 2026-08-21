@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { engineOptionsFrom } from '@perfportal/core';
 import {
   ProjectRepository,
   RunRepository,
@@ -6,7 +7,6 @@ import {
 } from '@perfportal/persistence';
 import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import type { RunnerConfig } from './config.js';
-import { engineOptionsFrom } from './engine-options.js';
 import { RunnerExecutionError } from './errors.js';
 import type { RunnerIngestQueue } from './ingest-queue.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
@@ -131,6 +131,14 @@ export class RunnerLiveSink {
 
     this.#notifier.closed(runId);
     let committed = false;
+    // This finalize/hash/release sequence deliberately mirrors
+    // LiveService.close() (apps/api/src/ingest/live.service.ts) step for
+    // step, but is not extracted to @perfportal/core: that method wraps a
+    // Nest-injected LiveService with a different dependency shape (its own
+    // config/repository/blob-store instances via DI, not the plain
+    // constructor-injected fields here), so sharing it would mean sharing a
+    // framework-shaped interface a dependency-light package should not take
+    // on. Keep the two in sync by hand if this sequence changes.
     try {
       const state = await this.#runs.liveState(runId);
       const authoritativeOffset = state?.streamOffset ?? this.#offset;

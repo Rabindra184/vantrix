@@ -1,3 +1,4 @@
+import { INGEST_JOB_OPTIONS, INGEST_QUEUE } from '@perfportal/core';
 import { Queue } from 'bullmq';
 
 export interface IngestJobData {
@@ -8,19 +9,14 @@ export class RunnerIngestQueue {
   readonly #queue: Queue<IngestJobData>;
 
   constructor(redisUrl: string) {
-    this.#queue = new Queue<IngestJobData>('ingest', {
+    this.#queue = new Queue<IngestJobData>(INGEST_QUEUE, {
       connection: { url: redisUrl },
-      defaultJobOptions: {
-        removeOnComplete: 1000,
-        removeOnFail: 5000,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-      },
+      defaultJobOptions: INGEST_JOB_OPTIONS,
     });
   }
 
   async add(runId: string): Promise<void> {
-    await this.#queue.add('ingest', { runId }, { jobId: runId });
+    await this.#queue.add(INGEST_QUEUE, { runId }, { jobId: runId });
   }
 
   async close(): Promise<void> {
