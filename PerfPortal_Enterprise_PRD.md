@@ -230,12 +230,26 @@ k6, JMeter, Locust, Artillery plugins · distributed-run merging · APM/tracing 
 
 | Excluded | Rationale |
 |---|---|
-| **Executing, scheduling, or orchestrating load tests** | CI already does this well. This boundary is what keeps the platform deployable and focused. It is the single most important non-goal. |
-| **Provisioning or managing load injectors** | Follows from the above. |
+| **Executing tests as a hosted, multi-tenant service** | CI is still the primary path, and this boundary keeps the SaaS platform deployable and focused — it remains the single most important non-goal for the hosted product. **Narrow exception (added 2026-08-21):** a self-hosted, single-tenant **on-prem runner** may execute an operator-uploaded simulation on the operator's own host and feed the result through the normal ingest/live contract — see the note below the table. |
+| **Provisioning, autoscaling, or managing an injector fleet** | Follows from the above. The on-prem runner exception is a single operator-run process bound to one organisation, not a managed fleet. |
 | **Being an APM or tracing product** | Correlation with APM data is a future integration, not a reimplementation. |
 | **Cross-tool numeric comparison** | Tools measure different things. Overlaying them produces confidently wrong conclusions. See §6.4.6. |
 | **Synthetic monitoring / uptime checking** | Different product category. |
 | **Editing or authoring test scripts** | Scripts live in the user's repository. |
+
+**Note — on-prem runner (added 2026-08-21).** The platform ships an optional,
+self-hosted runner (`apps/runner`) that an operator points at their own host to
+execute an uploaded Gatling simulation and stream its `simulation.log` through
+the existing live/ingest contract. It is deliberately narrow: **single-tenant**
+— one runner instance is bound to one `RUNNER_ORG_ID` and claims only that
+organisation's jobs — and it is a **client of the ingest contract R-9 names**,
+not a new privileged path into the data model. What stays out of scope:
+executing tests as a hosted, multi-tenant service on shared infrastructure, and
+provisioning or autoscaling an injector fleet. Running more than one tenant's
+jobs on a single host requires per-job sandbox isolation (separate
+user/namespace/network per execution) that the current runner does **not**
+provide; until it does, the runner must be deployed as a single-tenant
+executor.
 
 ### 5.4 Assumptions
 
@@ -2371,7 +2385,7 @@ Priorities in §6 mark **V1 program** membership. This section is the authoritat
 | **R-6** | **Users compare across tools** and draw wrong conclusions | High | Medium | Hard refusal to overlay tools (§6.4.6); tool in the fingerprint; explanatory message instead of a chart | Any UI path found that permits it |
 | **R-7** | **Prisma used on the metrics read path**, degrading query performance | High | Medium | §16.8 constraint stated as architecture, not preference; lint rule confining metric-table access to M6's raw-SQL repositories; performance tests at 500k runs | Any metric query issued through Prisma |
 | **R-8** | **Cross-tenant data leak** | Critical | Low | Mandatory `organization_id` predicate in the repository base; lint rule against raw tenant-table queries elsewhere; automated cross-tenant probe on every endpoint; `404` not `403` | Any finding, at any severity |
-| **R-9** | **Scope creep toward test execution** | High | Medium | Execution is an explicit non-goal (§5.3); the ingest contract keeps it a separable future product | Any story assuming the platform runs a test |
+| **R-9** | **Scope creep toward test execution beyond the scoped on-prem exception** | High | Medium | The self-hosted on-prem runner (§5.3 note) is the *only* sanctioned execution path: single-tenant, bound to one org, and a client of the ingest contract. Hosted multi-tenant execution and injector-fleet management stay non-goals | Any story assuming the HOSTED platform runs a test, or that the on-prem runner is safe for multiple tenants on one host without per-job sandbox isolation |
 | **R-10** | **Live monitoring destabilizes the core** | Medium | Medium | Deferred to V1.1 behind GA deliberately; separate `ws` deployable; degradation to polling; bounded replay buffers | Live work blocking a GA milestone |
 | **R-11** | **Time-series storage growth** outpaces retention assumptions | Medium | Medium | Monthly partitions with drop-based retention; per-project overrides; storage visibility in admin; adaptive bucket caps | Storage growth > 2× forecast for two months |
 | **R-12** | **Adoption friction** — teams do not wire CI | High | Medium | Three-line snippet; auto-detection; actionable errors; parity as the wedge; onboarding empty states with copyable snippets | < 50% of target pipelines wired 60 days post-onboarding |
