@@ -114,6 +114,12 @@ export interface RunnerClaimScope {
   projectId?: string | null;
 }
 
+export interface DeletedRunnerArtifact {
+  artifactId: string;
+  storagePath: string;
+  logPaths: string[];
+}
+
 export class RunnerRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -361,6 +367,73 @@ export class RunnerRepository {
         AND status IN ('starting', 'running', 'closing')
         AND updated_at < ${cutoff}
     `;
+  }
+
+  async deleteTerminalArtifactsOlderThan(
+    scope: RunnerClaimScope,
+    cutoff: Date,
+    limit = 25,
+  ): Promise<DeletedRunnerArtifact[]> {
+    const projectPredicate = scope.projectId
+      ? Prisma.sql`AND a.project_id = ${scope.projectId}::uuid`
+      : Prisma.empty;
+
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{
+        artifactId: string;
+        storagePath: string;
+        logPaths: string[] | null;
+      }[]>`
+        WITH eligible AS (
+          SELECT
+            a.id,
+            max(j.updated_at) AS last_updated,
+            COALESCE(array_remove(array_agg(j.log_path ORDER BY j.created_at), NULL), ARRAY[]::text[]) AS log_paths
+          FROM runner_artifact a
+          JOIN runner_job j
+            ON j.artifact_id = a.id
+           AND j.org_id = a.org_id
+           AND j.project_id = a.project_id
+          WHERE a.org_id = ${scope.orgId}::uuid
+            ${projectPredicate}
+          GROUP BY a.id
+          HAVING bool_and(j.status IN ('complete', 'failed', 'cancelled'))
+             AND max(j.updated_at) < ${cutoff}
+        )
+        SELECT
+          a.id AS "artifactId",
+          a.storage_path AS "storagePath",
+          e.log_paths AS "logPaths"
+        FROM eligible e
+        JOIN runner_artifact a ON a.id = e.id
+        ORDER BY e.last_updated ASC, a.id ASC
+        LIMIT ${limit}
+        FOR UPDATE OF a
+      `;
+      if (rows.length === 0) return [];
+
+      const ids = rows.map((row) => row.artifactId);
+      await tx.runnerJob.deleteMany({
+        where: {
+          orgId: scope.orgId,
+          ...(scope.projectId ? { projectId: scope.projectId } : {}),
+          artifactId: { in: ids },
+        },
+      });
+      await tx.runnerArtifact.deleteMany({
+        where: {
+          orgId: scope.orgId,
+          ...(scope.projectId ? { projectId: scope.projectId } : {}),
+          id: { in: ids },
+        },
+      });
+
+      return rows.map((row) => ({
+        artifactId: row.artifactId,
+        storagePath: row.storagePath,
+        logPaths: row.logPaths ?? [],
+      }));
+    });
   }
 
   async status(jobId: string): Promise<string | null> {

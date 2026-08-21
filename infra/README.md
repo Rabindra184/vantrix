@@ -122,6 +122,7 @@ needs Java on the host and shared artifact/log directories:
     export RUNNER_ORG_ID='<org uuid this runner is allowed to claim>'
     # Optional: restrict this runner to one project inside that org.
     export RUNNER_PROJECT_ID='<project uuid>'
+    export RUNNER_ARTIFACT_RETENTION_DAYS='30'
     export JAVA_BIN='java'
 
 Start `apps/runner` beside `apps/api` and `apps/worker`. From the project runs
@@ -137,10 +138,15 @@ For a containerized single-node deployment, use the `onprem` compose profile:
     export PERFPORTAL_S3_ACCESS_KEY='change-me'
     export PERFPORTAL_S3_SECRET_KEY='change-me-too'
     export PERFPORTAL_RUNNER_ORG_ID='<org uuid this runner is allowed to claim>'
+    export PERFPORTAL_RUNNER_ARTIFACT_RETENTION_DAYS='30'
     docker compose -f infra/docker-compose.yml --profile onprem up --build
 
 The app services share named volumes for uploaded artifacts and runner logs;
 the profile also runs Prisma migrations before starting API, worker and runner.
+Terminal runner jobs, their uploaded artifacts and their runner logs are removed
+after `RUNNER_ARTIFACT_RETENTION_DAYS`; the attached report run remains in the
+normal run history, but retrying that old runner job is intentionally no longer
+available after retention.
 Gatling child processes run with a sanitized environment and, in the container
 profile, a separate unprivileged UID. The runner service itself starts as root
 only so Node can spawn Gatling with that lower UID; the compose profile drops

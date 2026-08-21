@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import {
   createPrisma,
   ProjectRepository,
@@ -38,6 +40,7 @@ const executor = new RunnerExecutor({
 
 let activeJob: RunnerJobWithArtifact | null = null;
 let activeRun: Promise<void> | null = null;
+let nextRetentionSweepAt = 0;
 shutdown.onStop(() => notifier.close());
 shutdown.onStop(() => queue.close());
 shutdown.onStop(() => prisma.$disconnect());
@@ -58,6 +61,10 @@ while (!shutdown.stopping) {
   let job: RunnerJobWithArtifact | null;
   try {
     await runner.failStale(config.scope, new Date(Date.now() - config.staleJobMs));
+    if (Date.now() >= nextRetentionSweepAt) {
+      nextRetentionSweepAt = Date.now() + config.retentionSweepIntervalMs;
+      await cleanupExpiredArtifacts();
+    }
     job = await runner.claimNext(config.scope);
   } catch (err) {
     console.error('failed to claim runner job', err);
@@ -76,3 +83,33 @@ while (!shutdown.stopping) {
 }
 
 await shutdown.stop('loop exited');
+
+async function cleanupExpiredArtifacts(): Promise<void> {
+  if (config.artifactRetentionDays === 0) return;
+  const retentionMs = config.artifactRetentionDays * 24 * 60 * 60 * 1000;
+  const rows = await runner.deleteTerminalArtifactsOlderThan(
+    config.scope,
+    new Date(Date.now() - retentionMs),
+  );
+  for (const row of rows) {
+    await removeIfUnder(config.artifactDir, row.storagePath);
+    for (const logPath of row.logPaths) await removeIfUnder(config.logDir, logPath);
+  }
+  if (rows.length > 0) {
+    console.log(`removed ${rows.length} expired runner artifact${rows.length === 1 ? '' : 's'}`);
+  }
+}
+
+async function removeIfUnder(root: string, storedPath: string): Promise<void> {
+  const resolvedRoot = path.resolve(root);
+  const target = path.isAbsolute(storedPath)
+    ? path.resolve(storedPath)
+    : path.resolve(resolvedRoot, storedPath);
+  if (target !== resolvedRoot && !target.startsWith(`${resolvedRoot}${path.sep}`)) {
+    console.warn(`skipping retention delete outside ${resolvedRoot}: ${target}`);
+    return;
+  }
+  await rm(target, { force: true, recursive: true }).catch((err: unknown) => {
+    console.warn(`failed to remove retained runner file ${target}`, err);
+  });
+}

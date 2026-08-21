@@ -8,6 +8,8 @@ export interface RunnerConfig {
   logPollIntervalMs: number;
   maxLogBytes: number;
   staleJobMs: number;
+  artifactRetentionDays: number;
+  retentionSweepIntervalMs: number;
   javaBin: string;
   scope: {
     orgId: string;
@@ -61,6 +63,8 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
     logPollIntervalMs: Math.max(250, numberOr(env.RUNNER_LOG_POLL_INTERVAL_MS, 1000)),
     maxLogBytes: Math.max(1024 * 1024, numberOr(env.MAX_BUNDLE_BYTES, 512 * 1024 * 1024)),
     staleJobMs: Math.max(60_000, numberOr(env.RUNNER_STALE_JOB_MS, 30 * 60_000)),
+    artifactRetentionDays: Math.max(0, numberOr(env.RUNNER_ARTIFACT_RETENTION_DAYS, 30)),
+    retentionSweepIntervalMs: Math.max(60_000, numberOr(env.RUNNER_RETENTION_SWEEP_INTERVAL_MS, 5 * 60_000)),
     javaBin: env.JAVA_BIN ?? 'java',
     scope: {
       orgId: required(env, 'RUNNER_ORG_ID'),
