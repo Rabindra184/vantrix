@@ -221,6 +221,38 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
   });
 
   /**
+   * A PROJECT-SCOPED CALLER SEARCHING ITS OWN PROJECT'S NAME.
+   *
+   * Found against a live token, not by reasoning: resolving the matching
+   * projects was skipped whenever `scope.projectId` was set, on the argument
+   * that an ANDed `r.project_id = $n` already stops any OTHER project's runs
+   * entering the page. True, and beside the point — when the caller's OWN
+   * project is what matches, every row in scope should match, and that
+   * branch is the only thing that says so. A token scoped to
+   * `parity-run-<x>` searching "parity-run" got zero runs while the
+   * org-scoped session got both.
+   *
+   * Asserted against BOTH scopes off one seed, so the two can never drift
+   * apart again without this failing.
+   */
+  it('matches a project name for a project-scoped caller, not just an org-scoped one', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    const run = await repo.create(runInput(orgId, a, { branch: 'main' }));
+    const project = await prisma.project.findUniqueOrThrow({ where: { id: a } });
+
+    // A distinctive fragment of the project's own slug, taken from the seed
+    // rather than written down.
+    const fragment = project.slug.slice(0, Math.max(4, project.slug.length - 4));
+
+    const asSession = await repo.list({ orgId }, { limit: 10, q: fragment });
+    const asToken = await repo.list({ orgId, projectId: a }, { limit: 10, q: fragment });
+
+    expect(asSession.items.map((r) => r.id)).toContain(run.id);
+    expect(asToken.items.map((r) => r.id)).toContain(run.id);
+  });
+
+  /**
    * THE PLAN, NOT JUST THE ROWS — the same reason the series suite asserts
    * partition pruning.
    *

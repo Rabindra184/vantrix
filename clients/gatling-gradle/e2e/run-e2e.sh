@@ -139,10 +139,33 @@ log "preconditions OK: API up, worker running, postgres/redis/minio reachable."
 # ===========================================================================
 # Step 2: publish the plugin under test to mavenLocal().
 # ===========================================================================
-log "publishing dev.vantrix.gatling:gatling-gradle-plugin:0.1.0-SNAPSHOT to mavenLocal()..."
+# THE VERSION IS DERIVED, NEVER WRITTEN DOWN — the same way CI's own
+# `plugin-consume` job derives it (.github/workflows/ci.yml). It was a literal
+# in three places here and in e2e-project/build.gradle.kts, and when the
+# plugin's default version moved from 0.1.0-SNAPSHOT to 0.2.0-SNAPSHOT this
+# whole gate started failing in Gradle's plugin-resolution phase — before
+# Gatling, before the platform, before anything this script exists to test.
+# Nothing noticed, because this gate is manual and in no `pnpm` or CI job.
+PLUGIN_VERSION="$(
+  cd "$PLUGIN_DIR" && ./gradlew properties --no-daemon -q 2>/dev/null |
+    awk '/^version:/{print $2}'
+)"
+[ -n "$PLUGIN_VERSION" ] || fail \
+  "could not read the plugin version from ./gradlew properties in $PLUGIN_DIR."
+log "plugin version is $PLUGIN_VERSION (derived, not written down)."
+
+log "publishing dev.vantrix.gatling:gatling-gradle-plugin:$PLUGIN_VERSION to mavenLocal()..."
 ( cd "$PLUGIN_DIR" && ./gradlew publishToMavenLocal --no-daemon -q ) \
   || fail "publishToMavenLocal failed -- see output above."
-log "published."
+
+# The MARKER, not just the main artifact. `plugins { id(...) }` resolves
+# `dev.vantrix.gatling:dev.vantrix.gatling.gradle.plugin`, and a missing marker
+# fails with the same "not found in any of the following sources" message a
+# wrong VERSION does -- so checking it here is what tells those two apart.
+MARKER_DIR="$HOME/.m2/repository/dev/vantrix/gatling/dev.vantrix.gatling.gradle.plugin/$PLUGIN_VERSION"
+[ -d "$MARKER_DIR" ] || fail \
+  "publishToMavenLocal did not produce the plugin marker at $MARKER_DIR -- the plugins{} block cannot resolve without it."
+log "published (artifact + marker)."
 
 # ===========================================================================
 # Step 3: seed a fresh org/project/token. Copied into apps/api/ so
@@ -236,7 +259,7 @@ log "running gatlingRun (expect it to fail on the deliberate assertion -- this t
 (
   cd "$E2E_PROJECT_DIR"
   VANTRIX_URL="$VANTRIX_URL_DEFAULT" VANTRIX_TOKEN="$TOKEN" VANTRIX_TICK_SECONDS=2 \
-    ./gradlew gatlingRun --no-daemon --stacktrace
+    ./gradlew gatlingRun --no-daemon --stacktrace -PvantrixPluginVersion="$PLUGIN_VERSION"
 ) >"$GRADLE_LOG" 2>&1 &
 GRADLE_PID=$!
 

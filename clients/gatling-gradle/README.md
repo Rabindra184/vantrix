@@ -46,7 +46,7 @@ pluginManagement {
 // build.gradle.kts
 plugins {
     id("io.gatling.gradle") version "3.15.1.2"
-    id("dev.vantrix.gatling") version "0.1.0-SNAPSHOT"
+    id("dev.vantrix.gatling") version "0.2.0-SNAPSHOT"
 }
 ```
 
@@ -72,10 +72,16 @@ its token lacks that scope. Inside GitHub Actions, the workflow's own
 `plugin-consume` job is the standing demonstration.
 
 Versioned releases are published by pushing a `v<semver>` tag
-(`.github/workflows/release.yml`); `main` republishes `0.1.0-SNAPSHOT` on
-every push. **The local-dev path** is `mavenLocal()` plus
+(`.github/workflows/release.yml`); `main` republishes the CURRENT SNAPSHOT on
+every push — `0.2.0-SNAPSHOT` today, and whatever
+`clients/gatling-gradle/build.gradle.kts`'s `version` line says thereafter,
+since that publish passes no `-PreleaseVersion`. Read it from the build
+rather than from here (`./gradlew properties -q | awk '/^version:/{print $2}'`,
+which is how CI's own `plugin-consume` job and the manual e2e both get it):
+this paragraph said `0.1.0-SNAPSHOT` for as long as it took the default to
+move, and the e2e broke on exactly that drift. **The local-dev path** is `mavenLocal()` plus
 `./gradlew publishToMavenLocal` run once from `clients/gatling-gradle/` —
-that publishes `dev.vantrix:gatling-gradle-plugin:0.1.0-SNAPSHOT` (and its
+that publishes `dev.vantrix:gatling-gradle-plugin` at that same version (and its
 plugin marker) to your local Maven cache, which is exactly what
 `clients/gatling-gradle/e2e/e2e-project` does (see its `settings.gradle.kts`,
 which lists `mavenLocal()` first for that reason).
