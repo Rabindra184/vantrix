@@ -3,10 +3,10 @@ import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ProjectListResponse } from '@perfportal/contracts';
 import Badge from './components/Badge';
-import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon, PlusIcon } from './components/icons';
+import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { cn } from './lib/cn';
-import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, projectPath } from './routes/paths';
+import { DEFAULT_ROUTE, projectPath } from './routes/paths';
 import { STATUS, VERDICT, type Mark } from './routes/marks';
 
 /**
@@ -208,15 +208,21 @@ export default function ProjectRail() {
           <span className={cn(collapsed && 'lg:sr-only')}>All runs</span>
         </NavLink>
 
-        <NavLink
-          to={NEW_PROJECT_ROUTE}
-          title={collapsed ? 'New project' : undefined}
-          className={({ isActive }) => rowClasses(collapsed, isActive)}
-        >
-          <PlusIcon className="h-4 w-4 shrink-0 opacity-70" />
-          <span className={cn(collapsed && 'lg:sr-only')}>New project</span>
-        </NavLink>
+        {/* NO "New project" ROW HERE, and its absence is deliberate.
+            `RunList` renders that action in its page heading on the org-wide
+            list, and the rail is on EVERY authenticated page — so a row here
+            put two links with the identical accessible name into the `/runs`
+            document. Playwright matches names as a case-insensitive
+            substring and enforces strict mode, so the first spec to reach for
+            `getByRole('link', { name: 'New project' })` resolves two elements
+            and fails on a page nobody touched; a screen-reader user hears the
+            same action announced twice in one view.
 
+            Removing it from the RAIL rather than from the heading, because
+            this `<nav>` is a list of DESTINATIONS — "All runs" and one row
+            per project — and creating something is not a place. `RunList`
+            already owns an `action` slot for exactly this, which is where
+            `ProjectRuns` puts Setup and New on-prem run too. */}
         {items.map((project) => (
           <NavLink
             key={project.id}
