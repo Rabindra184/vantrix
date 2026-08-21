@@ -1,4 +1,4 @@
-import { BadRequestException, ParseUUIDPipe } from '@nestjs/common';
+import { BadRequestException, ConflictException, ParseUUIDPipe } from '@nestjs/common';
 import { MAX_OFFSET_MS } from '@perfportal/persistence';
 import { z } from 'zod';
 
@@ -13,6 +13,23 @@ const UUID_EXAMPLE = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
  */
 export function badRequest(code: string, message: string, remediation: string): BadRequestException {
   return Object.assign(new BadRequestException(message), { code, remediation });
+}
+
+/**
+ * The 409 counterpart of `badRequest`, for a request that is well-formed and
+ * still cannot be satisfied because something already exists.
+ *
+ * It exists for the same reason: `ProblemFilter` falls back to
+ * "Check the request against the OpenAPI description at /v1/openapi.json"
+ * when an exception carries no `remediation`, and that is unhelpful advice
+ * for the one error a user hits routinely. A duplicate project slug is not a
+ * malformed request — the OpenAPI document describes it perfectly — so the
+ * only useful thing to say is "choose a different one", which the caller
+ * supplies here. The status is what distinguishes it: 400 means "you sent
+ * something wrong", 409 means "the world is not in the state you assumed".
+ */
+export function conflict(code: string, message: string, remediation: string): ConflictException {
+  return Object.assign(new ConflictException(message), { code, remediation });
 }
 
 /**

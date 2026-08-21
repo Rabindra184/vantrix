@@ -19,7 +19,7 @@ import { fetchRuns, runsQueryKey } from '../api/runs';
 // Marked's plain inline text. Same for the start-time formatter: the two
 // screens must agree about when a run started, and one definition is the
 // only way that is guaranteed.
-import { formatStarted } from './format';
+import { formatInstant } from './format';
 import { STATUS, VERDICT } from './marks';
 import { NEW_PROJECT_ROUTE, runPath } from './paths';
 import useDocumentTitle from '../useDocumentTitle';
@@ -337,7 +337,7 @@ function RunRow({ run }: { run: RunListItem }) {
             localised and does not sort. The attribute is the API's own ISO
             string, unmodified. */}
         <time dateTime={startedAt} className="tabular-nums">
-          {formatStarted(startedAt)}
+          {formatInstant(startedAt)}
         </time>
         {isIngestTime && <span className="ml-2 text-[12px] text-muted">ingest time</span>}
       </td>

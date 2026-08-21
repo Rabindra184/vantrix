@@ -21,6 +21,7 @@ import {
   revokeProjectToken,
 } from '../api/tokens';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
+import { formatInstant } from './format';
 import useDocumentTitle from '../useDocumentTitle';
 import { projectNewRunnerRunPath, projectPath } from './paths';
 
@@ -359,8 +360,8 @@ function TokenTable({
               <td className={TD}>{token.name}</td>
               <td className={`${TD} font-mono`}>{token.prefix}</td>
               <td className={TD}>{token.scopes.join(', ')}</td>
-              <td className={TD}>{formatDate(token.createdAt)}</td>
-              <td className={TD}>{token.lastUsedAt === null ? 'Never' : formatDate(token.lastUsedAt)}</td>
+              <td className={TD}>{formatInstant(token.createdAt)}</td>
+              <td className={TD}>{token.lastUsedAt === null ? 'Never' : formatInstant(token.lastUsedAt)}</td>
               <td className={TD}>{token.revokedAt === null ? 'Active' : 'Revoked'}</td>
               <td className={TD}>
                 {confirming === token.prefix ? (
@@ -431,8 +432,4 @@ function BackToProject({ slug }: { readonly slug: string }) {
       Back to project
     </Link>
   );
-}
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleString();
 }

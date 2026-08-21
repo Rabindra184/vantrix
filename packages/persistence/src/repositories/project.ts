@@ -46,6 +46,34 @@ export interface ProjectListRow {
   latestRun: { id: string; status: string; verdict: string | null } | null;
 }
 
+/**
+ * Whether a failed insert is THE duplicate this method is allowed to report
+ * as "that slug is taken" — the `(org_id, slug)` uniqueness — rather than any
+ * unique violation at all.
+ *
+ * The distinction is not hypothetical caution. `createInOrg` answers `null`
+ * for a conflict and its caller turns that into a 409 reading
+ * `A project with slug "x" already exists`. Collapsing EVERY P2002 into that
+ * answer means the day `project` grows a second unique index, violating it
+ * tells the user something confidently false about a slug that was never the
+ * problem, and the real fault is swallowed. Narrowing here makes anything
+ * else propagate as the 500 it is: an unexpected constraint violation is a
+ * bug to fix, not advice to give.
+ *
+ * `meta.target` is the DATABASE column list, snake_case, not Prisma field
+ * names — verified against this schema, where the violation reports
+ * `["org_id", "slug"]`. Matched as a set of exactly those two, so a future
+ * index that merely happens to include `slug` is not mistaken for this one.
+ */
+function isSlugTaken(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (err.code !== 'P2002') return false;
+  const target = err.meta?.['target'];
+  if (!Array.isArray(target)) return false;
+  const columns = new Set(target.map(String));
+  return columns.size === 2 && columns.has('org_id') && columns.has('slug');
+}
+
 export class ProjectRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -70,12 +98,7 @@ export class ProjectRepository {
         settings: (row.settings ?? {}) as Record<string, unknown>,
       };
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === 'P2002'
-      ) {
-        return null;
-      }
+      if (isSlugTaken(err)) return null;
       throw err;
     }
   }

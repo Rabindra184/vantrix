@@ -12,7 +12,7 @@
  *
  * ═══ THE READER'S ZONE ═══
  *
- * Local, like `routes/format.ts`'s `formatStarted` — the run header and the
+ * Local, like `routes/format.ts`'s `formatInstant` — the run header and the
  * run list already render instants in the viewer's own zone. Sliced out of an
  * ISO string these read in UTC, so an Asia/Kolkata reader saw a run labelled
  * `08-07 05:30` on an axis sitting directly below a header that called the
@@ -20,7 +20,7 @@
  * own working day needs the local reading, and two clocks on one page is
  * worse than either.
  *
- * ═══ NOT `Intl`, UNLIKE `formatStarted` ═══
+ * ═══ NOT `Intl`, UNLIKE `formatInstant` ═══
  *
  * This string is an ECharts SERIES NAME and a matrix column key, so its shape
  * carries weight a caption's does not: `compareLabels` decides collisions by

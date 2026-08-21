@@ -3,7 +3,7 @@ import type { RunIdentity, RunResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { ChevronRightIcon } from '../components/icons';
-import { formatDuration, formatStarted } from './format';
+import { formatDuration, formatInstant } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
 import { projectPath } from './paths';
 
@@ -213,7 +213,7 @@ export default function RunHeader({
             an id has neither. */}
         {startedAt !== null && (
           <Chip
-            label={`${isIngestTime ? 'Received' : 'Started'}: ${formatStarted(startedAt)}${
+            label={`${isIngestTime ? 'Received' : 'Started'}: ${formatInstant(startedAt)}${
               isIngestTime ? ' (ingest time — the tool reported no start)' : ''
             }`}
           >
@@ -225,7 +225,7 @@ export default function RunHeader({
                 the old `<dl>`'s `Field` label carried, restated here since a
                 bare `<time>` names nothing on its own either. */}
             <time dateTime={startedAt} className="tabular-nums">
-              {formatStarted(startedAt)}
+              {formatInstant(startedAt)}
             </time>
             {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
           </Chip>

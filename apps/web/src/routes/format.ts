@@ -1,5 +1,5 @@
 /**
- * How this app renders a run's start time — one definition, for the same
+ * How this app renders an INSTANT to a human — one definition, for the same
  * reason `marks.tsx` holds one definition of the status glyphs.
  *
  * Both the run list and the run detail page carry a comment saying the two
@@ -7,7 +7,13 @@
  * byte-identical private copy of this formatter. Two copies of a rule that
  * must not drift is the setup for the drift, not a defence against it: a
  * change to one screen's `dateStyle` would leave the other reading the same
- * instant differently, and nothing would fail.
+ * instant differently, and nothing would fail. `ProjectSetup`'s token table
+ * proved the point by arriving with a third copy — a bare `toLocaleString()`,
+ * which is a different rendering again.
+ *
+ * Named for what it formats rather than for the run that first needed it:
+ * a token's `createdAt` and a run's start are the same kind of value, and a
+ * function called `formatStarted` in a token table reads as a mistake.
  */
 
 /**
@@ -21,13 +27,13 @@
  * Constructed once at module scope rather than per render: `Intl.DateTimeFormat`
  * is comparatively expensive to build, and a run list renders one per row.
  */
-const STARTED_FORMAT = new Intl.DateTimeFormat(undefined, {
+const INSTANT_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
 
-export function formatStarted(iso: string): string {
-  return STARTED_FORMAT.format(new Date(iso));
+export function formatInstant(iso: string): string {
+  return INSTANT_FORMAT.format(new Date(iso));
 }
 
 /**
