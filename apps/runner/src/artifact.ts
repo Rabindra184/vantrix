@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, lstat, mkdir, readdir, rm } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { RunnerArtifactRecord, RunnerJobRecord } from '@perfportal/persistence';
@@ -16,6 +16,7 @@ const MAX_EXTRACTED_BUNDLE_BYTES = 1024 * 1024 * 1024;
 export interface PreparedGatlingRun {
   command: ProcessCommand;
   resultsDir: string;
+  workDir: string;
 }
 
 export async function prepareGatlingRun(
@@ -24,10 +25,11 @@ export async function prepareGatlingRun(
   artifact: RunnerArtifactRecord,
   shouldStop: () => Promise<boolean>,
 ): Promise<PreparedGatlingRun> {
-  await access(artifact.storagePath).catch(() => {
+  const artifactPath = resolveArtifactPath(config, artifact.storagePath);
+  await access(artifactPath).catch(() => {
     throw new RunnerExecutionError(
       'ARTIFACT_NOT_FOUND',
-      `Artifact file is not readable at ${artifact.storagePath}.`,
+      `Artifact file is not readable at ${artifactPath}.`,
       'Make sure the API and runner share RUNNER_ARTIFACT_DIR on the same on-prem node or volume.',
     );
   });
@@ -38,8 +40,10 @@ export async function prepareGatlingRun(
   await mkdir(resultsDir, { recursive: true });
 
   if (artifact.kind === 'gatling_jar') {
+    await makeChildWritable(workDir);
     return {
       resultsDir,
+      workDir,
       command: {
         command: config.javaBin,
         cwd: workDir,
@@ -47,7 +51,7 @@ export async function prepareGatlingRun(
           ...splitArgs(job.javaOptions),
           ...systemPropertyArgs(job.systemProperties),
           '-cp',
-          artifact.storagePath,
+          artifactPath,
           'io.gatling.app.Gatling',
           '-s',
           artifact.simulationClass,
@@ -55,6 +59,8 @@ export async function prepareGatlingRun(
           resultsDir,
         ],
         env: runnerChildEnv(config),
+        uid: config.childUid ?? undefined,
+        gid: config.childGid ?? undefined,
       },
     };
   }
@@ -62,8 +68,9 @@ export async function prepareGatlingRun(
   if (artifact.kind === 'gatling_bundle') {
     const bundleDir = path.join(workDir, 'bundle');
     await mkdir(bundleDir, { recursive: true });
-    await extractBundle(artifact.storagePath, bundleDir, workDir, shouldStop);
+    await extractBundle(artifactPath, bundleDir, workDir, shouldStop);
     await assertSafeExtractedTree(bundleDir, Date.now() + EXTRACT_TIMEOUT_MS);
+    await makeChildWritable(workDir);
     const gatlingHome = await findGatlingHome(bundleDir);
     const javaArgs = [
       ...splitArgs(job.javaOptions),
@@ -71,6 +78,7 @@ export async function prepareGatlingRun(
     ];
     return {
       resultsDir,
+      workDir,
       command: {
         command: config.javaBin,
         cwd: gatlingHome,
@@ -85,6 +93,8 @@ export async function prepareGatlingRun(
           resultsDir,
         ],
         env: runnerChildEnv(config),
+        uid: config.childUid ?? undefined,
+        gid: config.childGid ?? undefined,
       },
     };
   }
@@ -94,6 +104,22 @@ export async function prepareGatlingRun(
     `Unsupported runner artifact kind "${artifact.kind}".`,
     'Upload a Gatling fat jar or a Gatling bundle archive.',
   );
+}
+
+function resolveArtifactPath(config: RunnerConfig, storagePath: string): string {
+  return path.isAbsolute(storagePath)
+    ? storagePath
+    : path.resolve(config.artifactDir, storagePath);
+}
+
+async function makeChildWritable(root: string): Promise<void> {
+  await chmod(root, 0o777).catch(() => undefined);
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const full = path.join(root, entry.name);
+    await chmod(full, entry.isDirectory() ? 0o777 : 0o666).catch(() => undefined);
+    if (entry.isDirectory()) await makeChildWritable(full);
+  }
 }
 
 async function extractBundle(

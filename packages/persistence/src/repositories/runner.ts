@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 
 export interface RunnerArtifactRecord {
   id: string;
@@ -107,6 +107,11 @@ export interface RunnerJobError {
   code: string;
   message: string;
   remediation: string;
+}
+
+export interface RunnerClaimScope {
+  orgId: string;
+  projectId?: string | null;
 }
 
 export class RunnerRepository {
@@ -238,12 +243,17 @@ export class RunnerRepository {
    * single-node deployment still processes one job at a time by simply
    * awaiting each claim.
    */
-  async claimNext(): Promise<RunnerJobWithArtifact | null> {
+  async claimNext(scope: RunnerClaimScope): Promise<RunnerJobWithArtifact | null> {
+    const projectPredicate = scope.projectId
+      ? Prisma.sql`AND project_id = ${scope.projectId}::uuid`
+      : Prisma.empty;
     const [row] = await this.prisma.$queryRaw<RunnerRow[]>`
       WITH candidate AS (
         SELECT id
         FROM runner_job
         WHERE status = 'queued'
+          AND org_id = ${scope.orgId}::uuid
+          ${projectPredicate}
         ORDER BY created_at ASC, id ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -285,12 +295,13 @@ export class RunnerRepository {
     return row ? mapRow(row) : null;
   }
 
-  async markRunOpened(jobId: string, runId: string): Promise<void> {
-    await this.prisma.$executeRaw`
+  async markRunOpened(jobId: string, runId: string): Promise<boolean> {
+    const updated = await this.prisma.$executeRaw`
       UPDATE runner_job
       SET run_id = ${runId}::uuid, status = 'running', updated_at = now()
       WHERE id = ${jobId}::uuid AND status = 'starting'
     `;
+    return updated === 1;
   }
 
   async setLogPath(jobId: string, logPath: string): Promise<void> {
@@ -325,6 +336,33 @@ export class RunnerRepository {
     `;
   }
 
+  async heartbeat(jobId: string): Promise<void> {
+    await this.prisma.$executeRaw`
+      UPDATE runner_job
+      SET updated_at = now()
+      WHERE id = ${jobId}::uuid AND status IN ('starting', 'running', 'closing')
+    `;
+  }
+
+  async failStale(scope: RunnerClaimScope, cutoff: Date): Promise<number> {
+    const projectPredicate = scope.projectId
+      ? Prisma.sql`AND project_id = ${scope.projectId}::uuid`
+      : Prisma.empty;
+    const error = {
+      code: 'RUNNER_JOB_STALE',
+      message: 'The on-prem runner job stopped heartbeating before it reached a terminal state.',
+      remediation: 'Check the runner process logs and host health, then retry the job.',
+    };
+    return this.prisma.$executeRaw`
+      UPDATE runner_job
+      SET status = 'failed', error = ${JSON.stringify(error)}::jsonb, updated_at = now()
+      WHERE org_id = ${scope.orgId}::uuid
+        ${projectPredicate}
+        AND status IN ('starting', 'running', 'closing')
+        AND updated_at < ${cutoff}
+    `;
+  }
+
   async status(jobId: string): Promise<string | null> {
     const [row] = await this.prisma.$queryRaw<{ status: string }[]>`
       SELECT status
@@ -341,7 +379,7 @@ export class RunnerRepository {
       WHERE org_id = ${orgId}::uuid
         AND project_id = ${projectId}::uuid
         AND id = ${jobId}::uuid
-        AND status IN ('queued', 'starting', 'running', 'cancelled')
+        AND status IN ('queued', 'starting', 'running', 'closing', 'cancelled')
     `;
     return updated === 1 ? this.find(orgId, projectId, jobId) : null;
   }

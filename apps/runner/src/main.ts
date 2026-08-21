@@ -52,12 +52,13 @@ shutdown.onStop(async () => {
 });
 
 await blobs.ensureBucket();
-console.log('on-prem runner started');
+console.log(`on-prem runner started for org ${config.scope.orgId}${config.scope.projectId ? ` project ${config.scope.projectId}` : ''}`);
 
 while (!shutdown.stopping) {
   let job: RunnerJobWithArtifact | null;
   try {
-    job = await runner.claimNext();
+    await runner.failStale(config.scope, new Date(Date.now() - config.staleJobMs));
+    job = await runner.claimNext(config.scope);
   } catch (err) {
     console.error('failed to claim runner job', err);
     await sleep(config.pollIntervalMs);

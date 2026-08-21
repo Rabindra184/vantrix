@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import type { RunnerJobWithArtifact } from '@perfportal/persistence';
 import {
   ProjectRepository,
@@ -58,6 +59,7 @@ export class RunnerExecutor {
     });
     let logger: JobLogger | null = null;
     let tailer: SimulationLogTailer | null = null;
+    let workDir: string | null = null;
     const logError = (message: string) => {
       if (logger) logger.error(message);
       else console.error(`[runner] [error] ${message}`);
@@ -69,7 +71,12 @@ export class RunnerExecutor {
       logger.info(`claimed job ${jobId} (${job.artifact.name})`);
 
       const runId = await sink.open(job);
-      await this.#runner.markRunOpened(jobId, runId);
+      const opened = await this.#runner.markRunOpened(jobId, runId);
+      if (!opened) {
+        await sink.abortIncomplete();
+        logger.info(`job ${jobId} was cancelled before live run ${runId} could attach`);
+        return;
+      }
       logger.info(`opened live run ${runId}`);
       if (await this.#isCancelled(jobId)) {
         await sink.abortIncomplete();
@@ -78,6 +85,7 @@ export class RunnerExecutor {
       }
 
       const prepared = await prepareGatlingRun(this.#config, job.job, job.artifact, () => this.#isCancelled(jobId));
+      workDir = prepared.workDir;
       if (await this.#isCancelled(jobId)) {
         await sink.abortIncomplete();
         logger.info(`cancelled job ${jobId} before process launch`);
@@ -86,7 +94,7 @@ export class RunnerExecutor {
       tailer = new SimulationLogTailer({
         resultsDir: prepared.resultsDir,
         pollMs: this.#config.logPollIntervalMs,
-        onBytes: (bytes) => sink.append(bytes),
+        onBytes: (offset, bytes) => sink.appendAt(offset, bytes),
         logger,
       });
       tailer.start();
@@ -97,7 +105,7 @@ export class RunnerExecutor {
         stderrPrefix: `[gatling ${jobId}] `,
         logOutput: logger.stream,
         stopPollMs: this.#config.pollIntervalMs,
-        shouldStop: () => this.#isCancelled(jobId),
+        shouldStop: () => this.#heartbeatAndCheckCancelled(jobId),
       });
       await tailer.stop();
       tailer = null;
@@ -109,24 +117,22 @@ export class RunnerExecutor {
       }
 
       await this.#runner.markClosing(jobId);
-      if (result.signal) {
-        await sink.abortIncomplete();
-        throw new RunnerExecutionError(
-          'GATLING_SIGNALLED',
-          `Gatling was terminated by ${result.signal}.`,
-          'Check host resource limits and runner logs, then queue a new run.',
-        );
-      }
       if (sink.bytesWritten === 0) {
         await sink.abortIncomplete();
         throw new RunnerExecutionError(
-          'SIMULATION_LOG_NOT_FOUND',
-          'Gatling finished without producing a simulation.log file.',
-          'Confirm the simulation class is correct and the uploaded artifact can run on this node.',
+          result.signal ? 'GATLING_SIGNALLED' : 'SIMULATION_LOG_NOT_FOUND',
+          result.signal
+            ? `Gatling was terminated by ${result.signal} before simulation.log was produced.`
+            : 'Gatling finished without producing a simulation.log file.',
+          result.signal
+            ? 'Check host resource limits and runner logs, then queue a new run.'
+            : 'Confirm the simulation class is correct and the uploaded artifact can run on this node.',
         );
       }
 
-      if (result.code && result.code !== 0) {
+      if (result.signal) {
+        logger.warn(`Gatling was terminated by ${result.signal}; keeping the run because simulation.log was produced.`);
+      } else if (result.code && result.code !== 0) {
         logger.warn(`Gatling exited with code ${result.code}; keeping the run because simulation.log was produced.`);
       }
       await sink.close();
@@ -143,14 +149,24 @@ export class RunnerExecutor {
         });
       }
       const jobError = toRunnerJobError(err);
-      await this.#runner.markFailed(jobId, jobError);
+      await this.#runner.markFailed(jobId, jobError).catch((markErr) => {
+        logError(`failed to mark job ${jobId} failed: ${String(markErr)}`);
+      });
       logError(`failed job ${jobId}: ${jobError.code}: ${jobError.message}`);
     } finally {
+      if (workDir) await rm(workDir, { recursive: true, force: true }).catch((err) => logError(`failed to clean work dir: ${String(err)}`));
       await logger?.close().catch((err) => console.error('failed to close runner job log', err));
     }
   }
 
   async #isCancelled(jobId: string): Promise<boolean> {
     return (await this.#runner.status(jobId)) === 'cancelled';
+  }
+
+  async #heartbeatAndCheckCancelled(jobId: string): Promise<boolean> {
+    await this.#runner.heartbeat(jobId).catch((err) => {
+      console.error(`failed to heartbeat runner job ${jobId}`, err);
+    });
+    return this.#isCancelled(jobId);
   }
 }

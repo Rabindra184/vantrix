@@ -20,13 +20,25 @@ const OptionalRunMetadataSchema = z.object({
   commitSha: z.string().trim().min(7).max(64).optional(),
 });
 
+const SystemPropertiesSchema = z.record(z.string().trim().max(500)).superRefine((props, ctx) => {
+  for (const key of Object.keys(props)) {
+    if (!/^[A-Za-z0-9_.-]{1,120}$/.test(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: 'System property keys may contain only letters, numbers, dots, underscores and hyphens.',
+      });
+    }
+  }
+});
+
 export const RunnerStartMetadataSchema = OptionalRunMetadataSchema.extend({
   name: z.string().trim().min(1).max(160),
   artifactKind: RunnerArtifactKindSchema.default('gatling_jar'),
   simulationClass: z.string().trim().min(1).max(300),
   gatlingVersion: z.string().trim().min(1).max(40).optional(),
   javaOptions: z.string().trim().max(2_000).optional(),
-  systemProperties: z.record(z.string().trim().max(500)).default({}),
+  systemProperties: SystemPropertiesSchema.default({}),
 });
 export type RunnerStartMetadata = z.infer<typeof RunnerStartMetadataSchema>;
 

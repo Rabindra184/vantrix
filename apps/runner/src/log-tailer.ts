@@ -5,7 +5,7 @@ import type { JobLogger } from './job-logger.js';
 
 export class SimulationLogTailer {
   readonly #resultsDir: string;
-  readonly #onBytes: (bytes: Buffer) => Promise<void>;
+  readonly #onBytes: (fileOffset: number, bytes: Buffer) => Promise<void>;
   readonly #pollMs: number;
   readonly #logger?: JobLogger;
   #timer: NodeJS.Timeout | null = null;
@@ -17,7 +17,7 @@ export class SimulationLogTailer {
   constructor(opts: {
     resultsDir: string;
     pollMs: number;
-    onBytes: (bytes: Buffer) => Promise<void>;
+    onBytes: (fileOffset: number, bytes: Buffer) => Promise<void>;
     logger?: JobLogger;
   }) {
     this.#resultsDir = opts.resultsDir;
@@ -76,6 +76,7 @@ export class SimulationLogTailer {
     }
     if (info.size < this.#offset) this.#offset = 0;
     if (info.size === this.#offset) return;
+    let fileOffset = this.#offset;
 
     const stream = createReadStream(this.#file, {
       start: this.#offset,
@@ -84,8 +85,9 @@ export class SimulationLogTailer {
     });
     for await (const chunk of stream) {
       const bytes = Buffer.from(chunk as Buffer);
-      await this.#onBytes(bytes);
+      await this.#onBytes(fileOffset, bytes);
       this.#offset += bytes.length;
+      fileOffset += bytes.length;
     }
   }
 }

@@ -436,7 +436,7 @@ const responses: Record<string, ResponseObject> = {
     description:
       'The request body failed MintTokenRequestSchema (code INVALID_TOKEN_REQUEST): "name" is ' +
       'blank or missing, "scopes" is empty or missing, an entry in "scopes" is not one of ' +
-      '"ingest"/"read"/"telemetry"/"stream", or the body names a field the schema does not — ' +
+      '"ingest"/"read"/"telemetry"/"stream"/"runner", or the body names a field the schema does not — ' +
       'MintTokenRequestSchema is `.strict()`, so an extra field (e.g. a caller-supplied ' +
       '"projectId") lands here rather than being silently ignored. ' +
       'application/problem+json with a required "remediation".',
@@ -944,7 +944,7 @@ const paths: Record<string, PathItemObject> = {
         required: true,
         description:
           'A non-empty "name" for the credential (what an operator sees on a revocation list ' +
-          'later) and at least one scope from ["ingest", "read", "telemetry"].',
+          'later) and at least one scope from ["ingest", "read", "telemetry", "stream", "runner"].',
         content: json(schemaRef('MintTokenRequest')),
       },
       responses: {
@@ -1151,10 +1151,11 @@ export function buildOpenApiDocument(): OpenApiDocument {
             'project, so it cannot satisfy POST /v1/runs, POST /v1/telemetry, POST ' +
             '/v1/runs/live, POST /v1/runs/{id}/stream, POST /v1/runs/{id}/close, or ' +
             'GET /v1/projects/{slug}/runs (all require a project); GET /v1/runs is the ' +
-            'org-wide equivalent a session can use instead. Its scopes are ["read", "ingest"] ' +
-            '— NOT "telemetry" and NOT "stream": a browser session has no reason to post host ' +
-            'counters or stream a run, and widening it would make either scope\'s whole ' +
-            'purpose decorative, so both are refused by their own @Scopes() check even before ' +
+            'org-wide equivalent a session can use instead. Its scopes are ["read", "ingest", "runner"] ' +
+            '— NOT "telemetry" and NOT "stream": a browser session may queue on-prem executable ' +
+            'runner jobs, but has no reason to post host counters or stream a run, and widening ' +
+            'either would make that scope\'s whole purpose decorative, so both are refused by ' +
+            'their own @Scopes() check even before ' +
             'the missing-project check above applies. Minted with the Secure attribute ' +
             'unconditionally, so it requires an HTTPS origin — see the root README\'s ' +
             'Authentication section.',

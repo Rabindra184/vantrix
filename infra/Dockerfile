@@ -15,7 +15,9 @@ RUN pnpm install --frozen-lockfile --ignore-scripts \
   && pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma \
   && pnpm build
 
-RUN groupadd --system perfportal \
+RUN groupadd --system --gid 20001 gatling \
+  && useradd --system --uid 20001 --gid gatling --no-create-home gatling \
+  && groupadd --system perfportal \
   && useradd --system --gid perfportal --create-home perfportal \
   && install -d -o perfportal -g perfportal \
     /var/lib/perfportal/runner-artifacts \

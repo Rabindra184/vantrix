@@ -30,7 +30,7 @@ export class RunnerController {
   ) {}
 
   @Post('runs')
-  @Scopes('ingest')
+  @Scopes('runner')
   async start(
     @Param('slug') slug: string,
     @Req() req: Request,
@@ -71,7 +71,8 @@ export class RunnerController {
       await unlink(tmpPath).catch(() => undefined);
       throw err;
     }
-    const finalPath = path.join(dir, `${artifactId}${ext}`);
+    const relativeStoragePath = path.join(tenant.orgId, project.id, `${artifactId}${ext}`);
+    const finalPath = path.resolve(this.config.runner.artifactDir, relativeStoragePath);
     try {
       await rename(tmpPath, finalPath);
     } catch (err) {
@@ -93,7 +94,7 @@ export class RunnerController {
           gatlingVersion: metadata.data.gatlingVersion ?? null,
           sha256: upload.sha256,
           bytes: upload.bytes,
-          storagePath: finalPath,
+          storagePath: relativeStoragePath,
         },
         job: {
           id: jobId,
@@ -136,7 +137,7 @@ export class RunnerController {
   }
 
   @Post('runs/:jobId/cancel')
-  @Scopes('ingest')
+  @Scopes('runner')
   async cancel(
     @Param('slug') slug: string,
     @Param('jobId', uuidParam('jobId')) jobId: string,
@@ -171,7 +172,7 @@ export class RunnerController {
   }
 
   @Post('runs/:jobId/retry')
-  @Scopes('ingest')
+  @Scopes('runner')
   async retry(
     @Param('slug') slug: string,
     @Param('jobId', uuidParam('jobId')) jobId: string,

@@ -145,7 +145,13 @@ describe('the contract and the API agree about scopes', () => {
     // and `pnpm typecheck` runs it. Until it did, apps/api/test was checked
     // by nothing, the annotation below was erased before the test ever ran,
     // and this guarded exactly as much as a comment would have.
-    const fromApi: Record<TokenScope, true> = { ingest: true, read: true, telemetry: true, stream: true };
+    const fromApi: Record<TokenScope, true> = {
+      ingest: true,
+      read: true,
+      telemetry: true,
+      stream: true,
+      runner: true,
+    };
     expect([...TOKEN_SCOPES].sort()).toEqual(Object.keys(fromApi).sort());
   });
 });

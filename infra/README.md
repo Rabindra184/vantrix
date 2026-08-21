@@ -119,6 +119,9 @@ needs Java on the host and shared artifact/log directories:
     export RUNNER_ARTIFACT_DIR='.perfportal/runner-artifacts'
     export RUNNER_WORK_DIR='.perfportal/runner-work'
     export RUNNER_LOG_DIR='.perfportal/runner-logs'
+    export RUNNER_ORG_ID='<org uuid this runner is allowed to claim>'
+    # Optional: restrict this runner to one project inside that org.
+    export RUNNER_PROJECT_ID='<project uuid>'
     export JAVA_BIN='java'
 
 Start `apps/runner` beside `apps/api` and `apps/worker`. From the project runs
@@ -133,10 +136,16 @@ For a containerized single-node deployment, use the `onprem` compose profile:
     export PERFPORTAL_DB_PASSWORD='change-me'
     export PERFPORTAL_S3_ACCESS_KEY='change-me'
     export PERFPORTAL_S3_SECRET_KEY='change-me-too'
+    export PERFPORTAL_RUNNER_ORG_ID='<org uuid this runner is allowed to claim>'
     docker compose -f infra/docker-compose.yml --profile onprem up --build
 
 The app services share named volumes for uploaded artifacts and runner logs;
 the profile also runs Prisma migrations before starting API, worker and runner.
-Gatling child processes run with a sanitized environment, so the database,
-Redis and S3 credentials above stay in the runner control plane rather than in
-uploaded simulations.
+Gatling child processes run with a sanitized environment and, in the container
+profile, a separate unprivileged UID. The runner service itself starts as root
+only so Node can spawn Gatling with that lower UID; the compose profile drops
+all other Linux capabilities, keeping only `SETUID`/`SETGID`, and sets
+`no-new-privileges`. Database, Redis and S3
+credentials above stay in the runner control plane rather than in uploaded
+simulations. Treat this single-node runner as a single-tenant on-prem executor
+unless you add a stronger per-job sandbox boundary.

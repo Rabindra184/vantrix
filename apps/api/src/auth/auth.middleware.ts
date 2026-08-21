@@ -38,9 +38,10 @@ async function authenticateSession(req: Request, members: OrgMemberRepository): 
   return {
     orgId: membership.orgId,
     tokenId: `${SESSION_TOKEN_ID_PREFIX}${session.session.id}`,
-    // NOT 'telemetry'. A browser session has no reason to post host counters,
-    // and widening this would make the scope's whole purpose decorative.
-    scopes: ['read', 'ingest'],
+    // NOT 'telemetry' or 'stream'. A browser session may queue an on-prem
+    // executable runner job, but has no reason to post host counters or feed
+    // live bytes from a generator.
+    scopes: ['read', 'ingest', 'runner'],
   };
 }
 

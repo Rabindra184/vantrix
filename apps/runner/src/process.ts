@@ -7,6 +7,8 @@ export interface ProcessCommand {
   args: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  uid?: number;
+  gid?: number;
 }
 
 export interface ProcessResult {
@@ -46,6 +48,8 @@ export function spawnAndWait(
       child = spawn(command.command, command.args, {
         cwd: command.cwd,
         env: command.env ?? process.env,
+        uid: command.uid,
+        gid: command.gid,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (err) {

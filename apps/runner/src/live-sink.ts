@@ -20,6 +20,7 @@ export class RunnerLiveSink {
   readonly #queue: RunnerIngestQueue;
   readonly #notifier: RunnerLiveNotifier;
   #runId: string | null = null;
+  #bundleKey: string | null = null;
   #offset = 0;
   #attemptBytes = 0;
   #closed = false;
@@ -71,10 +72,28 @@ export class RunnerLiveSink {
       engineOptions: engineOptionsFrom(settings),
     });
     this.#runId = run.id;
+    this.#bundleKey = run.bundleKey;
     const state = await this.#runs.liveState(run.id);
     this.#offset = state?.streamOffset ?? 0;
     this.#notifier.opened(run.id);
     return run.id;
+  }
+
+  async appendAt(fileOffset: number, bytes: Buffer): Promise<void> {
+    if (fileOffset < this.#offset) {
+      const alreadyWritten = this.#offset - fileOffset;
+      if (alreadyWritten >= bytes.length) return;
+      bytes = bytes.subarray(alreadyWritten);
+      fileOffset = this.#offset;
+    }
+    if (fileOffset !== this.#offset) {
+      throw new RunnerExecutionError(
+        'SIMULATION_LOG_GAP',
+        `simulation.log jumped from byte ${this.#offset} to ${fileOffset}.`,
+        'Check whether Gatling rotated or rewrote simulation.log, then retry the job.',
+      );
+    }
+    await this.append(bytes);
   }
 
   async append(bytes: Buffer): Promise<void> {
@@ -113,14 +132,23 @@ export class RunnerLiveSink {
     this.#notifier.closed(runId);
     let committed = false;
     try {
-      if (this.#offset === 0) {
+      const state = await this.#runs.liveState(runId);
+      const authoritativeOffset = state?.streamOffset ?? this.#offset;
+      if (authoritativeOffset === 0) {
         await this.#runs.markIncomplete(runId);
         committed = true;
         this.#closed = true;
         return;
       }
 
-      const bundleKey = `runs/${runId}/simulation.log`;
+      const bundleKey = this.#bundleKey;
+      if (!bundleKey) {
+        throw new RunnerExecutionError(
+          'LIVE_RUN_BUNDLE_KEY_MISSING',
+          'The opened live run did not return a bundle key.',
+          'Check runner and API versions, then retry the job.',
+        );
+      }
       await this.#chunks.finalize(runId, bundleKey);
       const bundle = await this.#blobs.get(bundleKey);
       const sha256 = createHash('sha256').update(bundle).digest('hex');
