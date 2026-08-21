@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ROUTE, safeNext } from '../src/routes/paths.js';
+import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
+import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, safeNext } from '../src/routes/paths.js';
 
 /**
  * `safeNext` is a security control on a login page — the one place an open
@@ -62,4 +64,58 @@ describe('safeNext', () => {
       expect(new URL(safeNext(next), ORIGIN).origin).toBe(ORIGIN);
     },
   );
+});
+
+/**
+ * NOTHING STATIC MAY SIT WHERE A PROJECT SLUG GOES.
+ *
+ * React Router ranks a static segment above a dynamic one, so a literal
+ * child of `/projects/` does not merely risk clashing with `/projects/:slug`
+ * — it PERMANENTLY shadows any project whose slug matches it. `/projects/new`
+ * shipped exactly that: `PROJECT_SLUG_PATTERN` accepts `new`,
+ * `pnpm bootstrap new …` creates such a project, and from then on its rail
+ * row, its bookmarks and `projectPath('new')` all opened the create form
+ * while the project itself was reachable by nothing. Silent, and invisible
+ * until someone picks that name.
+ *
+ * READ OUT OF `App.tsx` RATHER THAN LISTED HERE, because the failure this
+ * guards against is a route somebody adds LATER — `/projects/import`,
+ * `/projects/archive` — and a hand-maintained list in a test cannot know
+ * about one. Anything the router declares directly under `/projects/` is
+ * checked against the real slug grammar, so the next such route fails this
+ * test the moment it is written, with the reason attached.
+ *
+ * The fix a failure asks for is a segment the grammar cannot produce — `_new`
+ * is the existing one, since slugs forbid `_` — never a reserved-word list,
+ * which cannot rescue a project that already carries the name.
+ */
+describe('static routes cannot shadow a project slug', () => {
+  const APP = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+
+  it('declares at least one project route, so the scan below is not vacuous', () => {
+    expect(APP).toMatch(/path=(?:"|\{)[^\n]*projects/);
+  });
+
+  it('gives every literal segment under /projects/ a name no slug can take', () => {
+    // Literal `path="/projects/<segment>"` only: a `path={CONST}` form is
+    // resolved through the constant instead, which the case below covers.
+    const literals = [...APP.matchAll(/path="\/projects\/([^/"]+)"/g)]
+      .map((match) => match[1])
+      // A capture group is `string | undefined` to the type checker even
+      // when the pattern guarantees it; narrowing here keeps the filter
+      // below honest rather than asserting it away.
+      .filter((segment): segment is string => segment !== undefined);
+    const shadowing = literals.filter(
+      (segment) => !segment.startsWith(':') && PROJECT_SLUG_PATTERN.test(segment),
+    );
+    expect(shadowing).toEqual([]);
+  });
+
+  it('keeps the create route itself unreachable as a slug', () => {
+    const segment = NEW_PROJECT_ROUTE.replace('/projects/', '');
+    expect(NEW_PROJECT_ROUTE.startsWith('/projects/')).toBe(true);
+    expect(PROJECT_SLUG_PATTERN.test(segment)).toBe(false);
+    // The regression in one line: the old value was a perfectly valid slug.
+    expect(PROJECT_SLUG_PATTERN.test('new')).toBe(true);
+  });
 });

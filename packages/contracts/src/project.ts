@@ -24,6 +24,20 @@ export const ProjectSummarySchema = z.object({
 });
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
+/**
+ * What a project slug may be, and therefore also what a URL segment must NOT
+ * look like if it is to sit beside `/projects/:slug` without shadowing a real
+ * project.
+ *
+ * EXPORTED because two places need the SAME grammar and a second copy could
+ * drift: this schema, and `apps/web/test/paths.test.ts`, which asserts that
+ * every literal segment the router declares under `/projects/` fails this
+ * pattern. Note it forbids `_` — which is what makes `_new` a segment no
+ * project can ever be named, by construction rather than by a reserved-word
+ * list somebody has to remember to extend.
+ */
+export const PROJECT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export const CreateProjectRequestSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -32,7 +46,7 @@ export const CreateProjectRequestSchema = z
       .trim()
       .min(2)
       .max(80)
-      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Use lowercase letters, numbers and single hyphens.'),
+      .regex(PROJECT_SLUG_PATTERN, 'Use lowercase letters, numbers and single hyphens.'),
   })
   .strict();
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;

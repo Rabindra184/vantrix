@@ -14,7 +14,7 @@ import RunTelemetry from './routes/RunTelemetry';
 import RunTrends from './routes/RunTrends';
 import RunDetail, { RunChartsTab, RunErrorsTab, RunOverviewTab } from './routes/RunDetail';
 import RunList from './routes/RunList';
-import { DEFAULT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
+import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
 
 export default function App() {
   return (
@@ -29,7 +29,10 @@ export default function App() {
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>
           <Route path="/runs" element={<RunList />} />
-          <Route path="/projects/new" element={<NewProject />} />
+          {/* Declared from the constant, not a second literal: the segment
+              has to stay one no project slug can be (see `NEW_PROJECT_ROUTE`),
+              and a hand-typed copy here could quietly drift back to `/new`. */}
+          <Route path={NEW_PROJECT_ROUTE} element={<NewProject />} />
           <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
           <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
           <Route path="/projects/:slug" element={<ProjectRuns />} />

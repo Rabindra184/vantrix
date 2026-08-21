@@ -6,6 +6,7 @@ import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createProject } from '../src/api/projects.js';
 import NewProject from '../src/routes/NewProject.js';
+import { NEW_PROJECT_ROUTE } from '../src/routes/paths.js';
 
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
@@ -37,10 +38,10 @@ describe('NewProject', () => {
     });
     const router = createMemoryRouter(
       [
-        { path: '/projects/new', element: <NewProject /> },
+        { path: NEW_PROJECT_ROUTE, element: <NewProject /> },
         { path: '/projects/:slug/setup', element: <p>Setup screen</p> },
       ],
-      { initialEntries: ['/projects/new'] },
+      { initialEntries: [NEW_PROJECT_ROUTE] },
     );
     return render(
       <QueryClientProvider client={client}>
@@ -53,10 +54,10 @@ describe('NewProject', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const router = createMemoryRouter(
       [
-        { path: '/projects/new', element: <NewProject /> },
+        { path: NEW_PROJECT_ROUTE, element: <NewProject /> },
         { path: '/projects/:slug/setup', element: <p>Setup screen</p> },
       ],
-      { initialEntries: ['/projects/new'] },
+      { initialEntries: [NEW_PROJECT_ROUTE] },
     );
 
     render(
@@ -127,8 +128,8 @@ describe('NewProject', () => {
 
   it('keeps invalid project details in the form', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    const router = createMemoryRouter([{ path: '/projects/new', element: <NewProject /> }], {
-      initialEntries: ['/projects/new'],
+    const router = createMemoryRouter([{ path: NEW_PROJECT_ROUTE, element: <NewProject /> }], {
+      initialEntries: [NEW_PROJECT_ROUTE],
     });
 
     render(

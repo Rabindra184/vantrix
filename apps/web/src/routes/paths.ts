@@ -1,6 +1,22 @@
 /** Where an authenticated session with nowhere particular to go ends up. */
 export const DEFAULT_ROUTE = '/runs';
-export const NEW_PROJECT_ROUTE = '/projects/new';
+/**
+ * The create-a-project page.
+ *
+ * `_new`, NOT `new`, and the underscore is the whole point. React Router
+ * ranks a static segment above a dynamic one, so `/projects/new` beside
+ * `/projects/:slug` does not merely risk a clash — it PERMANENTLY shadows a
+ * project whose slug is `new`, which `PROJECT_SLUG_PATTERN` happily accepts
+ * (`pnpm bootstrap new …` already creates one). That project's rail row, its
+ * bookmarks and `projectPath('new')` would all land on this form instead,
+ * with the project itself reachable by nothing.
+ *
+ * The slug grammar forbids `_`, so this segment cannot collide with any
+ * project that exists now or could ever be created — which fixes the
+ * already-created case a reserved-word list could not, and needs no list to
+ * keep in step. `paths.test.ts` holds that line for every future sibling.
+ */
+export const NEW_PROJECT_ROUTE = '/projects/_new';
 
 /**
  * A run's sections. Spelled once here because `App.tsx` declares them,
