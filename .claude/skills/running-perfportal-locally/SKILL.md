@@ -10,9 +10,14 @@ description: Use when starting, demoing, or clicking through the PerfPortal web 
 Containers → build → bootstrap → API + worker → browser.
 
 **The one rule that costs a debugging cycle:** the browser's origin must
-EXACTLY equal the API's `BETTER_AUTH_URL`, or sign-in fails. If an API is
-already running, find out what it was started with before you pick a URL —
-see *Already running?* below.
+EXACTLY equal the API's `BETTER_AUTH_URL`, or sign-in fails.
+
+Which URL is correct is therefore **a property of a process, not of this
+document** — and if you did not start that process, you cannot see it and it
+can change under you when someone restarts the stack. Never open a URL on
+faith: run the checks in *Already running?* first. The instructions below say
+`http://localhost:3000` because *you* started the API in step 6 with no
+`BETTER_AUTH_URL`, so it defaulted there.
 
 ## Already running? Check these three first
 
@@ -171,11 +176,19 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 Not "the server started" — that only proves a port bound:
 
 1. `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/` → `200`.
-   **This passes with the worker dead** — check the worker separately.
-2. Sign in **in a browser**. If you are already signed in from an earlier
-   session, sign out first, or you have tested nothing.
-3. Open a run: charts draw and the tiles show the fixture numbers above.
-4. Console is clean — this app draws ten ECharts instances plus a theme
+   **This passes with the worker dead.**
+2. Confirm the worker by PID and working directory, using the loop in
+   *Already running?*. **Do not judge it by its log:** the worker prints
+   nothing at all on startup, so a healthy worker and one that exited
+   immediately produce byte-identical output. The app-level proof is a run
+   reaching `complete` rather than sitting at `pending`.
+3. **Sign out first, then sign in**, in a browser. Cookies are scoped by HOST,
+   not by port, so a session established at `localhost:5173` leaves you
+   already signed in at `localhost:3000` and vice versa — you can conclude
+   sign-in works at an origin that would actually refuse it. Landing on the
+   runs list while already authenticated tests nothing.
+4. Open a run: charts draw and the tiles show the fixture numbers above.
+5. Console is clean — this app draws ten ECharts instances plus a theme
    observer, and a broken chart logs rather than throws.
 
 ## Stopping
