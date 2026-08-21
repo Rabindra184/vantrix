@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
 import Badge from '../components/Badge';
 import Button from '../components/Button';
+import { ChevronLeftIcon, ChevronRightIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
@@ -192,8 +193,11 @@ export default function RunList({
               forward is a trap. Returning to the first page needs no cursor at
               all, which is the one backwards move keyset pagination gives for
               free. */}
+          {/* The chevrons are decorative (`aria-hidden` via icons.tsx), so
+              both buttons keep the accessible names the e2e suite clicks. */}
           {cursor !== null && (
             <Button size="sm" onClick={() => setCursor(null)}>
+              <ChevronLeftIcon className="h-3.5 w-3.5" />
               First page
             </Button>
           )}
@@ -208,6 +212,7 @@ export default function RunList({
             onClick={() => setCursor(nextCursor)}
           >
             Next
+            <ChevronRightIcon className="h-3.5 w-3.5" />
           </Button>
           {/* Disabled rather than hidden: a control that vanishes at the end
               of the list leaves the reader wondering whether it was ever

@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectListResponse } from '@perfportal/contracts';
@@ -269,5 +270,66 @@ describe('ProjectRail', () => {
     // screen — must not appear instead.
     expect(screen.getByRole('link', { name: /Checkout Flow/ })).toBeInTheDocument();
     expect(screen.queryByText('Projects could not be loaded.')).toBeNull();
+  });
+});
+
+/**
+ * The desktop collapse, pinned at the exact seam most tempting to "simplify".
+ *
+ * The rail's collapsed state is CSS-ONLY (`lg:sr-only` on the labels,
+ * `lg:hidden` on the badges), and that is a contract, not an implementation
+ * detail: the obvious rewrite — conditionally RENDERING the labels the way
+ * the reference design does — leaves every collapsed row an icon-only link
+ * with no accessible name, and changes row textContent that this file pins
+ * verbatim above. jsdom applies no CSS, which for once is the point: these
+ * cases prove the DOM is IDENTICAL in both states, so what changes on a real
+ * screen can only be presentation.
+ */
+describe('ProjectRail collapse', () => {
+  afterEach(() => {
+    localStorage.removeItem('perfportal-rail-collapsed');
+  });
+
+  it('renders expanded by default, with the toggle naming the action it will perform', async () => {
+    renderRail(PROJECTS);
+    expect(
+      await screen.findByRole('button', { name: 'Collapse the projects rail' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps every row’s accessible name and textContent identical when collapsed', async () => {
+    renderRail(PROJECTS);
+    await screen.findByRole('link', { name: /Billing Exports/ });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse the projects rail' }));
+
+    // The control flips its own name — a screen reader always hears what the
+    // NEXT activation does.
+    expect(screen.getByRole('button', { name: 'Expand the projects rail' })).toBeInTheDocument();
+    // Same assertions the expanded state pins above, repeated in the
+    // collapsed state on purpose: absence of a badge is still exact, and a
+    // present badge is still in the row's text.
+    expect(screen.getByRole('link', { name: /Billing Exports/ }).textContent).toBe(
+      'Billing Exports',
+    );
+    expect(screen.getByRole('link', { name: /Checkout Flow/ })).toHaveTextContent('passed');
+    expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
+  });
+
+  it('remembers the choice across a remount', async () => {
+    renderRail(PROJECTS);
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Collapse the projects rail' }),
+    );
+
+    cleanup();
+    renderRail(PROJECTS);
+
+    // Read in the `useState` initialiser, the way ThemeToggle reads its
+    // stored choice — never an effect, so the first render already agrees
+    // with what the reader last chose.
+    expect(
+      await screen.findByRole('button', { name: 'Expand the projects rail' }),
+    ).toBeInTheDocument();
   });
 });

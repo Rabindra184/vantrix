@@ -70,7 +70,7 @@ export default function AppShell() {
           `z-40` clears the rail (`z-30`) — the two overlap at the top-left
           corner once the rail is sticky too — while staying below ECharts'
           own tooltips, which it portals at a far higher index. */}
-      <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-default bg-surface/85 px-4 backdrop-blur-md sm:px-6">
+      <header className="sticky top-0 z-40 flex h-header items-center gap-3 border-b border-default bg-surface/85 px-4 backdrop-blur-md sm:px-6">
         {/* The brand doubles as the way back to the org-wide list, which is
             why it is a `<Link>` and not a heading: a heading here would
             compete with the `<h1>` every page renders inside `<main>`. */}

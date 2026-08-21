@@ -107,6 +107,27 @@
 @import '../fonts/fonts.css';
 
 /*
+ * THE TEST DIRECTORY IS NOT A SOURCE OF CLASSES, and saying so is not
+ * housekeeping — without it a test injects real CSS into the shipped bundle.
+ *
+ * Tailwind v4 detects its own sources and scans `apps/web/test` along with
+ * `src`. Several tests here quote class strings as DATA — `tableStyles.test.ts`
+ * asserts `TD_NUM` contains `text-right`, and `tokens.test.ts`'s header block
+ * lists the hard-coded spellings (`h-14`, `top-14`) that must NOT appear in
+ * any component — and every quoted string is a class candidate. So the gate
+ * that forbids a spelling was itself emitting that spelling's utility into
+ * production: `.top-14{top:calc(var(--spacing)*14)}` shipped in a bundle whose
+ * source no longer contains `top-14` anywhere. Dead weight, and a confusing
+ * lie to anyone auditing the built CSS for what the app actually uses.
+ *
+ * Excluding tests cannot cost a utility the app needs: a class only reaches a
+ * browser from `src`, and the component tests run in jsdom, which applies no
+ * CSS at all. Verified by rebuilding — `.top-14` disappeared, every `src`
+ * utility (`h-header`, `top-header`, the `lg:` variants) stayed.
+ */
+@source not '../../test';
+
+/*
  * `@theme inline` publishes the short Tailwind-facing names (`bg-surface`,
  * `border-divider`, `bg-accent` / `text-accent`, and so on) as aliases of the
  * runtime tokens below. EVERY key here points at a differently-named runtime
@@ -165,6 +186,20 @@
   --shadow-panel: var(--elevation-panel);
   --shadow-raised: var(--elevation-raised);
   --shadow-overlay: var(--elevation-overlay);
+
+  /*
+   * The shell header's height, published into the SPACING namespace so the
+   * three files that must agree about it (`AppShell.tsx`'s `h-header`, and
+   * the sticky offsets `top-header` in `ProjectRail.tsx` / `RunTabs.tsx`)
+   * consume one decision instead of re-spelling 56px. A DIFFERENT name than
+   * the runtime token below, per this block's own rule: a key that reads a
+   * var() of its own name resolves to nothing, silently. The rail's
+   * `calc(100dvh - …)` height reaches the RUNTIME token directly — no
+   * spacing utility can express that subtraction, so an arbitrary value is
+   * the one way `@theme` leaves open (see `test/tokens.test.ts`'s header
+   * block for why that does not breach the `[var(--…)]` gate).
+   */
+  --spacing-header: var(--header-height);
 }
 
 :root {
@@ -219,6 +254,23 @@
 
   --font-family-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-family-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+
+  /*
+   * The shell header's height — 56px, and the ONE place it is a number.
+   *
+   * DECLARED ONCE, in this block only, and deliberately absent from the two
+   * dark blocks below: those re-state the tokens whose VALUES change with the
+   * theme, and a header is the same height in the dark. Repeating it there
+   * would create two more copies to drift, for no expressible difference.
+   *
+   * Three things depend on it and every one of them is a different CSS
+   * property, which is why it is a token rather than a shared class: the
+   * header's own `height`, the two sticky `top` offsets beneath it
+   * (`ProjectRail`, `RunTabs`), and the rail's `calc(100dvh - …)` height.
+   * They must agree, nothing made them, and the failure when they stop is
+   * invisible to jsdom — see `test/tokens.test.ts`'s header block.
+   */
+  --header-height: 3.5rem;
 
   --elevation-panel: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.03);
   --elevation-raised: 0 4px 16px -4px rgba(15, 23, 42, 0.1);

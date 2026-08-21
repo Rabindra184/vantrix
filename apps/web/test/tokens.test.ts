@@ -71,3 +71,60 @@ describe('components reach tokens by name, not by arbitrary value', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * The shell header's height is ONE decision, consumed from one token.
+ *
+ * It used to be three files with three spellings that had to agree — `h-14`
+ * on the header (`AppShell.tsx`), `lg:top-14` plus a `3.5rem` inside a calc
+ * (`ProjectRail.tsx`), and `sticky top-14` (`RunTabs.tsx`). Nothing gated the
+ * agreement, and the failure it allows is invisible to jsdom: resize the
+ * header and the other two keep sticking at 56px, so the translucent tab
+ * strip slides UNDER the taller header — a blurry ghost band that only shows
+ * while scrolling a chart page in a real browser.
+ *
+ * The token is the same two-name shape the colour tokens use, for the same
+ * reason (`@theme`'s self-reference trap, documented at the top of
+ * `tokens.css`): the runtime value is `--header-height`, and `@theme inline`
+ * publishes the spacing alias under the DIFFERENT name `--spacing-header`,
+ * which is what generates `h-header` / `top-header`.
+ *
+ * `ProjectRail`'s rail height cannot be a named utility — no spacing utility
+ * expresses `calc(100dvh - token)` — so it reaches the runtime token inside
+ * a calc() arbitrary value. That does not violate the `[var(--…)]` gate
+ * above, and not on a technicality: the gate exists to stop tokens that HAVE
+ * a published name being reached by arbitrary value, and this calc is
+ * exactly the case `@theme` leaves no name for.
+ */
+describe('the shell header height is one token', () => {
+  const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
+
+  it('declares the runtime token once and aliases it as spacing under a different name', () => {
+    const tokens = read('styles/tokens.css');
+    expect(tokens.match(/--header-height:\s*3\.5rem;/g)).toHaveLength(1);
+    expect(tokens).toContain('--spacing-header: var(--header-height);');
+  });
+
+  it('is consumed by token in every dependent, never as a hard-coded 14 or 3.5rem', () => {
+    const appShell = read('AppShell.tsx');
+    const rail = read('ProjectRail.tsx');
+    const tabs = read('routes/RunTabs.tsx');
+
+    expect(appShell).toContain('h-header');
+    expect(rail).toContain('lg:top-header');
+    expect(rail).toContain('var(--header-height)');
+    expect(tabs).toContain('top-header');
+
+    for (const [name, source] of [
+      ['AppShell.tsx', appShell],
+      ['ProjectRail.tsx', rail],
+      ['routes/RunTabs.tsx', tabs],
+    ] as const) {
+      for (const spelling of ['h-14', 'top-14', '3.5rem']) {
+        expect(source.includes(spelling), `${name} still spells the header height as ${spelling}`).toBe(
+          false,
+        );
+      }
+    }
+  });
+});
