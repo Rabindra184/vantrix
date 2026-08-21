@@ -65,10 +65,27 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **117 files / 1259 tests**, it
+`nvm use` first, and if a run reports fewer than **118 files / 1265 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the duplicate
+silently-skipped run looks like a pass. Last measured on three review
+follow-ups, which added ONE unit file —
+`packages/persistence/test/project-repository.test.ts` (6) — and 4 cases to
+the existing 409 case in `apps/api/test/projects.integration.test.ts`. Its
+integration floor is 114 files / 1325 tests (the new `.ts` file runs there
+too) and its e2e stays 93. The three: a duplicate-slug 409 now carries a
+real `remediation` via a new `conflict()` helper beside `badRequest`,
+because `ProblemFilter`'s fallback tells the user to consult the OpenAPI
+document for a request that matches it perfectly; `formatStarted` became
+`formatInstant` and `ProjectSetup` stopped carrying a third private
+`toLocaleString()` copy; and `createInOrg` no longer maps EVERY P2002 to
+"that slug is taken". THAT LAST ONE IS THE INTERESTING TEST. Only one
+unique index exists on `project`, so the branch that matters — a P2002 that
+is NOT the slug — cannot be produced against a live schema, which is why
+its file stubs the client instead. The real `meta.target` shape
+(`['org_id', 'slug']`, database column names rather than Prisma field
+names) was OBSERVED by triggering a genuine duplicate before the cases were
+written, not guessed. From a floor of 117 / 1259. Before that, the duplicate
 "New project" link fix, which added no unit FILE and 1 unit case to
 `ProjectRail.test.tsx` plus 1 E2E case to `run-list.spec.ts` — so its e2e
 floor rises to 93, the first time that number has moved in several

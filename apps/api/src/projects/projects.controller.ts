@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   CreateProjectRequestSchema,
@@ -12,7 +12,7 @@ import {
 import { ProjectRepository } from '@perfportal/persistence';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { badRequest } from '../common/validation.js';
+import { badRequest, conflict } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default. @Scopes('read') is still required
@@ -80,7 +80,15 @@ export class ProjectsController {
       slug: parsed.data.slug,
     });
     if (project === null) {
-      throw new ConflictException(`A project with slug "${parsed.data.slug}" already exists in this organisation.`);
+      // `conflict`, not a bare ConflictException: the filter's fallback
+      // remediation points at the OpenAPI document, which describes this
+      // request perfectly — the request is fine, the slug is taken. The one
+      // useful thing to say is what to do next.
+      throw conflict(
+        'PROJECT_SLUG_TAKEN',
+        `A project with slug "${parsed.data.slug}" already exists in this organisation.`,
+        'Choose a different slug. Slugs are unique within an organisation, and an existing project keeps its own.',
+      );
     }
 
     return ProjectSummarySchema.parse({

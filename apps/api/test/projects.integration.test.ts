@@ -117,7 +117,7 @@ describe('POST /v1/projects', () => {
     expect(res.status).toBe(403);
   });
 
-  it('rejects duplicate slugs inside the organisation', async () => {
+  it('rejects duplicate slugs inside the organisation, and says what to do about it', async () => {
     ctx = await createTestApp();
     const cookie = await signUpAsOrgMember(ctx, 'project-duplicate@example.test');
     const res = await request(ctx.app.getHttpServer())
@@ -125,6 +125,17 @@ describe('POST /v1/projects', () => {
       .set('Cookie', cookie)
       .send({ name: 'Another Checkout', slug: 'checkout' });
     expect(res.status).toBe(409);
+
+    // THE REMEDIATION IS THE POINT, not the status. A bare
+    // ConflictException carries none, so `ProblemFilter` falls back to
+    // "Check the request against the OpenAPI description" — advice that is
+    // useless here, because the request matches the document exactly and the
+    // slug is simply taken. This is the error a user hits routinely, and
+    // `NewProject.tsx` renders `remediation` straight under the message.
+    expect(res.body.code).toBe('PROJECT_SLUG_TAKEN');
+    expect(res.body.detail).toContain('checkout');
+    expect(res.body.remediation).toMatch(/different slug/i);
+    expect(res.body.remediation).not.toMatch(/openapi/i);
   });
 
   it('rejects invalid project details', async () => {
