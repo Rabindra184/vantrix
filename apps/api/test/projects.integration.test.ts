@@ -1,7 +1,8 @@
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ProjectListResponseSchema } from '@perfportal/contracts';
+import { ProjectListResponseSchema, ProjectSummarySchema } from '@perfportal/contracts';
 import { createTestApp, type TestContext } from './support/app.js';
+import { signUpAsOrgMember } from './support/session.js';
 
 let ctx: TestContext;
 
@@ -87,5 +88,55 @@ describe('GET /v1/projects', () => {
       .set('Authorization', `Bearer ${ctx.readToken}`);
     expect(res.body.items.map((p: { slug: string }) => p.slug)).toEqual(['checkout']);
     expect(res.body.items.map((p: { id: string }) => p.id)).not.toContain(other.id);
+  });
+});
+
+describe('POST /v1/projects', () => {
+  it('creates a project for a signed-in org member and lists it afterwards', async () => {
+    ctx = await createTestApp();
+    const cookie = await signUpAsOrgMember(ctx, 'project-create@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/projects')
+      .set('Cookie', cookie)
+      .send({ name: 'Search API', slug: 'search-api' });
+
+    expect(res.status).toBe(201);
+    expect(() => ProjectSummarySchema.parse(res.body)).not.toThrow();
+    expect(res.body).toMatchObject({ name: 'Search API', slug: 'search-api', latestRun: null });
+
+    const list = await request(ctx.app.getHttpServer()).get('/v1/projects').set('Cookie', cookie);
+    expect(list.body.items.map((p: { slug: string }) => p.slug)).toEqual(['checkout', 'search-api']);
+  });
+
+  it('refuses bearer credentials', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/projects')
+      .set('Authorization', `Bearer ${ctx.readToken}`)
+      .send({ name: 'Search API', slug: 'search-api' });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects duplicate slugs inside the organisation', async () => {
+    ctx = await createTestApp();
+    const cookie = await signUpAsOrgMember(ctx, 'project-duplicate@example.test');
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/projects')
+      .set('Cookie', cookie)
+      .send({ name: 'Another Checkout', slug: 'checkout' });
+    expect(res.status).toBe(409);
+  });
+
+  it('rejects invalid project details', async () => {
+    ctx = await createTestApp();
+    const cookie = await signUpAsOrgMember(ctx, 'project-invalid@example.test');
+    for (const body of [
+      { name: '  ', slug: 'search-api' },
+      { name: 'Search', slug: 'Search API' },
+      { name: 'Search', slug: 'a' },
+    ]) {
+      const res = await request(ctx.app.getHttpServer()).post('/v1/projects').set('Cookie', cookie).send(body);
+      expect(res.status).toBe(400);
+    }
   });
 });

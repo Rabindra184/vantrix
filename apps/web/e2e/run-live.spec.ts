@@ -279,7 +279,7 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
 
       // ON EVERY TAB, not just the one the reader happened to land on. This
       // banner used to live inside `Live`, the standalone live page that the
-      // five-tab work deleted; it now renders in `RunShell`, above the
+      // run-section work deleted; it now renders in `RunShell`, above the
       // `<Outlet/>`, so a breach follows the reader across the tab strip.
       // Charts is the tab that proves it — the furthest thing from Overview,
       // and the one a reader watching a run in progress is most likely to

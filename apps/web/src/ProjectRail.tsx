@@ -3,10 +3,10 @@ import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ProjectListResponse } from '@perfportal/contracts';
 import Badge from './components/Badge';
-import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
+import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon, PlusIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { cn } from './lib/cn';
-import { DEFAULT_ROUTE, projectPath } from './routes/paths';
+import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, projectPath } from './routes/paths';
 import { STATUS, VERDICT, type Mark } from './routes/marks';
 
 /**
@@ -206,6 +206,15 @@ export default function ProjectRail() {
         >
           <LayersIcon className="h-4 w-4 shrink-0 opacity-70" />
           <span className={cn(collapsed && 'lg:sr-only')}>All runs</span>
+        </NavLink>
+
+        <NavLink
+          to={NEW_PROJECT_ROUTE}
+          title={collapsed ? 'New project' : undefined}
+          className={({ isActive }) => rowClasses(collapsed, isActive)}
+        >
+          <PlusIcon className="h-4 w-4 shrink-0 opacity-70" />
+          <span className={cn(collapsed && 'lg:sr-only')}>New project</span>
         </NavLink>
 
         {items.map((project) => (

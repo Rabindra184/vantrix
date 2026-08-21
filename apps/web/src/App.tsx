@@ -3,8 +3,10 @@ import AppShell from './AppShell';
 import AuthGate from './AuthGate';
 import GroupDetail from './routes/GroupDetail';
 import Login from './routes/Login';
+import NewProject from './routes/NewProject';
 import NoOrg from './routes/NoOrg';
 import ProjectRuns from './routes/ProjectRuns';
+import ProjectSetup from './routes/ProjectSetup';
 import NewRunnerRun from './routes/NewRunnerRun';
 import RequestDetail from './routes/RequestDetail';
 import RunCompare from './routes/RunCompare';
@@ -27,8 +29,10 @@ export default function App() {
       <Route element={<AuthGate />}>
         <Route element={<AppShell />}>
           <Route path="/runs" element={<RunList />} />
-          <Route path="/projects/:slug" element={<ProjectRuns />} />
+          <Route path="/projects/new" element={<NewProject />} />
           <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
+          <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
+          <Route path="/projects/:slug" element={<ProjectRuns />} />
           <Route path="/runs/:runId" element={<RunDetail />}>
             <Route index element={<RunOverviewTab />} />
             <Route path="charts" element={<RunChartsTab />} />

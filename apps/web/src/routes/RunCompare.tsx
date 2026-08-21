@@ -243,8 +243,10 @@ export default function RunCompare() {
                           // exists, and a set that excluded it would compare a
                           // run against peers it is not among.
                           title={run.id === runId ? 'The run you came from is always included' : undefined}
-                          className={`rounded border px-2 py-1 text-sm disabled:opacity-50 ${
-                            on ? 'border-primary text-primary' : 'border-default text-muted'
+                          className={`transition-ui inline-flex h-8 touch-manipulation items-center rounded-lg border px-2.5 text-[13px] font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
+                            on
+                              ? 'border-accent bg-accent/10 text-accent shadow-panel'
+                              : 'border-default bg-surface text-muted shadow-panel hover:bg-sunken hover:text-primary'
                           }`}
                         >
                           {labelFor(run.id)}

@@ -1,9 +1,9 @@
 /** Where an authenticated session with nowhere particular to go ends up. */
 export const DEFAULT_ROUTE = '/runs';
+export const NEW_PROJECT_ROUTE = '/projects/new';
 
 /**
- * A run's four tabs, plus Compare, which is reached from Trends rather than
- * from the strip. Spelled once here because `App.tsx` declares them,
+ * A run's sections. Spelled once here because `App.tsx` declares them,
  * `RunTabs` links to them and the e2e suite navigates to them — three places
  * that must agree about a string, which is two more than can be kept in step
  * by hand.
@@ -55,6 +55,10 @@ export function projectPath(slug: string): string {
 
 export function projectNewRunnerRunPath(slug: string): string {
   return `${projectPath(slug)}/run/new`;
+}
+
+export function projectSetupPath(slug: string): string {
+  return `${projectPath(slug)}/setup`;
 }
 
 /**

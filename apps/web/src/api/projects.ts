@@ -1,4 +1,10 @@
-import { ProjectListResponseSchema, type ProjectListResponse } from '@perfportal/contracts';
+import {
+  ProjectListResponseSchema,
+  ProjectSummarySchema,
+  type CreateProjectRequest,
+  type ProjectListResponse,
+  type ProjectSummary,
+} from '@perfportal/contracts';
 import { apiFetch } from './fetch';
 
 /**
@@ -20,4 +26,12 @@ export const projectsQueryKey = ['projects'] as const;
  */
 export function fetchProjects(): Promise<ProjectListResponse> {
   return apiFetch(ProjectListResponseSchema, '/v1/projects');
+}
+
+export function createProject(body: CreateProjectRequest): Promise<ProjectSummary> {
+  return apiFetch(ProjectSummarySchema, '/v1/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }

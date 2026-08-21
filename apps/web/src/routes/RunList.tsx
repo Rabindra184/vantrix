@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
 import Badge from '../components/Badge';
-import Button from '../components/Button';
-import { ChevronLeftIcon, ChevronRightIcon } from '../components/icons';
+import Button, { linkButtonClasses } from '../components/Button';
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
@@ -21,7 +21,7 @@ import { fetchRuns, runsQueryKey } from '../api/runs';
 // only way that is guaranteed.
 import { formatStarted } from './format';
 import { STATUS, VERDICT } from './marks';
-import { runPath } from './paths';
+import { NEW_PROJECT_ROUTE, runPath } from './paths';
 import useDocumentTitle from '../useDocumentTitle';
 
 type RunListItem = RunListResponse['items'][number];
@@ -73,6 +73,12 @@ export default function RunList({
   // URL stays honest about what it can address — the list itself — and the
   // walk forward lives where the walk happens.
   const [cursor, setCursor] = useState<string | null>(null);
+  const headingAction = action ?? (projectSlug === null ? (
+    <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
+      <PlusIcon className="h-3.5 w-3.5" />
+      New project
+    </Link>
+  ) : undefined);
 
   // `heading` is the project's name on `/projects/:slug` and the literal
   // "Runs" on the org-wide list, so one call covers both — and on the project
@@ -91,7 +97,7 @@ export default function RunList({
   if (runs.isPending) {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeading heading={heading} action={action} />
+        <PageHeading heading={heading} action={headingAction} />
         <LoadingState label="Loading runs…">
           <SkeletonTable columns={5} rows={6} />
         </LoadingState>
@@ -112,7 +118,7 @@ export default function RunList({
     // a second one.
     return (
       <div className="flex flex-col gap-4">
-        <PageHeading heading={heading} action={action} />
+        <PageHeading heading={heading} action={headingAction} />
         <ErrorState
           title="The runs could not be loaded"
           detail={problem?.detail ?? error.message}
@@ -135,7 +141,7 @@ export default function RunList({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} action={action} />
+      <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} action={headingAction} />
 
       {items.length === 0 ? (
         <EmptyPage cursor={cursor} projectSlug={projectSlug} onFirstPage={() => setCursor(null)} />

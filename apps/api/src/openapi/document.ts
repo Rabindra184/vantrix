@@ -442,6 +442,14 @@ const responses: Record<string, ResponseObject> = {
       'application/problem+json with a required "remediation".',
     content: problem(),
   },
+  InvalidProjectRequest: {
+    description:
+      'The request body failed CreateProjectRequestSchema (code INVALID_PROJECT_REQUEST): ' +
+      '"name" is blank or missing, "slug" is too short, too long, or not lowercase ' +
+      'letters/numbers separated by single hyphens. application/problem+json with a required ' +
+      '"remediation".',
+    content: problem(),
+  },
   LiveOpened: {
     description:
       'The run is open and accepting POST /v1/runs/{id}/stream chunks at byte "nextOffset" — 0 ' +
@@ -893,6 +901,34 @@ const paths: Record<string, PathItemObject> = {
           content: json(schemaRef('ProjectListResponse')),
         },
         ...authFailureResponses,
+      },
+    },
+    post: {
+      operationId: 'createProject',
+      summary: 'Create a project in this organisation',
+      tags: ['projects'],
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session. A project is the application or service boundary that ' +
+        'tokens, on-prem runner jobs, and performance runs are attached to. Bearer tokens are ' +
+        'refused here because they are already project-scoped and must not create siblings.',
+      requestBody: {
+        required: true,
+        description: 'A display name and URL slug for the new project.',
+        content: json(schemaRef('CreateProjectRequest')),
+      },
+      responses: {
+        '201': {
+          description: 'Created. latestRun is null until a run is ingested.',
+          content: json(schemaRef('ProjectSummary')),
+        },
+        '400': ref('InvalidProjectRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '409': {
+          description: 'A project with that slug already exists in this organisation.',
+          content: problem(),
+        },
       },
     },
   },
