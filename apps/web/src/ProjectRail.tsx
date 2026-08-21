@@ -1,11 +1,39 @@
+import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ProjectListResponse } from '@perfportal/contracts';
 import Badge from './components/Badge';
-import { CubeIcon, LayersIcon } from './components/icons';
+import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { DEFAULT_ROUTE, projectPath } from './routes/paths';
 import { STATUS, VERDICT, type Mark } from './routes/marks';
+
+/**
+ * Whether the reader last left the rail collapsed. Same storage discipline as
+ * `theme.ts`: reads and writes are both allowed to fail (Safari private mode,
+ * blocked-storage iframes), because a layout preference is not worth a crash.
+ * Unlike the theme there is no pre-paint script — the rail renders expanded
+ * for a first-time visitor and a collapsed one sees one reflow on mount only
+ * if storage was unreadable, which those environments accept.
+ */
+const RAIL_COLLAPSED_KEY = 'perfportal-rail-collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(RAIL_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function storeCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(RAIL_COLLAPSED_KEY, collapsed ? '1' : '0');
+  } catch {
+    // A rail that does not survive a reload is a smaller failure than one
+    // that throws on the click that set it.
+  }
+}
 
 type ProjectItem = ProjectListResponse['items'][number];
 
@@ -45,6 +73,24 @@ export default function ProjectRail() {
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const items = projects.data?.items ?? [];
 
+  // DESKTOP-ONLY STATE. Below `lg` the rail is a horizontal strip and every
+  // `collapsed` class below is `lg:`-scoped, so on a phone this boolean is
+  // inert — the strip never collapses, which is what keeps
+  // `project-rail.spec.ts`'s 480px click-the-last-row case meaningful.
+  // Initialised from storage the same way `ThemeToggle` reads its choice: in
+  // the `useState` initialiser, never an effect, so the first render already
+  // agrees with the stored preference.
+  const [collapsed, setCollapsed] = useState(() =>
+    typeof document === 'undefined' ? false : readCollapsed(),
+  );
+
+  function toggleCollapsed() {
+    setCollapsed((value) => {
+      storeCollapsed(!value);
+      return !value;
+    });
+  }
+
   // TanStack Query keeps the last-known-good `data` across a failed refetch,
   // so `isError` and a non-empty `items` can both be true at once — the
   // ordinary shape of "loaded fine, then a later refetch failed". Blanking
@@ -67,7 +113,15 @@ export default function ProjectRail() {
     // matching height — `dvh` rather than `vh` because on mobile Safari `100vh`
     // is the viewport WITHOUT browser chrome, which would make the rail taller
     // than the screen and hide its last project behind the address bar.
-    <div className="z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-[17rem] lg:border-b-0 lg:border-r">
+    <div
+      className={`z-30 flex shrink-0 flex-col border-b border-default bg-sidebar lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:border-b-0 lg:border-r ${
+        // NO width transition, deliberately, though the reference design has
+        // one: this repo's motion rule (`tokens.css`'s `transition-ui`) is
+        // colour-ish properties only — width is laid out on the main thread
+        // and drops frames on a page already drawing eight ECharts instances.
+        collapsed ? 'lg:w-14' : 'lg:w-[17rem]'
+      }`}
+    >
       {/* An overline, not a heading: the `<nav>` below is already named
           "Projects" for assistive tech by its own `aria-label`, and a real
           <h2> here would put a heading above every page's <h1> in the
@@ -77,11 +131,38 @@ export default function ProjectRail() {
           heading, because nothing queries a `<p>` by accessible name — see
           `tableStyles.ts`'s `TH` for the case where it is not safe.
 
-          Hidden below `lg`, where the rail is a horizontal strip and a section
-          label would cost a whole row. */}
-      <p className="hidden px-4 pt-4 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted lg:block">
-        Projects
-      </p>
+          The whole row is hidden below `lg`, where the rail is a horizontal
+          strip and a section label (or a collapse control for a strip that
+          cannot collapse) would cost a whole row. */}
+      <div
+        className={`hidden items-center pt-3 pb-1.5 lg:flex ${
+          collapsed ? 'justify-center px-0' : 'justify-between pl-4 pr-2'
+        }`}
+      >
+        {!collapsed && (
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
+            Projects
+          </p>
+        )}
+        {/* A hand-rolled 28px icon button in `ThemeToggle`'s segment style,
+            not `Button`: 28px square is the right size beside a 10px
+            overline, and `Button`'s smallest height is 32px. The name flips
+            with the state so a screen reader always hears what the NEXT
+            activation does — there is no visible label to contradict. */}
+        <button
+          type="button"
+          aria-label={collapsed ? 'Expand the projects rail' : 'Collapse the projects rail'}
+          title={collapsed ? 'Expand the projects rail' : 'Collapse the projects rail'}
+          onClick={toggleCollapsed}
+          className="transition-ui flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-sunken hover:text-primary"
+        >
+          {collapsed ? (
+            <PanelExpandIcon className="h-4 w-4" />
+          ) : (
+            <PanelCollapseIcon className="h-4 w-4" />
+          )}
+        </button>
+      </div>
 
       <nav
         aria-label="Projects"
@@ -89,14 +170,36 @@ export default function ProjectRail() {
       >
         {/* `end` is load-bearing: without it React Router marks this active
             for /runs/:runId too, so the rail would claim the reader is on the
-            org-wide list while they are reading one run. */}
-        <NavLink to={DEFAULT_ROUTE} end className={rowClasses}>
+            org-wide list while they are reading one run.
+
+            EVERY `collapsed` TREATMENT BELOW IS CSS-ONLY AND `lg:`-SCOPED.
+            The label spans go `lg:sr-only` rather than unmounting, so a
+            collapsed row keeps its accessible name (an icon-only link with no
+            name is a WCAG failure, and `title` alone is not a name in every
+            AT) and the row's textContent — which `ProjectRail.test.tsx` pins
+            verbatim — is identical in both states. */}
+        {/* `title` moves UP to the link while collapsed: the name span is
+            `sr-only` then, and a 1px clipped element cannot be hovered, so a
+            tooltip left there answers nobody. Expanded, the span's own
+            `title` (below) keeps serving the truncated-name case exactly as
+            before. */}
+        <NavLink
+          to={DEFAULT_ROUTE}
+          end
+          title={collapsed ? 'All runs' : undefined}
+          className={rowClasses(collapsed)}
+        >
           <LayersIcon className="h-4 w-4 shrink-0 opacity-70" />
-          All runs
+          <span className={collapsed ? 'lg:sr-only' : undefined}>All runs</span>
         </NavLink>
 
         {items.map((project) => (
-          <NavLink key={project.id} to={projectPath(project.slug)} className={rowClasses}>
+          <NavLink
+            key={project.id}
+            to={projectPath(project.slug)}
+            title={collapsed ? project.name : undefined}
+            className={rowClasses(collapsed)}
+          >
             <CubeIcon className="h-4 w-4 shrink-0 opacity-70" />
             {/* Truncated, not wrapped: a rail whose rows are two lines tall
                 holds half as many projects, and the full name is on the page
@@ -104,7 +207,7 @@ export default function ProjectRail() {
                 specifically — a screen reader already gets the whole name,
                 since truncation is CSS-only and the accessible name is the
                 untouched `project.name`. */}
-            <span className="truncate" title={project.name}>
+            <span className={`truncate ${collapsed ? 'lg:sr-only' : ''}`} title={project.name}>
               {project.name}
             </span>
             {/* The badge is the FIXED element and the name is the flexible
@@ -123,8 +226,18 @@ export default function ProjectRail() {
                 (`Badge` has since grown `whitespace-nowrap` of its own for
                 unrelated reasons; this stays because `shrink-0` is the half
                 that actually holds the row's height, and because a shared
-                component is free to drop a class this row depends on.) */}
-            <span className="ml-auto shrink-0 whitespace-nowrap">{badgeFor(project.latestRun)}</span>
+                component is free to drop a class this row depends on.)
+
+                `lg:hidden` when collapsed, not `sr-only` like the name: the
+                name is the link's identity and must survive as its accessible
+                name, while the badge is supplementary state a collapsed rail
+                legitimately does not carry — the expanded rail and the page
+                the row links to both still do. */}
+            <span
+              className={`ml-auto shrink-0 whitespace-nowrap ${collapsed ? 'lg:hidden' : ''}`}
+            >
+              {badgeFor(project.latestRun)}
+            </span>
           </NavLink>
         ))}
 
@@ -140,7 +253,17 @@ export default function ProjectRail() {
             happened to be present at first paint. */}
         <div aria-live="polite" className="shrink-0">
           {message != null && (
-            <p className="px-3 py-2 text-[12px] leading-snug text-muted">{message}</p>
+            // `lg:sr-only` when collapsed, never `hidden`: `display: none`
+            // silences a live region, and a projects-failed announcement is
+            // exactly the kind of transition the wrapper above exists to
+            // announce whatever state the rail is drawn in.
+            <p
+              className={`px-3 py-2 text-[12px] leading-snug text-muted ${
+                collapsed ? 'lg:sr-only' : ''
+              }`}
+            >
+              {message}
+            </p>
           )}
         </div>
       </nav>
@@ -163,17 +286,25 @@ export default function ProjectRail() {
  * visibly instead of silently growing its row, so the failure mode is one
  * somebody notices.
  */
-function rowClasses({ isActive }: { isActive: boolean }) {
-  return [
-    'transition-ui flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
-    // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
-    // horizontal strip and "All runs" breaking after "All" is what it looks
-    // like without it.
-    'whitespace-nowrap',
-    isActive
-      ? 'bg-accent/10 font-semibold text-accent'
-      : 'font-medium text-muted hover:bg-sunken hover:text-primary',
-  ].join(' ');
+function rowClasses(collapsed: boolean) {
+  return ({ isActive }: { isActive: boolean }) =>
+    [
+      'transition-ui flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
+      // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
+      // horizontal strip and "All runs" breaking after "All" is what it looks
+      // like without it.
+      'whitespace-nowrap',
+      // A collapsed row is its icon, centred — the label is `sr-only` and the
+      // badge `hidden`, both of which leave flex layout, so with the padding
+      // gone the icon sits in the middle of the 56px column. `lg:`-scoped like
+      // every other collapsed treatment; the phone strip never collapses.
+      collapsed ? 'lg:justify-center lg:px-0' : '',
+      isActive
+        ? 'bg-accent/10 font-semibold text-accent'
+        : 'font-medium text-muted hover:bg-sunken hover:text-primary',
+    ]
+      .filter(Boolean)
+      .join(' ');
 }
 
 /**
