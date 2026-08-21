@@ -1,0 +1,24 @@
+{
+  // apps/runner/tsconfig.json includes only `src`, so until this file existed
+  // NOTHING typechecked apps/runner/test — the same gap apps/api/test/tsconfig.json
+  // and apps/worker/test/tsconfig.json were created to close. This test dir was
+  // empty until the on-prem runner's uid-isolation test landed; the first file in
+  // it is a security regression test, exactly the kind whose compile-time
+  // assertions (the mock shapes it casts to the executor's collaborators) rot
+  // silently the moment they stop being typechecked.
+  //
+  // Mirrors apps/worker/test/tsconfig.json field for field, and like it is wired
+  // into the root `typecheck` script.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["."]
+}
