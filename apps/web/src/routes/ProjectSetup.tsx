@@ -112,6 +112,8 @@ function ProjectSetupLoaded({
   };
 
   const problem = mintMutation.error instanceof ProblemError ? mintMutation.error : null;
+  const revokeProblem =
+    revokeMutation.error instanceof ProblemError ? revokeMutation.error : null;
   const commandToken = minted?.token ?? '$PERFPORTAL_TOKEN';
 
   return (
@@ -212,6 +214,36 @@ function ProjectSetupLoaded({
           </div>
         </Card>
       </div>
+
+      {/* A FAILED REVOKE HAS TO SAY SO, and this is the one action where
+          silence is dangerous rather than merely unhelpful. Without it the
+          spinner simply stopped: the row still read "Active", nothing was
+          announced, and an operator revoking a LEAKED credential could not
+          tell that from success — the failure mode being "the attacker keeps
+          the token and you stop looking".
+
+          The wording does not claim the token is still live, because a
+          request that failed on the way back may well have succeeded on the
+          server. "May still be active" is what is actually known, and the
+          reload is how the reader finds out which it was. `role="alert"` so
+          it is announced when it appears, and it sits directly above the
+          table whose row the reader just acted on. */}
+      {revokeMutation.isError && (
+        <div
+          role="alert"
+          className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
+        >
+          <p className="font-medium">
+            {revokeMutation.variables === undefined
+              ? 'That token may still be active — revoking it did not complete.'
+              : `Token ${revokeMutation.variables} may still be active — revoking it did not complete.`}
+          </p>
+          <p className="mt-1 text-muted">{revokeProblem?.detail ?? revokeMutation.error.message}</p>
+          <p className="mt-1 text-muted">
+            {revokeProblem?.remediation ?? 'Reload the page to see its current state, then try again.'}
+          </p>
+        </div>
+      )}
 
       <TokenTable
         query={tokens}

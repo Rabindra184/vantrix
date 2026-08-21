@@ -76,10 +76,15 @@ export default function NewProject() {
                 className={INPUT}
                 value={slug}
                 placeholder="checkout-api"
+                // `slugifyWhileTyping` on change and the FULL `slugify` on
+                // blur, never the full one on every keystroke — see those two
+                // functions for why the difference is what makes a hyphen
+                // typeable at all.
                 onChange={(event) => {
                   setSlugTouched(true);
-                  setSlug(slugify(event.target.value));
+                  setSlug(slugifyWhileTyping(event.target.value));
                 }}
+                onBlur={(event) => setSlug(slugify(event.target.value))}
                 required
               />
             </Field>
@@ -126,6 +131,13 @@ function Field({
   );
 }
 
+/**
+ * The finished slug: what the schema has to accept.
+ *
+ * Safe to run on a WHOLE string at once — deriving from the project name, or
+ * normalising once the reader leaves the field. It is NOT safe to run on
+ * every keystroke; `slugifyWhileTyping` below is the one for that.
+ */
 function slugify(value: string): string {
   return value
     .trim()
@@ -133,4 +145,30 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+/**
+ * The same normalisation MINUS the trailing-hyphen trim, for a controlled
+ * input the reader is still typing into.
+ *
+ * THE TRIM IS WHY A HYPHEN COULD NOT BE TYPED. `slugify` ends with
+ * `replace(/^-|-$/g, '')`, so running it per keystroke meant that the moment
+ * the reader pressed `-`, the value handed back to the input was the string
+ * WITHOUT it — the character vanished as it was typed, every time. Typing
+ * `checkout-api` produced `checkoutapi`, while the field's own placeholder
+ * advertised `checkout-api` and the validation message asked for "single
+ * hyphens". Only the name-derived path looked right, because that slugifies a
+ * whole string at once, where no hyphen is ever momentarily trailing.
+ *
+ * A leading hyphen and a doubled hyphen are still collapsed as you type:
+ * neither can survive into a valid slug, so removing them early costs the
+ * reader nothing and keeps the field showing what will actually be sent. The
+ * TRAILING hyphen is the only one that is legitimately mid-word.
+ */
+function slugifyWhileTyping(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-/, '');
 }

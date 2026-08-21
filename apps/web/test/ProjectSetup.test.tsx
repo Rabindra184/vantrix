@@ -96,6 +96,32 @@ describe('ProjectSetup', () => {
     });
   });
 
+  /**
+   * THE ONE ACTION WHERE SILENCE IS DANGEROUS, and the only path the mint
+   * side already covered by having its own `role="alert"`.
+   *
+   * A revoke that fails used to be indistinguishable from one that
+   * succeeded: the spinner stopped, the row still read "Active", and nothing
+   * was announced. An operator killing a LEAKED credential would conclude it
+   * was dead while it was still live — so this asserts the alert exists, is
+   * announced, names the token, and carries what the server actually said.
+   */
+  it('says so when a revoke fails, rather than looking like it worked', async () => {
+    revokeProjectTokenMock.mockRejectedValueOnce(new Error('network down'));
+    renderSetup();
+
+    expect(await screen.findByText('pp_existing')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /revoke/i }));
+
+    const alert = await screen.findByRole('alert');
+    // Names the token, and does NOT overclaim: a request that failed on the
+    // way back may still have succeeded on the server.
+    expect(alert).toHaveTextContent('pp_existing');
+    expect(alert).toHaveTextContent(/may still be active/i);
+    // The server's own words reach the reader.
+    expect(alert).toHaveTextContent('network down');
+  });
+
   it('lists existing tokens and revokes by prefix', async () => {
     renderSetup();
 
