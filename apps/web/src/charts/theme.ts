@@ -439,20 +439,31 @@ export function assignPalette(
  * a wire outline, and twelve of them read as a grid rather than as twelve
  * things.
  *
- * DARK IS NEAR-BLACK, not dark slate. `page` was `#0f172a` — slate-900, a
- * distinctly blue ground — and `card` `#1e293b` above it. Two problems, both
- * visible rather than theoretical: the six categorical hues and the four band
- * colours are themselves saturated, so a blue ground put the whole page in
- * competition with its own data; and slate-900 is light enough that the
- * elevation shadows had nothing to fall on. The values here are the canvas
- * (`#0b0d12`), panel (`#101319`) and rail (`#0d1015`) of the reference
- * dashboard this design borrows from — a near-neutral ramp that lets a
- * saturated mark be the only saturated thing in view.
+ * DARK IS DEEP INK, near-black with a deliberate blue cast — the
+ * control-room canvas of the 2026-08-22 redesign spec
+ * (docs/superpowers/specs/2026-08-22-control-room-redesign-design.md):
+ * canvas `#0d1220`, panel `#151c2c`, rail `#101727`. Two earlier failure
+ * modes bound this choice and both stay fixed at these values. Slate-900
+ * (`#0f172a` page) was BOTH too light — the elevation ring had nothing to
+ * fall on — and so saturated a ground that the categorical hues competed
+ * with it; the near-neutral `#0b0d12` ramp that replaced it fixed both by
+ * removing the chroma entirely. The ink ramp keeps the blue as a CAST
+ * rather than a colour: at this lightness its chroma is far below any
+ * mark's, so a saturated series is still the only saturated thing in view,
+ * and the panel-to-canvas step is wide enough for the inset ring to read.
+ *
+ * The LIGHT surfaces echo the same cast — cool off-whites (`#f5f7fb` page)
+ * rather than pure neutrals — so the two themes read as one product.
+ *
+ * `accent` is the redesign's SIGNAL ORANGE, the one interactive colour.
+ * `#f97316` itself fails 4.5:1 as text on a white card, so light mode
+ * carries orange-700 (`#c2410c`, white foreground) and dark mode the full
+ * `#f97316` (ink foreground) — same identity, per-theme lightness.
  *
  * `ring` is VIOLET (`#8b5cf6` / `#a78bfa`), not a shade of the accent. Focus
  * has to be legible against every surface the app draws INCLUDING the accent
- * itself — a focused primary button rings against its own indigo fill, and an
- * indigo ring on indigo is invisible. A neighbouring hue is distinguishable on
+ * itself — a focused primary button rings against its own orange fill, and an
+ * orange ring on orange is invisible. A distant hue is distinguishable on
  * that fill and everywhere else too.
  */
 export type SurfaceRole =
@@ -462,16 +473,16 @@ export type SurfaceRole =
 
 export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceRole, string>>>> = {
   light: {
-    page: '#f8fafc', card: '#ffffff', sidebar: '#ffffff', sunken: '#f1f5f9',
-    border: '#e2e8f0', divider: '#f1f5f9',
-    'text-primary': '#0f172a', 'text-muted': '#475569',
-    accent: '#4f46e5', 'accent-foreground': '#ffffff', ring: '#8b5cf6',
+    page: '#f5f7fb', card: '#ffffff', sidebar: '#f9fafd', sunken: '#eef1f7',
+    border: '#dde4ee', divider: '#edf1f7',
+    'text-primary': '#0f1524', 'text-muted': '#5a6a83',
+    accent: '#c2410c', 'accent-foreground': '#ffffff', ring: '#8b5cf6',
   },
   dark: {
-    page: '#0b0d12', card: '#101319', sidebar: '#0d1015', sunken: '#171b23',
-    border: '#232833', divider: '#191d25',
-    'text-primary': '#e8ecf4', 'text-muted': '#94a3b8',
-    accent: '#818cf8', 'accent-foreground': '#0b0d12', ring: '#a78bfa',
+    page: '#0d1220', card: '#151c2c', sidebar: '#101727', sunken: '#0f1524',
+    border: '#273349', divider: '#1e2941',
+    'text-primary': '#e8edf6', 'text-muted': '#8c99af',
+    accent: '#f97316', 'accent-foreground': '#0d1220', ring: '#a78bfa',
   },
 };
 

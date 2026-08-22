@@ -75,7 +75,10 @@ export default function AppShell() {
             why it is a `<Link>` and not a heading: a heading here would
             compete with the `<h1>` every page renders inside `<main>`. */}
         <Link to={DEFAULT_ROUTE} className="flex items-center gap-2.5">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-mark text-white shadow-panel">
+          {/* `text-on-brand`, not `text-white`: the glyph must be ink on the
+              orange tile in BOTH themes — white on #f97316 is a 2.8:1
+              graphic. See the token's note in tokens.css. */}
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-mark text-on-brand shadow-panel">
             <ActivityIcon className="h-4 w-4" />
           </span>
           <span className="text-[15px] font-semibold tracking-tight text-primary">PerfPortal</span>

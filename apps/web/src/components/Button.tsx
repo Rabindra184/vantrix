@@ -62,12 +62,15 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // `text-on-accent`, never `text-surface`. The two are both white in
+        // `text-on-accent`, never `text-surface`. The two were both white in
         // light mode, which is how the old inline spelling looked correct —
-        // but in dark mode the card is #101319 and the accent fill is a light
-        // indigo, so `text-surface` on `bg-accent` was near-black on
-        // light-indigo where it meant to be the reverse. The pair exists so
-        // the fill and its text move together.
+        // but in the dark theme of the day the card was near-black and the
+        // accent fill a light indigo, so `text-surface` on `bg-accent` was
+        // near-black on light-indigo where it meant to be the reverse. The
+        // pair exists so the fill and its text move together — which is also
+        // what let the accent change hue entirely (indigo → signal orange,
+        // with per-theme foregrounds; see the 2026-08-22 redesign spec)
+        // without this file needing to know.
         //
         // `opacity`, not `brightness`, for the hover: a brightness filter
         // lightens the LABEL along with the fill (dropping its contrast
