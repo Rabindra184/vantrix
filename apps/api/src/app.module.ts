@@ -10,10 +10,12 @@ import { RunsModule } from './runs/runs.module.js';
 import { RunnerModule } from './runner/runner.module.js';
 import { TelemetryModule } from './telemetry/telemetry.module.js';
 import { RulesModule } from './rules/rules.module.js';
+import { TestsModule } from './tests/tests.module.js';
 import { TokensModule } from './tokens/tokens.module.js';
 
 @Module({
-  imports: [AuthModule, RunsModule, IngestModule, LiveModule, MetricsModule, ProjectsModule, RulesModule, RunnerModule, TelemetryModule, TokensModule],
+  imports: [AuthModule, RunsModule, IngestModule, LiveModule, MetricsModule, ProjectsModule, RulesModule,
+    TestsModule, RunnerModule, TelemetryModule, TokensModule],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {

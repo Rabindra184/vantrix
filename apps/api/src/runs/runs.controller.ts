@@ -9,11 +9,7 @@ import {
   type RunListResponse,
   type RunStatus,
 } from '@perfportal/contracts';
-import {
-  ProjectRepository,
-  type RunRecord,
-  type RunVerdictFilter,
-} from '@perfportal/persistence';
+import { ProjectRepository, TestRepository, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { RunsService } from './runs.service.js';
 
@@ -32,6 +28,7 @@ export class RunsController {
   constructor(
     private readonly runs: RunsService,
     private readonly projects: ProjectRepository,
+    private readonly tests: TestRepository,
   ) {}
 
   /**
@@ -48,6 +45,7 @@ export class RunsController {
     @Query('limit') limit = '25',
     @Query('cursor') cursor?: string,
     @Query('project') project?: string,
+    @Query('test') test?: string,
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('verdict') verdict?: string,
@@ -76,6 +74,33 @@ export class RunsController {
       projectId = named.id;
     }
 
+    // ═══ `test` IS RESOLVED, NOT PASSED THROUGH ═══
+    //
+    // A test slug is unique per PROJECT, so it means nothing without one.
+    // Requiring `project` alongside it is the honest contract: the alternative
+    // — search the org for a test with this slug — would answer differently
+    // depending on how many projects happened to use the same simulation name,
+    // which is the kind of wrong answer that looks right.
+    //
+    // 400 rather than 404 for the missing pair, because the request is
+    // malformed rather than pointing at something absent.
+    let testId: string | undefined;
+    if (test !== undefined) {
+      if (projectId === undefined) {
+        throw badRequest(
+          'TEST_NEEDS_PROJECT',
+          'The "test" filter needs a "project" too.',
+          'A test slug is unique within its project, not across the organisation. ' +
+            'Add "project=<slug>", or use a bearer token, which already names one.',
+        );
+      }
+      const named = await this.tests.findBySlug({ orgId: tenant.orgId, projectId }, test);
+      // The same 404 as an unknown project, and for the same reason: the
+      // status code must not distinguish "no such test" from "not yours".
+      if (named === null) throw new NotFoundException(`No test "${test}" in that project.`);
+      testId = named.id;
+    }
+
     const parsedCursor = parseCursor(cursor);
     const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
@@ -83,6 +108,7 @@ export class RunsController {
       {
         limit: parseLimit(limit),
         ...(parsedCursor ? { cursor: parsedCursor } : {}),
+        ...(testId ? { testId } : {}),
         ...filters,
       },
     );
