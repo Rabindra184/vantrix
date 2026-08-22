@@ -30,12 +30,13 @@ model Project {
   settings  Json     @default("{}")
   createdAt DateTime @default(now()) @map("created_at")
 
-  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  tokens    ApiToken[]
-  runs      Run[]
-  slaRules  SlaRule[]
+  org             Org              @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tokens          ApiToken[]
+  runs            Run[]
+  tests           Test[]
+  slaRules        SlaRule[]
   runnerArtifacts RunnerArtifact[]
-  runnerJobs RunnerJob[]
+  runnerJobs      RunnerJob[]
 
   @@unique([id, orgId])
   @@unique([orgId, slug])
@@ -48,6 +49,70 @@ model Project {
   @@index([slug(ops: raw("gin_trgm_ops"))], type: Gin, map: "project_slug_trgm")
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "project_name_trgm")
   @@map("project")
+}
+
+/// A named thing that gets run repeatedly — the layer between a project and
+/// its runs, and the one this schema was missing.
+///
+/// ═══ IT ALREADY EXISTED, SPELLED AS A STRING COMPARISON ═══
+///
+/// `TRENDS_SQL` cohorts runs with `AND r.simulation IS NOT DISTINCT FROM $3`
+/// (packages/persistence/src/metrics/trends.ts). That IS this concept: runs of
+/// the same simulation, in the same project, compared over time. What it had
+/// was no identity, no name a reader chose, nowhere to hang configuration and
+/// no page of its own. `Run.simulation` goes back to being what it always
+/// was — the class name the tool reported, captured execution metadata.
+///
+/// ═══ WHY A RUN'S `testId` IS NULLABLE ═══
+///
+/// The simulation class is NOT KNOWN when a run is created. `POST /v1/runs`
+/// inserts at `status: 'pending'`; the worker parses the class out of the log
+/// header and writes it later (apps/worker/src/pipeline/pipeline.service.ts).
+/// The live path is the same. So there is nothing to put in `test_id` at
+/// insert time, and three kinds of run legitimately never acquire one: still
+/// pending, failed to parse at all, and every pre-migration row whose
+/// `simulation` was already null. That is not a broken state to be repaired —
+/// it is what "we have not been told yet" looks like.
+model Test {
+  id        String @id @default(uuid()) @db.Uuid
+  orgId     String @map("org_id") @db.Uuid
+  projectId String @map("project_id") @db.Uuid
+
+  /// URL identity within the project. Derived from `simulationClass` when the
+  /// worker first sees one; editable afterwards WITHOUT moving any run,
+  /// because runs point at `id` and never at this.
+  slug            String
+  /// What a reader calls it. Defaults to `simulationClass` so an auto-created
+  /// test is never nameless.
+  name            String
+  /// The tool's own class name, and the key the worker matches a parsed run
+  /// on. Not the display name: renaming a test must not orphan its runs.
+  simulationClass String  @map("simulation_class")
+  description     String?
+
+  /// TIMESTAMPTZ, not a bare timestamp — the rule CLAUDE.md records after a
+  /// raw-pool read reported a start time 5h30m out on an Asia/Kolkata machine
+  /// and stayed invisible in UTC. `test` is read through the raw pool by
+  /// TRENDS_SQL's join, so this is not hypothetical here.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runs    Run[]
+
+  @@unique([projectId, slug])
+  /// ONE TEST PER SIMULATION CLASS, which is what makes the worker's
+  /// resolve-or-create deterministic: given a parsed class there is exactly
+  /// one row it can belong to.
+  ///
+  /// Gatling Enterprise does NOT have this constraint — its Test is a named
+  /// configuration, so two tests may share a simulation class with different
+  /// load profiles. Getting there needs clients to name the test at submit
+  /// time (an optional `metadata.test`), and dropping a unique index is not a
+  /// data change, which is exactly why taking it now costs nothing later.
+  @@unique([projectId, simulationClass])
+  @@index([projectId, createdAt(sort: Desc)])
+  @@map("test")
 }
 
 model RunnerArtifact {
@@ -64,7 +129,7 @@ model RunnerArtifact {
   storagePath     String   @map("storage_path")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  project Project @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
+  project Project     @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
   jobs    RunnerJob[]
 
   @@unique([id, orgId, projectId])
@@ -120,47 +185,57 @@ model ApiToken {
 }
 
 model Run {
-  id             String    @id @default(uuid()) @db.Uuid
-  orgId          String    @map("org_id") @db.Uuid
-  projectId      String    @map("project_id") @db.Uuid
-  status         String
-  verdict        String?
-  tool           String
-  toolVersion    String?   @map("tool_version")
+  id               String    @id @default(uuid()) @db.Uuid
+  orgId            String    @map("org_id") @db.Uuid
+  projectId        String    @map("project_id") @db.Uuid
+  /// WHICH TEST THIS IS A RUN OF, and NULLABLE on purpose — see `Test`'s own
+  /// docstring. The class this is matched on is not known when the row is
+  /// inserted; the worker fills this in when it parses the header, so a run is
+  /// briefly, and sometimes permanently, without one.
+  ///
+  /// `SetNull` and never Cascade: deleting a test must not delete the runs it
+  /// grouped. Same instinct as `run_assertion` storing a rule SNAPSHOT rather
+  /// than a live foreign key — history has to survive the thing that organised
+  /// it.
+  testId           String?   @map("test_id") @db.Uuid
+  status           String
+  verdict          String?
+  tool             String
+  toolVersion      String?   @map("tool_version")
   /// Ingest metadata, frozen at accept time exactly like engineOptions and
   /// for the same reason: they describe the run that was submitted, and a
   /// later edit must not rewrite what was true when it ran. Never written by
   /// the worker. Null for every run created before migration
   /// 20260815000000_run_ingest_provenance, and for any run whose caller
   /// sent none of them.
-  environment String?
-  branch      String?
-  commitSha   String? @map("commit_sha")
+  environment      String?
+  branch           String?
+  commitSha        String?   @map("commit_sha")
   /// The tool's own simulation identity and run description, from the run
   /// header. Null until the worker parses, and forever for a failed run.
-  simulation  String?
-  description String?
+  simulation       String?
+  description      String?
   /// The span the SERIES OFFSETS live in: run-header start to last event.
   /// Every bucket `startOffsetMs` is relative to the header start, so a time
   /// axis must span this or the final bucket falls outside the domain.
   /// NOT what the run page calls "Duration" -- see `activityMs`.
-  durationMs  Int?     @map("duration_ms")
+  durationMs       Int?      @map("duration_ms")
   /// The run's MEASURED span: first event (after warm-up) to last event, and
   /// exactly what every `throughputRps` divides by. This is the "Duration"
   /// the run page shows, and the one Gatling's own report agrees with.
   /// Null for runs ingested before 20260822090000_run_activity_ms; the lead-in
   /// it subtracts cannot be recovered from this row, so those fall back to
   /// `durationMs` rather than being backfilled with a guess.
-  activityMs  Int?     @map("activity_ms")
-  bundleKey      String    @map("bundle_key")
-  bundleSha256   String    @map("bundle_sha256")
-  bundleBytes    BigInt    @map("bundle_bytes")
+  activityMs       Int?      @map("activity_ms")
+  bundleKey        String    @map("bundle_key")
+  bundleSha256     String    @map("bundle_sha256")
+  bundleBytes      BigInt    @map("bundle_bytes")
   /// The byte cursor for a run fed by a stream rather than a bundle upload --
   /// how much of the log the platform has durably accepted so far. BIGINT,
   /// not INT: a log size cap is a product decision, not a storage one, and
   /// widening an INT later means a table rewrite. Unrelated to bundleBytes,
   /// which is the FINAL assembled size and stays 0 until close() sets it.
-  streamOffset   BigInt    @default(0) @map("stream_offset")
+  streamOffset     BigInt    @default(0) @map("stream_offset")
   /// When this run's byte cursor LAST MOVED — set by RunRepository
   /// .advanceOffset on every accepted chunk, and null for a run that has
   /// never accepted one (including every run that was never live at all).
@@ -185,8 +260,8 @@ model Run {
   /// that did — the run really did last accept data when it says, and a
   /// close() that failed afterwards does not make that untrue or buy the
   /// producer a fresh silence budget.
-  streamUpdatedAt DateTime? @map("stream_updated_at") @db.Timestamptz(3)
-  idempotencyKey String?   @map("idempotency_key")
+  streamUpdatedAt  DateTime? @map("stream_updated_at") @db.Timestamptz(3)
+  idempotencyKey   String?   @map("idempotency_key")
   /// When the platform received this run's bundle (accept time), NOT when
   /// the load test itself ran. Deliberately ingest time: see startedOn.
   /// TIMESTAMPTZ, like every instant in this model should be. As a bare
@@ -195,7 +270,7 @@ model Run {
   /// — so the raw-pool trends query and the Prisma run query reported two
   /// different start times for one row on any non-UTC host. See the
   /// 20260817000000_run_timestamps_are_timestamptz migration.
-  startedAt      DateTime  @map("started_at") @db.Timestamptz(3)
+  startedAt        DateTime  @map("started_at") @db.Timestamptz(3)
   /// The DATE of startedAt — the run_series_bucket partition key, carried
   /// here so it can be written at insert time. Deliberately an ingest date,
   /// not the load test's own start date: the worker only learns the real
@@ -204,7 +279,7 @@ model Run {
   /// to honor a later-discovered "true" date is not worth doing when
   /// partitioning exists for retention, not reporting — see toolStartedAt
   /// for the load test's own start, and spec §9.3.
-  startedOn      DateTime  @map("started_on") @db.Date
+  startedOn        DateTime  @map("started_on") @db.Date
   /// The load test's own start, from the tool's run header (e.g. Gatling's
   /// simulation.log), populated by the worker once parsing completes — null
   /// until then, and null forever for a run that never reaches 'complete'.
@@ -212,8 +287,8 @@ model Run {
   /// when the platform found out about it. Never used as a partition key
   /// (see startedOn) and never backdates run_series_bucket rows already
   /// written under the ingest-date partition.
-  toolStartedAt  DateTime? @map("tool_started_at") @db.Timestamptz(3)
-  ingestedAt     DateTime? @map("ingested_at") @db.Timestamptz(3)
+  toolStartedAt    DateTime? @map("tool_started_at") @db.Timestamptz(3)
+  ingestedAt       DateTime? @map("ingested_at") @db.Timestamptz(3)
   /// Row creation time — used by the sweeper (apps/worker/src/sweeper.ts) to
   /// detect a run stuck at 'pending' for too long. This coincides with
   /// startedAt today because both are `now()` at the same insert, but the
@@ -227,7 +302,7 @@ model Run {
   ///
   /// NO LONGER what the sweeper measures 'parsing' staleness from — see
   /// parsingStartedAt below for why createdAt was wrong for that one case.
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   /// When this run MOST RECENTLY entered 'parsing' — set by both
   /// RunRepository.markParsing (the upload path) and .claimForClose (Task 9
   /// live path). The sweeper's 'parsing' staleness check reads THIS, falling
@@ -252,8 +327,8 @@ model Run {
   /// Frozen at accept time. Statistics are meaningless without the options
   /// that produced them, and a project changing its warm-up must not
   /// silently reinterpret its own history.
-  engineOptions  Json      @map("engine_options")
-  error          Json?
+  engineOptions    Json      @map("engine_options")
+  error            Json?
   /// The TOOL'S OWN assertions, decoded from the result file and re-evaluated
   /// against this run's statistics — Appendix A G-05. Null until the worker
   /// parses, and forever for a run that never reaches 'complete'; `[]` for a
@@ -265,13 +340,17 @@ model Run {
   /// metadata written once by the tool — never filtered, never aggregated,
   /// never joined — so they belong beside `engine_options` for the same reason
   /// it is a column: they describe the run, they are not entities of their own.
-  toolAssertions Json?     @map("tool_assertions")
+  toolAssertions   Json?     @map("tool_assertions")
 
   project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  test       Test?          @relation(fields: [testId], references: [id], onDelete: SetNull)
   assertions RunAssertion[]
   runnerJobs RunnerJob[]
 
   @@unique([projectId, idempotencyKey])
+  /// Serves the test's own run history, and TRENDS_SQL's cohort once it
+  /// stops matching on the simulation string.
+  @@index([testId, createdAt(sort: Desc)])
   @@index([projectId, startedAt(sort: Desc)])
   @@index([status, createdAt])
   // The other six columns of the run list's `?q=` search. See the pair on
@@ -285,25 +364,25 @@ model Run {
 }
 
 model RunStat {
-  id           String  @id @default(uuid()) @db.Uuid
-  runId        String  @map("run_id") @db.Uuid
-  orgId        String  @map("org_id") @db.Uuid
-  projectId    String  @map("project_id") @db.Uuid
-  scope        String
-  name         String
-  family       String
-  count        Int
-  okCount      Int     @map("ok_count")
-  koCount      Int     @map("ko_count")
-  errorRate    Float   @map("error_rate")
-  minMs        Float   @map("min_ms")
-  maxMs        Float   @map("max_ms")
-  meanMs       Float   @map("mean_ms")
-  stddevMs     Float   @map("stddev_ms")
-  throughputRps Float  @map("throughput_rps")
-  percentiles  Json
-  sketch       Bytes
-  sketchKind   String  @map("sketch_kind")
+  id            String  @id @default(uuid()) @db.Uuid
+  runId         String  @map("run_id") @db.Uuid
+  orgId         String  @map("org_id") @db.Uuid
+  projectId     String  @map("project_id") @db.Uuid
+  scope         String
+  name          String
+  family        String
+  count         Int
+  okCount       Int     @map("ok_count")
+  koCount       Int     @map("ko_count")
+  errorRate     Float   @map("error_rate")
+  minMs         Float   @map("min_ms")
+  maxMs         Float   @map("max_ms")
+  meanMs        Float   @map("mean_ms")
+  stddevMs      Float   @map("stddev_ms")
+  throughputRps Float   @map("throughput_rps")
+  percentiles   Json
+  sketch        Bytes
+  sketchKind    String  @map("sketch_kind")
   histogramOk   Bytes?  @map("histogram_ok")
   histogramKo   Bytes?  @map("histogram_ko")
   histogramKind String? @map("histogram_kind")
@@ -315,49 +394,49 @@ model RunStat {
 
 /// Partitioned by range on run_started_on — see migration 0001, hand-edited.
 model RunSeriesBucket {
-  runStartedOn  DateTime @map("run_started_on") @db.Date
-  runId         String   @map("run_id") @db.Uuid
-  orgId         String   @map("org_id") @db.Uuid
-  projectId     String   @map("project_id") @db.Uuid
-  scope         String
-  name          String
+  runStartedOn   DateTime @map("run_started_on") @db.Date
+  runId          String   @map("run_id") @db.Uuid
+  orgId          String   @map("org_id") @db.Uuid
+  projectId      String   @map("project_id") @db.Uuid
+  scope          String
+  name           String
   /// Which measure this series is of. 'response_time' for run and request
   /// scope; a group carries 'group_cumulated' AND 'group_duration' under one
   /// name, which is why this is in the primary key.
-  family        String
-  startOffsetMs Int      @map("start_offset_ms")
-  startedCount  Int      @map("started_count")
-  endedCount    Int      @map("ended_count")
-  okCount       Int      @map("ok_count")
-  koCount       Int      @map("ko_count")
+  family         String
+  startOffsetMs  Int      @map("start_offset_ms")
+  startedCount   Int      @map("started_count")
+  endedCount     Int      @map("ended_count")
+  okCount        Int      @map("ok_count")
+  koCount        Int      @map("ko_count")
   /// The START-edge outcome split (requests/s, G-23). Nullable: rows written
   /// before migration 20260813120000 have no start-edge split at all, and
   /// null must not be read as zero.
-  startedOkCount Int? @map("started_ok_count")
-  startedKoCount Int? @map("started_ko_count")
-  minMs         Float    @map("min_ms")
-  maxMs         Float    @map("max_ms")
-  meanMs        Float    @map("mean_ms")
-  percentiles   Json
-  percentilesOk Json? @map("percentiles_ok")
-  percentilesKo Json? @map("percentiles_ko")
+  startedOkCount Int?     @map("started_ok_count")
+  startedKoCount Int?     @map("started_ko_count")
+  minMs          Float    @map("min_ms")
+  maxMs          Float    @map("max_ms")
+  meanMs         Float    @map("mean_ms")
+  percentiles    Json
+  percentilesOk  Json?    @map("percentiles_ok")
+  percentilesKo  Json?    @map("percentiles_ko")
   /// Exact 1ms histograms of the same observations the bucket sketches hold,
   /// in a form a TIME WINDOW can merge — the frozen `percentiles` above cannot
   /// be re-aggregated, because the 95th of a union is not a function of two
   /// buckets' 95ths. Null for runs ingested before migration
   /// 20260816120000; that is what `windowable` reports.
-  histogramOk   Bytes? @map("histogram_ok")
-  histogramKo   Bytes? @map("histogram_ko")
+  histogramOk    Bytes?   @map("histogram_ok")
+  histogramKo    Bytes?   @map("histogram_ko")
 
   @@id([runStartedOn, runId, scope, name, family, startOffsetMs])
   @@map("run_series_bucket")
 }
 
 model RunError {
-  id        String @id @default(uuid()) @db.Uuid
-  runId     String @map("run_id") @db.Uuid
-  orgId     String @map("org_id") @db.Uuid
-  projectId String @map("project_id") @db.Uuid
+  id        String  @id @default(uuid()) @db.Uuid
+  runId     String  @map("run_id") @db.Uuid
+  orgId     String  @map("org_id") @db.Uuid
+  projectId String  @map("project_id") @db.Uuid
   scope     String
   name      String
   /// '' when isOther. A real message is never empty — the engine maps a
@@ -493,16 +572,16 @@ model TelemetrySample {
 }
 
 model RunAssertion {
-  id           String  @id @default(uuid()) @db.Uuid
-  runId        String  @map("run_id") @db.Uuid
-  orgId        String  @map("org_id") @db.Uuid
-  projectId    String  @map("project_id") @db.Uuid
-  ruleId       String  @map("rule_id") @db.Uuid
+  id           String @id @default(uuid()) @db.Uuid
+  runId        String @map("run_id") @db.Uuid
+  orgId        String @map("org_id") @db.Uuid
+  projectId    String @map("project_id") @db.Uuid
+  ruleId       String @map("rule_id") @db.Uuid
   /// The rule as it read at evaluation time. Editing a threshold must never
   /// rewrite the history of what passed.
-  ruleSnapshot Json    @map("rule_snapshot")
+  ruleSnapshot Json   @map("rule_snapshot")
   outcome      String
-  actualValue  Float?  @map("actual_value")
+  actualValue  Float? @map("actual_value")
   message      String
 
   run Run @relation(fields: [runId], references: [id], onDelete: Cascade)

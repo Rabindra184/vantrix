@@ -106,6 +106,10 @@ export function createPool(url: string, options: PoolOptions = {}): pg.Pool {
 export const SCHEMA_TABLES = [
   'org',
   'project',
+  // Between `project` and `run` because that is where it sits in the tree, not
+  // because the order matters — see `apps/api/test/support/app.ts` on why one
+  // `TRUNCATE a, b, c CASCADE` is order-independent.
+  'test',
   'api_token',
   'run',
   'run_stat',

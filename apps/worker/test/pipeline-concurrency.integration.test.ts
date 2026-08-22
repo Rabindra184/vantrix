@@ -51,7 +51,7 @@ const blobs = new BlobStore(config.blob);
 
 const TABLES = [
   'run_assertion', 'run_error', 'run_series_bucket', 'run_user_bucket', 'run_stat',
-  'run', 'sla_rule', 'api_token', 'project', 'org',
+  'run', 'test', 'sla_rule', 'api_token', 'project', 'org',
   'org_member', 'session', 'account', 'verification', 'user',
 ];
 
