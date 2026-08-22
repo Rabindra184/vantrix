@@ -65,10 +65,25 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **127 files / 1360 tests**, it
+`nvm use` first, and if a run reports fewer than **128 files / 1373 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The test-entity branch adds no unit
+silently-skipped run looks like a pass. Last measured on the test-api branch,
+which added ONE unit file — `packages/contracts/test/test.test.ts` (13) — from
+a floor of 127 / 1360. Its integration floor is **123 files / 1462 tests**
+(that `.ts` file runs there too, plus `apps/api/test/tests.integration.test.ts`
+(21) and two cases in `openapi.integration.test.ts`) and its e2e stays 96.
+
+ONE THING FROM IT, AND IT IS ABOUT ASSERTING A SPLIT. The tests routes guard
+per HANDLER — GETs take either credential, the PATCH is session-only — and the
+gate over that asserts BOTH halves: the PATCH overrides to cookieAuth, AND the
+GETs carry no override at all. Only the pair catches the split collapsing in
+either direction. A one-sided assertion would have let a GET quietly become
+session-only, locking out the bearer callers it exists for, with every other
+test still green. **When a rule is "these differ", assert both sides of the
+difference, not the interesting one.**
+
+Before that, the test-entity branch added no unit
 FILE and no unit case — its whole surface is a migration, a worker rule and one
 INTEGRATION file — so the unit floor is unchanged while **integration rises to
 121 files / 1426 tests** (`apps/worker/test/test-entity.integration.test.ts`, 8)
