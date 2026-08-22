@@ -116,8 +116,31 @@ export const RunIdentitySchema = z.object({
   /** The tool's own simulation identity and run description (G-01, G-02). */
   simulation: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
-  /** The load test's own span. Gatling's header renders this to whole seconds (G-04). */
+  /**
+   * The span the SERIES OFFSETS live in: run-header start to last event.
+   * Every bucket `startOffsetMs` is relative to the header start, so a time
+   * axis must span this or the final bucket falls outside the domain
+   * (`useTimeDomainFromShell`, `TimeBrush`).
+   *
+   * NOT the number the run page labels "Duration" — that is `activityMs`.
+   */
   durationMs: z.number().int().nullable().optional(),
+  /**
+   * The run's MEASURED span: first event (after warm-up) to last event, and
+   * exactly what every `throughputRps` divides by (G-04).
+   *
+   * THE PAGE USED TO CONTRADICT ITSELF WITHOUT THIS. The header rendered
+   * `durationMs` while the throughput tile beside it divided by the activity
+   * span, so `throughput x duration` disagreed with the request count on the
+   * same screen — 14.32 req/s over a stated 63s is 907, printed next to 895.
+   * Gatling anchors its own reported duration at the first event too, which
+   * is why its report reads "1m 2s" where `durationMs` rounds to 63s.
+   *
+   * Null for runs ingested before migration 20260822090000: the lead-in it
+   * subtracts is not recoverable from a stored row, so readers fall back to
+   * `durationMs` rather than showing a backfilled guess.
+   */
+  activityMs: z.number().int().nullable().optional(),
   /** When the platform received this run's bundle — ingest time, not tool start. */
   startedAt: z.string().datetime(),
   /**

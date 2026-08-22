@@ -17,6 +17,40 @@ describe('PT-G: global page exact quantities', () => {
     expect(run.koCount).toBe(24);
   });
 
+  /**
+   * TWO SPANS, AND THE ARITHMETIC THAT MADE THEM NECESSARY.
+   *
+   * `durationMs` is anchored at the run HEADER because that is where every
+   * bucket `startOffsetMs` is anchored — a time axis spanning anything less
+   * drops the final bucket. `activityMs` is anchored at the FIRST EVENT,
+   * which is what `throughputRps` divides by and what Gatling's own report
+   * calls the duration.
+   *
+   * Using one for the other made the run page contradict itself, so the
+   * binding assertion is the RECONCILIATION: the throughput this engine
+   * reports, multiplied by the span it reports, must return the count it
+   * reports. Every number is read back off the result rather than written
+   * down, so a re-captured fixture moves all of them together.
+   */
+  it('PT-G-04 reports a header-anchored series span and a first-event activity span', () => {
+    // The lead-in is real on this fixture, so the two are genuinely different
+    // numbers and the reconciliation below is not trivially satisfied.
+    expect(result.durationMs).toBeGreaterThan(result.activityMs);
+
+    const firstStart = Math.min(...events.filter((e) => e.type === 'request').map((e) => e.startMs));
+    const lastEnd = Math.max(...events.filter((e) => e.type === 'request').map((e) => e.endMs));
+    const meta = events.find((e) => e.type === 'meta')!;
+
+    expect(result.durationMs).toBe(lastEnd - meta.startedAtMs);
+    expect(result.activityMs).toBe(lastEnd - firstStart);
+  });
+
+  it('PT-G-13 throughput divides by the activity span, so the two reconcile to the count', () => {
+    expect(Math.abs(run.throughputRps * (result.activityMs / 1000) - run.count)).toBeLessThan(0.5);
+    // And NOT by the series span — the mismatch this pair exists to prevent.
+    expect(Math.abs(run.throughputRps * (result.durationMs / 1000) - run.count)).toBeGreaterThan(1);
+  });
+
   it('PT-G-06..09 indicator bands', () => {
     // Bands are now folded from the run's OK histogram at read time rather
     // than counted by the engine during ingest (see indicators.ts).

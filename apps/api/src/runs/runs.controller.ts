@@ -160,6 +160,7 @@ export async function respondWithRun(
         simulation: run.simulation,
         description: run.description,
         durationMs: run.durationMs,
+        activityMs: run.activityMs,
         startedAt: run.startedAt.toISOString(),
         toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
       });

@@ -65,6 +65,9 @@ export default function RunHeader({
   readonly verdict: RunResponse['verdict'] | undefined;
   readonly peakUsers: number | null;
 }) {
+  // See the Duration chip below for why this is `activityMs` first.
+  const runDurationMs = identity.activityMs ?? identity.durationMs;
+
   // The tool's own start when the parser has produced it, ingest time
   // otherwise — the same rule, spelled the same way, as the run list's
   // `startedAt` (RunList.tsx's RunRow). The two screens must not disagree
@@ -230,8 +233,21 @@ export default function RunHeader({
             {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
           </Chip>
         )}
-        <Chip label={`Duration: ${formatDuration(identity.durationMs)}`} testId="run-duration">
-          <span className="tabular-nums">{formatDuration(identity.durationMs)}</span>
+        {/* `activityMs`, NOT `durationMs`, AND THE FALLBACK IS THE OLD VALUE.
+            `durationMs` is the span the SERIES OFFSETS live in — header start
+            to last event — which the time axis needs and a reader does not
+            mean by "Duration". Showing it here made this page contradict
+            itself: the throughput tile divides by the ACTIVITY span, so
+            `throughput x duration` did not equal the request count on the
+            same screen (14.32 req/s over a stated 63s is 907, printed beside
+            a stated 895). Gatling's own report anchors at the first event too
+            and reads "1m 2s" where `durationMs` rounds to 63s.
+
+            `?? durationMs` for runs ingested before migration 20260822090000,
+            which have no `activityMs` and cannot be backfilled — those keep
+            rendering exactly what they rendered before rather than a dash. */}
+        <Chip label={`Duration: ${formatDuration(runDurationMs)}`} testId="run-duration">
+          <span className="tabular-nums">{formatDuration(runDurationMs)}</span>
         </Chip>
         {peakUsers !== null && (
           // The aria-label restates the visible text exactly, rather than

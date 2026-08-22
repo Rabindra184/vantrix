@@ -29,6 +29,7 @@ export interface RunRecord {
   description: string | null;
   /** The load test's own span in ms. Null until the worker parses. */
   durationMs: number | null;
+  activityMs: number | null;
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: number;
@@ -107,6 +108,7 @@ interface RunRow {
   simulation: string | null;
   description: string | null;
   durationMs: number | null;
+  activityMs: number | null;
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: bigint;
@@ -136,6 +138,7 @@ function toRecord(row: RunRow): RunRecord {
     simulation: row.simulation,
     description: row.description,
     durationMs: row.durationMs,
+    activityMs: row.activityMs,
     bundleKey: row.bundleKey,
     bundleSha256: row.bundleSha256,
     bundleBytes: Number(row.bundleBytes),
@@ -751,7 +754,7 @@ export class RunRepository {
         r.id, r.org_id AS "orgId", r.project_id AS "projectId", r.status, r.verdict, r.tool,
         r.tool_version AS "toolVersion", r.environment, r.branch, r.commit_sha AS "commitSha",
         r.simulation, r.description,
-        r.duration_ms AS "durationMs", r.bundle_key AS "bundleKey",
+        r.duration_ms AS "durationMs", r.activity_ms AS "activityMs", r.bundle_key AS "bundleKey",
         r.bundle_sha256 AS "bundleSha256", r.bundle_bytes AS "bundleBytes",
         r.idempotency_key AS "idempotencyKey", r.started_at AS "startedAt",
         r.started_on AS "startedOn", r.tool_started_at AS "toolStartedAt",

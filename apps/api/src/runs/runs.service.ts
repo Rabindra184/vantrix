@@ -61,6 +61,7 @@ export class RunsService {
       simulation: run.simulation ?? null,
       description: run.description ?? null,
       durationMs: run.durationMs ?? null,
+      activityMs: run.activityMs ?? null,
       // One EXISTS against this run's own partition, issued on the run fetch —
       // the one reader that needs it, the same way hasGroupSeries is only asked
       // for the group page. Derived from the ROWS, never from a date comparison

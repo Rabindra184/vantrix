@@ -1,0 +1,20 @@
+-- The run's MEASURED span — first event (after warm-up) to last event.
+--
+-- `duration_ms` is the span the SERIES OFFSETS live in: run-header start to
+-- last event, because `BucketSeries`/`UserSeries` are built with
+-- `startMs: runStartMs`. A time axis has to span that or the final bucket
+-- falls outside the domain, so it cannot simply be redefined.
+--
+-- But it is NOT what a reader means by "Duration", and using it as one made
+-- the run page contradict itself: the header showed `duration_ms` while the
+-- throughput tile beside it divided by the ACTIVITY span, so
+-- `throughput x duration` disagreed with the request count on the same
+-- screen (14.32 req/s over a stated 63s is 907, next to a stated 895).
+-- Gatling anchors its own reported duration at the first event too, which is
+-- why its report reads "1m 2s" where `duration_ms` rounds to 63s.
+--
+-- NULLABLE, and deliberately not backfilled: the lead-in it subtracts is not
+-- recoverable from anything on this row, so a run ingested before this
+-- migration genuinely does not know its activity span. Readers fall back to
+-- `duration_ms`, which is what they displayed before.
+ALTER TABLE "run" ADD COLUMN "activity_ms" INTEGER;

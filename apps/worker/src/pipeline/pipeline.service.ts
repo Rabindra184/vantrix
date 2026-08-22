@@ -349,7 +349,7 @@ export class PipelineService {
       await client.query(
         `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now(),
                 tool_started_at = $4, simulation = $5, description = $6, duration_ms = $7,
-                tool_assertions = $8
+                tool_assertions = $8, activity_ms = $9
           WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
         [
           run.id, verdict, toolVersion, toolStartedAt,
@@ -360,6 +360,9 @@ export class PipelineService {
           // question already answered. `[]` for a simulation that declared none,
           // which is a different fact from the NULL a pre-decoder run carries.
           JSON.stringify(result.toolAssertions),
+          // The MEASURED span, beside the series span above. See
+          // `EngineResult.activityMs` for why the run page needs both.
+          result.activityMs,
         ],
       );
 
