@@ -132,6 +132,45 @@ arrives as `project_id = ANY($n::uuid[])`. Adding a column to that OR means
 adding an index for it, or the whole predicate goes back to a sequential
 scan.
 
+`pg_trgm` IS A TRUSTED EXTENSION, AND THE FIRST VERSION OF THIS NOTE SAID
+OTHERWISE. Migration `20260821200000_run_search_trigram` runs
+`CREATE EXTENSION IF NOT EXISTS pg_trgm`, and it was written up — in the
+migration's own comment and in the review that shipped it — as needing
+"rights an unprivileged application role usually does not have". Measured on
+`postgres:16-alpine`, that is false: `pg_available_extension_versions`
+reports `trusted = t` for 1.3 through 1.6, and since PostgreSQL 13 a trusted
+extension installs for a NON-SUPERUSER holding CREATE on the database. Both
+sides were tested — a nosuperuser database owner succeeded; a nosuperuser
+role without CREATE on the database got `permission denied to create
+extension "pg_trgm"`.
+
+So the failing shape is narrow (CREATE on the schema but not the database),
+and any role that ran the twenty migrations before it already has broad DDL
+rights. `infra/pg_trgm-preflight.sql` answers it for a specific database
+without changing anything — run it AS THE ROLE THAT RUNS MIGRATIONS, or it
+reports on the wrong identity. The onprem compose profile is settled either
+way: `POSTGRES_USER` is created superuser by the official image, and the full
+migration history was applied from scratch on an empty database on it.
+
+THE GENERAL POINT IS WORTH MORE THAN THE EXTENSION. A privilege claim is
+cheap to assert and cheap to TEST — `create role … nosuperuser`, a scratch
+database, and the statement itself. Asserting one from memory is how a note
+that reads like operational knowledge ends up overstating a deployment risk
+by a wide margin.
+
+EDITING AN ALREADY-APPLIED MIGRATION CHANGES ITS CHECKSUM, and correcting
+that comment did exactly that — `_prisma_migrations.checksum` still holds the
+hash of the original text. `prisma migrate deploy` and `prisma migrate status`
+both tolerate it: verified against a database holding the OLD checksum, deploy
+answered "No pending migrations to apply" and status answered "Database schema
+is up to date!", with no warning. Since `deploy` is the only path this repo
+uses (README, infra/README, infra/docker-compose.yml, and the command in this
+file), a comment-only edit is safe.
+
+NOT VERIFIED, and stated as such: `prisma migrate dev` detects modified
+migrations and may offer to reset. It is not run here — it appears only in
+historical planning docs — but if you ever do, expect it to notice.
+
 Before that, the enterprise run
 dashboard branch and the fifteen-finding review wave that followed it, which
 between them added FIVE unit files — `RunDecisionBand.test.tsx` (7),
