@@ -224,7 +224,7 @@
   --color-text-muted: #5a6a83;
   --color-accent-base: #c2410c;
   --color-accent-foreground: #ffffff;
-  --color-ring: #8b5cf6;
+  --color-ring: #c2410c;
   --color-brand: #f97316;
   /* Ink in BOTH themes — declared once, like --header-height below: the tile's
      fill is the theme-invariant brand orange, so its foreground is
@@ -378,7 +378,7 @@ pre {
     --color-text-muted: #8c99af;
     --color-accent-base: #f97316;
     --color-accent-foreground: #0d1220;
-    --color-ring: #a78bfa;
+    --color-ring: #f97316;
     --color-brand: #f97316;
 
     --color-status-passed: #10b981;
@@ -442,7 +442,7 @@ pre {
   --color-text-muted: #8c99af;
   --color-accent-base: #f97316;
   --color-accent-foreground: #0d1220;
-  --color-ring: #a78bfa;
+  --color-ring: #f97316;
   --color-brand: #f97316;
 
   --color-status-passed: #10b981;

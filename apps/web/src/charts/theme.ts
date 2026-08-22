@@ -470,11 +470,19 @@ export function assignPalette(
  * carries orange-700 (`#c2410c`, white foreground) and dark mode the full
  * `#f97316` (ink foreground) — same identity, per-theme lightness.
  *
- * `ring` is VIOLET (`#8b5cf6` / `#a78bfa`), not a shade of the accent. Focus
- * has to be legible against every surface the app draws INCLUDING the accent
- * itself — a focused primary button rings against its own orange fill, and an
- * orange ring on orange is invisible. A distant hue is distinguishable on
- * that fill and everywhere else too.
+ * `ring` IS THE ACCENT, and the violet it replaced was a mistake worth
+ * recording. The argument for violet was "a focused primary button rings
+ * against its own orange fill, and orange on orange is invisible" — which
+ * assumed the ring sits ON the element. It does not: `tokens.css` draws
+ * focus as `outline` with `outline-offset: 2px`, so the ring is separated
+ * from the fill by two pixels of PAGE ground and reads as orange-gap-orange,
+ * plainly visible. Measured in a browser on a focused primary button in both
+ * themes before this changed.
+ *
+ * So the ring costs nothing and buys the thing the redesign is built on: one
+ * accent, one meaning. A violet ring was the only violet in the interface —
+ * a second interactive colour that appeared solely on keyboard focus, which
+ * is exactly the reader who most needs the signal to be familiar.
  */
 export type SurfaceRole =
   | 'page' | 'card' | 'sidebar' | 'sunken' | 'border' | 'divider'
@@ -486,13 +494,13 @@ export const SURFACE_TOKENS: Readonly<Record<ChartMode, Readonly<Record<SurfaceR
     page: '#f5f7fb', card: '#ffffff', sidebar: '#f9fafd', sunken: '#eef1f7',
     border: '#dde4ee', divider: '#edf1f7',
     'text-primary': '#0f1524', 'text-muted': '#5a6a83',
-    accent: '#c2410c', 'accent-foreground': '#ffffff', ring: '#8b5cf6',
+    accent: '#c2410c', 'accent-foreground': '#ffffff', ring: '#c2410c',
   },
   dark: {
     page: '#0d1220', card: '#151c2c', sidebar: '#101727', sunken: '#0f1524',
     border: '#273349', divider: '#1e2941',
     'text-primary': '#e8edf6', 'text-muted': '#8c99af',
-    accent: '#f97316', 'accent-foreground': '#0d1220', ring: '#a78bfa',
+    accent: '#f97316', 'accent-foreground': '#0d1220', ring: '#f97316',
   },
 };
 

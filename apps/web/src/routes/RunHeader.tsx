@@ -16,10 +16,10 @@ import { projectPath } from './paths';
  * migration, or one whose caller sent none of the three, looks exactly as it
  * did before this existed rather than growing three dashes.
  *
- * NOT ONE CHARACTER OF VISIBLE TEXT MAY BE ADDED INSIDE A CHIP, however much
- * a "Branch:" or "Commit:" label would help a sighted reader. The chips are
- * pinned by their own text content in three separate ways and each would break
- * differently:
+ * NOT ONE CHARACTER OF VISIBLE TEXT MAY BE ADDED INSIDE A CHIP'S VALUE NODE,
+ * however much a "Branch:" or "Commit:" label would help a sighted reader.
+ * The values are pinned by their own text content in three separate ways and
+ * each would break differently:
  *
  *   `RunHeader.test.tsx` reads `getByTestId('run-commit')`'s text and asserts
  *   `commitSha.startsWith(visible)` — a label inside makes the visible string
@@ -32,11 +32,20 @@ import { projectPath } from './paths';
  *   heading may hold the simulation and nothing else — no badge, no id, no
  *   copy button.
  *
- * The naming those labels would have provided is already there and is the
- * point of every `role="group"` + `aria-label` below: a screen reader hears
- * "Branch: release/24.8", the sighted reader sees the value in a labelled
- * position. Styling — a tinted pill, an icon, a separator — is unconstrained,
- * because none of it is text.
+ * INSIDE THE VALUE NODE is the operative phrase, and it is what the
+ * control-room redesign changed. This row was a `<dl>` whose `<dt>`s named
+ * every value; the design pass replaced it with bare values named only by
+ * `aria-label`, and the paragraph that used to sit here conceded the loss —
+ * "the sighted reader sees the value in a labelled position" was doing a lot
+ * of work for a row where position was the ONLY label. A reader had to infer
+ * that `63s` was a duration and `a3f9c21` a commit.
+ *
+ * `Chip` now renders a visible uppercase overline ABOVE the value, and the
+ * `role="group"`, the `aria-label` and the `data-testid` all stay on the
+ * value node itself. So every pin above still measures exactly what it
+ * measured — the value's text, and the value's own authored name — while the
+ * cell gains the label it lost. Styling of either part is unconstrained;
+ * only the value's TEXT is.
  */
 export default function RunHeader({
   identity,
@@ -182,11 +191,14 @@ export default function RunHeader({
           rather than six, and the commit's own <code> stops being the odd
           one out. Classes only; the chip TEXT is pinned three ways (module
           docstring) and gains nothing. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-default bg-surface px-3 py-2 font-mono text-[12px] text-muted shadow-panel sm:gap-x-0 sm:divide-x sm:divide-default">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[12px] text-muted shadow-panel sm:flex sm:flex-wrap sm:items-start sm:gap-x-0 sm:gap-y-3 sm:divide-x sm:divide-default">
         {/* Omitted entirely when the identity carries no tool — same
             rolling-deploy render as the breadcrumb above. */}
         {identity.tool != null && (
-          <Chip label={`Tool: ${identity.tool}${identity.toolVersion ? ` ${identity.toolVersion}` : ''}`}>
+          <Chip
+            name="Engine"
+            label={`Tool: ${identity.tool}${identity.toolVersion ? ` ${identity.toolVersion}` : ''}`}
+          >
             {identity.toolVersion ? `${identity.tool} ${identity.toolVersion}` : identity.tool}
           </Chip>
         )}
@@ -199,12 +211,12 @@ export default function RunHeader({
             here has them: a bare <span>'s implicit role is "generic", which
             is Name-from-PROHIBITED, so aria-label alone does nothing. */}
         {identity.environment != null && identity.environment !== '' && (
-          <Chip label={`Environment: ${identity.environment}`} testId="run-environment">
+          <Chip name="Environment" label={`Environment: ${identity.environment}`} testId="run-environment">
             {identity.environment}
           </Chip>
         )}
         {identity.branch != null && identity.branch !== '' && (
-          <Chip label={`Branch: ${identity.branch}`} testId="run-branch">
+          <Chip name="Branch" label={`Branch: ${identity.branch}`} testId="run-branch">
             {identity.branch}
           </Chip>
         )}
@@ -213,7 +225,7 @@ export default function RunHeader({
           // the same short-versus-full treatment the run list gives a run id.
           // NOT a link: the platform does not know the repository host, and a
           // chip that looks like a link but is not is worse than plain text.
-          <Chip label={`Commit: ${identity.commitSha}`} testId="run-commit">
+          <Chip name="Commit" label={`Commit: ${identity.commitSha}`} testId="run-commit">
             <code>{identity.commitSha.slice(0, 7)}</code>
           </Chip>
         )}
@@ -222,6 +234,7 @@ export default function RunHeader({
             an id has neither. */}
         {startedAt !== null && (
           <Chip
+            name={isIngestTime ? 'Received' : 'Started'}
             label={`${isIngestTime ? 'Received' : 'Started'}: ${formatInstant(startedAt)}${
               isIngestTime ? ' (ingest time — the tool reported no start)' : ''
             }`}
@@ -252,7 +265,7 @@ export default function RunHeader({
             `?? durationMs` for runs ingested before migration 20260822090000,
             which have no `activityMs` and cannot be backfilled — those keep
             rendering exactly what they rendered before rather than a dash. */}
-        <Chip label={`Duration: ${formatDuration(runDurationMs)}`} testId="run-duration">
+        <Chip name="Duration" label={`Duration: ${formatDuration(runDurationMs)}`} testId="run-duration">
           <span className="tabular-nums">{formatDuration(runDurationMs)}</span>
         </Chip>
         {peakUsers !== null && (
@@ -265,7 +278,7 @@ export default function RunHeader({
           // `getByText('8 peak users')` is visible, which only resolves while
           // the count and the words share a single text container — splitting
           // the number into its own styled span would break it.
-          <Chip label={`${peakUsers.toLocaleString()} peak users`}>
+          <Chip name="Peak users" label={`${peakUsers.toLocaleString()} peak users`}>
             {peakUsers.toLocaleString()} peak users
           </Chip>
         )}
@@ -287,23 +300,48 @@ export default function RunHeader({
  * the three text-content assertions in the module docstring depend on.
  */
 function Chip({
+  name,
   label,
   testId,
   children,
 }: {
+  /**
+   * The VISIBLE label, above the value. Restores what the design pass
+   * removed: this row was a `<dl>` whose `<dt>`s named each value for
+   * everyone, became a bare row of values named only by `aria-label`, and
+   * this module's own docstring has carried the complaint ever since — a
+   * sighted reader had to infer that "63s" was a duration from its position.
+   * The control-room mockups label every cell, and so does this again.
+   */
+  readonly name: string;
   readonly label: string;
   readonly testId?: string;
   readonly children: ReactNode;
 }) {
   return (
-    <span
-      role="group"
-      aria-label={label}
-      data-testid={testId}
-      className="whitespace-nowrap sm:px-3 sm:first:pl-0 sm:last:pr-0"
-    >
-      {children}
-    </span>
+    <div className="min-w-0 sm:px-4 sm:first:pl-0 sm:last:pr-0">
+      {/* An overline, not a heading — same rule as the rail's "Projects" and
+          the gate strip's "Release gate": nothing queries a `<p>` by
+          accessible name, so `uppercase` is safe HERE in a way it is not on
+          a column heading. */}
+      <p className="text-[10px] font-semibold tracking-[0.1em] text-muted uppercase">{name}</p>
+      {/* THE GROUP, THE NAME AND THE TESTID ALL STAY ON THE VALUE NODE, and
+          the visible label above sits OUTSIDE it. That is what keeps the
+          three text-content pins in the module docstring true while the cell
+          gains a label: `getByTestId('run-commit').textContent` is still the
+          seven-character sha and nothing else, and `toHaveAccessibleName`
+          still reads this element's own `aria-label`. Putting the label
+          inside would make that text content `COMMITa3f9c21`, which starts
+          nothing. */}
+      <span
+        role="group"
+        aria-label={label}
+        data-testid={testId}
+        className="mt-1 block truncate whitespace-nowrap text-[12px] text-primary"
+      >
+        {children}
+      </span>
+    </div>
   );
 }
 
