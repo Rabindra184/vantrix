@@ -28,7 +28,32 @@ import type { Mark } from '../routes/marks';
  * also what `currentColor` in `tint` reads. Wrapping the label in an inner
  * span would break both at once, silently.
  */
-export default function Badge({ mark }: { readonly mark: Mark }) {
+export default function Badge({
+  mark,
+  size = 'default',
+}: {
+  readonly mark: Mark;
+  /**
+   * `compact` for a badge sharing a NARROW row with something that matters
+   * more — today only `ProjectRail`, whose rows are a project name plus this.
+   *
+   * ═══ WHAT IT COSTS AND WHY THAT MATTERED ═══
+   *
+   * The LED look is mostly letter-spacing and uppercase, and both are paid for
+   * in WIDTH. In the rail that came out of the project name's budget, because
+   * the badge is `shrink-0` and the name is the flexible one: at a 272px rail,
+   * `ingest failed` took 119px of a 235px row and truncated "Search Service"
+   * — a fourteen-character name clipped not for being long but for standing
+   * next to a status word. Measured: the name needed 94px and was given 84.
+   *
+   * So this trades tracking and padding, NOT the word. Dropping to a glyph
+   * would have been narrower still and is exactly what `RAIL_INGEST_FAILED`
+   * exists to prevent: `STATUS.failed` and `VERDICT.failed` share a glyph, so
+   * a glyph-only rail badge cannot say whether a bundle failed to parse or a
+   * run failed its gate. The words are the disambiguation and they stay.
+   */
+  readonly size?: 'default' | 'compact';
+}) {
   return (
     // An LED readout, per the control-room redesign: squared corners and the
     // mono face are what separate a status STAMP from the rounded, sans
@@ -38,7 +63,11 @@ export default function Badge({ mark }: { readonly mark: Mark }) {
     // here would change the accessible name Playwright computes (CLAUDE.md's
     // uppercase rule), so the LED look leans on face and tracking instead.
     <span
-      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 font-mono text-[10px] font-medium tracking-[0.08em] uppercase"
+      className={`tint inline-flex items-center whitespace-nowrap rounded-md border font-mono text-[10px] font-medium uppercase ${
+        size === 'compact'
+          ? 'gap-1 px-1.5 py-0.5 tracking-[0.02em]'
+          : 'gap-1.5 px-2 py-0.5 tracking-[0.08em]'
+      }`}
       style={{ color: mark.colour }}
     >
       {/* `aria-hidden`, and the word beside it carries the meaning — a screen

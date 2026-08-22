@@ -130,7 +130,26 @@ export default function ProjectRail() {
         // one: this repo's motion rule (`tokens.css`'s `transition-ui`) is
         // colour-ish properties only — width is laid out on the main thread
         // and drops frames on a page already drawing eight ECharts instances.
-        collapsed ? 'lg:w-14' : 'lg:w-[17rem]',
+        //
+        // ═══ 18rem, AND THE LAST rem OF IT WAS BOUGHT BY A CI FAILURE ═══
+        //
+        // A rail row is an icon, a project NAME that truncates, and a status
+        // badge that does not. Making the badge compact bought the name back
+        // the width a status word had been taking from it — but only about 5px
+        // of slack on the machine it was measured on, and text metrics are not
+        // the same on the Linux runner that gates this. `project-rail.spec.ts`
+        // passed locally three times and failed there twice, deterministically,
+        // on a fourteen-character name.
+        //
+        // Slack that thin is not a fix, it is the same bug with a smaller
+        // margin. This is 16px of real headroom instead, which is also why the
+        // spec now prints the two widths when it fails: the next person to move
+        // this number should not have to guess by how much.
+        //
+        // Gatling Enterprise's own nav is 183px — but it carries no badges, and
+        // that is the whole difference. This column holds two variable-width
+        // things per row, so it costs more.
+        collapsed ? 'lg:w-14' : 'lg:w-[18rem]',
       )}
     >
       {/* An overline, not a heading: the `<nav>` below is already named
@@ -312,7 +331,7 @@ export default function ProjectRail() {
  * the primary-vs-muted text colour are the signals that survive it, the same
  * rule `marks.tsx` follows for status.
  *
- * `h-9` fixes the row height explicitly. It is what makes
+ * `h-10` fixes the row height explicitly. It is what makes
  * `project-rail.spec.ts`'s equal-height assertion structural rather than
  * incidental: with a fixed height a badge that wrapped would overflow
  * visibly instead of silently growing its row, so the failure mode is one
@@ -320,7 +339,12 @@ export default function ProjectRail() {
  */
 function rowClasses(collapsed: boolean, isActive: boolean) {
   return cn(
-    'transition-ui flex h-9 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
+    // `h-10` (40px), not the 36px this was. A row holding a name AND a status
+    // badge at 36px is the tightest thing in the app; Gatling Enterprise's own
+    // project nav — the reference for this pass — gives its rows 45px. 40px is
+    // the middle: it stops the badge crowding the name's cap-height without
+    // halving how many projects fit before the rail scrolls.
+    'transition-ui flex h-10 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
     // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
     // horizontal strip and "All runs" breaking after "All" is what it looks
     // like without it.
@@ -330,8 +354,38 @@ function rowClasses(collapsed: boolean, isActive: boolean) {
     // gone the icon sits in the middle of the 56px column. `lg:`-scoped like
     // every other collapsed treatment; the phone strip never collapses.
     collapsed && 'lg:justify-center lg:px-0',
+    // ═══ WHAT ACTUALLY MARKS THE ACTIVE ROW, MEASURED ═══
+    //
+    // `shadow-panel` is gone: it says "raised card", which is right for a card
+    // on a page and noise on a flat rail where nothing else is raised.
+    //
+    // Measuring the rest was the surprise. The `bg-surface` FILL — described
+    // in this file's own docstring as a "card-raised" signal, the card colour
+    // being one step lighter than the sidebar — is 1.05:1 against the rail in
+    // dark and 1.04:1 in light. It IS one step lighter, and that step is very
+    // nearly nothing. It has never been what a reader sees.
+    //
+    // What they see is the accent bar (6.38:1 dark, 4.96:1 light) and, as of
+    // this pass, the accent ICON (6.07:1 / 5.18:1). Gatling Enterprise's nav
+    // lands in the same place from the other direction: its active row is a
+    // 2px coral bar plus a gradient tint so faint it is barely a colour, with
+    // the icon carrying the brand hue. The bar and the glyph do the work in
+    // both designs; the wash is atmosphere.
+    //
+    // The fill stays anyway — a 1.05:1 edge is still an edge at close range,
+    // and it costs one class. `font-semibold` stays for a harder reason:
+    // forced-colours mode drops every background INCLUDING the `before:` bar's,
+    // so weight and the muted-vs-primary text colour are the only survivors
+    // there. Matching Gatling exactly — same weight active and idle — would
+    // leave that mode with no active row at all.
+    //
+    // The ICON taking the accent is the one thing Gatling's nav does that this
+    // rail did not, and it matters most COLLAPSED, where the label is `sr-only`
+    // and the glyph is all a sighted reader has. A descendant variant rather
+    // than a prop so it stays inside `rowClasses` with every other active
+    // decision; `[&_svg]` outranks the icons' own `opacity-70` on specificity.
     isActive
-      ? "relative bg-surface font-semibold text-primary shadow-panel before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent before:content-['']"
+      ? "relative bg-surface font-semibold text-primary [&_svg]:text-accent [&_svg]:opacity-100 before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent before:content-['']"
       : 'font-medium text-muted hover:bg-sunken hover:text-primary',
   );
 }
@@ -385,7 +439,7 @@ function badgeFor(latestRun: ProjectItem['latestRun']) {
   if (latestRun === null) return null;
   if (latestRun.status !== 'complete') {
     const mark = latestRun.status === 'failed' ? RAIL_INGEST_FAILED : STATUS[latestRun.status];
-    return <Badge mark={mark} />;
+    return <Badge mark={mark} size="compact" />;
   }
-  return <Badge mark={VERDICT[latestRun.verdict ?? 'none']} />;
+  return <Badge mark={VERDICT[latestRun.verdict ?? 'none']} size="compact" />;
 }
