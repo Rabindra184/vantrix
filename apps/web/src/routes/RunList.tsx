@@ -717,21 +717,48 @@ function RunRow({ run }: { run: RunListItem }) {
       <td className={TD}>
         <Badge mark={VERDICT[run.verdict ?? 'none']} />
       </td>
+      {/* PLAIN COLOURED TEXT, NOT A BADGE, and the distinction is what the
+          column means. Status and Verdict beside it are STATES the platform
+          recorded — a stamp is right for those, and the pill is what makes
+          them scannable down the column. Focus is not a state; it is the
+          ACTION this row suggests, derived here rather than stored. Drawing
+          it as a third pill made every row read as three equal stamps and
+          buried the two that came from the run itself.
+
+          The WORD carries the meaning — investigate / watch live / clear are
+          different words, not one word in different colours — so the colour
+          is emphasis rather than information, and WCAG 1.4.1 is satisfied
+          without the glyph the badge used to add. */}
       <td className={TD}>
-        <Badge mark={FOCUS_MARKS[focusFor(run)]} />
+        <FocusHint focus={focusFor(run)} />
       </td>
     </tr>
   );
 }
 
+function FocusHint({ focus }: { readonly focus: Focus }) {
+  const { label, colour } = FOCUS_MARKS[focus];
+  return (
+    <span className="font-medium whitespace-nowrap" style={{ color: colour }}>
+      {label}
+    </span>
+  );
+}
+
 type Focus = 'investigate' | 'watch' | 'processing' | 'clear' | 'review';
 
-const FOCUS_MARKS: Record<Focus, { glyph: string; label: string; colour: string }> = {
-  investigate: { glyph: '!', label: 'investigate', colour: 'var(--color-status-failed)' },
-  watch: { glyph: '◕', label: 'watch live', colour: 'var(--color-status-pending)' },
-  processing: { glyph: '◐', label: 'processing', colour: 'var(--color-status-pending)' },
-  clear: { glyph: '✓', label: 'clear', colour: 'var(--color-status-passed)' },
-  review: { glyph: '○', label: 'review', colour: 'var(--color-status-not-applicable)' },
+/**
+ * `glyph` is gone with the badge — see `FocusHint`. The remaining pair is
+ * deliberately the same SHAPE as a `Mark` minus that field, so the colours
+ * still come from the status text palette every other signal on this page
+ * reads, rather than becoming a fourth place colour is decided.
+ */
+const FOCUS_MARKS: Record<Focus, { label: string; colour: string }> = {
+  investigate: { label: 'investigate', colour: 'var(--color-status-failed)' },
+  watch: { label: 'watch live', colour: 'var(--color-status-pending)' },
+  processing: { label: 'processing', colour: 'var(--color-status-pending)' },
+  clear: { label: 'clear', colour: 'var(--color-status-passed)' },
+  review: { label: 'review', colour: 'var(--color-status-not-applicable)' },
 };
 
 function focusFor(run: RunListItem): Focus {
