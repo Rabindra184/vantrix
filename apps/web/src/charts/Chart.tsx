@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Card from '../components/Card';
+import { CollapseIcon } from '../components/icons';
+import ChartActions from './ChartActions';
 import DataTable from './DataTable';
 import { echarts } from './echarts';
 import { tooltipFormatter, type PairValue } from './tooltip';
@@ -299,6 +301,21 @@ export default function Chart({
   const instanceRef = useRef<ReturnType<typeof echarts.init> | null>(null);
   const [mode, setMode] = useState<ChartMode>(() => resolveChartMode());
 
+  /**
+   * Which of the card's two views is drawn, and whether the plot is filling
+   * the screen. Both live here rather than in the components that render them
+   * because they are the same decision seen twice: `DataTable` cannot hide the
+   * canvas, and `ChartActions` owns neither.
+   *
+   * NOT PERSISTED, unlike the rail's collapse or the theme. Those are
+   * preferences about the app; these are about one figure in one sitting, and
+   * a page that reopened ten data tables because the reader once opened one
+   * would be answering a question nobody asked.
+   */
+  const [tableShown, setTableShown] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const dialog = useRef<HTMLDialogElement | null>(null);
+
   // The axes, as primitives. See the option effect's closing comment.
   const yAxisType = yAxis?.type ?? 'value';
   const yAxisName = yAxis?.name;
@@ -388,6 +405,26 @@ export default function Chart({
     return assignPalette(names, mode, essential);
   }, [data.series, mode, roles]);
 
+  /**
+   * A NATIVE `<dialog>`, DRIVEN BY `showModal()` RATHER THAN BY A CLASS.
+   *
+   * The alternative — position the card `fixed inset-0` — needs a hand-rolled
+   * focus trap, its own Escape handler, and something to make the rest of the
+   * page inert, and gets two of those three wrong in most attempts. A modal
+   * `<dialog>` has all three in the platform, plus top-layer painting that no
+   * `z-index` can be beaten by.
+   *
+   * `onClose` is what keeps React's state honest: Escape closes the dialog
+   * without going through the button, so without this the DOM would be closed
+   * while `expanded` stayed true and the canvas stayed in a hidden dialog.
+   */
+  useEffect(() => {
+    const element = dialog.current;
+    if (element === null) return;
+    if (expanded && !element.open) element.showModal();
+    if (!expanded && element.open) element.close();
+  }, [expanded]);
+
   // THE INSTANCE'S LIFETIME, and nothing else: create, join the crosshair
   // group, follow the container's size, dispose.
   //
@@ -451,7 +488,14 @@ export default function Chart({
     // `hasBrush` joins the identity list because the datazoom handler is
     // bound at init; a chart that gained or lost a brush without a rebuild
     // would keep the old subscription.
-  }, [isEmpty, group, hasBrush]);
+    //
+    // `expanded` joins it for a different reason, and it is the one that bites
+    // if forgotten: expanding moves the canvas into the `<dialog>`, which
+    // REMOUNTS the element. The old instance is bound to a node no longer in
+    // the document, so it has to be disposed and rebuilt on the new one — a
+    // genuine change of existence, which is exactly what this effect's own
+    // comment above says earns a rebuild.
+  }, [isEmpty, group, hasBrush, expanded]);
 
   // WHAT IS DRAWN. Runs after the effect above on mount (effects fire in
   // declaration order), and on its own whenever the data or the theme moves.
@@ -744,15 +788,77 @@ export default function Chart({
     hasBrush,
     brushFrom,
     brushTo,
+    // NOT because the option depends on it — it does not — but because the
+    // effect above rebuilds the instance when it changes, and a fresh instance
+    // has no option on it. Effects run in declaration order, so listing it
+    // here is what makes the rebuilt chart draw instead of coming up blank.
+    //
+    // Verified red: removing this line leaves the full-screen dialog with an
+    // ECharts SVG root and no marks in it, which `run-charts.spec.ts`'s
+    // "a chart can fill the screen" case catches on its `path` assertion.
+    expanded,
   ]);
+
+  /**
+   * ═══ THE PLOTTING SURFACE, AND THE ONLY THING IN THIS CARD THAT MAY
+   *     CONTAIN AN <svg> ECharts DREW ═══
+   *
+   * `data-chart-canvas` exists so a test can say "the chart drew" without
+   * saying "this figure contains exactly one SVG". Those were the same
+   * sentence while the figure held nothing else that could carry one, and the
+   * e2e suite wrote the second — `getByTestId('chart-x').locator('svg')` with
+   * `toHaveCount(1)`, in twenty-odd places. CLAUDE.md recorded the consequence
+   * as a prohibition on icons anywhere in a chart card, which held the line
+   * but also froze the design: no icon control could ever live in a header.
+   * Scoping the assertion here says what was always meant, and is stronger —
+   * an icon elsewhere in the card can no longer answer it.
+   *
+   * ONE ELEMENT, TWO POSSIBLE PARENTS. It renders inside the card normally and
+   * inside the full-screen `<dialog>` when expanded; only ever one at a time,
+   * so `container.current` is unambiguous. Moving between parents remounts the
+   * node, which is why `expanded` is in BOTH echarts effects' dependencies —
+   * the instance has to be rebuilt on the new element, and the option set on
+   * the instance that replaced it.
+   */
+  const canvas = (
+    <div
+      ref={container}
+      data-chart-canvas=""
+      // The data table is the accessible route to these values (design §7).
+      // Exposing the SVG's own text nodes as well would make a screen reader
+      // read axis ticks and legend fragments in visual order, which is noise
+      // on top of a complete alternative.
+      aria-hidden="true"
+      className={expanded ? 'min-h-0 w-full flex-1' : compact ? 'h-24 w-full' : 'h-72 w-full'}
+    />
+  );
 
   return (
     <Card as="figure" data-testid={`chart-${id}`}>
-      {/* `Chart`'s own `<h3>`, not `Card`'s `title` prop — which is exactly
-          why that prop is optional (see `Card`'s docstring): a card that always
-          drew a heading would give every figure two, and the figure's
-          accessible name would become whichever won. */}
-      <h3 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
+      {/* The title and the card's own actions share a row. `items-start` and
+          not `items-center`, because a title that wraps to two lines on a
+          narrow column must not drag the button row down with it — the
+          controls stay aligned to the first line, where the eye expects a
+          header's actions to be. */}
+      <div className="flex items-start justify-between gap-3">
+        {/* `Chart`'s own `<h3>`, not `Card`'s `title` prop — which is exactly
+            why that prop is optional (see `Card`'s docstring): a card that
+            always drew a heading would give every figure two, and the figure's
+            accessible name would become whichever won. */}
+        <h3 className="min-w-0 text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
+
+        <ChartActions
+          id={id}
+          title={title}
+          columns={data.columns}
+          rows={data.rows}
+          tableShown={tableShown}
+          onToggleTable={() => setTableShown((was) => !was)}
+          expanded={expanded}
+          onToggleExpanded={() => setExpanded((was) => !was)}
+          expandable={!isEmpty}
+        />
+      </div>
 
       {/* Between the name of the figure and the figure itself, which is the
           only place a control bar reads as belonging to this chart and not to
@@ -761,6 +867,17 @@ export default function Chart({
           them there in order to get back. */}
       {controls}
 
+      {/* ONE THING, TWO VIEWS. `hidden` rather than unmounting: the canvas
+          holds a live ECharts instance that would be disposed and rebuilt on
+          every toggle, and the table is the parity and accessibility surface
+          that has to stay in the DOM whatever is on screen (see `DataTable`).
+          So both are always mounted and exactly one is displayed.
+
+          A `display: none` canvas reports a 0×0 box, which the instance's own
+          ResizeObserver sees; on the way back it fires again with the real
+          size and the chart re-lays out. That is why this can be a plain
+          attribute toggle and needs no resize call of its own. */}
+      <div hidden={tableShown}>
       {isEmpty ? (
         // An explanation, never empty axes. A grid with no marks reads as "this
         // was measured and found to be nothing"; the truth is usually "this run
@@ -777,36 +894,15 @@ export default function Chart({
         >
           {data.empty}
         </p>
+      ) : expanded ? (
+        // The canvas has moved into the dialog below. This keeps the space it
+        // left, so closing the dialog does not drop the page's scroll position
+        // by the height of a chart.
+        <div aria-hidden="true" className={compact ? 'h-24 w-full' : 'h-72 w-full'} />
       ) : (
-        <div
-          ref={container}
-          // ═══ THE PLOTTING SURFACE, AND THE ONLY THING IN THIS FIGURE THAT
-          //     MAY CONTAIN AN <svg> ECharts DREW ═══
-          //
-          // `data-chart-canvas` exists so a test can say "the chart drew"
-          // without saying "this figure contains exactly one SVG". Those were
-          // the same sentence while the figure held nothing else that could
-          // carry one, and the e2e suite wrote the second — `getByTestId(
-          // 'chart-x').locator('svg')` with `toHaveCount(1)`, in twenty-odd
-          // places. CLAUDE.md recorded the consequence as a prohibition ("a
-          // decorative <svg> inside a chart <figure> breaks nine specs; icons
-          // are fine everywhere else, not in there"), which held the line but
-          // also froze the figure's design: no icon control could ever live in
-          // a chart header.
-          //
-          // Scoping the assertion to this element says what was always meant
-          // and lifts the prohibition. It is also the STRONGER assertion —
-          // "the plot drew one SVG" cannot be satisfied by an icon somewhere
-          // else in the card, which the old form could have been.
-          data-chart-canvas=""
-          // The data table is the accessible route to these values (design §7).
-          // Exposing the SVG's own text nodes as well would make a screen
-          // reader read axis ticks and legend fragments in visual order, which
-          // is noise on top of a complete alternative.
-          aria-hidden="true"
-          className={compact ? 'h-24 w-full' : 'h-72 w-full'}
-        />
+        canvas
       )}
+      </div>
 
       {/* Anything the chart is not showing, in prose. Both the transform's own
           limitation (truncated bins, a split the run predates) and the
@@ -823,7 +919,73 @@ export default function Chart({
         </div>
       )}
 
-      <DataTable id={id} caption={title} columns={data.columns} rows={data.rows} />
+      <DataTable
+        id={id}
+        caption={title}
+        columns={data.columns}
+        rows={data.rows}
+        shown={tableShown}
+      />
+
+      {/* THE FULL-SCREEN VIEW.
+
+          A child of the figure in the DOM, which matters for two reasons that
+          are easy to miss. A modal `<dialog>` paints in the TOP LAYER, so its
+          position in the tree costs it nothing visually — but it keeps every
+          figure-scoped query (`getByTestId('chart-x')`, and `plot()` through
+          it) finding the canvas wherever the canvas currently lives.
+
+          `aria-label` rather than a heading inside it: a chart card must not
+          contribute an `<h2>`, because `run-tables.spec.ts` pins each tab's
+          heading outline exactly and this component renders on all of them.
+          The visible title below is a `<p>` for the same reason.
+
+          The content is mounted only while open. A closed `<dialog>` is
+          `display: none`, so its contents would be an invisible second copy of
+          the title in the accessible tree for no benefit — and, more to the
+          point, the canvas has to be in exactly one place at a time.
+
+          `controls` are deliberately NOT repeated here. They are a `ReactNode`
+          the caller built, and rendering the same node twice would put two
+          copies of every `data-testid` in the document. The cost is that the
+          percentile chart's scale toggle is unreachable while expanded; the
+          fix is to close it, which is one keystroke. */}
+      <dialog
+        ref={dialog}
+        aria-label={`${title} — full screen`}
+        onClose={() => setExpanded(false)}
+        // `m-auto` IS LOAD-BEARING, and its absence is invisible in every
+        // test. A modal `<dialog>` centres itself in the viewport with the UA
+        // stylesheet's `margin: auto`; Tailwind's preflight resets `margin: 0`
+        // on every element, which silently defeats that and pins the dialog to
+        // the top-left corner. Measured before the fix: a 1325×810 box at
+        // (0, 0) in a 1440×900 viewport.
+        className="m-auto h-[90dvh] w-[92vw] max-w-none rounded-xl border border-default bg-surface p-0 text-primary backdrop:bg-black/60"
+      >
+        {expanded && (
+          <div className="flex h-full w-full flex-col gap-3 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 text-[15px] font-semibold tracking-tight text-primary">
+                {title}
+              </p>
+              {/* A real labelled control, not only Escape. Escape is the
+                  keyboard route and the platform gives it for free; a pointer
+                  user needs something to aim at, and "click the backdrop" is
+                  not discoverable. */}
+              <button
+                type="button"
+                aria-label="Exit full screen"
+                title="Exit full screen"
+                onClick={() => setExpanded(false)}
+                className="transition-ui flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-sunken hover:text-primary"
+              >
+                <CollapseIcon className="h-4 w-4" />
+              </button>
+            </div>
+            {canvas}
+          </div>
+        )}
+      </dialog>
     </Card>
   );
 }

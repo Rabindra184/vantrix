@@ -573,8 +573,11 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     await expect(table).not.toBeVisible();
 
     // The button that controls THIS table, found the way assistive tech finds
-    // it: `aria-controls`. Picking the nth "Show data table" button by index
-    // would assert nothing about which table it opens.
+    // it: `aria-controls`. Picking the nth toggle by index would assert
+    // nothing about which table it opens. It is an icon button in the card's
+    // header now rather than a text button below the chart, and this query is
+    // deliberately unchanged by that — which is the point of finding it by the
+    // relationship rather than by its label.
     const toggle = page.locator(`button[aria-controls="chart-data-${id}"]`);
     await expect(toggle).toHaveCount(1);
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -582,7 +585,71 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     await toggle.click();
     await expect(table).toBeVisible();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    // ═══ THE TABLE REPLACES THE PLOT ═══
+    //
+    // The whole reason the control moved into the header. Only a browser can
+    // see this: `hidden` is applied to a wrapper and jsdom applies no
+    // stylesheet, so `toBeVisible()` there would answer for reasons unrelated
+    // to the component.
+    await expect(plot(page.getByTestId(`chart-${id}`))).toBeHidden();
+
+    // And back, so it is a real toggle rather than one-way — with the plot
+    // returning rather than merely the table going away.
+    await toggle.click();
+    await expect(table).not.toBeVisible();
+    await expect(plot(page.getByTestId(`chart-${id}`))).toBeVisible();
   }
+});
+
+test('a chart can fill the screen, and Escape brings it back', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
+
+  const figure = page.getByTestId('chart-requests-per-second');
+  const dialog = figure.locator('dialog');
+
+  // A modal `<dialog>` paints in the TOP LAYER, so it can be a child of the
+  // figure without being clipped by it — which is what keeps every
+  // figure-scoped query working while the canvas is inside it.
+  await expect(dialog).not.toBeVisible();
+  await figure.getByRole('button', { name: 'Show the chart full screen' }).click();
+  await expect(dialog).toBeVisible();
+
+  // THE PLOT MOVED, AND REDREW. Expanding remounts the canvas in a new parent,
+  // which disposes the ECharts instance bound to the old node — so this is the
+  // assertion that catches a rebuilt instance nobody set an option on, the
+  // failure mode being a full-screen blank rectangle.
+  const expandedPlot = plot(dialog);
+  await expect(expandedPlot).toHaveCount(1);
+  await expect(expandedPlot.locator('path').first()).toBeAttached();
+
+  // ═══ CENTRED, AND THIS IS NOT A COSMETIC ASSERTION ═══
+  //
+  // A modal `<dialog>` centres itself with the UA stylesheet's `margin: auto`,
+  // and Tailwind's preflight resets `margin: 0` on every element — so the
+  // dialog silently pins to the top-left corner unless it asks for the margin
+  // back. Shipped exactly that way once and measured at (0, 0) in a 1440×900
+  // viewport. Nothing but a browser can see it: jsdom lays out nothing, and
+  // the class list looks entirely reasonable either way.
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize()!;
+  const leftGap = box!.x;
+  const rightGap = viewport.width - (box!.x + box!.width);
+  expect(Math.abs(leftGap - rightGap), 'the dialog is not horizontally centred').toBeLessThan(2);
+
+  // Escape, not the button: it is the platform's own affordance for a modal
+  // dialog, and it closes the element WITHOUT going through React — so this
+  // is what proves `onClose` puts the component's state back in step. Without
+  // it the dialog would be shut while the canvas stayed inside it, and the
+  // card would be left permanently empty.
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(plot(figure)).toHaveCount(1);
+  await expect(plot(figure)).toBeVisible();
 });
 
 /* ------------------------------------------------------------------ *

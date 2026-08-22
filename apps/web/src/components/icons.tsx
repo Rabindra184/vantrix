@@ -16,6 +16,8 @@ import {
   KeyRound,
   Layers,
   LoaderCircle,
+  Maximize2,
+  Minimize2,
   LogOut,
   Monitor,
   Moon,
@@ -28,6 +30,7 @@ import {
   Settings,
   Square,
   Sun,
+  Table2,
   TrendingUp,
   TriangleAlert,
   Upload,
@@ -116,6 +119,16 @@ export const CopyIcon = icon(Clipboard);
 export const CheckIcon = icon(Check);
 export const DownloadIcon = icon(Download);
 export const FilterIcon = icon(Funnel);
+
+/* --- A chart card's own view controls (see `charts/ChartActions.tsx`) --- */
+
+/** Swap a plot for the table of the exact numbers behind it. */
+export const TableIcon = icon(Table2);
+/** Swap that table back for the plot. `ChartsTabIcon`'s glyph would collide
+ *  with the tab strip's meaning ("go to the Charts tab"), which this is not. */
+export const PlotIcon = icon(ChartSpline);
+export const ExpandIcon = icon(Maximize2);
+export const CollapseIcon = icon(Minimize2);
 
 /** Something the reader has to act on: a failed fetch, a failed sign-out. */
 export const AlertIcon = icon(TriangleAlert);

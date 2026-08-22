@@ -1,5 +1,3 @@
-import { useId, useState } from 'react';
-import Button from '../components/Button';
 import { CAPTION, ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import type { ChartTableRow } from './types';
 
@@ -87,6 +85,7 @@ export default function DataTable({
   caption,
   columns,
   rows,
+  shown,
 }: {
   /** The chart's id. The table is found as `chart-data-<id>` by every test. */
   id: string;
@@ -94,45 +93,32 @@ export default function DataTable({
   /** Header row INCLUDING the label column at index 0 — see `ChartTableRow`. */
   columns: readonly string[];
   rows: readonly ChartTableRow[];
+  /**
+   * CONTROLLED, because the plot and this table are two views of one thing and
+   * only one of them is drawn at a time. `Chart` owns the choice; it is the
+   * only component that can hide the canvas, and a second copy of the state
+   * here would let the two disagree.
+   */
+  shown: boolean;
 }) {
-  const [shown, setShown] = useState(false);
-  // Distinguishes two DataTables that somehow share an id; the STABLE
-  // `chart-data-<id>` is what tests and `aria-controls` use.
-  const buttonId = useId();
   const regionId = `chart-data-${id}`;
 
   return (
     <>
-      {/* `ghost`, deliberately the quietest variant in the set. This control
-          appears once per chart — eight times on the Charts tab — and it is
-          an accessibility affordance rather than the thing the reader came
-          for. Eight bordered buttons down the page would compete with the
-          eight figures they belong to.
+      {/* THE BUTTON THAT OPENS THIS NOW LIVES IN THE CARD'S HEADER, in
+          `ChartActions` — see that file for why, and for why it is still an
+          `aria-expanded` disclosure even though the plot visually goes away.
 
-          NO ICON, AND THAT IS A HARD CONSTRAINT RATHER THAN A PREFERENCE. A
-          rotating chevron was tried here and reverted: `Chart` renders this
-          inside its `<figure>`, and the e2e suite proves a chart actually drew
-          by counting SVG elements within the figure — `figures(page)
-          .locator('svg')).toHaveCount(8)`, and, for a chart with nothing to
-          draw, `chart.locator('svg')).toHaveCount(0)`. A decorative `<svg>`
-          anywhere inside the figure makes both counts wrong, and worse, makes
-          "an SVG is present" stop meaning "ECharts rendered something" — which
-          is the property nine specs in `run-charts.spec.ts` and
-          `request-detail.spec.ts` are built on. The changing LABEL is the
-          affordance, and it is the one a screen reader announces anyway. */}
-      <Button
-        id={buttonId}
-        size="sm"
-        variant="ghost"
-        aria-expanded={shown}
-        aria-controls={regionId}
-        onClick={() => setShown((was) => !was)}
-        className="self-start"
-      >
-        {shown ? 'Hide data table' : 'Show data table'}
-      </Button>
+          What used to stand here was a full-width `ghost` text button reading
+          "Show data table", carrying a long comment explaining that it could
+          NOT be an icon: `Chart` renders this inside its `<figure>`, and the
+          e2e suite proved a chart had drawn by counting `<svg>` elements
+          within that figure, so any icon in the card corrupted the count. That
+          constraint is gone — `plot()` in the e2e helpers scopes those
+          assertions to `[data-chart-canvas]` — and with it the reason this
+          control had to be text, and had to be here rather than in the header.
 
-      {/* `hidden` on the region and `SCROLLER` inside it, not both on one
+          `hidden` on the region and `SCROLLER` inside it, not both on one
           element: `hidden` sets `display: none`, and a `display:none` scroll
           container reports zero scroll width, so a collapsed table that is
           later revealed would start un-scrollable in some engines. */}
@@ -145,12 +131,12 @@ export default function DataTable({
             two-copies-one-source arrangement `TableFrame` documents at
             length for the four full-width tables. */}
         <p aria-hidden="true" className={CAPTION}>
-          {caption} — every value plotted above, as text.
+          {caption} — every value this chart plots, as text.
         </p>
         <div className={SCROLLER} tabIndex={0} role="region" aria-label={`${caption} data table`}>
         <table className={TABLE}>
           <caption className="sr-only">
-            {caption} — every value plotted above, as text.
+            {caption} — every value this chart plots, as text.
           </caption>
           <thead className={THEAD}>
             <tr className={ROW}>

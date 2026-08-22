@@ -1,6 +1,5 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import DataTable, { formatCell } from '../src/charts/DataTable.js';
 
@@ -22,9 +21,10 @@ import DataTable, { formatCell } from '../src/charts/DataTable.js';
 afterEach(cleanup);
 
 describe('DataTable', () => {
-  it('renders every plotted value, and the toggle reveals it', async () => {
-    const user = userEvent.setup();
-    render(<DataTable id="demo" caption="Demo" columns={['t', 'ok']} rows={[{ label: '0', values: [12] }]} />);
+  it('renders every plotted value whether or not it is shown', () => {
+    const { rerender } = render(
+      <DataTable id="demo" caption="Demo" columns={['t', 'ok']} rows={[{ label: '0', values: [12] }]} shown={false} />,
+    );
 
     const table = screen.getByTestId('chart-data-demo');
 
@@ -34,11 +34,18 @@ describe('DataTable', () => {
     expect(table.textContent).toContain('12');
     expect(table).not.toBeVisible();
 
-    await user.click(screen.getByRole('button', { name: /show data table/i }));
+    // CONTROLLED. The button that flips this lives in `ChartActions` now, in
+    // the card header, because the plot and this table are two views of one
+    // thing and only `Chart` can hide the other one. What this file still owns
+    // is that the prop is honoured in both directions.
+    rerender(
+      <DataTable id="demo" caption="Demo" columns={['t', 'ok']} rows={[{ label: '0', values: [12] }]} shown />,
+    );
     expect(table).toBeVisible();
 
-    // And back, so the control is a real disclosure rather than one-way.
-    await user.click(screen.getByRole('button', { name: /hide data table/i }));
+    rerender(
+      <DataTable id="demo" caption="Demo" columns={['t', 'ok']} rows={[{ label: '0', values: [12] }]} shown={false} />,
+    );
     expect(table).not.toBeVisible();
   });
 
@@ -53,7 +60,7 @@ describe('DataTable', () => {
           { label: '1000', values: [34, 2] },
           { label: '2000', values: [56, 3] },
         ]}
-      />,
+      shown={false} />,
     );
 
     const text = screen.getByTestId('chart-data-many').textContent ?? '';
@@ -69,7 +76,7 @@ describe('DataTable', () => {
         caption="Requests per second"
         columns={['Time', 'All', 'OK']}
         rows={[{ label: '0', values: [1, 2] }]}
-      />,
+      shown={false} />,
     );
 
     const table = screen.getByTestId('chart-data-semantic').querySelector('table');
@@ -82,19 +89,14 @@ describe('DataTable', () => {
     expect(headers).toEqual(['Time', 'All', 'OK']);
   });
 
-  it('tells assistive tech whether the table is expanded', async () => {
-    const user = userEvent.setup();
-    render(<DataTable id="aria" caption="Aria" columns={['t']} rows={[]} />);
-
-    const button = screen.getByRole('button', { name: /show data table/i });
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(button).toHaveAttribute('aria-controls', 'chart-data-aria');
-
-    await user.click(button);
-    expect(screen.getByRole('button', { name: /hide data table/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
+  it('keeps the id `aria-controls` points at, wherever the control lives', () => {
+    // The button moved to the card header; the TARGET did not. `ChartActions`
+    // builds `aria-controls` from the same `chart-data-<id>` string this
+    // renders, and `ChartActions.test.tsx` pins that end. This is the other
+    // end of the same contract — break either and a screen reader is told
+    // about a region that does not exist.
+    render(<DataTable id="aria" caption="Aria" columns={['t']} rows={[]} shown={false} />);
+    expect(screen.getByTestId('chart-data-aria')).toHaveAttribute('id', 'chart-data-aria');
   });
 
   /**
@@ -154,7 +156,7 @@ describe('DataTable', () => {
         caption="Precision"
         columns={['Bin', 'OK %']}
         rows={[{ label: '28', values: [24.916201117318437] }]}
-      />,
+      shown={false} />,
     );
 
     const cell = screen.getByTestId('chart-data-precision').querySelector('td')!;
@@ -171,7 +173,7 @@ describe('DataTable', () => {
         // `null` is what a transform sends for a bucket it has no observation
         // for — see ChartData.
         rows={[{ label: '0', values: [null as unknown as number] }]}
-      />,
+      shown={false} />,
     );
 
     const cell = screen.getByTestId('chart-data-gap').querySelector('td')!;
@@ -183,7 +185,7 @@ describe('DataTable', () => {
     // A chart with no data still ships its (empty) table: Task 10's e2e suite
     // asserts one `chart-data-<id>` per chart on the page, and a pending run
     // has no series at all.
-    render(<DataTable id="empty" caption="Empty" columns={['t', 'ok']} rows={[]} />);
+    render(<DataTable id="empty" caption="Empty" columns={['t', 'ok']} rows={[]} shown={false} />);
     const table = screen.getByTestId('chart-data-empty');
     expect(table.querySelector('table')).not.toBeNull();
     expect(table.querySelectorAll('tbody tr')).toHaveLength(0);

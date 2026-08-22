@@ -75,9 +75,9 @@ test('every §13.3 element is on the page', async ({ page }) => {
   // carrying a data table is not the same as having drawn anything.)
   //
   // `getByText` (as the brief originally wrote it) is ambiguous here: each
-  // chart's `<figcaption>`-like data-table `<caption>` opens with the same
-  // words as the chart's own `<h3>` title ("Number of requests — every value
-  // plotted above…", from `DataTable`'s caption), so an un-exact text locator
+  // chart's data-table `<caption>` opens with the same words as the chart's
+  // own `<h3>` title ("Number of requests — every value this chart
+  // plots…", from `DataTable`'s caption), so an un-exact text locator
   // resolves to two elements and Playwright's strict mode rejects it. Scoped
   // to the heading role instead, which is what the title actually is.
   await expect(
