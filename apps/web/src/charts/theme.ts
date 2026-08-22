@@ -30,12 +30,12 @@ export type ChartMode = 'light' | 'dark';
  * recolours every existing chart.
  */
 export const CATEGORICAL = [
-  '#4f46e5', // indigo
-  '#0d9488', // teal
-  '#8b5cf6', // violet
-  '#d97706', // amber
-  '#0ea5e9', // sky
-  '#e11d48', // rose
+  '#0186bf', // sky     — L 0.588
+  '#7c3aed', // violet  — L 0.541
+  '#d52c85', // pink    — L 0.589
+  '#d97706', // amber   — L 0.666
+  '#0d9488', // teal    — L 0.600
+  '#a11bb4', // fuchsia — L 0.519
 ] as const;
 
 /**
@@ -43,17 +43,27 @@ export const CATEGORICAL = [
  * used: hold the hue angle, clamp OKLCH L into the 0.48–0.67 dark band, and
  * reduce chroma only as far as the sRGB gamut forces.
  *
- * The Tailwind-400 values these started from (`#818cf8`, `#2dd4bf`, `#a78bfa`,
- * `#f59e0b`, `#38bdf8`, `#fb7185`) are all ABOVE the band — L 0.68 to 0.79 —
- * and would glare on a dark surface. Measured, not guessed: all six failed.
+ * THE HUE FAMILY CHANGED with the control-room redesign (2026-08-22 spec):
+ * sky leads — it is the redesign's chart identity — and indigo and rose left
+ * the set. Indigo was the OLD accent and now reads as "clickable" nowhere
+ * else in the app; rose sat one confusable step from the red that
+ * `--chart-status-failed` reserves for KO, and a categorical hue that can be
+ * mistaken for failure is the exact overloading the semantic palettes exist
+ * to prevent. Pink and fuchsia replace them: warm, distinct from status red
+ * by a hue gap the ΔE gate measures, and the mockups' own series hues.
+ *
+ * The Tailwind-400 values the redesign's mockups draw with (`#38bdf8`,
+ * `#a78bfa`, `#f472b6`, `#fbbf24`, `#2dd4bf`, `#e879f9`) are all ABOVE this
+ * band — L 0.68 to 0.79 — and would glare on a dark surface. Measured, not
+ * guessed, same as the set they replace: all six failed the band.
  */
 export const CATEGORICAL_DARK = [
-  '#6c71fe', // indigo  — L 0.620
-  '#30a79a', // teal    — L 0.661
-  '#9469ff', // violet  — L 0.639
-  '#d77500', // amber   — L 0.660
   '#059ddf', // sky     — L 0.660
-  '#ee2f52', // rose    — L 0.621
+  '#9469ff', // violet  — L 0.639
+  '#ec4899', // pink    — L 0.656
+  '#d77500', // amber   — L 0.660
+  '#30a79a', // teal    — L 0.661
+  '#d946ef', // fuchsia — L 0.667
 ] as const;
 
 export function paletteFor(mode: ChartMode): readonly string[] {
@@ -511,8 +521,8 @@ function token(name: string, fallback: string): string {
  * `chartTheme`, rendered faithfully, and go unnoticed.
  */
 export const GRIDLINE: Readonly<Record<ChartMode, string>> = {
-  light: '#e9ecf0',
-  dark: '#262c33',
+  light: '#e9eef6',
+  dark: '#1f2a40',
 };
 
 /**
