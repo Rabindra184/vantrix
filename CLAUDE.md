@@ -65,10 +65,34 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **124 files / 1297 tests**, it
+`nvm use` first, and if a run reports fewer than **124 files / 1299 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the second review-followup
+silently-skipped run looks like a pass. Last measured on the duration-is-activity-span branch, which added no unit
+FILE and 2 cases to `packages/statistics/test/parity.test.ts`, from a floor of
+124 / 1297. Its integration floor is 117 files / 1351 tests (that `.ts` file
+runs there too, plus `PT-G-13` in `parity.e2e.test.ts`) and its e2e stays 94.
+
+TWO THINGS FROM THAT BRANCH, AND THE SECOND IS ABOUT HOW TO RUN THIS GATE.
+
+FIRST, `apps/api/test/openapi.integration.test.ts` FLAKES ON `main`, and it is
+not yours. `/v1/openapi.json` is registered by Nest's Swagger module rather
+than by a decorated controller, so it races the global auth guard and answers
+401 intermittently; `fetchDoc()` asserts 200, so the failure lands on
+WHICHEVER test called it first and appears to move around the file. Measured
+by stashing every local change and running the file three times on `main`: it
+failed 2 of 3. Before blaming a branch for it, do that.
+
+SECOND, "RUN INTEGRATION BEFORE e2e" IS NOT ENOUGH — NOTHING ELSE MAY TOUCH
+THE STACK WHILE EITHER RUNS, INCLUDING DIAGNOSIS. Three ad-hoc integration
+runs started to investigate the flake above, while a queued e2e was already
+executing, truncated every table underneath it: 63 of 94 passed and the log
+filled with `failed to update last_used_at ... No record was found for an
+update` — tokens deleted mid-run. Nothing was wrong with the code. Re-run
+alone: 94/94. The rule below about not racing the suite against ITSELF
+applies just as much to the commands you type WHILE it runs.
+
+Before that, the second review-followup
 branch, which added ONE unit file — `RunSectionNotFound.test.tsx` (3) — plus a
 route-declaration guard in `paths.test.ts`, from a floor of 123 / 1293. Its
 integration floor is 117 files / 1348 tests (four cases in

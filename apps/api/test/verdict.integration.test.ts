@@ -229,7 +229,7 @@ describe('the adaptive verdict', () => {
       status: 'failed',
       verdict: null, tool: 'gatling', toolVersion: null,
       environment: null, branch: null, commitSha: null,
-      simulation: null, description: null, durationMs: null,
+      simulation: null, description: null, durationMs: null, activityMs: null,
       bundleKey: 'k',
       bundleSha256: 'x'.repeat(64), bundleBytes: 1, idempotencyKey: null,
       startedAt: new Date(), startedOn: new Date(), toolStartedAt: null,

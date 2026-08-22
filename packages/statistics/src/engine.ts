@@ -94,7 +94,31 @@ export interface EngineResult {
   simulation: string | null;
   description: string | null;
   /** Run start to last response. Gatling's header renders this to whole seconds. */
+  /**
+   * The run's span as the SERIES OFFSETS measure it: run-header start to the
+   * last event. Every `startOffsetMs` this engine emits is relative to the
+   * header start (`BucketSeries`/`UserSeries` are constructed with
+   * `startMs: runStartMs`), so this is the number a time axis must span or
+   * the final bucket falls outside the domain.
+   *
+   * NOT WHAT THE RUN PAGE CALLS "Duration" — that is `activityMs` below, and
+   * the two differ by the lead-in between the header timestamp and the first
+   * request (857ms on one measured run, 1025ms on the reference fixture).
+   */
   durationMs: number;
+  /**
+   * The run's MEASURED span: first event (after warm-up) to last event —
+   * exactly the `windowMs` every `throughputRps` in `stats` divides by.
+   *
+   * IT EXISTS BECAUSE THE RUN PAGE WAS CONTRADICTING ITSELF. The header
+   * displayed `durationMs` while the throughput tile beside it divided by
+   * this, so `throughput x duration` did not equal the request count on
+   * screen — 14.32 req/s over a stated 63s is 907 requests, and the page
+   * also said 895. Gatling anchors its own duration at the first event too
+   * ("1m 2s" where `durationMs` rounds to 63s), so this is the number that
+   * agrees with both the report and the tile next to it.
+   */
+  activityMs: number;
   /**
    * The tool's OWN assertions, re-evaluated against the rollups above —
    * Appendix A G-05. Empty for a tool that declares none, and for a tool with
@@ -345,6 +369,10 @@ export class LiveEngine {
   }
 
   snapshot(opts: { clone?: boolean } = {}): EngineResult {
+    // ONE expression, read twice: the rollups divide their counts by it and
+    // `activityMs` reports it. They were the same number by coincidence of
+    // arithmetic before, in two places; a change to one that missed the other
+    // is exactly the contradiction `activityMs` was added to remove.
     const windowMs = Math.max(0, this.#lastMs - Math.max(this.#firstMs, this.#runStartMs + this.#warmupMs));
     const stats: StatRollup[] = [];
     for (const { scope, name, family, builder } of this.#rollups.values()) {
@@ -396,6 +424,7 @@ export class LiveEngine {
       simulation: this.#simulation,
       description: this.#description,
       durationMs: this.#lastMs === 0 ? 0 : Math.max(0, this.#lastMs - this.#runStartMs),
+      activityMs: this.#lastMs === 0 ? 0 : windowMs,
       // AFTER `stats`, necessarily: an assertion is judged against the very
       // rollups this call produced, so it cannot be evaluated while they are
       // still being accumulated.

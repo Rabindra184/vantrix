@@ -396,13 +396,63 @@ describe('Appendix A — Gatling report parity rows (PT-*)', () => {
       expect(assertions[2]!.actualValue).toBeGreaterThan(100);
     });
 
-    it('PT-G-04 header duration matches the report’s whole-second rendering', async () => {
+    /**
+     * PT-G-04 READS THE REPORT NOW, AND THAT CHANGED THE ANSWER.
+     *
+     * This assertion used to hard-code 63 against `durationMs` with a comment
+     * claiming the report shows "1m 3s" and that the brief's "62" had been
+     * "verified against the real fixture and corrected". It had not: the
+     * committed report in this very directory says **1m 2s**, and the test
+     * never opened it — it compared PerfPortal's number to a number derived
+     * from PerfPortal's own definition, which is self-consistency wearing a
+     * parity test's name. The brief was right all along.
+     *
+     * The gap is real and structural, not a rounding quirk: `durationMs`
+     * measures the run HEADER to the last event, while Gatling anchors at the
+     * FIRST event. On this fixture that lead-in is 1025ms, so the two land on
+     * different whole seconds. `activityMs` is the first-event-anchored span,
+     * and it is what the page now labels "Duration".
+     *
+     * Ground truth is PARSED OUT OF `index.html` rather than written down, so
+     * a re-captured fixture moves both sides together.
+     */
+    it('PT-G-04 the run page\'s duration matches the report\'s own header', async () => {
+      const html = readFileSync(join(REPORT_DIR, 'index.html'), 'utf8');
+      const m = /Duration:\s*<\/span>\s*<span>(.*?)<\/span>/s.exec(html);
+      expect(m, 'could not find the Duration line in the reference report').not.toBeNull();
+      const shown = m![1]!.trim(); // e.g. "1m 2s"
+      const mm = /(?:(\d+)m\s*)?(\d+)s/.exec(shown);
+      expect(mm, `unparseable report duration: ${shown}`).not.toBeNull();
+      const reportSeconds = Number(mm![1] ?? 0) * 60 + Number(mm![2]);
+
       const r = await get(`/v1/runs/${runId}`);
-      // Ground truth from the fixture header: runStartEpochMs 1786080602171,
-      // last event at 1786080665332 -> 63161ms -> floor 63s ("1m 3s"). The
-      // brief's snippet said 62; verified against the real fixture and
-      // corrected here.
-      expect(Math.floor(r.body.durationMs / 1000)).toBe(63); // report shows "1m 3s"
+      // The MEASURED span is the one that has to agree with the report.
+      expect(Math.floor(r.body.activityMs / 1000)).toBe(reportSeconds);
+      // And the series span is deliberately NOT it — it is anchored at the
+      // header, which is what the time axis needs. Pinned so the two cannot
+      // silently collapse back into one field.
+      expect(r.body.durationMs).toBeGreaterThan(r.body.activityMs);
+    });
+
+    /**
+     * PT-G-13 THE THREE HEADLINE NUMBERS MUST RECONCILE WITH EACH OTHER.
+     *
+     * `throughputRps` had only a `typeof === 'number'` check anywhere in this
+     * suite, so nothing noticed that it divides by the ACTIVITY span while the
+     * header rendered the SERIES span: the page showed 14.32 req/s beside a
+     * stated 63s and a stated 895 requests, and 14.32 x 63 is 907. A reader
+     * could do that multiplication on screen and catch the product lying.
+     *
+     * Derived from the payload on both sides, never written down.
+     */
+    it('PT-G-13 throughput x the displayed duration equals the request count', async () => {
+      const run = await get(`/v1/runs/${runId}`);
+      const stats = await get(`/v1/runs/${runId}/stats`);
+      const row = stats.body.stats.find((s: { scope: string }) => s.scope === 'run');
+
+      const implied = row.throughputRps * (run.body.activityMs / 1000);
+      // Exact to within a rounding hair — this is the same division, undone.
+      expect(Math.abs(implied - row.count)).toBeLessThan(0.5);
     });
 
     it('PT-G-06..09 indicator bands are 848 / 0 / 23 / 24', async () => {

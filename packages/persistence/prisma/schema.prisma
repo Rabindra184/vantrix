@@ -140,9 +140,18 @@ model Run {
   /// header. Null until the worker parses, and forever for a failed run.
   simulation  String?
   description String?
-  /// The load test's own span in ms. Unrelated to ingest timing; Gatling's
-  /// report header renders this to whole seconds.
+  /// The span the SERIES OFFSETS live in: run-header start to last event.
+  /// Every bucket `startOffsetMs` is relative to the header start, so a time
+  /// axis must span this or the final bucket falls outside the domain.
+  /// NOT what the run page calls "Duration" -- see `activityMs`.
   durationMs  Int?     @map("duration_ms")
+  /// The run's MEASURED span: first event (after warm-up) to last event, and
+  /// exactly what every `throughputRps` divides by. This is the "Duration"
+  /// the run page shows, and the one Gatling's own report agrees with.
+  /// Null for runs ingested before 20260822090000_run_activity_ms; the lead-in
+  /// it subtracts cannot be recovered from this row, so those fall back to
+  /// `durationMs` rather than being backfilled with a guess.
+  activityMs  Int?     @map("activity_ms")
   bundleKey      String    @map("bundle_key")
   bundleSha256   String    @map("bundle_sha256")
   bundleBytes    BigInt    @map("bundle_bytes")
