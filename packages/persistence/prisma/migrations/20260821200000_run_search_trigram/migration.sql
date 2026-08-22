@@ -8,13 +8,34 @@
 -- old `r.id::text ILIKE` (see `runIdPrefixRange`) are what make the search
 -- proportional to what it matches rather than to the org's whole history.
 --
--- pg_trgm IS A DEPLOYMENT DEPENDENCY, AND THAT IS THE ONE THING TO KNOW
--- BEFORE RUNNING THIS. `CREATE EXTENSION` needs rights an unprivileged
--- application role usually does not have, so on a managed instance this
--- statement may have to be run once by an administrator (every major managed
--- Postgres offers pg_trgm; it is on the standard allow-list for RDS, Cloud
--- SQL and Azure). `IF NOT EXISTS` makes it a no-op where a platform has
--- installed it already, so the common case needs nothing.
+-- pg_trgm IS A DEPLOYMENT DEPENDENCY, BUT A MUCH SMALLER ONE THAN THIS
+-- COMMENT FIRST CLAIMED. It used to say `CREATE EXTENSION` "needs rights an
+-- unprivileged application role usually does not have". That is wrong, and
+-- the correction is measured rather than reasoned:
+--
+--   pg_trgm is a TRUSTED extension (PostgreSQL 13+). On postgres:16-alpine,
+--   `pg_available_extension_versions` reports trusted = t for 1.3 through
+--   1.6. A trusted extension can be installed by a NON-SUPERUSER; the only
+--   privilege it needs is CREATE on the current database.
+--
+-- Both sides were tested against that image. A nosuperuser role owning the
+-- database ran this statement successfully. A nosuperuser role WITHOUT
+-- CREATE on the database got:
+--
+--   ERROR:  permission denied to create extension "pg_trgm"
+--   HINT:   Must have CREATE privilege on current database to create this
+--           extension.
+--
+-- So the failing shape is narrow: a migration role that can create tables in
+-- a schema but holds no CREATE on the database itself. Any role that has run
+-- the 20 migrations before this one already has broad DDL rights, so in
+-- practice this succeeds — and `IF NOT EXISTS` makes it a no-op wherever the
+-- platform ships pg_trgm pre-installed (RDS, Cloud SQL and Azure all offer
+-- it).
+--
+-- To settle it for a given database before deploying, without changing
+-- anything, run `infra/pg_trgm-preflight.sql` AS THE ROLE THAT RUNS
+-- MIGRATIONS. It prints a PASS/FAIL verdict and, on failure, the exact GRANT.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- CreateIndex
