@@ -91,12 +91,20 @@ describe('OpenAPI document', () => {
   // something later. This gate went red when the project-creation UI landed,
   // which is exactly what it is for — a new 201 has to be argued for, not
   // absorbed.
-  it('never declares a 201 response on any operation except token minting, opening a live run, and creating a project, which really do create synchronously', async () => {
+  //
+  // POST /v1/projects/{slug}/rules is the fourth, on exactly that standard:
+  // `RulesController.create` awaits one `RuleRepository.create` insert and
+  // returns the row, which is complete and addressable at
+  // `/rules/{ruleId}` — the PATCH and DELETE beside it work on the id in
+  // that very response. Nothing about the rule is deferred; what is deferred
+  // is only the next RUN it will judge, which is not this resource.
+  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, and creating an SLA rule, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
       { path: '/v1/runs/live', method: 'post' },
       { path: '/v1/projects', method: 'post' },
+      { path: '/v1/projects/{slug}/rules', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
@@ -222,6 +230,28 @@ describe('OpenAPI document', () => {
       ['/v1/projects/{slug}/tokens', 'post'],
       ['/v1/projects/{slug}/tokens', 'get'],
       ['/v1/projects/{slug}/tokens/{prefix}', 'delete'],
+    ] as const) {
+      const op = doc.paths?.[path]?.[method] as { security?: Record<string, unknown>[] } | undefined;
+      expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();
+      expect(op?.security, `${method.toUpperCase()} ${path} must override security`).toBeTruthy();
+      expect(op?.security).toEqual([{ cookieAuth: [] }]);
+    }
+  });
+
+  // The same shape as the token test above, and it guards a sharper edge.
+  // These four routes edit the gate that decides whether a run passes, so a
+  // bearer credential must never reach them at any scope — a CI token able to
+  // raise its own threshold is a gate that does not gate. Drop the override
+  // from one of them and the document advertises bearerAuth on a route that
+  // always answers 403, with nothing else here turning red.
+  it('keeps the four SLA-rule operations cookieAuth-only — a CI credential must not edit the gate that judges it', async () => {
+    const doc = await fetchDoc();
+
+    for (const [path, method] of [
+      ['/v1/projects/{slug}/rules', 'post'],
+      ['/v1/projects/{slug}/rules', 'get'],
+      ['/v1/projects/{slug}/rules/{ruleId}', 'patch'],
+      ['/v1/projects/{slug}/rules/{ruleId}', 'delete'],
     ] as const) {
       const op = doc.paths?.[path]?.[method] as { security?: Record<string, unknown>[] } | undefined;
       expect(op, `${method.toUpperCase()} ${path} must be declared`).toBeTruthy();

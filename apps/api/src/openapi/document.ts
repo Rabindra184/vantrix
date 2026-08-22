@@ -70,6 +70,7 @@ interface OperationObject {
 interface PathItemObject {
   get?: OperationObject;
   post?: OperationObject;
+  patch?: OperationObject;
   delete?: OperationObject;
 }
 
@@ -325,6 +326,28 @@ const parameters: Record<string, ParameterObject> = {
       'act on a leaked token from the list alone.',
     schema: { type: 'string' },
   },
+  RuleProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'A project slug within the caller\'s own organisation. Resolved by the session\'s org ' +
+      'membership: like the token routes and unlike GET /v1/projects/{slug}/runs, this route ' +
+      'accepts no bearer credential at all (see SessionOnlyGuard), so there is no "the token\'s ' +
+      'own project" to match against. A slug outside the caller\'s org 404s rather than 403.',
+    schema: { type: 'string' },
+  },
+  RuleId: {
+    name: 'ruleId',
+    in: 'path',
+    required: true,
+    description:
+      'The "id" a create or list response returned. Must be a UUID — anything else is a 400 ' +
+      '(code INVALID_ID) rather than a 404, so a malformed id is distinguishable from one that ' +
+      'simply names no rule. A UUID belonging to another project or organisation answers 404, ' +
+      'the same as one that exists nowhere.',
+    schema: { type: 'string', format: 'uuid' },
+  },
   StreamOffset: {
     name: 'X-Stream-Offset',
     in: 'header',
@@ -467,6 +490,32 @@ const responses: Record<string, ResponseObject> = {
       'MintTokenRequestSchema is `.strict()`, so an extra field (e.g. a caller-supplied ' +
       '"projectId") lands here rather than being silently ignored. ' +
       'application/problem+json with a required "remediation".',
+    content: problem(),
+  },
+  InvalidSlaRule: {
+    description:
+      'The request body failed CreateSlaRuleRequestSchema (code INVALID_SLA_RULE), or the ' +
+      '"ruleId" in the path is not a UUID (code INVALID_ID). THE METRIC CHECK IS THE ONE WORTH ' +
+      'READING: "metric" must be a name the evaluator can actually resolve — one of count, ' +
+      'mean, min, max, stddev, error_rate, throughput_rps, or a percentile written as p<number> ' +
+      '(p50, p95, p99.9). A name it cannot resolve is refused HERE because it would not fail ' +
+      'later: the evaluator records "not_applicable" for an unresolvable metric, so "p95th" ' +
+      'would store a rule that looks like a release gate and checks nothing, forever. Also ' +
+      'refused: a run-scoped rule carrying a "targetName" (a run rule reads the run\'s own ' +
+      'aggregate and has nothing to name) and a request-, group- or scenario-scoped rule ' +
+      'without one (it would match no stat row at all). CreateSlaRuleRequestSchema is ' +
+      '`.strict()`, so an unknown field lands here rather than being ignored.',
+    content: problem(),
+  },
+  InvalidSlaRuleUpdate: {
+    description:
+      'The request body failed UpdateSlaRuleRequestSchema (code INVALID_SLA_RULE_UPDATE), or ' +
+      'the "ruleId" in the path is not a UUID (code INVALID_ID). The body must carry at least ' +
+      'one of "name", "threshold" or "enabled" — an empty object is refused rather than treated ' +
+      'as a no-op. Nothing else may change: a rule\'s scope, target, family, metric and ' +
+      'comparator are what it MEASURES, and every assertion already recorded against its id ' +
+      'would otherwise end up describing a measurement that rule never took. Re-aiming a gate ' +
+      'means creating a new one.',
     content: problem(),
   },
   InvalidProjectRequest: {
@@ -1090,6 +1139,136 @@ const paths: Record<string, PathItemObject> = {
           description: 'Revoked (or already was). The token\'s current summary, "revokedAt" now set.',
           content: json(schemaRef('TokenSummary')),
         },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/rules': {
+    post: {
+      operationId: 'createProjectSlaRule',
+      summary: 'Create an SLA rule for a project',
+      tags: ['rules'],
+      // The SAME cookieAuth-only override as the token operations, for a
+      // reason of its own: these routes edit the gate that decides whether a
+      // run passes. A CI bearer credential able to raise its own threshold is
+      // a gate that does not gate, so SessionOnlyGuard refuses every bearer
+      // token here regardless of scopes — and advertising bearerAuth would
+      // document an authentication the handler always rejects.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). A rule is evaluated against every ' +
+        'SUBSEQUENT run of this project; it never re-judges runs already recorded, and the ' +
+        'assertions those runs carry keep the rule text they were judged by. "scope" selects ' +
+        'which stat row the rule reads ("run" for the run aggregate, otherwise the row named by ' +
+        '"targetName"), "family" selects which family of that row, and "metric" selects the ' +
+        'value out of it — so an error-rate gate is metric "error_rate", not a family of its own.',
+      parameters: [parameters['RuleProjectSlug']!],
+      requestBody: {
+        required: true,
+        description:
+          'A scope, a family, a comparator, a finite threshold, and a metric the evaluator can ' +
+          'resolve. "name" is optional prose for an operator reading a list of gates later; ' +
+          '"targetName" is required for every scope except "run", which forbids it.',
+        content: json(schemaRef('CreateSlaRuleRequest')),
+      },
+      responses: {
+        '201': {
+          description:
+            'Created, and enabled. The stored rule, including the "id" needed to retune or ' +
+            'delete it — the row exists before this response is sent.',
+          content: json(schemaRef('SlaRule')),
+        },
+        '400': ref('InvalidSlaRule'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+    get: {
+      operationId: 'listProjectSlaRules',
+      summary: "List a project's SLA rules",
+      tags: ['rules'],
+      // Same override and the same reason as the POST above.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). Newest first. DISABLED RULES ARE ' +
+        'INCLUDED: "disabled" is a state an operator put a rule in and has to be able to see ' +
+        'and undo, which is the opposite of what evaluation loads — a run is judged only by the ' +
+        'enabled ones.',
+      parameters: [parameters['RuleProjectSlug']!],
+      responses: {
+        '200': {
+          description: 'This project\'s SLA rules, newest first, enabled and disabled alike.',
+          content: json(schemaRef('SlaRuleListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/rules/{ruleId}': {
+    patch: {
+      operationId: 'updateProjectSlaRule',
+      summary: 'Retune or silence an SLA rule',
+      tags: ['rules'],
+      // Same override and the same reason as POST /v1/projects/{slug}/rules.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). What may change is deliberately narrow: ' +
+        '"name", "threshold" and "enabled" only. Setting "enabled" to false is how a gate is ' +
+        'silenced without losing it — evaluation skips it from the next run onward, and the ' +
+        'assertions it already produced are untouched. Everything a rule MEASURES is fixed; see ' +
+        'the 400 response for why.',
+      parameters: [parameters['RuleProjectSlug']!, parameters['RuleId']!],
+      requestBody: {
+        required: true,
+        description: 'At least one of "name", "threshold" or "enabled". Unmentioned fields keep their values.',
+        content: json(schemaRef('UpdateSlaRuleRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Updated. The rule as it now stands, with "updatedAt" advanced.',
+          content: json(schemaRef('SlaRule')),
+        },
+        '400': ref('InvalidSlaRuleUpdate'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+    delete: {
+      operationId: 'deleteProjectSlaRule',
+      summary: 'Delete an SLA rule',
+      tags: ['rules'],
+      // Same override and the same reason as POST /v1/projects/{slug}/rules.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). PERMANENT, AND NOT RETROACTIVE: the rule ' +
+        'stops being evaluated from the next run onward, while every assertion already recorded ' +
+        'against it survives intact, because each one stores its own snapshot of the rule text ' +
+        'it was judged by rather than a live reference. A past run therefore keeps reading ' +
+        'exactly as it did the day it was judged. Prefer PATCH with "enabled": false when the ' +
+        'gate might come back. 404 (code NOT_FOUND) when "ruleId" names no rule in this project ' +
+        '— including one belonging to a different project or organisation, which answers the ' +
+        'same 404 rather than confirming it exists elsewhere.',
+      parameters: [parameters['RuleProjectSlug']!, parameters['RuleId']!],
+      responses: {
+        '200': {
+          description:
+            'Deleted. The rule as it was — returned rather than 204 so a caller can say WHICH ' +
+            'gate it just removed without having held the row itself.',
+          content: json(schemaRef('SlaRule')),
+        },
+        '400': ref('InvalidSlaRule'),
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),
