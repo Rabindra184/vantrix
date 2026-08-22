@@ -861,7 +861,7 @@ export function RunChartsTab() {
     // decides how many sit side by side.
     //
     // The break is at `2xl` (1536px) rather than `xl`, because each figure
-    // holds a 288px-tall plot plus a legend plus a data-table toggle, and two
+    // holds a 288px-tall plot plus a legend beneath a header row, and two
     // of those in a 1280px window leaves each chart ~600px — narrow enough
     // that a 60-bucket time axis starts dropping every other tick label.
     // Above 1536px there is room for both, and halving the scroll depth of an

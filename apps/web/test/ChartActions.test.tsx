@@ -168,7 +168,7 @@ describe('ChartActions — taking the numbers away', () => {
    * button reported success over a copy that went nowhere. A copy button that
    * lies is worse than one that is missing — the reader is about to paste.
    */
-  it('says so when there is no clipboard, instead of claiming it copied', async () => {
+  it('names the SECURE-CONTEXT cause only when the clipboard is genuinely absent', async () => {
     const user = userEvent.setup();
     setClipboard(undefined);
     renderActions();
@@ -176,17 +176,35 @@ describe('ChartActions — taking the numbers away', () => {
     await user.click(screen.getByRole('button', { name: 'Copy the chart data as JSON' }));
 
     // Visible, not merely announced — the reader is about to paste.
-    expect(await screen.findByRole('status')).toHaveTextContent(/Copy unavailable/);
-    expect(screen.getByRole('status')).not.toHaveClass('sr-only');
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(/not a secure context/i);
+    expect(status).not.toHaveClass('sr-only');
   });
 
-  it('says so when the clipboard rejects, too', async () => {
+  /**
+   * ═══ A REJECTED WRITE IS NOT AN INSECURE PAGE ═══
+   *
+   * Both used to produce the same sentence, and it was WRONG for this half:
+   * observed on a secure localhost page where `navigator.clipboard` was
+   * present and `writeText` rejected with NotAllowedError, while the message
+   * on screen told the reader their page was insecure. Denied permission, an
+   * unfocused document and a missing user gesture all land here and none of
+   * them is a secure-context problem.
+   *
+   * So this asserts the message says what is KNOWN and NOT the cause it cannot
+   * establish — the same discipline the token revoke follows with "may still
+   * be active".
+   */
+  it('does not blame the secure context when the clipboard merely refused', async () => {
     const user = userEvent.setup();
     setClipboard({ writeText: vi.fn(async () => { throw new Error('denied'); }) });
     renderActions();
 
     await user.click(screen.getByRole('button', { name: 'Copy the chart data as JSON' }));
-    expect(await screen.findByRole('status')).toHaveTextContent(/Copy unavailable/);
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(/blocked by the browser/i);
+    expect(status).not.toHaveTextContent(/secure context/i);
   });
 
   /**
