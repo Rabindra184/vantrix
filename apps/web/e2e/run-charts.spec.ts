@@ -592,13 +592,23 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     // see this: `hidden` is applied to a wrapper and jsdom applies no
     // stylesheet, so `toBeVisible()` there would answer for reasons unrelated
     // to the component.
-    await expect(plot(page.getByTestId(`chart-${id}`))).toBeHidden();
+    //
+    // ASSERTED ON THE CANVAS, NOT ON THE `<svg>` INSIDE IT, and that is not a
+    // detail. The canvas is React's — it exists for as long as the component
+    // does. The svg is ECharts', which disposes and redraws it on resize, and
+    // hiding a container IS a resize (0×0 and back). A locator that resolves
+    // to 0 or 2 elements mid-redraw makes `toBeVisible()` throw a strict-mode
+    // violation immediately rather than retry, which is a flake with no
+    // failing assertion in it. `plot()` stays right for "did it draw"; this
+    // question is "is it on screen", and the stable element answers it.
+    const canvas = page.getByTestId(`chart-${id}`).locator('[data-chart-canvas]');
+    await expect(canvas).toBeHidden();
 
     // And back, so it is a real toggle rather than one-way — with the plot
     // returning rather than merely the table going away.
     await toggle.click();
     await expect(table).not.toBeVisible();
-    await expect(plot(page.getByTestId(`chart-${id}`))).toBeVisible();
+    await expect(canvas).toBeVisible();
   }
 });
 

@@ -148,6 +148,32 @@ test('a skip link lets a keyboard user bypass the rail', async ({ page }) => {
   await expect(page.getByRole('main')).toBeFocused();
 });
 
+test('a status badge does not clip the project name beside it', async ({ page }) => {
+  const admin = await seedAdmin();
+  // FOURTEEN CHARACTERS, which is not a long name — it is shorter than three
+  // of the five projects any real org has. Paired with the WIDEST badge the
+  // rail renders (`no verdict yet`), because the bug was never about long
+  // names: it was about a status word taking its width out of the name's
+  // budget. The badge is `shrink-0` and the name is the flexible one, so
+  // whatever the badge takes, the name loses.
+  await seedProjectWithRuns(admin.orgId, 'search-svc', 'Search Service', 2, null);
+
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
+  const name = rail.getByText('Search Service', { exact: true });
+  await expect(name).toBeVisible();
+
+  // MEASURED, not eyeballed: `truncate` is `text-overflow: ellipsis`, which
+  // leaves the full string in the DOM — so `textContent` is identical whether
+  // the name is clipped or not, and every existing assertion in this file
+  // passes either way. The only thing that changes is scrollWidth against
+  // clientWidth. Before the badge was made compact this read 94 against 84.
+  const clipped = await name.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+  expect(clipped, 'the project name is being clipped by the badge beside it').toBe(false);
+});
+
 test('a long badge label does not make its rail row taller', async ({ page }) => {
   const admin = await seedAdmin();
   // The two names are the SAME LENGTH on purpose. The only variable between
