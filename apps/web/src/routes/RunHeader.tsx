@@ -176,7 +176,13 @@ export default function RunHeader({
           element, and `gap-y` keeps the rows apart when it wraps on a phone —
           where the vertical dividers disappear, which is correct, because
           stacked chips need no separator. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-default bg-surface px-3 py-2 text-[12px] text-muted shadow-panel sm:gap-x-0 sm:divide-x sm:divide-default">
+      {/* `font-mono` on the whole strip: every chip is a VALUE — tool
+          version, branch, sha, timestamp, duration, user count — and the
+          redesign's rule is that data wears the mono face. One class here
+          rather than six, and the commit's own <code> stops being the odd
+          one out. Classes only; the chip TEXT is pinned three ways (module
+          docstring) and gains nothing. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-default bg-surface px-3 py-2 font-mono text-[12px] text-muted shadow-panel sm:gap-x-0 sm:divide-x sm:divide-default">
         {/* Omitted entirely when the identity carries no tool — same
             rolling-deploy render as the breadcrumb above. */}
         {identity.tool != null && (

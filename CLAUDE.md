@@ -65,10 +65,19 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **124 files / 1299 tests**, it
+`nvm use` first, and if a run reports fewer than **124 files / 1300 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the duration-is-activity-span branch, which added no unit
+silently-skipped run looks like a pass. Last measured on the redesign-run-page
+branch, which added no unit FILE and 1 case to
+`apps/web/test/RunDecisionBand.test.tsx` — the gate tick strip follows the
+counts' own evaluated gate and stays aria-hidden — from a floor of 124 / 1299.
+Its integration floor stays 118 files / 1355 tests (the touched test file is
+`.tsx`, which integration never runs) and its e2e stays 94. The
+redesign-foundation branch before it (the control-room retheme: palette, three
+vendored faces, shell restyles) moved no counts at all — its churn was inside
+`palette.test.ts`'s mirrors, updated in lockstep with `charts/theme.ts`.
+Before that, the duration-is-activity-span branch added no unit
 FILE and 2 cases to `packages/statistics/test/parity.test.ts`, from a floor of
 124 / 1297. Its integration floor is 117 files / 1351 tests (that `.ts` file
 runs there too, plus `PT-G-13` in `parity.e2e.test.ts`) and its e2e stays 94.

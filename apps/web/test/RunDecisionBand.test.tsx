@@ -92,10 +92,13 @@ describe('RunDecisionBand', () => {
     renderBand({ status: 'running', verdict: undefined, assertions: undefined });
     expect(screen.queryByText('no verdict yet')).toBeNull();
     // The positive half — the band still SAYS what state the gate is in,
-    // so the absent badge is a decision and not a blank panel. Not a
-    // heading: see the band's own comment on why shell chrome contributes
-    // none.
-    expect(screen.getByText('Release gate pending')).toBeInTheDocument();
+    // so the absent badge is a decision and not a blank panel. The redesign
+    // split the old sentence ("Release gate pending") into the big verdict
+    // WORD and a constant overline naming its subject; both halves are
+    // asserted so neither can silently vanish. Not a heading: see the
+    // band's own comment on why shell chrome contributes none.
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText('Release gate')).toBeInTheDocument();
     expect(screen.queryByRole('heading')).toBeNull();
   });
 
@@ -118,14 +121,56 @@ describe('RunDecisionBand', () => {
     }
     // Positive half: the counts DO appear once there is something to count,
     // so the assertion above is about the gate and not about the labels.
+    // 'Passed', not 'Failed': the default render's big verdict WORD is also
+    // "Failed", so that string matches two elements — the label the big
+    // word can never spell is the one that uniquely proves a count chip.
     cleanup();
     renderBand();
-    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText('Passed')).toBeInTheDocument();
   });
 
   it('counts an evaluated run with no rules as zero rather than hiding the counts', () => {
     renderBand({ verdict: 'not_evaluated', assertions: [] });
     expect(screen.getByText('N/A')).toBeInTheDocument();
+  });
+
+  /**
+   * THE TICK STRIP FOLLOWS THE COUNTS' OWN GATE. It is the counts sentence's
+   * picture — one tick per rule — so it must appear exactly when the counts
+   * do and never over rules nobody has evaluated (grey ticks over an
+   * unevaluated run would be the three-zeros overclaim in bar form). It is
+   * `aria-hidden` because the sentence beside it already carries the same
+   * fact as text: a screen reader hearing the counts and then a run of
+   * unnamed presentational marks would get the information twice, once
+   * badly — the same argument `Badge` makes for its glyph.
+   */
+  it('draws one aria-hidden tick per rule once evaluated, and none before', () => {
+    renderBand({ status: 'pending', verdict: undefined, assertions: undefined });
+    expect(screen.queryByTestId('gate-ticks')).toBeNull();
+
+    // A mixed cohort, not the single-failure default: three rules with three
+    // different outcomes is what proves the strip counts EVERY outcome
+    // rather than only the one the default fixture happens to carry.
+    const mixed: readonly Assertion[] = [
+      ASSERTIONS[0]!,
+      {
+        ...ASSERTIONS[0]!,
+        ruleId: '33333333-3333-4333-8333-333333333333',
+        outcome: 'passed',
+        message: 'p99 within its threshold.',
+      },
+      {
+        ...ASSERTIONS[0]!,
+        ruleId: '44444444-4444-4444-8444-444444444444',
+        outcome: 'not_applicable',
+        message: 'Too few samples to evaluate.',
+      },
+    ];
+    cleanup();
+    renderBand({ assertions: mixed });
+    const strip = screen.getByTestId('gate-ticks');
+    expect(strip).toHaveAttribute('aria-hidden', 'true');
+    expect(strip.childElementCount).toBe(mixed.length);
   });
 
   it('exports the run summary the decision band is showing', async () => {
