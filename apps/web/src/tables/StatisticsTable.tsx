@@ -607,7 +607,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
   if (total === null && tree.length === 0) {
     return (
       <section aria-labelledby={headingId} className="flex flex-col gap-3">
-        <SectionHeading id={headingId}>Statistics</SectionHeading>
+        <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
         <EmptyState title="No statistics were recorded for this run" />
@@ -638,7 +638,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           stack on a narrow one, where a 200px input beside a heading leaves
           neither enough room. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <SectionHeading id={headingId}>Statistics</SectionHeading>
+        <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
 
         {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
             placeholder: a placeholder disappears the moment the reader types,

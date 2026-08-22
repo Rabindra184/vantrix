@@ -1,4 +1,4 @@
-import type { StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
+import type { Assertion, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
 import {
   clampPercentile,
@@ -46,9 +46,16 @@ type DeltaTone = 'better' | 'worse' | 'neutral';
 export default function RunStats({
   stats,
   baseline,
+  assertions,
 }: {
   readonly stats: StatsResponse;
   readonly baseline?: TrendRun | null;
+  /**
+   * The run's SLA results, used ONLY to tint a tile whose metric a rule
+   * actually targets. `undefined` for a run nobody has evaluated, which
+   * leaves every tile untinted — see `slaTone`.
+   */
+  readonly assertions?: readonly Assertion[];
 }) {
   const run = stats.stats.find((row) => row.scope === 'run');
   if (run === undefined) return null;
@@ -66,6 +73,7 @@ export default function RunStats({
         <StatTile
           label="Total Requests"
           value={formatCount(run.count)}
+          tone={slaTone(assertions, 'count')}
           hint={`${formatCount(run.okCount)} OK, ${formatCount(run.koCount)} KO`}
           delta={deltaFor(run.count, baseline?.count, 'neutral')}
           data-testid="stat-total-requests"
@@ -77,20 +85,25 @@ export default function RunStats({
           // `koCount / count`, which would be a second definition of one
           // number sitting a few hundred pixels from the first.
           value={`${(run.errorRate * 100).toFixed(2)}%`}
+          tone={slaTone(assertions, 'error_rate')}
           hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
           delta={deltaFor(run.errorRate, baseline?.errorRate, 'lower')}
           data-testid="stat-error-rate"
         />
         <StatTile
           label="Mean Throughput"
-          value={`${formatRate(run.throughputRps)} req/s`}
+          value={formatRate(run.throughputRps)}
+          unit="req/s"
+          tone={slaTone(assertions, 'throughput_rps')}
           hint={`${formatCount(run.count)} requests over the run`}
           delta={deltaFor(run.throughputRps, baseline?.throughputRps, 'higher')}
           data-testid="stat-throughput"
         />
         <StatTile
           label="Mean Response"
-          value={`${formatMs(run.meanMs)} ms`}
+          value={formatMs(run.meanMs)}
+          unit="ms"
+          tone={slaTone(assertions, 'mean')}
           hint={`up to ${formatMs(run.maxMs)} ms`}
           delta={deltaFor(run.meanMs, baseline?.meanMs, 'lower')}
           data-testid="stat-mean-response"
@@ -98,6 +111,8 @@ export default function RunStats({
         <StatTile
           label="95th Percentile"
           value={percentileValue(run, 'p95')}
+          unit={percentileUnit(run, 'p95')}
+          tone={slaTone(assertions, 'p95')}
           hint="an estimate, accurate to within 1%"
           delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
           data-testid="stat-p95"
@@ -105,6 +120,8 @@ export default function RunStats({
         <StatTile
           label="99th Percentile"
           value={percentileValue(run, 'p99')}
+          unit={percentileUnit(run, 'p99')}
+          tone={slaTone(assertions, 'p99')}
           hint="an estimate, accurate to within 1%"
           delta={deltaFor(percentileMs(run, 'p99'), percentileMs(baseline, 'p99'), 'lower')}
           data-testid="stat-p99"
@@ -130,7 +147,20 @@ export default function RunStats({
 function percentileValue(row: StatRow, key: string): string {
   const raw = row.percentiles[key];
   if (raw === undefined || !Number.isFinite(raw)) return '—';
-  return `${formatMs(clampPercentile(raw, row))} ms`;
+  return formatMs(clampPercentile(raw, row));
+}
+
+/**
+ * `ms`, or NOTHING when the value is the em dash.
+ *
+ * A unit beside a dash claims a measurement that was never taken — the same
+ * overclaim `RunDecisionBand` refuses when it draws no counts for a run
+ * nobody has evaluated. The two functions read the same field so they cannot
+ * disagree about whether a number exists.
+ */
+function percentileUnit(row: StatRow, key: string): string | undefined {
+  const raw = row.percentiles[key];
+  return raw === undefined || !Number.isFinite(raw) ? undefined : 'ms';
 }
 
 /**
@@ -188,4 +218,57 @@ function deltaTone(change: number, better: 'higher' | 'lower' | 'neutral'): Delt
   if (Math.abs(change) < 0.05 || better === 'neutral') return 'neutral';
   if (better === 'higher') return change > 0 ? 'better' : 'worse';
   return change < 0 ? 'better' : 'worse';
+}
+
+/**
+ * How a run-level response-time metric stands against the SLA rule that
+ * targets it: `breach` when that rule failed, `near` when it passed but sits
+ * within `NEAR_MARGIN` of its own threshold, and NOTHING otherwise.
+ *
+ * SCOPE `run` AND FAMILY `response_time` ONLY, and both filters are
+ * load-bearing. A rule on one request (`scope: 'request'`) judges that
+ * request, not the run's aggregate — tinting the run's p95 from it would
+ * report a per-endpoint breach as a whole-run one. And the other three
+ * families measure latency and group timings, which these tiles do not show.
+ *
+ * EVERY TILE HERE IS JUDGEABLE, AND AN EARLIER VERSION OF THIS COMMENT SAID
+ * OTHERWISE. It claimed "`AssertionSchema` has no error-rate or throughput
+ * family, so those tiles have no rule to be near" — which confused the two
+ * axes a rule is written on. `family` picks the stat ROW (`evaluate.ts`
+ * filters `s.family === rule.family`); `metric` picks the VALUE out of it
+ * (`resolveMetric`). `packages/sla/src/metrics.ts`'s `SCALARS` has carried
+ * `error_rate` and `throughput_rps` all along, and `evaluate.test.ts` already
+ * exercises a `throughput_rps` gate. So "error rate under 1%" is expressible
+ * today as scope `run`, family `response_time`, metric `error_rate` — no new
+ * family, no migration, nothing to add.
+ *
+ * The family filter STAYS, and is not redundant: it is what stops a rule on
+ * the `latency` distribution's p95 tinting a tile that shows the
+ * `response_time` p95. Two different measurements that share a metric name.
+ */
+const NEAR_MARGIN = 0.1;
+
+function slaTone(
+  assertions: readonly Assertion[] | undefined,
+  metric: string,
+): 'breach' | 'near' | undefined {
+  const rule = assertions?.find(
+    (a) =>
+      a.rule.scope === 'run' && a.rule.family === 'response_time' && a.rule.metric === metric,
+  );
+  if (rule === undefined) return undefined;
+  if (rule.outcome === 'failed') return 'breach';
+  // `not_applicable` carries a null actual — there was nothing to measure, so
+  // there is no distance to a threshold and nothing to warn about.
+  if (rule.outcome !== 'passed' || rule.actualValue === null) return undefined;
+
+  const { comparator, threshold } = rule.rule;
+  if (threshold === 0) return undefined;
+  // `lte` passes BELOW its threshold, so it approaches from underneath; `gte`
+  // passes above and approaches from over. Same margin, opposite directions.
+  const near =
+    comparator === 'lte'
+      ? rule.actualValue >= threshold * (1 - NEAR_MARGIN)
+      : rule.actualValue <= threshold * (1 + NEAR_MARGIN);
+  return near ? 'near' : undefined;
 }

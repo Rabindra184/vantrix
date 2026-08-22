@@ -196,7 +196,7 @@ export default function RunHeader({
             rolling-deploy render as the breadcrumb above. */}
         {identity.tool != null && (
           <Chip
-            name="Engine"
+            name="Version"
             label={`Tool: ${identity.tool}${identity.toolVersion ? ` ${identity.toolVersion}` : ''}`}
           >
             {identity.toolVersion ? `${identity.tool} ${identity.toolVersion}` : identity.tool}

@@ -34,13 +34,39 @@ import type { ReactNode } from 'react';
 export default function SectionHeading({
   children,
   id,
+  overline,
 }: {
   readonly children: ReactNode;
   readonly id?: string;
+  /**
+   * A short uppercase kicker above the heading, naming what KIND of thing the
+   * section holds — "Evidence" over Assertions, "Run telemetry" over
+   * Statistics.
+   *
+   * Two guards keep this from becoming the eyebrow-on-every-section tic. It is
+   * OPTIONAL and unset by default, so a section gets one only where the
+   * redesign's own screens draw one; and it is a `<p>`, never a heading, so it
+   * cannot appear in the document outline that `run-tables.spec.ts` pins.
+   * `uppercase` is safe here for the same reason it is on the rail's
+   * "Projects" label: nothing queries a `<p>` by accessible name.
+   */
+  readonly overline?: string;
 }) {
+  if (overline === undefined) {
+    return (
+      <h2 id={id} className="text-base font-semibold tracking-tight text-primary">
+        {children}
+      </h2>
+    );
+  }
   return (
-    <h2 id={id} className="text-base font-semibold tracking-tight text-primary">
-      {children}
-    </h2>
+    <div className="flex flex-col gap-1">
+      <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted uppercase">
+        {overline}
+      </p>
+      <h2 id={id} className="text-base font-semibold tracking-tight text-primary">
+        {children}
+      </h2>
+    </div>
   );
 }
