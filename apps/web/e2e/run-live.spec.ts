@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { Redis } from 'ioredis';
 import { openLiveRun, seedAdmin } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 import { runChartsPath, runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
@@ -178,12 +178,12 @@ test.describe('a running run draws its live dashboard', () => {
       /* ---- Charts: the live charts really drew, two withheld notices ---- */
       await page.goto(runChartsPath(runId));
 
-      // Exactly one svg per figure — the same invariant nine other specs
-      // already rest on (CLAUDE.md): a decorative icon or a second drawing
-      // inside a chart's <figure> would break this count as much as a chart
-      // that failed to draw would.
+      // Exactly one svg per PLOT — `plot()` scopes to `[data-chart-canvas]`
+      // rather than to the whole figure, so this counts what ECharts drew and
+      // not what the card contains. That distinction is why a chart header can
+      // now carry icon controls; see `helpers.ts`.
       for (const id of ['concurrent-users', 'user-start-rate', 'percentiles', 'requests-per-second', 'responses-per-second']) {
-        await expect(page.getByTestId(`chart-${id}`).locator('svg')).toHaveCount(1);
+        await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
       }
 
       await expect(page.getByTestId('live-notice-withheld')).toHaveCount(2);
@@ -272,9 +272,9 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
       await expect(banner).toContainText('1 of 1 checked SLA rule');
       await expect(banner).toContainText('6 further rules have not been checked yet');
 
-      // Never inside a chart's own <figure> — the CLAUDE.md rule nine other
-      // specs already rest on (an <svg> inside one corrupts a drawn-chart
-      // count), and this component carries no <svg> at all regardless.
+      // This banner carries no <svg> at all, which is what is asserted here.
+      // It is deliberately NOT scoped through `plot()`: the claim is about the
+      // whole component, not about a plot it does not have.
       await expect(banner.locator('svg')).toHaveCount(0);
 
       // ON EVERY TAB, not just the one the reader happened to land on. This

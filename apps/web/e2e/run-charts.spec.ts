@@ -5,7 +5,7 @@ import {
   seedPendingRun,
   seedRunWithData,
 } from './fixtures.js';
-import { apiJson, signIn } from './helpers.js';
+import { apiJson, plot, signIn } from './helpers.js';
 import { SURFACE_TOKENS } from '../src/charts/theme.js';
 import { runChartsPath } from '../src/routes/paths.js';
 
@@ -220,7 +220,7 @@ test('every chart actually draws — the real ECharts renders SVG marks for all 
   // fails if ECharts 6.1.0 does not initialise in a browser at all — which the
   // jsdom suite cannot tell us, since it mocks the library.
   for (const id of CHART_IDS) {
-    const svg = page.getByTestId(`chart-${id}`).locator('svg');
+    const svg = plot(page.getByTestId(`chart-${id}`));
     await expect(svg, `${id} drew no SVG`).toHaveCount(1);
     // `path` covers every mark type on the page: the line charts' polylines,
     // the bar charts' rectangles and the donut's sectors are all paths in
@@ -234,7 +234,7 @@ test('every chart actually draws — the real ECharts renders SVG marks for all 
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(err.message));
   await page.reload();
-  await expect(page.getByTestId('chart-percentiles').locator('svg')).toHaveCount(1);
+  await expect(plot(page.getByTestId('chart-percentiles'))).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
@@ -270,7 +270,7 @@ test('every chart actually draws in dark mode too, and the page background follo
   // The same "every chart draws marks" shape as the light-mode test above,
   // run under a forced dark `prefers-color-scheme`.
   for (const id of CHART_IDS) {
-    const svg = page.getByTestId(`chart-${id}`).locator('svg');
+    const svg = plot(page.getByTestId(`chart-${id}`));
     await expect(svg, `${id} drew no SVG in dark mode`).toHaveCount(1);
     await expect(svg.locator('path').first(), `${id} drew no marks in dark mode`).toBeAttached();
   }
@@ -425,7 +425,7 @@ test('the time-linked charts share one crosshair', async ({ page }) => {
   const requests = page.getByTestId('chart-requests-per-second');
   const users = page.getByTestId('chart-concurrent-users');
   for (const id of [...TIME_AXIS_IDS, ...OTHER_IDS]) {
-    await expect(page.getByTestId(`chart-${id}`).locator('svg')).toHaveCount(1);
+    await expect(plot(page.getByTestId(`chart-${id}`))).toHaveCount(1);
   }
 
   // Nothing is hovered, so no chart has a pointer. Asserted across all eight,
@@ -438,7 +438,7 @@ test('the time-linked charts share one crosshair', async ({ page }) => {
   // Hovering requests/s must move the pointer on concurrent users too — that
   // linkage is why active users is its own chart rather than a second y-axis
   // on requests/s.
-  await requests.locator('svg').hover({ position: { x: 200, y: 60 } });
+  await plot(requests).hover({ position: { x: 200, y: 60 } });
   await expect.poll(() => users.locator(AXIS_POINTER).count()).toBeGreaterThan(0);
 
   // ALL FIVE, and ONLY the five. The pointer reaching every time-axis chart is
@@ -524,7 +524,7 @@ test('a completed run with no data explains every chart rather than showing empt
   // NOT EMPTY AXES. A grid with no marks reads as "we measured, and there was
   // nothing"; the truth here is "nothing was recorded", and the two are acted
   // on differently. No chart may draw at all.
-  await expect(figures(page).locator('svg')).toHaveCount(0);
+  await expect(plot(figures(page))).toHaveCount(0);
 
   // Each one says so in its own words, naming what is missing.
   for (const id of CHART_IDS) {
@@ -564,7 +564,7 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
   // table opened before then is a table on an element about to be replaced, and
   // its disclosure state goes with it. That is a real (if brief) behaviour of
   // the page, not a test artefact; what it is not is what this test is about.
-  await expect(figures(page).locator('svg')).toHaveCount(CHART_IDS.length);
+  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
 
   for (const id of CHART_IDS) {
     const table = page.getByTestId(`chart-data-${id}`);
@@ -573,8 +573,11 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     await expect(table).not.toBeVisible();
 
     // The button that controls THIS table, found the way assistive tech finds
-    // it: `aria-controls`. Picking the nth "Show data table" button by index
-    // would assert nothing about which table it opens.
+    // it: `aria-controls`. Picking the nth toggle by index would assert
+    // nothing about which table it opens. It is an icon button in the card's
+    // header now rather than a text button below the chart, and this query is
+    // deliberately unchanged by that — which is the point of finding it by the
+    // relationship rather than by its label.
     const toggle = page.locator(`button[aria-controls="chart-data-${id}"]`);
     await expect(toggle).toHaveCount(1);
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -582,7 +585,71 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     await toggle.click();
     await expect(table).toBeVisible();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    // ═══ THE TABLE REPLACES THE PLOT ═══
+    //
+    // The whole reason the control moved into the header. Only a browser can
+    // see this: `hidden` is applied to a wrapper and jsdom applies no
+    // stylesheet, so `toBeVisible()` there would answer for reasons unrelated
+    // to the component.
+    await expect(plot(page.getByTestId(`chart-${id}`))).toBeHidden();
+
+    // And back, so it is a real toggle rather than one-way — with the plot
+    // returning rather than merely the table going away.
+    await toggle.click();
+    await expect(table).not.toBeVisible();
+    await expect(plot(page.getByTestId(`chart-${id}`))).toBeVisible();
   }
+});
+
+test('a chart can fill the screen, and Escape brings it back', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
+
+  const figure = page.getByTestId('chart-requests-per-second');
+  const dialog = figure.locator('dialog');
+
+  // A modal `<dialog>` paints in the TOP LAYER, so it can be a child of the
+  // figure without being clipped by it — which is what keeps every
+  // figure-scoped query working while the canvas is inside it.
+  await expect(dialog).not.toBeVisible();
+  await figure.getByRole('button', { name: 'Show the chart full screen' }).click();
+  await expect(dialog).toBeVisible();
+
+  // THE PLOT MOVED, AND REDREW. Expanding remounts the canvas in a new parent,
+  // which disposes the ECharts instance bound to the old node — so this is the
+  // assertion that catches a rebuilt instance nobody set an option on, the
+  // failure mode being a full-screen blank rectangle.
+  const expandedPlot = plot(dialog);
+  await expect(expandedPlot).toHaveCount(1);
+  await expect(expandedPlot.locator('path').first()).toBeAttached();
+
+  // ═══ CENTRED, AND THIS IS NOT A COSMETIC ASSERTION ═══
+  //
+  // A modal `<dialog>` centres itself with the UA stylesheet's `margin: auto`,
+  // and Tailwind's preflight resets `margin: 0` on every element — so the
+  // dialog silently pins to the top-left corner unless it asks for the margin
+  // back. Shipped exactly that way once and measured at (0, 0) in a 1440×900
+  // viewport. Nothing but a browser can see it: jsdom lays out nothing, and
+  // the class list looks entirely reasonable either way.
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize()!;
+  const leftGap = box!.x;
+  const rightGap = viewport.width - (box!.x + box!.width);
+  expect(Math.abs(leftGap - rightGap), 'the dialog is not horizontally centred').toBeLessThan(2);
+
+  // Escape, not the button: it is the platform's own affordance for a modal
+  // dialog, and it closes the element WITHOUT going through React — so this
+  // is what proves `onClose` puts the component's state back in step. Without
+  // it the dialog would be shut while the canvas stayed inside it, and the
+  // card would be left permanently empty.
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(plot(figure)).toHaveCount(1);
+  await expect(plot(figure)).toBeVisible();
 });
 
 /* ------------------------------------------------------------------ *
@@ -617,7 +684,7 @@ async function valueAxisTicks(chart: Locator): Promise<string[]> {
  * `bands` state with it. A click landing before then is silently undone.
  */
 async function settled(page: Page): Promise<void> {
-  await expect(figures(page).locator('svg')).toHaveCount(CHART_IDS.length);
+  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
 }
 
 test('the percentile chart draws on a log axis by default, and the toggle really switches it', async ({
@@ -681,7 +748,7 @@ test('the tooltip reads at the same precision the data table does', async ({ pag
   // `122.74516052680153` for a percentile whose parity tolerance is two
   // decimals. `Chart` now hands ECharts the same `formatCell` the table uses.
   const chart = page.getByTestId('chart-percentiles');
-  await chart.locator('svg').hover({ position: { x: 300, y: 120 } });
+  await plot(chart).hover({ position: { x: 300, y: 120 } });
 
   const tooltip = chart.locator('[_echarts_instance_] > div').nth(1);
   await expect(tooltip).toBeVisible();
@@ -827,7 +894,7 @@ test('deselecting every band explains itself rather than drawing an empty grid',
   // bucket count, so an empty SELECTION drew 62 axis labels and zero series —
   // the picture that says "we measured this and there was nothing here", for
   // data that is entirely intact.
-  await expect(chart.locator('svg')).toHaveCount(0);
+  await expect(plot(chart)).toHaveCount(0);
   await expect(chart.locator('[role="status"]')).toHaveCount(1);
   await expect(chart).toContainText(/no percentile bands are selected/i);
   // Names the remedy: unlike every other empty state on this page, the reader
@@ -844,7 +911,7 @@ test('deselecting every band explains itself rather than drawing an empty grid',
 
   // One click back and it draws again.
   await page.getByTestId('band-p95-percentiles').click();
-  await expect(chart.locator('svg')).toHaveCount(1);
+  await expect(plot(chart)).toHaveCount(1);
 
   // A second band, and the legend appears with exactly those two — which also
   // pins the "a legend only from two series up" rule from the other side: with
@@ -922,12 +989,12 @@ test('the scrubber is a real chart, and it really draws a slider', async ({ page
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));
 
-  // ONE `<svg>` in the strip's figure, exactly like every other chart. This is
+  // ONE `<svg>` in the strip's plot, exactly like every other chart. This is
   // the assertion that settles the question the design turned on: an ECharts
-  // dataZoom draws INSIDE the single svg root its instance emits, so the
-  // invariant nine other specs rest on is untouched by adding a slider.
+  // dataZoom draws INSIDE the single svg root its instance emits, so adding a
+  // slider costs no extra root.
   const strip = page.getByTestId('chart-time-window');
-  await expect(strip.locator('svg')).toHaveCount(1);
+  await expect(plot(strip)).toHaveCount(1);
 
   /**
    * AND THE SLIDER IS ACTUALLY THERE.
@@ -944,7 +1011,7 @@ test('the scrubber is a real chart, and it really draws a slider', async ({ page
    * chart's carries only its axis.
    */
   const bottomBandCount = (testId: string) =>
-    page.getByTestId(testId).locator('svg').evaluate((el) => {
+    plot(page.getByTestId(testId)).evaluate((el) => {
       const box = el.getBoundingClientRect();
       return Array.from(el.querySelectorAll('*')).filter((node) => {
         const r = node.getBoundingClientRect();
@@ -984,7 +1051,7 @@ test('dragging the scrubber commits a window in milliseconds, not axis noise', a
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));
 
-  const strip = page.getByTestId('chart-time-window').locator('svg');
+  const strip = plot(page.getByTestId('chart-time-window'));
   await expect(strip).toHaveCount(1);
 
   // SCROLLED INTO VIEW BEFORE ANY GEOMETRY IS TAKEN, because this is the one

@@ -1,4 +1,28 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+
+/**
+ * The SVG root ECharts drew, within some scope — a figure, the compare
+ * overlay, the time-window strip.
+ *
+ * ═══ WHY THIS IS NOT `scope.locator('svg')` ═══
+ *
+ * It was, in twenty-two places, and that spelling quietly made a design rule
+ * out of a test convenience: a chart `<figure>` could contain no other SVG,
+ * ever, because `toHaveCount(1)` counted every one of them. CLAUDE.md carried
+ * the rule as a flat prohibition on icons inside a chart card, which is a
+ * strange thing for a design system to be told by its test suite.
+ *
+ * `[data-chart-canvas]` is the element `Chart` renders the instance into, so
+ * this asks the question the assertions always meant — "did the plot draw?" —
+ * and is strictly harder to satisfy than the old form, which an icon anywhere
+ * in the card could have answered.
+ *
+ * Use it for anything reaching into what ECharts produced: counting the root,
+ * hovering a point, reading axis labels, `evaluate`-ing the SVG element.
+ */
+export function plot(scope: Locator): Locator {
+  return scope.locator('[data-chart-canvas] svg');
+}
 
 /**
  * Drives the real login form through the browser. The account itself is

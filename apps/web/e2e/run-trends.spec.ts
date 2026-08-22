@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 import { runPath, runTrendsPath } from '../src/routes/paths.js';
 
 /**
@@ -29,7 +29,7 @@ function figures(page: Page): Locator {
 }
 
 async function settled(page: Page): Promise<void> {
-  await expect(figures(page).locator('svg')).toHaveCount(CHART_IDS.length);
+  await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
 }
 
 test('the tab is reachable at its own URL and draws every figure', async ({ page }) => {
@@ -51,7 +51,7 @@ test('the tab is reachable at its own URL and draws every figure', async ({ page
   expect(rendered).toEqual(CHART_IDS.map((id) => `chart-${id}`));
 
   for (const id of CHART_IDS) {
-    await expect(page.getByTestId(`chart-${id}`).locator('svg'), `${id} drew no SVG`).toHaveCount(1);
+    await expect(plot(page.getByTestId(`chart-${id}`)), `${id} drew no SVG`).toHaveCount(1);
     // The parity surface: every chart carries its data table unconditionally.
     await expect(page.getByTestId(`chart-data-${id}`)).toHaveCount(1);
   }

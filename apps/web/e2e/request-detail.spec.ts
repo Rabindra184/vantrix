@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 
 /**
  * §13.3 in a real browser.
@@ -75,9 +75,9 @@ test('every §13.3 element is on the page', async ({ page }) => {
   // carrying a data table is not the same as having drawn anything.)
   //
   // `getByText` (as the brief originally wrote it) is ambiguous here: each
-  // chart's `<figcaption>`-like data-table `<caption>` opens with the same
-  // words as the chart's own `<h3>` title ("Number of requests — every value
-  // plotted above…", from `DataTable`'s caption), so an un-exact text locator
+  // chart's data-table `<caption>` opens with the same words as the chart's
+  // own `<h3>` title ("Number of requests — every value this chart
+  // plots…", from `DataTable`'s caption), so an un-exact text locator
   // resolves to two elements and Playwright's strict mode rejects it. Scoped
   // to the heading role instead, which is what the title actually is.
   await expect(
@@ -100,7 +100,7 @@ test('the scatter draws a mark for every point in its data table', async ({ page
   await page.goto(`/runs/${runId}/requests/${encodeURIComponent(NESTED)}`);
 
   const chart = page.getByTestId('chart-scatter');
-  const svg = chart.locator('svg');
+  const svg = plot(chart);
   await expect(svg).toHaveCount(1);
 
   // WHY THIS IS NOT `path.first()` — the assertion the §13.3 test above and
