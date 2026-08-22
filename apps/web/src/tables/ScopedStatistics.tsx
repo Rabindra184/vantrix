@@ -2,7 +2,7 @@ import type { StatRow } from '@perfportal/contracts';
 import { useId, useMemo } from 'react';
 import Card from '../components/Card';
 import SectionHeading from '../components/SectionHeading';
-import { ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD } from '../components/tableStyles';
+import { ROW, SCROLLER, TABLE, TD_NUM, THEAD, TH_NUM } from '../components/tableStyles';
 import { columnsFor, type Column } from './StatisticsTable';
 
 /**
@@ -63,7 +63,9 @@ export default function ScopedStatistics({
                   // `run-tables.spec.ts` matches these headers by exact name
                   // and `title` does not contribute to the name while visible
                   // text would.
-                  <th key={c.column} scope="col" title={c.hint} className={TH}>
+                  // `TH_NUM`: every column here is a `TD_NUM` cell below, so
+                  // every heading right-aligns with it.
+                  <th key={c.column} scope="col" title={c.hint} className={TH_NUM}>
                     {c.label}
                   </th>
                 ))}

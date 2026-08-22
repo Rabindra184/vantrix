@@ -15,7 +15,19 @@ import Button from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { EmptyState } from '../components/States';
 import TableFrame from '../components/TableFrame';
-import { INPUT, ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
+import {
+  INPUT,
+  ROW,
+  ROW_TOTAL,
+  TABLE,
+  TD,
+  TD_NUM,
+  TH,
+  THEAD,
+  TH_GROUP,
+  TH_NUM,
+  TH_ROW,
+} from '../components/tableStyles';
 import { downloadCsv, toCsv } from './csv';
 
 /**
@@ -700,14 +712,16 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 onSort={sortBy}
                 rowSpan={2}
                 style={{ paddingLeft: indentFor(0) }}
+                align="left"
               />
               {/* The two headings that SPAN columns are not columns: there is
                   nothing to sort by, and a control here would have to guess
-                  which of the five it meant. */}
-              <th colSpan={columns.executions.length} scope="colgroup" className={TH}>
+                  which of the five it meant. Centred over their span for the
+                  same reason — see `TH_GROUP`. */}
+              <th colSpan={columns.executions.length} scope="colgroup" className={TH_GROUP}>
                 Executions
               </th>
-              <th colSpan={columns.responseTime.length} scope="colgroup" className={TH}>
+              <th colSpan={columns.responseTime.length} scope="colgroup" className={TH_GROUP}>
                 Response Time (ms)
               </th>
             </tr>
@@ -731,10 +745,18 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               tables. Task 6 reorders the second one; this one never moves. */}
           {total !== null && (
             <tbody>
+              {/* `ROW_TOTAL`, not `${ROW} font-semibold`. `ROW`'s
+                  `last:border-0` matches the last row of THIS `<tbody>`, which
+                  a lone totals row always is — so the row that most needs a
+                  rule under it was the only one in the table without one. It
+                  also carries the fill that makes it read as a summary rather
+                  than as a slightly bolder data row. Its own hover is dropped
+                  with the same change, which is right: nothing here is a link,
+                  and the rows below hover because each one leads somewhere. */}
               <tr
                 data-testid="stat-row-total"
                 data-scope="run"
-                className={`${ROW} font-semibold`}
+                className={ROW_TOTAL}
               >
                 <th
                   scope="row"
@@ -756,7 +778,13 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                   // StatisticsTable.test.tsx's "does not cancel the inherited
                   // bold on the totals row name cell" — swap this to `TH_ROW`
                   // and that test fails.
-                  className={TD}
+                  // `whitespace-nowrap` for the same reason every `TD_NUM`
+                  // carries it: this is a fixed two-word label, and a table
+                  // that already scrolls horizontally should widen rather than
+                  // break "All Requests" across two lines. A request NAME may
+                  // wrap — those are arbitrary and can be long — but the
+                  // totals label is neither.
+                  className={`${TD} whitespace-nowrap`}
                   style={{ paddingLeft: indentFor(0) }}
                 >
                   {/* Gatling's own wording. Not a link: this is the run, and
@@ -857,6 +885,7 @@ function SortableHeader({
   onSort,
   rowSpan,
   style,
+  align = 'right',
 }: {
   column: SortColumn;
   label: string;
@@ -866,6 +895,12 @@ function SortableHeader({
   onSort: (column: SortColumn) => void;
   rowSpan?: number;
   style?: CSSProperties;
+  /**
+   * Defaults to `right` because twelve of the thirteen headings sit over
+   * `TD_NUM` cells, and a heading has to line up with the values under it —
+   * see `TH_NUM`. Only the row-name column is `left`, and it says so.
+   */
+  align?: 'left' | 'right';
 }) {
   const sorted = sort.column === column;
 
@@ -878,7 +913,7 @@ function SortableHeader({
       // `none` on the others, not nothing: a column that CAN be sorted and
       // currently is not is a different thing from one that cannot be.
       aria-sort={sorted ? ARIA_SORT[sort.direction] : 'none'}
-      className={TH}
+      className={align === 'left' ? TH : TH_NUM}
     >
       <button
         type="button"
