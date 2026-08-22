@@ -303,9 +303,14 @@ export default function ProjectRail() {
  *
  * A function rather than a constant because `NavLink` supplies `isActive`, and
  * the active row is the only place the accent appears in the rail. The active
- * treatment is THREE signals, not one: a tinted fill, a heavier weight, and
- * the accent as text colour — so it survives a monochrome print-out and a
- * forced-colours theme, the same rule `marks.tsx` follows for status.
+ * treatment is THREE signals, not one: a card-raised fill (`bg-surface` — the
+ * card colour is one step lighter than the sidebar in both themes, the same
+ * "active = raised" language `ThemeToggle`'s segments speak), a heavier
+ * weight, and an accent edge bar drawn by a `before:` pseudo-element — CSS
+ * only, so the row's textContent, which `ProjectRail.test.tsx` pins verbatim,
+ * gains nothing. Forced-colours mode drops both backgrounds; the weight and
+ * the primary-vs-muted text colour are the signals that survive it, the same
+ * rule `marks.tsx` follows for status.
  *
  * `h-9` fixes the row height explicitly. It is what makes
  * `project-rail.spec.ts`'s equal-height assertion structural rather than
@@ -326,7 +331,7 @@ function rowClasses(collapsed: boolean, isActive: boolean) {
     // every other collapsed treatment; the phone strip never collapses.
     collapsed && 'lg:justify-center lg:px-0',
     isActive
-      ? 'bg-accent/10 font-semibold text-accent'
+      ? "relative bg-surface font-semibold text-primary shadow-panel before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent before:content-['']"
       : 'font-medium text-muted hover:bg-sunken hover:text-primary',
   );
 }

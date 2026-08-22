@@ -30,12 +30,15 @@ import type { Mark } from '../routes/marks';
  */
 export default function Badge({ mark }: { readonly mark: Mark }) {
   return (
-    // `rounded-full`: a status is a stamp, not a box — the pill silhouette is
-    // what separates it at a glance from the rectangular controls (buttons,
-    // inputs) that share these rows, and it is the shape every status chip in
-    // the reference design language uses.
+    // An LED readout, per the control-room redesign: squared corners and the
+    // mono face are what separate a status STAMP from the rounded, sans
+    // controls that share these rows. `rounded-md`, not `rounded-full` — the
+    // pill silhouette moved to interactive chips, and a status is not one.
+    // The label's case is whatever the mark data carries: `text-transform`
+    // here would change the accessible name Playwright computes (CLAUDE.md's
+    // uppercase rule), so the LED look leans on face and tracking instead.
     <span
-      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[12px] font-medium"
+      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium tracking-wide"
       style={{ color: mark.colour }}
     >
       {/* `aria-hidden`, and the word beside it carries the meaning — a screen

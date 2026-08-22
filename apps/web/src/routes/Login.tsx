@@ -91,7 +91,7 @@ export default function Login() {
           {/* The brand mark, at the one moment the product has to introduce
               itself. Same tile as the rail's, so the page a user lands on and
               the app they land in are visibly the same product. */}
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-white shadow-raised">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-on-brand shadow-raised">
             <ActivityIcon className="h-6 w-6" />
           </span>
           <div className="flex flex-col gap-1">

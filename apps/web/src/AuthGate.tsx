@@ -112,7 +112,7 @@ export default function AuthGate() {
 function Bootstrapping() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-3 p-6">
-      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-white shadow-raised">
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-on-brand shadow-raised">
         <ActivityIcon className="h-6 w-6" />
       </span>
       <p role="status" className="text-[13px] text-muted">

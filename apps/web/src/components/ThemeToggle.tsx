@@ -50,7 +50,10 @@ export default function ThemeToggle() {
     <div
       role="radiogroup"
       aria-label="Colour theme"
-      className="flex items-center gap-0.5 rounded-lg border border-default bg-sunken p-0.5"
+      // A pill, matching the redesign's segmented controls — the silhouette
+      // change is the whole restyle; the three segments, their names and the
+      // no-effect mount discipline above are untouched.
+      className="flex items-center gap-0.5 rounded-full border border-default bg-sunken p-0.5"
     >
       {OPTIONS.map(({ value, label, Icon }) => {
         const active = value === choice;
@@ -67,7 +70,7 @@ export default function ThemeToggle() {
             aria-label={`${label} theme`}
             title={`${label} theme`}
             onClick={() => select(value)}
-            className={`transition-ui flex h-7 w-7 items-center justify-center rounded-md ${
+            className={`transition-ui flex h-7 w-7 items-center justify-center rounded-full ${
               active
                 ? 'bg-surface text-primary shadow-panel'
                 : 'text-muted hover:text-primary'

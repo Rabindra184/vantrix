@@ -179,9 +179,18 @@
    */
   --color-on-accent: var(--color-accent-foreground);
   --color-brand-mark: var(--color-brand);
+  /* Same convention as `on-accent`, for the same silent-failure reason: the
+     glyph on the brand tile must be ink in BOTH themes (white on #f97316 is
+     2.8:1), and `on-brand` cannot collide with its runtime token's name. */
+  --color-on-brand: var(--color-brand-foreground);
 
   --font-sans: var(--font-family-sans);
   --font-mono: var(--font-family-mono);
+  /* Generates `font-display` — the DISPLAY face (Space Grotesk) for the few
+     places a component reaches it directly (the run page's verdict word);
+     headings get the family from the base-layer rule below instead, one
+     decision rather than thirty files. */
+  --font-display: var(--font-family-display);
 
   --shadow-panel: var(--elevation-panel);
   --shadow-raised: var(--elevation-raised);
@@ -205,18 +214,22 @@
 :root {
   color-scheme: light;
 
-  --color-surface-page: #f8fafc;
+  --color-surface-page: #f5f7fb;
   --color-surface-card: #ffffff;
-  --color-surface-sidebar: #ffffff;
-  --color-surface-sunken: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-rule: #f1f5f9;
-  --color-text-primary: #0f172a;
-  --color-text-muted: #475569;
-  --color-accent-base: #4f46e5;
+  --color-surface-sidebar: #f9fafd;
+  --color-surface-sunken: #eef1f7;
+  --color-border: #dde4ee;
+  --color-rule: #edf1f7;
+  --color-text-primary: #0f1524;
+  --color-text-muted: #5a6a83;
+  --color-accent-base: #c2410c;
   --color-accent-foreground: #ffffff;
   --color-ring: #8b5cf6;
   --color-brand: #f97316;
+  /* Ink in BOTH themes — declared once, like --header-height below: the tile's
+     fill is the theme-invariant brand orange, so its foreground is
+     theme-invariant too, and a copy per dark block would only be drift. */
+  --color-brand-foreground: #0d1220;
 
   --color-status-passed: #047857;
   --color-status-failed: #dc2626;
@@ -252,8 +265,13 @@
   --chart-pct-p99: #f97316;
   --chart-pct-max: #ef4444;
 
-  --font-family-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-family-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+  --font-family-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-family-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+  /* The display face falls back through the sans stack: a heading drawn in
+     Inter while Space Grotesk loads is the right degradation, not a
+     different one. Declared once — typefaces do not vary by theme. */
+  --font-family-display:
+    'Space Grotesk', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   /*
    * The shell header's height — 56px, and the ONE place it is a number.
@@ -297,9 +315,21 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* `cv11` disambiguates the single-storey `a`; `ss01` is Geist's own
-     stylistic set. Both are no-ops for the fallback stack. */
-  font-feature-settings: 'cv11', 'ss01';
+  /* `cv11` is Inter's single-storey `a` — calmer at UI sizes than the
+     default double-storey. A no-op for the fallback stack. */
+  font-feature-settings: 'cv11';
+}
+
+/* Headings wear the DISPLAY face (Space Grotesk) as one decision here rather
+   than a `font-display` class in every route. h4–h6 are deliberately left on
+   the body face: below h3 this app's headings are table captions and card
+   titles, where a second family reads as noise rather than hierarchy.
+   Components keep their own size/weight/tracking utilities — those sort after
+   this base rule, so nothing fights. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-family-display);
 }
 
 /* A form control smaller than 16px makes iOS Safari zoom the viewport on
@@ -338,16 +368,16 @@ pre {
   :root:not([data-theme='light']) {
     color-scheme: dark;
 
-    --color-surface-page: #0b0d12;
-    --color-surface-card: #101319;
-    --color-surface-sidebar: #0d1015;
-    --color-surface-sunken: #171b23;
-    --color-border: #232833;
-    --color-rule: #191d25;
-    --color-text-primary: #e8ecf4;
-    --color-text-muted: #94a3b8;
-    --color-accent-base: #818cf8;
-    --color-accent-foreground: #0b0d12;
+    --color-surface-page: #0d1220;
+    --color-surface-card: #151c2c;
+    --color-surface-sidebar: #101727;
+    --color-surface-sunken: #0f1524;
+    --color-border: #273349;
+    --color-rule: #1e2941;
+    --color-text-primary: #e8edf6;
+    --color-text-muted: #8c99af;
+    --color-accent-base: #f97316;
+    --color-accent-foreground: #0d1220;
     --color-ring: #a78bfa;
     --color-brand: #f97316;
 
@@ -402,16 +432,16 @@ pre {
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --color-surface-page: #0b0d12;
-  --color-surface-card: #101319;
-  --color-surface-sidebar: #0d1015;
-  --color-surface-sunken: #171b23;
-  --color-border: #232833;
-  --color-rule: #191d25;
-  --color-text-primary: #e8ecf4;
-  --color-text-muted: #94a3b8;
-  --color-accent-base: #818cf8;
-  --color-accent-foreground: #0b0d12;
+  --color-surface-page: #0d1220;
+  --color-surface-card: #151c2c;
+  --color-surface-sidebar: #101727;
+  --color-surface-sunken: #0f1524;
+  --color-border: #273349;
+  --color-rule: #1e2941;
+  --color-text-primary: #e8edf6;
+  --color-text-muted: #8c99af;
+  --color-accent-base: #f97316;
+  --color-accent-foreground: #0d1220;
   --color-ring: #a78bfa;
   --color-brand: #f97316;
 
