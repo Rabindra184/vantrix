@@ -60,7 +60,7 @@ export default function TelemetryCharts({
   return (
     // TWO COLUMNS FROM `2xl`, ONE BELOW IT — the same break `RunChartsTab`
     // uses and for the same reason: each figure holds a 288px plot plus a
-    // legend plus a data-table toggle, and two of those in a 1280px window
+    // legend beneath a header row, and two of those in a 1280px window
     // leaves too little room for a 60-plus-point time axis to label itself.
     <section aria-labelledby="load-generators-heading" className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
       {/* `sr-only`, not `aria-label`: see `RunChartsTab`'s own heading for the

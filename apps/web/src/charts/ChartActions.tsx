@@ -13,6 +13,25 @@ import { formatCell } from './DataTable';
 import type { ChartTableRow } from './types';
 
 /**
+ * The clipboard API was not there at all, which is a fact about the PAGE: it
+ * is exposed only in a secure context, so plain http on anything but localhost
+ * has none. Worth saying plainly, because the remedy is to use https.
+ */
+const NOT_SECURE = 'Copy unavailable — this page is not a secure context.';
+
+/**
+ * The API was present and refused. This deliberately does NOT guess why —
+ * denied permission, an unfocused document and a missing user gesture all
+ * land here and the page cannot tell them apart.
+ */
+const BLOCKED = 'Copy was blocked by the browser.';
+
+type CopyState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'done' }
+  | { readonly kind: 'failed'; readonly message: string };
+
+/**
  * A chart card's own view controls: swap the plot for its numbers, take those
  * numbers away as a file or on the clipboard, and fill the screen with the
  * plot.
@@ -79,7 +98,7 @@ export default function ChartActions({
    */
   readonly expandable: boolean;
 }) {
-  const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
+  const [copied, setCopied] = useState<CopyState>({ kind: 'idle' });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The "Copied" acknowledgement is transient, and a component unmounted
@@ -112,24 +131,37 @@ export default function ChartActions({
       2,
     );
 
+    // ═══ TWO DIFFERENT FAILURES, AND THEY MUST NOT SHARE A SENTENCE ═══
+    //
     // THE CLIPBOARD IS ABSENT ON ANY PAGE THAT IS NOT A SECURE CONTEXT —
     // plain http on anything but localhost, i.e. an ordinary way to reach an
     // on-prem install. Optional-chaining it would make `await undefined`
     // resolve and this would report success over a copy that went nowhere,
     // which is the exact bug the token screen shipped once already.
     if (navigator.clipboard === undefined) {
-      setCopied('failed');
+      setCopied({ kind: 'failed', message: NOT_SECURE });
       return;
     }
+
+    // A REJECTED WRITE IS A DIFFERENT FACT. The API can be present on a page
+    // that IS secure and still refuse: the permission was denied, the document
+    // was not focused, or the browser requires a user gesture this call did not
+    // inherit. Observed for real — a secure localhost page with
+    // `navigator.clipboard` defined, rejecting with NotAllowedError while the
+    // message on screen claimed the page was insecure.
+    //
+    // So this reports what is KNOWN rather than a cause it has not
+    // established, the same discipline the token revoke follows when it says a
+    // token "may still be active" instead of guessing.
     try {
       await navigator.clipboard.writeText(payload);
-      setCopied('done');
     } catch {
-      setCopied('failed');
+      setCopied({ kind: 'failed', message: BLOCKED });
       return;
     }
+    setCopied({ kind: 'done' });
     if (timer.current !== null) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied('idle'), 2000);
+    timer.current = setTimeout(() => setCopied({ kind: 'idle' }), 2000);
   };
 
   return (
@@ -152,14 +184,12 @@ export default function ChartActions({
           because the button's own icon has already turned into a check. A
           silent copy failure is indistinguishable from success, and the reader
           is about to paste. */}
-      {copied !== 'idle' && (
+      {copied.kind !== 'idle' && (
         <p
           role="status"
-          className={copied === 'failed' ? 'mr-1 text-[11px] text-muted' : 'sr-only'}
+          className={copied.kind === 'failed' ? 'mr-1 text-[11px] text-muted' : 'sr-only'}
         >
-          {copied === 'failed'
-            ? 'Copy unavailable — this page is not a secure context.'
-            : 'Chart data copied to the clipboard.'}
+          {copied.kind === 'failed' ? copied.message : 'Chart data copied to the clipboard.'}
         </p>
       )}
 
@@ -180,7 +210,7 @@ export default function ChartActions({
         disabledReason="This chart has no data to copy."
         onClick={() => void copyJson()}
       >
-        {copied === 'done' ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
+        {copied.kind === 'done' ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
       </IconButton>
 
       <IconButton
