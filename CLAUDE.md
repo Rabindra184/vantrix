@@ -65,10 +65,39 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **127 files / 1358 tests**, it
+`nvm use` first, and if a run reports fewer than **127 files / 1360 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the
+silently-skipped run looks like a pass. Last measured on the rail-layout
+branch, which added no unit FILE and 2 cases to `apps/web/test/Badge.test.tsx`,
+from a floor of 127 / 1358. Its integration floor stays 120 files / 1418 tests
+(every file it touches is a `.tsx` integration never runs) and its **e2e rises
+to 96**.
+
+TWO THINGS FROM IT.
+
+FIRST, A `truncate` DEFECT IS INVISIBLE TO EVERY TEXT ASSERTION. `truncate` is
+`text-overflow: ellipsis`, which leaves the full string in the DOM — so
+`textContent` is identical whether a name is clipped or not, and every
+existing assertion in `ProjectRail.test.tsx` and `project-rail.spec.ts` passed
+while the rail was clipping fourteen-character project names. Only
+`scrollWidth > clientWidth` can see it, and only in a browser. What caused it
+is worth as much as the fix: the badge is `shrink-0` and the name is the
+flexible one, so a 119px status word took its width out of the NAME's budget —
+"Search Service" needed 94px and got 84. **A `shrink-0` sibling is a claim on
+space that something else pays for, and the payer is whatever has
+`truncate`.**
+
+SECOND, THE RAIL'S ACTIVE-ROW FILL WAS NEVER DOING THE JOB ITS COMMENT
+CLAIMED. `ProjectRail`'s docstring described `bg-surface` as a "card-raised"
+signal, the card colour being one step lighter than the sidebar in both
+themes. Measured, that step is **1.05:1 in dark and 1.04:1 in light** — one
+step lighter, and very nearly nothing. What a reader actually sees is the
+accent `before:` bar (6.38:1 / 4.96:1) and, since this pass, the accent-
+coloured ICON (6.07:1 / 5.18:1). The claim was not false, it was just not
+load-bearing, which is the harder kind of stale comment to notice.
+
+Before that, the
 chart-header-controls branch, which added ONE unit file —
 `apps/web/test/ChartActions.test.tsx` (13) — from a floor of 126 / 1345.
 Its integration floor stays 120 files / 1418 tests (every file it touches is a
