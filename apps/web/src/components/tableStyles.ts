@@ -79,11 +79,15 @@ export const THEAD = 'bg-sunken';
  * `textContent`), so the unit suite would have stayed green — precisely the
  * failure mode CLAUDE.md records as belonging to Playwright.
  *
- * The hierarchy the uppercase was buying comes from size, weight and colour
- * instead, none of which touch the accessible name.
+ * The hierarchy the uppercase was buying comes from size, face, weight and
+ * colour instead, none of which touch the accessible name. The control-room
+ * redesign added the MONO face and widened the tracking for the same reason:
+ * an instrument panel's column labels read as chrome, distinct from prose,
+ * without a single transformed character — `Percentage` still names
+ * `Percentage`.
  */
 export const TH =
-  'bg-sunken px-3 py-2 text-[11px] font-semibold tracking-[0.02em] text-muted whitespace-nowrap';
+  'bg-sunken px-3 py-2 font-mono text-[11px] font-medium tracking-[0.06em] text-muted whitespace-nowrap';
 export const ROW = 'transition-ui border-b border-divider last:border-0 hover:bg-sunken';
 export const TD = 'px-3 py-2 align-middle';
 export const TD_NUM = 'px-3 py-2 text-right align-middle font-mono tabular-nums whitespace-nowrap';

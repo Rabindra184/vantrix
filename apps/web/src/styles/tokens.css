@@ -241,13 +241,13 @@
   --chart-status-not-applicable: #94a3b8;
   --chart-status-pending: #f59e0b;
 
-  --chart-1: #4f46e5;
-  --chart-2: #0d9488;
-  --chart-3: #8b5cf6;
+  --chart-1: #0186bf;
+  --chart-2: #7c3aed;
+  --chart-3: #d52c85;
   --chart-4: #d97706;
-  --chart-5: #0ea5e9;
-  --chart-6: #e11d48;
-  --chart-gridline: #e9ecf0;
+  --chart-5: #0d9488;
+  --chart-6: #a11bb4;
+  --chart-gridline: #e9eef6;
 
   --chart-band-under: var(--chart-status-passed);
   --chart-band-between: var(--chart-status-pending);
@@ -391,13 +391,13 @@ pre {
     --chart-status-not-applicable: #94a3b8;
     --chart-status-pending: #f59e0b;
 
-    --chart-1: #6c71fe;
-    --chart-2: #30a79a;
-    --chart-3: #9469ff;
+    --chart-1: #059ddf;
+    --chart-2: #9469ff;
+    --chart-3: #ec4899;
     --chart-4: #d77500;
-    --chart-5: #059ddf;
-    --chart-6: #ee2f52;
-    --chart-gridline: #262c33;
+    --chart-5: #30a79a;
+    --chart-6: #d946ef;
+    --chart-gridline: #1f2a40;
 
     --chart-band-under: var(--chart-status-passed);
     --chart-band-between: var(--chart-status-pending);
@@ -455,13 +455,13 @@ pre {
   --chart-status-not-applicable: #94a3b8;
   --chart-status-pending: #f59e0b;
 
-  --chart-1: #6c71fe;
-  --chart-2: #30a79a;
-  --chart-3: #9469ff;
+  --chart-1: #059ddf;
+  --chart-2: #9469ff;
+  --chart-3: #ec4899;
   --chart-4: #d77500;
-  --chart-5: #059ddf;
-  --chart-6: #ee2f52;
-  --chart-gridline: #262c33;
+  --chart-5: #30a79a;
+  --chart-6: #d946ef;
+  --chart-gridline: #1f2a40;
 
   --chart-band-under: var(--chart-status-passed);
   --chart-band-between: var(--chart-status-pending);
