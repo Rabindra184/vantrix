@@ -35,7 +35,15 @@ function operations(doc: AnyDoc): { path: string; method: string; op: { response
 async function fetchDoc(): Promise<AnyDoc> {
   ctx = await createTestApp();
   const res = await request(ctx.app.getHttpServer()).get('/v1/openapi.json');
-  expect(res.status).toBe(200);
+  // The BODY in the message, not just the code. This helper is called by every
+  // test in the file, so when it fails the failure lands on whichever test got
+  // there first and reads "expected 401 to be 200" while naming neither the
+  // endpoint nor the reason. One occurrence of exactly that cost a full
+  // investigation; the next one explains itself.
+  expect(
+    res.status,
+    `GET /v1/openapi.json -> ${res.status}: ${JSON.stringify(res.body).slice(0, 300)}`,
+  ).toBe(200);
   return res.body as AnyDoc;
 }
 

@@ -25,6 +25,31 @@ export class AppModule implements NestModule {
    * /healthz and /readyz are outside /v1 and stay unauthenticated on purpose.
    */
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(AuthMiddleware).forRoutes('v1/*path');
+    consumer
+      // THE API DESCRIPTION IS ALREADY PUBLIC — THIS ONLY MAKES IT
+      // DETERMINISTIC.
+      //
+      // `mountOpenApi` registers /v1/docs and /v1/openapi.json straight onto
+      // the Express instance BEFORE `app.init()` (see main.ts and
+      // test/support/app.ts), and Express matches in registration order — so
+      // those two have always resolved ahead of this middleware and answered
+      // 200 with no credential. Measured against the real bootstrap, not
+      // assumed: unauthenticated, /v1/openapi.json and /v1/docs both return
+      // 200 while /v1/runs returns 401.
+      //
+      // Relying on that ordering is the problem. Nothing declares it, nothing
+      // tests it, and any future change to when Swagger is mounted flips
+      // these two routes from public to 401 with no failing assertion to say
+      // so — `openapi.integration.test.ts` asserts 200 from `fetchDoc()`, so
+      // the symptom would be that whole file failing on whichever test
+      // happened to call it first, naming nothing.
+      //
+      // Excluding them states the existing contract instead of inheriting it
+      // from a side effect. It widens nothing: both were already reachable
+      // without a credential, and `openapi-public.integration.test.ts` pins
+      // that /v1/runs still is not.
+      .apply(AuthMiddleware)
+      .exclude('v1/openapi.json', 'v1/docs', 'v1/docs/*path')
+      .forRoutes('v1/*path');
   }
 }
