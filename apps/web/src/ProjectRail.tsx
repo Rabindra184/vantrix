@@ -130,7 +130,26 @@ export default function ProjectRail() {
         // one: this repo's motion rule (`tokens.css`'s `transition-ui`) is
         // colour-ish properties only — width is laid out on the main thread
         // and drops frames on a page already drawing eight ECharts instances.
-        collapsed ? 'lg:w-14' : 'lg:w-[17rem]',
+        //
+        // ═══ 18rem, AND THE LAST rem OF IT WAS BOUGHT BY A CI FAILURE ═══
+        //
+        // A rail row is an icon, a project NAME that truncates, and a status
+        // badge that does not. Making the badge compact bought the name back
+        // the width a status word had been taking from it — but only about 5px
+        // of slack on the machine it was measured on, and text metrics are not
+        // the same on the Linux runner that gates this. `project-rail.spec.ts`
+        // passed locally three times and failed there twice, deterministically,
+        // on a fourteen-character name.
+        //
+        // Slack that thin is not a fix, it is the same bug with a smaller
+        // margin. This is 16px of real headroom instead, which is also why the
+        // spec now prints the two widths when it fails: the next person to move
+        // this number should not have to guess by how much.
+        //
+        // Gatling Enterprise's own nav is 183px — but it carries no badges, and
+        // that is the whole difference. This column holds two variable-width
+        // things per row, so it costs more.
+        collapsed ? 'lg:w-14' : 'lg:w-[18rem]',
       )}
     >
       {/* An overline, not a heading: the `<nav>` below is already named

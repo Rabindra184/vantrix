@@ -170,8 +170,18 @@ test('a status badge does not clip the project name beside it', async ({ page })
   // the name is clipped or not, and every existing assertion in this file
   // passes either way. The only thing that changes is scrollWidth against
   // clientWidth. Before the badge was made compact this read 94 against 84.
-  const clipped = await name.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
-  expect(clipped, 'the project name is being clipped by the badge beside it').toBe(false);
+  //
+  // THE NUMBERS GO IN THE MESSAGE because this assertion is about TEXT METRICS,
+  // which differ between the machine that writes the fix and the Linux runner
+  // that gates it. The first version of this test passed locally with about
+  // 5px of slack and failed on CI, where the same string measures wider — and
+  // the failure said only "true, expected false", which is the least useful
+  // thing it could have said about a five-pixel problem.
+  const box = await name.evaluate((el) => ({ needs: el.scrollWidth, gets: el.clientWidth }));
+  expect(
+    box.needs,
+    `the project name is being clipped by the badge beside it: needs ${box.needs}px, gets ${box.gets}px`,
+  ).toBeLessThanOrEqual(box.gets + 1);
 });
 
 test('a long badge label does not make its rail row taller', async ({ page }) => {
