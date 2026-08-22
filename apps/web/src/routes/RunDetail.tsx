@@ -496,9 +496,15 @@ export function RunOverviewTab() {
     );
   }
 
+  // Captured HERE, not read inside `TableSection`'s children callback below:
+  // TypeScript drops the narrowing that proved this run is terminal once the
+  // expression moves into a closure, and a terminal run is the only shape
+  // that carries assertions at all.
+  const runAssertions = run.data.run.assertions;
+
   return (
     <>
-      <Assertions runId={runId} assertions={run.data.run.assertions} />
+      <Assertions runId={runId} assertions={runAssertions} />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
       {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
@@ -527,6 +533,7 @@ export function RunOverviewTab() {
             <RunStats
               stats={data}
               baseline={window === null ? baselineRun(trends.data, runId) : null}
+              assertions={runAssertions}
             />
             {/* THE TILES ARE NEVER WITHHELD. They are the whole point of the
                 mobile summary — §22.6 names "key tiles, sparklines, verdict,
@@ -925,7 +932,7 @@ function Assertions({
   if (assertions.length === 0) {
     return (
       <section className="flex flex-col gap-3">
-        <SectionHeading>Assertions</SectionHeading>
+        <SectionHeading overline="Evidence">Assertions</SectionHeading>
         <EmptyState
           title="No SLA rules were evaluated against this run"
           body="Rules are configured per project, and only rules that existed when the run was ingested are applied to it."
@@ -937,7 +944,7 @@ function Assertions({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeading>Assertions</SectionHeading>
+        <SectionHeading overline="Evidence">Assertions</SectionHeading>
         <Button
           size="sm"
           onClick={() => downloadCsv(`run-${runId}-assertions.csv`, assertionsCsv(assertions))}

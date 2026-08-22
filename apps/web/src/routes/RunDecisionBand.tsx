@@ -96,8 +96,13 @@ export default function RunDecisionBand({
               the type scale, which is the whole point of shell chrome that
               answers ship/no-ship. `break-words` because "Not evaluated" is
               two words and must wrap inside its column rather than widen it. */}
+          {/* `uppercase` is the mockups' own treatment and it is safe HERE for
+              the reason CLAUDE.md's corrected note gives: `text-transform`
+              is a RENDERING property, so `textContent` stays "Failed" and
+              nothing computed from it — this band contributes no heading and
+              no accessible name — changes. */}
           <p
-            className="font-display text-4xl leading-none font-semibold tracking-tight break-words sm:text-5xl"
+            className="font-display text-4xl leading-none font-semibold tracking-tight break-words uppercase sm:text-5xl"
             style={{ color: decisionColour(decision, counts) }}
           >
             {word}
