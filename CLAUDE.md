@@ -72,16 +72,33 @@ silently-skipped run looks like a pass. Last measured on the duration-is-activit
 FILE and 2 cases to `packages/statistics/test/parity.test.ts`, from a floor of
 124 / 1297. Its integration floor is 117 files / 1351 tests (that `.ts` file
 runs there too, plus `PT-G-13` in `parity.e2e.test.ts`) and its e2e stays 94.
+The openapi-public branch then took integration to 118 files / 1355 tests --
+one new integration FILE, `apps/api/test/openapi-public.integration.test.ts`
+(4) -- leaving the unit floor at 124 / 1299 and e2e at 94, since it adds no
+`.tsx` file and no spec.
 
 TWO THINGS FROM THAT BRANCH, AND THE SECOND IS ABOUT HOW TO RUN THIS GATE.
 
-FIRST, `apps/api/test/openapi.integration.test.ts` FLAKES ON `main`, and it is
-not yours. `/v1/openapi.json` is registered by Nest's Swagger module rather
-than by a decorated controller, so it races the global auth guard and answers
-401 intermittently; `fetchDoc()` asserts 200, so the failure lands on
-WHICHEVER test called it first and appears to move around the file. Measured
-by stashing every local change and running the file three times on `main`: it
-failed 2 of 3. Before blaming a branch for it, do that.
+FIRST, `apps/api/test/openapi.integration.test.ts` FAILED ONCE WITH
+`expected 401 to be 200`, AND WAS NEVER REPRODUCED. Recorded because the
+investigation is more useful than the verdict. The file passes 4 of 4 in
+isolation and the full suite passes clean on an idle stack; one occurrence
+stands, mechanism undiagnosed. An earlier note here claimed it "fails 2 of 3
+on main" — that measurement was taken while a queued e2e was running and is
+worthless; see the second point. Do not trust a flake rate measured against a
+busy stack, including one your own diagnosis is keeping busy.
+
+What the investigation DID establish, by measuring the real bootstrap:
+`/v1/openapi.json` and `/v1/docs` answer 200 with no credential while
+`/v1/runs` answers 401. Those two were public only as a SIDE EFFECT OF MOUNT
+ORDERING — `mountOpenApi` registers them on Express before `app.init()`, and
+Express matches in registration order, so they resolved ahead of
+`AuthMiddleware`, which excludes nothing. `app.module.ts` states that contract
+explicitly now and `openapi-public.integration.test.ts` pins it. Note which
+case guards it: `/v1/runs` stays 401 even under a wide-open `exclude('v1/*path')`,
+because `AuthGuard` still runs for MATCHED routes — only the
+unimplemented-path case (must 401, never 404) catches an over-broad exclusion,
+and it was verified red exactly that way.
 
 SECOND, "RUN INTEGRATION BEFORE e2e" IS NOT ENOUGH — NOTHING ELSE MAY TOUCH
 THE STACK WHILE EITHER RUNS, INCLUDING DIAGNOSIS. Three ad-hoc integration
