@@ -388,8 +388,24 @@ model SlaRule {
   threshold  Float
   enabled    Boolean @default(true)
 
+  /// A human label, and NULLABLE because every rule that existed before
+  /// authoring did was inserted by a fixture with nothing to call it. The
+  /// table falls back to `describeAssertionRule()` for those, which is what
+  /// the run page has always shown.
+  name String?
+
+  /// TIMESTAMPTZ, not a bare timestamp. Nothing reads these through the raw
+  /// pool today — but `run`'s columns were bare timestamps read only through
+  /// Prisma too, until one raw-pool read reported a start time 5h30m out on
+  /// an Asia/Kolkata machine and stayed invisible in UTC. See CLAUDE.md.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  /// Serves `listEnabled`, which is the hot path (every run, batch and live).
+  /// The authoring list is per-project, unfiltered and small, so it rides the
+  /// same index prefix rather than earning one of its own.
   @@index([projectId, enabled])
   @@map("sla_rule")
 }
