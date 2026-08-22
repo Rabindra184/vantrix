@@ -9,6 +9,7 @@ import {
   RunnerRepository,
   RunRepository,
   RuleRepository,
+  TestRepository,
   TokenRepository,
 } from '@perfportal/persistence';
 import pg from 'pg';
@@ -30,6 +31,7 @@ export const CONFIG = Symbol('CONFIG');
     { provide: RunnerRepository, useFactory: (p: PrismaClient) => new RunnerRepository(p), inject: [PrismaClient] },
     { provide: RunRepository, useFactory: (p: PrismaClient) => new RunRepository(p), inject: [PrismaClient] },
     { provide: RuleRepository, useFactory: (p: PrismaClient) => new RuleRepository(p), inject: [PrismaClient] },
+    { provide: TestRepository, useFactory: (p: PrismaClient) => new TestRepository(p), inject: [PrismaClient] },
     AuthGuard,
     AuthMiddleware,
     // Global so @Scopes() is enforced everywhere by default — a handler
@@ -38,6 +40,6 @@ export const CONFIG = Symbol('CONFIG');
     // AuthGuard provider above, not a second one.
     { provide: APP_GUARD, useExisting: AuthGuard },
   ],
-  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, AuthGuard, AuthMiddleware],
+  exports: [CONFIG, PrismaClient, pg.Pool, TokenRepository, OrgMemberRepository, ProjectRepository, RunnerRepository, RunRepository, RuleRepository, TestRepository, AuthGuard, AuthMiddleware],
 })
 export class AuthModule {}

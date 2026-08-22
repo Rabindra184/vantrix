@@ -326,6 +326,40 @@ const parameters: Record<string, ParameterObject> = {
       'act on a leaked token from the list alone.',
     schema: { type: 'string' },
   },
+  TestProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'A project slug. Resolved against the caller\'s own organisation for a session, and ' +
+      'against the token\'s own project for a bearer credential. A slug outside what the ' +
+      'credential can see 404s rather than 403, so the response never confirms that another ' +
+      'organisation\'s project exists.',
+    schema: { type: 'string' },
+  },
+  TestSlug: {
+    name: 'testSlug',
+    in: 'path',
+    required: true,
+    description:
+      'A test slug, unique WITHIN its project rather than across the organisation — derived ' +
+      'from the simulation class the first time a run of it was parsed. Not the simulation ' +
+      'class itself: two classes can slugify to the same string, and the second one to arrive ' +
+      'takes a numeric suffix.',
+    schema: { type: 'string' },
+  },
+  RunListTest: {
+    name: 'test',
+    in: 'query',
+    description:
+      'Narrow to one test\'s runs, by its slug. REQUIRES "project" TOO — a test slug is unique ' +
+      'within its project, not across the organisation, so the pair is what identifies it; ' +
+      'sending "test" alone is a 400 (code TEST_NEEDS_PROJECT) rather than a guess. A bearer ' +
+      'token already names a project and so needs only this. Runs with no test — still pending, ' +
+      'or a bundle that never parsed — match no value of this, which is correct: they are not ' +
+      'runs of any test yet.',
+    schema: { type: 'string' },
+  },
   RuleProjectSlug: {
     name: 'slug',
     in: 'path',
@@ -492,6 +526,18 @@ const responses: Record<string, ResponseObject> = {
       'application/problem+json with a required "remediation".',
     content: problem(),
   },
+  InvalidTestUpdate: {
+    description:
+      'The request body failed UpdateTestRequestSchema (code INVALID_TEST_UPDATE): it named ' +
+      'neither "name" nor "description", or a value was blank or too long, or the body carried ' +
+      'a field the schema does not know — it is `.strict()`, so an extra field lands here ' +
+      'rather than being ignored. IN PARTICULAR "simulationClass" IS REJECTED: it is the key a ' +
+      'parsed run is matched on, so changing it would not rename the test, it would split its ' +
+      'history — every future run of the old class would start a second test while the runs ' +
+      'already recorded stayed on this one, with nothing erroring. Send "description": null to ' +
+      'clear a description; omitting the field leaves it alone.',
+    content: problem(),
+  },
   InvalidSlaRule: {
     description:
       'The request body failed CreateSlaRuleRequestSchema (code INVALID_SLA_RULE), or the ' +
@@ -606,6 +652,7 @@ const paths: Record<string, PathItemObject> = {
         parameters['Limit']!,
         parameters['Cursor']!,
         parameters['ProjectFilter']!,
+        parameters['RunListTest']!,
         parameters['RunSearch']!,
         parameters['RunStatusFilter']!,
         parameters['RunVerdictFilter']!,
@@ -1139,6 +1186,93 @@ const paths: Record<string, PathItemObject> = {
           description: 'Revoked (or already was). The token\'s current summary, "revokedAt" now set.',
           content: json(schemaRef('TokenSummary')),
         },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/tests': {
+    get: {
+      operationId: 'listProjectTests',
+      summary: "List a project's tests",
+      tags: ['tests'],
+      description:
+        'The tests this project runs — the layer between a project and its runs. A test is the ' +
+        'thing "Trends" has always compared: runs of one simulation, in one project, over time. ' +
+        'Newest first. EITHER CREDENTIAL, unlike the SLA rule routes beside it: reading which ' +
+        'tests exist is an ordinary read, and resolving "which test am I about to add a run to" ' +
+        'is exactly what a CI job needs. Each entry carries "runCount" and "latestRun" because ' +
+        'a list is useless without them and a caller cannot assemble them cheaply — it would be ' +
+        'one request per test. "latestRun" reports STATUS beside verdict: a pending run has a ' +
+        'null verdict, and reading that as "not evaluated" states a fact about a run nobody has ' +
+        'measured yet.',
+      parameters: [parameters['TestProjectSlug']!],
+      responses: {
+        '200': {
+          description: "This project's tests, newest first.",
+          content: json(schemaRef('TestListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/tests/{testSlug}': {
+    get: {
+      operationId: 'getProjectTest',
+      summary: 'Read one test',
+      tags: ['tests'],
+      description:
+        'One test, with its run count and latest run. 404 (code NOT_FOUND) when "testSlug" ' +
+        'names no test in this project — including one belonging to a different project or ' +
+        'organisation, which answers the same 404 rather than confirming it exists elsewhere.',
+      parameters: [parameters['TestProjectSlug']!, parameters['TestSlug']!],
+      responses: {
+        '200': { description: 'The test.', content: json(schemaRef('TestSummary')) },
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+      },
+    },
+    patch: {
+      operationId: 'updateProjectTest',
+      summary: 'Rename or re-describe a test',
+      tags: ['tests'],
+      // SESSION-ONLY, and for a different reason than the token and rule
+      // routes. Renaming a test is not dangerous — it is a label, not a gate.
+      // It is that a name is a HUMAN's choice about how their organisation
+      // reads, and a machine credential has no business making it: a CI job
+      // that could rename a test would rename it on every run.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 response below). ONLY "name" AND "description" MAY CHANGE. ' +
+        'A test\'s simulation class is fixed: it is the key the worker matches a parsed run on, ' +
+        'so editing it would not rename the test, it would SPLIT it — every future run of the ' +
+        'old class would create a second test and start a second history, while the runs already ' +
+        'recorded stayed here, and nothing would error. The slug is fixed for a smaller reason: ' +
+        'it is a URL people share. There is no create endpoint, because a test exists because a ' +
+        'run of it was parsed — the simulation class belongs to the tool, not to a caller ' +
+        'inventing one. There is no delete either: it would orphan the runs the test grouped, ' +
+        'which needs its own design.',
+      parameters: [parameters['TestProjectSlug']!, parameters['TestSlug']!],
+      requestBody: {
+        required: true,
+        description:
+          'At least one of "name" or "description". Unmentioned fields keep their values; ' +
+          '"description": null clears it.',
+        content: json(schemaRef('UpdateTestRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'Updated. The test as it now stands, with "updatedAt" advanced.',
+          content: json(schemaRef('TestSummary')),
+        },
+        '400': ref('InvalidTestUpdate'),
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
         '404': ref('NotFound'),

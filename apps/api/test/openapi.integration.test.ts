@@ -260,6 +260,40 @@ describe('OpenAPI document', () => {
     }
   });
 
+  /**
+   * The tests routes SPLIT their guards, unlike the token and rule routes
+   * beside them, so the document has to say so per operation. Reading which
+   * tests exist is an ordinary read a CI job has every reason to make; naming
+   * one is a human's choice about how their org reads.
+   *
+   * Two assertions, not one: that the PATCH overrides to cookieAuth, AND that
+   * the GETs do NOT. Only the pair catches the split collapsing in either
+   * direction — a GET that quietly became session-only would lock out the
+   * bearer callers it exists for, and no other test here would notice.
+   */
+  it('keeps the test PATCH cookieAuth-only while its GETs take either credential', async () => {
+    const doc = await fetchDoc();
+
+    const patch = doc.paths?.['/v1/projects/{slug}/tests/{testSlug}']?.['patch'] as
+      | { security?: Record<string, unknown>[] }
+      | undefined;
+    expect(patch, 'PATCH /v1/projects/{slug}/tests/{testSlug} must be declared').toBeTruthy();
+    expect(patch?.security).toEqual([{ cookieAuth: [] }]);
+
+    for (const path of ['/v1/projects/{slug}/tests', '/v1/projects/{slug}/tests/{testSlug}']) {
+      const get = doc.paths?.[path]?.['get'] as { security?: unknown[] } | undefined;
+      expect(get, `GET ${path} must be declared`).toBeTruthy();
+      // No override at all: it inherits the document-level "either credential".
+      expect(get?.security, `GET ${path} must not narrow to one credential`).toBeUndefined();
+    }
+  });
+
+  it('declares the test filter on GET /v1/runs', async () => {
+    const doc = await fetchDoc();
+    const get = doc.paths?.['/v1/runs']?.['get'] as { parameters?: { name?: string }[] } | undefined;
+    expect(get?.parameters?.map((p) => p.name)).toContain('test');
+  });
+
   it('documents the new component schemas', async () => {
     const doc = await fetchDoc();
     for (const name of ['DistributionResponse', 'UsersResponse', 'ScatterResponse', 'IndicatorBands']) {

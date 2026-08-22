@@ -9,3 +9,4 @@ export * from './live.js';
 export * from './live-delta.js';
 export * from './runner.js';
 export * from './rules.js';
+export * from './test.js';

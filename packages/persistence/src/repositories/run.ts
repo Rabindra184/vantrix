@@ -181,6 +181,16 @@ export interface RunListOptions {
   readonly status?: RunStatus;
   readonly verdict?: RunVerdictFilter;
   readonly q?: string;
+  /**
+   * Narrow to one test's runs. A UUID, not a slug: a slug is unique per
+   * PROJECT, so resolving it needs the project, and the API has already done
+   * that by the time it gets here — passing the slug down would make this
+   * repository resolve it a second time or take a project it does not need.
+   *
+   * A run with `test_id IS NULL` — still pending, never parsed — matches no
+   * value of this, which is correct: it is not a run of any test yet.
+   */
+  readonly testId?: string;
 }
 
 function fromSqlRow(row: RunSqlRow): RunRecord {
@@ -670,6 +680,10 @@ export class RunRepository {
         `(COALESCE(r.tool_started_at, r.started_at), r.id) < ` +
           `($${params.length - 1}::timestamptz(3), $${params.length}::uuid)`,
       );
+    }
+    if (opts.testId) {
+      params.push(opts.testId);
+      filters.push(`r.test_id = $${params.length}::uuid`);
     }
     if (opts.status) {
       params.push(opts.status);
