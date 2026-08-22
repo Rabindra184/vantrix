@@ -65,11 +65,78 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **124 files / 1300 tests**, it
+`nvm use` first, and if a run reports fewer than **126 files / 1345 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the redesign-run-page
-branch, which added no unit FILE and 1 case to
+silently-skipped run looks like a pass. Last measured on the sla-rule-authoring
+branch, which added TWO unit files — `packages/contracts/test/rules.test.ts`
+(29) and `apps/web/test/ProjectRules.test.tsx` (12) — from a floor of
+124 / 1304, which is FIVE TESTS ABOVE the 124 / 1299 recorded below and
+measured on `main` itself rather than inferred by subtraction. The integration
+and e2e figures were both accurate; only the unit test count had drifted. That
+is the drift this parenthetical exists to catch, and it is worth knowing it
+happens even while the FILE count stays right — a branch that adds cases to an
+existing file moves one number and not the other, which is the easier of the
+two to forget. Its integration floor is 120 files / 1418 tests: `rules.test.ts`
+is a `.ts` file integration runs too, plus one new integration FILE
+(`apps/api/test/rules.integration.test.ts`, 33) and one case added to
+`openapi.integration.test.ts`. Its e2e stays 94.
+
+THREE THINGS FROM IT, AND THE FIRST IS A TRAP THIS FILE ALREADY WARNS ABOUT
+IN THE OTHER DIRECTION. A page-wide `getByRole('alert')` silently changes
+meaning when a page grows a second thing that can fail: it stops asking "did
+the revoke fail" and starts asking "did ANYTHING fail". Composing
+`ProjectRules` into `ProjectSetup` broke two token tests that way — the
+rules panel's own load failure (its query has no server under jsdom)
+answered the query first. Unlike the `ProjectRail` link collision, jsdom CAN
+see this one, because both alerts are in ONE document rather than in two
+components rendered apart. The fix is the same either way: scope the query
+to the block it means (`token-mint`, `token-list`), and mock the new
+section's data the way the file already mocked the others. **A page with N
+independently-failing sections cannot be asserted on with an unscoped
+`alert` query, and the assertion does not fail when it goes wrong — it just
+starts passing for a different reason.**
+
+SECOND, THE 201 CARVE-OUT IN `openapi.integration.test.ts` IS
+BIDIRECTIONAL AND THAT IS THE POINT. Adding `POST /v1/projects/{slug}/rules`
+to `CREATES_SYNCHRONOUSLY` does not wave it through: the allowlist branch
+ASSERTS the operation still declares 201, so an operation that drops it
+while its handler keeps returning 201 fails there rather than being skipped.
+The standard it had to meet is the one already written down — a handler that
+awaits a single Prisma insert and returns the row it wrote, complete and
+addressable when the response is sent.
+
+THIRD, A UNIT FAILURE THAT NEVER REPRODUCED, recorded because the
+investigation is worth more than the verdict.
+`apps/web/test/RequestDetail.test.tsx`'s "renders the row it found, and says
+so when there is none" failed ONCE, on a branch that does not touch it, with
+a `request-stat-count` cell from that test's own FIRST render surviving into
+its second. It passes alone, and the full unit suite then passed six
+consecutive times at 126 / 1345, plus four runs of `apps/web/test` alone.
+That test does two renders in one case with an `unmount()` between them,
+which is the only unusual thing about it. One occurrence stands, mechanism
+undiagnosed — do not "fix" it on the strength of this note, and do not
+assume a new file caused it beyond perturbing timing.
+
+THE WHOLE GATE PASSED AND PROVED NOTHING ABOUT THE FEATURE, which is the
+fourth thing and the reason the section below this one exists. Every suite
+was green while the only question that mattered — does a rule authored here
+actually judge a run — was answered by no test in any of them, because the
+three suites between them never author a rule through the API and then feed
+a real simulation to the evaluator. Three real `gatlingRun` executions
+through `clients/gatling-gradle/e2e/e2e-project` did answer it, and it took
+about ten minutes: a run-scoped p95 gate PASSED at 645ms/800, an error-rate
+gate FAILED at 2.23%/1% and drove the run's verdict to `failed`, disabling
+that gate through PATCH flipped the NEXT run's verdict to `passed` with one
+assertion instead of two, and neither the disable nor a subsequent DELETE
+touched the assertion the first run had already recorded. A request-scoped
+rule authored through the browser form then failed `Search`'s p50 at 572ms
+against 100 — independently agreeing with `ParitySimulation`'s own
+deliberately-failing Gatling assertion about that same request, which is a
+cross-check no unit fixture can give you.
+
+Before that, the redesign-run-page
+branch added no unit FILE and 1 case to
 `apps/web/test/RunDecisionBand.test.tsx` — the gate tick strip follows the
 counts' own evaluated gate and stays aria-hidden — from a floor of 124 / 1299.
 Its integration floor stays 118 files / 1355 tests (the touched test file is

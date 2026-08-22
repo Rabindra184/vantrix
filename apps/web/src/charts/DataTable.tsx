@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import Button from '../components/Button';
-import { CAPTION, ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles';
+import { CAPTION, ROW, SCROLLER, TABLE, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import type { ChartTableRow } from './types';
 
 /**
@@ -154,11 +154,15 @@ export default function DataTable({
           </caption>
           <thead className={THEAD}>
             <tr className={ROW}>
-              {columns.map((column) => (
+              {columns.map((column, index) => (
                 // scope="col" is what makes a cell comprehensible when a
                 // screen reader announces it out of context: "OK, 12" rather
                 // than "12".
-                <th key={column} scope="col" className={TH}>
+                //
+                // The FIRST column is the row label (an elapsed offset, a
+                // request name) and is `TH_ROW`/left below; every other column
+                // is a `TD_NUM` value, so its heading right-aligns to match.
+                <th key={column} scope="col" className={index === 0 ? TH : TH_NUM}>
                   {column}
                 </th>
               ))}

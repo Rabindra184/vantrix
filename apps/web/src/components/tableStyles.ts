@@ -88,7 +88,62 @@ export const THEAD = 'bg-sunken';
  */
 export const TH =
   'bg-sunken px-3 py-2 font-mono text-[11px] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
+/**
+ * A NUMERIC column heading — `TH` plus the right alignment its cells already
+ * have.
+ *
+ * THE PAIRING IS THE RULE: a `TD_NUM` cell is right-aligned, so a `TH` above
+ * it must be too, or the heading sits at one edge of the column and every
+ * value at the other. On the statistics table that was thirteen columns of it
+ * — "Total" at the left edge, `895` at the right, with the eye asked to bridge
+ * a gap that widens with the column. Nothing failed, because alignment is not
+ * something any of these tables assert on and jsdom lays out nothing.
+ *
+ * `CompareMatrix` had already written `${TH} text-right` inline, which is what
+ * this constant is: the same fix, named once, so the next table gets it by
+ * reaching for the right constant rather than by remembering.
+ *
+ * Use `TH` for a text column (a name, a message, a status) and `TH_NUM`
+ * wherever the cells below are `TD_NUM`.
+ */
+export const TH_NUM =
+  'bg-sunken px-3 py-2 text-right font-mono text-[11px] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
+
+/**
+ * A heading that SPANS a group of numeric columns (`colSpan` > 1).
+ *
+ * Centred, not right-aligned: it names the whole group rather than any one
+ * column, and right-aligning it would park "EXECUTIONS" over the last of its
+ * five columns, which reads as a label for that column. Left-aligned — what it
+ * was — parks it over the FIRST, with the same wrong reading.
+ */
+export const TH_GROUP =
+  'bg-sunken px-3 py-2 text-center font-mono text-[11px] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
+
 export const ROW = 'transition-ui border-b border-divider last:border-0 hover:bg-sunken';
+
+/**
+ * A TOTALS row — the run's own aggregate, structurally apart in its own
+ * `<tbody>`.
+ *
+ * TWO THINGS `ROW` ALONE GETS WRONG HERE, and both were live.
+ *
+ * `border-b` rather than relying on `ROW`: `last:border-0` matches the last
+ * row OF ITS OWN `<tbody>`, and a totals row alone in its own body is always
+ * that row. So the one row that most needs a rule under it was the only row in
+ * the table without one — a silent consequence of the two-body structure,
+ * because `last:border-0` reads as "the last row of the table" and is not.
+ *
+ * `bg-sunken` because font-weight alone is not a distinction a reader can use.
+ * A totals row differing from thirteen columns of mono digits only by being
+ * semibold is a difference you have to already know about to see; the fill is
+ * what makes it read as a summary band at a glance, and it ties the row to the
+ * `THEAD` above it, which carries the same fill. Colour is not doing this
+ * alone — the weight stays, and the row is in its own `<tbody>` for anything
+ * listening rather than looking.
+ */
+export const ROW_TOTAL = 'border-b border-divider bg-sunken font-semibold';
+
 export const TD = 'px-3 py-2 align-middle';
 export const TD_NUM = 'px-3 py-2 text-right align-middle font-mono tabular-nums whitespace-nowrap';
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchProjects } from '../src/api/projects.js';
@@ -48,6 +48,19 @@ vi.mock('../src/api/tokens.js', async (importOriginal) => ({
   })),
 }));
 
+/**
+ * The rules panel is a third data-dependent section of this page, and this
+ * file is not about it — but leaving it unmocked does not leave it silent:
+ * its query fails against no server and it announces that, in a `role="alert"`
+ * the token tests below then resolved to instead of their own. Mocked to a
+ * quiet empty list, the same as projects and tokens above. `ProjectRules.test.tsx`
+ * is where the panel's own behaviour is pinned.
+ */
+vi.mock('../src/api/rules.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/rules.js')>()),
+  fetchProjectRules: vi.fn(async () => ({ rules: [] })),
+}));
+
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchProjectTokensMock = vi.mocked(fetchProjectTokens);
 const mintProjectTokenMock = vi.mocked(mintProjectToken);
@@ -68,6 +81,13 @@ afterEach(() => {
 });
 
 describe('ProjectSetup', () => {
+  // The two token blocks, so an assertion can name the one it means rather
+  // than resolving to whichever of the page's alerts happened to render.
+  /** The mint form and the once-only secret it reveals. */
+  const mintCard = () => screen.getByTestId('token-mint');
+  /** The token table and the revoke alert that sits above it. */
+  const tokenList = () => screen.getByTestId('token-list');
+
   function renderSetup() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     return render(
@@ -115,7 +135,10 @@ describe('ProjectSetup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
 
-    const alert = await screen.findByRole('alert');
+    // SCOPED to the token list, not `screen`. This page has several sections
+    // that each announce their own failures, so a page-wide alert query
+    // silently asks "did ANYTHING go wrong" rather than "did the revoke".
+    const alert = await within(tokenList()).findByRole('alert');
     // Names the token, and does NOT overclaim: a request that failed on the
     // way back may still have succeeded on the server.
     expect(alert).toHaveTextContent('pp_existing');
@@ -179,7 +202,7 @@ describe('ProjectSetup', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be copied/i);
+    expect(await within(mintCard()).findByRole('alert')).toHaveTextContent(/could not be copied/i);
     // And it must NOT claim success.
     expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();

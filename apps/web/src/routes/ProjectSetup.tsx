@@ -22,6 +22,7 @@ import {
 } from '../api/tokens';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { formatInstant } from './format';
+import ProjectRules from './ProjectRules';
 import useDocumentTitle from '../useDocumentTitle';
 import { projectNewRunnerRunPath, projectPath } from './paths';
 
@@ -161,7 +162,17 @@ function ProjectSetupLoaded({
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <Card title="API tokens" description="Issue scoped credentials for CI, agents, and runners.">
+        {/* `data-testid` so a test can scope a query to THIS block. The page
+            holds several independently-failing sections that each announce
+            their own failure, so a bare page-wide `getByRole('alert')` asks
+            "did anything go wrong" rather than "did the mint" — which is how
+            adding the rules panel below broke two token tests that were never
+            about rules. */}
+        <Card
+          title="API tokens"
+          description="Issue scoped credentials for CI, agents, and runners."
+          data-testid="token-mint"
+        >
           <form className="flex flex-col gap-4" onSubmit={submit}>
             <label className="flex min-w-0 flex-col gap-1.5">
               <span className="text-[13px] font-medium text-primary">Token name</span>
@@ -255,41 +266,55 @@ function ProjectSetupLoaded({
         </Card>
       </div>
 
-      {/* A FAILED REVOKE HAS TO SAY SO, and this is the one action where
-          silence is dangerous rather than merely unhelpful. Without it the
-          spinner simply stopped: the row still read "Active", nothing was
-          announced, and an operator revoking a LEAKED credential could not
-          tell that from success — the failure mode being "the attacker keeps
-          the token and you stop looking".
+      {/* Grouped, and at a TIGHTER gap than the page's own: the alert below
+          is about a row in the table below it, and the comment on it says as
+          much. The grouping is also the scope a test names to reach the
+          revoke alert rather than whichever alert the page happens to hold —
+          see `token-mint` above. */}
+      <div className="flex flex-col gap-3" data-testid="token-list">
+        {/* A FAILED REVOKE HAS TO SAY SO, and this is the one action where
+            silence is dangerous rather than merely unhelpful. Without it the
+            spinner simply stopped: the row still read "Active", nothing was
+            announced, and an operator revoking a LEAKED credential could not
+            tell that from success — the failure mode being "the attacker keeps
+            the token and you stop looking".
 
-          The wording does not claim the token is still live, because a
-          request that failed on the way back may well have succeeded on the
-          server. "May still be active" is what is actually known, and the
-          reload is how the reader finds out which it was. `role="alert"` so
-          it is announced when it appears, and it sits directly above the
-          table whose row the reader just acted on. */}
-      {revokeMutation.isError && (
-        <div
-          role="alert"
-          className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
-        >
-          <p className="font-medium">
-            {revokeMutation.variables === undefined
-              ? 'That token may still be active — revoking it did not complete.'
-              : `Token ${revokeMutation.variables} may still be active — revoking it did not complete.`}
-          </p>
-          <p className="mt-1 text-muted">{revokeProblem?.detail ?? revokeMutation.error.message}</p>
-          <p className="mt-1 text-muted">
-            {revokeProblem?.remediation ?? 'Reload the page to see its current state, then try again.'}
-          </p>
-        </div>
-      )}
+            The wording does not claim the token is still live, because a
+            request that failed on the way back may well have succeeded on the
+            server. "May still be active" is what is actually known, and the
+            reload is how the reader finds out which it was. `role="alert"` so
+            it is announced when it appears, and it sits directly above the
+            table whose row the reader just acted on. */}
+        {revokeMutation.isError && (
+          <div
+            role="alert"
+            className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
+          >
+            <p className="font-medium">
+              {revokeMutation.variables === undefined
+                ? 'That token may still be active — revoking it did not complete.'
+                : `Token ${revokeMutation.variables} may still be active — revoking it did not complete.`}
+            </p>
+            <p className="mt-1 text-muted">{revokeProblem?.detail ?? revokeMutation.error.message}</p>
+            <p className="mt-1 text-muted">
+              {revokeProblem?.remediation ?? 'Reload the page to see its current state, then try again.'}
+            </p>
+          </div>
+        )}
 
-      <TokenTable
-        query={tokens}
-        revoking={revokeMutation.isPending ? revokeMutation.variables ?? null : null}
-        onRevoke={(prefix) => revokeMutation.mutate(prefix)}
-      />
+        <TokenTable
+          query={tokens}
+          revoking={revokeMutation.isPending ? revokeMutation.variables ?? null : null}
+          onRevoke={(prefix) => revokeMutation.mutate(prefix)}
+        />
+      </div>
+
+      {/* Rules live BELOW tokens, and the order is the setup order: a project
+          needs a credential before it can receive a run, and a run before a
+          gate has anything to judge. `ProjectRules` owns its own queries and
+          mutations — this page composes it rather than growing a third
+          stateful section. */}
+      <ProjectRules slug={slug} />
     </div>
   );
 }
