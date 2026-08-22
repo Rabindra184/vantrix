@@ -312,6 +312,18 @@ export class PipelineService {
 
     const { assertions, verdict } = evaluateRules(evaluableRules, evaluable);
 
+    // ═══ WHICH TEST THIS IS A RUN OF ═══
+    //
+    // Resolved HERE, immediately before the transaction, and deliberately not
+    // inside it. See `resolveTestId` for why a slug collision must not be able
+    // to abort the write that finalizes the run.
+    //
+    // This is the moment the answer first exists: `result.simulation` is the
+    // class parsed out of the log header, and nothing before this point in a
+    // run's life knows it. `null` when the header declared none, which stays a
+    // run with no test rather than a test with no name.
+    const testId = await this.#resolveTestId(run, result.simulation);
+
     // Statistics, assertions, and the terminal status commit together. A run is
     // never observable with statistics but no verdict, or the reverse.
     const client = await this.pool.connect();
@@ -349,7 +361,7 @@ export class PipelineService {
       await client.query(
         `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now(),
                 tool_started_at = $4, simulation = $5, description = $6, duration_ms = $7,
-                tool_assertions = $8, activity_ms = $9
+                tool_assertions = $8, activity_ms = $9, test_id = $10
           WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
         [
           run.id, verdict, toolVersion, toolStartedAt,
@@ -363,6 +375,10 @@ export class PipelineService {
           // The MEASURED span, beside the series span above. See
           // `EngineResult.activityMs` for why the run page needs both.
           result.activityMs,
+          // Written in the SAME statement as `simulation`, which is the point:
+          // the string and the row it groups by can never disagree, because
+          // one UPDATE sets both or neither.
+          testId,
         ],
       );
 
@@ -375,7 +391,109 @@ export class PipelineService {
     }
   }
 
+  /**
+   * Resolve-or-create the `test` this run belongs to, by simulation class.
+   *
+   * ═══ THE SAME RULE THE MIGRATION USED, WHICH IS THE POINT ═══
+   *
+   * `20260822220000_test_entity` grouped history by `(project_id, simulation)`
+   * and derived a slug the same way. If this drifted from that, the backfill
+   * would be a one-off that the application immediately started contradicting
+   * — a second test for a class that already had one. Keeping the two rules
+   * identical is what makes the migration trustworthy rather than a snapshot.
+   *
+   * ═══ OUTSIDE THE FINALIZE TRANSACTION, DELIBERATELY ═══
+   *
+   * A constraint violation ABORTS a Postgres transaction — every later
+   * statement in it fails with "current transaction is aborted". Doing this
+   * inside the transaction that writes statistics, assertions and the terminal
+   * status would mean a slug collision could lose all of that, to decide a
+   * grouping. Its own connection instead, and its own failure mode: a run
+   * whose test could not be resolved is a run with `test_id IS NULL`, which is
+   * a state the schema already allows for pending and unparsed runs. The next
+   * run of the same class creates the test and adopts it.
+   *
+   * An orphan test with no runs is possible if this succeeds and the
+   * transaction below then fails. That is benign — the next run of that class
+   * finds and reuses it.
+   */
+  async #resolveTestId(run: RunRecord, simulation: string | null): Promise<string | null> {
+    // No class in the header is not a failure — it is a run that cannot say
+    // what it was. A test named `null` would be worse than no test.
+    if (simulation === null || simulation.trim() === '') return null;
+
+    const base = slugifySimulation(simulation);
+    try {
+      const existing = await this.pool.query<{ id: string }>(
+        `SELECT id FROM test WHERE project_id = $1 AND simulation_class = $2`,
+        [run.projectId, simulation],
+      );
+      if (existing.rows[0] !== undefined) return existing.rows[0].id;
+
+      // The slug is chosen and the row inserted in ONE statement, so the
+      // window between "this slug is free" and "this slug is mine" is as small
+      // as Postgres can make it. `ON CONFLICT (project_id, simulation_class)
+      // DO UPDATE` rather than DO NOTHING because only DO UPDATE returns a
+      // row — which is how a caller that lost the race still gets the id.
+      const inserted = await this.pool.query<{ id: string }>(
+        `WITH candidate AS (
+           SELECT CASE WHEN n = 1 THEN $3::text ELSE $3::text || '-' || n END AS slug
+             FROM generate_series(1, 50) AS n
+            WHERE NOT EXISTS (
+                  SELECT 1 FROM test t
+                   WHERE t.project_id = $2::uuid
+                     AND t.slug = CASE WHEN n = 1 THEN $3::text ELSE $3::text || '-' || n END)
+            ORDER BY n
+            LIMIT 1)
+         INSERT INTO test (id, org_id, project_id, slug, name, simulation_class, created_at, updated_at)
+         SELECT gen_random_uuid(), $1::uuid, $2::uuid, c.slug, $4, $4, now(), now()
+           FROM candidate c
+         ON CONFLICT (project_id, simulation_class) DO UPDATE SET updated_at = test.updated_at
+         RETURNING id`,
+        [run.orgId, run.projectId, base, simulation],
+      );
+      if (inserted.rows[0] !== undefined) return inserted.rows[0].id;
+
+      // Nothing returned means either a lost race or fifty taken slugs. One
+      // more read settles which, and costs nothing on the path that never
+      // gets here.
+      const after = await this.pool.query<{ id: string }>(
+        `SELECT id FROM test WHERE project_id = $1 AND simulation_class = $2`,
+        [run.projectId, simulation],
+      );
+      return after.rows[0]?.id ?? null;
+    } catch (err) {
+      // A run is worth more than its grouping. Failing the pipeline here would
+      // turn a naming problem into a lost result.
+      console.warn(
+        `run ${run.id}: could not resolve a test for simulation ${simulation}; ` +
+          `leaving it ungrouped: ${String(err)}`,
+      );
+      return null;
+    }
+  }
+
   async #publish(runId: string): Promise<void> {
     await this.pool.query(`SELECT pg_notify('run_terminal', $1)`, [runId]);
   }
+}
+
+/**
+ * A simulation class as a URL slug — the TypeScript half of a rule the
+ * migration also spells in SQL (`regexp_replace(lower(x), '[^a-z0-9]+', '-')`
+ * then trim). Two spellings of one rule is a real risk, and the mitigation is
+ * that `test-entity.integration.test.ts` asserts they agree on the same inputs
+ * rather than each agreeing with itself.
+ *
+ * A class that is entirely punctuation slugifies to nothing; `test` is the
+ * fallback, and the collision suffix then applies to it like any other base.
+ */
+export function slugifySimulation(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '');
+  return slug === '' ? 'test' : slug;
 }

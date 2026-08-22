@@ -68,7 +68,37 @@ only to show the scale of what disappears.
 `nvm use` first, and if a run reports fewer than **127 files / 1360 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the rail-layout
+silently-skipped run looks like a pass. The test-entity branch adds no unit
+FILE and no unit case — its whole surface is a migration, a worker rule and one
+INTEGRATION file — so the unit floor is unchanged while **integration rises to
+121 files / 1426 tests** (`apps/worker/test/test-entity.integration.test.ts`, 8)
+and e2e stays 96.
+
+TWO THINGS ABOUT RUNNING THE GATE, AND NEITHER IS ABOUT THE CODE.
+
+FIRST, `No space left on device` LOOKS LIKE TWO HUNDRED BROKEN TESTS. Docker's
+VM disk filled (1.9 GB free of 58.4 GB) and the integration suite failed across
+nearly every file at once — `LiveFoldOwner`, `PipelineService`, the OpenAPI
+document, the rules API, all of them. Not one message named the disk except a
+single Postgres line buried in the output: `could not create file
+"base/16384/…": No space left on device`. Everything downstream reported
+`Can't reach database server`, which reads like a stack problem and is not one.
+The PerfPortal database was 14 MB at the time — the suite's own data is never
+the cause. `docker system df` is the check, and `docker builder prune -f`
+reclaimed 20.4 GB with no images, volumes or containers touched. Re-run after
+that: 1426/1426.
+
+SECOND, `pnpm test:e2e` AT ITS DEFAULT FIVE WORKERS IS NOT RELIABLE ON A LOADED
+MACHINE. Five specs failed with missing run data — no statistics table, no
+error count, no compare chart — and every failure was a fixture whose data had
+not arrived. It reproduced on a tree with the branch's changes STASHED, and
+worse there (5 failures against 3), which is the measurement that matters: it
+is not the change under test. `--workers=2` passes 96/96, and CI passes at its
+own default. **Before believing an e2e failure that looks like missing data,
+re-run at `--workers=2`, and re-run it with your change stashed.** The second
+half is what separates "my change broke this" from "this machine is busy".
+
+Before that, the rail-layout
 branch, which added no unit FILE and 2 cases to `apps/web/test/Badge.test.tsx`,
 from a floor of 127 / 1358. Its integration floor stays 120 files / 1418 tests
 (every file it touches is a `.tsx` integration never runs) and its **e2e rises
