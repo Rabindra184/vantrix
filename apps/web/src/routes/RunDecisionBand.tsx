@@ -88,8 +88,16 @@ export default function RunDecisionBand({
             "Failed — release gate" — which is the verdict-first order the
             whole band exists to put on screen. */}
         <div className="flex min-w-0 flex-col justify-center gap-1 border-b border-divider p-4 lg:border-r lg:border-b-0 lg:p-5">
+          {/* 36px, rising to 48px from `sm`. The first cut was 30px flat and
+              read as a large label rather than as the page's verdict — this
+              band is the one place the redesign spends size, and at 30px the
+              `<h1>` above it (24px) was close enough to compete. It stays
+              BELOW the heading in the document's semantics and above it in
+              the type scale, which is the whole point of shell chrome that
+              answers ship/no-ship. `break-words` because "Not evaluated" is
+              two words and must wrap inside its column rather than widen it. */}
           <p
-            className="font-display text-3xl leading-none font-semibold tracking-tight break-words"
+            className="font-display text-4xl leading-none font-semibold tracking-tight break-words sm:text-5xl"
             style={{ color: decisionColour(decision, counts) }}
           >
             {word}
@@ -125,9 +133,14 @@ export default function RunDecisionBand({
           {evaluated && (
             <div aria-hidden="true" data-testid="gate-ticks" className="flex flex-wrap items-center gap-1">
               {tickMarks(counts).map((mark, index) => (
+                // 10px × 32px, squared rather than pill: this is a TEST STRIP,
+                // and a strip's ticks are bars. At 4px wide and fully rounded
+                // they read as dots — a row of beads that says "some things
+                // happened" rather than "here is every rule, and these two
+                // failed". Width is what makes an individual tick findable.
                 <span
                   key={index}
-                  className="h-5 w-1 rounded-full"
+                  className="h-8 w-2.5 rounded-sm"
                   style={{ backgroundColor: mark.colour }}
                 />
               ))}

@@ -85,8 +85,46 @@ export default function Login() {
     // the viewport WITHOUT the browser chrome, so a vertically-centred card
     // sits partly under the address bar until the user scrolls. `dvh` is the
     // dynamic height that accounts for it.
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 p-4 sm:p-6">
-      <div className="w-full max-w-sm">
+    <main className="relative flex min-h-dvh flex-col items-center justify-center gap-6 overflow-hidden p-4 sm:p-6">
+      {/* THE TRACE. The one decorative mark in the app, and it earns its place
+          by being the product's own subject matter: a latency trace, drawn at
+          the level of the wordmark so the brand sits ON the measurement rather
+          than beside a graphic.
+
+          `aria-hidden` and `pointer-events-none` — it carries no information a
+          reader needs and must never take a click meant for the card.
+
+          `text-muted` at 10%, NOT a `--chart-*` hue. The chart tokens are the
+          mark palette — they mean "this is a series" — and spending one on
+          decoration is the same overloading the semantic palettes exist to
+          prevent. A neutral at a tenth of its weight is dim enough that the
+          form stays the only thing on the page with contrast, and it moves
+          with the theme for free.
+
+          `preserveAspectRatio="none"` so it spans any viewport width without
+          the polyline re-scaling into a different shape; a decorative rule is
+          exactly the case that wants stretching rather than fitting.
+
+          It is NOT inside a <figure>, which matters: `run-charts.spec.ts`
+          counts SVG elements within chart figures to prove a chart really
+          drew, and a decorative <svg> in one of those would break nine specs
+          (CLAUDE.md's design-pass note). This page has no figure. */}
+      <svg
+        aria-hidden="true"
+        preserveAspectRatio="none"
+        viewBox="0 0 1440 120"
+        className="pointer-events-none absolute inset-x-0 top-[28%] h-24 w-full text-muted opacity-10"
+      >
+        <polyline
+          points="0,74 96,74 150,30 205,96 260,58 315,62 372,20 430,104 486,66 540,66 600,44 660,80 720,66 780,66 840,54 900,86 960,30 1020,96 1080,70 1140,58 1200,74 1260,44 1320,88 1380,66 1440,66"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+      </svg>
+
+      <div className="relative w-full max-w-sm">
         <header className="mb-6 flex flex-col items-center gap-3 text-center">
           {/* The brand mark, at the one moment the product has to introduce
               itself. Same tile as the rail's, so the page a user lands on and

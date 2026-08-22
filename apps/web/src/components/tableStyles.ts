@@ -69,25 +69,25 @@ export const THEAD = 'bg-sunken';
 /**
  * A column heading.
  *
- * NOT `uppercase`, and that is a correction rather than a taste. The overline
- * treatment every dashboard uses for column headings is `text-transform`, and
- * Playwright's accessible-name computation APPLIES `text-transform` — so
- * `Percentage` becomes the accessible name `PERCENTAGE`, and
- * `run-tables.spec.ts`'s `toHaveText(['Error', 'Count', 'Percentage'])` and
- * every `getByRole('columnheader', { name, exact: true })` in that file break
- * at once. jsdom sees none of it (`dom-accessibility-api` reads
- * `textContent`), so the unit suite would have stayed green — precisely the
- * failure mode CLAUDE.md records as belonging to Playwright.
+ * `uppercase`, MONO AND WIDE-TRACKED — the instrument-panel column label the
+ * control-room redesign draws.
  *
- * The hierarchy the uppercase was buying comes from size, face, weight and
- * colour instead, none of which touch the accessible name. The control-room
- * redesign added the MONO face and widened the tracking for the same reason:
- * an instrument panel's column labels read as chrome, distinct from prose,
- * without a single transformed character — `Percentage` still names
- * `Percentage`.
+ * This constant carried the OPPOSITE rule for most of its life ("NOT
+ * `uppercase`… Playwright's accessible-name computation APPLIES
+ * `text-transform`, so `Percentage` becomes `PERCENTAGE` and every
+ * `getByRole('columnheader', { name, exact: true })` breaks at once"). That
+ * was re-measured on Playwright 1.62.1 and does not reproduce: with
+ * `uppercase` on this constant the full e2e suite passes 94/94, including
+ * `run-tables.spec.ts`'s exact-name columnheader sweep.
+ *
+ * `text-transform` is a RENDERING property — `th.textContent` is still
+ * `Percentage`, so the computed name is unchanged and a screen reader reads
+ * the sentence-case word rather than spelling out capitals. See CLAUDE.md's
+ * corrected note for the measurement and for what genuinely IS still unsafe:
+ * uppercasing the DATA or an `aria-label`, which is what the name is made of.
  */
 export const TH =
-  'bg-sunken px-3 py-2 font-mono text-[11px] font-medium tracking-[0.06em] text-muted whitespace-nowrap';
+  'bg-sunken px-3 py-2 font-mono text-[11px] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
 export const ROW = 'transition-ui border-b border-divider last:border-0 hover:bg-sunken';
 export const TD = 'px-3 py-2 align-middle';
 export const TD_NUM = 'px-3 py-2 text-right align-middle font-mono tabular-nums whitespace-nowrap';
@@ -128,7 +128,14 @@ export const CAPTION = 'caption-top pb-3 text-left text-[13px] leading-relaxed t
  * globally in `tokens.css` to `input, select, textarea` under a max-width
  * media query, so an explicit size here would override it and re-introduce
  * the zoom.
+ *
+ * `bg-sunken`, NOT `bg-surface`, and the difference is the whole affordance.
+ * Every input in this app sits inside a card, and a card IS `bg-surface` —
+ * so a field painted the same colour as its container has no fill at all,
+ * only a hairline, and reads as an outlined box rather than as somewhere to
+ * type. A recessed well is what says "this is an input", which is why the
+ * redesign draws fields one step DOWN from the surface they sit on.
  */
 export const INPUT =
-  'transition-ui h-8 w-full min-w-0 rounded-lg border border-default bg-surface px-2.5 ' +
+  'transition-ui h-8 w-full min-w-0 rounded-lg border border-default bg-sunken px-2.5 ' +
   'placeholder:text-muted hover:border-muted';

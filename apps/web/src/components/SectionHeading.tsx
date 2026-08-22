@@ -15,13 +15,21 @@ import type { ReactNode } from 'react';
  * product, not an article, and a 32px section heading above a 13px table
  * spends a whole row of vertical space on a word.
  *
- * NOT `uppercase`, for the reason `tableStyles.ts`'s `TH` is not: Playwright's
- * accessible-name computation applies `text-transform`, so
- * `getByRole('heading', { name: 'Duration', exact: true })` — which
- * `group-detail.spec.ts` really does assert — would be looking for a heading
- * named `DURATION`. jsdom would not have caught it. The overline treatment is
- * fine for a `<dt>` or a rail label, where nothing queries by accessible name;
- * it is not fine on a heading.
+ * NOT `uppercase`, and the reason is now TYPOGRAPHIC rather than technical.
+ * The old reason was that Playwright's accessible-name computation applies
+ * `text-transform`, which would leave `getByRole('heading', { name:
+ * 'Duration', exact: true })` — `group-detail.spec.ts` really does assert
+ * that — hunting a heading named `DURATION`. That was re-measured on
+ * Playwright 1.62.1 while the redesign uppercased `tableStyles.ts`'s `TH`
+ * and `Badge`: the suite passes, because `text-transform` never touches
+ * `textContent`. So it would be SAFE here too (see CLAUDE.md's corrected
+ * note).
+ *
+ * It stays sentence case anyway. A section heading is prose — it names a
+ * region of the page a reader is reading, and the redesign's uppercase is
+ * chrome: column labels, overlines, status pills, the things that frame data
+ * rather than being it. `Simulation assertions` set in capitals would read as
+ * a label for the section rather than as its title.
  */
 export default function SectionHeading({
   children,

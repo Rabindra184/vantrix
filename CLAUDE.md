@@ -986,16 +986,37 @@ replaces rather than silently upserting" is the guard.
 Each of these shipped as a real defect first and was caught by a browser, not
 by the unit suite.
 
-**`text-transform` CHANGES A PLAYWRIGHT ACCESSIBLE NAME.** Playwright computes
-accessible names in its own injected script and applies `text-transform`, so a
+**`text-transform` AND PLAYWRIGHT ACCESSIBLE NAMES — THIS NOTE WAS WRONG, AND
+THE CORRECTION IS THE POINT.** It read: "Playwright computes accessible names
+in its own injected script and applies `text-transform`, so a
 `<th class="uppercase">Percentage</th>` is named `PERCENTAGE` and
 `getByRole('columnheader', { name: 'Percentage', exact: true })` no longer
-resolves. jsdom's `dom-accessibility-api` reads `textContent` and sees none of
-it, so the unit suite stays green. **Never put `uppercase` on anything queried
-by accessible name** — column headings (`tableStyles.ts`'s `TH`) and section
-headings (`components/SectionHeading.tsx`) both carry a comment saying so. It
-is fine on a `<dt>`, a `<p>` label, or a rail overline, where nothing queries by
-name.
+resolves… **Never put `uppercase` on anything queried by accessible name**."
+
+MEASURED ON PLAYWRIGHT 1.62.1, TWICE, AND IT DOES NOT REPRODUCE. `uppercase`
+was added to `tableStyles.ts`'s `TH` (every column heading in the app) and to
+`components/Badge.tsx` (every status and verdict pill, including the ones
+inside `<td>`s whose names come from content), then the whole e2e suite was
+run against each change separately: **94 passed both times**, including
+`run-tables.spec.ts`'s `getByRole('columnheader', { name, exact: true })`
+sweep and `run-list.spec.ts`'s `expect(statusCell).toHaveAccessibleName('complete')`.
+
+The reason is that `text-transform` is a RENDERING property and the DOM text
+is untouched: `td.textContent` is still `●complete` with the pill drawn
+`COMPLETE`. That is also why it is safe for real users — a screen reader
+announces "complete", not the spelled-out capitals some readers produce for
+all-caps strings.
+
+WHAT REMAINS TRUE: whatever the accessible name is computed FROM must stay
+put. Uppercase the RENDERING freely; do not uppercase the DATA (`marks.tsx`'s
+labels) or an `aria-label`, because those are the name. And a `<th>` whose
+name you change for real still breaks its query.
+
+Do not restore the old prohibition without re-measuring — it cost the
+control-room redesign its uppercase LED badges and column headings on a
+constraint that no longer exists. If a future Playwright reinstates the
+behaviour, the e2e suite says so in 90 seconds; that run is the arbiter, not
+this paragraph.
 
 **A token that is not in `@theme` produces NO utility, silently.** Tailwind v4
 generates utilities only from `@theme` declarations, never from a bare `:root`

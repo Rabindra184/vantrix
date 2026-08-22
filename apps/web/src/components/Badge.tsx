@@ -38,7 +38,7 @@ export default function Badge({ mark }: { readonly mark: Mark }) {
     // here would change the accessible name Playwright computes (CLAUDE.md's
     // uppercase rule), so the LED look leans on face and tracking instead.
     <span
-      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium tracking-wide"
+      className="tint inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 font-mono text-[10px] font-medium tracking-[0.08em] uppercase"
       style={{ color: mark.colour }}
     >
       {/* `aria-hidden`, and the word beside it carries the meaning — a screen
