@@ -65,10 +65,47 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **126 files / 1345 tests**, it
+`nvm use` first, and if a run reports fewer than **127 files / 1358 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the sla-rule-authoring
+silently-skipped run looks like a pass. Last measured on the
+chart-header-controls branch, which added ONE unit file —
+`apps/web/test/ChartActions.test.tsx` (13) — from a floor of 126 / 1345.
+Its integration floor stays 120 files / 1418 tests (every file it touches is a
+`.tsx` integration never runs) and its **e2e rises to 95**, the first e2e case
+added since the review-followup branch: a chart filling the screen, which no
+unit layer can see.
+
+TWO DEFECTS FROM IT, AND BOTH WERE INVISIBLE TO A GREEN SUITE.
+
+FIRST, A REMOUNT NEEDS **BOTH** ECHARTS EFFECTS RE-RUN, NOT ONE. Expanding a
+chart moves its canvas into a `<dialog>`, which remounts the node — so the
+instance effect has to rebuild on the new element, which is obvious, and the
+OPTION effect has to re-run too, which is not: a fresh instance has no option
+on it. Miss the second and full screen is a blank rectangle with a valid SVG
+root in it. `Chart.tsx` lists `expanded` in both dependency arrays and says why
+in each. Verified red by removing the option one.
+
+SECOND, `m-auto` ON A `<dialog>` IS LOAD-BEARING UNDER TAILWIND. A modal
+`<dialog>` centres itself with the UA stylesheet's `margin: auto`, and
+Tailwind's preflight resets `margin: 0` on **every** element — so a modal pins
+to the top-left corner and the class list looks entirely reasonable. Measured
+at (0,0) in a 1440×900 viewport before the fix. jsdom lays out nothing, so only
+a browser can see it; `run-charts.spec.ts` now asserts the left and right gaps
+match, and that assertion was verified red too.
+
+A THIRD THING NEARLY SHIPPED AND IS RECORDED BECAUSE IT REPEATS AN EXISTING
+LESSON ONE ROLE OVER. `ChartActions`'s copy-feedback live region was written
+always-mounted, per the usual advice — so ten charts contributed ten
+permanently-EMPTY `role="status"` elements, and `RunTelemetry`'s clock-skew
+test began resolving eleven. That is exactly the unscoped-`alert` trap recorded
+below, reintroduced for `status` within a minute of being read. A status role
+now exists exactly when there is a status, which is what `Chart`'s own
+empty-state `<p role="status">` always did. **The rule generalizes: a component
+rendered N times per page must not contribute an always-present landmark or
+live region.**
+
+Before that, the sla-rule-authoring
 branch, which added TWO unit files — `packages/contracts/test/rules.test.ts`
 (29) and `apps/web/test/ProjectRules.test.tsx` (12) — from a floor of
 124 / 1304, which is FIVE TESTS ABOVE the 124 / 1299 recorded below and
@@ -1094,12 +1131,35 @@ indigo at 2.84:1. Publish the alias under a DIFFERENT name than the runtime
 token (`--color-on-accent: var(--color-accent-foreground)`), because a key that
 reads a `var()` of its own name also resolves to nothing, equally silently.
 
-**A decorative `<svg>` inside a chart `<figure>` breaks nine specs.**
-`run-charts.spec.ts` and `request-detail.spec.ts` prove a chart really drew by
-counting SVG elements within the figure — `toHaveCount(1)` per chart, and
-`toHaveCount(0)` for one with nothing to draw. An icon in `DataTable`'s toggle
-(which `Chart` renders inside the figure) makes both counts wrong AND destroys
-the invariant they rest on. Icons are fine everywhere else; not in there.
+**AN `<svg>` INSIDE A CHART `<figure>` USED TO BREAK NINE SPECS. IT NO LONGER
+DOES, AND THE FIX IS THE INTERESTING PART.** This entry read: "a decorative
+`<svg>` inside a chart `<figure>` breaks nine specs… icons are fine everywhere
+else; not in there."
+
+It was true, and it was a design rule handed down by a test convenience.
+`run-charts.spec.ts` and `request-detail.spec.ts` proved a chart really drew by
+counting SVG elements **within the whole figure** — `getByTestId('chart-x')
+.locator('svg')`, `toHaveCount(1)`, in twenty-two places across seven files. So
+any icon in a chart card corrupted the count, and the prohibition followed.
+
+`Chart` now marks its ECharts container `data-chart-canvas`, and `helpers.ts`
+exports `plot(scope)` for `scope.locator('[data-chart-canvas] svg')`. **The new
+form is strictly HARDER to satisfy**: "this figure holds one SVG" could in
+principle be answered by something that is not the plot; "the canvas holds one
+SVG" cannot. Nothing was weakened to make room for the icons.
+
+What survives: the invariant itself. A chart that failed to draw renders its
+axes and nothing else, and only a mark count catches that — every `plot()` call
+site still asserts `toHaveCount(1)` plus an attached `path`. And one
+`locator('svg')` is deliberately still raw, in `run-live.spec.ts`: the SLA
+banner asserts the WHOLE component carries no SVG, which is a claim about a
+component rather than about a plot it does not have.
+
+**The general lesson is worth more than the rule it replaces.** When a test
+spells an invariant more broadly than it means, the extra breadth becomes a
+constraint on the product — silently, and in a place nobody thinks to look for
+one. The fix is to narrow the assertion to what it actually claims, not to
+work around it.
 
 **`focus:not-sr-only` resets `padding` to 0.** It has to, to undo `sr-only` —
 and a `focus:`-variant utility outranks an unprefixed one, so `sr-only … px-3
