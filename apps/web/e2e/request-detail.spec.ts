@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 
 /**
  * §13.3 in a real browser.
@@ -100,7 +100,7 @@ test('the scatter draws a mark for every point in its data table', async ({ page
   await page.goto(`/runs/${runId}/requests/${encodeURIComponent(NESTED)}`);
 
   const chart = page.getByTestId('chart-scatter');
-  const svg = chart.locator('svg');
+  const svg = plot(chart);
   await expect(svg).toHaveCount(1);
 
   // WHY THIS IS NOT `path.first()` — the assertion the §13.3 test above and

@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 import { runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
@@ -628,9 +628,9 @@ test('the errors tab draws failures over time above the table', async ({ page })
   await page.goto(runErrorsPath(runId));
 
   const figure = page.getByTestId('chart-errors-over-time');
-  // EXACTLY ONE svg in the figure. Nine other specs rest on this invariant,
-  // and it is why no icon may be rendered inside a chart's figure.
-  await expect(figure.locator('svg')).toHaveCount(1);
+  // EXACTLY ONE svg in the PLOT. Scoped to `[data-chart-canvas]`, so the
+  // figure's own header icons are not in the count — see `helpers.ts`.
+  await expect(plot(figure)).toHaveCount(1);
 
   // The table is still below it, holding every message rather than five.
   await expect(errorsTable(page)).toBeVisible();

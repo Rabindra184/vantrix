@@ -780,6 +780,25 @@ export default function Chart({
       ) : (
         <div
           ref={container}
+          // ═══ THE PLOTTING SURFACE, AND THE ONLY THING IN THIS FIGURE THAT
+          //     MAY CONTAIN AN <svg> ECharts DREW ═══
+          //
+          // `data-chart-canvas` exists so a test can say "the chart drew"
+          // without saying "this figure contains exactly one SVG". Those were
+          // the same sentence while the figure held nothing else that could
+          // carry one, and the e2e suite wrote the second — `getByTestId(
+          // 'chart-x').locator('svg')` with `toHaveCount(1)`, in twenty-odd
+          // places. CLAUDE.md recorded the consequence as a prohibition ("a
+          // decorative <svg> inside a chart <figure> breaks nine specs; icons
+          // are fine everywhere else, not in there"), which held the line but
+          // also froze the figure's design: no icon control could ever live in
+          // a chart header.
+          //
+          // Scoping the assertion to this element says what was always meant
+          // and lifts the prohibition. It is also the STRONGER assertion —
+          // "the plot drew one SVG" cannot be satisfied by an icon somewhere
+          // else in the card, which the old form could have been.
+          data-chart-canvas=""
           // The data table is the accessible route to these values (design §7).
           // Exposing the SVG's own text nodes as well would make a screen
           // reader read axis ticks and legend fragments in visual order, which

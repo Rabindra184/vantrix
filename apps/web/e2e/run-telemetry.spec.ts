@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData, seedRunWithTelemetry } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 import { runTelemetryPath } from '../src/routes/paths.js';
 
 /**
@@ -68,12 +68,11 @@ test.describe('Load generators', () => {
     const chartFigures = figures(page);
     await expect(chartFigures).toHaveCount(6);
 
-    // ONE SVG PER FIGURE. This is the invariant nine existing specs rest on:
-    // a chart that failed to draw renders its axes and nothing else, and only
-    // a mark count catches that. It is also why no figure here may contain a
-    // decorative icon.
+    // ONE SVG PER PLOT. A chart that failed to draw renders its axes and
+    // nothing else, and only a mark count catches that. Scoped to the canvas
+    // rather than the figure, so header icons do not enter the count.
     for (let i = 0; i < 6; i++) {
-      await expect(chartFigures.nth(i).locator('svg')).toHaveCount(1);
+      await expect(plot(chartFigures.nth(i))).toHaveCount(1);
     }
   });
 
