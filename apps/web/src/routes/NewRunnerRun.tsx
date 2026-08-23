@@ -46,6 +46,7 @@ type FormState = {
   environment: string;
   branch: string;
   commitSha: string;
+  test: string;
   javaOptions: string;
   systemProperties: string;
 };
@@ -58,6 +59,7 @@ const initialForm: FormState = {
   environment: '',
   branch: '',
   commitSha: '',
+  test: '',
   javaOptions: '',
   systemProperties: '',
 };
@@ -160,6 +162,7 @@ function NewRunnerRunProject({
       ...(form.environment.trim() ? { environment: form.environment.trim() } : {}),
       ...(form.branch.trim() ? { branch: form.branch.trim() } : {}),
       ...(form.commitSha.trim() ? { commitSha: form.commitSha.trim() } : {}),
+      ...(form.test.trim() ? { test: form.test.trim() } : {}),
       ...(form.javaOptions.trim() ? { javaOptions: form.javaOptions.trim() } : {}),
       systemProperties: parsedProps.value,
     });
@@ -236,6 +239,34 @@ function NewRunnerRunProject({
                 <input id="runner-commit" className={INPUT} value={form.commitSha} onChange={update('commitSha', setForm)} />
               </Field>
             </div>
+
+            {/* ═══ THE FOURTH SUBMIT PATH, FINALLY ABLE TO SAY THIS ═══
+
+                A bundle upload, a live open and the Gradle plugin could all
+                name the test a run belongs to; this form — the one with a UI
+                in front of it — could not, so a simulation started here was
+                stuck grouping by its class while the same simulation submitted
+                another way could be two tests.
+
+                A SLUG, and the hint says so. The server rejects a display name
+                outright (`DeclaredTestSlugSchema`), which is the right answer —
+                slugifying here would turn a typo into a second test instead of
+                an error — but a field that only tells you that AFTER a failed
+                submit is a field that teaches by refusing. */}
+            <Field label="Test" id="runner-test" optional>
+              <input
+                id="runner-test"
+                className={INPUT}
+                value={form.test}
+                placeholder="checkout-soak"
+                onChange={update('test', setForm)}
+              />
+              <span className="text-[11px] font-normal text-muted">
+                A test slug — lower case, hyphens, no spaces. Leave it empty to group these runs by
+                their simulation class, which is the default. Name one to run the same simulation as
+                more than one test; a slug that names no test yet creates it.
+              </span>
+            </Field>
 
             <Field label="JVM options" id="runner-java-options" optional>
               <input id="runner-java-options" className={INPUT} value={form.javaOptions} onChange={update('javaOptions', setForm)} />

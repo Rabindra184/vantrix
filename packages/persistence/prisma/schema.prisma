@@ -159,6 +159,18 @@ model RunnerJob {
   environment      String?
   branch           String?
   commitSha        String?  @map("commit_sha")
+
+  /// WHICH TEST the requester said this run is of, as a slug — the same field
+  /// `IngestMetadataSchema.test` and `OpenLiveRunRequestSchema.test` carry,
+  /// reaching the platform by its fourth and last route.
+  ///
+  /// Null is the ordinary case: no test named, so the run groups by the
+  /// simulation class its log header declares.
+  ///
+  /// NOT a foreign key, for the reason `Run.declaredTestSlug` is not one
+  /// either — the `Test` row it names need not exist yet. It BECOMES
+  /// `Run.declaredTestSlug` when the runner opens the live run.
+  testSlug         String?  @map("test_slug")
   javaOptions      String?  @map("java_options")
   systemProperties Json     @default("{}") @map("system_properties")
   logPath          String?  @map("log_path")

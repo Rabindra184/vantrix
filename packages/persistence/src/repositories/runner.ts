@@ -26,6 +26,9 @@ export interface RunnerJobRecord {
   environment: string | null;
   branch: string | null;
   commitSha: string | null;
+  /** The test the requester named, or null — becomes the run's own
+   *  declaration when the runner opens it. */
+  testSlug: string | null;
   javaOptions: string | null;
   systemProperties: Record<string, string>;
   logPath: string | null;
@@ -62,6 +65,7 @@ interface RunnerRow {
   environment: string | null;
   branch: string | null;
   commitSha: string | null;
+  testSlug: string | null;
   javaOptions: string | null;
   systemProperties: Record<string, string>;
   logPath: string | null;
@@ -90,6 +94,7 @@ export interface CreateRunnerJobInput {
     environment: string | null;
     branch: string | null;
     commitSha: string | null;
+    testSlug: string | null;
     javaOptions: string | null;
     systemProperties: Record<string, string>;
   };
@@ -149,7 +154,7 @@ export class RunnerRepository {
       job AS (
         INSERT INTO runner_job (
           id, org_id, project_id, artifact_id, status, requested_by,
-          environment, branch, commit_sha, java_options, system_properties
+          environment, branch, commit_sha, test_slug, java_options, system_properties
         )
         SELECT
           ${input.job.id}::uuid,
@@ -161,6 +166,7 @@ export class RunnerRepository {
           ${input.job.environment},
           ${input.job.branch},
           ${input.job.commitSha},
+          ${input.job.testSlug},
           ${input.job.javaOptions},
           ${systemProperties}::jsonb
         FROM artifact
@@ -189,6 +195,7 @@ export class RunnerRepository {
         job.environment,
         job.branch,
         job.commit_sha AS "commitSha",
+        job.test_slug AS "testSlug",
         job.java_options AS "javaOptions",
         job.system_properties AS "systemProperties",
         job.log_path AS "logPath",
@@ -226,6 +233,7 @@ export class RunnerRepository {
         j.environment,
         j.branch,
         j.commit_sha AS "commitSha",
+        j.test_slug AS "testSlug",
         j.java_options AS "javaOptions",
         j.system_properties AS "systemProperties",
         j.log_path AS "logPath",
@@ -291,6 +299,7 @@ export class RunnerRepository {
         j.environment,
         j.branch,
         j.commit_sha AS "commitSha",
+        j.test_slug AS "testSlug",
         j.java_options AS "javaOptions",
         j.system_properties AS "systemProperties",
         j.log_path AS "logPath",
@@ -509,6 +518,7 @@ export class RunnerRepository {
         j.environment,
         j.branch,
         j.commit_sha AS "commitSha",
+        j.test_slug AS "testSlug",
         j.java_options AS "javaOptions",
         j.system_properties AS "systemProperties",
         j.log_path AS "logPath",
@@ -552,6 +562,7 @@ function mapRow(row: RunnerRow): RunnerJobWithArtifact {
       environment: row.environment,
       branch: row.branch,
       commitSha: row.commitSha,
+      testSlug: row.testSlug,
       javaOptions: row.javaOptions,
       systemProperties: row.systemProperties,
       logPath: row.logPath,

@@ -112,4 +112,74 @@ describe('NewRunnerRun', () => {
       },
     });
   });
+
+  /**
+   * ═══ THE FOURTH SUBMIT PATH ═══
+   *
+   * `metadata.test` reached the bundle upload, the live open and the Gradle
+   * plugin, and missed this form — the one with a UI in front of it. So a
+   * simulation started here was stuck grouping by its class while the same
+   * simulation submitted another way could be two tests.
+   *
+   * OMITTED WHEN EMPTY, not sent as `''`. The server's grammar rejects an
+   * empty slug (correctly — it names nothing), so a form that always sent the
+   * field would refuse every run where the user simply left it blank, which is
+   * the ordinary case.
+   */
+  it('sends a declared test only when one was typed', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const router = createMemoryRouter(
+      [{ path: '/projects/:slug/run/new', element: <NewRunnerRun /> }],
+      { initialEntries: ['/projects/alpha/run/new'] },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    const fill = (test?: string) => {
+      fireEvent.change(screen.getByLabelText(/run name/i), { target: { value: 'soak' } });
+      fireEvent.change(screen.getByLabelText(/simulation class/i), {
+        target: { value: 'example.AlphaSimulation' },
+      });
+      fireEvent.change(screen.getByLabelText(/artifact file/i), {
+        target: { files: [new File(['x'], 'x.jar', { type: 'application/java-archive' })] },
+      });
+      // BY PLACEHOLDER, not by label. `Field` appends an "optional" marker
+      // inside the `<label>`, so this field's accessible name is
+      // "Test optional" — and a loose `/test/i` would be satisfied by any
+      // future label containing the word. The placeholder is this input's
+      // alone and says what the field wants, which is the same reason it is
+      // there for a reader.
+      if (test !== undefined) {
+        fireEvent.change(screen.getByPlaceholderText('checkout-soak'), { target: { value: test } });
+      }
+      fireEvent.click(screen.getByRole('button', { name: /queue run/i }));
+    };
+
+    await screen.findByLabelText(/run name/i);
+
+    // LEFT BLANK: the field must not appear in the body at all. The server's
+    // grammar rejects an empty slug — correctly, it names nothing — so a form
+    // that always sent it would refuse every run where the user simply left it
+    // alone, which is the ordinary case.
+    fill();
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunMock.mock.calls[0]?.[0]?.metadata).not.toHaveProperty('test');
+
+    startRunnerRunMock.mockClear();
+    await act(async () => {
+      await router.navigate('/projects/beta/run/new');
+    });
+    await screen.findByLabelText(/run name/i);
+
+    fill('checkout-soak');
+    await screen.findByText(/run queued/i);
+    expect(startRunnerRunMock.mock.calls[0]?.[0]?.metadata).toMatchObject({
+      test: 'checkout-soak',
+    });
+  });
 });

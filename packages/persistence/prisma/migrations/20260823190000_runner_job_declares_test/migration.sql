@@ -1,0 +1,33 @@
+-- An on-prem runner job can name the test its run belongs to.
+--
+-- ═══ CLOSING A HOLE IN THE PREVIOUS MIGRATION, NOT ADDING A FEATURE ═══
+--
+-- `20260823170000_test_per_configuration` let a caller declare which test a
+-- run is of, so one simulation can be two tests with different injection
+-- profiles. It reached three of the four ways a run enters this platform: a
+-- bundle upload (`metadata.test`), a live open (`test`), and the Gatling
+-- Gradle plugin, which sends one or the other.
+--
+-- It did NOT reach the on-prem runner. A job requested through
+-- `POST /v1/projects/:slug/runner/runs` carries `environment`, `branch` and
+-- `commit_sha` — the same metadata group, frozen the same way — and had no
+-- way to say `test`. So the one submit path with a UI in front of it was the
+-- one that could not use the feature, and a simulation run from that form was
+-- stuck grouping by its class while the same simulation submitted two other
+-- ways could be two tests.
+--
+-- NULLABLE, and null is the ordinary case: it means the requester named no
+-- test, which resolves by simulation class exactly as before.
+
+-- `test_slug`, not `declared_test_slug`, and not a foreign key.
+--
+-- Not a key because the `test` row it names need not exist yet — the same
+-- reason `run.declared_test_slug` is a string. `RunnerJob` has no resolved
+-- `test_id` to distinguish this from, which is what earns `run` its
+-- `declared_` prefix; here the plain name is unambiguous and matches the three
+-- columns beside it.
+--
+-- It becomes `run.declared_test_slug` when the runner opens the live run
+-- (`apps/runner/src/live-sink.ts`), which is where every other field in this
+-- group makes the same journey.
+ALTER TABLE "runner_job" ADD COLUMN "test_slug" TEXT;

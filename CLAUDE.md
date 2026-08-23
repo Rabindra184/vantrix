@@ -65,10 +65,39 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **130 files / 1446 tests**, it
+`nvm use` first, and if a run reports fewer than **130 files / 1447 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The test-per-configuration branch added
+silently-skipped run looks like a pass. The runner-declares-test branch added
+no unit FILE and 1 unit case to `apps/web/test/NewRunnerRun.test.tsx`, from a
+floor of 130 / 1446. Its integration floor is **123 files / 1527 tests** (2
+cases in `packages/persistence/test/runner.integration.test.ts`) and e2e stays
+101.
+
+ONE THING FROM IT, AND IT IS ABOUT SWEEPING A FEATURE ACROSS ITS ENTRY POINTS.
+`metadata.test` reached FOUR submit paths and shipped on three: the bundle
+upload, the live open and the Gradle plugin. The one it missed was the on-prem
+runner — the only path with a UI in front of it, so the surface a reader is
+most likely to meet was the one that could not use the feature. Nothing failed;
+a run from that form simply grouped by simulation class, which is what it would
+have done anyway.
+
+**A field added to ingest metadata has FOUR homes, and they are easy to
+enumerate**: `IngestMetadataSchema` (bundle upload), `OpenLiveRunRequestSchema`
+(live), `RunnerJobRequest` (on-prem), and the Gatling plugin's
+`VantrixExtension`/`ResolvedConfig`. Check all four before calling one of them
+done.
+
+**A FLAKE WORTH KNOWING ABOUT, NOT CAUSED BY THAT BRANCH.**
+`ProjectRail.test.tsx`'s "lists every project as a link to its own page" failed
+3 of 4 full `test:unit` runs and passes alone every time, with
+`Unable to find role="link" and name /Checkout Flow/` after ~1.8s. The file DOES
+call `afterEach(cleanup)`, so it is not the leak this file diagnosed earlier —
+it is `findByRole`'s 1-second default timeout losing to a saturated machine
+while the rail's own query resolves. CI has never failed it. If it starts
+failing there, raise the timeout rather than hunting the component.
+
+Before that, the test-per-configuration branch added
 no unit FILE and 8 unit cases to `packages/contracts/test/contracts.test.ts`,
 from a floor of 130 / 1438. Its integration floor is **123 files / 1525 tests**
 (that `contracts.test.ts` is a `.ts` file integration runs too, plus 6 net new

@@ -102,6 +102,7 @@ export class RunnerController {
           environment: metadata.data.environment ?? null,
           branch: metadata.data.branch ?? null,
           commitSha: metadata.data.commitSha ?? null,
+          testSlug: metadata.data.test ?? null,
           javaOptions: metadata.data.javaOptions ?? null,
           systemProperties: metadata.data.systemProperties,
         },
@@ -292,6 +293,7 @@ function toJob(job: {
   environment: string | null;
   branch: string | null;
   commitSha: string | null;
+  testSlug: string | null;
   javaOptions: string | null;
   systemProperties: Record<string, string>;
   error: { code: string; message: string; remediation: string } | null;
@@ -307,6 +309,7 @@ function toJob(job: {
     environment: job.environment,
     branch: job.branch,
     commitSha: job.commitSha,
+    testSlug: job.testSlug,
     javaOptions: job.javaOptions,
     systemProperties: job.systemProperties,
     error: job.error,
