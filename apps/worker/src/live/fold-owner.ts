@@ -9,6 +9,7 @@ import type { LiveChunkStore } from '@perfportal/storage';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
+import { resolveTestId } from '../pipeline/test-resolver.js';
 import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor, type SlaInput } from './delta.js';
 
 /**
@@ -130,6 +131,29 @@ interface FoldState {
    * see `#claimRules`'s own doc comment for why failing open is right here.
    */
   rulesLoadFailed: boolean;
+  /**
+   * The tenant this run belongs to, or null when its row could not be read at
+   * claim (the same condition that leaves `rulesLoadFailed` true).
+   *
+   * Kept HERE rather than only handed to `#claimRules`, because `#identify`
+   * needs it mid-fold — the moment the decoder reads the log header, long
+   * after the claim returned.
+   */
+  scope: ProjectScope | null;
+  /**
+   * Whether this run has already had its test resolved from the log header.
+   *
+   * ONE ATTEMPT PER RUN, which is what keeps `#identify` from becoming the
+   * per-tick rule re-read that `rules` above forbids. The decoder emits its
+   * `meta` event exactly once, so in practice this guards only against a
+   * re-entrant fold; the flag makes the contract explicit rather than relying
+   * on the decoder never emitting a second one.
+   *
+   * Reset to false by a re-claim, deliberately: a new owner re-folds from byte
+   * 0 and meets the header again, and resolving a second time is idempotent
+   * (`resolveTestId` finds the row the first owner created).
+   */
+  identified: boolean;
   /**
    * ruleId -> the elapsed offset at which it began breaching.
    *
@@ -1460,6 +1484,13 @@ export class LiveFoldOwner {
       cursor,
       rules,
       rulesLoadFailed,
+      // The tenant, kept on the state rather than only passed to `#claimRules`
+      // — `#identify` needs it mid-fold, long after the claim has returned.
+      // `null` context means the run row could not be read at all, which
+      // `#claimContext` has already logged; identification is skipped for such
+      // a run, exactly as its rule load was.
+      scope: context === null ? null : { orgId: context.orgId, projectId: context.projectId },
+      identified: false,
       breachingSince,
       // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
       // own doc comment: the first tick after a claim must seed immediately.
@@ -1536,22 +1567,23 @@ export class LiveFoldOwner {
   ): Promise<{ rules: EvaluableRule[]; rulesLoadFailed: boolean }> {
     if (!scope) return { rules: [], rulesLoadFailed: true };
     try {
-      // ═══ `null`: A LIVE RUN HAS NO TEST, AND CANNOT ═══
+      // ═══ `null`: AT CLAIM, A RUN HAS NOT SAID WHAT IT IS YET ═══
       //
-      // `run.test_id` is resolved by `PipelineService` from the simulation
-      // class in the parsed log header, and `OpenLiveRunRequestSchema` carries
-      // no simulation — so the column is NULL for the whole stream, on every
-      // live run, by construction rather than by timing.
+      // `run.test_id` comes from the simulation class in the log HEADER, and a
+      // claim happens before a single byte has been decoded — so at this
+      // moment the honest answer is that this run belongs to no test, and it
+      // gets the project-wide rules.
       //
-      // The consequence is worth stating where somebody will read it: a
-      // TEST-SCOPED rule does not appear in the live SLA banner. It judges the
-      // final report, where the test is known, and the run's recorded verdict
-      // is correct. Only the in-flight preview is narrower than the verdict.
+      // IT DOES NOT STAY THAT WAY. `#identify` re-asks the moment the decoder
+      // emits its `meta` event, which is within the first few hundred bytes of
+      // the stream, and widens `state.rules` to include that test's own. This
+      // is the initial load in two parts, not a per-tick re-read — see
+      // `FoldState.rules`, which forbids the latter for good reasons.
       //
-      // Passed explicitly rather than defaulted (`listEnabled` takes it as a
-      // required parameter for exactly this reason): the day a live run learns
-      // its test at open, this line is where the change goes, and it is
-      // findable.
+      // What a reader can still see, briefly: a test-scoped rule does not
+      // judge the ticks before the header is decoded. Those ticks have no
+      // statistics worth judging either, since the first event follows the
+      // header.
       const records = await this.#rules.listEnabled(scope, null);
       const rules = records.map((r) => ({
         id: r.id,
@@ -1770,6 +1802,98 @@ export class LiveFoldOwner {
 
     const events = state.decoder.push(bytes);
     for (const event of events) state.engine.add(event);
+
+    // ═══ THE RUN IDENTIFIES ITSELF, AND ITS TEST'S RULES JOIN IN ═══
+    //
+    // The decoder emits exactly one `meta` event per run — from the log
+    // HEADER, so within the first few hundred bytes — and it carries the
+    // fully-qualified simulation class. That is the only thing standing
+    // between a live run and knowing which test it is of, and until this
+    // existed the answer arrived at finalize: a test-scoped SLA rule could
+    // not appear in the live banner at all, only in the finished report.
+    //
+    // NOT A PER-TICK RE-READ, and the distinction is the whole reason this is
+    // safe. `FoldState.rules`'s own docstring forbids re-reading rules per
+    // tick — a run's SLA should be the SLA it started under, or a rule edited
+    // mid-run makes a breach appear with no change in the data. This is the
+    // INITIAL load completing: the claim could not ask the right question yet
+    // because the run had not said what it was. It happens once, guarded by
+    // `#identify`'s own check.
+    const meta = events.find((e) => e.type === 'meta');
+    if (meta !== undefined) await this.#identify(runId, state, meta.simulation ?? null);
+  }
+
+  /**
+   * Resolve this run's test from the class the log header declared, record it
+   * on the run row, and widen the rule set to that test's own.
+   *
+   * ═══ EVERY FAILURE HERE IS A DEGRADATION, NEVER A DROPPED FOLD ═══
+   *
+   * `resolveTestId` already swallows its own errors and answers `null` (a run
+   * with no test is a state the schema allows), and the two writes below are
+   * each guarded. A live fold is a preview; the finished report is the
+   * authority, and `PipelineService` re-resolves from the same header at
+   * finalize. Letting a naming problem throw out of `#fold` would trade a
+   * missing banner rung for a run that stops folding entirely.
+   */
+  async #identify(runId: string, state: FoldState, simulation: string | null): Promise<void> {
+    if (state.identified) return;
+    // No tenant means `#claimContext` could not read the run row — already
+    // logged there, and the same condition that left this claim with no rules.
+    // There is nothing to scope a test lookup by, so this run stays
+    // unidentified until the pipeline resolves it at finalize.
+    const scope = state.scope;
+    if (scope === null) return;
+    // Set BEFORE the awaits, not after: `#foldOnce` gates concurrent folds for
+    // one run, but a `live:advance` ping and a tick can still interleave
+    // across await points elsewhere, and re-resolving would be wasted work
+    // rather than wrong. One attempt per run is the contract; a decoder that
+    // never produces a header leaves this false forever, which is correct —
+    // there is nothing to identify.
+    state.identified = true;
+
+    const testId = await resolveTestId(
+      this.#pool,
+      { id: runId, orgId: scope.orgId, projectId: scope.projectId },
+      simulation,
+    );
+    if (testId === null) return;
+
+    try {
+      // The run row, so a reader watching this run sees its test in the
+      // breadcrumb rather than waiting for the parse. `test_id IS NULL` in the
+      // WHERE, so this can never overwrite an answer somebody else already
+      // reached — `PipelineService` at finalize is the authority, and a
+      // re-claim mid-stream must not thrash the column.
+      await this.#pool.query(
+        `UPDATE run SET test_id = $2 WHERE id = $1 AND test_id IS NULL`,
+        [runId, testId],
+      );
+    } catch (err) {
+      console.warn(`LiveFoldOwner: could not record the test for ${runId}:`, err);
+    }
+
+    try {
+      const records = await this.#rules.listEnabled(scope, testId);
+      state.rules = records.map((r) => ({
+        id: r.id,
+        scope: r.scope,
+        targetName: r.targetName,
+        family: r.family,
+        metric: r.metric,
+        comparator: r.comparator,
+        threshold: r.threshold,
+      }));
+      // A load that SUCCEEDS here clears a claim-time failure: the rules are
+      // now known, whatever went wrong when this run was claimed.
+      state.rulesLoadFailed = false;
+    } catch (err) {
+      // The claim-time set stays in place — project-wide rules, which is
+      // strictly better than none — and the flag is left as the claim set it.
+      // Reporting a load failure now would tell a reader the banner is blind
+      // when it is merely narrower than it could be.
+      console.warn(`LiveFoldOwner: could not widen rules to the test for ${runId}:`, err);
+    }
   }
 
   /**

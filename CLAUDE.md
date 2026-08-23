@@ -68,7 +68,60 @@ only to show the scale of what disappears.
 `nvm use` first, and if a run reports fewer than **130 files / 1425 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The test-scoped-rules branch added no
+silently-skipped run looks like a pass. The live-test-rules branch added no
+unit FILE and no unit case — it REPLACED one in `ProjectRules.test.tsx` with
+its inverse — so the unit floor is unchanged, while **integration rises to 123
+files / 1502 tests** (5 new cases in
+`apps/worker/test/fold-owner.integration.test.ts` plus one existing case split
+in two) and e2e stays 100.
+
+TWO THINGS FROM IT, AND BOTH ARE ABOUT A CAVEAT THAT STOPPED BEING TRUE.
+
+FIRST, A LIVE RUN CAN KNOW ITS TEST, AND THE ANSWER WAS ALREADY IN THE STREAM.
+The branch before this one shipped a real limitation: `run.test_id` was
+resolved only by `PipelineService` at finalize, so a streaming run belonged to
+no test and a test-scoped SLA rule could not judge it — the live banner showed
+project-wide rules and nothing else. The fix needed no protocol change and no
+client change, because `StreamingLogDecoder` already emits a `meta` event
+carrying the fully-qualified simulation class, from the log HEADER, in the
+first few hundred bytes of every run. `LiveFoldOwner.#identify` resolves the
+test there and widens the rule set.
+
+**Before designing a way to make a client tell you something, check whether the
+bytes already do.** The rejected alternative was adding `simulation` to
+`OpenLiveRunRequestSchema` and teaching the Gradle plugin to send it: a
+protocol change, a JVM release, every other client left behind, and a
+client's CLAIM rather than the log's own statement.
+
+SECOND, "LOADED ONCE AT CLAIM" AND "NEVER RE-READ" ARE DIFFERENT RULES.
+`FoldState.rules` forbids re-reading rules per tick, for a good reason — a run's
+SLA should be the SLA it started under, or a rule edited mid-run makes a breach
+appear with no change in the data. `#identify` looks like it violates that and
+does not: it is the INITIAL load completing, because the claim could not ask
+the right question yet. It runs once per run, guarded by a flag set before its
+first await.
+
+A THIRD THING, AND IT IS ABOUT VERIFYING LIVE BEHAVIOUR BY HAND. **Read the
+DELTAS, never `live:{runId}:snapshot`.** `SNAPSHOT_EVERY_N_TICKS` is 60 — two
+minutes at the default 2-second tick — so a 60-second run only ever writes the
+snapshot its FIRST tick produced, and that one is frozen at `evaluated: 0`
+because nothing has been folded yet. Polling it during a real Gatling run
+therefore reports "no rules evaluated" for the whole run, whatever the truth
+is, and looks exactly like the feature being broken. `XRANGE
+live:{runId}:deltas - +` is written every tick and is the honest record; it
+showed the rule entering the set and breaching from tick 4. The snapshot is a
+seed for late joiners, not a status board.
+
+A recorded behaviour changed as a result, and the test that pinned it was
+inverted rather than deleted. `fold-owner.integration.test.ts` asserted "this
+claim never gets a second attempt at loading rules… that is the documented
+behaviour, not a hang". It now asserts the opposite: a claim-time load failure
+RECOVERS at the header. That is strictly better — a transient database problem
+at claim no longer blinds a soak test's banner for hours — and the
+both-loads-fail case survives beside it, because a rules problem must still
+never read as "nothing configured".
+
+Before that, the test-scoped-rules branch added no
 unit FILE and 16 unit cases — 8 to `apps/web/test/ProjectRules.test.tsx` and 8
 to `packages/contracts/test/rules.test.ts` — from a floor of 130 / 1409. Its
 integration floor is **123 files / 1496 tests** (that `rules.test.ts` is a
@@ -104,14 +157,12 @@ migration says so at the top. The failure this avoids is not a crash: it is
 somebody authoring a gate on the wrong thing while reading their own
 configuration as correct.
 
-ONE LIMITATION IS DESIGNED IN AND WRITTEN DOWN IN THREE PLACES. `run.test_id`
-is resolved by the pipeline from the parsed log header, and
-`OpenLiveRunRequestSchema` carries no simulation — so a live run has NO test
-for its whole stream, by construction rather than by timing. A test-scoped
-rule therefore never appears in the live SLA banner; it judges the finished
-report, where the verdict is correct. The rules form says so where the rule is
-authored, because a reader who watched a live run and saw their new gate
-missing would reasonably conclude it was broken.
+THAT BRANCH SHIPPED A LIMITATION, AND THE NEXT ONE REMOVED IT. It read: "a
+live run has NO test for its whole stream, by construction… a test-scoped rule
+never appears in the live SLA banner". True as written, and fixed by
+`LiveFoldOwner.#identify` — see the live-test-rules entry above. The
+prohibition is recorded here only so a reader meeting the old comments in a
+`git log` knows they were superseded rather than forgotten.
 
 Before that, the test-ui branch added TWO unit files
 — `apps/web/test/ProjectTests.test.tsx` (10) and `TestRuns.test.tsx` (11) —
