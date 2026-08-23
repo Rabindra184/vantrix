@@ -214,17 +214,15 @@ export default function ProjectRules({
             <p className="rounded-lg border border-default bg-sunken p-3 text-[12px] leading-relaxed text-muted">
               A rule added here applies to <span className="text-primary">{testLabel}</span> only.
               To gate every test in this project, add it on the project’s setup page instead.
-              {/* THE LIVE CAVEAT, stated where the rule is authored rather than
-                  discovered later. `run.test_id` is resolved from the parsed
-                  log header, so it is null for a whole live stream — a
-                  test-scoped rule cannot appear in the live banner and judges
-                  the final report. A reader who watched a live run and saw
-                  their new gate missing would reasonably conclude it was
-                  broken. */}
-              <span className="mt-1 block">
-                Test rules are evaluated on the finished report, so they do not appear in a run’s
-                live banner while it is still streaming. Project-wide rules do.
-              </span>
+              {/* THIS PARAGRAPH USED TO CARRY A CAVEAT, and it is worth knowing
+                  why it does not any more. A test-scoped rule could once not
+                  appear in a run's live banner at all: `run.test_id` was only
+                  resolved by the pipeline at finalize, so a streaming run
+                  belonged to no test and matched no test rule. `LiveFoldOwner`
+                  now resolves it from the log header the decoder reads within
+                  the first few hundred bytes, so the banner applies these
+                  rules like any other. Nothing here needs to warn a reader
+                  about a gap that no longer exists. */}
             </p>
           ) : (
             <label className="flex flex-col gap-1.5 text-[13px] font-medium">
@@ -242,8 +240,8 @@ export default function ProjectRules({
                 ))}
               </select>
               <span className="text-[11px] font-normal text-muted">
-                A rule for one test is evaluated on its finished report, so it does not appear in a
-                live run’s banner. A project-wide rule does.
+                A rule for one test judges only that test’s runs. Every rule here applies to a live
+                run as soon as its log header names the simulation.
               </span>
             </label>
           )}

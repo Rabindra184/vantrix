@@ -378,17 +378,28 @@ describe('ProjectRules — on a test’s page', () => {
   });
 
   /**
-   * ═══ THE LIVE CAVEAT, WHERE THE RULE IS AUTHORED ═══
+   * ═══ NO LIVE CAVEAT, BECAUSE THERE IS NO LONGER A GAP ═══
    *
-   * `run.test_id` is resolved from the parsed log header, so it is null for a
-   * whole live stream — a test-scoped rule cannot be evaluated in the live SLA
-   * banner and judges the finished report instead. A reader who watched a live
-   * run and saw their new gate missing would reasonably conclude it was
-   * broken, so the form says it before they find out.
+   * This case is the inverse of the one it replaces. A test-scoped rule USED
+   * TO be invisible in a run's live banner: `run.test_id` was resolved only by
+   * the pipeline at finalize, so a streaming run belonged to no test and
+   * matched no test rule, and this panel warned the author about it.
+   *
+   * `LiveFoldOwner` now resolves the test from the log header the decoder
+   * reads within the first few hundred bytes, so the warning became false. A
+   * false caveat is worse than none — it tells a reader their working gate
+   * does not work — and stale prose is exactly the kind of thing that survives
+   * a behaviour change unnoticed, so the absence is asserted rather than left
+   * to review.
+   *
+   * The paired positive comes first: the panel really did render, so the
+   * absence below is about this sentence and not about an empty card.
    */
-  it('warns that a test rule is not evaluated live', async () => {
+  it('no longer warns about a live gap that has since been closed', async () => {
     renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' });
-    expect(await screen.findByText(/do not appear in a run’s live banner/i)).toBeInTheDocument();
+    expect(await screen.findByText(/applies to/i)).toBeInTheDocument();
+    expect(screen.queryByText(/live banner/i)).toBeNull();
+    expect(screen.queryByText(/finished report/i)).toBeNull();
   });
 
   /**
