@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TestSummary } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
@@ -11,11 +11,13 @@ import { INPUT } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
 import { fetchProjects, projectsQueryKey } from '../api/projects';
 import {
+  deleteProjectTest,
   fetchProjectTest,
   projectTestQueryKey,
   projectTestsQueryKey,
   updateProjectTest,
 } from '../api/tests';
+import { fetchProjectRules, projectRulesQueryKey } from '../api/rules';
 import ProjectRules from './ProjectRules';
 import RunList from './RunList';
 import { projectPath, projectRunsPath } from './paths';
@@ -45,7 +47,13 @@ import { projectPath, projectRunsPath } from './paths';
  */
 export default function TestRuns() {
   const { slug = '', testSlug = '' } = useParams<{ slug: string; testSlug: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [renaming, setRenaming] = useState(false);
+  // Armed by the Delete button, disarmed by Cancel or by a successful delete.
+  // The same one-step arming `TokenTable`'s revoke uses: a destructive action
+  // never fires on a single click.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
   const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
@@ -53,6 +61,31 @@ export default function TestRuns() {
   const test = useQuery({
     queryKey: projectTestQueryKey(slug, testSlug),
     queryFn: () => fetchProjectTest(slug, testSlug),
+  });
+
+  // THE SAME QUERY `ProjectRules` MOUNTS BELOW, by the same key — so TanStack
+  // serves both observers from one request rather than fetching twice. It is
+  // here because the delete confirmation has to NAME what it will destroy, and
+  // the rules that go with a test are the half a reader will not otherwise
+  // think of.
+  const rules = useQuery({
+    queryKey: projectRulesQueryKey(slug, testSlug),
+    queryFn: () => fetchProjectRules(slug, testSlug),
+  });
+  // Only this test's OWN rules cascade; project-wide ones are not its to lose.
+  const ownRuleCount = (rules.data?.rules ?? []).filter((r) => r.test != null).length;
+
+  const removal = useMutation({
+    mutationFn: () => deleteProjectTest(slug, testSlug),
+    onSuccess: () => {
+      // The project's test list and every rules variant under this project —
+      // both are now wrong, and the reader is about to land on the first.
+      void queryClient.invalidateQueries({ queryKey: projectTestsQueryKey(slug) });
+      void queryClient.invalidateQueries({ queryKey: ['project-rules', slug] });
+      // `replace`, not push: the page just deleted is not somewhere Back
+      // should return to — it would render its own 404.
+      void navigate(projectPath(slug), { replace: true });
+    },
   });
 
   if (test.isPending) {
@@ -137,12 +170,99 @@ export default function TestRuns() {
             </Button>
             {/* "Project runs", never "All runs" — the rail's own org-wide row
                 already owns that name on every page. See `ProjectTests`. */}
+            {/* ═══ "Delete test", NEVER BARE "Delete" ═══
+
+                `ProjectRules` mounts below and renders a "Delete" button per
+                RULE row, so a bare name here puts two controls with one
+                accessible name into this document, destroying different
+                things. It shipped that way for the length of one test run —
+                the case that caught it is the one whose fixture has a rule in
+                it, and the cases without rules passed happily. Same class as
+                the rail's "All runs" collision recorded in CLAUDE.md. */}
+            <Button
+              size="sm"
+              aria-expanded={confirmingDelete}
+              onClick={() => setConfirmingDelete((open) => !open)}
+            >
+              {confirmingDelete ? 'Keep this test' : 'Delete test'}
+            </Button>
             <Link to={projectRunsPath(slug)} className={linkButtonClasses}>
               <LayersIcon className="h-3.5 w-3.5" />
               Project runs
             </Link>
           </div>
         </div>
+
+        {/* ═══ THE CONFIRMATION NAMES WHAT IT WILL DESTROY, AND WHAT IT WILL NOT ═══
+
+            Two different cascades meet here and a reader cannot be expected to
+            know either. The RUNS survive — `run.test_id` is SET NULL, so they
+            move to the project's run list ungrouped — and this is the half
+            people fear and would otherwise not do. The RULES do not: this
+            test's own gates are CASCADE, and that is the half nobody expects,
+            which is exactly why the count is spelled out rather than implied.
+
+            Both numbers are real rather than hedged. `runCount` is the test's
+            whole history (this endpoint is not paginated), and the rule count
+            excludes project-wide rules, which were never this test's to
+            lose. */}
+        {confirmingDelete && (
+          <div
+            data-testid="test-delete-confirm"
+            className="flex flex-col gap-3 rounded-lg border border-default bg-sunken p-4"
+          >
+            <p className="text-[13px] leading-relaxed text-primary">
+              Delete <span className="font-medium">{row.name}</span>? This cannot be undone.
+            </p>
+            <ul className="flex list-disc flex-col gap-1 pl-5 text-[12px] leading-relaxed text-muted">
+              <li>
+                {row.runCount === 0
+                  ? 'It has no runs.'
+                  : `Its ${row.runCount} ${row.runCount === 1 ? 'run is' : 'runs are'} kept, and
+                     move to the project’s run list. Verdicts already recorded do not change.`}
+              </li>
+              <li>
+                {ownRuleCount === 0
+                  ? 'It has no SLA rules of its own. Project-wide rules are unaffected.'
+                  : `Its ${ownRuleCount} SLA ${ownRuleCount === 1 ? 'rule is' : 'rules are'}
+                     deleted with it. Project-wide rules are unaffected.`}
+              </li>
+              <li>
+                A future run of{' '}
+                <code className="font-mono">{row.simulationClass}</code> creates the test again,
+                under its class name.
+              </li>
+            </ul>
+
+            {removal.isError && (
+              <div
+                role="alert"
+                className="rounded-lg border border-default bg-surface p-3 text-[13px] text-primary"
+              >
+                {/* NEVER claims the test survived — this side cannot know. The
+                    same wording discipline `TokenTable`'s failed revoke uses. */}
+                This test may still exist — deleting it did not complete.
+                {removal.error instanceof ProblemError && (
+                  <p className="mt-1">{removal.error.detail}</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="primary"
+                loading={removal.isPending}
+                onClick={() => removal.mutate()}
+              >
+                Delete this test
+              </Button>
+              <Button size="sm" onClick={() => setConfirmingDelete(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* The same bordered chip strip `RunHeader` uses, and for the same
             reason: these are VALUES, they wear the mono face, and a divider
@@ -180,8 +300,24 @@ export default function TestRuns() {
           `key` for the same reason `RunList` below carries one: this panel
           holds form state, and moving between two tests matches the SAME
           route, so React would reuse the instance and carry a half-typed rule
-          from one test into another. */}
-      <ProjectRules key={`${slug}/${testSlug}`} slug={slug} testSlug={testSlug} testName={row.name} />
+          from one test into another.
+
+          ═══ THE `rules:` PREFIX IS NOT DECORATION ═══
+
+          Both keys are derived from the same two slugs, and both elements are
+          children of the same parent — so without the prefixes they were the
+          IDENTICAL key on two siblings. React's rule is that keys are unique
+          among siblings, and the failure when they are not is not an error: it
+          rendered this panel FOUR times, with a console warning nobody sees in
+          a browser tab. `project-tests.spec.ts` caught it as
+          `getByRole('button', { name: 'Add rule' }) resolved to 2 elements`,
+          which names the symptom and not the cause. */}
+      <ProjectRules
+        key={`rules:${slug}/${testSlug}`}
+        slug={slug}
+        testSlug={testSlug}
+        testName={row.name}
+      />
 
       <RunList
         // `key` for the same reason `ProjectRuns` carries one: moving from one
@@ -191,7 +327,7 @@ export default function TestRuns() {
         // with an empty page, so the reader would get a blank list for no
         // visible reason. Keyed on BOTH slugs, because the project can change
         // under a test slug that happens to exist in each.
-        key={`${slug}/${testSlug}`}
+        key={`runs:${slug}/${testSlug}`}
         projectSlug={slug}
         testSlug={testSlug}
         heading={row.name}

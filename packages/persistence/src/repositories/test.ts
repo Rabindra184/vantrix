@@ -143,4 +143,40 @@ export class TestRepository {
     if (result.count === 0) return null;
     return this.findBySlug(scope, slug);
   }
+
+  /**
+   * Delete a test and return what was deleted, or null when this project has
+   * no such test.
+   *
+   * ═══ WHAT GOES WITH IT, AND WHAT DOES NOT ═══
+   *
+   * Its RUNS SURVIVE, un-grouped: `run.test_id` is `ON DELETE SET NULL`,
+   * because a run is a record of something that happened and deleting the
+   * label somebody put on it must not delete the measurement. Those runs stay
+   * on the project's run list, which is the one view that shows a run
+   * belonging to no test.
+   *
+   * Its RULES DO NOT: `sla_rule.test_id` is `ON DELETE CASCADE`, because a
+   * rule is configuration, and one pointing at a test that no longer exists
+   * judges nothing forever while still reading as protection in an authoring
+   * list. Project-wide rules are untouched — they were never this test's.
+   *
+   * VERDICTS ALREADY RECORDED ARE UNAFFECTED EITHER WAY. `run_assertion`
+   * carries no foreign key to `sla_rule` and keeps its own `ruleSnapshot`,
+   * precisely so retiring a rule cannot rewrite the past.
+   *
+   * The row is read FIRST so the caller can say what it removed — a delete
+   * that returns nothing leaves a UI unable to name what it just lost — and
+   * `deleteMany` carries the tenant in its `where` for the same
+   * no-TOCTOU reason `update` above does.
+   */
+  async remove(scope: ProjectScope, slug: string): Promise<TestRow | null> {
+    const existing = await this.findBySlug(scope, slug);
+    if (existing === null) return null;
+
+    const { count } = await this.prisma.test.deleteMany({
+      where: { orgId: scope.orgId, projectId: scope.projectId, slug },
+    });
+    return count === 0 ? null : existing;
+  }
 }

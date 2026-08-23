@@ -77,21 +77,53 @@ function jsonResponse(body: unknown, status = 200): Response {
 const runRequests: string[] = [];
 /** Every PATCH body this render sent, parsed. */
 const patches: unknown[] = [];
+/** Every DELETE this render issued. */
+const deletes: string[] = [];
 
 function stubFetch({
   test = TEST,
   testStatus = 200,
   patchStatus = 200,
-}: { test?: unknown; testStatus?: number; patchStatus?: number } = {}) {
+  deleteStatus = 200,
+  rulesBody = [],
+}: {
+  test?: unknown;
+  testStatus?: number;
+  patchStatus?: number;
+  deleteStatus?: number;
+  rulesBody?: unknown[];
+} = {}) {
   runRequests.length = 0;
   patches.length = 0;
+  deletes.length = 0;
   vi.stubGlobal('fetch', (input: RequestInfo, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost');
 
     if (url.pathname === '/v1/projects') {
       return Promise.resolve(jsonResponse({ items: [PROJECT] }));
     }
+    if (url.pathname === '/v1/projects/checkout/rules') {
+      return Promise.resolve(jsonResponse({ rules: rulesBody }));
+    }
     if (url.pathname === '/v1/projects/checkout/tests/example-checkoutsimulation') {
+      if (init?.method === 'DELETE') {
+        deletes.push(url.pathname);
+        return Promise.resolve(
+          deleteStatus === 200
+            ? jsonResponse(TEST)
+            : jsonResponse(
+                {
+                  type: 'about:blank',
+                  title: 'Not Found',
+                  status: 404,
+                  detail: 'No test "example-checkoutsimulation" in this project.',
+                  code: 'NOT_FOUND',
+                  remediation: 'It may already have been deleted.',
+                },
+                deleteStatus,
+              ),
+        );
+      }
       if (init?.method === 'PATCH') {
         patches.push(JSON.parse(String(init.body)));
         return Promise.resolve(
@@ -159,6 +191,31 @@ describe('TestRuns', () => {
     await screen.findByRole('heading', { level: 1, name: 'Checkout smoke' });
     await waitFor(() => expect(screen.getAllByTestId('run-row')).toHaveLength(RUNS.length));
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  /**
+   * ═══ ONE RULES PANEL, AND THE REASON THIS CASE EXISTS ═══
+   *
+   * `ProjectRules` and `RunList` are siblings here and BOTH take a `key` built
+   * to force a remount when the reader moves between two tests. Built from the
+   * same two slugs, those keys were IDENTICAL — and React's rule is that keys
+   * are unique among siblings. The failure is not an error: React rendered the
+   * rules panel FOUR times, behind a console warning nobody sees in a browser
+   * tab.
+   *
+   * Every existing case here passed throughout, because each queried something
+   * unique to the page (`Rename`, `Delete test`, the heading). The e2e suite
+   * caught it as `getByRole('button', { name: 'Add rule' }) resolved to 2
+   * elements`, which names the symptom two layers from the cause. This asserts
+   * the cause directly, and cheaply.
+   */
+  it('mounts exactly one rules panel, not one per key collision', async () => {
+    stubFetch();
+    renderPage();
+    await screen.findByRole('heading', { level: 1, name: 'Checkout smoke' });
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: 'Add rule' })).toHaveLength(1),
+    );
   });
 
   /**
@@ -315,5 +372,129 @@ describe('TestRuns — renaming', () => {
     await userEvent.clear(screen.getByLabelText('Name'));
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(patches).toHaveLength(0);
+  });
+});
+
+/**
+ * ═══ DELETING A TEST, AND SAYING WHAT THAT COSTS ═══
+ *
+ * Two different cascades meet on this button and a reader cannot be expected
+ * to know either. The RUNS survive (`run.test_id` is SET NULL) and move to the
+ * project's run list — the half people fear and would otherwise not do. The
+ * test's own SLA RULES do not (`sla_rule.test_id` is CASCADE) — the half
+ * nobody expects, which is why the count is spelled out rather than implied.
+ *
+ * A destructive action whose consequences are only discoverable afterwards is
+ * not a confirmed one, so these cases are about the WORDS as much as the call.
+ */
+describe('TestRuns — deleting a test', () => {
+  const OWN_RULE = {
+    id: '55555555-5555-4555-8555-555555555555',
+    name: 'Payments p95',
+    test: { id: TEST.id, slug: TEST.slug, name: TEST.name },
+    scope: 'run',
+    targetName: null,
+    family: 'response_time',
+    metric: 'p95',
+    comparator: 'lte',
+    threshold: 800,
+    enabled: true,
+    createdAt: '2026-08-22T10:00:00.000Z',
+    updatedAt: '2026-08-22T10:00:00.000Z',
+  };
+  /** A project-wide rule — it judges this test but is NOT its to lose. */
+  const WIDE_RULE = { ...OWN_RULE, id: '66666666-6666-4666-8666-666666666666', test: null };
+
+  it('does not delete on a single click', async () => {
+    stubFetch();
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+
+    expect(screen.getByTestId('test-delete-confirm')).toBeInTheDocument();
+    expect(deletes).toHaveLength(0);
+  });
+
+  it('names the runs it will keep and the rules it will destroy', async () => {
+    stubFetch({ rulesBody: [OWN_RULE, WIDE_RULE] });
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+
+    const panel = screen.getByTestId('test-delete-confirm');
+    // `TEST.runCount` is 2 — computed from the fixture rather than written
+    // down, so a re-fixtured count cannot make this pass for the wrong reason.
+    expect(panel).toHaveTextContent(new RegExp(`${TEST.runCount} runs are kept`));
+    // ONE rule, not two: the project-wide one is not this test's to lose, and
+    // counting it would overstate the damage in the one place a reader is
+    // deciding whether to proceed.
+    expect(panel).toHaveTextContent(/1 SLA rule is\s+deleted with it/);
+    expect(panel).toHaveTextContent(/Project-wide rules are unaffected/);
+  });
+
+  it('says so plainly when there is nothing of either to lose', async () => {
+    stubFetch({ test: { ...TEST, runCount: 0 }, rulesBody: [WIDE_RULE] });
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+
+    const panel = screen.getByTestId('test-delete-confirm');
+    expect(panel).toHaveTextContent('It has no runs.');
+    expect(panel).toHaveTextContent('It has no SLA rules of its own.');
+  });
+
+  /**
+   * The test comes BACK if a run of its class is parsed again — it is created
+   * from the simulation class, not authored — and a reader deciding whether to
+   * delete needs to know that this is not permanent in the way it looks.
+   */
+  it('says the test returns with the next run of its class', async () => {
+    stubFetch();
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+    expect(screen.getByTestId('test-delete-confirm')).toHaveTextContent(
+      /A future run of\s+example\.CheckoutSimulation\s+creates the test again/,
+    );
+  });
+
+  it('deletes on confirmation, and leaves the page it just destroyed', async () => {
+    stubFetch();
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this test' }));
+
+    await waitFor(() => expect(deletes).toHaveLength(1));
+    // Navigated away — the heading of the page that no longer exists is gone.
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { level: 1, name: 'Checkout smoke' })).toBeNull(),
+    );
+  });
+
+  it('disarms without deleting', async () => {
+    stubFetch();
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByTestId('test-delete-confirm')).toBeNull();
+    expect(deletes).toHaveLength(0);
+  });
+
+  /**
+   * A destructive mutation that failed must announce itself and must NOT claim
+   * a state it cannot know — the same wording discipline `TokenTable`'s revoke
+   * failure uses. Scoped to the confirm panel, because the run list below has
+   * its own `role="alert"` and a page-wide query would stop asking "did the
+   * delete fail" and start asking "did anything fail".
+   */
+  it('says the test may still exist when the delete fails', async () => {
+    stubFetch({ deleteStatus: 404 });
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete test' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this test' }));
+
+    const panel = await screen.findByTestId('test-delete-confirm');
+    const alert = await within(panel).findByRole('alert');
+    expect(alert).toHaveTextContent('This test may still exist');
+    // Still on the page: navigating away from a delete that did not happen
+    // would tell the reader it did.
+    expect(screen.getByRole('heading', { level: 1, name: 'Checkout smoke' })).toBeInTheDocument();
   });
 });

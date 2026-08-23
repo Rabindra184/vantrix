@@ -8,7 +8,15 @@ import RunList from '../src/routes/RunList';
 
 afterEach(cleanup);
 
-function renderList(items: RunListResponse['items'], initialEntry = '/runs') {
+/**
+ * `props` is what scopes the list. Empty is the org-wide `/runs`; a
+ * `projectSlug` is a project's own list; both together are a test's.
+ */
+function renderList(
+  items: RunListResponse['items'],
+  initialEntry = '/runs',
+  props: { projectSlug?: string; testSlug?: string } = {},
+) {
   const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() =>
     Promise.resolve(
       new Response(JSON.stringify({ items, nextCursor: null }), {
@@ -22,7 +30,7 @@ function renderList(items: RunListResponse['items'], initialEntry = '/runs') {
   const utils = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
-        <RunList />
+        <RunList {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -59,6 +67,54 @@ describe('RunList columns', () => {
     expect(screen.getByRole('columnheader', { name: 'Simulation' })).toBeInTheDocument();
     expect(screen.getAllByText('Checkout')).toHaveLength(2);
     expect(screen.getByText('example.ParitySimulation')).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ A COLUMN THAT IS CONSTANT BY CONSTRUCTION CARRIES NOTHING ═══
+   *
+   * The same argument the missing Tool column already rests on, applied per
+   * scope. On a project's run list every row's project is that project, so the
+   * column costs horizontal room on an already-wide table and gives a reader
+   * nothing to compare.
+   *
+   * The paired positive comes first: the table really rendered, so the absence
+   * below is about this column and not about an empty list.
+   */
+  it('drops the Project column on a project’s own list, where it never varies', async () => {
+    renderList(ROWS, '/projects/checkout', { projectSlug: 'checkout' });
+    expect(await screen.findByRole('columnheader', { name: 'Simulation' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Project' })).toBeNull();
+    expect(screen.queryByText('Checkout')).toBeNull();
+  });
+
+  /**
+   * ═══ THE SIMULATION COLUMN CANNOT SIMPLY GO ═══
+   *
+   * On a test's list the simulation is constant too — it is the page's own
+   * heading — but that cell holds the ONLY link to the run. So the column keeps
+   * its place and becomes `Run`, showing the short id, which is the thing that
+   * actually tells two runs of one test apart.
+   *
+   * The link and its accessible name are asserted, not just the header: a
+   * column that lost its link would still pass a header-only check while
+   * leaving every row unreachable.
+   */
+  it('identifies a test’s runs by id, keeping the link the row depends on', async () => {
+    renderList(ROWS, '/projects/checkout/tests/parity', {
+      projectSlug: 'checkout',
+      testSlug: 'parity',
+    });
+    expect(await screen.findByRole('columnheader', { name: 'Run' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Simulation' })).toBeNull();
+    // The simulation is NOT repeated down the rows...
+    expect(screen.queryByText('example.ParitySimulation')).toBeNull();
+    // ...and the row is still reachable, by a link whose name carries the
+    // WHOLE id even though the cell shows only its prefix.
+    const link = screen.getByRole('link', {
+      name: 'View run 11111111-1111-4111-8111-111111111111',
+    });
+    expect(link).toHaveAttribute('href', '/runs/11111111-1111-4111-8111-111111111111');
+    expect(link).toHaveTextContent('11111111');
   });
 
   it('has no Tool column — TOOL_IDS has one member, so it read "gatling" on every row', async () => {

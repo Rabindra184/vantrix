@@ -20,7 +20,7 @@ afterEach(async () => {
 
 const TESTS = '/v1/projects/checkout/tests';
 
-const asSession = (method: 'get' | 'patch', path: string) =>
+const asSession = (method: 'get' | 'patch' | 'delete', path: string) =>
   request(ctx.app.getHttpServer())[method](path).set('Cookie', cookie);
 
 async function seedTest(over: Partial<{ slug: string; name: string; simulationClass: string }> = {}) {
@@ -370,5 +370,130 @@ describe('GET /v1/runs/:id — the test a run belongs to', () => {
     const res = await asSession('get', `/v1/runs/${run.id}`);
     expect(res.status, JSON.stringify(res.body)).toBe(202);
     expect(res.body.test).toMatchObject({ slug: 'alpha', name: 'Checkout smoke' });
+  });
+});
+
+/**
+ * ═══ DELETE, AND THE TWO CASCADES THAT MEET IN IT ═══
+ *
+ * Runs are `ON DELETE SET NULL` and this test's own SLA rules are
+ * `ON DELETE CASCADE`, and the difference is history versus configuration —
+ * see `TestRepository.remove`. Both directions are asserted against a real
+ * database, because a foreign key declared one way and behaving another is
+ * exactly the kind of thing a mocked test cannot see.
+ */
+describe('DELETE /v1/projects/:slug/tests/:testSlug', () => {
+  const seedRule = (testId: string | null) =>
+    ctx.prisma.slaRule.create({
+      data: {
+        orgId: ctx.orgId,
+        projectId: ctx.projectId,
+        testId,
+        scope: 'run',
+        targetName: null,
+        family: 'response_time',
+        metric: 'p95',
+        comparator: 'lte',
+        threshold: 800,
+      },
+    });
+
+  it('returns the test it deleted, so a caller can name what it removed', async () => {
+    const test = await seedTest({ slug: 'alpha', name: 'Alpha', simulationClass: 'a.Sim' });
+
+    const res = await asSession('delete', `${TESTS}/alpha`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({ id: test.id, slug: 'alpha', name: 'Alpha' });
+    expect(await ctx.prisma.test.count()).toBe(0);
+  });
+
+  /**
+   * THE HALF PEOPLE FEAR. A run records something that happened; deleting the
+   * label somebody put on it must not delete the measurement. The runs stay,
+   * ungrouped, and appear on the project's run list — the one view that shows
+   * a run belonging to no test.
+   */
+  it('keeps its runs, ungrouped, rather than deleting them with it', async () => {
+    const test = await seedTest({ slug: 'alpha', simulationClass: 'a.Sim' });
+    const run = await seedRun(test.id);
+
+    await asSession('delete', `${TESTS}/alpha`);
+
+    const after = await ctx.prisma.run.findUnique({ where: { id: run.id } });
+    expect(after).not.toBeNull();
+    expect(after?.testId).toBeNull();
+  });
+
+  /**
+   * THE HALF NOBODY EXPECTS, which is why the UI spells out the count before
+   * it will arm the button. A rule pointing at a test that no longer exists
+   * judges nothing forever while still reading as configured protection.
+   */
+  it('deletes its own SLA rules and leaves the project-wide ones', async () => {
+    const test = await seedTest({ slug: 'alpha', simulationClass: 'a.Sim' });
+    const scoped = await seedRule(test.id);
+    const wide = await seedRule(null);
+
+    await asSession('delete', `${TESTS}/alpha`);
+
+    const remaining = (await ctx.prisma.slaRule.findMany()).map((r) => r.id);
+    expect(remaining).toContain(wide.id);
+    expect(remaining).not.toContain(scoped.id);
+  });
+
+  /**
+   * VERDICTS ALREADY RECORDED SURVIVE. `run_assertion` carries no foreign key
+   * to `sla_rule` and keeps its own snapshot, precisely so retiring a rule
+   * cannot rewrite the past — and deleting a test takes a rule with it.
+   */
+  it('leaves assertions already recorded against the deleted rule', async () => {
+    const test = await seedTest({ slug: 'alpha', simulationClass: 'a.Sim' });
+    const scoped = await seedRule(test.id);
+    const run = await seedRun(test.id);
+    await ctx.prisma.runAssertion.create({
+      data: {
+        runId: run.id,
+        orgId: ctx.orgId,
+        projectId: ctx.projectId,
+        ruleId: scoped.id,
+        outcome: 'failed',
+        actualValue: 1234,
+        message: 'p95 of the run (response_time) ≤ 800 — actual 1234',
+        ruleSnapshot: {
+          scope: 'run',
+          targetName: null,
+          family: 'response_time',
+          metric: 'p95',
+          comparator: 'lte',
+          threshold: 800,
+        },
+      },
+    });
+
+    await asSession('delete', `${TESTS}/alpha`);
+
+    const kept = await ctx.prisma.runAssertion.findMany({ where: { runId: run.id } });
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.ruleId).toBe(scoped.id);
+  });
+
+  it('404s a slug that names no test, rather than reporting success', async () => {
+    const res = await asSession('delete', `${TESTS}/nope`);
+    expect(res.status).toBe(404);
+  });
+
+  /**
+   * SESSION-ONLY, like the PATCH. Destroying a test is a human's decision
+   * about how their org reads; a CI job that could delete a test would
+   * eventually delete one.
+   */
+  it('refuses a bearer credential', async () => {
+    await seedTest({ slug: 'alpha', simulationClass: 'a.Sim' });
+    const res = await request(ctx.app.getHttpServer())
+      .delete(`${TESTS}/alpha`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status).toBe(403);
+    expect(await ctx.prisma.test.count()).toBe(1);
   });
 });
