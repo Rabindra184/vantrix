@@ -303,3 +303,115 @@ describe('the adaptive verdict', () => {
     expect(getRes.body.verdict).toBe(postRes.body.verdict);
   });
 });
+
+/**
+ * ═══ A TEST-SCOPED RULE, THROUGH THE REAL PIPELINE ═══
+ *
+ * `rules.integration.test.ts` proves `listEnabled` returns the right SET for a
+ * given test id. That is the query; this is the wiring. Between the two sits
+ * `PipelineService`, which has to resolve the run's test BEFORE it loads the
+ * rules — and if that order is ever reversed, the query stays correct, nothing
+ * throws, and every test-scoped gate silently stops firing. There is no
+ * failing assertion in that world, only verdicts that quietly become
+ * `not_evaluated`.
+ *
+ * The `test` row is seeded ahead of the run rather than created by it, because
+ * a rule cannot name a test that does not exist yet. The pipeline's own upsert
+ * matches on `(project_id, simulation_class)` and finds this row, which is
+ * also what makes the seeding honest: the run really is assigned to it.
+ */
+describe('a rule scoped to one test', () => {
+  const PARITY = 'example.ParitySimulation';
+
+  const seedTest = (ctx: TestContext, slug: string, simulationClass: string) =>
+    ctx.prisma.test.create({
+      data: { orgId: ctx.orgId, projectId: ctx.projectId, slug, name: slug, simulationClass },
+    });
+
+  const failingRule = (ctx: TestContext, testId: string | null) =>
+    ctx.prisma.slaRule.create({
+      data: {
+        orgId: ctx.orgId,
+        projectId: ctx.projectId,
+        testId,
+        scope: 'run',
+        targetName: null,
+        family: 'response_time',
+        // 1ms — the reference run cannot possibly meet it, so an evaluated
+        // rule is a FAILED one and an unevaluated rule leaves no assertion at
+        // all. The two outcomes are unmistakable.
+        metric: 'p95',
+        comparator: 'lte',
+        threshold: 1,
+      },
+    });
+
+  it('judges a run of the test it names', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+    const test = await seedTest(ctx, 'parity', PARITY);
+    await failingRule(ctx, test.id);
+
+    const accepted = await post(0);
+    await runPipelineFor(ctx, accepted.body.id);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${accepted.body.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    // The run really did land on the test the rule names — otherwise the
+    // verdict below would be right for the wrong reason.
+    expect(res.body.test?.slug).toBe('parity');
+    expect(res.status).toBe(422);
+    expect(res.body.verdict).toBe('failed');
+    expect(res.body.assertions).toHaveLength(1);
+  });
+
+  /**
+   * The other half, and the one a passing test-scoped rule cannot distinguish
+   * from a broken filter: a rule belonging to a DIFFERENT test must leave no
+   * assertion at all. Not a passing one — none. The run is `not_evaluated`,
+   * which is what "no rule applies to this" means here.
+   */
+  it('leaves a run of another test entirely unjudged', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+    await seedTest(ctx, 'parity', PARITY);
+    const other = await seedTest(ctx, 'search', 'shop.SearchSimulation');
+    await failingRule(ctx, other.id);
+
+    const accepted = await post(0);
+    await runPipelineFor(ctx, accepted.body.id);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${accepted.body.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.verdict).toBe('not_evaluated');
+    expect(res.body.assertions).toEqual([]);
+  });
+
+  /**
+   * And the compatibility case, which is the one every existing deployment is
+   * in: a rule nobody scoped judges the run regardless of which test it turned
+   * out to belong to. `test_id IS NULL` is the backfill, and this is it
+   * working.
+   */
+  it('still judges every run when the rule names no test', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+    await seedTest(ctx, 'parity', PARITY);
+    await failingRule(ctx, null);
+
+    const accepted = await post(0);
+    await runPipelineFor(ctx, accepted.body.id);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${accepted.body.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status).toBe(422);
+    expect(res.body.assertions).toHaveLength(1);
+  });
+});
