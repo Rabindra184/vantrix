@@ -750,9 +750,12 @@ const paths: Record<string, PathItemObject> = {
         'Requires the "stream" scope. Creates a "running" run immediately (unlike POST ' +
         '/v1/runs, this never waits on a terminal state — there is nothing to wait for yet) ' +
         'and returns where to stream its bytes. Takes the same frozen metadata a bundle ' +
-        'upload does — "environment"/"branch"/"commitSha", plus "idempotencyKey" so a retried ' +
-        'open (e.g. after a network timeout) rejoins the run it already created instead of ' +
-        'starting a second one.',
+        'upload does — "environment"/"branch"/"commitSha"/"test", plus "idempotencyKey" so a ' +
+        'retried open (e.g. after a network timeout) rejoins the run it already created ' +
+        'instead of starting a second one. "test" is a test SLUG (e.g. "checkout-soak"): omit ' +
+        'it and the run groups by the simulation class its log header declares; set it to run ' +
+        'one simulation as two tests with different injection profiles. A slug naming no ' +
+        'existing test creates it.',
       requestBody: {
         required: true,
         description: '"tool" is required; every other field is optional, exactly as on POST /v1/runs.',

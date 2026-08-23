@@ -181,7 +181,7 @@ above) and, like ingest, accept only a bearer token — a session names no
 project, so it can never satisfy any of them:
 
 ```text
-POST /v1/runs/live         open    { tool, environment?, branch?, commitSha?, idempotencyKey? }
+POST /v1/runs/live         open    { tool, environment?, branch?, commitSha?, test?, idempotencyKey? }
                                     → 201 { runId, streamUrl, nextOffset }
 POST /v1/runs/{id}/stream  stream  raw chunk bytes, "X-Stream-Offset" header required
                                     → 202 { nextOffset }  or  409 { …, nextOffset }
@@ -194,6 +194,14 @@ to wait for yet — and returns `nextOffset`, the byte offset to start (or
 resume) streaming at. `idempotencyKey` makes a retried `open` (say, after a
 lost response) rejoin the run it already created instead of starting a
 second one.
+
+`test` names which TEST the run belongs to, as a slug (`checkout-soak`, never
+`"Checkout soak"`) — the same optional field `POST /v1/runs` takes as
+`metadata.test`. Omit it and the run groups by the simulation class its log
+header declares, which is what every run did before the field existed. Set it
+to run ONE simulation as TWO tests with different injection profiles: a smoke
+on every merge and a soak overnight are not comparable, and one trend line
+over both hides them both. A slug naming no existing test creates it.
 
 **Exactly one process may stream a given run.** The offset protocol below
 makes an agent's own retries safe, and it makes two *sequential* writers
