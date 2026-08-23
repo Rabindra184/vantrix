@@ -103,18 +103,30 @@ export default function RunTrends() {
             {data.runs.length === 1 && (
               <p className="text-[13px] text-muted">
                 This is the only completed run of{' '}
-                {data.simulation === null ? 'this unnamed simulation' : data.simulation} so far,
-                so there is nothing to compare it against yet.
+                {data.test?.name ?? data.simulation ?? 'this run'} so far, so there is nothing
+                to compare it against yet.
               </p>
             )}
 
-            {/* The cohort key, stated. A reader whose runs carry no simulation
-                name needs to know they are grouped by that ABSENCE — not that
-                the product decided they are the same test. */}
-            {data.simulation === null && data.runs.length > 1 && (
+            {/* ═══ A RUN THAT BELONGS TO NO TEST SAYS SO ═══
+
+                What stood here was the opposite sentence: "these runs are
+                grouped because none of them carries a simulation name, not
+                because they are known to be the same test." It was honest
+                about a cohort that should never have existed — the old query
+                matched NULL to NULL, so every run in a project whose header
+                declared no simulation was trended against every other one,
+                a failed checkout ingest beside a failed search ingest.
+
+                Cohorting by test ends that: a run with no test is a cohort of
+                exactly one. So the paragraph explaining the bad grouping is
+                replaced by one naming the actual state, and the remedy — this
+                is a run waiting to be identified, not a run mis-filed. */}
+            {data.test === null && (
               <p className="text-[13px] text-muted">
-                These runs are grouped because none of them carries a simulation name, not
-                because they are known to be the same test.
+                This run is not part of a test yet, so it has nothing to trend against. A run
+                joins a test when its simulation name is read from the log — a run that failed
+                to parse never gets one.
               </p>
             )}
 

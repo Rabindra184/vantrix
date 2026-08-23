@@ -76,6 +76,28 @@ async function ingested(extra: Record<string, unknown> = {}): Promise<string> {
  * that got any of them wrong would produce a run this endpoint cannot see,
  * which would look like a query bug rather than a fixture one.
  */
+/**
+ * Resolve-or-create a test, the way the worker does — so a cohort in this file
+ * is built the same way a real one is. Keyed on the simulation class, which is
+ * what makes two runs of the same class land in one test.
+ */
+async function testFor(simulationClass: string): Promise<string> {
+  const existing = await ctx.prisma.test.findFirst({
+    where: { projectId: ctx.projectId, simulationClass },
+  });
+  if (existing !== null) return existing.id;
+  const created = await ctx.prisma.test.create({
+    data: {
+      orgId: ctx.orgId,
+      projectId: ctx.projectId,
+      slug: simulationClass.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      name: simulationClass,
+      simulationClass,
+    },
+  });
+  return created.id;
+}
+
 async function seedRun(opts: {
   simulation: string | null;
   startedAt: Date;
@@ -96,6 +118,11 @@ async function seedRun(opts: {
       verdict: 'passed',
       tool: 'gatling',
       simulation: opts.simulation,
+      // THE COHORT KEY, and it follows the simulation because that is what the
+      // worker does: a test IS (project, simulation class). A run whose header
+      // declared no simulation gets no test, which is the state the
+      // cohort-of-one case below is about.
+      testId: opts.simulation === null ? null : await testFor(opts.simulation),
       startedAt,
       startedOn: startedAt,
       toolStartedAt: opts.toolStartedAt === undefined ? startedAt : opts.toolStartedAt,
@@ -185,7 +212,7 @@ describe('GET /v1/runs/:id/trends', () => {
     expect(body.cohortSize).toBe(1);
   });
 
-  it('groups runs of the same simulation in the same project', async () => {
+  it('groups runs of the same test in the same project', async () => {
     ctx = await createTestApp();
     const a = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
     await seedRun({ simulation: 'checkout', startedAt: at('2026-08-02T10:00:00Z') });
@@ -196,7 +223,7 @@ describe('GET /v1/runs/:id/trends', () => {
     expect(body.cohortSize).toBe(3);
   });
 
-  it('treats a different simulation as a different cohort', async () => {
+  it('treats a different test as a different cohort', async () => {
     ctx = await createTestApp();
     const a = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
     await seedRun({ simulation: 'search', startedAt: at('2026-08-02T10:00:00Z') });
@@ -206,18 +233,70 @@ describe('GET /v1/runs/:id/trends', () => {
     expect(body.cohortSize).toBe(1);
   });
 
-  it('treats NULL as its own equivalence class, not a wildcard', async () => {
-    // `simulation = NULL` is NULL in SQL, so a naive `=` would return an empty
-    // cohort here — not even the run being asked about. IS NOT DISTINCT FROM
-    // is what makes these two find each other and exclude the named one.
+  /**
+   * ═══ THIS CASE ASSERTED THE OPPOSITE, AND THAT WAS THE DEFECT ═══
+   *
+   * It read "treats NULL as its own equivalence class, not a wildcard", and it
+   * was a faithful description of `r.simulation IS NOT DISTINCT FROM $3`:
+   * NULL matched NULL, so every run in a project whose header declared no
+   * simulation was cohorted with every OTHER such run. A failed ingest of the
+   * checkout suite trended against a failed ingest of the search suite,
+   * because neither could say what it was.
+   *
+   * That is not a cohort, it is the absence of one wearing a cohort's clothes
+   * — and the UI needed a paragraph telling readers the grouping did not mean
+   * what it looked like. Cohorting by test ends it: `= $3` never matches a
+   * NULL test_id.
+   *
+   * What must NOT happen is the run vanishing from its own trend, which a
+   * plain `=` would do. `OR r.id = $5` keeps it, as a cohort of exactly one.
+   */
+  it('gives a run with no test a cohort of itself, not of every unidentified run', async () => {
     ctx = await createTestApp();
     const a = await seedRun({ simulation: null, startedAt: at('2026-08-01T10:00:00Z') });
-    const b = await seedRun({ simulation: null, startedAt: at('2026-08-02T10:00:00Z') });
+    await seedRun({ simulation: null, startedAt: at('2026-08-02T10:00:00Z') });
     await seedRun({ simulation: 'checkout', startedAt: at('2026-08-03T10:00:00Z') });
 
     const body = TrendsResponseSchema.parse((await trends(a)).body);
-    expect(body.simulation).toBeNull();
-    expect(new Set(body.runs.map((r) => r.id))).toEqual(new Set([a, b]));
+    expect(body.test).toBeNull();
+    // Itself, and nothing else — in particular NOT the other testless run.
+    expect(body.runs.map((r) => r.id)).toEqual([a]);
+    expect(body.cohortSize).toBe(1);
+  });
+
+  /**
+   * The cohort now has a NAME, which is the point of the layer. A reader on
+   * Trends should be told what they are looking at the history of.
+   */
+  it('names the test the cohort is of', async () => {
+    ctx = await createTestApp();
+    const a = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
+    await seedRun({ simulation: 'checkout', startedAt: at('2026-08-02T10:00:00Z') });
+
+    const body = TrendsResponseSchema.parse((await trends(a)).body);
+    expect(body.test).toMatchObject({ slug: 'checkout', name: 'checkout' });
+    // And the run's own reported simulation is still there beside it, as
+    // captured execution metadata rather than as the cohort key.
+    expect(body.simulation).toBe('checkout');
+  });
+
+  /**
+   * ═══ TWO SIMULATIONS, ONE TEST — WHICH THE STRING COHORT COULD NOT DO ═══
+   *
+   * A test is identified by its id, not by the string a run happened to
+   * report. If a run is assigned to a test whose class differs from what its
+   * own header said, it still belongs to that test. The string cohort could
+   * not express this at all, and it is what makes renaming safe later.
+   */
+  it('follows test_id rather than the simulation string when they disagree', async () => {
+    ctx = await createTestApp();
+    const shared = await testFor('checkout');
+    const a = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
+    const odd = await seedRun({ simulation: 'renamed-later', startedAt: at('2026-08-02T10:00:00Z') });
+    await ctx.prisma.run.update({ where: { id: odd }, data: { testId: shared } });
+
+    const body = TrendsResponseSchema.parse((await trends(a)).body);
+    expect(new Set(body.runs.map((r) => r.id))).toEqual(new Set([a, odd]));
     expect(body.cohortSize).toBe(2);
   });
 

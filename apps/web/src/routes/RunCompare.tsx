@@ -215,13 +215,22 @@ export default function RunCompare() {
               // A cohort of one has no comparison to draw, which is genuinely
               // nothing rather than a chart with one line in it — unlike
               // Trends, where a single point is still a measurement worth
-              // showing. `body` says which simulation, so a reader who
-              // expected peers knows which name to look for.
+              // showing. `body` names the TEST, so a reader who expected peers
+              // knows what to look for.
+              //
+              // The fallbacks are ordered by how much they actually say: the
+              // test's name is what a reader chose, the simulation is what the
+              // tool reported, and a run with neither is one nothing has
+              // identified yet — which is a different sentence, below.
               <EmptyState
                 title="Nothing to compare yet"
-                body={`This is the only completed run of ${
-                  data.simulation === null ? 'this unnamed simulation' : data.simulation
-                }. Compare becomes available once a second run of it has been ingested.`}
+                body={
+                  data.test === null
+                    ? 'This run is not part of a test yet, so there is nothing to compare it ' +
+                      'against. A run joins a test when its simulation name is read from the log.'
+                    : `This is the only completed run of ${data.test.name}. Compare becomes ` +
+                      'available once a second run of it has been ingested.'
+                }
               />
             ) : (
               <>

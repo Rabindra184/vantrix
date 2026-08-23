@@ -68,7 +68,41 @@ only to show the scale of what disappears.
 `nvm use` first, and if a run reports fewer than **128 files / 1373 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. Last measured on the test-api branch,
+silently-skipped run looks like a pass. The trends-by-test branch added no unit
+FILE and no unit case — it rewrote existing ones — so the unit floor is
+unchanged, while **integration rises to 123 files / 1464 tests** (two new cases
+in `apps/api/test/trends.integration.test.ts`) and e2e stays 96.
+
+TWO THINGS FROM IT.
+
+FIRST, THE FLAKE THIS FILE RECORDED AS "MECHANISM UNDIAGNOSED" IS DIAGNOSED.
+`RequestDetail.test.tsx` failed intermittently with a stale
+`request-stat-count` cell surviving between renders. **`vitest.config.ts` does
+not set `globals`, so Testing Library's automatic cleanup never registers** —
+every file has to call `afterEach(cleanup)` itself, and four did not (`Card`,
+`RequestDetail`, `payload`, `useLiveRun`). Every `render` appends to the same
+`document.body`.
+
+It is INTERMITTENT rather than always wrong because an earlier test's
+`useQuery` can resolve AFTER that test has ended and commit into its
+still-attached container — so whether the stale node exists depends on timing,
+which is exactly why it looked unreproducible. Four cleanup calls fixed it;
+four consecutive clean runs since. **When a jsdom test finds an element it did
+not render, check the file for cleanup before suspecting the component.**
+
+SECOND, LOAD AVERAGE IS A PREREQUISITE FOR BELIEVING ANY RESULT HERE. One
+integration sweep came back with 22 failures across LiveFoldOwner,
+PipelineService, Sweeper, the OpenAPI document and more — the same everything-
+is-broken shape the disk-full incident produced, on a healthy disk. The tells
+were a single test running **15 minutes against a 2-minute timeout**, and
+`prisma.org.create` failing `Unique constraint failed on (slug)` immediately
+after a `TRUNCATE`. `uptime` said **79**. The same suite on the same commit
+passed 1464/1464 once load fell to ~30. Nothing was wrong with the code, and
+nothing in the output said so. **Check `uptime` before diagnosing a broad
+integration failure; above roughly 40 on this machine the suite cannot be
+trusted either way.**
+
+Before that, the test-api branch,
 which added ONE unit file — `packages/contracts/test/test.test.ts` (13) — from
 a floor of 127 / 1360. Its integration floor is **123 files / 1462 tests**
 (that `.ts` file runs there too, plus `apps/api/test/tests.integration.test.ts`

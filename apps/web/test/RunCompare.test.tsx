@@ -37,7 +37,17 @@ const COMPLETE_RUN: RunResponse = {
   assertions: [],
 };
 
-const EMPTY_TRENDS = { runId: RUN_ID, simulation: COMPLETE_RUN.simulation, cohortSize: 1, runs: [] };
+// `test` is REQUIRED by TrendsResponseSchema, and `apiFetch` parses through
+// it — a fixture missing it fails validation and the component renders its
+// error state, which is why leaving it out made two cases fail looking for
+// prose that was never reached.
+const EMPTY_TRENDS = {
+  runId: RUN_ID,
+  simulation: COMPLETE_RUN.simulation,
+  test: { id: '99999999-9999-4999-8999-999999999999', slug: 'example-paritysimulation', name: 'example.ParitySimulation' },
+  cohortSize: 1,
+  runs: [],
+};
 
 function processing(status: RunProcessing['status']) {
   return { state: 'processing' as const, run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` } };

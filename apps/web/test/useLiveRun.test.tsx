@@ -1,10 +1,25 @@
 import '@testing-library/jest-dom/vitest';
-import { act, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, SeriesResponse, UsersResponse } from '@perfportal/contracts';
 import { errorsQueryKey, seriesQueryKey, usersQuery, usersQueryKey } from '../src/api/metrics';
 import { BASE_BACKOFF_MS, MAX_BACKOFF_MS, backoffDelayMs, useLiveRun } from '../src/api/live';
+
+// ═══ WITHOUT THIS THE FILE LEAKS DOM BETWEEN CASES ═══
+//
+// `vitest.config.ts` does not set `globals`, so Testing Library's automatic
+// cleanup never registers — every file has to call it itself, and this one
+// did not. Each `render` appends to the same `document.body`, so a query in
+// one test can resolve an element another test mounted.
+//
+// It is INTERMITTENT rather than always wrong, which is what made it hard to
+// see: an earlier test's `useQuery` can resolve after that test has ended and
+// commit into its still-attached container, so whether the stale node exists
+// depends on timing. CLAUDE.md carried the resulting failure as "one
+// occurrence, mechanism undiagnosed"; this is the mechanism.
+afterEach(cleanup);
+
 
 const RUN_ID = '00000000-0000-4000-8000-000000000001';
 

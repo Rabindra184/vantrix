@@ -37,6 +37,7 @@ function response(runs: TrendRun[], over: Partial<TrendsResponse> = {}): TrendsR
   return {
     runId: runs[0]?.id ?? '00000000-0000-0000-0000-000000000000',
     simulation: 'checkout',
+  test: { id: '99999999-9999-4999-8999-999999999999', slug: 'checkout', name: 'checkout' },
     cohortSize: runs.length,
     runs,
     ...over,

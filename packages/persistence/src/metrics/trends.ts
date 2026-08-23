@@ -119,8 +119,30 @@ export const TRENDS_SQL = `
          AND s.name = ''
          AND s.family = 'response_time'
        WHERE r.org_id = $1 AND r.project_id = $2
-         AND r.simulation IS NOT DISTINCT FROM $3
          AND r.status = 'complete'
+         -- ═══ THE COHORT IS A TEST, NOT A STRING ═══
+         --
+         -- This was \`r.simulation IS NOT DISTINCT FROM $3\`, which is the same
+         -- selection for every run the migration backfilled — a test IS
+         -- (project, simulation class), so the two agree by construction. What
+         -- changes is what the cohort can be CALLED, and one real defect.
+         --
+         -- \`IS NOT DISTINCT FROM\` matches NULL to NULL. So every run in a
+         -- project whose header declared no simulation was cohorted with every
+         -- OTHER such run, regardless of what they actually were: a failed
+         -- ingest of the checkout suite trended against a failed ingest of the
+         -- search suite, because neither could say what it was. That is not a
+         -- cohort, it is the absence of one, and the UI needed a paragraph
+         -- explaining that the grouping did not mean what it looked like.
+         -- \`= $3\` never matches a NULL test_id, so those runs stop being
+         -- grouped with each other.
+         --
+         -- THE \`OR r.id = $5\` IS WHAT KEEPS THEM FROM VANISHING. Without it a
+         -- run with no test drops out of the inner query entirely, and the
+         -- outer \`t.id = $5\` below has nothing left to add back — a run's own
+         -- Trends tab would show not even itself. With it, such a run is a
+         -- cohort of exactly one, which is the honest answer.
+         AND (r.test_id = $3::uuid OR r.id = $5::uuid)
     ) t
    WHERE t.rn <= $4 OR t.id = $5::uuid
    ORDER BY t.effective DESC, t.id DESC`;

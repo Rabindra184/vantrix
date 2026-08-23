@@ -36,6 +36,7 @@ function trends(runs: readonly TrendRun[]): TrendsResponse {
   return {
     runId: runs[0]?.id ?? '',
     simulation: 'example.ParitySimulation',
+  test: { id: '99999999-9999-4999-8999-999999999999', slug: 'example-paritysimulation', name: 'example.ParitySimulation' },
     cohortSize: runs.length,
     runs: [...runs],
   };
