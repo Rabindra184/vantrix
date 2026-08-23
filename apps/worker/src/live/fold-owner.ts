@@ -1536,7 +1536,23 @@ export class LiveFoldOwner {
   ): Promise<{ rules: EvaluableRule[]; rulesLoadFailed: boolean }> {
     if (!scope) return { rules: [], rulesLoadFailed: true };
     try {
-      const records = await this.#rules.listEnabled(scope);
+      // ═══ `null`: A LIVE RUN HAS NO TEST, AND CANNOT ═══
+      //
+      // `run.test_id` is resolved by `PipelineService` from the simulation
+      // class in the parsed log header, and `OpenLiveRunRequestSchema` carries
+      // no simulation — so the column is NULL for the whole stream, on every
+      // live run, by construction rather than by timing.
+      //
+      // The consequence is worth stating where somebody will read it: a
+      // TEST-SCOPED rule does not appear in the live SLA banner. It judges the
+      // final report, where the test is known, and the run's recorded verdict
+      // is correct. Only the in-flight preview is narrower than the verdict.
+      //
+      // Passed explicitly rather than defaulted (`listEnabled` takes it as a
+      // required parameter for exactly this reason): the day a live run learns
+      // its test at open, this line is where the change goes, and it is
+      // findable.
+      const records = await this.#rules.listEnabled(scope, null);
       const rules = records.map((r) => ({
         id: r.id,
         scope: r.scope,

@@ -293,10 +293,28 @@ export class PipelineService {
     const toolStartedAt =
       result.runStartedAtMs !== null ? new Date(result.runStartedAtMs).toISOString() : null;
 
-    const rules = await new RuleRepository(this.prisma).listEnabled({
-      orgId: run.orgId,
-      projectId: run.projectId,
-    });
+    // ═══ WHICH TEST THIS IS A RUN OF ═══
+    //
+    // Resolved HERE, before the transaction, and deliberately not inside it.
+    // See `resolveTestId` for why a slug collision must not be able to abort
+    // the write that finalizes the run.
+    //
+    // This is the moment the answer first exists: `result.simulation` is the
+    // class parsed out of the log header, and nothing before this point in a
+    // run's life knows it. `null` when the header declared none, which stays a
+    // run with no test rather than a test with no name.
+    //
+    // AHEAD OF THE RULE LOAD BELOW, and the order is load-bearing rather than
+    // tidy. Rules are now filtered by applicability — project-wide plus this
+    // test's own — so loading them first would mean loading them for a test
+    // this code had not worked out yet, and every test-scoped gate would sit
+    // there configured and never fire.
+    const testId = await this.#resolveTestId(run, result.simulation);
+
+    const rules = await new RuleRepository(this.prisma).listEnabled(
+      { orgId: run.orgId, projectId: run.projectId },
+      testId,
+    );
 
     const evaluable = toEvaluableStats(result.stats);
 
@@ -311,18 +329,6 @@ export class PipelineService {
     }));
 
     const { assertions, verdict } = evaluateRules(evaluableRules, evaluable);
-
-    // ═══ WHICH TEST THIS IS A RUN OF ═══
-    //
-    // Resolved HERE, immediately before the transaction, and deliberately not
-    // inside it. See `resolveTestId` for why a slug collision must not be able
-    // to abort the write that finalizes the run.
-    //
-    // This is the moment the answer first exists: `result.simulation` is the
-    // class parsed out of the log header, and nothing before this point in a
-    // run's life knows it. `null` when the header declared none, which stays a
-    // run with no test rather than a test with no name.
-    const testId = await this.#resolveTestId(run, result.simulation);
 
     // Statistics, assertions, and the terminal status commit together. A run is
     // never observable with statistics but no verdict, or the reverse.

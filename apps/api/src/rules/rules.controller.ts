@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -19,7 +20,12 @@ import {
   type SlaRule,
   type SlaRuleListResponse,
 } from '@perfportal/contracts';
-import { ProjectRepository, RuleRepository, type SlaRuleRow } from '@perfportal/persistence';
+import {
+  ProjectRepository,
+  RuleRepository,
+  TestRepository,
+  type SlaRuleRow,
+} from '@perfportal/persistence';
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, uuidParam } from '../common/validation.js';
@@ -48,6 +54,7 @@ export class RulesController {
   constructor(
     private readonly rules: RuleRepository,
     private readonly projects: ProjectRepository,
+    private readonly tests: TestRepository,
   ) {}
 
   /**
@@ -78,10 +85,17 @@ export class RulesController {
       );
     }
 
+    // Resolved BEFORE the insert, so an unknown test slug is a 404 rather than
+    // a rule that quietly became project-wide — the failure mode that matters
+    // here, because a gate applied to everything looks like a gate applied to
+    // something and nothing on screen distinguishes them.
+    const testId = await this.resolveTest(tenant.orgId, project.id, parsed.data.testSlug ?? null);
+
     const row = await this.rules.create(
       { orgId: tenant.orgId, projectId: project.id },
       {
         name: parsed.data.name ?? null,
+        testId,
         scope: parsed.data.scope,
         targetName: parsed.data.targetName,
         family: parsed.data.family,
@@ -93,11 +107,35 @@ export class RulesController {
     return toRule(row);
   }
 
+  /**
+   * Every rule in the project, or — with `?test=` — every rule that JUDGES
+   * that test.
+   *
+   * ═══ THE FILTER IS A UNION, NOT AN EQUALITY ═══
+   *
+   * `?test=checkout` answers "what gates this test", which is the project-wide
+   * rules PLUS that test's own. Reading it as `test_id = <id>` would hide
+   * every gate the project applies to everything, so a reader would see an
+   * org's error-rate floor vanish from the one page where they went to check
+   * whether it was configured. The repository spells the union; this handler
+   * only resolves the slug.
+   */
   @Get()
-  async list(@Param('slug') slug: string, @Req() req: Request): Promise<SlaRuleListResponse> {
+  async list(
+    @Param('slug') slug: string,
+    @Req() req: Request,
+    @Query('test') test?: string,
+  ): Promise<SlaRuleListResponse> {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, slug);
-    const rows = await this.rules.listForProject({ orgId: tenant.orgId, projectId: project.id });
+    // 404 for an unknown test rather than an unfiltered list: a page that
+    // asked about one test and got every rule in the project would present
+    // rules that do not judge it as rules that do.
+    const testId = await this.resolveTest(tenant.orgId, project.id, test ?? null);
+    const rows = await this.rules.listForProject(
+      { orgId: tenant.orgId, projectId: project.id },
+      testId ?? undefined,
+    );
     // Parsed on the way out, like every other list here: a response this
     // schema rejects is a bug in the server, not data a client should see.
     return SlaRuleListResponseSchema.parse({ rules: rows.map(toRule) });
@@ -177,6 +215,25 @@ export class RulesController {
   private noSuchRule(ruleId: string): NotFoundException {
     return new NotFoundException(`No SLA rule "${ruleId}" in this project.`);
   }
+
+  /**
+   * A test slug to its id within THIS project, or null for "no test named".
+   *
+   * One helper for the create body and the list query, because the two must
+   * not disagree about what an unknown slug means. Both get a 404 — the same
+   * answer `RunsController` gives `?test=`, and for the same reason: the
+   * status code must not distinguish "no such test" from "not yours".
+   */
+  private async resolveTest(
+    orgId: string,
+    projectId: string,
+    testSlug: string | null,
+  ): Promise<string | null> {
+    if (testSlug === null) return null;
+    const found = await this.tests.findBySlug({ orgId, projectId }, testSlug);
+    if (found === null) throw new NotFoundException(`No test "${testSlug}" in this project.`);
+    return found.id;
+  }
 }
 
 /** A stored row on the wire: instants as ISO strings, then through the schema. */
@@ -184,6 +241,7 @@ function toRule(row: SlaRuleRow): SlaRule {
   return SlaRuleSchema.parse({
     id: row.id,
     name: row.name,
+    test: row.test,
     scope: row.scope,
     targetName: row.targetName,
     family: row.family,

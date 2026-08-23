@@ -5,6 +5,7 @@ import {
   CreateSlaRuleRequestSchema,
   SLA_METRIC_SCALARS,
   SlaMetricSchema,
+  SlaRuleSchema,
   UpdateSlaRuleRequestSchema,
   isResolvableSlaMetric,
 } from '../src/rules.js';
@@ -168,5 +169,106 @@ describe('UpdateSlaRuleRequestSchema', () => {
     { comparator: 'gte' },
   ])('refuses %j, which would re-aim the rule rather than retune it', (patch) => {
     expect(UpdateSlaRuleRequestSchema.safeParse(patch).success).toBe(false);
+  });
+});
+
+/**
+ * ═══ WHAT A RULE APPLIES TO, WHICH IS NOT WHAT IT MEASURES ═══
+ *
+ * `scope` on this same object means run/scenario/group/request — the metric
+ * target — and `ProjectScope` in the repositories means the tenant. `testSlug`
+ * is a third question and is never called a scope, in the schema or in the UI,
+ * because a reader who conflates the two authors a gate on the wrong thing
+ * while reading their own configuration as correct.
+ */
+describe('CreateSlaRuleRequestSchema — which test a rule applies to', () => {
+  const RULE = {
+    scope: 'run' as const,
+    targetName: null,
+    family: 'response_time' as const,
+    metric: 'p95',
+    comparator: 'lte' as const,
+    threshold: 800,
+  };
+
+  /**
+   * THE COMPATIBILITY CASE. Every rule authored before this field existed
+   * judged every run in its project, and a client that has never heard of
+   * `testSlug` must keep meaning exactly that — so an absent field is
+   * project-wide, not a validation error.
+   */
+  it('accepts a body with no testSlug at all, which is project-wide', () => {
+    expect(CreateSlaRuleRequestSchema.parse(RULE).testSlug).toBeUndefined();
+  });
+
+  it('reads an explicit null as project-wide too', () => {
+    expect(CreateSlaRuleRequestSchema.parse({ ...RULE, testSlug: null }).testSlug).toBeNull();
+  });
+
+  it('carries a test slug through', () => {
+    expect(CreateSlaRuleRequestSchema.parse({ ...RULE, testSlug: 'payments-sweep' }).testSlug).toBe(
+      'payments-sweep',
+    );
+  });
+
+  /**
+   * A blank slug names no test and cannot resolve, so it would either 404 or —
+   * worse, if anything ever coerced it — become project-wide. Rejecting it
+   * here means the only two ways to say "every test" are absence and null.
+   */
+  it('refuses a blank test slug rather than treating it as every test', () => {
+    expect(() => CreateSlaRuleRequestSchema.parse({ ...RULE, testSlug: '   ' })).toThrow();
+  });
+
+  /**
+   * `.strict()` doing its job. A caller reaching for the obvious-but-wrong
+   * field name gets a 400 rather than a rule that silently went project-wide —
+   * which is the failure that matters here, because a gate applied to
+   * everything looks exactly like a gate applied to something.
+   */
+  it('refuses testId, so a caller cannot half-say what it meant', () => {
+    expect(() =>
+      CreateSlaRuleRequestSchema.parse({
+        ...RULE,
+        testId: '33333333-3333-4333-8333-333333333333',
+      }),
+    ).toThrow();
+  });
+});
+
+describe('SlaRuleSchema — the test a rule reports', () => {
+  const STORED = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: null,
+    scope: 'run',
+    targetName: null,
+    family: 'response_time',
+    metric: 'p95',
+    comparator: 'lte',
+    threshold: 800,
+    enabled: true,
+    createdAt: '2026-08-22T10:00:00.000Z',
+    updatedAt: '2026-08-22T10:00:00.000Z',
+  };
+
+  it('carries the test a rule judges', () => {
+    const parsed = SlaRuleSchema.parse({
+      ...STORED,
+      test: { id: '33333333-3333-4333-8333-333333333333', slug: 'payments', name: 'Payments' },
+    });
+    expect(parsed.test?.slug).toBe('payments');
+  });
+
+  it('accepts null for a project-wide rule', () => {
+    expect(SlaRuleSchema.parse({ ...STORED, test: null }).test).toBeNull();
+  });
+
+  /**
+   * The rolling-deploy case, the same pairing `RunResponse.test` documents: a
+   * required field here would blank the whole rules panel while an old API pod
+   * is still answering.
+   */
+  it('accepts a rule from an API pod that predates the field', () => {
+    expect(SlaRuleSchema.parse(STORED).test).toBeUndefined();
   });
 });

@@ -109,6 +109,25 @@ export const CreateSlaRuleRequestSchema = z
   .object({
     /** Optional — an unnamed rule is described by its own expression. */
     name: z.string().trim().min(1).max(120).nullable().optional(),
+    /**
+     * WHAT THIS RULE APPLIES TO. Absent or null makes a PROJECT-WIDE rule —
+     * every run of every test, which is what every rule meant before this
+     * field existed, so an existing client's body keeps its exact meaning.
+     * A test slug narrows it to that test's runs.
+     *
+     * ═══ NOT CALLED A SCOPE, AND THAT IS DELIBERATE ═══
+     *
+     * `scope` right below already means run/scenario/group/request — what the
+     * rule MEASURES — and `ProjectScope` in the repositories means the tenant.
+     * A third sense of the word is how somebody authors a gate on the wrong
+     * thing while reading their own configuration as correct.
+     *
+     * A SLUG, not an id, because a slug is what a URL and a human both carry;
+     * the server resolves it within THIS project, which is the only scope in
+     * which a test slug is unique. An unknown slug is a 404, never a silently
+     * project-wide rule.
+     */
+    testSlug: z.string().trim().min(1).max(200).nullable().optional(),
     scope: z.enum(SLA_RULE_SCOPES),
     targetName: z.string().trim().min(1).max(500).nullable(),
     family: z.enum(SLA_RULE_FAMILIES),
@@ -165,6 +184,22 @@ export type UpdateSlaRuleRequest = z.infer<typeof UpdateSlaRuleRequestSchema>;
 export const SlaRuleSchema = z.object({
   id: z.string().uuid(),
   name: z.string().nullable(),
+  /**
+   * The test this rule applies to, or null for a project-wide one.
+   *
+   * The whole ref rather than a slug: a list has to NAME what each rule
+   * judges, and re-fetching the test list to turn slugs into names would make
+   * a rules table depend on a second request to be readable.
+   *
+   * NULLABLE AND OPTIONAL, the same pairing `RunResponse.test` documents:
+   * `null` is a genuine project-wide rule, `undefined` is a response from an
+   * API pod that predates the field, and a required field would blank the
+   * rules panel for a whole rolling deploy.
+   */
+  test: z
+    .object({ id: z.string().uuid(), slug: z.string(), name: z.string() })
+    .nullable()
+    .optional(),
   scope: z.string(),
   targetName: z.string().nullable(),
   family: z.string(),

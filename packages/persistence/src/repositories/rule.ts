@@ -23,6 +23,17 @@ export interface SlaRuleRecord {
 export interface SlaRuleRow extends SlaRuleRecord {
   name: string | null;
   enabled: boolean;
+  /**
+   * The test this rule applies to, or null for a project-wide rule.
+   *
+   * The whole ref rather than an id, for the same reason `RunRecord.test`
+   * carries one: an authoring list has to NAME what each rule judges, and an
+   * id names nothing. It is on `SlaRuleRow` and NOT on `SlaRuleRecord` for the
+   * reason that split exists at all — the evaluator has already had the
+   * applicability question answered for it by `listEnabled`'s filter, and does
+   * not need the answer restated on every rule it maps over.
+   */
+  test: { id: string; slug: string; name: string } | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,6 +41,15 @@ export interface SlaRuleRow extends SlaRuleRecord {
 /** The fields a caller may set when creating a rule. */
 export interface CreateSlaRuleInput {
   name?: string | null;
+  /**
+   * Null (or absent) creates a PROJECT-WIDE rule, which is what every rule
+   * was before this existed. A test id narrows it to that test's runs.
+   *
+   * The caller resolves a slug to this id, because a test slug is unique per
+   * project rather than per org — the same resolution `RunsController` does
+   * for `?test=`, and for the same reason.
+   */
+  testId?: string | null;
   scope: SlaRuleRecord['scope'];
   targetName: string | null;
   family: SlaRuleRecord['family'];
@@ -63,7 +83,19 @@ interface RuleRow {
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * The joined test, or null. `undefined` is what a query that did NOT ask for
+   * the join produces, and it has to read as project-wide rather than throwing
+   * — `update` re-reads with `findUnique`, and forgetting the include there
+   * would otherwise turn every retune into a crash rather than into a rule
+   * that merely forgot its test.
+   */
+  test?: { id: string; slug: string; name: string } | null;
 }
+
+/** Every read below asks for exactly this, so no two of them can disagree
+ *  about which test columns a rule row carries. */
+const WITH_TEST = { test: { select: { id: true, slug: true, name: true } } } as const;
 
 function toRow(r: RuleRow): SlaRuleRow {
   return {
@@ -76,6 +108,7 @@ function toRow(r: RuleRow): SlaRuleRow {
     threshold: r.threshold,
     name: r.name,
     enabled: r.enabled,
+    test: r.test ?? null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -84,9 +117,35 @@ function toRow(r: RuleRow): SlaRuleRow {
 export class RuleRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async listEnabled(scope: ProjectScope): Promise<SlaRuleRecord[]> {
+  /**
+   * The rules that judge ONE RUN: this project's enabled project-wide rules,
+   * plus the enabled rules of the test that run belongs to.
+   *
+   * ═══ `testId` IS REQUIRED, AND THAT IS ON PURPOSE ═══
+   *
+   * It could have defaulted to `null`, and every existing call site would have
+   * kept compiling. That is precisely why it does not: the two callers
+   * (`PipelineService` and `LiveFoldOwner`) pass different values for
+   * different reasons, and a silent default would have let the pipeline —
+   * which DOES know the run's test — carry on evaluating project-wide rules
+   * only, with nothing failing and no test-scoped gate ever firing.
+   *
+   * `null` means the run belongs to no test, and gets project-wide rules
+   * alone. That is the honest answer rather than a degraded one: a run with no
+   * test is not a run of anything a test-scoped rule could be about.
+   */
+  async listEnabled(scope: ProjectScope, testId: string | null): Promise<SlaRuleRecord[]> {
     const rows = await this.prisma.slaRule.findMany({
-      where: { orgId: scope.orgId, projectId: scope.projectId, enabled: true },
+      where: {
+        orgId: scope.orgId,
+        projectId: scope.projectId,
+        enabled: true,
+        // A plain `{ testId: null }` when the run has no test, NOT an `OR`
+        // whose two branches are the same predicate. `{ OR: [{ testId: null },
+        // { testId: null }] }` would be correct and would read as though the
+        // second branch meant something.
+        ...(testId === null ? { testId: null } : { OR: [{ testId: null }, { testId }] }),
+      },
       orderBy: { id: 'asc' },
     });
     return rows.map((r: {
@@ -120,9 +179,26 @@ export class RuleRepository {
    * the only stable order available was `id asc`, i.e. UUID order, i.e.
    * arbitrary.
    */
-  async listForProject(scope: ProjectScope): Promise<SlaRuleRow[]> {
+  async listForProject(
+    scope: ProjectScope,
+    /**
+     * When given, narrows the list to the rules that JUDGE that test — its own
+     * plus the project-wide ones. That union is the question a reader on a
+     * test's page is actually asking ("what gates this?"), and it is not the
+     * same as "rules whose test_id is this one", which would hide every gate
+     * the project applies to everything.
+     */
+    appliesToTestId?: string,
+  ): Promise<SlaRuleRow[]> {
     const rows = await this.prisma.slaRule.findMany({
-      where: { orgId: scope.orgId, projectId: scope.projectId },
+      where: {
+        orgId: scope.orgId,
+        projectId: scope.projectId,
+        ...(appliesToTestId === undefined
+          ? {}
+          : { OR: [{ testId: null }, { testId: appliesToTestId }] }),
+      },
+      include: WITH_TEST,
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
     });
     return rows.map(toRow);
@@ -130,9 +206,13 @@ export class RuleRepository {
 
   async create(scope: ProjectScope, input: CreateSlaRuleInput): Promise<SlaRuleRow> {
     const row = await this.prisma.slaRule.create({
+      include: WITH_TEST,
       data: {
         orgId: scope.orgId,
         projectId: scope.projectId,
+        // `?? null` rather than a spread: absent and explicitly-null both mean
+        // project-wide, and there is no third meaning for this field to carry.
+        testId: input.testId ?? null,
         name: input.name ?? null,
         scope: input.scope,
         targetName: input.targetName,
@@ -174,7 +254,7 @@ export class RuleRepository {
     });
     if (count === 0) return null;
 
-    const row = await this.prisma.slaRule.findUnique({ where: { id } });
+    const row = await this.prisma.slaRule.findUnique({ where: { id }, include: WITH_TEST });
     return row === null ? null : toRow(row);
   }
 
@@ -195,6 +275,7 @@ export class RuleRepository {
   async remove(scope: ProjectScope, id: string): Promise<SlaRuleRow | null> {
     const existing = await this.prisma.slaRule.findFirst({
       where: { id, orgId: scope.orgId, projectId: scope.projectId },
+      include: WITH_TEST,
     });
     if (existing === null) return null;
 
