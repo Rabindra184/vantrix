@@ -64,15 +64,28 @@ export class RunnerLiveSink {
       orgId: job.job.orgId,
       projectId: job.job.projectId,
       tool: 'gatling',
-      ...(job.job.environment ? { environment: job.job.environment } : {}),
-      ...(job.job.branch ? { branch: job.job.branch } : {}),
-      ...(job.job.commitSha ? { commitSha: job.job.commitSha } : {}),
-      // The fourth member of the same frozen-metadata group. Without it a run
-      // started from the on-prem form could never be a simulation's SECOND
-      // test, while the same simulation uploaded or streamed by the Gradle
-      // plugin could — the one submit path with a UI in front of it being the
-      // one that could not use the feature.
-      ...(job.job.testSlug ? { test: job.job.testSlug } : {}),
+      // ═══ NAMED IN THE LITERAL, NOT SPREAD IN CONDITIONALLY ═══
+      //
+      // These four were each `...(job.job.x ? { x: job.job.x } : {})`, and the
+      // fourth spelled its key `test` where `CreateLiveRunInput` declares
+      // `declaredTestSlug`. It compiled, and the runner discarded the test on
+      // every job it ever ran: TypeScript's excess-property check applies to
+      // object LITERALS, and a spread is not one — so a mistyped key hidden in
+      // a spread is accepted in silence, and only a real run through the whole
+      // path can tell you. Naming each key here is what puts them back in
+      // front of the compiler.
+      //
+      // `|| undefined` preserves what the spreads meant: falsy is ABSENT, so
+      // an empty string still stores NULL rather than ''.
+      //
+      // `declaredTestSlug` is the fourth member of the frozen-metadata group.
+      // Without it a run started from the on-prem form can never be a
+      // simulation's SECOND test — the one submit path with a UI in front of
+      // it being the one that could not use the feature.
+      environment: job.job.environment || undefined,
+      branch: job.job.branch || undefined,
+      commitSha: job.job.commitSha || undefined,
+      declaredTestSlug: job.job.testSlug || undefined,
       idempotencyKey: `runner:${job.job.id}`,
       startedAt: new Date(),
       engineOptions: engineOptionsFrom(settings),

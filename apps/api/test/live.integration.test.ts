@@ -96,6 +96,39 @@ describe('live streaming', () => {
     expect(res.body.streamUrl).toContain(res.body.runId);
   });
 
+  // ═══ THE DECLARED TEST HAS TO SURVIVE THE REQUEST, NOT JUST PASS VALIDATION ═══
+  //
+  // `OpenLiveRunRequestSchema` accepted `test` and `LiveService` forwarded it
+  // under the right key, and the run still came out with `declared_test_slug`
+  // NULL: `RunRepository.createLive` declared the field in its input interface
+  // and never wrote it. Every layer looked right in isolation, and the run a
+  // caller actually got had grouped by simulation class — the exact behaviour
+  // naming a test exists to replace.
+  //
+  // ASSERT THE ROW, because no response can show this. A freshly-opened live
+  // run has no RESOLVED test yet by design (that waits for the simulation
+  // class in the log header), so `GET /v1/runs/:id` reports `test: null`
+  // whether or not the declaration was stored. The 201 body is equally blind.
+  // The column is the only witness at open time.
+  it('stores the test a caller declares when opening, where no response can show it', async () => {
+    ctx = await createTestApp();
+
+    const declared = await open(ctx.streamToken, { tool: 'gatling', test: 'checkout-soak' });
+    expect(declared.status).toBe(201);
+    const undeclared = await open(ctx.streamToken, { tool: 'gatling' });
+    expect(undeclared.status).toBe(201);
+
+    // The undeclared run is not filler: it is what makes the first assertion
+    // mean "the caller's slug" rather than "some value is present".
+    const rows = await ctx.prisma.run.findMany({
+      where: { id: { in: [declared.body.runId, undeclared.body.runId] } },
+      select: { id: true, declaredTestSlug: true },
+    });
+    const slugOf = (runId: string) => rows.find((r) => r.id === runId)?.declaredTestSlug;
+    expect(slugOf(declared.body.runId)).toBe('checkout-soak');
+    expect(slugOf(undeclared.body.runId)).toBeNull();
+  });
+
   it('refuses a gap and names the offset to resume from', async () => {
     ctx = await createTestApp();
     const opened = await open(ctx.streamToken);

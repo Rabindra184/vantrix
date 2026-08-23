@@ -87,6 +87,44 @@ describe('POST /v1/runs', () => {
     expect(row?.engineOptions).toMatchObject({ warmupMs: 5000, percentiles: [50, 90, 99] });
   });
 
+  // ═══ THE ONE SUBMIT PATH THAT ALWAYS WORKED, AND HAD NO TEST EITHER ═══
+  //
+  // `metadata.test` reaches four entry points; three of them dropped it for
+  // their whole life because `RunRepository.createLive` never wrote the
+  // column, and nothing anywhere failed. This one — the bundle upload, through
+  // `create` rather than `createLive` — was the survivor by accident of which
+  // method it happened to call, not by anything asserting it. Pinning it here
+  // is what stops the surviving path becoming the next silent casualty.
+  //
+  // The column, not the response: `POST /v1/runs` answers 202 before the
+  // worker has parsed anything, so the run has no RESOLVED test yet and the
+  // body's `test` field is null either way.
+  it('freezes the test a caller declares onto the run, and null when it declared none', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+    const post = (metadata: Record<string, unknown>) =>
+      request(ctx.app.getHttpServer())
+        .post('/v1/runs')
+        .set('Authorization', `Bearer ${ctx.ingestToken}`)
+        // `waitMs: 0` because this case cares about a column that is written
+        // BEFORE the response (see "commits the run row before enqueuing"),
+        // not about a verdict. Without it each post sits out the full
+        // INGEST_WAIT_MS default waiting for a terminal notification no worker
+        // in this process will ever send — 25 seconds each, for nothing.
+        .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, ...metadata }))
+        .attach('bundle', bundle, 'bundle.tgz');
+
+    const declared = await post({ test: 'checkout-soak', idempotencyKey: 'declared' });
+    const undeclared = await post({ idempotencyKey: 'undeclared' });
+
+    const declaredRow = await ctx.prisma.run.findUnique({ where: { id: declared.body.id } });
+    const undeclaredRow = await ctx.prisma.run.findUnique({ where: { id: undeclared.body.id } });
+    expect(declaredRow?.declaredTestSlug).toBe('checkout-soak');
+    // Not filler: it is what makes the assertion above mean "the caller's
+    // slug" rather than "some value is present".
+    expect(undeclaredRow?.declaredTestSlug).toBeNull();
+  });
+
   it('is idempotent — the same key returns the original run and creates no second row', async () => {
     await drainQueue();
     ctx = await createTestApp();
