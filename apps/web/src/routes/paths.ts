@@ -63,10 +63,54 @@ export function runComparePath(runId: string, runs?: readonly string[]): string 
 /** The no-organisation explanation. Its own URL on purpose (see NoOrg.tsx). */
 export const NO_ORG_ROUTE = '/no-organisation';
 
-/** One project's runs. Spelled once because App.tsx declares it, RunHeader
- *  links to it and the e2e suite navigates to it. */
+/**
+ * One project — which is now its TESTS, not its runs.
+ *
+ * ═══ THIS URL CHANGED WHAT IT SHOWS, DELIBERATELY ═══
+ *
+ * It rendered the project's run list for its whole life. The hierarchy is
+ * `Organization → Project → Test → Run`, and a project's own page is one rung
+ * above the runs: a reader arriving at a project wants to know which tests it
+ * has and how each is doing, not the interleaved stream of every run of every
+ * test in start order. The stream is still one click away at
+ * `projectRunsPath`, and every deep link to a RUN is untouched.
+ *
+ * The path itself is unchanged, so a bookmark still resolves and still lands
+ * on the project it named. That is why the run list moved to a child segment
+ * rather than this page moving to `/projects/:slug/tests`: a bookmark that
+ * shows the same project one rung up is a small surprise; one that 404s, or
+ * silently redirects to a list of every project, is a broken link.
+ */
 export function projectPath(slug: string): string {
   return `/projects/${encodeURIComponent(slug)}`;
+}
+
+/**
+ * Every run in one project, across all of its tests — what `projectPath` used
+ * to be.
+ *
+ * Worth keeping as its own page rather than folding into the test list: "what
+ * ran here recently, whatever it was" is a real question with a real answer,
+ * and it is the only view that can show a run whose test is null — one still
+ * pending, or one that failed before the worker could read its simulation
+ * class. Those runs belong to no test and appear on no test's page.
+ */
+export function projectRunsPath(slug: string): string {
+  return `${projectPath(slug)}/runs`;
+}
+
+/**
+ * One test's own page: its run history.
+ *
+ * The test's SLUG, not its id. A slug is unique per project (see
+ * `@@unique([projectId, slug])`), which is exactly the scope this URL already
+ * carries, and it survives being read aloud and pasted into a ticket. The id
+ * is what the API filters runs by — `GET /v1/runs?project=&test=` resolves one
+ * to the other server-side, and refuses a `test` with no `project` for the
+ * same reason this path cannot express one.
+ */
+export function projectTestPath(slug: string, testSlug: string): string {
+  return `${projectPath(slug)}/tests/${encodeURIComponent(testSlug)}`;
 }
 
 export function projectNewRunnerRunPath(slug: string): string {

@@ -11,6 +11,7 @@ import RunHeader from '../src/routes/RunHeader';
 afterEach(cleanup);
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
+const TEST_ID = '33333333-3333-4333-8333-333333333333';
 
 const RUN: RunResponse = {
   id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
@@ -70,10 +71,78 @@ describe('RunHeader', () => {
     expect(screen.getByText(/ingest time/)).toBeInTheDocument();
   });
 
-  it('names the project, linking to its run list', () => {
+  it('names the project, linking to its tests', () => {
     renderHeader({ ...RUN, project: { id: PROJECT_ID, slug: 'checkout', name: 'Checkout' } });
     const link = screen.getByRole('link', { name: 'Checkout' });
     expect(link).toHaveAttribute('href', '/projects/checkout');
+  });
+
+  /**
+   * ═══ THE TEST IS THE MIDDLE RUNG ═══
+   *
+   * `Organization → Project → Test → Run`, and this breadcrumb is the only
+   * place on the run page that names the level the trend is computed at
+   * (`TRENDS_SQL` cohorts on `test_id`). A reader wanting the other runs of
+   * the same thing has one click from here and from nowhere else.
+   *
+   * The href is asserted, not just the text: the link is built from the
+   * PROJECT's slug and the TEST's slug, two fields from two different objects,
+   * and getting the pair the wrong way round renders a plausible-looking link
+   * that 404s.
+   */
+  it('names the test between the project and the run', () => {
+    renderHeader({
+      ...RUN,
+      test: { id: TEST_ID, slug: 'example-paritysimulation', name: 'Checkout smoke' },
+    });
+    const link = screen.getByRole('link', { name: 'Checkout smoke' });
+    expect(link).toHaveAttribute('href', '/projects/checkout/tests/example-paritysimulation');
+  });
+
+  /**
+   * BOTH ABSENCES RENDER THE SAME, and they are different facts.
+   *
+   * `null` is a run that belongs to no test — still pending, or one that
+   * failed before the worker could read its simulation class. `undefined` is a
+   * body from an API pod that predates the field, mid-rolling-deploy. A reader
+   * cannot act on the difference, and a breadcrumb rung pointing at a test
+   * that does not exist is worse than a two-rung breadcrumb, so neither draws
+   * one.
+   *
+   * `it.each` rather than two cases, because the whole claim is that the two
+   * inputs are indistinguishable on screen.
+   */
+  it.each([['null', null], ['absent', undefined]] as const)(
+    'omits the test rung entirely when the run has %s for one, keeping the project and the id',
+    (_label, test) => {
+      renderHeader({ ...RUN, test });
+      expect(screen.queryByTestId('run-test')).toBeNull();
+      expect(screen.getByRole('link', { name: 'Checkout' })).toBeInTheDocument();
+      // The breadcrumb still ENDS at this run — dropping the middle rung must
+      // not drop the trailing segment with it.
+      expect(screen.getByText('a66548b7')).toHaveAttribute('aria-current', 'page');
+    },
+  );
+
+  /**
+   * A run with no PROJECT has no breadcrumb at all (the rolling-deploy render,
+   * where an old pod's 202 carried only `{ id, status, statusUrl }`) — so a
+   * test rung that somehow arrived without one must not render alone. It has
+   * nothing to build a URL from: `projectTestPath` needs both slugs.
+   */
+  it('draws no breadcrumb at all when the project is unknown, test or no test', () => {
+    // `delete` rather than a rest destructure: `project` is REQUIRED on
+    // `RunIdentity` (run.project_id is NOT NULL), so this state exists only as
+    // a partial identity from an old pod and there is no honest typed literal
+    // for it. The cast is the point of the case, not a shortcut around it.
+    const withoutProject: Record<string, unknown> = { ...RUN };
+    delete withoutProject.project;
+    renderHeader({
+      ...withoutProject,
+      test: { id: TEST_ID, slug: 'example-paritysimulation', name: 'Checkout smoke' },
+    } as unknown as RunResponse);
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
+    expect(screen.queryByTestId('run-test')).toBeNull();
   });
 
   it('shows no provenance chips for a run that carried none', () => {

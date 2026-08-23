@@ -26,6 +26,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Repeat,
   Server,
   Settings,
   Square,
@@ -95,6 +96,18 @@ export const LayersIcon = icon(Layers);
 
 /** One project. */
 export const CubeIcon = icon(Box);
+
+/**
+ * A test — the named thing a project runs REPEATEDLY, which is the whole
+ * distinction between a test and a run.
+ *
+ * `Repeat` rather than a flask or a checklist. Those read as "test" in the
+ * QA-suite sense, and this product's tests are not pass/fail cases: a test is
+ * a simulation you execute again and again to watch a number move, and the
+ * repetition is the reason the entity exists at all (see `TRENDS_SQL`, which
+ * cohorts on it).
+ */
+export const TestIcon = icon(Repeat);
 
 export const SunIcon = icon(Sun);
 export const MoonIcon = icon(Moon);

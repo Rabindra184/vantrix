@@ -62,12 +62,45 @@ type RunListItem = RunListResponse['items'][number];
  */
 export default function RunList({
   projectSlug = null,
+  testSlug = null,
   heading = 'Runs',
+  showHeading = true,
+  caption: captionOverride,
+  emptyBody,
   action,
 }: {
   /** Narrows the list to one project. Null is the org-wide list. */
   readonly projectSlug?: string | null;
+  /**
+   * Narrows further, to one test's runs. Meaningless without `projectSlug`
+   * and silently dropped without it — see `fetchRuns`, and the API's own
+   * TEST_NEEDS_PROJECT for why a test slug alone names nothing.
+   */
+  readonly testSlug?: string | null;
   readonly heading?: string;
+  /**
+   * Whether to draw the `<h1>`. `false` says THE CALLER ALREADY HAS ONE, and
+   * is the only correct value for a page that does — `TestRuns` renders a
+   * breadcrumb, a heading and a metadata strip of its own above this list, and
+   * a second `<h1>` in that document is a real defect rather than a cosmetic
+   * one: a screen-reader user navigating by heading meets the page twice.
+   *
+   * `heading` is STILL REQUIRED when this is false, because it does two other
+   * jobs — it titles the document (one `useDocumentTitle` call, here, so two
+   * components never race for `document.title`) and it names the table's
+   * scroll region. Suppressing the element is not the same as having no name
+   * for the thing.
+   */
+  readonly showHeading?: boolean;
+  /**
+   * The table's own description. Defaults to the org/project sentence below;
+   * a caller with a narrower scope supplies a truer one, because the default
+   * says "every run in this project" and a test's page is showing a subset of
+   * exactly that.
+   */
+  readonly caption?: ReactNode;
+  /** What "no runs yet" means in this scope. Same reasoning as `caption`. */
+  readonly emptyBody?: string;
   readonly action?: ReactNode;
 } = {}) {
   // The cursor is component state, not a URL query parameter. Keyset
@@ -122,8 +155,8 @@ export default function RunList({
   useDocumentTitle(heading);
 
   const runs = useQuery({
-    queryKey: runsQueryKey(cursor, projectSlug, filters),
-    queryFn: () => fetchRuns(cursor, projectSlug, filters),
+    queryKey: runsQueryKey(cursor, projectSlug, filters, testSlug),
+    queryFn: () => fetchRuns(cursor, projectSlug, filters, testSlug),
     // Keeps the current page on screen while the next one loads, instead of
     // blanking the table back to a loading state on every click of Next.
     placeholderData: keepPreviousData,
@@ -132,7 +165,7 @@ export default function RunList({
   if (runs.isPending) {
     return (
       <div className="flex flex-col gap-4">
-        <PageHeading heading={heading} action={headingAction} />
+        <PageHeading show={showHeading} heading={heading} action={headingAction} />
         {controls}
         <LoadingState label="Loading runs…">
           <SkeletonTable columns={6} rows={6} />
@@ -154,7 +187,7 @@ export default function RunList({
     // a second one.
     return (
       <div className="flex flex-col gap-4">
-        <PageHeading heading={heading} action={headingAction} />
+        <PageHeading show={showHeading} heading={heading} action={headingAction} />
         {controls}
         <ErrorState
           title="The runs could not be loaded"
@@ -167,7 +200,7 @@ export default function RunList({
 
   const { items, nextCursor } = runs.data;
 
-  const caption = (
+  const caption = captionOverride ?? (
     <>
       {projectSlug === null ? 'Every run in your organisation' : 'Every run in this project'},
       newest first, with the project it belongs to. “Started” is the load test’s own start time;
@@ -178,13 +211,20 @@ export default function RunList({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeading heading={heading} count={items.length} hasMore={nextCursor !== null} action={headingAction} />
+      <PageHeading
+        show={showHeading}
+        heading={heading}
+        count={items.length}
+        hasMore={nextCursor !== null}
+        action={headingAction}
+      />
       {controls}
 
       {items.length === 0 ? (
         <EmptyPage
           cursor={cursor}
           projectSlug={projectSlug}
+          emptyBody={emptyBody}
           filtered={filtersActive}
           onFirstPage={() => setCursor(null)}
           onClearFilters={clearFilters}
@@ -528,16 +568,25 @@ function healthSummary(items: readonly RunListItem[]) {
  * what the cursor actually tells us.
  */
 function PageHeading({
+  show = true,
   heading,
   count,
   hasMore = false,
   action,
 }: {
+  /**
+   * False when the CALLER owns the page's `<h1>` — see `showHeading` on
+   * `RunList`. Returning null from here rather than branching at the three
+   * call sites keeps the three loading/error/loaded branches identical, which
+   * is the same reason `controls` is built once above them.
+   */
+  readonly show?: boolean;
   readonly heading: string;
   readonly count?: number;
   readonly hasMore?: boolean;
   readonly action?: ReactNode;
 }) {
+  if (!show) return null;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -562,12 +611,14 @@ function PageHeading({
 function EmptyPage({
   cursor,
   projectSlug,
+  emptyBody,
   filtered,
   onFirstPage,
   onClearFilters,
 }: {
   cursor: string | null;
   projectSlug: string | null;
+  emptyBody: string | undefined;
   filtered: boolean;
   onFirstPage: () => void;
   onClearFilters: () => void;
@@ -610,9 +661,10 @@ function EmptyPage({
       // with an empty org what to actually do about it.
       title="No runs yet"
       body={
-        projectSlug === null
+        emptyBody ??
+        (projectSlug === null
           ? 'Runs appear here once a test bundle is uploaded to one of this organisation’s projects.'
-          : 'Runs appear here once a test bundle is uploaded to this project.'
+          : 'Runs appear here once a test bundle is uploaded to this project.')
       }
     />
   );

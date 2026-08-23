@@ -5,7 +5,7 @@ import Badge from '../components/Badge';
 import { ChevronRightIcon } from '../components/icons';
 import { formatDuration, formatInstant } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
-import { projectPath } from './paths';
+import { projectPath, projectTestPath } from './paths';
 
 /**
  * What this run IS, before anything about how it went.
@@ -107,13 +107,42 @@ export default function RunHeader({
           no breadcrumb, and the next poll that reaches a new pod fills it
           back in. */}
       {identity.project != null && (
-        <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[13px] text-muted">
+        <nav
+          aria-label="Breadcrumb"
+          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-muted"
+        >
           <Link
             to={projectPath(identity.project.slug)}
             className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
           >
             {identity.project.name}
           </Link>
+          {/* THE TEST IS A RUNG, NOT A DECORATION — it is the level the trend
+              this run belongs to is computed at (`TRENDS_SQL` cohorts on
+              `test_id`), so a reader who wants "the other runs of this same
+              thing" is one click from them here and nowhere else on the page.
+
+              OMITTED, not dashed, when the run belongs to no test: one still
+              pending, one that failed before the worker could read its
+              simulation class, one ingested before migration
+              `20260822220000_test_entity`. Those runs are reachable only from
+              the project's run list, and a breadcrumb rung pointing at a test
+              that does not exist is worse than a two-rung breadcrumb. `!= null`
+              covers BOTH absences at once — `null` (this run has no test) and
+              `undefined` (an API pod that predates the field), which look the
+              same to a reader and must render the same. */}
+          {identity.test != null && (
+            <>
+              <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
+              <Link
+                to={projectTestPath(identity.project.slug, identity.test.slug)}
+                data-testid="run-test"
+                className="transition-ui min-w-0 truncate font-medium text-accent hover:underline hover:underline-offset-2"
+              >
+                {identity.test.name}
+              </Link>
+            </>
+          )}
           <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
           <code aria-current="page" className="text-[12px]">
             {identity.id.slice(0, 8)}

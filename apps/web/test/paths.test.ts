@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROJECT_SLUG_PATTERN } from '@perfportal/contracts';
-import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, safeNext } from '../src/routes/paths.js';
+import {
+  DEFAULT_ROUTE,
+  NEW_PROJECT_ROUTE,
+  projectPath,
+  projectRunsPath,
+  projectTestPath,
+  safeNext,
+} from '../src/routes/paths.js';
 
 /**
  * `safeNext` is a security control on a login page — the one place an open
@@ -64,6 +71,33 @@ describe('safeNext', () => {
       expect(new URL(safeNext(next), ORIGIN).origin).toBe(ORIGIN);
     },
   );
+});
+
+/**
+ * `Organization → Project → Test → Run`, as URLs.
+ *
+ * The ENCODING is the part worth a test. A test slug arrives from the API and
+ * is therefore data: `slugifySimulation` cannot produce a separator today, but
+ * a path helper that relies on that is one migration away from routing
+ * somewhere else entirely. Same rule `App.tsx` records for a group's
+ * `Catalog/Recommendations`, which reaches its route as `%2F` and decodes back
+ * inside one segment.
+ */
+describe('the project → test → run hierarchy, as paths', () => {
+  it('keeps the run list a child of the project, so a project bookmark still resolves', () => {
+    expect(projectRunsPath('checkout')).toBe('/projects/checkout/runs');
+    expect(projectRunsPath('checkout').startsWith(`${projectPath('checkout')}/`)).toBe(true);
+  });
+
+  it('nests a test under the project whose scope makes its slug unique', () => {
+    expect(projectTestPath('checkout', 'example-paritysimulation')).toBe(
+      '/projects/checkout/tests/example-paritysimulation',
+    );
+  });
+
+  it('encodes a separator in a test slug rather than growing a path segment', () => {
+    expect(projectTestPath('checkout', 'a/b')).toBe('/projects/checkout/tests/a%2Fb');
+  });
 });
 
 /**
@@ -134,6 +168,22 @@ describe('static routes cannot shadow a project slug', () => {
       (segment) => !segment.startsWith(':') && PROJECT_SLUG_PATTERN.test(segment),
     );
     expect(shadowing).toEqual([]);
+  });
+
+  /**
+   * A SUB-PATH NOBODY DECLARED FALLS THROUGH TO THE GLOBAL CATCH-ALL, and
+   * that catch-all redirects to `/runs`. So deleting either of these routes
+   * does not produce a 404 a reader can act on — it teleports them from the
+   * project they were looking at to the top of the org's run list, silently.
+   * The same failure `RunSectionNotFound` exists to prevent one route over,
+   * and the same reason this file reads `App.tsx` rather than listing routes
+   * of its own: the regression it guards against is a future deletion.
+   */
+  it.each([
+    ['the project run list', 'path="/projects/:slug/runs"'],
+    ['a test’s run history', 'path="/projects/:slug/tests/:testSlug"'],
+  ])('declares a route for %s', (_what, declaration) => {
+    expect(APP).toContain(declaration);
   });
 
   it('keeps the create route itself unreachable as a slug', () => {

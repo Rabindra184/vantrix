@@ -888,3 +888,68 @@ export async function seedRunWithProvenance(
   });
   return run.id;
 }
+
+/**
+ * A test in the org's own project, with `runs` complete runs attached.
+ *
+ * SEEDED DIRECTLY RATHER THAN INGESTED, unlike `seedRunWithData` — which does
+ * produce a real `test` row, via the worker's own resolve-or-create. That path
+ * costs a bundle upload and a parse per run, and this fixture exists for specs
+ * about the test LIST, where what matters is that several tests with different
+ * run counts exist. The one spec that needs a genuinely parsed run's test uses
+ * `seedRunWithData` instead, precisely so the two are not confused.
+ *
+ * `startedAt` walks backwards a minute per row so the list's order is
+ * deterministic, and `startedOn` mirrors its date because that column is the
+ * ingest-date partition key (see schema.prisma) — the same rules
+ * `seedProjectWithRuns` follows.
+ */
+export async function seedTestWithRuns(
+  orgId: string,
+  opts: {
+    slug: string;
+    name: string;
+    simulationClass: string;
+    runs: number;
+    /** The verdict every run of this test carries. */
+    verdict?: 'passed' | 'failed' | 'not_evaluated' | null;
+  },
+): Promise<{ testId: string; slug: string }> {
+  const projectId = await projectFor(orgId);
+  const test = await prisma.test.create({
+    data: {
+      orgId,
+      projectId,
+      slug: opts.slug,
+      name: opts.name,
+      simulationClass: opts.simulationClass,
+    },
+  });
+
+  if (opts.runs > 0) {
+    const base = Date.UTC(2026, 7, 15, 12, 0, 0);
+    await prisma.run.createMany({
+      data: Array.from({ length: opts.runs }, (_, i) => {
+        const startedAt = new Date(base - i * 60_000);
+        return {
+          orgId,
+          projectId,
+          testId: test.id,
+          status: 'complete',
+          verdict: opts.verdict === undefined ? 'passed' : opts.verdict,
+          tool: 'gatling',
+          simulation: opts.simulationClass,
+          bundleKey: `e2e-fixture/${randomUUID()}`,
+          bundleSha256: '0'.repeat(64),
+          bundleBytes: BigInt(1),
+          startedAt,
+          startedOn: startedAt,
+          toolStartedAt: startedAt,
+          engineOptions: {},
+        };
+      }),
+    });
+  }
+
+  return { testId: test.id, slug: test.slug };
+}
