@@ -99,6 +99,7 @@ vantrix {
     environment = "staging"           // optional
     branch = "main"                   // optional
     commitSha = "a1b2c3d"             // optional
+    test = "checkout-soak"            // optional — a test SLUG, not a name
     tickSeconds = 5                   // optional, default 5
     uploadIfLiveUnavailable = false   // optional, default false — see below
 }
@@ -110,12 +111,41 @@ vantrix {
 | `environment` | `VANTRIX_ENVIRONMENT` | none | Free-text tag sent when the run opens (e.g. `staging`). |
 | `branch` | `VANTRIX_BRANCH` | none | Free-text tag sent when the run opens. Never inferred by shelling out to `git` — a detached CI checkout makes that confidently wrong, and the field is optional in the request schema, so absent beats wrong. |
 | `commitSha` | `VANTRIX_COMMIT_SHA` | none | Same reasoning as `branch`. |
+| `test` | `VANTRIX_TEST` | none | Which **test** these runs belong to, as a slug — `checkout-soak`, never `"Checkout soak"`. Leave it unset and runs group by the simulation class in the log header, which is what every project did before this existed. Set it to run **one simulation as two tests** with different injection profiles — the only way to express that. A slug naming no existing test creates it, so no setup step in the UI is needed first. See below. |
 | `tickSeconds` | `VANTRIX_TICK_SECONDS` | `5` | How often the tailer polls `simulation.log` and, if there's anything new, ships it. Does not change how often Gatling itself flushes — see Liveness expectations below. |
 | `uploadIfLiveUnavailable` | `VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE` | `false` | Opt-in post-run bundle upload when the live run could never be opened. See its own section below. |
 | `resultsDir` | *(none — build-file only)* | `build/reports/gatling` (Gradle's own `layout.buildDirectory`) | Where Gatling writes its results directories. Only needed if your build customises Gatling's own output location away from the default. |
 
 There is no `vantrix.token` key. That is not an omission — see the token
 rule.
+
+### `test`: one simulation, more than one test
+
+Vantrix groups runs into **tests** so it can trend them. By default the
+grouping key is the simulation class the log header declares, so every run of
+`shop.CheckoutSimulation` lands on one test and its history is one line.
+
+That is wrong as soon as you run the same simulation two ways — a five-minute
+smoke on every merge and an hour-long soak overnight. Their numbers are not
+comparable, and averaging them into one trend hides both. Naming the test
+separates them:
+
+```bash
+VANTRIX_TEST=checkout-smoke ./gradlew gatlingRun     # on every merge
+VANTRIX_TEST=checkout-soak  ./gradlew gatlingRun     # nightly
+```
+
+**A slug, not a display name.** `checkout-soak` is an identifier — it is the
+last segment of the test's URL and what `GET /v1/runs?test=` filters by. Rename
+it to read as "Checkout soak" once, in the UI, and your pipeline never changes.
+A display name here would have to be slugified on every run, and a typo would
+then create a second test rather than being refused: `Checkout soak` is
+rejected, `checkout-soak` is not.
+
+**Adding it later is safe.** A run that names no test keeps grouping by
+simulation class exactly as before, and once you split a class into two tests,
+runs that still declare nothing keep landing on the older of them — so a
+pipeline you have not updated does not silently start a third history.
 
 ## The token rule
 
