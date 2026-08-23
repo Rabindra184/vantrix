@@ -226,6 +226,8 @@ describe('the adaptive verdict', () => {
     const run: RunRecord = {
       id: 'unseeded', orgId: ctx.orgId, projectId: ctx.projectId,
       project: { id: ctx.projectId, slug: 'checkout', name: 'Checkout' },
+      // A failed ingest never parsed a header, so it never acquired a test.
+      test: null,
       status: 'failed',
       verdict: null, tool: 'gatling', toolVersion: null,
       environment: null, branch: null, commitSha: null,

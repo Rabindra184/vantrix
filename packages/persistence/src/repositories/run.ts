@@ -15,6 +15,16 @@ export interface RunRecord {
    * optional-but-always-present field.
    */
   project: { id: string; slug: string; name: string };
+  /**
+   * The test this is a run OF, joined for the same reason `project` is: every
+   * caller that has a run wants to name what it was a run of, and the
+   * alternative is a second query at every one of those call sites.
+   *
+   * NULL is a real state, not a missing join — see the `Test` model. A run is
+   * without one while it is pending, forever if its bundle never parsed, and
+   * for any row that predates the worker recording a simulation.
+   */
+  test: { id: string; slug: string; name: string } | null;
   status: string;
   verdict: string | null;
   tool: string;
@@ -98,6 +108,8 @@ interface RunRow {
   orgId: string;
   projectId: string;
   project: { id: string; slug: string; name: string };
+  /** The joined `test`, or null — see `RunRecord.test`. */
+  test?: { id: string; slug: string; name: string } | null;
   status: string;
   verdict: string | null;
   tool: string;
@@ -128,6 +140,10 @@ function toRecord(row: RunRow): RunRecord {
     orgId: row.orgId,
     projectId: row.projectId,
     project: { id: row.project.id, slug: row.project.slug, name: row.project.name },
+    test:
+      row.test === null || row.test === undefined
+        ? null
+        : { id: row.test.id, slug: row.test.slug, name: row.test.name },
     status: row.status,
     verdict: row.verdict,
     tool: row.tool,
@@ -158,9 +174,21 @@ function toRecord(row: RunRow): RunRecord {
  * nested object, because a SQL result set has no nesting — fromSqlRow below
  * is the one place that difference is reconciled.
  */
-interface RunSqlRow extends Omit<RunRow, 'project'> {
+interface RunSqlRow extends Omit<RunRow, 'project' | 'test'> {
   projectSlug: string;
   projectName: string;
+  /**
+   * The list joins `test` for its NAME, not just its id: a run row that could
+   * not say what test it was of would send every caller back for one query per
+   * row. Flat, like the project columns beside it, for the reason this file's
+   * header gives — a SQL result set has no nesting.
+   *
+   * Null for a run with no test, which is a real state rather than a missing
+   * join. See the `Test` model.
+   */
+  testId: string | null;
+  testSlug: string | null;
+  testName: string | null;
 }
 
 /** A verdict filter, plus the one value that is the ABSENCE of a verdict. */
@@ -194,8 +222,18 @@ export interface RunListOptions {
 }
 
 function fromSqlRow(row: RunSqlRow): RunRecord {
-  const { projectSlug, projectName, ...rest } = row;
-  return toRecord({ ...rest, project: { id: row.projectId, slug: projectSlug, name: projectName } });
+  const { projectSlug, projectName, testId, testSlug, testName, ...rest } = row;
+  return toRecord({
+    ...rest,
+    project: { id: row.projectId, slug: projectSlug, name: projectName },
+    // All three or none: the LEFT JOIN either matched a test or it did not,
+    // and a half-populated triple would be a bug in the query rather than a
+    // state to represent.
+    test:
+      testId === null || testSlug === null || testName === null
+        ? null
+        : { id: testId, slug: testSlug, name: testName },
+  });
 }
 
 /** UTC date of the run start — the partition key. Derived, never supplied. */
@@ -284,7 +322,7 @@ export class RunRepository {
         startedOn: startedOnFrom(input.startedAt),
         engineOptions: input.engineOptions as object,
       },
-      include: { project: true },
+      include: { project: true, test: true },
     });
     return toRecord(row);
   }
@@ -356,7 +394,7 @@ export class RunRepository {
           startedOn: startedOnFrom(input.startedAt),
           engineOptions: input.engineOptions as object,
         },
-        include: { project: true },
+        include: { project: true, test: true },
       });
       return toRecord(row);
     } catch (err) {
@@ -553,21 +591,21 @@ export class RunRepository {
         orgId: scope.orgId,
         ...(scope.projectId ? { projectId: scope.projectId } : {}),
       },
-      include: { project: true },
+      include: { project: true, test: true },
     });
     return row ? toRecord(row) : null;
   }
 
   /** Unscoped by design: the worker holds a job, not a caller's credential. */
   async findByIdUnscoped(id: string): Promise<RunRecord | null> {
-    const row = await this.prisma.run.findUnique({ where: { id }, include: { project: true } });
+    const row = await this.prisma.run.findUnique({ where: { id }, include: { project: true, test: true } });
     return row ? toRecord(row) : null;
   }
 
   async findByIdempotencyKey(scope: ProjectScope, key: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: { orgId: scope.orgId, projectId: scope.projectId, idempotencyKey: key },
-      include: { project: true },
+      include: { project: true, test: true },
     });
     return row ? toRecord(row) : null;
   }
@@ -774,9 +812,14 @@ export class RunRepository {
         r.started_on AS "startedOn", r.tool_started_at AS "toolStartedAt",
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
         r.tool_assertions AS "toolAssertions",
-        p.slug AS "projectSlug", p.name AS "projectName"
+        p.slug AS "projectSlug", p.name AS "projectName",
+        t.id AS "testId", t.slug AS "testSlug", t.name AS "testName"
       FROM run r
       JOIN project p ON p.id = r.project_id
+      -- LEFT, and that is the whole point: a run with no test is an ordinary
+      -- run — still pending, or a bundle that never parsed — and an inner join
+      -- would drop it out of the list it belongs in.
+      LEFT JOIN test t ON t.id = r.test_id
       WHERE ${filters.join(' AND ')}
       ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
       LIMIT $${params.length}

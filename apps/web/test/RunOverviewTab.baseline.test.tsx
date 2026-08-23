@@ -62,6 +62,7 @@ const READY_RUN: RunResponse = {
 const TRENDS: TrendsResponse = {
   runId: RUN_ID,
   simulation: READY_RUN.simulation ?? null,
+  test: { id: '99999999-9999-4999-8999-999999999999', slug: 'example-paritysimulation', name: 'example.ParitySimulation' },
   cohortSize: 2,
   runs: [
     {

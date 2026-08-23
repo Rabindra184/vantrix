@@ -1,10 +1,25 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import RequestDetail, { requestRow } from '../src/routes/RequestDetail';
 import fixture from './fixtures/reference-run.json';
+
+// ═══ WITHOUT THIS THE FILE LEAKS DOM BETWEEN CASES ═══
+//
+// `vitest.config.ts` does not set `globals`, so Testing Library's automatic
+// cleanup never registers — every file has to call it itself, and this one
+// did not. Each `render` appends to the same `document.body`, so a query in
+// one test can resolve an element another test mounted.
+//
+// It is INTERMITTENT rather than always wrong, which is what made it hard to
+// see: an earlier test's `useQuery` can resolve after that test has ended and
+// commit into its still-attached container, so whether the stale node exists
+// depends on timing. CLAUDE.md carried the resulting failure as "one
+// occurrence, mechanism undiagnosed"; this is the mechanism.
+afterEach(cleanup);
+
 
 const stats = fixture.stats as Parameters<typeof requestRow>[0];
 

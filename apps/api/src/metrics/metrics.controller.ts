@@ -126,7 +126,11 @@ export class MetricsController {
 
     const { runs, cohortSize } = await this.reader.trends(
       { orgId: run.orgId, projectId: run.projectId },
-      { simulation: run.simulation ?? null },
+      // The cohort is the TEST now, not the simulation string. For every run
+      // the migration backfilled these select identically — a test IS
+      // (project, simulation class) — so a reader's existing trend does not
+      // move under them.
+      { testId: run.test?.id ?? null },
       // THE REQUESTED RUN, passed so the query can add it back when it falls
       // outside the newest `limit`. Without it a run older than the window is
       // absent from its own trend — see TRENDS_SQL.
@@ -139,6 +143,7 @@ export class MetricsController {
     return {
       runId: run.id,
       simulation: run.simulation ?? null,
+      test: run.test ?? null,
       cohortSize,
       runs: runs.map((r) => ({
         id: r.id,

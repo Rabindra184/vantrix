@@ -377,8 +377,23 @@ export type TrendRun = z.infer<typeof TrendRunSchema>;
  */
 export const TrendsResponseSchema = z.object({
   runId: z.string().uuid(),
-  /** The cohort key. Null is a real cohort, not "unknown". */
+  /**
+   * What the tool called the simulation, as this run reported it. Captured
+   * execution metadata — NOT the cohort key any more.
+   */
   simulation: z.string().nullable(),
+  /**
+   * THE COHORT, and what it is called.
+   *
+   * Null means this run belongs to no test, which is a different fact from
+   * the null `simulation` beside it: the run may well have a simulation name
+   * and simply not have been grouped yet. A null test is a cohort of exactly
+   * one — this run — rather than the "every run that could not say what it
+   * was" bucket the old string cohort produced.
+   */
+  test: z
+    .object({ id: z.string().uuid(), slug: z.string(), name: z.string() })
+    .nullable(),
   /** Total runs matching the cohort, which may exceed `runs.length`. */
   cohortSize: z.number().int(),
   runs: z.array(TrendRunSchema),

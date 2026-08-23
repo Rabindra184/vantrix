@@ -229,8 +229,12 @@ export class MetricReader {
   }
 
   /**
-   * A run's cohort — every complete run of the same simulation in the same
-   * project, newest first — with the cohort's full size beside it.
+   * A run's cohort — every complete run of the same TEST, newest first — with
+   * the cohort's full size beside it.
+   *
+   * `testId` is null for a run that has none: still pending, or a bundle that
+   * never parsed. Such a run gets a cohort of exactly itself rather than
+   * disappearing from its own trend — see TRENDS_SQL's `OR r.id = $5`.
    *
    * NO PARTITION KEY, unlike `series` below, and that is not an oversight:
    * `run_series_bucket` is partitioned by `run_started_on`, `run_stat` is not.
@@ -249,14 +253,14 @@ export class MetricReader {
    */
   async trends(
     scope: ProjectScope,
-    cohort: { simulation: string | null },
+    cohort: { testId: string | null },
     requestedRunId: string,
     limit: number,
   ): Promise<{ runs: StoredTrendRun[]; cohortSize: number }> {
     const { rows } = await this.pool.query(TRENDS_SQL, [
       scope.orgId,
       scope.projectId,
-      cohort.simulation,
+      cohort.testId,
       limit,
       requestedRunId,
     ]);
