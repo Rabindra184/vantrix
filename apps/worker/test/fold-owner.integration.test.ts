@@ -2008,6 +2008,111 @@ describe('LiveFoldOwner', () => {
       await owner.close();
     });
 
+    /**
+     * ═══ A TEST-SCOPED RULE, JUDGED WHILE THE RUN IS STILL STREAMING ═══
+     *
+     * `run.test_id` is written by `PipelineService` at finalize, so for most
+     * of this feature's life a live run belonged to no test and a test-scoped
+     * rule could not judge it at all — the banner showed project-wide rules
+     * and nothing else. `LiveFoldOwner.#identify` closes that: the decoder's
+     * `meta` event carries the simulation class from the log HEADER, which
+     * arrives in the first few hundred bytes, and the rule set widens then.
+     *
+     * The synthetic header declares `test.Sim` (`synthetic-log.ts`), so a test
+     * row on that class is the one this run resolves to.
+     */
+    describe('a rule scoped to the test the log header names', () => {
+      const seedTest = (simulationClass: string, slug: string) =>
+        prisma.test.create({
+          data: { orgId, projectId, slug, name: slug, simulationClass },
+        });
+
+      const seedScopedRule = (testId: string) =>
+        prisma.slaRule.create({
+          data: {
+            orgId,
+            projectId,
+            testId,
+            scope: 'run',
+            targetName: null,
+            family: 'response_time',
+            metric: 'error_rate',
+            comparator: 'lte',
+            threshold: 0.01,
+            enabled: true,
+          },
+        });
+
+      it('breaches live, without waiting for the run to finish', async () => {
+        const test = await seedTest('test.Sim', 'the-sim');
+        const rule = await seedScopedRule(test.id);
+
+        // AT CLAIM the run has said nothing about itself, so this rule is not
+        // in the set — that is the state `#claimRules` documents, asserted
+        // here so the widening below is visibly a CHANGE rather than
+        // something that was always true.
+        await owner.tick();
+
+        expect(breachesOf(owner, runId).map((b) => b.ruleId)).toEqual([rule.id]);
+      });
+
+      it('records the test on the run row, so a reader sees it mid-stream', async () => {
+        const test = await seedTest('test.Sim', 'the-sim');
+        await owner.tick();
+
+        const row = await prisma.run.findUnique({ where: { id: runId } });
+        expect(row?.testId).toBe(test.id);
+      });
+
+      /**
+       * CREATED, not merely matched. A live run is usually the FIRST run of
+       * its simulation — nobody has authored a test for a class that has never
+       * been seen — so the resolve-or-create path is the ordinary one here,
+       * and the row it makes is what the pipeline later finds at finalize.
+       */
+      it('creates the test when the class has never been seen before', async () => {
+        expect(await prisma.test.count()).toBe(0);
+        await owner.tick();
+
+        const created = await prisma.test.findFirst();
+        expect(created).toMatchObject({ simulationClass: 'test.Sim', slug: 'test-sim' });
+      });
+
+      /**
+       * The negative, and the one a passing scoped rule cannot distinguish
+       * from a filter that ignores `test_id` entirely: a rule belonging to
+       * ANOTHER test must not judge this run, live or otherwise.
+       */
+      it('leaves another test’s rule out of the live set', async () => {
+        await seedTest('test.Sim', 'the-sim');
+        const other = await seedTest('other.Sim', 'other-sim');
+        await seedScopedRule(other.id);
+
+        await owner.tick();
+
+        expect(breachesOf(owner, runId)).toHaveLength(0);
+        expect(owner.rulesOf(runId)).toHaveLength(0);
+      });
+
+      /**
+       * ONE ATTEMPT PER RUN. `#identify` sets its flag before awaiting, so a
+       * second tick must not re-resolve — the decoder emits one `meta` event
+       * per run, and re-running the upsert every tick would be wasted work on
+       * the hot path for a question already answered.
+       */
+      it('does not re-resolve on every subsequent tick', async () => {
+        await seedTest('test.Sim', 'the-sim');
+        await owner.tick();
+        const updatedAfterFirst = (await prisma.test.findFirst())?.updatedAt;
+
+        await foldEnoughSuccessesToRecover();
+        await owner.tick();
+
+        expect((await prisma.test.findFirst())?.updatedAt).toEqual(updatedAfterFirst);
+        expect(await prisma.test.count()).toBe(1);
+      });
+    });
+
     /** Wraps the shared `seedSlaRule`, recording the id on the closure for
      * `tightenRuleTo` to find. */
     async function seedRule(opts: {
@@ -2159,7 +2264,55 @@ describe('LiveFoldOwner', () => {
      * Claimed the ordinary way (a tick, not a ping): this failure mode is
      * not specific to either claim path.
      */
-    it('marks a rules-load failure, distinctly, when RuleRepository itself throws', async () => {
+    /**
+     * BOTH loads fail — `mockRejectedValue`, not `...Once`. A rules problem
+     * must not be silently read as "nothing configured": the banner would say
+     * "nothing breaching" either way, and one of those is a lie.
+     */
+    it('marks a rules-load failure, distinctly, when RuleRepository keeps throwing', async () => {
+      await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const listEnabledSpy = vi
+        .spyOn(rules, 'listEnabled')
+        .mockRejectedValue(new Error('synthetic rule load failure'));
+      try {
+        await owner.tick();
+
+        expect(owner.rulesOf(runId)).toEqual([]);
+        expect(owner.rulesLoadFailedFor(runId)).toBe(true);
+        expect(breachesOf(owner, runId)).toHaveLength(0);
+        expect(
+          errorSpy.mock.calls.some(
+            (c) => typeof c[0] === 'string' && c[0].includes(`could not load SLA rules for ${runId}`),
+          ),
+        ).toBe(true);
+
+        // Failed OPEN, not stuck: the run is still owned and still folds.
+        expect(owner.snapshotOf(runId)).not.toBeNull();
+      } finally {
+        listEnabledSpy.mockRestore();
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+
+    /**
+     * ═══ A CLAIM-TIME FAILURE IS NOW RECOVERABLE, AND IT DID NOT USED TO BE ═══
+     *
+     * This case replaces an assertion that read "this claim never gets a
+     * second attempt at loading rules (they load once, at claim), but that is
+     * the documented behaviour, not a hang." That was true and is no longer:
+     * `#identify` re-asks the moment the decoder names the simulation, so a
+     * transient database problem at claim no longer blinds a run's banner for
+     * its entire life — which for a soak test could be hours.
+     *
+     * `mockRejectedValueOnce`: the claim's load throws, the header-time one
+     * runs for real. The flag CLEARING is the point — a run reporting "rules
+     * could not be loaded" while holding rules it just loaded would be telling
+     * a reader to distrust a banner that is now correct.
+     */
+    it('recovers rules at the header when the claim-time load failed', async () => {
       await seedRule({ metric: 'error_rate', comparator: 'lte', threshold: 0.01 });
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const listEnabledSpy = vi
@@ -2168,21 +2321,10 @@ describe('LiveFoldOwner', () => {
       try {
         await owner.tick();
 
-        expect(owner.rulesOf(runId)).toEqual([]);
-        expect(owner.rulesLoadFailedFor(runId)).toBe(true);
-        // Not the same breach this rule would otherwise report -- a rules
-        // problem must not be silently read as "nothing configured".
-        expect(breachesOf(owner, runId)).toHaveLength(0);
-        expect(
-          errorSpy.mock.calls.some(
-            (c) => typeof c[0] === 'string' && c[0].includes(`could not load SLA rules for ${runId}`),
-          ),
-        ).toBe(true);
-
-        // Failed OPEN, not stuck: the run is still owned and still folds --
-        // this claim never gets a second attempt at loading rules (they load
-        // once, at claim), but that is the documented behaviour, not a hang.
-        expect(owner.snapshotOf(runId)).not.toBeNull();
+        expect(owner.rulesLoadFailedFor(runId)).toBe(false);
+        expect(owner.rulesOf(runId)).toHaveLength(1);
+        // And it really evaluates: the rule this run breaches is back in play.
+        expect(breachesOf(owner, runId)).toHaveLength(1);
       } finally {
         listEnabledSpy.mockRestore();
         errorSpy.mockRestore();

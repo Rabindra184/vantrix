@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { createPool, createPrisma, SCHEMA_TABLES } from '@perfportal/persistence';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
-import { slugifySimulation } from '../src/pipeline/pipeline.service.js';
+import { slugifySimulation } from '../src/pipeline/test-resolver.js';
 
 /**
  * The `test` row a run belongs to, and the two rules that have to agree about
@@ -49,13 +49,20 @@ beforeEach(async () => {
 
 /**
  * The worker's own statement, verbatim. Copied rather than reached for through
- * `PipelineService`, because that method is `#private` and driving a whole
- * pipeline run per case would test the parser, the engine and the object store
- * to answer a question about one INSERT.
+ * `resolveTestId`, because driving a whole pipeline run per case would test
+ * the parser, the engine and the object store to answer a question about one
+ * INSERT.
+ *
+ * IT MOVED OUT OF `PipelineService` and into `test-resolver.ts`, which is
+ * exactly what this drift guard exists for at one remove: there are TWO
+ * callers now — the pipeline at finalize and `LiveFoldOwner` the moment the
+ * streaming decoder reads the log header — and a second COPY of this
+ * resolve-or-create would surface as a second test appearing for a class that
+ * already had one, with the history split across both.
  *
  * The copy is the risk this file is about, so it is asserted against the real
  * one: `the worker's statement is the one this file tests` below reads
- * `pipeline.service.ts` and fails if the SQL there stops matching.
+ * `test-resolver.ts` and fails if the SQL there stops matching.
  */
 const UPSERT = `WITH candidate AS (
    SELECT CASE WHEN n = 1 THEN $3::text ELSE $3::text || '-' || n END AS slug
@@ -229,13 +236,13 @@ describe('the TypeScript and SQL slug rules agree', () => {
 describe("the worker's statement is the one this file tests", () => {
   const normalise = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
 
-  it('matches the SQL in pipeline.service.ts', () => {
+  it('matches the SQL in test-resolver.ts', () => {
     const source = readFileSync(
-      fileURLToPath(new URL('../src/pipeline/pipeline.service.ts', import.meta.url)),
+      fileURLToPath(new URL('../src/pipeline/test-resolver.ts', import.meta.url)),
       'utf8',
     );
     const match = /`(WITH candidate AS[\s\S]*?RETURNING id)`/.exec(source);
-    expect(match, 'no `WITH candidate AS … RETURNING id` statement found in pipeline.service.ts')
+    expect(match, 'no `WITH candidate AS … RETURNING id` statement found in test-resolver.ts')
       .not.toBeNull();
     expect(normalise(match![1]!)).toBe(normalise(UPSERT));
   });
