@@ -20,6 +20,12 @@ afterEach(cleanup);
  * IDENTITY across a route-param change — something only `history.pushState`
  * (what `react-router-dom`'s `<Link>` performs) can exercise.
  *
+ * THE PATH GAINED A `/runs` SEGMENT and the claim is untouched by it.
+ * `/projects/:slug` now lists the project's TESTS (`ProjectTests`) and the run
+ * list moved one segment deeper; `/projects/a/runs` and `/projects/b/runs`
+ * still match ONE route with a changing param, which is the entire
+ * precondition for the bug. The same guard, at the address the page now has.
+ *
  * `apps/web/e2e/project-runs.spec.ts` cannot prove this. Playwright's
  * `page.goto` is a full top-level browser navigation — a document load, the
  * same as typing a URL and pressing Enter — and cannot be intercepted by
@@ -125,10 +131,10 @@ describe('ProjectRuns — a client-side transition between two projects', () => 
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/projects/alpha']}>
-          <Link to="/projects/beta">Switch to beta</Link>
+        <MemoryRouter initialEntries={['/projects/alpha/runs']}>
+          <Link to="/projects/beta/runs">Switch to beta</Link>
           <Routes>
-            <Route path="/projects/:slug" element={<ProjectRuns />} />
+            <Route path="/projects/:slug/runs" element={<ProjectRuns />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,

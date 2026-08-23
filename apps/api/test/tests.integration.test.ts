@@ -319,3 +319,56 @@ describe('GET /v1/runs?test=', () => {
     expect(res.body.items.map((r: { id: string }) => r.id)).toEqual([mine.id]);
   });
 });
+
+/**
+ * ═══ THE BREADCRUMB'S DATA SOURCE ═══
+ *
+ * `apps/web`'s run header draws `project › test › run`, and the middle rung
+ * comes from here — from the run body itself, not from a second request. The
+ * join already exists on `RunRecord` (`include: { test: true }`), so this
+ * costs no query; what these cases pin is that it is actually SENT, and that
+ * the two shapes a reader can meet are both honest.
+ */
+describe('GET /v1/runs/:id — the test a run belongs to', () => {
+  it('names the test in the run body, so a reader needs no second request', async () => {
+    const test = await seedTest({ slug: 'alpha', name: 'Checkout smoke', simulationClass: 'a.Sim' });
+    const run = await seedRun(test.id);
+
+    const res = await asSession('get', `/v1/runs/${run.id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.test).toEqual({ id: test.id, slug: 'alpha', name: 'Checkout smoke' });
+  });
+
+  /**
+   * `null`, NOT ABSENT. A run with no test is an ordinary state — still
+   * pending, or failed before the worker could read its simulation class — and
+   * the client tells that apart from `undefined`, which means an API pod that
+   * predates the field. Omitting the key here would make every testless run
+   * look like a rolling deploy.
+   */
+  it('says null for a run that belongs to no test, rather than omitting the field', async () => {
+    const run = await seedRun(null);
+
+    const res = await asSession('get', `/v1/runs/${run.id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toHaveProperty('test');
+    expect(res.body.test).toBeNull();
+  });
+
+  /**
+   * THE 202 CARRIES IT TOO, and that is the interesting half. A live run is
+   * polled every five seconds and answers 202 the whole time; if only the
+   * terminal 200 named the test, the breadcrumb would pop a rung into
+   * existence at the end of a run rather than as soon as the parse resolved
+   * one. The 202 body is identity-only by design (`respondWithRun`), and the
+   * test is identity.
+   */
+  it('carries the test on a 202 as well, so the breadcrumb does not wait for the verdict', async () => {
+    const test = await seedTest({ slug: 'alpha', name: 'Checkout smoke', simulationClass: 'a.Sim' });
+    const run = await seedRun(test.id, { status: 'running', verdict: null });
+
+    const res = await asSession('get', `/v1/runs/${run.id}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    expect(res.body.test).toMatchObject({ slug: 'alpha', name: 'Checkout smoke' });
+  });
+});

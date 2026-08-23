@@ -7,6 +7,8 @@ import NewProject from './routes/NewProject';
 import NoOrg from './routes/NoOrg';
 import ProjectRuns from './routes/ProjectRuns';
 import ProjectSetup from './routes/ProjectSetup';
+import ProjectTests from './routes/ProjectTests';
+import TestRuns from './routes/TestRuns';
 import NewRunnerRun from './routes/NewRunnerRun';
 import RequestDetail from './routes/RequestDetail';
 import RunCompare from './routes/RunCompare';
@@ -36,7 +38,19 @@ export default function App() {
           <Route path={NEW_PROJECT_ROUTE} element={<NewProject />} />
           <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
           <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
-          <Route path="/projects/:slug" element={<ProjectRuns />} />
+          {/* `Organization → Project → Test → Run`. A project's own page is
+              its TESTS; the run list across every test moved one segment
+              deeper rather than the test list taking a child segment, so an
+              existing bookmark to `/projects/:slug` still resolves and still
+              lands on the project it named. See `paths.ts`.
+
+              Both of these are second-level literals, which the slug-shadowing
+              rule `paths.test.ts` enforces does not reach: that rule is about
+              a literal sitting where `:slug` itself goes. Nothing dynamic
+              competes with `runs` or `tests` at this depth. */}
+          <Route path="/projects/:slug/runs" element={<ProjectRuns />} />
+          <Route path="/projects/:slug/tests/:testSlug" element={<TestRuns />} />
+          <Route path="/projects/:slug" element={<ProjectTests />} />
           <Route path="/runs/:runId" element={<RunDetail />}>
             <Route index element={<RunOverviewTab />} />
             <Route path="charts" element={<RunChartsTab />} />

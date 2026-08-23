@@ -53,7 +53,8 @@ export const runsQueryKey = (
   cursor: string | null = null,
   projectSlug: string | null = null,
   filters: RunListFilters = {},
-) => ['runs', cursor, projectSlug, normaliseFilters(filters)] as const;
+  testSlug: string | null = null,
+) => ['runs', cursor, projectSlug, normaliseFilters(filters), testSlug] as const;
 
 /**
  * `GET /v1/runs`, org-scoped by the session cookie (the API derives the org
@@ -68,6 +69,13 @@ export const runsQueryKey = (
  * `projectSlug`, when given, narrows the list to one project via `?project=`
  * (RunsController.list) — `null` asks for the whole org.
  *
+ * `testSlug` narrows further, to one test's runs, via `?test=`. IT IS ONLY
+ * EVER SENT ALONGSIDE `?project=`, and that is the API's rule rather than a
+ * convention here: a test slug is unique within its project, not across the
+ * organisation, so `GET /v1/runs?test=checkout` names nothing and the server
+ * answers 400 TEST_NEEDS_PROJECT. The guard below makes that unreachable from
+ * this client rather than relying on every caller to remember.
+ *
  * Rejects with `ProblemError` for every non-2xx, per `apiFetch`'s contract.
  * The 401/403 distinction that rejection carries is the whole point of the
  * bootstrap probe: a valid session belonging to no organisation is a 403
@@ -77,11 +85,13 @@ export function fetchRuns(
   cursor: string | null = null,
   projectSlug: string | null = null,
   filters: RunListFilters = {},
+  testSlug: string | null = null,
 ): Promise<RunListResponse> {
   const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
   const activeFilters = normaliseFilters(filters);
   if (cursor !== null) query.set('cursor', cursor);
   if (projectSlug !== null) query.set('project', projectSlug);
+  if (projectSlug !== null && testSlug !== null) query.set('test', testSlug);
   if (activeFilters.q) query.set('q', activeFilters.q);
   if (activeFilters.status) query.set('status', activeFilters.status);
   if (activeFilters.verdict) query.set('verdict', activeFilters.verdict);

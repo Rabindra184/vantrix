@@ -178,6 +178,29 @@ describe('ProjectRail', () => {
     expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
   });
 
+  /**
+   * ═══ THE PROJECT ROW HAS NO `end`, AND THAT IS NOW LOAD-BEARING ═══
+   *
+   * `All runs` carries `end` so `/runs` does not prefix-match `/runs/:runId`.
+   * The project rows deliberately do not, and until the hierarchy existed that
+   * was a distinction without a difference: `/projects/:slug` had no children
+   * a reader ever visited.
+   *
+   * It has three now — the run list, a test's run history, and setup — and a
+   * reader spends most of their time on them. Adding `end` here to "match
+   * All runs" would unlight the rail on every one, so the rail would claim the
+   * reader is nowhere while they are two clicks inside a project.
+   */
+  it.each([
+    ['the project run list', '/projects/checkout/runs'],
+    ['a test’s run history', '/projects/checkout/tests/example-paritysimulation'],
+  ])('keeps the project row current on %s, a page inside it', async (_what, route) => {
+    renderRail(PROJECTS, { route });
+    const checkout = await screen.findByRole('link', { name: /Checkout Flow/ });
+    expect(checkout).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'All runs' })).not.toHaveAttribute('aria-current');
+  });
+
   it('marks nothing as current on a run detail page', async () => {
     renderRail(PROJECTS, { route: '/runs/a66548b7-2962-43ff-8b93-7149a6f2a1b8' });
     // Paired positive FIRST: the rail rendered its rows, so the absences

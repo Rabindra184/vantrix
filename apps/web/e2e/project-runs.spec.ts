@@ -3,7 +3,13 @@ import { seedAdmin, seedProjectWithRuns } from './fixtures.js';
 import { signIn } from './helpers.js';
 
 /**
- * `/projects/:slug` — the run list narrowed to one project.
+ * `/projects/:slug/runs` — the run list narrowed to one project.
+ *
+ * IT MOVED HERE from `/projects/:slug`, which now lists the project's TESTS
+ * (see `project-tests.spec.ts`). Nothing else about this file changed: the
+ * claims below are about `?project=` narrowing the server response and the
+ * heading naming itself from `GET /v1/projects`, and both are properties of
+ * the page rather than of its address.
  *
  * This file exists separately from run-list.spec.ts (rather than appending
  * to it) because this spec seeds TWO extra projects into the org, and
@@ -48,14 +54,14 @@ test('switching projects after paging forward shows the second project\'s first 
   await seedProjectWithRuns(admin.orgId, 'beta', 'Beta Checkout Flow', 3);
 
   await signIn(page, admin);
-  await page.goto(`/projects/${alpha.slug}`);
+  await page.goto(`/projects/${alpha.slug}/runs`);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByTestId('run-row')).toHaveCount(1); // 26 = 25 + 1
 
   // A fresh document load, not a client-side transition (see this file's
   // docstring) — so this next assertion is about `?project=` filtering the
   // SERVER response correctly, not about `key={slug}` surviving anything.
-  await page.goto('/projects/beta');
+  await page.goto('/projects/beta/runs');
   await expect(page.getByTestId('run-row')).toHaveCount(3);
   // exact: true, so this can only pass on the real project name — the
   // heading's `?? slug` fallback ('beta') would fail it.

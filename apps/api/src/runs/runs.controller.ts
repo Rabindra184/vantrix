@@ -183,6 +183,11 @@ export async function respondWithRun(
         environment: run.environment,
         branch: run.branch,
         commitSha: run.commitSha,
+        // Null on nearly every 202 — a run has no test until the worker has
+        // read its simulation class — and that is the honest answer rather
+        // than an omission. It stops being null the moment the parse lands,
+        // which is exactly when the reader's breadcrumb should grow a rung.
+        test: run.test,
         simulation: run.simulation,
         description: run.description,
         durationMs: run.durationMs,
