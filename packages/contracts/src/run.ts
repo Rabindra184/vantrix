@@ -76,6 +76,27 @@ export const ProjectRefSchema = z.object({
 export type ProjectRef = z.infer<typeof ProjectRefSchema>;
 
 /**
+ * The test this is a run OF — the layer between a project and its runs.
+ *
+ * The same three fields as `ProjectRefSchema`, and for the same reason: a
+ * reader who has the run needs to be able to NAME the test and LINK to it
+ * without a second request, and the id alone gives neither.
+ *
+ * `TestSummarySchema` (test.ts) is not reused here on purpose. That carries
+ * `runCount`, `latestRun` and both timestamps — an aggregate over the test's
+ * whole history, computed by a `groupBy` and an ordered scan. Attaching it to
+ * every run body would make one run's fetch pay for a query about all the
+ * others, and `respondWithRun`'s 202 branch exists precisely to avoid that
+ * kind of work on a path a poller hits every five seconds.
+ */
+export const TestRefSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+});
+export type TestRef = z.infer<typeof TestRefSchema>;
+
+/**
  * What a run knows about itself from the moment it exists, independent of
  * whether anything has parsed it.
  *
@@ -113,6 +134,28 @@ export const RunIdentitySchema = z.object({
   environment: z.string().nullable().optional(),
   branch: z.string().nullable().optional(),
   commitSha: z.string().nullable().optional(),
+  /**
+   * The test this is a run of, or null.
+   *
+   * NULLABLE AND OPTIONAL, AND THE TWO MEAN DIFFERENT THINGS. `null` is a run
+   * that belongs to no test — one still pending, one that failed before the
+   * worker could read its simulation class, one ingested before migration
+   * `20260822220000_test_entity` whose grouping key the backfill could not
+   * recover. That is a real state the column holds (`test_id` is nullable by
+   * necessity: the class is unknowable until the log header is parsed).
+   *
+   * `undefined` is a run body from an API pod that predates this field —
+   * mid-rolling-deploy. Required-but-nullable would blank the run page for
+   * the whole rollout, the same failure `RunProcessingSchema`'s comment below
+   * and `live-delta.test.ts` one endpoint over both exist to prevent.
+   *
+   * Distinct from `simulation`, which is what the log HEADER said. Two runs
+   * can carry the same simulation string and different tests (a project
+   * renamed, a test deleted and re-created), so a reader following the
+   * hierarchy has to follow this and not that — see `TRENDS_SQL`, which
+   * cohorts on `test_id` for exactly this reason.
+   */
+  test: TestRefSchema.nullable().optional(),
   /** The tool's own simulation identity and run description (G-01, G-02). */
   simulation: z.string().nullable().optional(),
   description: z.string().nullable().optional(),

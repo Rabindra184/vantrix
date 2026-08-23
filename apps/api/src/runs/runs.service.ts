@@ -58,6 +58,9 @@ export class RunsService {
       environment: run.environment,
       branch: run.branch,
       commitSha: run.commitSha,
+      // Joined on the RunRecord already (`include: { test: true }`), so this
+      // costs no query of its own — the same free ride `project` takes.
+      test: run.test,
       simulation: run.simulation ?? null,
       description: run.description ?? null,
       durationMs: run.durationMs ?? null,
