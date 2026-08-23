@@ -65,10 +65,21 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **130 files / 1425 tests**, it
+`nvm use` first, and if a run reports fewer than **130 files / 1435 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The live-test-rules branch added no
+silently-skipped run looks like a pass. The test-entity-loose-ends branch added
+no unit FILE and 10 unit cases — 8 to `apps/web/test/TestRuns.test.tsx` and 2
+to `RunList.test.tsx` — from a floor of 130 / 1425. Its integration floor is
+**123 files / 1508 tests** (6 cases in `apps/api/test/tests.integration.test.ts`)
+and its e2e stays 100.
+
+ONE THING FROM IT, AND IT IS THE DUPLICATE-KEY TRAP RECORDED UNDER
+"Conventions that bite". Two siblings keyed off the same route params get the
+same key, React renders one of them four times, and nothing errors. Read that
+entry before adding a second remount key to a page.
+
+Before that, the live-test-rules branch added no
 unit FILE and no unit case — it REPLACED one in `ProjectRules.test.tsx` with
 its inverse — so the unit floor is unchanged, while **integration rises to 123
 files / 1502 tests** (5 new cases in
@@ -923,6 +934,32 @@ export S3_ACCESS_KEY=perfportal
 export S3_SECRET_KEY=perfportal123
 ```
 
+**NEVER `prisma db push` AGAINST THIS DATABASE. IT PARTIALLY APPLIES, AND A
+FAILED PUSH LEAVES THE SCHEMA THE MIGRATIONS NO LONGER DESCRIBE.** Reached for
+once, to red-verify a foreign key's `onDelete` by editing `schema.prisma` and
+pushing. The push FAILED (exit 1) — and had already DROPPED
+`sla_rule_test_id_fkey` before it did. The integration case then went red,
+which is what was wanted, for entirely the wrong reason: there was no
+constraint at all rather than a different one. Nothing in the output said the
+constraint was gone; `\d sla_rule` is what found it.
+
+The database was left describing a schema no migration produces, and the next
+`migrate deploy` would not have restored it — that migration is already
+recorded as applied.
+
+**To red-verify a referential action, change the CONSTRAINT, not the schema
+file**, and put it back afterwards:
+
+```
+ALTER TABLE sla_rule DROP CONSTRAINT sla_rule_test_id_fkey;
+ALTER TABLE sla_rule ADD CONSTRAINT sla_rule_test_id_fkey
+  FOREIGN KEY (test_id) REFERENCES test(id) ON DELETE SET NULL ON UPDATE CASCADE;
+```
+
+`select confdeltype from pg_constraint where conname = '…'` reads back what is
+actually in force — `c` for CASCADE, `n` for SET NULL, `a` for NO ACTION — and
+is the only thing worth believing after either of these.
+
 **No compose service here has a volume, so EDITING one destroys its data.**
 `docker compose up -d` recreates a container whose service definition changed,
 and with no volume the recreated container starts empty — the edit does not
@@ -1155,6 +1192,29 @@ variant of the value you actually mean to require — otherwise the assertion
 passes whether or not the real value ever loaded. Cheaper still: pick fixture
 values that cannot collide with their fallback in the first place —
 `'beta'`/`'Beta Checkout Flow'`, never `'beta'`/`'Beta'`.
+
+**TWO SIBLINGS KEYED OFF THE SAME ROUTE PARAMS GET THE SAME KEY, AND REACT
+RENDERS ONE OF THEM FOUR TIMES.** This codebase uses `key={slug}` to FORCE a
+remount in several places — `ProjectRuns`, `TestRuns` — because a same-route
+param change otherwise reuses a component instance and carries its cursor or
+its half-typed form into a scope where neither belongs. That is right, and it
+has a trap: `TestRuns` came to hold two such siblings, `ProjectRules` and
+`RunList`, both keyed `` `${slug}/${testSlug}` ``. Identical keys among
+siblings.
+
+React does not error. It rendered the rules panel FOUR times, behind a console
+warning ("Encountered two children with the same key") that nobody reads in a
+browser tab. Every jsdom case kept passing, because each queried something
+unique to the page. The e2e suite caught it as
+`getByRole('button', { name: 'Add rule' }) resolved to 2 elements` — the
+symptom, two layers from the cause.
+
+**Prefix a remount key with what it is keying** — `` `rules:${slug}/${test}` ``,
+`` `runs:${slug}/${test}` `` — the moment a second sibling gets one. And when a
+strict-mode violation reports a duplicate that no source file duplicates, count
+the RENDERED components before hunting for a second JSX site: `TestRuns.test.tsx`'s
+"mounts exactly one rules panel" is that check, and it fails with the cause
+attached.
 
 **Every page-scoped `getByRole('link', { name })` in the e2e suite now shares
 a document with N rail links.** `ProjectRail` (`apps/web/src/ProjectRail.tsx`)

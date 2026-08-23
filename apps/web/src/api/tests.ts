@@ -49,6 +49,24 @@ export function fetchProjectTest(slug: string, testSlug: string): Promise<TestSu
  * `UpdateTestRequestSchema`'s own docstring for what editing the class would
  * silently do to a test's history.
  */
+/**
+ * Delete a test. Returns the test that was deleted, so a caller can name what
+ * it just removed rather than saying "done".
+ *
+ * Its RUNS SURVIVE and move to the project's run list, un-grouped; its own SLA
+ * rules go with it. `TestRepository.remove` documents why those two cascade
+ * differently, and `TestRuns` states both to the reader BEFORE arming the
+ * button — a destructive action whose consequences are only discoverable
+ * afterwards is not a confirmed one.
+ */
+export function deleteProjectTest(slug: string, testSlug: string): Promise<TestSummary> {
+  return apiFetch(
+    TestSummarySchema,
+    `/v1/projects/${encodeURIComponent(slug)}/tests/${encodeURIComponent(testSlug)}`,
+    { method: 'DELETE' },
+  );
+}
+
 export function updateProjectTest(
   slug: string,
   testSlug: string,

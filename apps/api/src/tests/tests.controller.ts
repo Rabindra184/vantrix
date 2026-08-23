@@ -1,4 +1,14 @@
-import { Body, Controller, Get, NotFoundException, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  NotFoundException,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   TestListResponseSchema,
   TestSummarySchema,
@@ -37,9 +47,18 @@ import { badRequest } from '../common/validation.js';
  * endpoint would let a reader invent a test no run will ever match, because
  * the simulation class belongs to the tool, not to them.
  *
- * There is no delete either, in this slice. Deleting a test orphans its runs
- * (`ON DELETE SET NULL`, chosen so history survives), which is a real operation
- * that needs its own confirmation design rather than being added quietly.
+ * ═══ THERE IS A DELETE NOW, AND IT IS SESSION-ONLY FOR THE SAME REASON ═══
+ *
+ * It was left out of the slice that added this controller, whose comment read:
+ * "Deleting a test orphans its runs (`ON DELETE SET NULL`, chosen so history
+ * survives), which is a real operation that needs its own confirmation design
+ * rather than being added quietly." The confirmation design exists now — see
+ * `TestRuns`, which names the run count and the rule count before it will arm
+ * the button — so the endpoint follows it rather than the other way round.
+ *
+ * Session-only, like the PATCH: destroying a test is a human's decision about
+ * how their org reads, and a CI job that could delete a test would eventually
+ * delete one.
  */
 @Controller('/v1/projects/:slug/tests')
 export class TestsController {
@@ -105,6 +124,31 @@ export class TestsController {
       testSlug,
       parsed.data,
     );
+    if (row === null) throw this.noSuchTest(testSlug);
+    return toSummary(row);
+  }
+
+  /**
+   * Delete a test. Its RUNS SURVIVE, un-grouped, and move to the project's run
+   * list; its own SLA rules go with it. See `TestRepository.remove` for why
+   * those two cascade differently — history versus configuration.
+   *
+   * Returns the test it deleted rather than 204, exactly as
+   * `RulesController.remove` does: a UI that has just removed something needs
+   * to be able to say WHICH, and the read that makes that possible is the same
+   * one that decides whether there was anything to delete.
+   */
+  @Delete(':testSlug')
+  @UseGuards(SessionOnlyGuard)
+  async remove(
+    @Param('slug') slug: string,
+    @Param('testSlug') testSlug: string,
+    @Req() req: Request,
+  ): Promise<TestSummary> {
+    const tenant = req.tenant!;
+    const project = await this.resolveProject(tenant.orgId, slug);
+
+    const row = await this.tests.remove({ orgId: tenant.orgId, projectId: project.id }, testSlug);
     if (row === null) throw this.noSuchTest(testSlug);
     return toSummary(row);
   }

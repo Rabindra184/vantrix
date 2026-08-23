@@ -242,17 +242,33 @@ export default function RunList({
                 {/* No Tool column. TOOL_IDS has exactly one member, so it read
                     "gatling" on every row this platform can produce. It returns
                     the day a second tool ships, at which point it carries
-                    information; the field stays in the contract meanwhile. */}
+                    information; the field stays in the contract meanwhile.
+
+                    ═══ AND THE SAME ARGUMENT NOW APPLIES PER SCOPE ═══
+
+                    That reasoning was never specific to the tool. A column
+                    whose every cell reads the same thing costs horizontal room
+                    on a table that is already wide and gives a reader nothing
+                    to compare — and on a project's run list the PROJECT is
+                    constant by construction, exactly as `tool` is.
+
+                    `Simulation` is the same on a TEST's list, but it cannot
+                    simply go: it holds the only link to the run. So it becomes
+                    `Run` there and shows the short id, which is what actually
+                    distinguishes one of this test's runs from another. See
+                    `RunRow`. */}
                 <thead className={THEAD}>
                   <tr>
                     <th scope="col" className={TH}>
                       Started
                     </th>
+                    {projectSlug === null && (
+                      <th scope="col" className={TH}>
+                        Project
+                      </th>
+                    )}
                     <th scope="col" className={TH}>
-                      Project
-                    </th>
-                    <th scope="col" className={TH}>
-                      Simulation
+                      {testSlug === null ? 'Simulation' : 'Run'}
                     </th>
                     <th scope="col" className={TH}>
                       Status
@@ -267,7 +283,12 @@ export default function RunList({
                 </thead>
                 <tbody>
                   {items.map((run) => (
-                    <RunRow key={run.id} run={run} />
+                    <RunRow
+                      key={run.id}
+                      run={run}
+                      showProject={projectSlug === null}
+                      identifyByRunId={testSlug !== null}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -718,7 +739,22 @@ function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
   return VERDICT_FILTERS.some((option) => option.value === value);
 }
 
-function RunRow({ run }: { run: RunListItem }) {
+function RunRow({
+  run,
+  showProject,
+  identifyByRunId,
+}: {
+  readonly run: RunListItem;
+  /** False on a project-scoped list, where every row's project is the same. */
+  readonly showProject: boolean;
+  /**
+   * True on a TEST-scoped list, where every row's simulation is the same. The
+   * column keeps its place and its link — it is the row's only route to the
+   * run — and shows the short id instead, which is the thing that actually
+   * tells two runs of one test apart.
+   */
+  readonly identifyByRunId: boolean;
+}) {
   // The value the API ORDERS BY, spelled the same way here — RunRepository.list
   // sorts on COALESCE(tool_started_at, started_at) DESC. Displaying anything
   // else (startedAt alone, say) renders a correctly-sorted list that reads as
@@ -740,7 +776,11 @@ function RunRow({ run }: { run: RunListItem }) {
         </time>
         {isIngestTime && <span className="ml-2 text-[12px] text-muted">ingest time</span>}
       </td>
-      <td className={TD}>{run.project.name}</td>
+      {showProject && <td className={TD}>{run.project.name}</td>}
+      {/* The testid stays `run-simulation` in both modes, deliberately: the
+          e2e suite and `helpers.ts` reach for it as "the cell holding the row's
+          link to its run", which is what it has always been and still is. What
+          changes is the value shown, not the cell's job. */}
       <td data-testid="run-simulation" className={TD}>
         {/* The simulation is what a reader is looking for, so it is the
             link. Falls back to the short id for a run the worker has not
@@ -760,7 +800,18 @@ function RunRow({ run }: { run: RunListItem }) {
           aria-label={`View run ${run.id}`}
           className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
         >
-          {run.simulation ?? <code className="text-[12px]">{run.id.slice(0, 8)}</code>}
+          {/* On a test's list the simulation is the page's own heading, so
+              repeating it down every row says nothing; the short id is what
+              distinguishes these runs from each other. Elsewhere the
+              simulation is what a reader is scanning for, falling back to the
+              short id for a run the worker has not parsed. Either way the
+              accessible name above carries the WHOLE id, because a column of
+              eight-character prefixes names nothing on its own. */}
+          {identifyByRunId || run.simulation === null || run.simulation === undefined ? (
+            <code className="text-[12px]">{run.id.slice(0, 8)}</code>
+          ) : (
+            run.simulation
+          )}
         </Link>
       </td>
       <td className={TD}>
