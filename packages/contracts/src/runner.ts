@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DeclaredTestSlugSchema } from './ingest.js';
 
 export const RunnerArtifactKindSchema = z.enum(['gatling_jar', 'gatling_bundle']);
 export type RunnerArtifactKind = z.infer<typeof RunnerArtifactKindSchema>;
@@ -18,6 +19,17 @@ const OptionalRunMetadataSchema = z.object({
   environment: z.string().trim().min(1).max(100).optional(),
   branch: z.string().trim().min(1).max(200).optional(),
   commitSha: z.string().trim().min(7).max(64).optional(),
+  /**
+   * WHICH TEST this run is of — the same field, the same grammar and the same
+   * meaning as `IngestMetadataSchema.test`, reaching the platform by its
+   * fourth and last route.
+   *
+   * `DeclaredTestSlugSchema` is SHARED rather than re-declared here, so the
+   * four submit paths cannot drift into disagreeing about what a valid test
+   * slug looks like. Absent is the ordinary case and groups by simulation
+   * class, exactly as before.
+   */
+  test: DeclaredTestSlugSchema.optional(),
 });
 
 const SystemPropertiesSchema = z.record(z.string().trim().max(500)).superRefine((props, ctx) => {
@@ -64,6 +76,9 @@ export const RunnerJobSchema = z.object({
   environment: z.string().nullable(),
   branch: z.string().nullable(),
   commitSha: z.string().nullable(),
+  /** The test this job named, or null. Becomes the run's own declaration when
+   *  the runner opens it. */
+  testSlug: z.string().nullable(),
   javaOptions: z.string().nullable(),
   systemProperties: z.record(z.string()),
   error: z.object({ code: z.string(), message: z.string(), remediation: z.string() }).nullable(),

@@ -47,6 +47,7 @@ async function queueJob(
   repo: RunnerRepository,
   orgId: string,
   projectId: string,
+  testSlug: string | null = null,
 ): Promise<string> {
   const input: CreateRunnerJobInput = {
     artifact: {
@@ -68,6 +69,7 @@ async function queueJob(
       environment: 'staging',
       branch: null,
       commitSha: null,
+      testSlug,
       javaOptions: null,
       systemProperties: {},
     },
@@ -154,5 +156,40 @@ describe('RunnerRepository.claimNext tenancy scoping', () => {
 
     const claimed = await repo.claimNext({ orgId: orgB, projectId: projectB1 });
     expect(claimed?.job.id).toBe(firstQueued);
+  });
+});
+
+/**
+ * ═══ THE DECLARED TEST, ACROSS THE HANDOFF ═══
+ *
+ * `metadata.test` reached the bundle upload, the live open and the Gradle
+ * plugin before it reached this path — so the one submit route with a UI in
+ * front of it was the one that could not name a test.
+ *
+ * What this pins is the HANDOFF, which is where a field of this kind gets
+ * silently dropped: it is written by the API when the job is queued and read
+ * back by the on-prem runner, a separate process, some time later. Everything
+ * in between is SQL this repository writes by hand — an INSERT column list and
+ * four separate SELECT projections — and a field missing from any one of them
+ * fails soft, as a run that simply groups by simulation class, which is
+ * exactly what it would have done anyway.
+ */
+describe('a runner job that names its test', () => {
+  it('round-trips the slug the requester declared', async () => {
+    const { orgB, projectB1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    await queueJob(repo, orgB, projectB1, 'checkout-soak');
+
+    const claimed = await repo.claimNext({ orgId: orgB, projectId: projectB1 });
+    expect(claimed?.job.testSlug).toBe('checkout-soak');
+  });
+
+  it('reports null for a job that named none, which is the ordinary case', async () => {
+    const { orgB, projectB1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    await queueJob(repo, orgB, projectB1);
+
+    const claimed = await repo.claimNext({ orgId: orgB, projectId: projectB1 });
+    expect(claimed?.job.testSlug).toBeNull();
   });
 });

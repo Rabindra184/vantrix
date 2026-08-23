@@ -67,6 +67,12 @@ export class RunnerLiveSink {
       ...(job.job.environment ? { environment: job.job.environment } : {}),
       ...(job.job.branch ? { branch: job.job.branch } : {}),
       ...(job.job.commitSha ? { commitSha: job.job.commitSha } : {}),
+      // The fourth member of the same frozen-metadata group. Without it a run
+      // started from the on-prem form could never be a simulation's SECOND
+      // test, while the same simulation uploaded or streamed by the Gradle
+      // plugin could — the one submit path with a UI in front of it being the
+      // one that could not use the feature.
+      ...(job.job.testSlug ? { test: job.job.testSlug } : {}),
       idempotencyKey: `runner:${job.job.id}`,
       startedAt: new Date(),
       engineOptions: engineOptionsFrom(settings),
