@@ -141,3 +141,46 @@ test('a parsed run names its test in the breadcrumb, and the link opens that tes
   // is the claim the breadcrumb makes, followed all the way round.
   await expect(page.locator(`[data-run-id="${runId}"]`)).toBeVisible();
 });
+
+/**
+ * ═══ THE RULES PANEL ON A TEST'S PAGE ═══
+ *
+ * `ProjectRules.test.tsx` pins what the panel does with a given payload, with
+ * `fetch` stubbed. What only a real stack can show is that it is MOUNTED here
+ * with the right props and that `GET /v1/projects/:slug/rules?test=` is a
+ * request the API actually honours — a panel wired with the wrong slug, or a
+ * query parameter the server rejects, renders an error state that no
+ * stubbed-fetch test would ever produce.
+ */
+test('a test’s page carries the gates that judge it, and authors new ones against it', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  await seedTestWithRuns(admin.orgId, {
+    slug: 'payments-sweep',
+    name: 'Payments sweep',
+    simulationClass: 'shop.PaymentsSimulation',
+    runs: 1,
+  });
+
+  await signIn(page, admin);
+  await page.goto('/projects/checkout/tests/payments-sweep');
+
+  // No "Applies to" select here — the page is titled after one test, and the
+  // one non-default option would silently widen a rule to every OTHER test.
+  await expect(page.getByRole('button', { name: 'Add rule' })).toBeVisible();
+  await expect(page.getByLabel('Applies to')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add rule' }).click();
+
+  // The row appears, and says the rule belongs to THIS test rather than to the
+  // project — which is the whole difference this feature adds.
+  const appliesTo = page.getByTestId('rule-applies-to');
+  await expect(appliesTo).toHaveCount(1);
+  await expect(appliesTo).toHaveText('This test');
+
+  // And the project's own setup page sees it too, named by the test it judges
+  // — the same row, read from the other end of the union.
+  await page.goto('/projects/checkout/setup');
+  await expect(page.getByTestId('rule-applies-to')).toHaveText('Payments sweep');
+});

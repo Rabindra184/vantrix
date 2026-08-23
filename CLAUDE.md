@@ -65,10 +65,55 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **130 files / 1409 tests**, it
+`nvm use` first, and if a run reports fewer than **130 files / 1425 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The test-ui branch added TWO unit files
+silently-skipped run looks like a pass. The test-scoped-rules branch added no
+unit FILE and 16 unit cases — 8 to `apps/web/test/ProjectRules.test.tsx` and 8
+to `packages/contracts/test/rules.test.ts` — from a floor of 130 / 1409. Its
+integration floor is **123 files / 1496 tests** (that `rules.test.ts` is a
+`.ts` file integration runs too, plus 9 cases in
+`apps/api/test/rules.integration.test.ts` and 3 in
+`verdict.integration.test.ts`) and its **e2e rises to 100**.
+
+TWO THINGS FROM IT, AND THE FIRST IS THE ONE THAT WOULD HAVE COST A RELEASE.
+
+FIRST, A PARAMETER WHOSE WRONG VALUE IS SILENT MUST NOT HAVE A DEFAULT.
+`RuleRepository.listEnabled` gained a `testId` argument — which rules judge
+THIS run. Giving it `= null` would have been the polite change: both existing
+call sites keep compiling, no diff outside the repository. It would also have
+meant the pipeline, which is the one caller that KNOWS the run's test,
+carrying on evaluating project-wide rules only. Nothing throws, no test fails,
+and every test-scoped gate somebody configured sits there reading as
+protection while never firing once. The parameter is required, so both callers
+had to state their answer, and the fold owner's `null` is a comment explaining
+itself rather than an omission.
+
+The same reasoning made `PipelineService` resolve the run's test BEFORE
+loading its rules — an ordering that looks cosmetic and is not.
+`verdict.integration.test.ts`'s "judges a run of the test it names" is the
+guard, and it was verified red by passing `null` there.
+
+SECOND, A WORD THAT ALREADY MEANS TWO THINGS DOES NOT GET A THIRD. `scope` on
+an SLA rule means run/scenario/group/request — what it MEASURES — and
+`ProjectScope` in the repositories means the tenant. The new axis is which
+TEST a rule judges, and calling it a scope would have put three senses of one
+word in one file, two of them in the same form. It is `test` in the schema,
+`testSlug` in the contract, and "Applies to" in the UI, everywhere, and the
+migration says so at the top. The failure this avoids is not a crash: it is
+somebody authoring a gate on the wrong thing while reading their own
+configuration as correct.
+
+ONE LIMITATION IS DESIGNED IN AND WRITTEN DOWN IN THREE PLACES. `run.test_id`
+is resolved by the pipeline from the parsed log header, and
+`OpenLiveRunRequestSchema` carries no simulation — so a live run has NO test
+for its whole stream, by construction rather than by timing. A test-scoped
+rule therefore never appears in the live SLA banner; it judges the finished
+report, where the verdict is correct. The rules form says so where the rule is
+authored, because a reader who watched a live run and saw their new gate
+missing would reasonably conclude it was broken.
+
+Before that, the test-ui branch added TWO unit files
 — `apps/web/test/ProjectTests.test.tsx` (10) and `TestRuns.test.tsx` (11) —
 plus cases across `RunHeader.test.tsx` (4), `ProjectRail.test.tsx` (2),
 `paths.test.ts` (5) and `packages/contracts/test/contracts.test.ts` (4), from a

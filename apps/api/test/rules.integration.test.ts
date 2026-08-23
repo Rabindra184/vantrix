@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { RuleRepository } from '@perfportal/persistence';
 import { createTestApp, type TestContext } from './support/app.js';
 import { signUpAsOrgMember } from './support/session.js';
 
@@ -365,5 +366,156 @@ describe('a rule authored through the API is one the evaluator would load', () =
       where: { orgId: ctx.orgId, projectId: ctx.projectId, enabled: true },
     });
     expect(enabled.map((r) => r.id)).not.toContain(created.id);
+  });
+});
+
+/**
+ * ═══ A RULE MAY NOW JUDGE ONE TEST INSTEAD OF THE WHOLE PROJECT ═══
+ *
+ * The point of the feature, and the one thing worth proving against a real
+ * database: that `RuleRepository.listEnabled` — the query the pipeline and the
+ * fold owner both evaluate from — returns the right SET for a given run.
+ *
+ * Everything here is `listEnabled` rather than a HTTP read, deliberately. A
+ * list endpoint can be right while evaluation is wrong, and evaluation is the
+ * half that decides whether somebody's deploy is blocked.
+ */
+describe('rules scoped to one test', () => {
+  const seedTest = (slug: string, simulationClass: string) =>
+    ctx.prisma.test.create({
+      data: {
+        orgId: ctx.orgId,
+        projectId: ctx.projectId,
+        slug,
+        name: slug,
+        simulationClass,
+      },
+    });
+
+  const listEnabledFor = (testId: string | null) =>
+    new RuleRepository(ctx.prisma).listEnabled(
+      { orgId: ctx.orgId, projectId: ctx.projectId },
+      testId,
+    );
+
+  it('creates a rule against a named test and reports which one', async () => {
+    const test = await seedTest('payments-sweep', 'shop.PaymentsSimulation');
+    const created = await createRule({ testSlug: 'payments-sweep' });
+    expect(created.test).toEqual({ id: test.id, slug: 'payments-sweep', name: 'payments-sweep' });
+  });
+
+  it('reports null for a rule nobody scoped, which is every rule that existed before', async () => {
+    const created = await createRule();
+    expect(created.test).toBeNull();
+  });
+
+  /**
+   * 404, never a silently project-wide rule. That is the failure mode that
+   * matters: a gate applied to everything looks exactly like a gate applied to
+   * something, and nothing on any screen afterwards distinguishes them.
+   */
+  it('404s an unknown test slug rather than widening the rule to everything', async () => {
+    const res = await asSession('post', RULES).send(runRule({ testSlug: 'no-such-test' }));
+    expect(res.status).toBe(404);
+    expect(await ctx.prisma.slaRule.count()).toBe(0);
+  });
+
+  /**
+   * ═══ THE CASE THE WHOLE MIGRATION EXISTS FOR ═══
+   *
+   * Three rules, three different answers, and each one is a different way the
+   * filter could be wrong: dropping the project-wide rule from a test's set,
+   * leaking one test's rule into another's, or letting a test rule judge a run
+   * that belongs to no test at all.
+   */
+  it('gives each run the project-wide rules plus its own test’s, and nobody else’s', async () => {
+    const payments = await seedTest('payments-sweep', 'shop.PaymentsSimulation');
+    const search = await seedTest('search-latency', 'shop.SearchSimulation');
+
+    const wide = await createRule({ name: 'Project error floor', metric: 'error_rate' });
+    const paymentsOnly = await createRule({ name: 'Payments p95', testSlug: 'payments-sweep' });
+    const searchOnly = await createRule({ name: 'Search p95', testSlug: 'search-latency' });
+
+    const forPayments = (await listEnabledFor(payments.id)).map((r) => r.id);
+    expect(forPayments).toContain(wide.id);
+    expect(forPayments).toContain(paymentsOnly.id);
+    expect(forPayments).not.toContain(searchOnly.id);
+
+    const forSearch = (await listEnabledFor(search.id)).map((r) => r.id);
+    expect(forSearch).toEqual(expect.arrayContaining([wide.id, searchOnly.id]));
+    expect(forSearch).not.toContain(paymentsOnly.id);
+
+    // A run with no test — still pending, or one that failed before the worker
+    // could read its simulation class. It gets the project-wide rule and
+    // nothing else: it is not a run of anything a test rule could be about.
+    expect(await listEnabledFor(null)).toEqual([expect.objectContaining({ id: wide.id })]);
+  });
+
+  it('still honours enabled, so silencing a test rule silences it for that test', async () => {
+    const payments = await seedTest('payments-sweep', 'shop.PaymentsSimulation');
+    const scoped = await createRule({ testSlug: 'payments-sweep' });
+
+    expect((await listEnabledFor(payments.id)).map((r) => r.id)).toContain(scoped.id);
+    await asSession('patch', `${RULES}/${scoped.id}`).send({ enabled: false });
+    expect((await listEnabledFor(payments.id)).map((r) => r.id)).not.toContain(scoped.id);
+  });
+
+  /**
+   * ═══ THE LIST FILTER IS A UNION, NOT AN EQUALITY ═══
+   *
+   * `?test=` answers "what gates this test". Reading it as `test_id = <id>`
+   * would hide every gate the project applies to everything — so a reader
+   * checking whether their org's error-rate floor was configured would find it
+   * missing from the one page they went to look.
+   */
+  it('lists a test’s own rules AND the project-wide ones under ?test=', async () => {
+    await seedTest('payments-sweep', 'shop.PaymentsSimulation');
+    await seedTest('search-latency', 'shop.SearchSimulation');
+    const wide = await createRule({ name: 'Project error floor', metric: 'error_rate' });
+    const paymentsOnly = await createRule({ name: 'Payments p95', testSlug: 'payments-sweep' });
+    const searchOnly = await createRule({ name: 'Search p95', testSlug: 'search-latency' });
+
+    const res = await asSession('get', `${RULES}?test=payments-sweep`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const ids = (res.body.rules as { id: string }[]).map((r) => r.id);
+    expect(ids).toEqual(expect.arrayContaining([wide.id, paymentsOnly.id]));
+    expect(ids).not.toContain(searchOnly.id);
+  });
+
+  it('lists every rule in the project when no test is named', async () => {
+    await seedTest('payments-sweep', 'shop.PaymentsSimulation');
+    const wide = await createRule({ metric: 'error_rate' });
+    const scoped = await createRule({ testSlug: 'payments-sweep' });
+
+    const res = await asSession('get', RULES);
+    const ids = (res.body.rules as { id: string }[]).map((r) => r.id);
+    expect(ids).toEqual(expect.arrayContaining([wide.id, scoped.id]));
+  });
+
+  it('404s ?test= for a slug that names nothing, rather than answering unfiltered', async () => {
+    await createRule();
+    const res = await asSession('get', `${RULES}?test=no-such-test`);
+    expect(res.status).toBe(404);
+  });
+
+  /**
+   * ═══ CASCADE, WHERE `run.test_id` IS SET NULL ═══
+   *
+   * A run is history and survives its test being deleted, ungrouped. A rule is
+   * configuration: one pointing at a test that no longer exists would judge
+   * nothing forever while still reading as configured protection in an
+   * authoring list. Verdicts already recorded are untouched either way —
+   * `run_assertion` has no foreign key here and keeps its own snapshot.
+   */
+  it('deletes a test’s rules with the test, and leaves the project-wide ones', async () => {
+    const payments = await seedTest('payments-sweep', 'shop.PaymentsSimulation');
+    const wide = await createRule({ metric: 'error_rate' });
+    const scoped = await createRule({ testSlug: 'payments-sweep' });
+
+    await ctx.prisma.test.delete({ where: { id: payments.id } });
+
+    const remaining = (await ctx.prisma.slaRule.findMany()).map((r) => r.id);
+    expect(remaining).toContain(wide.id);
+    expect(remaining).not.toContain(scoped.id);
   });
 });

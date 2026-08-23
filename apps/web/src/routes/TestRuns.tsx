@@ -16,6 +16,7 @@ import {
   projectTestsQueryKey,
   updateProjectTest,
 } from '../api/tests';
+import ProjectRules from './ProjectRules';
 import RunList from './RunList';
 import { projectPath, projectRunsPath } from './paths';
 
@@ -167,6 +168,20 @@ export default function TestRuns() {
           onDone={() => setRenaming(false)}
         />
       )}
+
+      {/* ═══ THE GATES, ABOVE THE HISTORY THEY JUDGE ═══
+
+          A reader on a test's page asks two questions: how has it been going,
+          and what is it held to. The second frames the first — a column of
+          "not evaluated" verdicts means something different when the answer is
+          "no rules" than when it is "three rules that never fire" — so the
+          panel sits above the run list rather than under it.
+
+          `key` for the same reason `RunList` below carries one: this panel
+          holds form state, and moving between two tests matches the SAME
+          route, so React would reuse the instance and carry a half-typed rule
+          from one test into another. */}
+      <ProjectRules key={`${slug}/${testSlug}`} slug={slug} testSlug={testSlug} testName={row.name} />
 
       <RunList
         // `key` for the same reason `ProjectRuns` carries one: moving from one
