@@ -65,28 +65,100 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **130 files / 1447 tests**, it
+`nvm use` first, and if a run reports fewer than **131 files / 1450 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The runner-declares-test branch added
-no unit FILE and 1 unit case to `apps/web/test/NewRunnerRun.test.tsx`, from a
-floor of 130 / 1446. Its integration floor is **123 files / 1527 tests** (2
-cases in `packages/persistence/test/runner.integration.test.ts`) and e2e stays
-101.
+silently-skipped run looks like a pass. The declared-test-never-stored branch
+added ONE unit file — `apps/runner/test/live-sink.test.ts` (3) — from a floor
+of 130 / 1447. Its integration floor is **124 files / 1533 tests** (that file
+is a `.ts` integration runs too, plus one case each in
+`packages/persistence/test/run-live.integration.test.ts`,
+`apps/api/test/live.integration.test.ts` and
+`apps/api/test/ingest.integration.test.ts`) and e2e stays 101.
 
-ONE THING FROM IT, AND IT IS ABOUT SWEEPING A FEATURE ACROSS ITS ENTRY POINTS.
-`metadata.test` reached FOUR submit paths and shipped on three: the bundle
-upload, the live open and the Gradle plugin. The one it missed was the on-prem
-runner — the only path with a UI in front of it, so the surface a reader is
-most likely to meet was the one that could not use the feature. Nothing failed;
-a run from that form simply grouped by simulation class, which is what it would
-have done anyway.
+THREE THINGS FROM IT, AND THE FIRST CORRECTS WHAT THE ENTRY BELOW THIS ONE
+CLAIMED.
+
+FIRST, `metadata.test` REACHED ONE SUBMIT PATH, NOT THREE. The entry below
+said it "shipped on three: the bundle upload, the live open and the Gradle
+plugin", and the runner branch after it said it closed the fourth. Measured by
+running each path against a real stack, only the BUNDLE UPLOAD ever worked.
+`RunRepository.createLive` declared `declaredTestSlug` in `CreateLiveRunInput`
+and never wrote it to the `data` block — `create` (upload) had the line eleven
+lines up and `createLive` did not — so the live open, the plugin's live mode
+and the runner all silently fell back to grouping by simulation class. That is
+the exact behaviour declaring a test exists to REPLACE, which is why nothing
+looked wrong: every run still landed on a test, just not the one it named.
+
+THE RUNNER WAS BROKEN TWICE OVER, and the second cause is the transferable
+one. **A CONDITIONAL SPREAD IS A HOLE IN TYPE CHECKING.** `live-sink.ts` built
+its metadata as `...(job.job.testSlug ? { test: job.job.testSlug } : {})`, and
+the field is `declaredTestSlug` — `test` is not a member of
+`CreateLiveRunInput` at all. It compiled, because TypeScript's
+excess-property check applies to object LITERALS and a spread is not one. So a
+mistyped key inside a spread is accepted in silence, forever. Naming the four
+frozen-metadata keys directly in the literal (`environment: job.job.environment
+|| undefined`, and so on) is what puts them back in front of the compiler;
+verified by re-introducing the typo and watching `tsc` reject it with
+`'test' does not exist in type 'CreateLiveRunInput'`. **Grep for
+`...(x ? { … } : {})` before trusting that a field reaches its repository.**
+
+SECOND, EVERY GATE WAS GREEN AND THE FEATURE HAD NEVER WORKED. Unit, integration,
+e2e, typecheck and lint all passed on all four branches that built this feature.
+`test-entity.integration.test.ts` drove `resolveTestId` directly and proved it
+honours a declared slug — with the slug handed to it by the test itself. **A
+test that supplies the value it is checking proves the CONSUMER, never the
+seam.** The two integration cases added here read the ROW back instead
+(`run.declared_test_slug`), which is the only witness available at open time:
+a freshly-opened live run has no RESOLVED test yet by design, so `GET
+/v1/runs/:id` reports `test: null` whether the declaration was stored or not,
+and so does the 201 body. Both cases were verified red against the original
+`createLive`.
+
+THIRD, WHAT FOUND IT WAS A REAL GATLING RUN AND NOTHING ELSE COULD HAVE.
+Submitting a bundle through `POST /v1/projects/:slug/runner/runs` with
+`test: "checkout-soak"`, letting the real runner claim it, extract it and
+stream `simulation.log`, then reading three columns: `runner_job.test_slug`
+was `checkout-soak`, `run.declared_test_slug` was NULL, and `run.test_id`
+pointed at `example-paritysimulation`. That is a ten-minute check that no
+amount of suite-writing substitutes for.
 
 **A field added to ingest metadata has FOUR homes, and they are easy to
 enumerate**: `IngestMetadataSchema` (bundle upload), `OpenLiveRunRequestSchema`
 (live), `RunnerJobRequest` (on-prem), and the Gatling plugin's
 `VantrixExtension`/`ResolvedConfig`. Check all four before calling one of them
-done.
+done — and check them by RUNNING each one, because all four of these had
+schemas, plumbing and passing tests while three of them dropped the field.
+
+**A `POST /v1/runs` IN A TEST COSTS 25 SECONDS UNLESS IT SAYS `waitMs: 0`.**
+The handler waits `INGEST_WAIT_MS` (default 25s) for a terminal verdict, and
+no worker runs inside the API's own test process — so the wait always expires.
+A two-post case therefore takes 51 seconds while asserting something written
+before the first response: measured at 51,687ms, and 1,167ms with `waitMs: 0`
+added. `ingest.integration.test.ts`'s "does not update provenance on an
+idempotent re-post" is still paying it, and is the likeliest candidate whenever
+that suite reports `Test timed out in 60000ms` with no other explanation —
+51s of deliberate waiting leaves 9s of headroom for a loaded machine. Any new
+case there that does not need a verdict should say so.
+
+**THE ON-PREM RUNNER NEEDS `--add-opens` ON JAVA 17+, AND DOES NOT PASS IT.**
+Found by the same real run and deliberately NOT fixed in that branch, because
+changing what the runner executes is its own decision. `prepareGatlingRun`
+builds `java … -cp … io.gatling.app.Gatling` with only the operator's
+`javaOptions` and system properties; Gatling's own `gatling.sh` and the
+`io.gatling.gradle` plugin both add JVM opens that this path does not. Without
+`--add-opens=java.base/java.lang=ALL-UNNAMED` (measured: that one alone is
+sufficient for 3.15.1) every job dies before writing a byte:
+
+```
+java.lang.IllegalAccessException: module java.base does not open java.lang
+  at io.gatling.core.stats.writer.StringInternals.<clinit>
+```
+
+The runner then reports `SIMULATION_LOG_NOT_FOUND`, whose remediation says to
+confirm the simulation class — pointing at the artifact rather than the JVM.
+Until this is defaulted, an on-prem job needs that flag typed into the Java
+options field by hand.
 
 **THAT FLAKE IS FIXED, AND THE CAUSE GENERALISES.** `ProjectRail.test.tsx`'s
 "lists every project as a link to its own page" failed 3 of 4 full `test:unit`

@@ -114,9 +114,9 @@ export default function ProjectTests() {
 
   const caption = (
     <>
-      Every test in this project, newest first. A test is created the first time PerfPortal parses
-      a run of it, and is named after the simulation class it was found under until somebody renames
-      it. “Runs” counts this test’s whole history, not a page of it.
+      Every test in this project, newest first. A test is created the first time PerfPortal sees a
+      run of it, named by whatever that run declared — or after its simulation class, if it declared
+      nothing — until somebody renames it. “Runs” counts this test’s whole history, not a page of it.
     </>
   );
 

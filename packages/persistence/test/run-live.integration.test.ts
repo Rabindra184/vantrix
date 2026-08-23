@@ -67,6 +67,41 @@ describe('RunRepository live runs', () => {
     );
   });
 
+  // ═══ THE FIELD `CreateLiveRunInput` DECLARED AND `createLive` DROPPED ═══
+  //
+  // `declaredTestSlug` was in the input interface and absent from the
+  // `prisma.run.create` data block, so every caller could pass it and none of
+  // them had any effect. Three of the platform's four submit paths go through
+  // here — a live open, the Gatling plugin's live mode, and the on-prem runner
+  // — and all three silently fell back to grouping by simulation class, which
+  // is the exact behaviour declaring a test exists to replace.
+  //
+  // NOTHING FAILED, and nothing could: `create` (the bundle-upload path) wrote
+  // the column correctly, `resolveTestId` honours it correctly, and this file
+  // is the seam between them that nobody had asserted on. A test that hands
+  // the resolver a slug proves the resolver; only a test that reads the ROW
+  // back proves the slug ever arrived.
+  //
+  // The null case is half the point rather than filler. It is what makes the
+  // positive case mean "the caller's value", not "some value is present" — a
+  // column defaulted to a constant would pass one of these and fail the other.
+  it('stores the test the caller declared, and null when it declared none', async () => {
+    const { orgId, projectId } = await seedProject();
+    const repo = new RunRepository(prisma);
+
+    const declared = await repo.createLive(
+      liveInput(orgId, projectId, { declaredTestSlug: 'checkout-soak' }),
+    );
+    const undeclared = await repo.createLive(liveInput(orgId, projectId));
+
+    // Read the ROW, not the returned record: the record could carry a value
+    // the insert never persisted.
+    const declaredRow = await prisma.run.findUniqueOrThrow({ where: { id: declared.id } });
+    const undeclaredRow = await prisma.run.findUniqueOrThrow({ where: { id: undeclared.id } });
+    expect(declaredRow.declaredTestSlug).toBe('checkout-soak');
+    expect(undeclaredRow.declaredTestSlug).toBeNull();
+  });
+
   it('advances the offset only from the expected position', async () => {
     const { orgId, projectId } = await seedProject();
     const repo = new RunRepository(prisma);

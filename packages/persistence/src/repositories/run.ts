@@ -394,6 +394,17 @@ export class RunRepository {
           environment: input.environment ?? null,
           branch: input.branch ?? null,
           commitSha: input.commitSha ?? null,
+          // The fourth member of the frozen-metadata group, and the one this
+          // method dropped while `create` — the bundle-upload path, the
+          // method directly above — wrote it correctly. `CreateLiveRunInput`
+          // DECLARED the field, so every caller could pass it and none had any
+          // effect: a live open sending `test`, the Gatling plugin's live
+          // mode, and the on-prem runner all resolved by simulation class
+          // instead, silently, which is exactly the behaviour that declaring a
+          // test exists to replace. Two sibling methods writing the same
+          // frozen metadata is the shape to distrust — the divergence is one
+          // absent line and nothing reads as wrong at either site.
+          declaredTestSlug: input.declaredTestSlug ?? null,
           bundleKey: `runs/${id}/simulation.log`,
           bundleSha256: '',
           bundleBytes: 0n,
