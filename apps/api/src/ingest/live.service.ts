@@ -53,7 +53,7 @@ export class LiveService {
 
   /**
    * Opens a run that will be fed by POST /v1/runs/:id/stream rather than a
-   * bundle upload. Freezes environment/branch/commitSha/engineOptions the
+   * bundle upload. Freezes environment/branch/commitSha/test/engineOptions the
    * same way IngestService.accept does for an upload — see
    * RunRepository.createLive's docstring for why a live run's submission
    * moment is `open`, exactly as an upload's is its own POST.
@@ -69,6 +69,11 @@ export class LiveService {
       ...(body.environment ? { environment: body.environment } : {}),
       ...(body.branch ? { branch: body.branch } : {}),
       ...(body.commitSha ? { commitSha: body.commitSha } : {}),
+      // Same freeze-at-open treatment as the three above. `LiveFoldOwner`
+      // resolves it against a real `test` row the moment the decoder reads the
+      // log header, so a declared test's SLA rules judge this run from its
+      // first ticks rather than only from the finished report.
+      ...(body.test ? { declaredTestSlug: body.test } : {}),
       ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
       startedAt: new Date(),
       engineOptions: engineOptionsFrom(settings),

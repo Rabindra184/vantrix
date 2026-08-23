@@ -34,26 +34,74 @@ import type pg from 'pg';
  */
 export async function resolveTestId(
   pool: pg.Pool,
-  run: { readonly id: string; readonly orgId: string; readonly projectId: string },
+  run: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly projectId: string;
+    /**
+     * What the CALLER said this run was a test of — `metadata.test` at ingest,
+     * or `test` on a live open, frozen onto the run row. Null is the ordinary
+     * case and means "nobody said", which resolves by simulation class below.
+     *
+     * A DECLARED SLUG WINS OVER THE CLASS, and that is the whole point of the
+     * field: it is what lets one simulation be run as two tests with different
+     * injection profiles, the way Gatling Enterprise models it. The class is
+     * still recorded on whichever test gets created, as captured metadata.
+     */
+    readonly declaredTestSlug?: string | null;
+  },
   simulation: string | null,
 ): Promise<string | null> {
-  // No class in the header is not a failure — it is a run that cannot say what
-  // it was. A test named `null` would be worse than no test.
+  const declared = run.declaredTestSlug?.trim();
+  if (declared !== undefined && declared !== '') {
+    return resolveDeclared(pool, run, declared, simulation);
+  }
+
+  // No class in the header AND no declared test is not a failure — it is a run
+  // that cannot say what it was. A test named `null` would be worse than no
+  // test.
   if (simulation === null || simulation.trim() === '') return null;
 
   const base = slugifySimulation(simulation);
   try {
+    // ═══ THE OLDEST TEST WITH THIS CLASS, NOT "THE" TEST WITH THIS CLASS ═══
+    //
+    // `(project_id, simulation_class)` stopped being unique in
+    // `20260823170000_test_per_configuration`, so this can now match several
+    // rows and needs a deterministic answer. The OLDEST wins: it is the test
+    // that existed before anybody split the class in two, so a CI job nobody
+    // updated keeps landing exactly where it always did.
+    //
+    // The alternative — leave an ambiguous run ungrouped — is more literal and
+    // worse in practice: it would break every un-updated pipeline the day
+    // someone creates a second test for a simulation, and the breakage would
+    // show up as trends quietly going flat rather than as an error.
+    //
+    // `id ASC` after `created_at ASC` because two tests created in the same
+    // millisecond must still order the same way on every call.
     const existing = await pool.query<{ id: string }>(
-      `SELECT id FROM test WHERE project_id = $1 AND simulation_class = $2`,
+      `SELECT id FROM test
+        WHERE project_id = $1 AND simulation_class = $2
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1`,
       [run.projectId, simulation],
     );
     if (existing.rows[0] !== undefined) return existing.rows[0].id;
 
     // The slug is chosen and the row inserted in ONE statement, so the window
     // between "this slug is free" and "this slug is mine" is as small as
-    // Postgres can make it. `ON CONFLICT (project_id, simulation_class) DO
-    // UPDATE` rather than DO NOTHING because only DO UPDATE returns a row —
-    // which is how a caller that lost the race still gets the id.
+    // Postgres can make it. `DO UPDATE` rather than DO NOTHING because only DO
+    // UPDATE returns a row — which is how a caller that lost the race still
+    // gets the id.
+    //
+    // ═══ THE CONFLICT TARGET IS THE SLUG NOW, AND THE GUARANTEE IS THE SAME ═══
+    //
+    // It was `(project_id, simulation_class)`, which needs a unique index on
+    // exactly those columns — and that index is gone, so the clause could not
+    // survive `20260823170000_test_per_configuration`. `(project_id, slug)` is
+    // the table's only unique key now, and it protects the identical race:
+    // two concurrent first-runs of one class derive the SAME base slug from it
+    // above, collide here, and the loser is handed the winner's row.
     const inserted = await pool.query<{ id: string }>(
       `WITH candidate AS (
            SELECT CASE WHEN n = 1 THEN $3::text ELSE $3::text || '-' || n END AS slug
@@ -67,7 +115,7 @@ export async function resolveTestId(
          INSERT INTO test (id, org_id, project_id, slug, name, simulation_class, created_at, updated_at)
          SELECT gen_random_uuid(), $1::uuid, $2::uuid, c.slug, $4, $4, now(), now()
            FROM candidate c
-         ON CONFLICT (project_id, simulation_class) DO UPDATE SET updated_at = test.updated_at
+         ON CONFLICT (project_id, slug) DO UPDATE SET updated_at = test.updated_at
          RETURNING id`,
       [run.orgId, run.projectId, base, simulation],
     );
@@ -76,7 +124,10 @@ export async function resolveTestId(
     // Nothing returned means either a lost race or fifty taken slugs. One more
     // read settles which, and costs nothing on the path that never gets here.
     const after = await pool.query<{ id: string }>(
-      `SELECT id FROM test WHERE project_id = $1 AND simulation_class = $2`,
+      `SELECT id FROM test
+        WHERE project_id = $1 AND simulation_class = $2
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1`,
       [run.projectId, simulation],
     );
     return after.rows[0]?.id ?? null;
@@ -86,6 +137,63 @@ export async function resolveTestId(
     // pipeline, or a dropped fold for the live owner.
     console.warn(
       `run ${run.id}: could not resolve a test for simulation ${simulation}; ` +
+        `leaving it ungrouped: ${String(err)}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * The test the CALLER named, resolved or created under exactly that slug.
+ *
+ * ═══ THE SLUG IS TAKEN AT ITS WORD ═══
+ *
+ * No collision loop, unlike the class path: a caller that said
+ * `test: "checkout-soak"` means that test and not `checkout-soak-2`. If the
+ * slug already exists it is used, whatever simulation class it was created
+ * under — because the declaration is a human's statement about what this run
+ * IS, and a run of a second simulation filed under a test somebody named is a
+ * choice they are entitled to make. `simulation_class` on the existing row is
+ * left alone: it records what the test was FIRST seen running, and rewriting
+ * it on every run would make it a log of the most recent one instead.
+ *
+ * A DECLARED TEST CAN BE CREATED WITH NO SIMULATION AT ALL. `$4` falls back to
+ * the slug when the header declared no class — a live run whose producer named
+ * its test but died before writing a header, say. The test exists, correctly
+ * named, and the next run of it fills nothing in: `simulation_class` stays the
+ * slug, which is honest about what is known rather than pretending to a class
+ * nobody reported.
+ */
+async function resolveDeclared(
+  pool: pg.Pool,
+  run: { readonly id: string; readonly orgId: string; readonly projectId: string },
+  slug: string,
+  simulation: string | null,
+): Promise<string | null> {
+  const declaredClass = simulation !== null && simulation.trim() !== '' ? simulation : slug;
+  try {
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id FROM test WHERE project_id = $1 AND slug = $2`,
+      [run.projectId, slug],
+    );
+    if (existing.rows[0] !== undefined) return existing.rows[0].id;
+
+    // Same race protection as the class path, on the same unique key: a
+    // concurrent first run declaring the same slug collides here and is handed
+    // the winner's row rather than failing.
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO test (id, org_id, project_id, slug, name, simulation_class, created_at, updated_at)
+       VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $3, $4, now(), now())
+       ON CONFLICT (project_id, slug) DO UPDATE SET updated_at = test.updated_at
+       RETURNING id`,
+      [run.orgId, run.projectId, slug, declaredClass],
+    );
+    return inserted.rows[0]?.id ?? null;
+  } catch (err) {
+    // Degrades exactly as the class path does, and for the same reason: a run
+    // is worth more than its grouping.
+    console.warn(
+      `run ${run.id}: could not resolve the declared test "${slug}"; ` +
         `leaving it ungrouped: ${String(err)}`,
     );
     return null;

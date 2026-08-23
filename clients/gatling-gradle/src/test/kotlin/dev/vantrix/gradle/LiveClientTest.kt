@@ -46,7 +46,7 @@ class LiveClientTest {
     private fun configFor(srv: HttpServer, token: String = "tok") = PluginConfig(
         baseUrl = "http://localhost:${srv.address.port}",
         token = token,
-        environment = null, branch = null, commitSha = null,
+        environment = null, branch = null, commitSha = null, test = null,
         tickSeconds = 5, uploadIfLiveUnavailable = false, resultsDir = null,
     )
 

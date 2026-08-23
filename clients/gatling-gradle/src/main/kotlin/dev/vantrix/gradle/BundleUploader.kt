@@ -111,7 +111,7 @@ class BundleUploader(
         }
     }
 
-    /** `{"tool":"gatling","waitMs":0}` plus `environment`/`branch`/`commitSha` -- ONLY when non-null. */
+    /** `{"tool":"gatling","waitMs":0}` plus `environment`/`branch`/`commitSha`/`test` -- ONLY when non-null. */
     private fun metadataJson(config: PluginConfig): String {
         val obj = JsonObject().apply {
             addProperty("tool", "gatling")
@@ -119,6 +119,10 @@ class BundleUploader(
             config.environment?.let { addProperty("environment", it) }
             config.branch?.let { addProperty("branch", it) }
             config.commitSha?.let { addProperty("commitSha", it) }
+            // The fallback path must declare the test too, or a run that could
+            // not open live would land on a DIFFERENT test from its siblings —
+            // grouped by simulation class while they were grouped by name.
+            config.test?.let { addProperty("test", it) }
         }
         return obj.toString()
     }

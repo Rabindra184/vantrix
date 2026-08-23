@@ -57,11 +57,12 @@ class BundleUploaderTest {
         environment: String? = "prod",
         branch: String? = "main",
         commitSha: String? = "sha123",
+        test: String? = null,
         token: String = "tok",
     ) = PluginConfig(
         baseUrl = "http://localhost:${srv.address.port}",
         token = token,
-        environment = environment, branch = branch, commitSha = commitSha,
+        environment = environment, branch = branch, commitSha = commitSha, test = test,
         tickSeconds = 5, uploadIfLiveUnavailable = true, resultsDir = null,
     )
 

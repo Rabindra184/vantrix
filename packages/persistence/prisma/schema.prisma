@@ -103,17 +103,25 @@ model Test {
   /// (`SlaRule.testId IS NULL`) judge its runs too and are not in here.
   slaRules SlaRule[]
 
+  /// THE ONLY UNIQUE KEY ON THIS TABLE, and it carries more than URL identity:
+  /// the worker's resolve-or-create conflicts on it, so two concurrent first
+  /// runs of one simulation — which derive the same base slug from it — cannot
+  /// create two tests. See `test-resolver.ts`.
   @@unique([projectId, slug])
-  /// ONE TEST PER SIMULATION CLASS, which is what makes the worker's
-  /// resolve-or-create deterministic: given a parsed class there is exactly
-  /// one row it can belong to.
+  /// NOT UNIQUE, as of `20260823170000_test_per_configuration`.
   ///
-  /// Gatling Enterprise does NOT have this constraint — its Test is a named
-  /// configuration, so two tests may share a simulation class with different
-  /// load profiles. Getting there needs clients to name the test at submit
-  /// time (an optional `metadata.test`), and dropping a unique index is not a
-  /// data change, which is exactly why taking it now costs nothing later.
-  @@unique([projectId, simulationClass])
+  /// It was `@@unique`, and this comment stood in its place: "ONE TEST PER
+  /// SIMULATION CLASS… Gatling Enterprise does NOT have this constraint — its
+  /// Test is a named configuration, so two tests may share a simulation class
+  /// with different load profiles. Getting there needs clients to name the
+  /// test at submit time (an optional `metadata.test`)."
+  ///
+  /// `metadata.test` exists now, so a project may hold "checkout smoke" and
+  /// "checkout soak" as two tests of one simulation with different injection
+  /// profiles. The index remains because `resolveTestId` still asks "which
+  /// test has this class" for every run that declares none — the ordinary
+  /// path, and the only one for a client nobody has updated.
+  @@index([projectId, simulationClass])
   @@index([projectId, createdAt(sort: Desc)])
   @@map("test")
 }
@@ -214,6 +222,19 @@ model Run {
   environment      String?
   branch           String?
   commitSha        String?   @map("commit_sha")
+  /// THE TEST THIS RUN'S CALLER SAID IT WAS OF — ingest metadata, frozen at
+  /// accept time beside `environment`, `branch` and `commitSha`, and the same
+  /// kind of thing: a fact the caller ASSERTS, never one the platform
+  /// measured.
+  ///
+  /// Null is the ordinary case and means "no test named": the worker then
+  /// resolves by simulation class, exactly as it always has. A slug here wins
+  /// over the class, which is what lets two tests share one simulation.
+  ///
+  /// NOT resolved to `testId` at accept time, though it looks like it could
+  /// be: a declared test may not exist yet, and creating one needs a
+  /// simulation class that nothing knows until the log header is parsed.
+  declaredTestSlug String? @map("declared_test_slug")
   /// The tool's own simulation identity and run description, from the run
   /// header. Null until the worker parses, and forever for a failed run.
   simulation       String?

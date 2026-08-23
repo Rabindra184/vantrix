@@ -30,6 +30,12 @@ import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor, type SlaIn
  */
 interface RunClaimContext extends ProjectScope {
   engineOptions: EngineOptions;
+  /**
+   * What the OPEN call said this run was a test of, or null. Carried on the
+   * claim because `#identify` needs it later, and this is the read that
+   * already touches the row.
+   */
+  declaredTestSlug: string | null;
 }
 
 /**
@@ -40,11 +46,18 @@ interface RunClaimContext extends ProjectScope {
 function runContextOf(row: {
   org_id: string;
   project_id: string;
+  declared_test_slug: string | null;
   engine_options: unknown;
 }): RunClaimContext {
   return {
     orgId: row.org_id,
     projectId: row.project_id,
+    // What the OPEN call said this run was a test of, if anything. Read at
+    // claim rather than at identification time because it is frozen on the row
+    // and this is the one query that already touches it -- see
+    // `#identify`, which hands it to `resolveTestId` alongside the class the
+    // decoder just read.
+    declaredTestSlug: row.declared_test_slug,
     // `engine_options` is a NOT NULL `Json` column (schema.prisma), so this
     // is an object in practice -- but degrading a SQL or JSON null to the
     // engine's own defaults is the only sane reading anyway, and it is what
@@ -139,7 +152,7 @@ interface FoldState {
    * needs it mid-fold — the moment the decoder reads the log header, long
    * after the claim returned.
    */
-  scope: ProjectScope | null;
+  scope: (ProjectScope & { declaredTestSlug: string | null }) | null;
   /**
    * Whether this run has already had its test resolved from the log header.
    *
@@ -896,6 +909,7 @@ export class LiveFoldOwner {
       id: string;
       org_id: string;
       project_id: string;
+      declared_test_slug: string | null;
       engine_options: unknown;
     }>(
       // org_id and project_id ride along because the claim needs them to read
@@ -904,7 +918,7 @@ export class LiveFoldOwner {
       // (`RunClaimContext`'s doc comment) -- the same rows and the same index,
       // so this costs nothing over selecting `id` alone, and it saves a round
       // trip.
-      "SELECT id, org_id, project_id, engine_options FROM run WHERE status = 'running'",
+      "SELECT id, org_id, project_id, declared_test_slug, engine_options FROM run WHERE status = 'running'",
     );
     const runningIds = new Set(rows.map((r) => r.id));
     // Only the claim loop below reads this -- a run already owned or claimed
@@ -1489,7 +1503,14 @@ export class LiveFoldOwner {
       // `null` context means the run row could not be read at all, which
       // `#claimContext` has already logged; identification is skipped for such
       // a run, exactly as its rule load was.
-      scope: context === null ? null : { orgId: context.orgId, projectId: context.projectId },
+      scope:
+        context === null
+          ? null
+          : {
+              orgId: context.orgId,
+              projectId: context.projectId,
+              declaredTestSlug: context.declaredTestSlug,
+            },
       identified: false,
       breachingSince,
       // SNAPSHOT_EVERY_N_TICKS, not 0 -- see FoldState.ticksSinceSnapshot's
@@ -1609,8 +1630,13 @@ export class LiveFoldOwner {
    * lock on, so it costs a statement on an already-open connection, not a
    * new one. */
   async #lookupRunContext(client: pg.PoolClient, runId: string): Promise<RunClaimContext | null> {
-    const { rows } = await client.query<{ org_id: string; project_id: string; engine_options: unknown }>(
-      'SELECT org_id, project_id, engine_options FROM run WHERE id = $1',
+    const { rows } = await client.query<{
+      org_id: string;
+      project_id: string;
+      declared_test_slug: string | null;
+      engine_options: unknown;
+    }>(
+      'SELECT org_id, project_id, declared_test_slug, engine_options FROM run WHERE id = $1',
       [runId],
     );
     const row = rows[0];
@@ -1854,7 +1880,15 @@ export class LiveFoldOwner {
 
     const testId = await resolveTestId(
       this.#pool,
-      { id: runId, orgId: scope.orgId, projectId: scope.projectId },
+      {
+        id: runId,
+        orgId: scope.orgId,
+        projectId: scope.projectId,
+        // A declared slug WINS over the class the decoder just read — that is
+        // the whole point of the field, and the only way a live run can be a
+        // simulation's SECOND test rather than joining its first.
+        declaredTestSlug: scope.declaredTestSlug,
+      },
       simulation,
     );
     if (testId === null) return;
