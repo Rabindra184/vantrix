@@ -88,14 +88,29 @@ enumerate**: `IngestMetadataSchema` (bundle upload), `OpenLiveRunRequestSchema`
 `VantrixExtension`/`ResolvedConfig`. Check all four before calling one of them
 done.
 
-**A FLAKE WORTH KNOWING ABOUT, NOT CAUSED BY THAT BRANCH.**
-`ProjectRail.test.tsx`'s "lists every project as a link to its own page" failed
-3 of 4 full `test:unit` runs and passes alone every time, with
-`Unable to find role="link" and name /Checkout Flow/` after ~1.8s. The file DOES
-call `afterEach(cleanup)`, so it is not the leak this file diagnosed earlier —
-it is `findByRole`'s 1-second default timeout losing to a saturated machine
-while the rail's own query resolves. CI has never failed it. If it starts
-failing there, raise the timeout rather than hunting the component.
+**THAT FLAKE IS FIXED, AND THE CAUSE GENERALISES.** `ProjectRail.test.tsx`'s
+"lists every project as a link to its own page" failed 3 of 4 full `test:unit`
+runs and passed alone every time, reporting `Unable to find role="link" and
+name /Checkout Flow/` after ~1.8s. The file DOES call `afterEach(cleanup)`, so
+it was not the leak this file diagnosed earlier.
+
+**`testTimeout` was 30s and Testing Library's `findBy*` gave up at 1s.** The
+suite was willing to wait thirty times longer for a TEST than for the query
+inside it, and that gap is a flake generator: the rail's fetch stub resolves
+with `Promise.resolve`, so nothing there can be slow except the machine failing
+to schedule a render within a second. `apps/web/test/setup.ts` now sets
+`asyncUtilTimeout: 5_000`.
+
+It cannot hide a real failure, only delay one — `findBy*` retries and then
+throws the identical message, five seconds later instead of one. What changed
+is the verdict on a render that WOULD have succeeded given a moment more.
+Measured: three consecutive clean `test:unit` runs at load averages of **102,
+89 and 127**, well above the ~40 this file calls untrustworthy.
+
+The setup file lives under `apps/web/test/` and not at the root because
+`configure` comes from Testing Library, a dependency of `apps/web` and not of
+the workspace root — a root-level setup file fails to resolve it outright. It
+deliberately does NOT register a global `cleanup`; see its own docstring.
 
 Before that, the test-per-configuration branch added
 no unit FILE and 8 unit cases to `packages/contracts/test/contracts.test.ts`,

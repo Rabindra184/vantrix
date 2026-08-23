@@ -50,5 +50,10 @@ export default defineConfig({
     // vitest.integration.config.ts, so `pnpm test` stays runnable with no Docker.
     exclude: ['**/node_modules/**', '**/dist/**', '**/*.integration.test.ts', '**/*.e2e.test.ts'],
     testTimeout: 30_000,
+    // Aligns Testing Library's async-query timeout with the one above — see
+    // `apps/web/test/setup.ts` for why a 30s test containing a 1s `findByRole` is a
+    // flake generator rather than a preference. It configures ONLY that; in
+    // particular it deliberately does not register a global `cleanup`.
+    setupFiles: ['./apps/web/test/setup.ts'],
   },
 });
