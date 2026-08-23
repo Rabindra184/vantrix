@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TOOL_IDS } from './ingest.js';
+import { DeclaredTestSlugSchema, TOOL_IDS } from './ingest.js';
 import { ProblemDetailsSchema } from './problem.js';
 import { TOKEN_SCOPES } from './tokens.js';
 
@@ -47,6 +47,17 @@ export const OpenLiveRunRequestSchema = z.object({
   environment: z.string().min(1).max(100).optional(),
   branch: z.string().min(1).max(200).optional(),
   commitSha: z.string().min(7).max(64).optional(),
+  /**
+   * WHICH TEST THIS RUN IS OF — the same field, and the same meaning, as
+   * `IngestMetadataSchema.test`. A live run needs it for one extra reason: it
+   * is the only way a live run can be a test's SECOND configuration, since the
+   * simulation class in its header is by definition shared with the first.
+   *
+   * Still optional, still absent by default. `LiveFoldOwner` resolves it the
+   * moment the decoder reads the header, so a declared test's SLA rules judge
+   * the run from its first ticks rather than from the finished report.
+   */
+  test: DeclaredTestSlugSchema.optional(),
   idempotencyKey: z.string().min(1).max(200).optional(),
 });
 export type OpenLiveRunRequest = z.infer<typeof OpenLiveRunRequestSchema>;

@@ -77,6 +77,7 @@ class LiveClient(
                 config.environment?.let { addProperty("environment", it) }
                 config.branch?.let { addProperty("branch", it) }
                 config.commitSha?.let { addProperty("commitSha", it) }
+                config.test?.let { addProperty("test", it) }
                 addProperty("idempotencyKey", idempotencyKey)
             }
             val request = HttpRequest.newBuilder(URI.create("${config.baseUrl}/v1/runs/live"))

@@ -15,6 +15,43 @@ describe('IngestMetadataSchema', () => {
   it('rejects an idempotency key that is too long to index safely', () => {
     expect(() => IngestMetadataSchema.parse({ tool: 'gatling', idempotencyKey: 'x'.repeat(256) })).toThrow();
   });
+
+  /**
+   * ═══ `test` DECLARES WHICH TEST A RUN IS OF ═══
+   *
+   * Optional, and ABSENT IS THE ORDINARY CASE — the worker then groups by the
+   * simulation class in the log header, exactly as it always has. That is what
+   * makes `20260823170000_test_per_configuration` invisible to every client
+   * that predates it, so the compatibility case is asserted first and
+   * explicitly rather than assumed from the `.optional()`.
+   */
+  it('accepts a payload that names no test, which is every existing client', () => {
+    expect(IngestMetadataSchema.parse({ tool: 'gatling' }).test).toBeUndefined();
+  });
+
+  it('carries a declared test slug through', () => {
+    expect(IngestMetadataSchema.parse({ tool: 'gatling', test: 'checkout-soak' }).test).toBe(
+      'checkout-soak',
+    );
+  });
+
+  /**
+   * A SLUG, NOT A DISPLAY NAME, and the grammar is what enforces that. A
+   * caller who sends "Checkout soak" is not naming the test at
+   * `/tests/checkout-soak` — they are naming nothing, and accepting it would
+   * mean slugifying on every run, where a typo silently creates a SECOND test
+   * rather than being refused.
+   */
+  it.each([
+    ['a display name with spaces', 'Checkout soak'],
+    ['upper case', 'Checkout-Soak'],
+    ['a leading hyphen', '-checkout'],
+    ['a trailing hyphen', 'checkout-'],
+    ['a double hyphen', 'checkout--soak'],
+    ['an empty string', ''],
+  ])('refuses %s, rather than silently making a second test', (_what, value) => {
+    expect(() => IngestMetadataSchema.parse({ tool: 'gatling', test: value })).toThrow();
+  });
 });
 
 describe('RunResponseSchema', () => {

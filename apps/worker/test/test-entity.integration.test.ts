@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { createPool, createPrisma, SCHEMA_TABLES } from '@perfportal/persistence';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
-import { slugifySimulation } from '../src/pipeline/test-resolver.js';
+import { randomUUID } from 'node:crypto';
+import { resolveTestId, slugifySimulation } from '../src/pipeline/test-resolver.js';
 
 /**
  * The `test` row a run belongs to, and the two rules that have to agree about
@@ -48,46 +47,31 @@ beforeEach(async () => {
 });
 
 /**
- * The worker's own statement, verbatim. Copied rather than reached for through
- * `resolveTestId`, because driving a whole pipeline run per case would test
- * the parser, the engine and the object store to answer a question about one
- * INSERT.
+ * ═══ THE REAL FUNCTION, NOT A MIRROR OF ITS SQL ═══
  *
- * IT MOVED OUT OF `PipelineService` and into `test-resolver.ts`, which is
- * exactly what this drift guard exists for at one remove: there are TWO
- * callers now — the pipeline at finalize and `LiveFoldOwner` the moment the
- * streaming decoder reads the log header — and a second COPY of this
- * resolve-or-create would surface as a second test appearing for a class that
- * already had one, with the history split across both.
+ * This file used to hold a verbatim copy of the worker's upsert and drive it
+ * directly, with a separate case reading `test-resolver.ts` to prove the copy
+ * had not drifted. That worked while the SQL WAS the whole rule: the upsert
+ * conflicted on `(project_id, simulation_class)`, so running it twice for one
+ * class was idempotent all by itself.
  *
- * The copy is the risk this file is about, so it is asserted against the real
- * one: `the worker's statement is the one this file tests` below reads
- * `test-resolver.ts` and fails if the SQL there stops matching.
+ * `20260823170000_test_per_configuration` dropped that unique index, and the
+ * conflict target moved to `(project_id, slug)`. The upsert alone is no longer
+ * idempotent per class — run it twice and the candidate CTE picks
+ * `example-paritysimulation-2` the second time, because the base slug is taken
+ * and nothing has looked for an existing test of that CLASS. The SELECT that
+ * precedes it in `resolveTestId` is what makes the whole thing idempotent now.
+ *
+ * So the mirror is gone, along with the drift guard it needed. Correctness
+ * moved out of the database and into the function, and the function is what
+ * this file calls.
  */
-const UPSERT = `WITH candidate AS (
-   SELECT CASE WHEN n = 1 THEN $3::text ELSE $3::text || '-' || n END AS slug
-     FROM generate_series(1, 50) AS n
-    WHERE NOT EXISTS (
-          SELECT 1 FROM test t
-           WHERE t.project_id = $2::uuid
-             AND t.slug = CASE WHEN n = 1 THEN $3::text ELSE $3::text || '-' || n END)
-    ORDER BY n
-    LIMIT 1)
- INSERT INTO test (id, org_id, project_id, slug, name, simulation_class, created_at, updated_at)
- SELECT gen_random_uuid(), $1::uuid, $2::uuid, c.slug, $4, $4, now(), now()
-   FROM candidate c
- ON CONFLICT (project_id, simulation_class) DO UPDATE SET updated_at = test.updated_at
- RETURNING id`;
-
-const resolve = async (simulation: string): Promise<string> => {
-  const { rows } = await pool.query<{ id: string }>(UPSERT, [
-    orgId,
-    projectId,
-    slugifySimulation(simulation),
+const resolve = (simulation: string | null, declaredTestSlug?: string): Promise<string | null> =>
+  resolveTestId(
+    pool,
+    { id: randomUUID(), orgId, projectId, ...(declaredTestSlug ? { declaredTestSlug } : {}) },
     simulation,
-  ]);
-  return rows[0]!.id;
-};
+  );
 
 describe('resolving the test a run belongs to', () => {
   it('creates one on first sight and reuses it after', async () => {
@@ -157,16 +141,129 @@ describe('resolving the test a run belongs to', () => {
       data: { orgId, slug: 'payments', name: 'Payments', settings: {} },
     });
     const a = await resolve('example.ParitySimulation');
-    const { rows } = await pool.query<{ id: string }>(UPSERT, [
-      orgId,
-      other.id,
-      slugifySimulation('example.ParitySimulation'),
+    const b = await resolveTestId(
+      pool,
+      { id: randomUUID(), orgId, projectId: other.id },
       'example.ParitySimulation',
-    ]);
+    );
 
-    expect(rows[0]!.id).not.toBe(a);
+    expect(b).not.toBe(a);
     const { rows: counted } = await pool.query<{ count: string }>('SELECT count(*) FROM test');
     expect(counted[0]!.count).toBe('2');
+  });
+});
+
+/**
+ * ═══ A TEST IS A CONFIGURATION, NOT A SIMULATION CLASS ═══
+ *
+ * `20260823170000_test_per_configuration` dropped
+ * `test_project_id_simulation_class_key` so a project can run ONE simulation
+ * as TWO tests — "checkout smoke" and "checkout soak" with different injection
+ * profiles, which is how Gatling Enterprise models it. A caller says which by
+ * declaring `metadata.test`; saying nothing keeps the old behaviour exactly.
+ */
+describe('a caller that names its test', () => {
+  it('creates a test under exactly the slug it asked for', async () => {
+    const id = await resolve('example.ParitySimulation', 'checkout-soak');
+
+    const { rows } = await pool.query<{ slug: string; name: string; simulation_class: string }>(
+      'SELECT slug, name, simulation_class FROM test',
+    );
+    expect(rows).toHaveLength(1);
+    // NAMED after the slug and CLASSED after the header — the two are separate
+    // facts, and this is the one moment both are known at once.
+    expect(rows[0]).toMatchObject({
+      slug: 'checkout-soak',
+      name: 'checkout-soak',
+      simulation_class: 'example.ParitySimulation',
+    });
+    expect(id).not.toBeNull();
+  });
+
+  /**
+   * ═══ THE CASE THE WHOLE MIGRATION EXISTS FOR ═══
+   *
+   * Two tests, one simulation class. This was a unique-constraint violation
+   * before, and the second `resolve` would have returned the first test's id.
+   */
+  it('lets one simulation be two tests with different names', async () => {
+    const smoke = await resolve('example.ParitySimulation', 'checkout-smoke');
+    const soak = await resolve('example.ParitySimulation', 'checkout-soak');
+
+    expect(soak).not.toBe(smoke);
+    const { rows } = await pool.query<{ count: string }>('SELECT count(*) FROM test');
+    expect(rows[0]!.count).toBe('2');
+  });
+
+  it('reuses the test on the next run that names it', async () => {
+    const first = await resolve('example.ParitySimulation', 'checkout-soak');
+    const second = await resolve('example.ParitySimulation', 'checkout-soak');
+
+    expect(second).toBe(first);
+    const { rows } = await pool.query<{ count: string }>('SELECT count(*) FROM test');
+    expect(rows[0]!.count).toBe('1');
+  });
+
+  /**
+   * The declaration is a HUMAN's statement about what this run is, so it wins
+   * over the class — and the test's own `simulation_class` is left as what it
+   * was FIRST seen running rather than being rewritten to the newest. It
+   * records an origin, not a running log of the most recent run.
+   */
+  it('honours the slug even when the class differs, without rewriting the class', async () => {
+    const first = await resolve('example.ParitySimulation', 'checkout-soak');
+    const second = await resolve('other.SearchSimulation', 'checkout-soak');
+
+    expect(second).toBe(first);
+    const { rows } = await pool.query<{ simulation_class: string }>(
+      'SELECT simulation_class FROM test',
+    );
+    expect(rows[0]!.simulation_class).toBe('example.ParitySimulation');
+  });
+
+  /**
+   * A declared test needs no class at all — a producer that named its test and
+   * died before writing a header. The test exists, correctly named, and its
+   * class records the only thing anybody knows.
+   */
+  it('creates a declared test for a run whose header said nothing', async () => {
+    const id = await resolve(null, 'checkout-soak');
+
+    expect(id).not.toBeNull();
+    const { rows } = await pool.query<{ slug: string; simulation_class: string }>(
+      'SELECT slug, simulation_class FROM test',
+    );
+    expect(rows[0]).toMatchObject({ slug: 'checkout-soak', simulation_class: 'checkout-soak' });
+  });
+
+  it('produces ONE test when two runs declaring the same slug resolve concurrently', async () => {
+    const [a, b] = await Promise.all([
+      resolve('example.ParitySimulation', 'checkout-soak'),
+      resolve('example.ParitySimulation', 'checkout-soak'),
+    ]);
+
+    expect(a).toBe(b);
+    const { rows } = await pool.query<{ count: string }>('SELECT count(*) FROM test');
+    expect(rows[0]!.count).toBe('1');
+  });
+
+  /**
+   * ═══ AND WHAT HAPPENS TO A RUN THAT DECLARES NOTHING, AFTER A SPLIT ═══
+   *
+   * It joins the OLDEST test with its class — the one that existed before
+   * anybody split it. That is a decision, not a fallout: a CI job nobody
+   * updated keeps landing exactly where it always did, which is the difference
+   * between this migration being invisible to existing users and it breaking
+   * every un-updated pipeline the day one project splits a test.
+   *
+   * The alternative (leave it ungrouped) is more literal and fails silently —
+   * trends going flat rather than anything erroring.
+   */
+  it('sends an undeclared run to the oldest test of its class, not an arbitrary one', async () => {
+    const first = await resolve('example.ParitySimulation', 'checkout-smoke');
+    await resolve('example.ParitySimulation', 'checkout-soak');
+
+    expect(await resolve('example.ParitySimulation')).toBe(first);
   });
 });
 
@@ -212,38 +309,5 @@ describe('the TypeScript and SQL slug rules agree', () => {
     );
     expect(rows[0]!.slug).toBeNull();
     expect(slugifySimulation('...')).toBe('test');
-  });
-});
-
-/**
- * ═══ THE COPY ABOVE IS ONLY SAFE IF IT IS STILL A COPY ═══
- *
- * `UPSERT` is `#resolveTestId`'s statement, duplicated into this file because
- * the method is private and driving a whole pipeline run per case would test
- * the parser, the engine and the object store to answer a question about one
- * INSERT.
- *
- * Duplication like that rots silently: someone fixes the real statement, this
- * file keeps passing against the old one, and the tests above go on proving
- * things about SQL that no longer runs. So it is read from source and compared
- * — the same file-reading mirror `palette.test.ts` uses to keep its copy of
- * the theme honest.
- *
- * Compared on the SHAPE, not byte-for-byte: whitespace and indentation move
- * when the surrounding code does, and a test that fails on a re-indent is a
- * test people learn to ignore.
- */
-describe("the worker's statement is the one this file tests", () => {
-  const normalise = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
-
-  it('matches the SQL in test-resolver.ts', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('../src/pipeline/test-resolver.ts', import.meta.url)),
-      'utf8',
-    );
-    const match = /`(WITH candidate AS[\s\S]*?RETURNING id)`/.exec(source);
-    expect(match, 'no `WITH candidate AS … RETURNING id` statement found in test-resolver.ts')
-      .not.toBeNull();
-    expect(normalise(match![1]!)).toBe(normalise(UPSERT));
   });
 });

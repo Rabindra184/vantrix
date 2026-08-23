@@ -3,6 +3,7 @@ package dev.vantrix.gradle
 data class PluginConfig(
     val baseUrl: String, val token: String,
     val environment: String?, val branch: String?, val commitSha: String?,
+    val test: String?,
     val tickSeconds: Int, val uploadIfLiveUnavailable: Boolean, val resultsDir: String?,
 )
 
@@ -21,6 +22,9 @@ sealed class ResolvedConfig {
                 environment = ext.environment ?: env["VANTRIX_ENVIRONMENT"],
                 branch = ext.branch ?: env["VANTRIX_BRANCH"],
                 commitSha = ext.commitSha ?: env["VANTRIX_COMMIT_SHA"],
+                // Same extension-then-environment precedence as the three above,
+                // so a CI job can name its test without editing a build file.
+                test = ext.test ?: env["VANTRIX_TEST"],
                 tickSeconds = ext.tickSeconds ?: env["VANTRIX_TICK_SECONDS"]?.toIntOrNull() ?: 5,
                 uploadIfLiveUnavailable = ext.uploadIfLiveUnavailable
                     ?: env["VANTRIX_UPLOAD_IF_LIVE_UNAVAILABLE"]?.toBoolean() ?: false,

@@ -84,6 +84,11 @@ export class IngestService {
         ...(metadata.environment ? { environment: metadata.environment } : {}),
         ...(metadata.branch ? { branch: metadata.branch } : {}),
         ...(metadata.commitSha ? { commitSha: metadata.commitSha } : {}),
+        // Frozen at accept time beside the three above, and the same kind of
+        // thing: what the CALLER asserts, never what the platform measured.
+        // The worker resolves it against a real `test` row once it has the
+        // simulation class too — see `resolveTestId`.
+        ...(metadata.test ? { declaredTestSlug: metadata.test } : {}),
         bundleKey: key,
         bundleSha256: sha256,
         bundleBytes: bytes,

@@ -33,6 +33,10 @@ export interface RunRecord {
   environment: string | null;
   branch: string | null;
   commitSha: string | null;
+  /** What the caller SAID this run was a test of — see `resolveTestId`. A
+   *  slug, never resolved here: the `test` row it names may not exist until
+   *  the worker knows the simulation class too. */
+  declaredTestSlug: string | null;
   /** The tool's own simulation identity and run description, from the run
    *  header. Null until the worker parses, and forever for a failed run. */
   simulation: string | null;
@@ -74,6 +78,7 @@ export interface CreateRunInput {
   environment?: string;
   branch?: string;
   commitSha?: string;
+  declaredTestSlug?: string;
   bundleKey: string;
   bundleSha256: string;
   bundleBytes: number;
@@ -98,6 +103,7 @@ export interface CreateLiveRunInput {
   environment?: string;
   branch?: string;
   commitSha?: string;
+  declaredTestSlug?: string;
   idempotencyKey?: string;
   startedAt: Date;
   engineOptions: Record<string, unknown>;
@@ -117,6 +123,7 @@ interface RunRow {
   environment: string | null;
   branch: string | null;
   commitSha: string | null;
+  declaredTestSlug: string | null;
   simulation: string | null;
   description: string | null;
   durationMs: number | null;
@@ -151,6 +158,7 @@ function toRecord(row: RunRow): RunRecord {
     environment: row.environment,
     branch: row.branch,
     commitSha: row.commitSha,
+    declaredTestSlug: row.declaredTestSlug,
     simulation: row.simulation,
     description: row.description,
     durationMs: row.durationMs,
@@ -314,6 +322,7 @@ export class RunRepository {
         environment: input.environment ?? null,
         branch: input.branch ?? null,
         commitSha: input.commitSha ?? null,
+        declaredTestSlug: input.declaredTestSlug ?? null,
         bundleKey: input.bundleKey,
         bundleSha256: input.bundleSha256,
         bundleBytes: BigInt(input.bundleBytes),

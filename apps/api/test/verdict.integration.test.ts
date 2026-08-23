@@ -39,9 +39,10 @@ async function clearQueue() {
   await q.close();
 }
 
-function post(waitMs?: number) {
+function post(waitMs?: number, test?: string) {
   const metadata: Record<string, unknown> = { tool: 'gatling' };
   if (waitMs !== undefined) metadata.waitMs = waitMs;
+  if (test !== undefined) metadata.test = test;
   return request(ctx.app.getHttpServer())
     .post('/v1/runs')
     .set('Authorization', `Bearer ${ctx.ingestToken}`)
@@ -231,6 +232,9 @@ describe('the adaptive verdict', () => {
       status: 'failed',
       verdict: null, tool: 'gatling', toolVersion: null,
       environment: null, branch: null, commitSha: null,
+      // Nothing was declared and nothing was parsed — the two independent ways
+      // a run ends up belonging to no test.
+      declaredTestSlug: null,
       simulation: null, description: null, durationMs: null, activityMs: null,
       bundleKey: 'k',
       bundleSha256: 'x'.repeat(64), bundleBytes: 1, idempotencyKey: null,
@@ -413,5 +417,74 @@ describe('a rule scoped to one test', () => {
 
     expect(res.status).toBe(422);
     expect(res.body.assertions).toHaveLength(1);
+  });
+});
+
+
+/**
+ * ═══ A CALLER THAT NAMES ITS TEST, THROUGH THE REAL PIPELINE ═══
+ *
+ * `test-entity.integration.test.ts` proves `resolveTestId`'s rules against a
+ * real database. This proves the DECLARATION survives the journey: metadata on
+ * a multipart form, frozen onto the run row at accept time, read back by the
+ * worker several seconds later alongside a class it parsed itself. Every step
+ * of that is somewhere the field could be silently dropped, and a dropped one
+ * fails soft — the run simply groups by class, which is exactly what it would
+ * have done anyway.
+ */
+describe('a run that declares which test it is of', () => {
+  const PARITY = 'example.ParitySimulation';
+
+  it('lands on the declared test rather than one named after the class', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+    const accepted = await post(0, 'checkout-soak');
+    await runPipelineFor(ctx, accepted.body.id);
+
+    const res = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${accepted.body.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.test).toMatchObject({ slug: 'checkout-soak', name: 'checkout-soak' });
+    // The class is still recorded — on the TEST, as what it was first seen
+    // running. The declaration decides identity, not what was measured.
+    const test = await ctx.prisma.test.findFirst({ where: { slug: 'checkout-soak' } });
+    expect(test?.simulationClass).toBe(PARITY);
+  });
+
+  /**
+   * THE CASE THE MIGRATION EXISTS FOR, end to end: two runs of ONE simulation
+   * that are two different tests because their callers said so.
+   */
+  it('keeps two declared tests of one simulation apart', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+    const smoke = await post(0, 'checkout-smoke');
+    await runPipelineFor(ctx, smoke.body.id);
+    const soak = await post(0, 'checkout-soak');
+    await runPipelineFor(ctx, soak.body.id);
+
+    const tests = await ctx.prisma.test.findMany({ orderBy: { slug: 'asc' } });
+    expect(tests.map((t) => t.slug)).toEqual(['checkout-smoke', 'checkout-soak']);
+    // Every one of them records the same class, which is the point: the class
+    // is no longer what tells two tests apart.
+    expect(new Set(tests.map((t) => t.simulationClass))).toEqual(new Set([PARITY]));
+  });
+
+  /**
+   * AND A RUN THAT DECLARES NOTHING STILL WORKS EXACTLY AS BEFORE — the
+   * compatibility claim every existing client depends on, asserted rather than
+   * assumed.
+   */
+  it('still groups an undeclared run by its simulation class', async () => {
+    await clearQueue();
+    ctx = await createTestApp();
+    const accepted = await post(0);
+    await runPipelineFor(ctx, accepted.body.id);
+
+    const test = await ctx.prisma.test.findFirst();
+    expect(test?.simulationClass).toBe(PARITY);
+    expect(test?.slug).toBe('example-paritysimulation');
   });
 });

@@ -65,10 +65,48 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **130 files / 1438 tests**, it
+`nvm use` first, and if a run reports fewer than **130 files / 1446 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The compare-from-test branch added no
+silently-skipped run looks like a pass. The test-per-configuration branch added
+no unit FILE and 8 unit cases to `packages/contracts/test/contracts.test.ts`,
+from a floor of 130 / 1438. Its integration floor is **123 files / 1525 tests**
+(that `contracts.test.ts` is a `.ts` file integration runs too, plus 6 net new
+in `apps/worker/test/test-entity.integration.test.ts` — 7 added and 1 deleted —
+and 3 in `verdict.integration.test.ts`) and e2e stays 101.
+
+TWO THINGS FROM IT.
+
+FIRST, DROPPING A UNIQUE INDEX MOVES CORRECTNESS OUT OF THE DATABASE AND INTO
+THE APPLICATION, AND A TEST THAT MIRRORED THE SQL STOPS BEING VALID.
+`test-entity.integration.test.ts` held a verbatim copy of the worker's upsert,
+drove it directly, and had a separate case reading `test-resolver.ts` to prove
+the copy had not drifted. That worked while the SQL WAS the whole rule: the
+upsert conflicted on `(project_id, simulation_class)`, so running it twice for
+one class was idempotent all by itself.
+
+With that index gone the conflict target moved to `(project_id, slug)` — and
+the upsert alone is no longer idempotent per class. Run it twice and the
+candidate CTE picks `example-paritysimulation-2` the second time, because the
+base slug is taken and nothing has looked for an existing test of that CLASS.
+The SELECT that precedes it is what makes the whole thing idempotent now. The
+mirror and its drift guard are deleted, and the file calls `resolveTestId`
+directly — which is only possible because an earlier branch extracted it out of
+a `#private` method. **When a constraint moves from the schema into code, every
+test that stood in for the schema has to be re-pointed at the code.**
+
+SECOND, A PRISMA FIELD INSERTED BY REGEX CAN LAND IN THE WRONG MODEL, AND THE
+SYMPTOM POINTS SOMEWHERE ELSE. `declaredTestSlug` was anchored on `commitSha`,
+which appears in `Run` AND in `RunnerJob` — it landed in `RunnerJob`. What
+typecheck then reported was `Property 'declaredTestSlug' does not exist` on the
+generated client, which reads exactly like a stale `prisma generate` and sends
+you to re-run it. One line settles it:
+
+```
+awk '/^model /{m=$2} /declaredTestSlug/{print "in model: " m}' packages/persistence/prisma/schema.prisma
+```
+
+Before that, the compare-from-test branch added no
 unit FILE and 3 unit cases to `apps/web/test/TestRuns.test.tsx`, from a floor
 of 130 / 1435. Its integration floor is unchanged at **123 files / 1508
 tests** (it touches no `.ts` file integration runs) and its **e2e rises to
