@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TestSummary } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
-import { ChevronRightIcon, LayersIcon, TestIcon } from '../components/icons';
+import { ChevronRightIcon, CompareTabIcon, LayersIcon, TestIcon } from '../components/icons';
 import { ErrorState, LoadingState } from '../components/States';
 import { SkeletonTable } from '../components/Skeleton';
 import { INPUT } from '../components/tableStyles';
@@ -18,9 +18,11 @@ import {
   updateProjectTest,
 } from '../api/tests';
 import { fetchProjectRules, projectRulesQueryKey } from '../api/rules';
+import { fetchRuns, runsQueryKey } from '../api/runs';
 import ProjectRules from './ProjectRules';
 import RunList from './RunList';
-import { projectPath, projectRunsPath } from './paths';
+import { MAX_COMPARE } from './compareSelection';
+import { projectPath, projectRunsPath, runComparePath } from './paths';
 
 /**
  * One test: what it is, and every run of it.
@@ -74,6 +76,33 @@ export default function TestRuns() {
   });
   // Only this test's OWN rules cascade; project-wide ones are not its to lose.
   const ownRuleCount = (rules.data?.rules ?? []).filter((r) => r.test != null).length;
+
+  /**
+   * ═══ THE RUNS A COMPARISON WOULD BE OF ═══
+   *
+   * UNFILTERED, by `runsQueryKey(null, slug, {}, testSlug)` — deliberately NOT
+   * the key `RunList` below is using, which folds in whatever filters the URL
+   * carries. "Compare the latest runs of this test" is a question about the
+   * test, not about the view: a reader who has filtered down to failed
+   * verdicts has not asked to compare only those, and a Compare link that
+   * changed meaning as they typed in the filter box would be the harder kind
+   * of surprise. With no filter active the two keys coincide and this costs no
+   * request at all.
+   *
+   * COMPLETE ONLY. `TRENDS_SQL` — which is where the Compare page gets its own
+   * cohort — selects `status = 'complete'`, so a pending or failed run is not
+   * a candidate there and `parseCompareSelection` would drop it on arrival.
+   * Filtering here means the link never asks for something the destination
+   * will silently refuse.
+   */
+  const compareRuns = useQuery({
+    queryKey: runsQueryKey(null, slug, {}, testSlug),
+    queryFn: () => fetchRuns(null, slug, {}, testSlug),
+  });
+  const comparable = (compareRuns.data?.items ?? [])
+    .filter((r) => r.status === 'complete')
+    .slice(0, MAX_COMPARE)
+    .map((r) => r.id);
 
   const removal = useMutation({
     mutationFn: () => deleteProjectTest(slug, testSlug),
@@ -150,6 +179,34 @@ export default function TestRuns() {
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {/* ═══ THE PAYOFF OF GROUPING RUNS AT ALL ═══
+
+                Compare has always been reachable only from INSIDE a run, so
+                answering "how have the last few of these gone" meant opening
+                one run to get at a comparison of several. The cohort it draws
+                has been this test's since `TRENDS_SQL` started keying on
+                `test_id`; this is the missing door to it.
+
+                The anchor is the NEWEST run rather than an arbitrary one:
+                `parseCompareSelection` fixes the current run first in the
+                palette, so anchoring on the newest keeps the run a reader is
+                most likely thinking about in a stable colour.
+
+                RENDERED ONLY WITH SOMETHING TO COMPARE. One complete run is
+                not a comparison, and a link that opens a page saying "there is
+                nothing to compare" is worse than no link — `RunTrends` makes
+                the same call about linking here at all. The COUNT is in the
+                label rather than implied, because "Compare latest 5" and
+                "Compare latest 2" describe genuinely different pictures. */}
+            {comparable.length >= 2 && (
+              <Link
+                to={runComparePath(comparable[0]!, comparable)}
+                className={linkButtonClasses}
+              >
+                <CompareTabIcon className="h-3.5 w-3.5" />
+                Compare latest {comparable.length}
+              </Link>
+            )}
             {/* `aria-expanded`, because this button REVEALS something rather
                 than navigating — without it a screen reader announces
                 "Rename" with no indication that a form has just appeared
