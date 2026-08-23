@@ -65,10 +65,25 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **130 files / 1435 tests**, it
+`nvm use` first, and if a run reports fewer than **130 files / 1438 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The test-entity-loose-ends branch added
+silently-skipped run looks like a pass. The compare-from-test branch added no
+unit FILE and 3 unit cases to `apps/web/test/TestRuns.test.tsx`, from a floor
+of 130 / 1435. Its integration floor is unchanged at **123 files / 1508
+tests** (it touches no `.ts` file integration runs) and its **e2e rises to
+101**.
+
+ONE THING FROM IT, ABOUT LINKING TO A PAGE THAT VALIDATES ITS OWN INPUT.
+`parseCompareSelection` drops any run outside its cohort, and `TRENDS_SQL`
+builds that cohort from `status = 'complete'` runs of one test. So a Compare
+link built from the wrong runs does not error — the page renders a comparison
+of however many survived, and a comparison of ONE still draws a chart. The
+e2e case therefore asserts the overlay draws TWO series rather than that it
+drew at all: "an svg exists" is satisfied by exactly the failure being
+guarded against.
+
+Before that, the test-entity-loose-ends branch added
 no unit FILE and 10 unit cases — 8 to `apps/web/test/TestRuns.test.tsx` and 2
 to `RunList.test.tsx` — from a floor of 130 / 1425. Its integration floor is
 **123 files / 1508 tests** (6 cases in `apps/api/test/tests.integration.test.ts`)
