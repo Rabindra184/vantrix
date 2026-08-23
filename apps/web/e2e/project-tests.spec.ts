@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { seedAdmin, seedRunWithData, seedTestWithRuns } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { plot, signIn } from './helpers.js';
 
 /**
  * `Organization → Project → Test → Run`, walked in a real browser against a
@@ -183,4 +183,36 @@ test('a test’s page carries the gates that judge it, and authors new ones agai
   // — the same row, read from the other end of the union.
   await page.goto('/projects/checkout/setup');
   await expect(page.getByTestId('rule-applies-to')).toHaveText('Payments sweep');
+});
+
+/**
+ * ═══ COMPARE, REACHED FROM THE TEST RATHER THAN FROM A RUN ═══
+ *
+ * `TestRuns.test.tsx` pins the link's href against a stubbed run list. What
+ * only a real stack shows is that the link ARRIVES somewhere that draws: the
+ * Compare page validates every id against its own cohort (`TRENDS_SQL`, which
+ * takes only complete runs of this test), so a selection built from the wrong
+ * runs would be silently dropped and the page would render a comparison of
+ * one. That failure looks like nothing being wrong.
+ *
+ * TWO INGESTS of the reference bundle, the same way `run-compare.spec.ts`
+ * builds its cohort — two real runs of `example.ParitySimulation`, which the
+ * worker groups into one test.
+ */
+test('a test links to a comparison of its own latest runs, and it draws', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await seedRunWithData(admin.orgId);
+
+  await signIn(page, admin);
+  await page.goto('/projects/checkout/tests/example-paritysimulation');
+
+  await page.getByRole('link', { name: 'Compare latest 2', exact: true }).click();
+  await page.waitForURL('**/compare?runs=**');
+
+  // TWO series drawn, not one: a selection whose second id the cohort rejected
+  // would still render a chart, and a chart is not a comparison.
+  const overlay = page.getByTestId('chart-compare-overlay');
+  await expect(plot(overlay)).toHaveCount(1);
+  await expect(overlay.locator('svg text[text-anchor="start"]')).toHaveCount(2);
 });

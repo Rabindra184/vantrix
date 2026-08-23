@@ -86,12 +86,14 @@ function stubFetch({
   patchStatus = 200,
   deleteStatus = 200,
   rulesBody = [],
+  runsBody = RUNS,
 }: {
   test?: unknown;
   testStatus?: number;
   patchStatus?: number;
   deleteStatus?: number;
   rulesBody?: unknown[];
+  runsBody?: RunListResponse['items'];
 } = {}) {
   runRequests.length = 0;
   patches.length = 0;
@@ -146,7 +148,7 @@ function stubFetch({
     }
     if (url.pathname === '/v1/runs') {
       runRequests.push(url.search);
-      return Promise.resolve(jsonResponse({ items: RUNS, nextCursor: null }));
+      return Promise.resolve(jsonResponse({ items: runsBody, nextCursor: null }));
     }
 
     throw new Error(`unhandled request in TestRuns.test.tsx: ${url.pathname}${url.search}`);
@@ -268,6 +270,68 @@ describe('TestRuns', () => {
     // No run list under an error: the runs of a test that could not be
     // resolved are not a thing this page can ask for.
     expect(screen.queryByTestId('run-row')).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE PAYOFF OF GROUPING RUNS AT ALL ═══
+ *
+ * Compare has always been reachable only from INSIDE a run, so answering "how
+ * have the last few of these gone" meant opening one run to get at a
+ * comparison of several. Its cohort has been this test's since `TRENDS_SQL`
+ * started keying on `test_id`; this link is the door.
+ */
+describe('TestRuns — comparing the latest runs', () => {
+  it('links to a comparison of this test’s runs, anchored on the newest', async () => {
+    stubFetch();
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: `Compare latest ${RUNS.length}` });
+    // Anchored on the NEWEST run and carrying both ids: the anchor fixes the
+    // palette (`parseCompareSelection` puts the current run first), so the run
+    // a reader is most likely thinking about keeps a stable colour.
+    expect(link).toHaveAttribute(
+      'href',
+      `/runs/${RUNS[0]!.id}/compare?runs=${encodeURIComponent(RUNS.map((r) => r.id).join(','))}`,
+    );
+  });
+
+  /**
+   * One run is not a comparison, and a link that opens a page saying "there is
+   * nothing to compare" is worse than no link — the same call `RunTrends`
+   * makes about linking here at all.
+   */
+  it('offers nothing to compare when the test has only one complete run', async () => {
+    stubFetch({ runsBody: [RUNS[0]!] });
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1, name: 'Checkout smoke' });
+    await waitFor(() => expect(screen.getAllByTestId('run-row')).toHaveLength(1));
+    expect(screen.queryByRole('link', { name: /Compare latest/ })).toBeNull();
+  });
+
+  /**
+   * ═══ ONLY COMPLETE RUNS ARE CANDIDATES ═══
+   *
+   * `TRENDS_SQL` — where the Compare page gets its own cohort — selects
+   * `status = 'complete'`, so a pending run is not a candidate there and
+   * `parseCompareSelection` would drop it on arrival. Including it here would
+   * build a link the destination silently refuses, which reads as the
+   * comparison having lost a run for no reason.
+   */
+  it('leaves an unfinished run out of the selection rather than sending it', async () => {
+    stubFetch({
+      runsBody: [
+        RUNS[0]!,
+        { ...RUNS[1]!, status: 'running', verdict: null },
+        { ...RUNS[1]!, id: '77777777-7777-4777-8777-777777777777' },
+      ],
+    });
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: 'Compare latest 2' });
+    const runs = new URL(link.getAttribute('href')!, 'http://x').searchParams.get('runs');
+    expect(runs?.split(',')).toEqual([RUNS[0]!.id, '77777777-7777-4777-8777-777777777777']);
   });
 });
 
