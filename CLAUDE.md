@@ -65,13 +65,57 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **128 files / 1373 tests**, it
+`nvm use` first, and if a run reports fewer than **130 files / 1409 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The trends-by-test branch added no unit
-FILE and no unit case — it rewrote existing ones — so the unit floor is
-unchanged, while **integration rises to 123 files / 1464 tests** (two new cases
-in `apps/api/test/trends.integration.test.ts`) and e2e stays 96.
+silently-skipped run looks like a pass. The test-ui branch added TWO unit files
+— `apps/web/test/ProjectTests.test.tsx` (10) and `TestRuns.test.tsx` (11) —
+plus cases across `RunHeader.test.tsx` (4), `ProjectRail.test.tsx` (2),
+`paths.test.ts` (5) and `packages/contracts/test/contracts.test.ts` (4), from a
+floor of 128 / 1373. Its integration floor is **123 files / 1476 tests** — no
+new integration FILE, but `contracts.test.ts` and `paths.test.ts` are `.ts`
+files integration runs too, plus three cases in
+`apps/api/test/tests.integration.test.ts` — and its **e2e rises to 99**
+(`apps/web/e2e/project-tests.spec.ts`).
+
+TWO THINGS FROM IT, AND BOTH ARE ABOUT COMPOSING A PAGE OUT OF PARTS.
+
+FIRST, A COMPONENT THAT DRAWS A PAGE HEADING CANNOT BE COMPOSED INTO A PAGE
+THAT ALREADY HAS ONE. `RunList` renders its own `<h1>` and its own
+`useDocumentTitle`, which is right on the three screens where it IS the page.
+`TestRuns` needs a breadcrumb above the heading and a metadata strip below it,
+so it owns the heading and passes `showHeading={false}`; without that the
+document carries two `<h1>`s and a screen-reader user navigating by heading
+meets the page twice. NOTHING VISUAL SHOWS IT — the second heading looks like a
+section title. This is the same rule as "a shell component must not contribute
+an `<h2>`", one level up, and the same reason: a heading's correctness is a
+property of the DOCUMENT, which no component can see from inside itself.
+
+The document TITLE is the other half and points the other way. `heading` stays
+required when `showHeading` is false precisely so `useDocumentTitle` is called
+in exactly ONE place. Calling it in both would work by accident — effects run
+child-first, so the parent's write lands last — and break the day the tree
+moves.
+
+SECOND, A FIXTURE MISSING A REQUIRED CONTRACT FIELD EXERCISES THE FALLBACK, NOT
+THE FIELD. `ProjectTests.test.tsx`'s project fixture omitted `latestRun`, which
+`ProjectSummarySchema` requires. That does not produce a project with no latest
+run: `apiFetch` parses with the schema, so the WHOLE `GET /v1/projects` call
+throws, the query errors, and the page falls back to rendering the slug. The
+"falls back to the slug" case then passed for the wrong reason and the "names
+the project" case failed with `Unable to find role="heading" and name
+"Checkout"` — a message pointing at the heading, which was fine.
+
+**Wherever a page degrades gracefully, a malformed fixture is silent in one
+direction and misdirecting in the other.** The cheap guard is to build fixtures
+that would satisfy the real schema, and to keep a paired positive assertion
+beside every fallback case — the pattern `ProjectRail.test.tsx` already uses to
+stop an absence assertion passing against an empty rail.
+
+Before that, the trends-by-test branch added no unit
+FILE and no unit case — it rewrote existing ones — so the unit floor was
+unchanged, while **integration rose to 123 files / 1464 tests** (two new cases
+in `apps/api/test/trends.integration.test.ts`) and e2e stayed 96.
 
 TWO THINGS FROM IT.
 
@@ -1026,6 +1070,19 @@ only because no seeded project name collides with a page's own link text;
 that is a standing constraint on fixture naming from here on, not a one-off
 check to pass once. (The brand link moved to `AppShell`'s header in the
 design pass, but it is still in the document on every page — same rule.)
+
+**AND IT RUNS THE OTHER WAY: A PAGE MAY NOT ADD A LINK NAMED LIKE A RAIL
+ROW.** The note above is about fixture NAMES colliding with a page's links;
+the test-ui branch hit the mirror image, which is a product defect rather
+than a test one. `ProjectTests` shipped an action link reading **All runs**,
+pointing at that project's run list — the identical accessible name the
+rail's own row carries for the ORG-WIDE list, in every authenticated
+document. Two links, one name, two destinations; a screen-reader user hears
+the same words for both. `project-tests.spec.ts` failed as a strict-mode
+violation naming both elements, which is the only reason it was caught
+before merge. The label is **Project runs** now. **The rail's vocabulary —
+"All runs", and every project name — is reserved: a page's own controls have
+to be named around it.**
 
 **A truncated read does not throw — `subarray` returns a short buffer.**
 `BinaryReader.readString` reads a length then slices, and slicing past the
