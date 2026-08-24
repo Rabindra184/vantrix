@@ -2,7 +2,9 @@ import { execFile } from 'node:child_process';
 import { access, chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import type { GatlingJarFacts } from '@perfportal/core';
 import type { RunnerArtifactRecord, RunnerJobRecord } from '@perfportal/persistence';
+import { readGatlingJar } from '@perfportal/storage';
 import type { RunnerConfig } from './config.js';
 import { RunnerExecutionError } from './errors.js';
 import type { ProcessCommand } from './process.js';
@@ -48,10 +50,9 @@ export async function prepareGatlingRun(
         command: config.javaBin,
         cwd: workDir,
         args: [
-          ...splitArgs(job.javaOptions),
-          ...systemPropertyArgs(job.systemProperties),
+          ...jvmArgs(job),
           '-cp',
-          artifactPath,
+          await jarClasspath(config, artifactPath),
           'io.gatling.app.Gatling',
           '-s',
           artifact.simulationClass,
@@ -72,10 +73,7 @@ export async function prepareGatlingRun(
     await assertSafeExtractedTree(bundleDir, Date.now() + EXTRACT_TIMEOUT_MS);
     await makeChildWritable(workDir);
     const gatlingHome = await findGatlingHome(bundleDir);
-    const javaArgs = [
-      ...splitArgs(job.javaOptions),
-      ...systemPropertyArgs(job.systemProperties),
-    ];
+    const javaArgs = jvmArgs(job);
     return {
       resultsDir,
       workDir,
@@ -104,6 +102,157 @@ export async function prepareGatlingRun(
     `Unsupported runner artifact kind "${artifact.kind}".`,
     'Upload a Gatling fat jar or a Gatling bundle archive.',
   );
+}
+
+/**
+ * The JVM options every Gatling launch here gets, before the operator's own.
+ *
+ * ═══ WITHOUT THESE, NOTHING RUNS ON JAVA 17 OR LATER ═══
+ *
+ * Gatling 3.15's log writer reaches into `java.lang` through
+ * `MethodHandles.privateLookupIn`, which the module system refuses unless the
+ * package is opened. The failure is total and arrives before the first byte of
+ * `simulation.log`:
+ *
+ *     java.lang.IllegalAccessException: module java.base does not open
+ *     java.lang to unnamed module
+ *       at io.gatling.core.stats.writer.StringInternals.<clinit>
+ *
+ * The runner then reports SIMULATION_LOG_NOT_FOUND, whose remediation points
+ * at the simulation class — so the operator is sent to check the one thing
+ * that was fine. `infra/Dockerfile` shipped exactly 17, and 17 is already
+ * affected, so this was EVERY containerized job rather than an edge case.
+ *
+ * Gatling's own `gatling.sh` and the `io.gatling.gradle` plugin both pass
+ * these; running the launcher directly, as this does, is what lost them.
+ * MEASURED: `java.base/java.lang` ALONE is sufficient for 3.15.1 — the rest
+ * mirror Gatling's own launcher so that a feature needing one of them does not
+ * fail here while working under `gatling.sh`.
+ *
+ * OPERATOR OPTIONS COME AFTER, so `javaOptions` can still override anything
+ * here; `--add-opens` accumulates rather than replacing, so adding more is
+ * always safe.
+ */
+const DEFAULT_JVM_OPTIONS = [
+  '--add-opens=java.base/java.lang=ALL-UNNAMED',
+  '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+  '--add-opens=java.base/java.util=ALL-UNNAMED',
+  '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
+  '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
+];
+
+function jvmArgs(job: RunnerJobRecord): string[] {
+  return [
+    ...DEFAULT_JVM_OPTIONS,
+    ...splitArgs(job.javaOptions),
+    ...systemPropertyArgs(job.systemProperties),
+  ];
+}
+
+/**
+ * The classpath for an uploaded jar — the jar itself, plus a Gatling runtime
+ * lent to it when it carries none.
+ *
+ * ═══ THE THIN JAR IS THE NORMAL CASE, NOT THE EXCEPTION ═══
+ *
+ * `./gradlew gatlingEnterprisePackage` is the command Gatling documents, and
+ * it deliberately packages simulations WITHOUT the framework, because Gatling
+ * Enterprise supplies that at execution time. Running such a jar alone fails
+ * before Gatling starts:
+ *
+ *     Error: Could not find or load main class io.gatling.app.Gatling
+ *
+ * So this is the runner being the thing Enterprise is: whoever runs the test
+ * provides the runtime. A jar that DOES carry the framework — a shadow/fat jar
+ * — is launched exactly as before, alone on the classpath, so nothing that
+ * worked stops working.
+ *
+ * THE UPLOADED JAR COMES FIRST. Classpath order decides duplicates, so a jar
+ * carrying its own copy of anything keeps it; the lent runtime can only supply
+ * what the jar lacks.
+ */
+async function jarClasspath(config: RunnerConfig, artifactPath: string): Promise<string> {
+  let facts: GatlingJarFacts;
+  try {
+    facts = await readGatlingJar(artifactPath);
+  } catch (err) {
+    throw new RunnerExecutionError(
+      'ARTIFACT_NOT_A_JAR',
+      `The uploaded artifact could not be read as a jar: ${String(err)}`,
+      'Upload a .jar built by `gradlew gatlingEnterprisePackage` (or an equivalent Maven/sbt packager), or choose the runnable-bundle artifact type.',
+    );
+  }
+
+  if (facts.carriesRuntime) return artifactPath;
+
+  const lib = await resolveGatlingLib(config.gatlingHome);
+  if (lib === null) {
+    throw new RunnerExecutionError(
+      'GATLING_RUNTIME_REQUIRED',
+      'This jar contains simulations but not the Gatling framework, and this runner has no Gatling distribution to lend it.',
+      'Set RUNNER_GATLING_HOME on the runner to an unpacked Gatling distribution, or upload a fat jar that bundles Gatling itself.',
+    );
+  }
+
+  // A runtime one framework version away from the jar produces NoSuchMethodError
+  // deep inside a run, minutes later, with nothing naming the cause. Refusing
+  // up front costs an operator one clear message instead.
+  const runtimeVersion = await gatlingRuntimeVersion(lib);
+  if (
+    facts.gatlingVersion !== null &&
+    runtimeVersion !== null &&
+    facts.gatlingVersion !== runtimeVersion
+  ) {
+    throw new RunnerExecutionError(
+      'GATLING_VERSION_MISMATCH',
+      `The jar was packaged against Gatling ${facts.gatlingVersion} but this runner lends Gatling ${runtimeVersion}.`,
+      `Point RUNNER_GATLING_HOME at a Gatling ${facts.gatlingVersion} distribution, or repackage the simulations against ${runtimeVersion}.`,
+    );
+  }
+
+  // `lib/*` is expanded by the JVM itself, and it expands to JARs only — a
+  // classes directory placed there would be silently invisible.
+  return [artifactPath, path.join(lib, '*')].join(path.delimiter);
+}
+
+/**
+ * The directory of jars inside a configured Gatling home.
+ *
+ * Accepts either shape an operator is likely to have: an unpacked distribution
+ * (which has `lib/` beside `bin/`) or a bare directory of jars. Returns null
+ * when nothing is configured or the path does not exist, which the caller
+ * turns into an actionable error rather than a stack trace.
+ */
+async function resolveGatlingLib(home: string | null): Promise<string | null> {
+  if (home === null) return null;
+  const root = path.resolve(home);
+  const candidates = [path.join(root, 'lib'), root];
+  for (const candidate of candidates) {
+    try {
+      const entries = await readdir(candidate);
+      if (entries.some((entry) => entry.endsWith('.jar'))) return candidate;
+    } catch {
+      // Try the next shape.
+    }
+  }
+  return null;
+}
+
+/**
+ * Which Gatling the lent runtime is, read from `gatling-core-<version>.jar`.
+ *
+ * `gatling-core` rather than `gatling-app`, because it is the artifact whose
+ * version IS the framework version in every distribution layout. Null when no
+ * such jar is present, in which case the version check above declines to
+ * guess.
+ */
+async function gatlingRuntimeVersion(lib: string): Promise<string | null> {
+  const entries = await readdir(lib).catch(() => [] as string[]);
+  for (const entry of entries) {
+    const match = /^gatling-core-(\d+\.\d+\.\d+.*)\.jar$/.exec(entry);
+    if (match?.[1] !== undefined) return match[1];
+  }
+  return null;
 }
 
 function resolveArtifactPath(config: RunnerConfig, storagePath: string): string {

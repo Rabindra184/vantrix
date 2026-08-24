@@ -65,16 +65,66 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **131 files / 1450 tests**, it
+`nvm use` first, and if a run reports fewer than **133 files / 1466 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The declared-test-never-stored branch
-added ONE unit file — `apps/runner/test/live-sink.test.ts` (3) — from a floor
-of 130 / 1447. Its integration floor is **124 files / 1533 tests** (that file
-is a `.ts` integration runs too, plus one case each in
-`packages/persistence/test/run-live.integration.test.ts`,
-`apps/api/test/live.integration.test.ts` and
-`apps/api/test/ingest.integration.test.ts`) and e2e stays 101.
+silently-skipped run looks like a pass. The runner-runs-a-real-jar branch added
+TWO unit files — `packages/storage/test/gatling-jar.test.ts` (8) and
+`apps/runner/test/artifact.test.ts` (8) — from a floor of 131 / 1450. Its
+integration floor is **127 files / 1554 tests** (both of those are `.ts` files
+integration runs too, plus a new `apps/api/test/runner.integration.test.ts`
+(5)) and e2e stays 101.
+
+FOUR THINGS FROM IT, AND THE FIRST IS THE PRODUCT MODEL.
+
+FIRST, `gatlingEnterprisePackage` BUILDS A THIN JAR ON PURPOSE, AND WHOEVER
+RUNS THE TEST SUPPLIES THE FRAMEWORK. That command — the one Gatling's own
+documentation gives you — packages your simulations and your dependencies and
+NOT ONE BYTE of Gatling, because Gatling Enterprise lends the runtime at
+execution time. Measured on a real one: 1.8 MB, zero `io/gatling/**` entries,
+and a manifest saying `Gatling-Version: 3.15.1` /
+`Gatling-Simulations: example.AssertionCorpus,example.BasicSimulation`.
+
+The runner ran `java -cp <uploaded.jar> io.gatling.app.Gatling`, which only
+works for a fat jar — so the artifact a reader is most likely to produce died
+with `Could not find or load main class io.gatling.app.Gatling`. `Gatling jar`
+was the form's DEFAULT and the README called it "a fat jar", which nothing in
+the product said and no ordinary build produces. The runner lends a runtime
+now (`RUNNER_GATLING_HOME`, baked into `infra/Dockerfile`), and only to a jar
+that carries none — `readGatlingJar().carriesRuntime` decides, so a fat jar is
+launched exactly as before rather than having a second Gatling appended to its
+classpath.
+
+SECOND, THREE BREAKAGES WERE STACKED, EACH HIDDEN BY THE ONE IN FRONT. Fixing
+the classpath only revealed the missing `--add-opens`; fixing that only
+revealed that `infra/Dockerfile` shipped `openjdk-17-jre-headless` while a
+current packager emits class file version 65 (`UnsupportedClassVersionError …
+only recognizes class file versions up to 61.0`). **Do not conclude a path
+works because the first failure went away** — re-run to a real result. The
+image installs Java 21 from bookworm-backports now, and a JVM runs older
+bytecode happily, so raising that floor cannot break an artifact that already
+worked.
+
+THIRD, `SIMULATION_LOG_NOT_FOUND` IS A CATCH-ALL WEARING A SPECIFIC
+REMEDIATION. All three failures above surfaced as "Gatling finished without
+producing a simulation.log file. Confirm the simulation class is correct…" —
+one message covering a typo'd class, a jar with no runtime, a JVM too old and
+a dead process, naming only the first. Two of the three now fail earlier and
+by name (`GATLING_RUNTIME_REQUIRED`, `GATLING_VERSION_MISMATCH`), and a typo is
+refused at UPLOAD against the manifest's own `Gatling-Simulations` — an
+instant 400 listing the real classes, which is what Gatling Enterprise does
+with the same header. **When a message can mean four things, the fix is more
+errors, not better wording.**
+
+FOURTH, THE PURE-PACKAGE LINT RULE FORCED A BETTER SHAPE. The jar reader
+started life in `@perfportal/core` and `no-restricted-imports` rejected
+`node:fs/promises` there ("Pure packages must not touch the filesystem",
+`packages/{core,plugin-gatling,statistics,sla}/src/**`). Splitting it was
+strictly better than exempting it: `core` decodes zip over a
+`ReadAt` callback with no idea where bytes come from, `@perfportal/storage`
+supplies the file-backed one beside its existing `bundle.ts`, and the parser
+became testable from a Buffer. **When that rule fires, the import is usually
+telling you the module is two modules.**
 
 THREE THINGS FROM IT, AND THE FIRST CORRECTS WHAT THE ENTRY BELOW THIS ONE
 CLAIMED.
@@ -141,24 +191,24 @@ that suite reports `Test timed out in 60000ms` with no other explanation —
 51s of deliberate waiting leaves 9s of headroom for a loaded machine. Any new
 case there that does not need a verdict should say so.
 
-**THE ON-PREM RUNNER NEEDS `--add-opens` ON JAVA 17+, AND DOES NOT PASS IT.**
-Found by the same real run and deliberately NOT fixed in that branch, because
-changing what the runner executes is its own decision. `prepareGatlingRun`
-builds `java … -cp … io.gatling.app.Gatling` with only the operator's
-`javaOptions` and system properties; Gatling's own `gatling.sh` and the
-`io.gatling.gradle` plugin both add JVM opens that this path does not. Without
-`--add-opens=java.base/java.lang=ALL-UNNAMED` (measured: that one alone is
-sufficient for 3.15.1) every job dies before writing a byte:
+**THE ON-PREM RUNNER NEEDED `--add-opens` ON JAVA 17+ AND DID NOT PASS IT —
+FIXED IN THE BRANCH ABOVE, and the mechanism is worth keeping.**
+`prepareGatlingRun` built `java … -cp … io.gatling.app.Gatling` with only the
+operator's `javaOptions` and system properties; Gatling's own `gatling.sh` and
+the `io.gatling.gradle` plugin both add JVM opens that launching the class
+directly loses. Without `--add-opens=java.base/java.lang=ALL-UNNAMED`
+(measured: that one alone is sufficient for 3.15.1, and `DEFAULT_JVM_OPTIONS`
+mirrors Gatling's fuller set so a feature needing another does not fail here
+while working under `gatling.sh`) every job died before writing a byte:
 
 ```
 java.lang.IllegalAccessException: module java.base does not open java.lang
   at io.gatling.core.stats.writer.StringInternals.<clinit>
 ```
 
-The runner then reports `SIMULATION_LOG_NOT_FOUND`, whose remediation says to
-confirm the simulation class — pointing at the artifact rather than the JVM.
-Until this is defaulted, an on-prem job needs that flag typed into the Java
-options field by hand.
+**Operator options are appended AFTER the defaults**, so `javaOptions` can
+still override them — a default appended last would silently win over the
+operator, which is the opposite of what a per-job field is for.
 
 **THAT FLAKE IS FIXED, AND THE CAUSE GENERALISES.** `ProjectRail.test.tsx`'s
 "lists every project as a link to its own page" failed 3 of 4 full `test:unit`
@@ -421,6 +471,26 @@ passed 1464/1464 once load fell to ~30. Nothing was wrong with the code, and
 nothing in the output said so. **Check `uptime` before diagnosing a broad
 integration failure; above roughly 40 on this machine the suite cannot be
 trusted either way.**
+
+**AND CHECK MEMORY, BECAUSE LOAD ALONE DOES NOT SAY WHY.** A later session hit
+the same everything-is-broken shape at load averages of **174, then 278** —
+`ProjectRail` cases at 193s, "refuses a bearer credential" at 139s, and finally
+the whole run killed by SIGTERM (`exit 143`) part-way through. The CPU list
+looked innocent; the cause was swapping, and `memory_pressure` said so:
+**7.2 million pageouts, 29% free**. Under thrashing, `pnpm test:unit` took
+**908s and reported 8 failures**, then ran **130s and passed 1466/1466** once
+the machine recovered — same commit, same tree, nothing changed but the load.
+
+Two practical consequences. Waiting for a number to fall is not enough, because
+it can climb back mid-run: gate the START on load and still re-check `uptime`
+after, since a run that BEGAN at 24 and finished at 218 is as worthless as one
+that began high. And typecheck and lint stay trustworthy throughout — they are
+deterministic, so a thrashing machine makes them slow rather than wrong, which
+makes them the right thing to run when the suites cannot be believed.
+
+A `.metadata_never_index` file in a scratch directory stops Spotlight
+re-indexing whatever the work generates, which is worth doing before unpacking
+a hundred megabytes of jars into one.
 
 Before that, the test-api branch,
 which added ONE unit file — `packages/contracts/test/test.test.ts` (13) — from

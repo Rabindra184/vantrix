@@ -66,6 +66,27 @@ const initialForm: FormState = {
 
 const activeRunnerStatuses = new Set<RunnerJobStatus>(['queued', 'starting', 'running', 'closing']);
 
+/**
+ * What each artifact type actually is, in the words of the command that builds
+ * it.
+ *
+ * The form said only "Gatling jar", and the natural way to build one —
+ * `gatlingEnterprisePackage`, the command Gatling's own documentation gives
+ * you — produces a jar with NO Gatling framework inside it, because Gatling
+ * Enterprise supplies that at execution time. Uploading it here used to fail
+ * with `Could not find or load main class io.gatling.app.Gatling`, reported as
+ * "Gatling finished without producing a simulation.log file". The runner lends
+ * its own Gatling now, so that jar is the expected input rather than a trap —
+ * and saying so is what stops the next reader building a fat jar they do not
+ * need.
+ */
+const ARTIFACT_HINTS: Record<RunnerArtifactKind, string> = {
+  gatling_jar:
+    'Built by `gradlew gatlingEnterprisePackage` (or the Maven/sbt equivalent). It does not need to bundle Gatling — the runner supplies the framework.',
+  gatling_bundle:
+    'A .zip or .tgz holding a Gatling distribution: bin/gatling.sh beside a lib/ of jars, with your simulation among them.',
+};
+
 export default function NewRunnerRun() {
   const { slug = '' } = useParams<{ slug: string }>();
   const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
@@ -193,8 +214,14 @@ function NewRunnerRunProject({
               <Field label="Run name" id="runner-name">
                 <input id="runner-name" className={INPUT} value={form.name} onChange={update('name', setForm)} required />
               </Field>
-              <Field label="Artifact type" id="runner-kind">
-                <select id="runner-kind" className={INPUT} value={form.artifactKind} onChange={update('artifactKind', setForm)}>
+              <Field label="Artifact type" id="runner-kind" hint={ARTIFACT_HINTS[form.artifactKind]}>
+                <select
+                  id="runner-kind"
+                  className={INPUT}
+                  aria-describedby="runner-kind-hint"
+                  value={form.artifactKind}
+                  onChange={update('artifactKind', setForm)}
+                >
                   <option value="gatling_jar">Gatling jar</option>
                   <option value="gatling_bundle">Runnable bundle</option>
                 </select>
@@ -326,11 +353,13 @@ function Field({
   label,
   id,
   optional = false,
+  hint,
   children,
 }: {
   readonly label: string;
   readonly id: string;
   readonly optional?: boolean;
+  readonly hint?: string;
   readonly children: ReactNode;
 }) {
   return (
@@ -340,6 +369,15 @@ function Field({
         {optional && <span className="ml-1 font-normal text-muted">optional</span>}
       </label>
       {children}
+      {/* The id is derived, not passed, so a caller cannot wire
+          `aria-describedby` to a hint that is not there — but the attribute
+          itself belongs on the CONTROL, which lives in `children` and only the
+          caller can reach. */}
+      {hint !== undefined && (
+        <p id={`${id}-hint`} className="text-[13px] leading-snug text-muted">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
