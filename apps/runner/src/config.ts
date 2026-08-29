@@ -11,6 +11,21 @@ export interface RunnerConfig {
   artifactRetentionDays: number;
   retentionSweepIntervalMs: number;
   javaBin: string;
+  /**
+   * A Gatling distribution this runner can LEND to a jar that carries none —
+   * the directory holding `lib/*.jar`, or a `lib` directory itself.
+   *
+   * `gatlingEnterprisePackage` builds a thin jar on purpose: Gatling
+   * Enterprise supplies the framework at execution time, so the package never
+   * carries it. This is that supply. Null means the runner has none, and a
+   * thin jar is refused with an actionable error rather than launched into a
+   * `ClassNotFoundException`.
+   *
+   * `infra/Dockerfile` installs one and points `RUNNER_GATLING_HOME` at it, so
+   * a containerized runner needs no configuration at all; a host install sets
+   * the variable itself.
+   */
+  gatlingHome: string | null;
   scope: {
     orgId: string;
     projectId: string | null;
@@ -67,6 +82,7 @@ export function loadRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
     artifactRetentionDays: Math.max(0, numberOr(env.RUNNER_ARTIFACT_RETENTION_DAYS, 30)),
     retentionSweepIntervalMs: Math.max(60_000, numberOr(env.RUNNER_RETENTION_SWEEP_INTERVAL_MS, 5 * 60_000)),
     javaBin: env.JAVA_BIN ?? 'java',
+    gatlingHome: optionalNonEmpty(env, 'RUNNER_GATLING_HOME'),
     scope: {
       orgId: required(env, 'RUNNER_ORG_ID'),
       projectId: optionalNonEmpty(env, 'RUNNER_PROJECT_ID'),

@@ -14,7 +14,9 @@ import {
   type RunnerJobLogsResponse,
   type RunnerStartResponse,
 } from '@perfportal/contracts';
+import type { GatlingJarFacts } from '@perfportal/core';
 import { ProjectRepository, RunnerRepository, type ProjectRecord } from '@perfportal/persistence';
+import { readGatlingJar } from '@perfportal/storage';
 import { CONFIG } from '../auth/auth.module.js';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, uuidParam } from '../common/validation.js';
@@ -78,6 +80,15 @@ export class RunnerController {
     } catch (err) {
       await unlink(tmpPath).catch(() => undefined);
       throw err;
+    }
+
+    if (metadata.data.artifactKind === 'gatling_jar') {
+      try {
+        await assertJarDeclaresSimulation(finalPath, metadata.data.simulationClass);
+      } catch (err) {
+        await unlink(finalPath).catch(() => undefined);
+        throw err;
+      }
     }
 
     let created: Awaited<ReturnType<RunnerRepository['createQueued']>>;
@@ -234,6 +245,58 @@ function extensionFor(filename: string, kind: string): string {
 
 function sanitizeFilename(filename: string): string {
   return path.basename(filename).replace(/[^\w.\- ]/g, '_') || 'gatling-artifact';
+}
+
+/**
+ * Refuses an upload the runner could never execute, while the requester is
+ * still looking at the form.
+ *
+ * ═══ THE COST OF NOT DOING THIS IS NINETY SECONDS AND A WRONG ANSWER ═══
+ *
+ * A mistyped simulation class is only discovered when Gatling exits without
+ * producing `simulation.log`, which the runner reports as
+ * SIMULATION_LOG_NOT_FOUND — a message that also covers a broken artifact, a
+ * missing runtime and a dead JVM. The requester gets it minutes later, in a
+ * job log, and it does not name the typo.
+ *
+ * A jar packaged by Gatling's own tooling states its simulations in the
+ * manifest (`Gatling-Simulations`), which is exactly what Gatling Enterprise
+ * reads to list them for you. Checking against that turns the whole class of
+ * mistake into an immediate 400 that names the real classes.
+ *
+ * ═══ ONLY WHEN THE JAR ACTUALLY SAYS ═══
+ *
+ * A hand-rolled shadow jar carries no such header, and an empty list is NOT
+ * evidence of no simulations — it means nobody wrote the header. Validating
+ * against an absent list would reject perfectly good fat jars, so silence here
+ * means "cannot check", never "wrong".
+ *
+ * Being unreadable as a zip IS decided, though, and decided against: that jar
+ * can never run, and saying so now beats a queued job dying on it later.
+ */
+async function assertJarDeclaresSimulation(
+  jarPath: string,
+  simulationClass: string,
+): Promise<void> {
+  let facts: GatlingJarFacts;
+  try {
+    facts = await readGatlingJar(jarPath);
+  } catch (err) {
+    throw badRequest(
+      'RUNNER_ARTIFACT_NOT_A_JAR',
+      `The uploaded file could not be read as a jar: ${err instanceof Error ? err.message : String(err)}`,
+      'Upload a .jar built by `gradlew gatlingEnterprisePackage` (or an equivalent Maven/sbt packager), or choose the runnable bundle artifact type.',
+    );
+  }
+
+  if (facts.simulations.length === 0) return;
+  if (facts.simulations.includes(simulationClass)) return;
+
+  throw badRequest(
+    'SIMULATION_CLASS_NOT_IN_ARTIFACT',
+    `This jar declares no simulation called "${simulationClass}".`,
+    `Use one of the simulations it does declare: ${facts.simulations.join(', ')}.`,
+  );
 }
 
 async function readLogTail(

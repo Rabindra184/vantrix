@@ -124,6 +124,20 @@ needs Java on the host and shared artifact/log directories:
     export RUNNER_PROJECT_ID='<project uuid>'
     export RUNNER_ARTIFACT_RETENTION_DAYS='30'
     export JAVA_BIN='java'
+    # A Gatling distribution this runner LENDS to a jar that carries none.
+    # `gradlew gatlingEnterprisePackage` deliberately builds a thin jar --
+    # simulations and their dependencies, no framework -- because Gatling
+    # Enterprise supplies the runtime when it runs the test. Without this, such
+    # an upload dies with "Could not find or load main class
+    # io.gatling.app.Gatling". Unpack any Gatling bundle and point at it; the
+    # runner uses <home>/lib, or the directory itself if it holds the jars.
+    # A fat jar that bundles Gatling needs none of this and ignores it.
+    export RUNNER_GATLING_HOME='/opt/gatling'
+
+`JAVA_BIN` must be **Java 21 or newer**. A jar built by a current Gatling
+packager carries class file version 65, which a Java 17 runtime refuses with
+`UnsupportedClassVersionError` before Gatling is reached. The `onprem` image
+installs 21 and sets `RUNNER_GATLING_HOME` itself, so neither applies there.
 
 Start `apps/runner` beside `apps/api` and `apps/worker`. From the project runs
 page, choose **New on-prem run**, upload a Gatling fat jar or runnable bundle,

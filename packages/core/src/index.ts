@@ -5,6 +5,7 @@ export * from './errors.js';
 export * from './plugin.js';
 export * from './tokens.js';
 export * from './engine-options.js';
+export * from './gatling-jar.js';
 export * from './ingest-queue.js';
 export * from './live-channels.js';
 export * from './shutdown.js';

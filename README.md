@@ -22,7 +22,7 @@ HTTP.
   persists the result. It runs in its own process and event loop, so a slow
   parse can never block API latency.
 - **`apps/runner`** — single-node on-prem Gatling executor. The UI queues an
-  uploaded fat jar or runnable bundle; this process claims one queued job at a
+  uploaded Gatling jar or runnable bundle; this process claims one queued job at a
   time, starts Gatling locally, tails `simulation.log` while it is written, and
   closes the live run into the normal worker/report pipeline.
 
