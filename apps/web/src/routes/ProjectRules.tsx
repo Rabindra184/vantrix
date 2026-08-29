@@ -6,6 +6,8 @@ import {
   SLA_RULE_COMPARATORS,
   SLA_RULE_FAMILIES,
   SLA_RULE_SCOPES,
+  slaMetricUnit,
+  slaThresholdWarning,
   type Assertion,
   type CreateSlaRuleRequest,
   type SlaRule,
@@ -124,6 +126,11 @@ export default function ProjectRules({
   const [comparator, setComparator] = useState<(typeof SLA_RULE_COMPARATORS)[number]>('lte');
   const [threshold, setThreshold] = useState('800');
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Both derived, never stored: a unit that could disagree with the metric box
+  // beside it would be worse than no unit at all.
+  const thresholdUnit = slaMetricUnit(metric.trim());
+  const thresholdWarning = slaThresholdWarning(metric.trim(), Number(threshold));
 
   // One row armed at a time, exactly as `TokenTable`'s revoke does it: arming
   // a second disarms the first, so two destructive confirmations can never be
@@ -339,15 +346,42 @@ export default function ProjectRules({
               </select>
             </label>
             <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-              Threshold
+              {/* THE UNIT IS PART OF THE LABEL, not a placeholder. `error_rate`
+                  is a fraction while every other screen renders it as a
+                  percentage, so an author who types 1 for "one percent" builds
+                  a gate meaning 100% that no run can ever breach — valid,
+                  evaluated, and permanently PASSED. A placeholder vanishes the
+                  moment they type; the label is still there when they choose
+                  the number. */}
+              Threshold{thresholdUnit === null ? '' : ` (${thresholdUnit})`}
               <input
                 className={INPUT}
                 inputMode="decimal"
+                aria-describedby={thresholdWarning === null ? undefined : 'rule-threshold-warning'}
                 value={threshold}
                 onChange={(e) => setThreshold(e.target.value)}
               />
             </label>
           </div>
+          {/* Rendered only when there IS a warning, so this is never an empty
+              live region a screen reader has to step through — the same rule
+              `ChartActions`' copy feedback follows. */}
+          {thresholdWarning !== null && (
+            <p
+              id="rule-threshold-warning"
+              role="status"
+              className="text-[13px] leading-snug"
+              /* INLINE, not a `text-status-pending` utility: the status colours
+                 are declared on `:root` rather than inside `@theme inline`, so
+                 Tailwind generates no utility for them and the class would emit
+                 nothing at all — silently, which tokens.test.ts exists to catch
+                 elsewhere. `StatTile` and `RunList` reference them this same
+                 way. */
+              style={{ color: 'var(--color-status-pending)' }}
+            >
+              {thresholdWarning}
+            </p>
+          )}
 
           {formError !== null && (
             <p role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px]">

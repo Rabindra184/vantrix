@@ -71,6 +71,65 @@ export function isResolvableSlaMetric(metric: string): boolean {
 }
 
 /**
+ * What a threshold for a given metric is MEASURED IN.
+ *
+ * ═══ WHY A MACHINE-READABLE UNIT AND NOT JUST PROSE ═══
+ *
+ * `error_rate` is a FRACTION — `koCount / count`, so 0.17753 — while every
+ * other surface in the product renders that same number as `17.75%`. An author
+ * who reads "error rate" on a percentage-shaped screen and types `1` meaning
+ * "one percent" gets `≤ 1`, which is `≤ 100%`, which no run can ever breach.
+ *
+ * Nothing catches it. The rule is valid, the metric resolves, the gate
+ * evaluates, and it reports PASSED forever — configured protection that
+ * cannot fire. That is the same failure shape as a rule authored as `p95th`,
+ * which `SlaMetricSchema` above already refuses for exactly this reason: the
+ * engine is right to degrade, and the author is the one who must be told.
+ *
+ * A schema cannot refuse `≤ 1` — 100% is a legal, if pointless, bound — so the
+ * defence has to be telling the author the unit BEFORE they type. This makes
+ * that a fact the form can read rather than a sentence somebody has to
+ * remember, and it generalises: every metric gets a label, so no future one
+ * repeats the trap by being added without a note.
+ */
+export const SLA_METRIC_UNITS = {
+  count: 'requests',
+  mean: 'ms',
+  min: 'ms',
+  max: 'ms',
+  stddev: 'ms',
+  error_rate: 'fraction',
+  throughput_rps: 'req/s',
+} as const satisfies Record<SlaMetricScalar, SlaMetricUnit>;
+
+export type SlaMetricUnit = 'ms' | 'fraction' | 'requests' | 'req/s';
+
+/**
+ * The unit for any metric the evaluator can resolve, or null for one it cannot.
+ *
+ * Percentiles fall through to milliseconds: `resolveMetric` answers them from
+ * the response-time sketch, so `p95` is the same kind of quantity as `mean`.
+ */
+export function slaMetricUnit(metric: string): SlaMetricUnit | null {
+  const scalar = (SLA_METRIC_UNITS as Record<string, SlaMetricUnit | undefined>)[metric];
+  if (scalar !== undefined) return scalar;
+  return isResolvableSlaMetric(metric) ? 'ms' : null;
+}
+
+/**
+ * A threshold that is legal but almost certainly not what the author meant.
+ *
+ * Only `fraction` metrics have one: a bound above 1 is 100%-or-more, which for
+ * `error_rate` is a gate no run can breach. Returns null when there is nothing
+ * to say, so a caller renders a warning only when there is a real one.
+ */
+export function slaThresholdWarning(metric: string, threshold: number): string | null {
+  if (slaMetricUnit(metric) !== 'fraction') return null;
+  if (!Number.isFinite(threshold) || threshold <= 1) return null;
+  return `${metric} is a fraction, so ${threshold} means ${threshold * 100}% — no run can breach it. Use ${threshold / 100} for ${threshold}%.`;
+}
+
+/**
  * A metric name the evaluator can actually resolve.
  *
  * THIS IS THE POINT OF THE WHOLE WRITE PATH. `resolveMetric` returns `null`

@@ -187,6 +187,66 @@ describe('ProjectRules — authoring', () => {
       threshold: 0.01,
     });
   });
+
+  /**
+   * THE UNIT TRAP, AND WHY A LABEL RATHER THAN A PLACEHOLDER.
+   *
+   * `error_rate` is a fraction — `koCount / count` — while the stat tiles, the
+   * statistics table and the errors tab all render that same number as a
+   * percentage. An author who types `1` for "one percent" gets `≤ 100%`: a
+   * rule that is valid, resolves, evaluates, and reports PASSED on every run
+   * forever. Nothing fails, so nothing tells them.
+   *
+   * Caught by doing exactly that while demonstrating the feature, which is the
+   * only way it surfaces — no test could have failed on it, because the gate
+   * behaved correctly for the value it was given.
+   */
+  it('names the unit in the threshold label, and follows the metric', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    // The default metric is a percentile, which is milliseconds.
+    expect(await screen.findByLabelText(/threshold \(ms\)/i)).toBeInTheDocument();
+
+    const metric = await screen.findByLabelText(/metric/i);
+    await user.clear(metric);
+    await user.type(metric, 'error_rate');
+
+    // Asserting the label CHANGED is the point: a static "(ms)" would be
+    // worse than no unit, since it would state the wrong one with authority.
+    expect(await screen.findByLabelText(/threshold \(fraction\)/i)).toBeInTheDocument();
+  });
+
+  it('warns when a fraction threshold is a gate no run could breach', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const metric = await screen.findByLabelText(/metric/i);
+    await user.clear(metric);
+    await user.type(metric, 'error_rate');
+    const threshold = screen.getByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.type(threshold, '5');
+
+    const warning = await screen.findByRole('status');
+    expect(warning).toHaveTextContent('500%');
+    // The number to type INSTEAD, because a warning that only disapproves
+    // leaves the author to work out the conversion that confused them.
+    expect(warning).toHaveTextContent('0.05');
+  });
+
+  it('stays quiet for an ordinary millisecond threshold', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const threshold = await screen.findByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.type(threshold, '30000');
+
+    // 30s is a perfectly reasonable p95 bound. A warning here would train the
+    // reader to ignore the one that matters.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });
 
 describe('ProjectRules — the table', () => {

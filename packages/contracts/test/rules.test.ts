@@ -8,6 +8,9 @@ import {
   SlaRuleSchema,
   UpdateSlaRuleRequestSchema,
   isResolvableSlaMetric,
+  slaMetricUnit,
+  slaThresholdWarning,
+  SLA_METRIC_UNITS,
 } from '../src/rules.js';
 
 /**
@@ -270,5 +273,72 @@ describe('SlaRuleSchema — the test a rule reports', () => {
    */
   it('accepts a rule from an API pod that predates the field', () => {
     expect(SlaRuleSchema.parse(STORED).test).toBeUndefined();
+  });
+});
+
+/**
+ * THE UNIT A THRESHOLD IS MEASURED IN.
+ *
+ * `error_rate` is a fraction and every other surface renders it as a
+ * percentage, so an author who types `1` for "one percent" builds `≤ 100%` —
+ * a gate no run can breach, that reports PASSED forever. A schema cannot
+ * refuse it, because 100% is a legal bound; the only defence is telling the
+ * author the unit, which means the unit has to be a fact code can read.
+ */
+describe('slaMetricUnit', () => {
+  // EVERY scalar, enumerated from the list itself rather than spelled out
+  // again: a metric added to `SLA_METRIC_SCALARS` without a unit would
+  // otherwise reach the form with a blank label and no one would notice.
+  it.each(SLA_METRIC_SCALARS)('gives %s a unit', (metric) => {
+    expect(slaMetricUnit(metric)).toBeTruthy();
+  });
+
+  it('measures percentiles in milliseconds, like the scalars they sit beside', () => {
+    expect(slaMetricUnit('p95')).toBe('ms');
+    expect(slaMetricUnit('p99.9')).toBe('ms');
+    expect(slaMetricUnit('mean')).toBe('ms');
+  });
+
+  it('calls the error rate a fraction, which is the whole point', () => {
+    expect(slaMetricUnit('error_rate')).toBe('fraction');
+    expect(SLA_METRIC_UNITS.error_rate).toBe('fraction');
+  });
+
+  it('returns null for a metric the evaluator cannot resolve', () => {
+    // `p95th` is the typo `SlaMetricSchema` already refuses; a unit for it
+    // would imply the form should label a field it is about to reject.
+    expect(slaMetricUnit('p95th')).toBeNull();
+    expect(slaMetricUnit('')).toBeNull();
+  });
+});
+
+describe('slaThresholdWarning', () => {
+  it('warns that a fraction above 1 is a gate nothing can breach', () => {
+    const warning = slaThresholdWarning('error_rate', 1);
+    expect(warning).toBeNull(); // exactly 1 IS 100% — legal, and the boundary
+
+    const above = slaThresholdWarning('error_rate', 5);
+    expect(above).toContain('fraction');
+    expect(above).toContain('500%');
+    // Naming the number to type instead is what makes this actionable rather
+    // than merely disapproving.
+    expect(above).toContain('0.05');
+  });
+
+  it('says nothing about a millisecond threshold, however large', () => {
+    // 30000 ms is a perfectly ordinary max-response-time bound.
+    expect(slaThresholdWarning('p95', 30000)).toBeNull();
+    expect(slaThresholdWarning('mean', 2)).toBeNull();
+  });
+
+  it('says nothing about a sane fraction', () => {
+    expect(slaThresholdWarning('error_rate', 0.01)).toBeNull();
+    expect(slaThresholdWarning('error_rate', 0)).toBeNull();
+  });
+
+  it('says nothing when the threshold is not a number yet', () => {
+    // The form calls this on every keystroke, so a half-typed value must not
+    // flash a warning.
+    expect(slaThresholdWarning('error_rate', Number.NaN)).toBeNull();
   });
 });
