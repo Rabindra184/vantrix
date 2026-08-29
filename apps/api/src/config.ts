@@ -38,6 +38,55 @@ export interface AppConfig {
   betterAuthUrl: string;
 }
 
+/**
+ * The shortest secret this refuses in production. `openssl rand -base64 32`
+ * emits 44 characters, so the documented recipe clears it comfortably; the
+ * number itself is Better Auth's own advice, which it only WARNS about.
+ */
+export const MIN_AUTH_SECRET_LENGTH = 32;
+
+/**
+ * ═══ THE ONE VARIABLE WHOSE ABSENCE IS SILENT UNTIL SOMEBODY LOGS IN ═══
+ *
+ * Better Auth falls back to a hard-coded default secret when
+ * `BETTER_AUTH_SECRET` is unset, and throws on that default only when
+ * `NODE_ENV=production` — which `infra/Dockerfile` sets. But it throws from
+ * inside `createAuthContext`, which is ASYNC and not awaited until the first
+ * `/auth` request. So a container with no secret builds, starts, passes its
+ * health check, serves the SPA, and then fails every sign-in for the life of
+ * the deployment. The compose profile shipped exactly that way.
+ *
+ * Checking it here moves that failure to process start, where an orchestrator
+ * can see it and an operator gets a message naming the variable and the
+ * command that generates one.
+ *
+ * Production-only, deliberately: a development machine and the integration
+ * harness (vitest sets NODE_ENV=test) must keep working with no new required
+ * variable, which is the same reason `betterAuthUrl` below has a default
+ * rather than being `required()`.
+ *
+ * LENGTH IS CHECKED TOO, and that is stricter than Better Auth, which only
+ * logs a warning below 32 characters. This value signs every session cookie
+ * in the deployment; a warning in a container log is not where that belongs.
+ */
+function requireAuthSecretInProduction(env: NodeJS.ProcessEnv): void {
+  if (env.NODE_ENV !== 'production') return;
+  const secret = env.BETTER_AUTH_SECRET ?? env.AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      'BETTER_AUTH_SECRET is required when NODE_ENV=production: it signs every session cookie, ' +
+        'and without it Better Auth refuses to authenticate anyone. ' +
+        'Generate one with `openssl rand -base64 32` and set it (PERFPORTAL_AUTH_SECRET in infra/docker-compose.yml).',
+    );
+  }
+  if (secret.length < MIN_AUTH_SECRET_LENGTH) {
+    throw new Error(
+      `BETTER_AUTH_SECRET must be at least ${MIN_AUTH_SECRET_LENGTH} characters; this one is ${secret.length}. ` +
+        'Generate one with `openssl rand -base64 32`.',
+    );
+  }
+}
+
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const v = env[key];
   if (!v) throw new Error(`Missing required environment variable ${key}`);
@@ -53,6 +102,7 @@ function positiveInteger(env: NodeJS.ProcessEnv, key: string, fallback: number):
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  requireAuthSecretInProduction(env);
   return {
     port: Number(env.PORT ?? 3000),
     databaseUrl: required(env, 'DATABASE_URL'),

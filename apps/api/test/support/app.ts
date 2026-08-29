@@ -17,6 +17,7 @@ import { mountBetterAuth } from '../../src/auth/mount-better-auth.js';
 import { AppModule } from '../../src/app.module.js';
 import { ProblemFilter } from '../../src/common/problem.filter.js';
 import { mountOpenApi } from '../../src/openapi.js';
+import { mountSecurityHeaders } from '../../src/security-headers.js';
 import { mountSpa } from '../../src/spa.js';
 import { hashToken, mintToken } from '@perfportal/core';
 import { SCHEMA_TABLES } from '@perfportal/persistence';
@@ -68,6 +69,10 @@ export async function createTestApp(
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication();
 
+  // Same order as main.ts, and shared with it for the same reason
+  // mountBetterAuth is: a header sent only in production, or only under
+  // test, fails invisibly — no test would catch it either way.
+  mountSecurityHeaders(app.getHttpAdapter().getInstance(), FIXTURE_WEB_DIST);
   mountBetterAuth(app);
   mountSpa(app.getHttpAdapter().getInstance(), FIXTURE_WEB_DIST);
 

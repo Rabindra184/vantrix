@@ -163,8 +163,27 @@ const liveTickTimer = setInterval(() => {
  * and Prisma's connections open and printing `ERR_UNHANDLED_REJECTION`
  * instead of the message that error was built to carry.
  */
+let shutdownPromise: Promise<void> | null = null;
+
 function shutdown(): Promise<void> {
-  return runShutdown([
+  // ═══ MEMOIZED, AND `process.once` BELOW ═══
+  //
+  // Neither alone is enough. `process.once` stops a repeated SIGINT (two
+  // Ctrl-Cs, which is what a shell gives you when the first teardown takes a
+  // moment) re-entering through the SAME signal; the memo stops SIGTERM
+  // arriving after SIGINT — a different handler, so `once` says nothing about
+  // it — starting a second teardown over the first.
+  //
+  // A second teardown is not harmless. It calls `pool.end()` on an already
+  // ended pool and `.quit()` on a Redis connection that is already closing,
+  // and `runShutdown` faithfully logs both as failed steps: an operator
+  // reading that log sees errors from a shutdown that actually went fine, in
+  // the one place they are most likely to be looking for a real one.
+  //
+  // Matches apps/runner/src/main.ts, which has had this shape since it was
+  // written; this file was the odd one out.
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = runShutdown([
     { name: 'clear timers', run: () => { clearInterval(sweepTimer); clearInterval(liveTickTimer); } },
     { name: 'worker.close', run: () => worker.close() },
     { name: 'sweeper.close', run: () => sweeper.close() },
@@ -177,6 +196,7 @@ function shutdown(): Promise<void> {
     { name: 'pool.end', run: () => pool.end() },
     { name: 'prisma.$disconnect', run: () => prisma.$disconnect() },
   ]);
+  return shutdownPromise;
 }
 
 // `.catch()` even though `runShutdown` is documented not to reject: a
@@ -185,5 +205,5 @@ function shutdown(): Promise<void> {
 // which is exactly how the AggregateError above used to take the whole
 // teardown down. Belt and braces, at the cost of one line.
 const onSignal = () => void shutdown().catch((err) => console.error('worker shutdown failed', err));
-process.on('SIGTERM', onSignal);
-process.on('SIGINT', onSignal);
+process.once('SIGTERM', onSignal);
+process.once('SIGINT', onSignal);

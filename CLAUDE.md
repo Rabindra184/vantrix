@@ -65,15 +65,154 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **133 files / 1483 tests**, it
+**AND THE SUITE NOW RUNS AS TWO PROJECTS, WHICH IS WHY THAT NODE-20 TRAP READS
+DIFFERENTLY.** `vitest.config.ts` used to say `environmentMatchGlobs` — one
+include list, node by default, jsdom for `.tsx`. Vitest 4 removed that option,
+so a `.tsx` suite silently ran in `node` and threw `ReferenceError: document is
+not defined` at every `render`: 410 tests across 42 files, all at once, all
+loud. It is now two `projects` (`node` and `jsdom`) with their own include
+lists. `pnpm test:unit` still reports one combined total, so the floors below
+read exactly as they always did.
+
+`nvm use` first, and if a run reports fewer than **136 files / 1516 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The sla-threshold-unit branch added no
+silently-skipped run looks like a pass. The release-readiness branch added
+THREE unit files — `apps/api/test/config.test.ts` (6),
+`apps/api/test/security-headers.test.ts` (18) and
+`apps/web/test/ThemeToggle.test.tsx` (9) — from a floor of 133 / 1483. Its
+integration floor is **129 files / 1592 tests** (the two new `.ts` files
+run there too) and its **e2e rises to 102** (`smoke.spec.ts` gained the CSP case).
+
+FIVE THINGS FROM IT, AND FOUR OF THEM WERE BROKEN BY THE WORLD RATHER THAN BY
+A COMMIT HERE.
+
+FIRST, **`infra/` IS IN NO GATE, AND EVERYTHING IN IT HAD ROTTED.** `pnpm
+lint`, `pnpm typecheck` and every `pnpm test:*` are blind to
+`infra/docker-compose.yml` and `infra/Dockerfile` exactly the way they are
+blind to `agent/` and `clients/gatling-gradle/` — and unlike those two, `infra/`
+had no gate of its own at all. Measured on an untouched checkout, all four of
+these were true at once:
+
+  - `docker compose -f infra/docker-compose.yml up -d`, the command BOTH
+    READMEs open with, failed before starting a container:
+    `required variable PERFPORTAL_RUNNER_ORG_ID is missing`. Compose
+    interpolates the WHOLE file before it decides which profiles are active,
+    so a `${VAR:?}` inside a service behind the `onprem` profile aborts the
+    base command too. **Every onprem-only variable must be `${VAR:-}` and
+    validated by the process that needs it.**
+  - the image did not build: Debian pruned `openjdk-21` from
+    `bookworm-backports`. A `-backports` suite is by definition not stable
+    over time, so pinning a runtime to one was always a build that would fail
+    on somebody else's schedule. It is `node:22-trixie-slim` now, where
+    openjdk-21 is in `main`.
+  - the image did not build for a SECOND reason behind that one: the Gatling
+    3.15.1 bundle has no `lib/` directory. It is a Maven project now — `pom.xml`,
+    `mvnw`, a pre-populated `.m2/repository` — so `find … -name lib` returned
+    nothing and the step died at exit 1 with no message, one line after the
+    checksum had printed `OK`.
+  - the image built with a FLOATING pnpm: `corepack enable` with no pin
+    resolved pnpm 11 against a lockfile written by pnpm 9, and failed with
+    `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. `package.json` now carries
+    `packageManager: pnpm@9.15.0`, which also means `pnpm/action-setup` must
+    NOT be given a `version:` input — it refuses both at once.
+
+There is a `compose` CI job now that runs `docker compose config` with only the
+three documented variables exported, builds the image, and RUNS what the image
+is built to carry (java, the Gatling runtime, and a production start with no
+auth secret). **Do not add anything to `infra/` without adding its check
+there**; the whole cost above was paid for a file nothing ran.
+
+A SEVENTH THING, AND IT IS THE ONE MOST LIKELY TO WASTE SOMEBODY'S AFTERNOON.
+**THE ANONYMOUS-VOLUME BUG ABOVE IS WHAT EVENTUALLY BREAKS THE INTEGRATION
+SUITE ON A LONG-LIVED MACHINE, AND IT DOES NOT REPORT ITSELF.** Postgres and
+MinIO had no `volumes:` key, so every container replacement orphaned one
+anonymous volume apiece. Measured here after months of that:
+`/var/lib/docker/volumes` inside the Docker VM held **3,317,759 of the
+filesystem's 3,907,584 inodes**, against 533,119 for every image layer
+combined. `df -h` said 22 GB free — and there were about twenty thousand
+inodes left. The suite then failed 36 files at once with
+
+```
+error: could not create file "base/16384/64222": No space left on device
+XMinioStorageFull: Storage backend has reached its minimum free drive threshold
+```
+
+which is the everything-is-broken shape this file already documents for a full
+disk, from a disk that is 60% empty. **`df -i` is the check, not `df -h`**:
+
+```
+docker run --rm --privileged --pid=host alpine \
+  nsenter -t 1 -m -u -n -i df -i /var/lib
+```
+
+`docker volume prune -f` is the fix, and it takes many minutes because it is
+deleting millions of small files. `docker builder prune` and `docker image
+prune` do NOT touch it — both were run first here, reclaimed 4 GB of bytes, and
+moved the inode count by nothing.
+
+SECOND, **FLATTENING A MAVEN REPOSITORY IS NOT THE SAME AS RESOLVING ONE.**
+The obvious fix for the Gatling bundle was to copy every jar out of its
+`.m2/repository` into one directory. That repository is what Maven needs to
+BUILD the demo project, so it carries the build toolchain too: 301 jars
+including THREE `slf4j-api` versions. Flattened, `-cp lib/*` picked 1.7.32 and
+Gatling started with `Failed to load class org.slf4j.impl.StaticLoggerBinder …
+Defaulting to no-operation (NOP) logger` — a run whose logging was silently
+dead, from a step that looked like it had worked. Letting the bundle's own
+`mvnw` do `dependency:copy-dependencies -DincludeScope=test` offline gives 95
+jars, 52 MB, one slf4j and logback bound. **`-DincludeScope=test`, not
+`runtime`**: Gatling's own archetype declares `gatling-charts-highcharts` at
+`test` scope, so `runtime` resolves to an EMPTY directory and reproduces the
+"Could not find or load main class" the whole step exists to prevent.
+
+THIRD, **A `role` IS A PROMISE, AND HALF-KEEPING IT IS WORSE THAN NOT MAKING
+IT.** `ThemeToggle` shipped `role="radiogroup"` with three `role="radio"`
+buttons and no arrow-key handling, on the reasoning that three tab stops cost
+less than an interaction with no browser test over it. A screen reader
+announces "radio button, 1 of 3" and its user then presses an arrow key,
+because that is what the role means; nothing happened. Three plain buttons
+would at least have been honest. It has a roving tabindex now
+(`ThemeToggle.test.tsx`, 9 cases), and the case that matters most asserts
+FOCUS moves and not just `aria-checked` — a roving tabindex that never moves
+focus leaves the caret on a segment that is no longer the tab stop.
+
+FOURTH, **THE CSP's `script-src` HASH IS COMPUTED, NEVER WRITTEN DOWN.**
+`index.html` carries an inline theme script on purpose (it is the pre-paint
+write that avoids the white flash), so a policy with `script-src 'self'`
+blocks it — and the symptom is a flash plus a console error nobody is
+watching for, with no test failing. `security-headers.ts` reads the built
+`index.html` at boot and hashes what is actually in it, so those five lines can
+change freely. `style-src` DOES keep `'unsafe-inline'`, and that is the
+weakest line in the policy: ECharts writes inline `style` attributes on every
+render, up to ten charts per run page, so the choice is that or no charts.
+The e2e case that guards all of it reads the CONSOLE while the real bundle
+boots — header assertions cannot tell you whether a browser could still run
+the page.
+
+FIFTH, **`vitest/globals` USED TO IMPLY `@types/node`, AND STOPPED.**
+`apps/web/test/tsconfig.json` listed `"types": ["vitest/globals"]` and
+`palette`, `paths`, `tokens` and both `transforms.*` suites resolved
+`node:fs` and `process` through it by accident. Under Vitest 4 they all stopped
+compiling at once with `Cannot find module 'node:fs'`. Those suites read source
+files off disk deliberately — `paths.test.ts` reads `App.tsx`, `tokens.test.ts`
+reads the emitted CSS — so the dependency is real and is now declared.
+
+A SIXTH THING IS NOT A LESSON BUT IT WILL COST SOMEBODY AN HOUR: **`pnpm audit
+--prod` is a CI gate now**, and the four `pnpm.overrides` in `package.json`
+plus the Vitest 2→4 upgrade are what took it from 1 critical / 6 high / 7
+moderate to zero. The vitest chain reached the PRODUCTION graph because
+`better-auth` declares `vitest` as an OPTIONAL PEER and pnpm satisfies it from
+the workspace root's dev copy — so the repo's own test runner was, by pnpm's
+reckoning, a production dependency of `apps/api`. Vitest 4 pairs with the
+vite 8 `apps/web` already had, so there is now one vite in the tree instead of
+two.
+
+Before that, the sla-threshold-unit branch added no
 unit FILE and 17 unit cases — 14 to `packages/contracts/test/rules.test.ts`
 (one is an `it.each` over the seven scalars) and 3 to
 `apps/web/test/ProjectRules.test.tsx` — from a floor of 133 / 1466. Its
-integration floor is **127 files / 1568 tests** (that `rules.test.ts` is a
-`.ts` file integration runs too) and e2e stays 101.
+integration floor was **127 files / 1568 tests** (that `rules.test.ts` is a
+`.ts` file integration runs too) and e2e was 101.
 
 ONE THING FROM IT, AND NO TEST COULD HAVE FOUND IT.
 

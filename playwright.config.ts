@@ -27,7 +27,34 @@ export default defineConfig({
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  /**
+   * ═══ CHROMIUM BY DEFAULT, THREE ENGINES ON DEMAND ═══
+   *
+   * `pnpm test:e2e` stays Chromium-only, and that is not laziness: adding
+   * Firefox and WebKit unconditionally would make the documented command fail
+   * on every machine that has not run `playwright install firefox webkit`,
+   * turning a coverage improvement into a broken quick start.
+   *
+   * `pnpm test:e2e:cross` sets the variable below and runs all three. The
+   * `e2e-cross-browser` CI job runs it on `main` and on demand, which is the
+   * cadence that matches what it catches: engine differences in CSS layout,
+   * focus behaviour, `Intl` formatting and — the one this product genuinely
+   * risks — WebSocket and cookie handling, none of which change between two
+   * commits on a feature branch.
+   *
+   * The whole suite runs on each engine rather than a smoke subset. A subset
+   * would need a tagging convention nobody maintains, and the specs that
+   * would be OUTSIDE it (the run tables, the charts, the live banner) are
+   * exactly where an engine difference would show up.
+   */
+  projects:
+    process.env.PERFPORTAL_E2E_BROWSERS === 'all'
+      ? [
+          { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+          { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+          { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+        ]
+      : [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     // `pnpm build` (root) compiles every workspace package plus apps/api,
     // apps/worker AND apps/web — the last via the root `build:web` script,

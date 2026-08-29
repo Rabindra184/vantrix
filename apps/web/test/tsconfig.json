@@ -22,7 +22,14 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals"],
+    // `node` as well as vitest's globals. Up to Vitest 2 the `vitest/globals`
+    // types transitively pulled in @types/node, so `node:fs` and `process`
+    // resolved here by accident; Vitest 4 does not, and the whole of
+    // palette/paths/tokens/transforms.* stopped compiling at once with
+    // `Cannot find module 'node:fs'`. Several of these suites read source
+    // files off disk on purpose — `paths.test.ts` reads App.tsx, `tokens.test.ts`
+    // reads the built CSS — so the dependency is real and is now declared.
+    "types": ["vitest/globals", "node"],
     "noEmit": true
   },
   "include": ["."]

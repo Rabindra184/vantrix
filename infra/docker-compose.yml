@@ -21,6 +21,20 @@ services:
       POSTGRES_PASSWORD: ${PERFPORTAL_DB_PASSWORD:?set PERFPORTAL_DB_PASSWORD}
       POSTGRES_DB: perfportal
     ports: ['5433:5432']
+    # ═══ A NAMED VOLUME, BECAUSE THE IMAGE DECLARES ONE EITHER WAY ═══
+    #
+    # postgres:16-alpine carries `VOLUME /var/lib/postgresql/data`, so a
+    # service with no `volumes:` key does not run without storage -- it runs
+    # on an ANONYMOUS volume with a 64-hex name. `docker compose down`
+    # deletes the container and orphans that volume; the next `up` creates a
+    # fresh empty one, and the old data survives on disk with nothing
+    # pointing at it. The symptom is a database that lost its schema for no
+    # visible reason, plus unreclaimed gigabytes.
+    #
+    # Naming it makes `down` keep the data and `down -v` the deliberate way
+    # to discard it. See infra/README.md's Backup and restore section.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U perfportal']
       interval: 2s
@@ -43,6 +57,11 @@ services:
       MINIO_ROOT_USER: ${PERFPORTAL_S3_ACCESS_KEY:?set PERFPORTAL_S3_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${PERFPORTAL_S3_SECRET_KEY:?set PERFPORTAL_S3_SECRET_KEY}
     ports: ['9000:9000']
+    # Same reasoning as postgres above: minio/minio declares `VOLUME /data`,
+    # so without this every `down`/`up` cycle orphans the run bundles and
+    # simulation logs and starts again on an empty anonymous volume.
+    volumes:
+      - minio-data:/data
     healthcheck:
       test: ['CMD', 'mc', 'ready', 'local']
       interval: 2s
@@ -61,7 +80,41 @@ services:
       S3_ACCESS_KEY: ${PERFPORTAL_S3_ACCESS_KEY:?set PERFPORTAL_S3_ACCESS_KEY}
       S3_SECRET_KEY: ${PERFPORTAL_S3_SECRET_KEY:?set PERFPORTAL_S3_SECRET_KEY}
       S3_BUCKET: perfportal
-      BETTER_AUTH_URL: http://localhost:3000
+      # ═══ EVERY ONPREM-ONLY VARIABLE IS OPTIONAL AT INTERPOLATION TIME ═══
+      #
+      # Compose interpolates the WHOLE file before it decides which profiles
+      # are active, so a `${VAR:?...}` anywhere in here -- including inside a
+      # service nobody selected -- aborts the plain
+      # `docker compose -f infra/docker-compose.yml up -d` that README.md and
+      # infra/README.md document for local development. That is not a
+      # hypothetical: `RUNNER_ORG_ID` was spelled `:?` and made the
+      # documented quick start fail before a single container started.
+      #
+      # So onprem values default to empty here and are validated by the
+      # process that needs them, at startup, with a message naming the
+      # variable. `apps/api/src/config.ts` does that for BETTER_AUTH_SECRET
+      # and `apps/runner/src/config.ts` for RUNNER_ORG_ID. The base services'
+      # own `:?` guards (PERFPORTAL_DB_PASSWORD and the two S3 keys) stay --
+      # those services run in EVERY profile, so requiring them is correct.
+      #
+      # `pnpm compose:check` (and the `compose` CI job) runs
+      # `docker compose config` with nothing exported, which is exactly the
+      # condition that regression reproduced under.
+
+      # The public origin the browser will use. Better Auth derives its CSRF
+      # trusted-origin check from this, so a deployment reached at anything
+      # other than http://localhost:3000 MUST set PERFPORTAL_PUBLIC_URL or
+      # sign-in is refused as an invalid origin. It also has to be an
+      # `https://` origin in practice: the session cookie is minted
+      # `secure: true` (packages/persistence/src/auth.ts), so a browser
+      # stores no session over plain HTTP unless the host is localhost.
+      BETTER_AUTH_URL: ${PERFPORTAL_PUBLIC_URL:-http://localhost:3000}
+      # Signs every session cookie. Better Auth THROWS on its built-in
+      # default secret when NODE_ENV=production -- which infra/Dockerfile
+      # sets -- so without this the onprem profile builds, starts, and then
+      # fails every single /auth request. Generate one with
+      # `openssl rand -base64 32`.
+      BETTER_AUTH_SECRET: ${PERFPORTAL_AUTH_SECRET:-}
       RUNNER_ARTIFACT_DIR: /var/lib/perfportal/runner-artifacts
       RUNNER_WORK_DIR: /var/lib/perfportal/runner-work
       RUNNER_LOG_DIR: /var/log/perfportal/runner
@@ -116,7 +169,10 @@ services:
     user: root
     environment:
       <<: *app_env
-      RUNNER_ORG_ID: ${PERFPORTAL_RUNNER_ORG_ID:?set PERFPORTAL_RUNNER_ORG_ID}
+      # `:-` and not `:?` -- see the comment in app_env above. An empty
+      # value is refused by apps/runner/src/config.ts's own `required()`
+      # when the runner starts, which is the only moment it matters.
+      RUNNER_ORG_ID: ${PERFPORTAL_RUNNER_ORG_ID:-}
       RUNNER_PROJECT_ID: ${PERFPORTAL_RUNNER_PROJECT_ID:-}
       RUNNER_ARTIFACT_RETENTION_DAYS: ${PERFPORTAL_RUNNER_ARTIFACT_RETENTION_DAYS:-30}
       RUNNER_CHILD_UID: '20001'
@@ -142,7 +198,45 @@ services:
         condition: service_completed_successfully
     command: pnpm --filter @perfportal/runner start
 
+  # ═══ OPTIONAL TLS, AND WHY IT IS A SEPARATE PROFILE ═══
+  #
+  # `--profile onprem --profile tls` puts Caddy in front of the API and gets a
+  # real certificate from Let's Encrypt automatically. It is opt-in because it
+  # cannot work without two things this file cannot supply: a domain that
+  # resolves to this host, and ports 80 and 443 free on it. A service that
+  # failed to start for everyone who has neither would be worse than none.
+  #
+  # It is worth having at all because the platform does not work over plain
+  # HTTP from a browser. The session cookie is minted `secure: true`
+  # unconditionally (packages/persistence/src/auth.ts), so at anything other
+  # than `localhost` a browser stores no session: sign-in appears to succeed
+  # and every subsequent request 401s as if uncredentialed. TLS is not
+  # hardening here, it is a functional requirement.
+  #
+  # Set PERFPORTAL_PUBLIC_URL to `https://$PERFPORTAL_DOMAIN` as well — Caddy
+  # terminating TLS does not tell the API what origin it is served at, and
+  # Better Auth refuses a sign-in from an origin it does not trust.
+  caddy:
+    profiles: ['tls']
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PERFPORTAL_DOMAIN: ${PERFPORTAL_DOMAIN:-localhost}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Issued certificates and the ACME account key. WITHOUT THIS the
+      # container re-requests a certificate on every restart and Let's
+      # Encrypt's rate limit (5 per domain per week) turns a few restarts
+      # into a week with no TLS at all.
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  minio-data:
   runner-artifacts:
   runner-work:
   runner-logs:

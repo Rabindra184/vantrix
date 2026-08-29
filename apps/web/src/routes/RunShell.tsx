@@ -1,4 +1,6 @@
+import { Suspense } from 'react';
 import { Outlet } from 'react-router-dom';
+import RouteFallback from '../components/RouteFallback';
 import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
@@ -225,17 +227,23 @@ export default function RunShell({
           than here — different query keys, so `/users` was fetched twice and
           the "one window for the whole page" this shell promises was not true.
           One parse, one object, one key. */}
-      <Outlet
-        context={{
-          window,
-          durationMs: identity.durationMs ?? null,
-          // NOW REAL. This was hard-coded `null` for as long as no live run
-          // reached this shell; a live run reaches it now, and this is what
-          // `useTimeDomainFromShell` consults to grow the shared domain.
-          liveDurationMs: live?.lastDelta?.summary.durationMs ?? null,
-          live,
-        } satisfies RunWindowContext}
-      />
+      {/* The five tabs are five lazy chunks. Without a boundary here the
+          nearest one is AppShell's, so the first click on Charts would
+          replace the run header, the decision band and the tab strip with a
+          loading line — losing the reader's place in the run they opened. */}
+      <Suspense fallback={<RouteFallback />}>
+        <Outlet
+          context={{
+            window,
+            durationMs: identity.durationMs ?? null,
+            // NOW REAL. This was hard-coded `null` for as long as no live run
+            // reached this shell; a live run reaches it now, and this is what
+            // `useTimeDomainFromShell` consults to grow the shared domain.
+            liveDurationMs: live?.lastDelta?.summary.durationMs ?? null,
+            live,
+          } satisfies RunWindowContext}
+        />
+      </Suspense>
     </div>
   );
 }

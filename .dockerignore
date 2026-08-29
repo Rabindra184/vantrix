@@ -1,0 +1,71 @@
+# Everything here is about the BUILD CONTEXT, which is the repository root
+# (see infra/docker-compose.yml: `context: ..` for all four app services).
+# Docker tars the whole context and sends it to the daemon before reading the
+# first line of the Dockerfile, so a directory excluded here is never
+# transferred — even though `infra/Dockerfile` only ever COPYs a handful of
+# paths out of it.
+#
+# Measured on a working checkout, the untuned context was ~730 MB, of which
+# ~711 MB was `node_modules` and ~19 MB `.git`. Neither is copied. Both were
+# being uploaded on every build.
+#
+# THE RULE FOR ADDING TO THIS FILE: exclude what the image demonstrably does
+# not need, never what it might. A wrong entry here fails the build with a
+# missing file, which is loud — but only if somebody runs the build, and the
+# `onprem` profile is not in any `pnpm` gate. `.github/workflows/ci.yml`'s
+# `compose` job builds the image for exactly that reason.
+
+# ═══ NEVER ═══
+# Reinstalled inside the image from the lockfile; a host `node_modules` also
+# carries platform-specific binaries (esbuild, @swc/core, Prisma engines) that
+# would be wrong for linux/amd64 if they ever leaked in.
+node_modules
+**/node_modules
+.pnpm-store
+.git
+.gitignore
+.github
+
+# Build output. `pnpm build` runs inside the image; a stale host `dist/` that
+# reached it would be silently overwritten at best and shipped at worst.
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+.impeccable
+.superpowers
+.claude
+
+# ═══ TEST AND TOOL ARTEFACTS ═══
+test-results
+playwright-report
+blob-report
+coverage
+**/.vitest
+.perfportal
+
+# ═══ NOT PART OF THE APPLICATION IMAGE ═══
+# The Go agent and the Gradle plugin are separate toolchains with their own
+# gates and their own release artefacts; the Node image builds neither.
+agent
+clients
+spikes
+fixtures
+docs
+scripts
+PerfPortal_Enterprise_PRD.md
+CLAUDE.md
+README.md
+
+# The compose file and this Dockerfile are read by the daemon, not copied.
+infra
+
+# ═══ EDITOR AND OS NOISE ═══
+.DS_Store
+**/.DS_Store
+.idea
+.vscode
+*.swp
+*.log
+.env
+.env.*

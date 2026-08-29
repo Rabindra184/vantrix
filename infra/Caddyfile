@@ -1,0 +1,26 @@
+# Fronts the `onprem` API with TLS. Used only by the `tls` compose profile —
+# see the `caddy` service in docker-compose.yml for why that is opt-in.
+#
+# `PERFPORTAL_DOMAIN` must resolve to this host from the public internet
+# before the first start: Caddy asks Let's Encrypt for a certificate on boot,
+# and the HTTP-01 challenge is answered on port 80 of that name. Left at its
+# `localhost` default, Caddy issues its own local certificate instead, which
+# is fine for trying the profile out and trusted by nothing else.
+{$PERFPORTAL_DOMAIN:localhost} {
+	# `reverse_proxy` sets X-Forwarded-Proto itself. That header is the only
+	# thing apps/api reads from a proxy, and it decides exactly one thing:
+	# whether to send Strict-Transport-Security. See
+	# apps/api/src/security-headers.ts.
+	reverse_proxy api:3000 {
+		# A live run streams over a WebSocket for the length of a load test —
+		# hours, for a soak. Caddy's default of no flush interval buffers a
+		# streaming response; -1 disables buffering so deltas arrive as they
+		# are produced rather than in blocks.
+		flush_interval -1
+	}
+
+	# The API sets its own security headers, including HSTS, and Caddy must
+	# not add a second, differing copy of any of them. Nothing is added here
+	# on purpose.
+	encode zstd gzip
+}
