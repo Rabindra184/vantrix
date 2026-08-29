@@ -65,10 +65,42 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **133 files / 1466 tests**, it
+`nvm use` first, and if a run reports fewer than **133 files / 1483 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The runner-runs-a-real-jar branch added
+silently-skipped run looks like a pass. The sla-threshold-unit branch added no
+unit FILE and 17 unit cases — 14 to `packages/contracts/test/rules.test.ts`
+(one is an `it.each` over the seven scalars) and 3 to
+`apps/web/test/ProjectRules.test.tsx` — from a floor of 133 / 1466. Its
+integration floor is **127 files / 1568 tests** (that `rules.test.ts` is a
+`.ts` file integration runs too) and e2e stays 101.
+
+ONE THING FROM IT, AND NO TEST COULD HAVE FOUND IT.
+
+**A UNIT THAT ONE SURFACE SHOWS AS A PERCENTAGE AND ANOTHER TAKES AS A
+FRACTION IS A GATE THAT NEVER FIRES.** `errorRate` is `koCount / count`, so
+0.1775. Every read surface renders it `17.75%`. The SLA rule form took a bare
+number, so an author who typed `1` meaning "one percent" authored `≤ 100%` —
+valid, resolvable, evaluated on every run, and PASSED forever. Found by doing
+exactly that while demonstrating the feature; the gate behaved CORRECTLY for
+the value it was given, so nothing failed and no test could have.
+
+The fix is to make the unit a fact code can read (`SLA_METRIC_UNITS`,
+`slaMetricUnit`) rather than a sentence in a doc comment, and to put it in the
+LABEL rather than a placeholder — a placeholder disappears the moment the
+author types, which is exactly when they are choosing the number.
+`slaThresholdWarning` then names the number to type instead, because a warning
+that only disapproves leaves the reader with the arithmetic that confused them.
+**A schema could not have refused it**: 100% is a legal bound, so validation
+was never available and telling the author was the only defence.
+
+While proving the colour, `text-status-pending` turned out to emit NOTHING —
+the status tokens are declared on `:root`, not inside `@theme inline`, so
+Tailwind generates no utility for them. That is the trap this file already
+records one section down, met in the wild; `StatTile` and `RunList` reference
+them as `var(--color-status-pending)` for exactly this reason.
+
+Before that, the runner-runs-a-real-jar branch added
 TWO unit files — `packages/storage/test/gatling-jar.test.ts` (8) and
 `apps/runner/test/artifact.test.ts` (8) — from a floor of 131 / 1450. Its
 integration floor is **127 files / 1554 tests** (both of those are `.ts` files
