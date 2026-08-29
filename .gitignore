@@ -10,3 +10,16 @@ blob-report/
 # file gets touched — six had accumulated across apps/ and packages/ before
 # anyone noticed. No leading slash, so this matches at any depth.
 .impeccable/
+
+# Claude Code's project-scoped MCP servers. Personal authoring tooling, not
+# project config: the one that appeared here declares shadcn's MCP server, and
+# shadcn is not a dependency of this workspace — there is no `components.json`
+# and no `shadcn` in any package.json. `apps/web` follows shadcn/ui's PATTERN
+# (a hand-written `cn`, cva variant maps) and its own comments say so, which is
+# a reference, not a toolchain.
+#
+# Committing it would put an unpinned `npx shadcn@latest mcp` in front of every
+# teammate, for a tool the build never invokes. Genuinely shared agent tooling
+# still belongs in the repo — `.claude/skills/running-perfportal-locally` is
+# committed precisely because it is.
+.mcp.json
