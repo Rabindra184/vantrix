@@ -24,6 +24,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # For `e2e-cross-browser`, which is deliberately not on every pull request
+  # — see that job's own comment. Declared here so it can be asked for from
+  # the Actions tab when a change really does touch layout or cookies.
+  workflow_dispatch:
 
 # Supersede, do not queue: a second push to a PR makes the first run's answer
 # irrelevant. `github.run_id` on `main` instead, because each merge commit is
@@ -99,8 +103,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      # No `version:` input: package.json's `packageManager` field pins it,
+      # and pnpm/action-setup refuses both at once. One source of truth for
+      # the pnpm the lockfile was written by — CI, the image and a
+      # contributor's `corepack enable` all read the same field.
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -110,6 +117,23 @@ jobs:
       # CI failure in this project's history was a removal verified against a
       # stale node_modules that still had the package hoisted.
       - run: pnpm install --frozen-lockfile
+
+      # ═══ THE DEPENDENCY GATE ═══
+      #
+      # `--prod` and not a bare audit: this asks what a DEPLOYED instance is
+      # exposed to, which is the question a release needs answered. It was
+      # answered by nobody until a pre-release audit ran it by hand and found
+      # 1 critical, 6 high and 7 moderate.
+      #
+      # It is a hard failure, not a warning. An advisory that cannot be
+      # resolved by an upgrade or a `pnpm.overrides` entry (see package.json)
+      # goes in `pnpm.auditConfig.ignoreGhsas` WITH a comment saying why it is
+      # not reachable here and what would make it reachable — a decision
+      # somebody wrote down, rather than a number nobody reads.
+      #
+      # Runs before the build so a red advisory reports in seconds rather than
+      # behind the whole gate.
+      - run: pnpm audit --prod
 
       - run: pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma
       - run: pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
@@ -189,6 +213,149 @@ jobs:
         with:
           name: perfportal-agent
           path: agent/dist/
+
+  # ═══ THE DEPLOYMENT ARTEFACT NOBODY WAS BUILDING ═══
+  #
+  # `infra/docker-compose.yml` and `infra/Dockerfile` are in NO `pnpm` gate —
+  # `pnpm lint`, `pnpm typecheck` and every `pnpm test:*` are blind to both,
+  # the same way they are blind to `agent/` and `clients/gatling-gradle/`. The
+  # cost of that showed up all at once in a pre-release audit:
+  #
+  #  - `docker compose config` failed outright with nothing exported, because
+  #    a `${VAR:?}` inside a service behind the `onprem` profile aborts
+  #    interpolation for the WHOLE file — so the quick start in README.md
+  #    could not start a single container.
+  #  - the image had stopped building at two separate steps: Debian pruned
+  #    openjdk-21 from bookworm-backports, and the Gatling bundle stopped
+  #    shipping the `lib/` directory the runtime step went looking for.
+  #
+  # Neither was caused by a change in this repository. Both were caused by the
+  # world moving underneath a file nothing ran. This job runs it.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ONLY the three variables both READMEs tell an operator to export, and
+      # nothing else: that is exactly the condition the documented quick start
+      # runs under, and the condition the interpolation regression above
+      # reproduced under. `PERFPORTAL_RUNNER_ORG_ID` is deliberately absent.
+      - name: docker compose config, base and onprem
+        env:
+          PERFPORTAL_DB_PASSWORD: ci-only
+          PERFPORTAL_S3_ACCESS_KEY: ci-only
+          PERFPORTAL_S3_SECRET_KEY: ci-only-secret
+        run: |
+          docker compose -f infra/docker-compose.yml config --quiet
+          docker compose -f infra/docker-compose.yml --profile onprem config --quiet
+
+      # The whole image, not a cached prefix. Both breaks above were in RUN
+      # steps that a layer cache would have skipped.
+      - name: Build the production image
+        run: docker build -f infra/Dockerfile -t perfportal:ci .
+
+      # The two things the image is built to carry, checked by running them.
+      # A `RUN ls` inside the Dockerfile proves the file exists; this proves
+      # the runtime starts, which is the property the runner depends on.
+      - name: The image carries a working Java 21 and a Gatling runtime
+        run: |
+          docker run --rm perfportal:ci java -version
+          docker run --rm perfportal:ci sh -c 'ls "$RUNNER_GATLING_HOME"/lib/gatling-core-*.jar'
+          docker run --rm perfportal:ci sh -c \
+            'java --add-opens=java.base/java.lang=ALL-UNNAMED -cp "$RUNNER_GATLING_HOME/lib/*" io.gatling.app.Gatling 2>&1 | grep -q "Missing simulation class"'
+
+      # A production container with no BETTER_AUTH_SECRET must die at startup
+      # with a message naming the variable — not start, pass its health check,
+      # and then fail every sign-in, which is what it did before
+      # apps/api/src/config.ts grew its own check.
+      - name: The API refuses to start in production with no auth secret
+        run: |
+          set +e
+          out=$(docker run --rm -e DATABASE_URL=postgresql://u:p@nowhere:5432/db perfportal:ci 2>&1)
+          status=$?
+          set -e
+          echo "$out"
+          test "$status" -ne 0
+          echo "$out" | grep -q "BETTER_AUTH_SECRET is required"
+
+  # ═══ FIREFOX AND WEBKIT ═══
+  #
+  # `pnpm test:e2e` is Chromium-only and stays that way; see the comment on
+  # `projects` in playwright.config.ts. This job runs the same 101 specs on
+  # all three engines.
+  #
+  # NOT on every pull request. What it catches — CSS layout differences,
+  # focus behaviour, `Intl` formatting, and this product's real exposure,
+  # WebSocket and cookie handling under a strict CSP — does not change between
+  # two commits on a feature branch, and tripling a ~13-minute gate on every
+  # push buys nothing. On `main` and on demand is the cadence that matches.
+  e2e-cross-browser:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: perfportal
+          POSTGRES_PASSWORD: perfportal
+          POSTGRES_DB: perfportal
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U perfportal"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      minio:
+        # The same pinned digest the `build` job uses — see the long comment
+        # there for why it is `bitnamilegacy` and why it is a digest.
+        image: bitnamilegacy/minio@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+        env:
+          MINIO_ROOT_USER: perfportal
+          MINIO_ROOT_PASSWORD: perfportal123
+        ports: ['9000:9000']
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://perfportal:perfportal@localhost:5433/perfportal
+      REDIS_URL: redis://localhost:6380
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: perfportal
+      S3_SECRET_KEY: perfportal123
+
+    steps:
+      - uses: actions/checkout@v4
+      # No `version:` input: package.json's `packageManager` field pins it,
+      # and pnpm/action-setup refuses both at once. One source of truth for
+      # the pnpm the lockfile was written by — CI, the image and a
+      # contributor's `corepack enable` all read the same field.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
+      # BEFORE Playwright collects specs. `apps/web/e2e/fixtures.ts` imports
+      # the worker's COMPILED output (`../../worker/dist/...`) at module load,
+      # so on a clean checkout the spec files cannot even be read until a
+      # build has happened. playwright.config.ts's `webServer` command builds
+      # too, but that starts after collection — the same ordering the `build`
+      # job's comment above explains for typecheck.
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:e2e:cross
 
   # The Gatling Gradle plugin (clients/gatling-gradle) is a Kotlin/Gradle
   # module outside the pnpm workspace (pnpm-workspace.yaml globs only

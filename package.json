@@ -1,7 +1,10 @@
 {
   "name": "perf-portal",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
+  "//packageManager": "PINNED, because corepack otherwise resolves whatever pnpm is newest at build time. infra/Dockerfile runs `corepack enable` with no pin and got pnpm 11 against a lockfile written by pnpm 9, which failed the image build with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH on the `overrides` block. Same class of failure as the openjdk-21 one that file records: a floating dependency in a build nothing runs. `pnpm/action-setup` reads this field, so its `version:` input must NOT also be set.",
+  "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=22"
   },
@@ -13,9 +16,19 @@
     "test:unit": "vitest run",
     "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
+    "test:e2e:cross": "PERFPORTAL_E2E_BROWSERS=all playwright test --workers=1",
+    "compose:check": "docker compose -f infra/docker-compose.yml config --quiet && docker compose -f infra/docker-compose.yml --profile onprem config --quiet",
     "lint": "eslint .",
     "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/api/test/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json && tsc --noEmit -p apps/worker/test/tsconfig.json && tsc --noEmit -p apps/runner/tsconfig.json && tsc --noEmit -p apps/runner/test/tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p apps/web/e2e/tsconfig.json && tsc --noEmit -p apps/web/test/tsconfig.json",
     "bootstrap": "pnpm --filter @perfportal/persistence run bootstrap"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash@4": "^4.18.1",
+      "js-yaml@4": "^4.3.2",
+      "nanoid@3": "^3.3.18",
+      "deepmerge-ts@7": "^8.0.2"
+    }
   },
   "devDependencies": {
     "@perfportal/plugin-gatling": "workspace:*",
@@ -28,6 +41,6 @@
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.0.0",
     "unplugin-swc": "^1.5.10",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.11"
   }
 }

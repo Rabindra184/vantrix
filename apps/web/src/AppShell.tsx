@@ -1,4 +1,6 @@
+import { Suspense } from 'react';
 import { Link, Outlet } from 'react-router-dom';
+import RouteFallback from './components/RouteFallback';
 import ProjectRail from './ProjectRail';
 import SignOutButton from './SignOutButton';
 import ThemeToggle from './components/ThemeToggle';
@@ -99,7 +101,14 @@ export default function AppShell() {
         {/* `p-4` on a phone, `p-6` from `sm` up: a 24px gutter on a 375px
             screen spends 13% of the width on nothing. */}
         <main id="main" tabIndex={-1} className="min-w-0 flex-1 p-4 outline-none sm:p-6">
-          <Outlet />
+          {/* Every route under this shell is a lazy chunk (see App.tsx). This
+              boundary is what keeps the header and the project rail on screen
+              while one loads: without it the nearest boundary is App's own,
+              ABOVE this shell, so a first visit to any page blanks the whole
+              window — chrome included — for the length of one request. */}
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

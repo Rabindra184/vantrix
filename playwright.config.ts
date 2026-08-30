@@ -16,6 +16,27 @@ import { defineConfig, devices } from '@playwright/test';
  * database — the integration suite will wipe whatever this suite just
  * seeded, mid-assertion.
  */
+/**
+ * 3000 unless told otherwise. `reuseExistingServer` is deliberately false
+ * (see below), so ANYTHING already listening on this port fails the whole run
+ * before a single spec — including a completely unrelated project of yours,
+ * which is exactly how this was met:
+ *
+ *     Error: http://localhost:3000 is already used, make sure that nothing is
+ *     running on the port/url or set reuseExistingServer:true
+ *
+ * `PERFPORTAL_E2E_PORT=3100 pnpm test:e2e` moves the whole harness — the
+ * server's own PORT, the URL Playwright waits on, baseURL, AND
+ * `apps/web/e2e/fixtures.ts`, which reads the same variable because it seeds
+ * over plain fetch and cannot see `baseURL`. All four or none: moving three of
+ * them sent the browser to 3100 and the seeding to 3000, and 214 specs failed
+ * with a 404 from whatever else was listening there.
+ *
+ * It stays same-origin, which is the property the session cookie depends on.
+ */
+const PORT = process.env.PERFPORTAL_E2E_PORT ?? '3000';
+const ORIGIN = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: 'apps/web/e2e',
   fullyParallel: true,
@@ -24,10 +45,37 @@ export default defineConfig({
   reporter: 'list',
   timeout: 60_000,
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: ORIGIN,
     trace: 'on-first-retry',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  /**
+   * ═══ CHROMIUM BY DEFAULT, THREE ENGINES ON DEMAND ═══
+   *
+   * `pnpm test:e2e` stays Chromium-only, and that is not laziness: adding
+   * Firefox and WebKit unconditionally would make the documented command fail
+   * on every machine that has not run `playwright install firefox webkit`,
+   * turning a coverage improvement into a broken quick start.
+   *
+   * `pnpm test:e2e:cross` sets the variable below and runs all three. The
+   * `e2e-cross-browser` CI job runs it on `main` and on demand, which is the
+   * cadence that matches what it catches: engine differences in CSS layout,
+   * focus behaviour, `Intl` formatting and — the one this product genuinely
+   * risks — WebSocket and cookie handling, none of which change between two
+   * commits on a feature branch.
+   *
+   * The whole suite runs on each engine rather than a smoke subset. A subset
+   * would need a tagging convention nobody maintains, and the specs that
+   * would be OUTSIDE it (the run tables, the charts, the live banner) are
+   * exactly where an engine difference would show up.
+   */
+  projects:
+    process.env.PERFPORTAL_E2E_BROWSERS === 'all'
+      ? [
+          { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+          { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+          { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+        ]
+      : [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     // `pnpm build` (root) compiles every workspace package plus apps/api,
     // apps/worker AND apps/web — the last via the root `build:web` script,
@@ -43,8 +91,8 @@ export default defineConfig({
     // apps/worker/dist/pipeline/pipeline.service.js directly to run the
     // ingest pipeline synchronously against the same database, with no live
     // worker — see fixtures.ts's own comment for why.
-    command: 'pnpm build && pnpm --filter @perfportal/api start',
-    url: 'http://localhost:3000',
+    command: `pnpm build && PORT=${PORT} pnpm --filter @perfportal/api start`,
+    url: ORIGIN,
     // A full workspace build (tsc -b across every package, plus the api,
     // worker and web builds) comfortably exceeds Playwright's 60s default
     // webServer timeout on a cold cache.

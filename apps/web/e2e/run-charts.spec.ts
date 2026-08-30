@@ -260,9 +260,35 @@ test('every chart actually draws — the real ECharts renders SVG marks for all 
  */
 test('every chart actually draws in dark mode too, and the page background follows', async ({
   page,
+  browserName,
 }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
+  // ═══ NOT FIREFOX, AND IT IS THE RUNNER RATHER THAN THE APP ═══
+  //
+  // Under the Playwright TEST RUNNER, Firefox honours a dark `colorScheme`
+  // neither page-level (`emulateMedia`, what this test uses) nor
+  // context-level (`test.use({ colorScheme })`). Measured three ways on
+  // Playwright 1.62.1, against a minimal spec with no fixtures and no
+  // sign-in:
+  //
+  //   page.emulateMedia     chromium true   firefox false  webkit true
+  //   test.use colorScheme  chromium true   firefox false  webkit true
+  //
+  // The same two calls through the LIBRARY api (`firefox.launch()` →
+  // `newContext()`), including with `devices['Desktop Firefox']`, report
+  // true. So the preference never reaches the page here, `matchMedia
+  // ('(prefers-color-scheme: dark)')` is false, and the app painting its
+  // LIGHT background is correct for what the browser told it — the assertion
+  // below would be testing the runner, not the product.
+  //
+  // Chromium and WebKit both keep covering this, which is what matters: the
+  // rule under test is a plain `@media (prefers-color-scheme: dark)` block,
+  // not an engine-specific one.
+  test.skip(
+    browserName === 'firefox',
+    'Playwright 1.62.1 does not apply an emulated colorScheme to Firefox under the test runner — see the comment above.',
+  );
   await page.emulateMedia({ colorScheme: 'dark' });
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));

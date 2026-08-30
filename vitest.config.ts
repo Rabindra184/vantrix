@@ -33,18 +33,6 @@ export default defineConfig({
     conditions: ['perfportal-source'],
   },
   test: {
-    include: [
-      'packages/*/test/**/*.test.ts',
-      'apps/*/test/**/*.test.ts',
-      // .tsx is a separate entry rather than a {ts,tsx} brace because the two
-      // extensions run in different environments — see environmentMatchGlobs
-      // below — and keeping them spelled apart makes that visible here.
-      'apps/*/test/**/*.test.tsx',
-    ],
-    // Node stays the DEFAULT. Only the .tsx tests — the ones that mount React
-    // into a document — get jsdom, so the existing node-environment suites are
-    // untouched by this and keep their (much cheaper) startup.
-    environmentMatchGlobs: [['apps/web/test/**/*.test.tsx', 'jsdom']],
     // Anything needing live Postgres, Redis, or MinIO is named
     // *.integration.test.ts or *.e2e.test.ts and runs only under
     // vitest.integration.config.ts, so `pnpm test` stays runnable with no Docker.
@@ -55,5 +43,48 @@ export default defineConfig({
     // flake generator rather than a preference. It configures ONLY that; in
     // particular it deliberately does not register a global `cleanup`.
     setupFiles: ['./apps/web/test/setup.ts'],
+
+    /**
+     * ═══ TWO PROJECTS, BECAUSE ONE OF THEM NEEDS A DOCUMENT ═══
+     *
+     * This was `environmentMatchGlobs: [['apps/web/test/**\/*.test.tsx',
+     * 'jsdom']]` — one include list, node by default, jsdom for the .tsx
+     * files. Vitest 4 removed that option, and the failure mode is loud in
+     * the best way: every DOM suite throws `ReferenceError: document is not
+     * defined` at `render`, 410 tests across 42 files at once. (Contrast the
+     * Node-20 trap CLAUDE.md opens with, where the same files vanish
+     * SILENTLY and the run still reports a pass.)
+     *
+     * `projects` is the replacement, and it says the same thing more
+     * explicitly: which files, in which environment. `extends: true` pulls in
+     * the plugins, the `perfportal-source` condition and the shared `test`
+     * options above, so nothing is duplicated except the two include lists
+     * that are genuinely different.
+     *
+     * The counts to expect are in CLAUDE.md; `pnpm test:unit` reports the two
+     * projects' files and tests as one total, so that floor still reads the
+     * same way it always did.
+     */
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          include: ['packages/*/test/**/*.test.ts', 'apps/*/test/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          // Only the tests that mount React into a document. jsdom's startup
+          // is much more expensive than node's, which is why this is a
+          // separate project rather than the default for everything.
+          name: 'jsdom',
+          include: ['apps/*/test/**/*.test.tsx'],
+          environment: 'jsdom',
+        },
+      },
+    ],
   },
 });

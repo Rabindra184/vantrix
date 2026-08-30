@@ -5,6 +5,25 @@ bundles (currently: Gatling), aggregates them into exact and estimated
 statistics, evaluates them against SLA rules, and serves the results over
 HTTP.
 
+Licensed under [Apache-2.0](LICENSE).
+
+## Names you will see
+
+**PerfPortal is the product. Vantrix is the published-artifact namespace.**
+Two names in one repository looks like a rename half-done; it is not, and
+knowing which is which saves reading the wrong docs.
+
+| You will see | Where | What it is |
+|--------------|-------|------------|
+| `PerfPortal` | the UI, this README, `@perfportal/*` packages, `PERFPORTAL_*` variables | The product and the source tree. |
+| `Vantrix` | `dev.vantrix.gatling` (the Gradle plugin id), `dev.vantrix:gatling-gradle-plugin` (its Maven coordinates), `VANTRIX_*` variables, `github.com/Rabindra184/vantrix/agent` (the Go module path) | The **stable namespace of things published outside this repository** — coordinates other people's builds already resolve, and environment variables already set on their CI. |
+
+Those coordinates are load-bearing for consumers, so they are deliberately
+NOT being renamed: changing a plugin id breaks every `plugins { id(...) }`
+block already written against it, and changing a Go module path breaks every
+`import`. New surfaces take `PerfPortal`/`PERFPORTAL_*`; the four Vantrix
+names above stay.
+
 ## Apps
 
 - **`apps/api`** — NestJS on Express (`@nestjs/platform-express`; multipart
@@ -64,10 +83,19 @@ pnpm install
 pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma
 pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
 pnpm build
-pnpm bootstrap          # mints an org/project/API token — see infra/README.md
+# --admin-email as well as the API token: `pnpm bootstrap` on its own mints a
+# machine credential and nothing that can sign in, and the login page has no
+# sign-up link (deliberately — see Authentication below). Without this flag
+# the stack comes up with no way for a human to reach the dashboard.
+pnpm bootstrap --admin-email you@example.test
 pnpm test              # unit
 pnpm test:integration   # needs the services above
 ```
+
+Both credentials are printed once, to stdout: an API token (`pp_…`) for CI and
+a generated password for the admin account. Copy them now — the token is
+stored only as an Argon2id hash and the password only as Better Auth's own
+hash.
 
 ## Authentication
 
@@ -133,13 +161,140 @@ base URL Better Auth derives `trustedOrigins` from — its CSRF origin check.
 The default is fine locally; **set it to the service's public origin in any
 real deployment.**
 
-**The session cookie requires TLS.** `packages/persistence/src/auth.ts` mints
-it with `secure: true` unconditionally, so on a non-TLS deployment reachable
-by hostname (not `localhost`), a browser never stores it — every session
-attempt then looks identical to "no credential" and lands on `/v1`'s generic
-401. If session sign-in behaves as though it silently does nothing on a real
-deployment, check that the deployment is served over HTTPS before suspecting
-the auth code.
+**The session cookie requires TLS anywhere but loopback.**
+`packages/persistence/src/auth.ts` mints it `Secure` unless the base URL's
+host is `localhost`, `127.0.0.1` or `[::1]`. So on a non-TLS deployment
+reachable by hostname a browser never stores it — every session attempt looks
+identical to "no credential" and lands on `/v1`'s generic 401. That is
+deliberate: a session cookie a browser will send in the clear across a real
+network is one an attacker on the path can read. If sign-in behaves as though
+it silently does nothing on a real deployment, check that it is served over
+HTTPS before suspecting the auth code.
+
+**The loopback exemption exists because Safari needs it.** Measured with a
+three-engine probe against a plain-HTTP loopback server setting one `Secure`
+cookie: Chromium and Firefox stored it, WebKit did not. Loopback is a
+potentially-trustworthy origin by every browser's own spec — there is no
+network between the two ends — but WebKit does not extend `Secure` handling to
+it. Without the exemption **nobody can sign in to a local instance in
+Safari**, and the WebKit end-to-end project cannot get past the login form.
+
+## Deploying it
+
+`infra/docker-compose.yml`'s `onprem` profile builds and runs the whole
+platform on one node. Three things about it are not optional, and each one
+fails in a way that does not name itself:
+
+**`PERFPORTAL_AUTH_SECRET` is required.** It becomes `BETTER_AUTH_SECRET`,
+which signs every session cookie. Better Auth refuses to run on its built-in
+default when `NODE_ENV=production` — which `infra/Dockerfile` sets — but it
+refuses from an async context nothing awaits until the first `/auth` request,
+so the symptom of forgetting it used to be a container that started, passed
+its health check, served the SPA, and then failed every sign-in forever.
+`apps/api/src/config.ts` now checks it at startup instead, so the container
+exits immediately with a message naming the variable. Generate one with
+`openssl rand -base64 32`; anything under 32 characters is refused.
+
+**`PERFPORTAL_PUBLIC_URL` must be the origin a browser will actually use.**
+It becomes `BETTER_AUTH_URL`, which is what Better Auth derives its
+trusted-origin (CSRF) check from. Left at the default, a deployment reached at
+`https://perf.example.com` refuses its own sign-in as an invalid origin.
+
+**It must be behind TLS, and the compose file provides none.** The session
+cookie is minted `secure: true` unconditionally, so a browser stores nothing
+over plain HTTP unless the host is literally `localhost` — sign-in appears to
+succeed and every subsequent request 401s. Terminate TLS in front of it
+(Caddy, nginx, a cloud load balancer) and forward to the `api` service's port
+3000. The proxy must set `X-Forwarded-Proto: https`; that header is the only
+thing the API reads from a proxy, and it decides one thing — whether to send
+`Strict-Transport-Security`. A two-line Caddyfile is enough:
+
+```
+perf.example.com {
+    reverse_proxy api:3000
+}
+```
+
+`infra/docker-compose.yml` ships that as an opt-in `tls` profile — see
+`infra/README.md`. The proxy is also the right place to compress **dynamic**
+responses: the API precompresses its static assets at build time (below) but
+sends JSON uncompressed, and a run's `/series` payload is not small.
+
+### Security headers
+
+`apps/api/src/security-headers.ts` sets them on every response — the SPA's
+assets, `/auth/*` and `/v1` alike — because it is mounted ahead of all three
+on the same Express instance. `X-Powered-By` is disabled, and the set is
+`Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Cross-Origin-Opener-Policy`,
+`Cross-Origin-Resource-Policy`, `Permissions-Policy`, `X-DNS-Prefetch-Control`,
+and `Strict-Transport-Security` on TLS requests only.
+
+Two things about the CSP are worth knowing before changing anything:
+
+- **`script-src` carries no `'unsafe-inline'`** and instead carries a
+  `sha256-` hash of `index.html`'s theme script — computed at boot from the
+  built file, never written down, so editing those five lines cannot silently
+  break the page.
+- **`style-src` does carry `'unsafe-inline'`**, and that is the weakest line
+  in the policy. ECharts writes inline `style` attributes on every render and
+  there are up to ten charts on a run page; the choice is that or no charts.
+
+`/v1/docs` (Swagger UI) gets its own, looser policy — it is a third-party page
+whose inline script changes with its own version, so hashing it would break on
+a dependency bump with a blank page and no other signal.
+
+### How the SPA is delivered
+
+Three changes, and the numbers are measured against a real server rather than
+estimated:
+
+**Every authenticated route is a lazy chunk.** `App.tsx` used to import all of
+them statically, so the login page downloaded and parsed **1,117,911 bytes** of
+JavaScript — the whole app, `echarts` included — to render an email field and
+a password field. `echarts` is now its own 611 KB chunk that only the five
+chart routes pull.
+
+**Assets are precompressed at build time**, not per request: a Vite plugin
+(`apps/web/vite.config.ts`) writes `.br` and `.gz` beside each compressible
+asset, and `apps/api/src/spa.ts` negotiates. Compressing once per build rather
+than once per reader is what makes brotli quality 11 affordable.
+
+**Fingerprinted assets are `immutable`, `index.html` is `no-cache`.** Vite
+fingerprints every asset, so a given `/assets/…` URL's content cannot change —
+that is exactly the condition `immutable` describes, and `express.static`'s
+default was `max-age=0`, revalidating a megabyte on every reload.
+`index.html` has to be the opposite: its URL is stable while its content names
+the current fingerprints, so a cached copy points at assets the next deploy
+deleted.
+
+Together, the login page went from **1,117,911 bytes of uncompressed
+JavaScript to 101,893 bytes over the wire** — everything it fetches, including
+the CSS and the document.
+
+### Releases
+
+Pushing a tag `v<semver>` (`.github/workflows/release.yml`) publishes three
+things, and nothing publishes without a tag:
+
+| Artefact | Where | Consumed by |
+|----------|-------|-------------|
+| `ghcr.io/<owner>/perfportal:<version>` and `:latest` | GitHub Container Registry | `docker run`, or `image:` in place of `build:` in a compose file |
+| `dev.vantrix:gatling-gradle-plugin:<version>` | GitHub Packages | the Gradle plugin, `clients/gatling-gradle` |
+| `perfportal-agent-{linux,darwin}-{amd64,arm64}` + `SHA256SUMS` | the GitHub Release | load generators, see [`agent/README.md`](agent/README.md) |
+
+The image is `linux/amd64` only. A multi-arch build would run the whole
+`pnpm install && pnpm build` under QEMU for arm64, which takes tens of minutes
+and starts timing out rather than failing cleanly; an amd64 image still runs
+on Apple Silicon under emulation.
+
+`main` separately republishes the plugin as `0.1.0-SNAPSHOT` on every push, for
+the bleeding edge. **GitHub Packages rejects unauthenticated Maven downloads
+even from a public repository**, so a plugin consumer needs a personal access
+token with `read:packages` — see [`clients/gatling-gradle/README.md`](clients/gatling-gradle/README.md).
+That is a GitHub Packages property, not a choice this project made; publishing
+to the Gradle Plugin Portal or Maven Central would remove it and is the open
+item there.
 
 ## The verdict contract
 

@@ -5,6 +5,15 @@
     export PERFPORTAL_S3_SECRET_KEY='change-me-too'
     docker compose -f infra/docker-compose.yml up -d
 
+**Those three are the whole list.** Compose interpolates the entire file
+before it decides which profiles are active, so a `${VAR:?}` inside a service
+behind the `onprem` profile aborts this command too — which is exactly what
+`PERFPORTAL_RUNNER_ORG_ID` used to do, failing the documented quick start
+before a single container started. Every onprem-only variable now defaults to
+empty here and is validated by the process that needs it; `pnpm compose:check`
+(and CI's `compose` job) run `docker compose config` with nothing but the
+three above exported, which is the condition that regression reproduced under.
+
 Ports are deliberately offset so an existing local Postgres or Redis is never
 shadowed:
 
@@ -13,6 +22,53 @@ shadowed:
 | PostgreSQL | 5433 | perfportal / `$PERFPORTAL_DB_PASSWORD` |
 | Redis      | 6380 | —                        |
 | MinIO      | 9000 | `$PERFPORTAL_S3_ACCESS_KEY` / `$PERFPORTAL_S3_SECRET_KEY` |
+
+## Data, and how to not lose it
+
+Postgres and MinIO write to **named** volumes, `infra_postgres-data` and
+`infra_minio-data`. They did not always: with no `volumes:` key those images
+still declare `VOLUME` internally, so each service ran on an ANONYMOUS volume
+with a 64-hex name — `docker compose down` orphaned it, the next `up` created
+a fresh empty one, and the old data sat on disk with nothing pointing at it.
+The symptom was a database that had lost its schema for no visible reason.
+
+    docker compose -f infra/docker-compose.yml down      # keeps the data
+    docker compose -f infra/docker-compose.yml down -v   # deletes it, deliberately
+
+**THE ORPHANS ARE NOT MERELY WASTED SPACE — THEY BROKE THE TEST STACK.**
+Measured on a machine that had been running this compose file for a while:
+`/var/lib/docker/volumes` inside the Docker VM held **3.3 million of the
+filesystem's 3.9 million inodes**, almost all of it in six anonymous volumes
+belonging to Postgres and MinIO containers that had long since been replaced.
+`df -h` reported 22 GB free, so nothing looked wrong — but there were about
+20,000 inodes left, and the integration suite exhausted them mid-run:
+
+    error: could not create file "base/16384/64222": No space left on device
+    XMinioStorageFull: Storage backend has reached its minimum free drive threshold
+
+Neither message mentions inodes, and both read as a broken stack rather than a
+full disk. **`df -i`, not `df -h`, is the check** — and `docker volume prune`
+is the fix when the answer is 100%. With named volumes those orphans are no
+longer created in the first place.
+
+**Editing `infra/docker-compose.yml` still recreates a container**, and a
+recreated container starts from whatever its volume holds. That is now the
+data you had, not an empty disk — but if you ever do lose the database, the
+migrations are the way back:
+
+    pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
+
+Backup and restore are ordinary `pg_dump`/`mc mirror`:
+
+    docker compose -f infra/docker-compose.yml exec -T postgres \
+      pg_dump -U perfportal perfportal | gzip > perfportal-$(date +%F).sql.gz
+
+    gunzip -c perfportal-2026-08-29.sql.gz | \
+      docker compose -f infra/docker-compose.yml exec -T postgres psql -U perfportal perfportal
+
+The MinIO bucket holds the uploaded bundles and assembled live logs. A dump of
+Postgres without it restores every run's statistics and verdict but not the
+raw artefacts behind them.
 
 ## Environment
 
@@ -28,6 +84,12 @@ shadowed:
                                                        # http://localhost:<PORT>;
                                                        # set to the public origin
                                                        # in any real deployment
+    # Signs every session cookie. Optional in development, REQUIRED whenever
+    # NODE_ENV=production — apps/api/src/config.ts refuses to start without
+    # it, and without one Better Auth would otherwise fall back to a built-in
+    # default that it then rejects at the first /auth request rather than at
+    # startup. At least 32 characters.
+    export BETTER_AUTH_SECRET="$(openssl rand -base64 32)"
 
 ## First run
 
@@ -89,13 +151,12 @@ Authentication section) — no run id needed up front:
       -d '{"email":"you@example.test","password":"<printed password>"}'
     curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs
 
-The session cookie is minted `secure: true` (see the root `README.md`'s
-Authentication section), so this recipe working over plain `http://localhost`
-is specific to `curl`, which — unlike a browser — replays a `Secure` cookie
-over plain HTTP regardless of host. A real, non-TLS deployment reachable by
-hostname gets no session at all from a browser: sign-in appears to succeed,
-but no cookie is ever stored, and every subsequent `/v1` request 401s as if
-uncredentialed.
+On `http://localhost` the cookie is minted WITHOUT `Secure` — see the root
+`README.md`'s Authentication section for why that exemption is loopback-only
+and why Safari is the reason it exists. A real, non-TLS deployment reachable
+by hostname still gets `Secure`, and therefore no session at all from a
+browser: sign-in appears to succeed, no cookie is ever stored, and every
+subsequent `/v1` request 401s as if uncredentialed.
 
 ## Running the slice
 
@@ -151,9 +212,56 @@ For a containerized single-node deployment, use the `onprem` compose profile:
     export PERFPORTAL_DB_PASSWORD='change-me'
     export PERFPORTAL_S3_ACCESS_KEY='change-me'
     export PERFPORTAL_S3_SECRET_KEY='change-me-too'
+    # REQUIRED for the onprem profile. It becomes BETTER_AUTH_SECRET, which
+    # signs every session cookie; infra/Dockerfile sets NODE_ENV=production,
+    # and the API refuses to start without one. Under 32 characters is
+    # refused too.
+    export PERFPORTAL_AUTH_SECRET="$(openssl rand -base64 32)"
+    # The origin a BROWSER will use. It becomes BETTER_AUTH_URL, which Better
+    # Auth derives its CSRF trusted-origin check from — leave it at the
+    # localhost default and a deployment reached by hostname refuses its own
+    # sign-in as an invalid origin. It must be https:// for a real
+    # deployment: the session cookie is `secure: true`, so a browser stores
+    # nothing over plain HTTP unless the host is literally localhost. See the
+    # root README's "Deploying it" section for the reverse proxy.
+    export PERFPORTAL_PUBLIC_URL='https://perf.example.com'
     export PERFPORTAL_RUNNER_ORG_ID='<org uuid this runner is allowed to claim>'
     export PERFPORTAL_RUNNER_ARTIFACT_RETENTION_DAYS='30'
     docker compose -f infra/docker-compose.yml --profile onprem up --build
+
+### TLS
+
+Add `--profile tls` and Caddy fronts the API with an automatic Let's Encrypt
+certificate:
+
+    export PERFPORTAL_DOMAIN='perf.example.com'
+    export PERFPORTAL_PUBLIC_URL="https://$PERFPORTAL_DOMAIN"
+    docker compose -f infra/docker-compose.yml --profile onprem --profile tls up --build
+
+Both variables, not one. Caddy terminating TLS does not tell the API what
+origin it is being served at, and Better Auth refuses a sign-in from an origin
+it does not trust.
+
+**It is opt-in because it cannot work without two things this file cannot
+supply**: `PERFPORTAL_DOMAIN` must already resolve to this host from the
+public internet (Caddy answers an HTTP-01 challenge on port 80 of that name at
+first boot), and ports 80 and 443 must be free. Left unset it issues a local
+certificate instead, which is enough to try the profile and trusted by nothing
+else. `infra/Caddyfile` is the whole configuration — a reverse proxy, no
+buffering so live-run deltas are not held back, and no security headers of its
+own, because the API sets those itself and a second differing copy of any of
+them is worse than none.
+
+Without TLS from somewhere, **a browser cannot sign in at all** at anything
+other than `localhost`: the session cookie is `secure: true`, so it is never
+stored, and every request afterwards 401s as though it carried no credential.
+
+`PERFPORTAL_RUNNER_ORG_ID` is validated by `apps/runner` at startup, not by
+Compose: making it a `${VAR:?}` here is what broke the plain
+`docker compose up -d` at the top of this file, because interpolation does not
+respect profiles. Leave it unset and the runner exits with
+`Missing required environment variable RUNNER_ORG_ID`; the other three
+services come up regardless.
 
 The app services share named volumes for uploaded artifacts and runner logs;
 the profile also runs Prisma migrations before starting API, worker and runner.

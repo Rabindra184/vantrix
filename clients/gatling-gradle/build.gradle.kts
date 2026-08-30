@@ -119,6 +119,21 @@ tasks.withType<GenerateModuleMetadata>().configureEach { enabled = false }
 
 publishing {
     publications.withType<MavenPublication>().configureEach {
+        // LICENCE METADATA, because a published artefact travels without its
+        // repository. A consumer resolving this plugin sees the POM and
+        // nothing else -- no LICENSE file, no README -- so an artefact with no
+        // <licenses> block is one whose terms nobody downstream can determine.
+        pom {
+            name.set("Vantrix Gatling Gradle plugin")
+            description.set("Streams Gatling results from a Gradle build into PerfPortal.")
+            url.set("https://github.com/Rabindra184/vantrix")
+            licenses {
+                license {
+                    name.set("The Apache License, Version 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                }
+            }
+        }
         pom.withXml {
             val root = asNode()
             @Suppress("UNCHECKED_CAST")

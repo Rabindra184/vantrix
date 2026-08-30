@@ -65,15 +65,263 @@ Node 20 this was once measured at 47 of 67 files, 534 tests. Do not calibrate
 against those absolutes — they were true of a smaller suite and are recorded
 only to show the scale of what disappears.
 
-`nvm use` first, and if a run reports fewer than **133 files / 1483 tests**, it
+**AND THE SUITE NOW RUNS AS TWO PROJECTS, WHICH IS WHY THAT NODE-20 TRAP READS
+DIFFERENTLY.** `vitest.config.ts` used to say `environmentMatchGlobs` — one
+include list, node by default, jsdom for `.tsx`. Vitest 4 removed that option,
+so a `.tsx` suite silently ran in `node` and threw `ReferenceError: document is
+not defined` at every `render`: 410 tests across 42 files, all at once, all
+loud. It is now two `projects` (`node` and `jsdom`) with their own include
+lists. `pnpm test:unit` still reports one combined total, so the floors below
+read exactly as they always did.
+
+`nvm use` first, and if a run reports fewer than **137 files / 1533 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
-silently-skipped run looks like a pass. The sla-threshold-unit branch added no
+silently-skipped run looks like a pass. The release-readiness branch added
+FOUR unit files — `apps/api/test/config.test.ts` (6),
+`apps/api/test/security-headers.test.ts` (18),
+`apps/web/test/ThemeToggle.test.tsx` (9) and
+`packages/persistence/test/auth-cookies.test.ts` (17) — from a floor of
+133 / 1483. Its integration floor is **130 files / 1609 tests** (the three
+new `.ts` files run there too) and its **e2e rises to 102**
+(`smoke.spec.ts` gained the CSP case).
+
+**AND ITS e2e IS THE FIRST THAT RUNS ON THREE ENGINES.** `pnpm test:e2e` is
+still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
+firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
+on demand. The WebKit third of that is worth its wall-clock all by itself —
+see the eighth lesson below.
+
+FIVE THINGS FROM IT, AND FOUR OF THEM WERE BROKEN BY THE WORLD RATHER THAN BY
+A COMMIT HERE.
+
+FIRST, **`infra/` IS IN NO GATE, AND EVERYTHING IN IT HAD ROTTED.** `pnpm
+lint`, `pnpm typecheck` and every `pnpm test:*` are blind to
+`infra/docker-compose.yml` and `infra/Dockerfile` exactly the way they are
+blind to `agent/` and `clients/gatling-gradle/` — and unlike those two, `infra/`
+had no gate of its own at all. Measured on an untouched checkout, all four of
+these were true at once:
+
+  - `docker compose -f infra/docker-compose.yml up -d`, the command BOTH
+    READMEs open with, failed before starting a container:
+    `required variable PERFPORTAL_RUNNER_ORG_ID is missing`. Compose
+    interpolates the WHOLE file before it decides which profiles are active,
+    so a `${VAR:?}` inside a service behind the `onprem` profile aborts the
+    base command too. **Every onprem-only variable must be `${VAR:-}` and
+    validated by the process that needs it.**
+  - the image did not build: Debian pruned `openjdk-21` from
+    `bookworm-backports`. A `-backports` suite is by definition not stable
+    over time, so pinning a runtime to one was always a build that would fail
+    on somebody else's schedule. It is `node:22-trixie-slim` now, where
+    openjdk-21 is in `main`.
+  - the image did not build for a SECOND reason behind that one: the Gatling
+    3.15.1 bundle has no `lib/` directory. It is a Maven project now — `pom.xml`,
+    `mvnw`, a pre-populated `.m2/repository` — so `find … -name lib` returned
+    nothing and the step died at exit 1 with no message, one line after the
+    checksum had printed `OK`.
+  - the image built with a FLOATING pnpm: `corepack enable` with no pin
+    resolved pnpm 11 against a lockfile written by pnpm 9, and failed with
+    `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. `package.json` now carries
+    `packageManager: pnpm@9.15.0`, which also means `pnpm/action-setup` must
+    NOT be given a `version:` input — it refuses both at once.
+
+There is a `compose` CI job now that runs `docker compose config` with only the
+three documented variables exported, builds the image, and RUNS what the image
+is built to carry (java, the Gatling runtime, and a production start with no
+auth secret). **Do not add anything to `infra/` without adding its check
+there**; the whole cost above was paid for a file nothing ran.
+
+FOUR THINGS THE CROSS-BROWSER SUITE COST TO SET UP, AND ALL FOUR WILL RECUR.
+
+**`test:e2e:cross` IS `--workers=1`, AND THAT IS MEASURED RATHER THAN
+CAUTIOUS.** At the default (5 workers here) it failed 19, then 7, then 9 — a
+DIFFERENT set each time, drifting between Firefox and WebKit, always timeouts
+or a chart that missed its 5s window. Serial: **303 passed, 3 skipped, 0
+failed, and FASTER** (6.7 min against 8.8), which is what contention looks
+like. Three engines is three times the Chromium suite's load, and CLAUDE.md
+already records that that one is unreliable at its default here. A chart that
+"did not draw" in one engine and drew in the other two is a worker-count
+symptom, not a rendering bug — check it alone before believing it.
+
+**AND THE TWO RUNS THAT LOOKED LIKE THEY PROVED THE WORKER COUNT PROVED
+NOTHING, BECAUSE THE FLAG NEVER APPLIED.** `pnpm test:e2e:cross -- --workers=2`
+SILENTLY DROPS THE FLAG — pnpm eats the `--` — and both runs reported
+`Running 306 tests using 5 workers` while being described as constrained. The
+19 → 7 "improvement" was the skip-link scoping plus noise. Write it as
+`pnpm test:e2e:cross --workers=1`, with no `--`, and **read the runner's own
+`Running N tests using M workers` line back** rather than trusting that an
+argument arrived.
+
+**AND AN EMULATED `colorScheme` DOES NOT REACH FIREFOX UNDER THE RUNNER.**
+Measured on Playwright 1.62.1 against a minimal spec with no fixtures and no
+sign-in:
+
+```
+                      chromium  firefox  webkit
+page.emulateMedia       true     false    true
+test.use colorScheme    true     false    true
+```
+
+The same two calls through the LIBRARY api (`firefox.launch()` →
+`newContext()`), including with `devices['Desktop Firefox']`, report true. So
+`matchMedia('(prefers-color-scheme: dark)')` is genuinely false in the harness
+and the app painting its LIGHT background is CORRECT for what the browser told
+it — `run-charts.spec.ts`'s dark-mode case would be testing the runner. It is
+skipped on Firefox and still covered by the other two. **Before believing a
+theme assertion in a new engine, ask the page what `matchMedia` returns.**
+
+**`PERFPORTAL_E2E_PORT` MOVES FOUR THINGS, NOT THREE.** `playwright.config.ts`
+owns `baseURL`, `webServer.url` and the server's own `PORT`; `fixtures.ts`
+owns its own copy, because it seeds over plain `fetch` and can never see
+`baseURL`. Moving three of them sent the browser to 3100 and the seeding to
+3000 — where an unrelated project was listening — and 214 of 306 specs failed
+with `POST /v1/runs expected 202, got 404` naming somebody else's server. The
+port is worth having because `reuseExistingServer` is deliberately false, so
+anything at all on 3000 fails the whole run before a single spec.
+
+**`test.skip(fn, reason)` AT FILE SCOPE SKIPS THE FILE.** Reaching for it to
+exempt ONE test from one engine silently drops that whole spec file on that
+engine. It belongs inside the test body, taking `browserName` from the
+fixture. `--list` is the check: `project-rail.spec.ts` collects 21 across
+three engines either way, and only a runtime skip leaves it at 21.
+
+A SEVENTH THING, AND IT IS THE ONE MOST LIKELY TO WASTE SOMEBODY'S AFTERNOON.
+**THE ANONYMOUS-VOLUME BUG ABOVE IS WHAT EVENTUALLY BREAKS THE INTEGRATION
+SUITE ON A LONG-LIVED MACHINE, AND IT DOES NOT REPORT ITSELF.** Postgres and
+MinIO had no `volumes:` key, so every container replacement orphaned one
+anonymous volume apiece. Measured here after months of that:
+`/var/lib/docker/volumes` inside the Docker VM held **3,317,759 of the
+filesystem's 3,907,584 inodes**, against 533,119 for every image layer
+combined. `df -h` said 22 GB free — and there were about twenty thousand
+inodes left. The suite then failed 36 files at once with
+
+```
+error: could not create file "base/16384/64222": No space left on device
+XMinioStorageFull: Storage backend has reached its minimum free drive threshold
+```
+
+which is the everything-is-broken shape this file already documents for a full
+disk, from a disk that is 60% empty. **`df -i` is the check, not `df -h`**:
+
+```
+docker run --rm --privileged --pid=host alpine \
+  nsenter -t 1 -m -u -n -i df -i /var/lib
+```
+
+`docker volume prune -f` is the fix, and it takes many minutes because it is
+deleting millions of small files. `docker builder prune` and `docker image
+prune` do NOT touch it — both were run first here, reclaimed 4 GB of bytes, and
+moved the inode count by nothing.
+
+AN EIGHTH THING, AND IT IS A PRODUCT DEFECT THAT ONLY A THIRD ENGINE COULD
+FIND. **`secure: true` ON THE SESSION COOKIE MEANT NOBODY COULD SIGN IN TO A
+LOCAL INSTANCE IN SAFARI.** Adding the WebKit e2e project turned 98 of its 102
+specs red; 95 of the 98 page snapshots are the LOGIN FORM, which is what every
+authenticated route renders when the session never established. A
+three-engine probe against a plain-HTTP loopback server setting one `Secure`
+cookie says it in one line each:
+
+```
+chromium  cookie:pp_session=abc
+firefox   cookie:pp_session=abc
+webkit    cookie:(none)
+```
+
+Chromium and Firefox treat loopback as a trustworthy origin and store it;
+WebKit does not. `cookiesAreSecure` now exempts `localhost`, `127.0.0.1` and
+`[::1]` and NOTHING else — a plain-HTTP deployment reachable by hostname still
+gets `Secure` and still fails closed, which is the property worth keeping.
+`auth-cookies.test.ts` asserts both halves, because a test that only checked
+the exemption would pass just as happily against `secure: false` everywhere.
+
+**`URL.hostname` KEEPS THE BRACKETS ON AN IPv6 LITERAL** — it is `[::1]`, not
+`::1`. The first version of that comparison used the unbracketed form and only
+the `http://[::1]:3000` case caught it.
+
+**THE GENERAL LESSON IS ABOUT WHAT ONE ENGINE CANNOT TELL YOU.** Every unit
+test, every integration test and 102 Chromium e2e specs were green while a
+whole browser could not log in. Adding an engine is not redundant coverage; it
+is the only thing that can see a decision a spec leaves to the implementation.
+
+**AND SOME OF WHAT IT SEES IS THE OPERATING SYSTEM, NOT THE PAGE.** Whether
+Tab reaches a LINK is a macOS keyboard-navigation preference, and the three
+engines ship different defaults — measured against a two-element page on a
+real origin:
+
+```
+chromium  Tab order: lnk → btn
+firefox   Tab order: btn → btn        ← the link is skipped
+webkit    Tab order: (body) → (body)  ← nothing is focusable by Tab
+```
+
+So `project-rail.spec.ts`'s skip-link test is Chromium-only, and that is not a
+gap in the product: the markup is correct, and a keyboard user with full
+keyboard access on gets the link in every engine. Weakening the assertion to
+`focus()`-then-check would pass everywhere and stop testing the thing that
+matters, which is that the skip link is the FIRST stop.
+
+SECOND, **FLATTENING A MAVEN REPOSITORY IS NOT THE SAME AS RESOLVING ONE.**
+The obvious fix for the Gatling bundle was to copy every jar out of its
+`.m2/repository` into one directory. That repository is what Maven needs to
+BUILD the demo project, so it carries the build toolchain too: 301 jars
+including THREE `slf4j-api` versions. Flattened, `-cp lib/*` picked 1.7.32 and
+Gatling started with `Failed to load class org.slf4j.impl.StaticLoggerBinder …
+Defaulting to no-operation (NOP) logger` — a run whose logging was silently
+dead, from a step that looked like it had worked. Letting the bundle's own
+`mvnw` do `dependency:copy-dependencies -DincludeScope=test` offline gives 95
+jars, 52 MB, one slf4j and logback bound. **`-DincludeScope=test`, not
+`runtime`**: Gatling's own archetype declares `gatling-charts-highcharts` at
+`test` scope, so `runtime` resolves to an EMPTY directory and reproduces the
+"Could not find or load main class" the whole step exists to prevent.
+
+THIRD, **A `role` IS A PROMISE, AND HALF-KEEPING IT IS WORSE THAN NOT MAKING
+IT.** `ThemeToggle` shipped `role="radiogroup"` with three `role="radio"`
+buttons and no arrow-key handling, on the reasoning that three tab stops cost
+less than an interaction with no browser test over it. A screen reader
+announces "radio button, 1 of 3" and its user then presses an arrow key,
+because that is what the role means; nothing happened. Three plain buttons
+would at least have been honest. It has a roving tabindex now
+(`ThemeToggle.test.tsx`, 9 cases), and the case that matters most asserts
+FOCUS moves and not just `aria-checked` — a roving tabindex that never moves
+focus leaves the caret on a segment that is no longer the tab stop.
+
+FOURTH, **THE CSP's `script-src` HASH IS COMPUTED, NEVER WRITTEN DOWN.**
+`index.html` carries an inline theme script on purpose (it is the pre-paint
+write that avoids the white flash), so a policy with `script-src 'self'`
+blocks it — and the symptom is a flash plus a console error nobody is
+watching for, with no test failing. `security-headers.ts` reads the built
+`index.html` at boot and hashes what is actually in it, so those five lines can
+change freely. `style-src` DOES keep `'unsafe-inline'`, and that is the
+weakest line in the policy: ECharts writes inline `style` attributes on every
+render, up to ten charts per run page, so the choice is that or no charts.
+The e2e case that guards all of it reads the CONSOLE while the real bundle
+boots — header assertions cannot tell you whether a browser could still run
+the page.
+
+FIFTH, **`vitest/globals` USED TO IMPLY `@types/node`, AND STOPPED.**
+`apps/web/test/tsconfig.json` listed `"types": ["vitest/globals"]` and
+`palette`, `paths`, `tokens` and both `transforms.*` suites resolved
+`node:fs` and `process` through it by accident. Under Vitest 4 they all stopped
+compiling at once with `Cannot find module 'node:fs'`. Those suites read source
+files off disk deliberately — `paths.test.ts` reads `App.tsx`, `tokens.test.ts`
+reads the emitted CSS — so the dependency is real and is now declared.
+
+A SIXTH THING IS NOT A LESSON BUT IT WILL COST SOMEBODY AN HOUR: **`pnpm audit
+--prod` is a CI gate now**, and the four `pnpm.overrides` in `package.json`
+plus the Vitest 2→4 upgrade are what took it from 1 critical / 6 high / 7
+moderate to zero. The vitest chain reached the PRODUCTION graph because
+`better-auth` declares `vitest` as an OPTIONAL PEER and pnpm satisfies it from
+the workspace root's dev copy — so the repo's own test runner was, by pnpm's
+reckoning, a production dependency of `apps/api`. Vitest 4 pairs with the
+vite 8 `apps/web` already had, so there is now one vite in the tree instead of
+two.
+
+Before that, the sla-threshold-unit branch added no
 unit FILE and 17 unit cases — 14 to `packages/contracts/test/rules.test.ts`
 (one is an `it.each` over the seven scalars) and 3 to
 `apps/web/test/ProjectRules.test.tsx` — from a floor of 133 / 1466. Its
-integration floor is **127 files / 1568 tests** (that `rules.test.ts` is a
-`.ts` file integration runs too) and e2e stays 101.
+integration floor was **127 files / 1568 tests** (that `rules.test.ts` is a
+`.ts` file integration runs too) and e2e was 101.
 
 ONE THING FROM IT, AND NO TEST COULD HAVE FOUND IT.
 

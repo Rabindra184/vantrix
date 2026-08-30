@@ -36,6 +36,19 @@ const runRule = (over: Record<string, unknown> = {}) => ({
 const asSession = (method: 'post' | 'get' | 'patch' | 'delete', path: string) =>
   request(ctx.app.getHttpServer())[method](path).set('Cookie', cookie);
 
+/**
+ * ═══ EVERY STATUS ASSERTION IN THIS FILE CARRIES THE BODY ═══
+ *
+ * `expect(res.status).toBe(201)` reports `expected 501 to be 201` and nothing
+ * else — no code, no detail, no remediation, and no way to tell a server
+ * error from a guard doing its job. This suite produced exactly that once, in
+ * a full run, and passed on every rerun; with the body attached, the same
+ * failure would have arrived with the problem document that explains it.
+ *
+ * The cost is one argument per assertion and it is paid only on failure:
+ * vitest evaluates the message eagerly, but `JSON.stringify` of a parsed
+ * response body is nothing next to the HTTP round trip above it.
+ */
 const createRule = async (over: Record<string, unknown> = {}) => {
   const res = await asSession('post', RULES).send(runRule(over));
   expect(res.status, JSON.stringify(res.body)).toBe(201);
@@ -45,7 +58,7 @@ const createRule = async (over: Record<string, unknown> = {}) => {
 describe('POST /v1/projects/:slug/rules', () => {
   it('creates a rule and returns it complete, with an id and both instants', async () => {
     const res = await asSession('post', RULES).send(runRule({ name: 'Checkout p95 gate' }));
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body).toMatchObject({
       name: 'Checkout p95 gate',
       scope: 'run',
@@ -66,7 +79,7 @@ describe('POST /v1/projects/:slug/rules', () => {
 
   it('names the rule null when the author gave it none', async () => {
     const res = await asSession('post', RULES).send(runRule());
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.name).toBeNull();
   });
 
@@ -81,7 +94,7 @@ describe('POST /v1/projects/:slug/rules', () => {
    */
   it('refuses a metric the evaluator could never resolve', async () => {
     const res = await asSession('post', RULES).send(runRule({ metric: 'p95th' }));
-    expect(res.status).toBe(400);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
     expect(res.body.code).toBe('INVALID_SLA_RULE');
     // The remediation must name what IS valid — a 400 that only says "invalid"
     // leaves the author guessing at the very thing they got wrong.
@@ -90,7 +103,7 @@ describe('POST /v1/projects/:slug/rules', () => {
 
   it.each(['p0', 'p100', 'P95', 'errorRate'])('refuses the unresolvable metric %s', async (metric) => {
     const res = await asSession('post', RULES).send(runRule({ metric }));
-    expect(res.status).toBe(400);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
   });
 
   /**
@@ -122,7 +135,7 @@ describe('POST /v1/projects/:slug/rules', () => {
 
   it('refuses a threshold no comparison could pass', async () => {
     const res = await asSession('post', RULES).send({ ...runRule(), threshold: 'soon' });
-    expect(res.status).toBe(400);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
   });
 
   // ═══ The guard, both directions ═══
@@ -131,7 +144,7 @@ describe('POST /v1/projects/:slug/rules', () => {
       .post(RULES)
       .set('Authorization', `Bearer ${ctx.readToken}`)
       .send(runRule());
-    expect(res.status).toBe(403);
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
   });
 
   it('404s for a project in another organisation, never 403', async () => {
@@ -140,7 +153,7 @@ describe('POST /v1/projects/:slug/rules', () => {
       data: { orgId: other.id, slug: 'other-rules-project', name: 'Other' },
     });
     const res = await asSession('post', '/v1/projects/other-rules-project/rules').send(runRule());
-    expect(res.status).toBe(404);
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
   });
 });
 
@@ -151,7 +164,7 @@ describe('GET /v1/projects/:slug/rules', () => {
     await asSession('patch', `${RULES}/${first.id}`).send({ enabled: false });
 
     const res = await asSession('get', RULES);
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     const names = (res.body.rules as { name: string }[]).map((r) => r.name);
     // An authoring list MUST show a disabled rule — "disabled" is a state a
     // reader put it in and has to be able to undo. `listEnabled`, which
@@ -192,7 +205,7 @@ describe('PATCH /v1/projects/:slug/rules/:ruleId', () => {
   it('retunes a threshold and moves updatedAt', async () => {
     const created = await createRule();
     const res = await asSession('patch', `${RULES}/${created.id}`).send({ threshold: 1200 });
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.threshold).toBe(1200);
     expect(Date.parse(res.body.updatedAt)).toBeGreaterThanOrEqual(
       Date.parse(created.createdAt as string),
@@ -219,14 +232,14 @@ describe('PATCH /v1/projects/:slug/rules/:ruleId', () => {
     async (patch) => {
       const created = await createRule();
       const res = await asSession('patch', `${RULES}/${created.id}`).send(patch);
-      expect(res.status).toBe(400);
+      expect(res.status, JSON.stringify(res.body)).toBe(400);
     },
   );
 
   it('refuses an empty patch rather than reporting a write it never made', async () => {
     const created = await createRule();
     const res = await asSession('patch', `${RULES}/${created.id}`).send({});
-    expect(res.status).toBe(400);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
   });
 
   it('404s for a rule id that belongs to another organisation', async () => {
@@ -248,7 +261,7 @@ describe('PATCH /v1/projects/:slug/rules/:ruleId', () => {
     });
 
     const res = await asSession('patch', `${RULES}/${theirs.id}`).send({ threshold: 5 });
-    expect(res.status).toBe(404);
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
     // And it really was not touched — a 404 that still wrote would be the
     // worst possible outcome.
     const after = await ctx.prisma.slaRule.findUnique({ where: { id: theirs.id } });
@@ -257,7 +270,7 @@ describe('PATCH /v1/projects/:slug/rules/:ruleId', () => {
 
   it('400s on a rule id that is not a UUID at all', async () => {
     const res = await asSession('patch', `${RULES}/not-a-uuid`).send({ threshold: 5 });
-    expect(res.status).toBe(400);
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
     expect(res.body.code).toBe('INVALID_ID');
   });
 });
@@ -266,7 +279,7 @@ describe('DELETE /v1/projects/:slug/rules/:ruleId', () => {
   it('removes the rule and returns what it removed', async () => {
     const created = await createRule({ name: 'retired' });
     const res = await asSession('delete', `${RULES}/${created.id}`);
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body).toMatchObject({ id: created.id, name: 'retired' });
 
     const list = await asSession('get', RULES);
@@ -327,7 +340,7 @@ describe('DELETE /v1/projects/:slug/rules/:ruleId', () => {
     const res = await request(ctx.app.getHttpServer())
       .delete(`${RULES}/${created.id}`)
       .set('Authorization', `Bearer ${ctx.readToken}`);
-    expect(res.status).toBe(403);
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
   });
 });
 
@@ -416,7 +429,7 @@ describe('rules scoped to one test', () => {
    */
   it('404s an unknown test slug rather than widening the rule to everything', async () => {
     const res = await asSession('post', RULES).send(runRule({ testSlug: 'no-such-test' }));
-    expect(res.status).toBe(404);
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
     expect(await ctx.prisma.slaRule.count()).toBe(0);
   });
 
@@ -495,7 +508,7 @@ describe('rules scoped to one test', () => {
   it('404s ?test= for a slug that names nothing, rather than answering unfiltered', async () => {
     await createRule();
     const res = await asSession('get', `${RULES}?test=no-such-test`);
-    expect(res.status).toBe(404);
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
   });
 
   /**
