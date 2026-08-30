@@ -151,13 +151,12 @@ Authentication section) — no run id needed up front:
       -d '{"email":"you@example.test","password":"<printed password>"}'
     curl -sS -b /tmp/cookies.txt http://localhost:3000/v1/runs
 
-The session cookie is minted `secure: true` (see the root `README.md`'s
-Authentication section), so this recipe working over plain `http://localhost`
-is specific to `curl`, which — unlike a browser — replays a `Secure` cookie
-over plain HTTP regardless of host. A real, non-TLS deployment reachable by
-hostname gets no session at all from a browser: sign-in appears to succeed,
-but no cookie is ever stored, and every subsequent `/v1` request 401s as if
-uncredentialed.
+On `http://localhost` the cookie is minted WITHOUT `Secure` — see the root
+`README.md`'s Authentication section for why that exemption is loopback-only
+and why Safari is the reason it exists. A real, non-TLS deployment reachable
+by hostname still gets `Secure`, and therefore no session at all from a
+browser: sign-in appears to succeed, no cookie is ever stored, and every
+subsequent `/v1` request 401s as if uncredentialed.
 
 ## Running the slice
 

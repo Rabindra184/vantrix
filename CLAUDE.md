@@ -74,15 +74,23 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **136 files / 1516 tests**, it
+`nvm use` first, and if a run reports fewer than **137 files / 1533 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
-THREE unit files — `apps/api/test/config.test.ts` (6),
-`apps/api/test/security-headers.test.ts` (18) and
-`apps/web/test/ThemeToggle.test.tsx` (9) — from a floor of 133 / 1483. Its
-integration floor is **129 files / 1592 tests** (the two new `.ts` files
-run there too) and its **e2e rises to 102** (`smoke.spec.ts` gained the CSP case).
+FOUR unit files — `apps/api/test/config.test.ts` (6),
+`apps/api/test/security-headers.test.ts` (18),
+`apps/web/test/ThemeToggle.test.tsx` (9) and
+`packages/persistence/test/auth-cookies.test.ts` (17) — from a floor of
+133 / 1483. Its integration floor is **130 files / 1609 tests** (the three
+new `.ts` files run there too) and its **e2e rises to 102**
+(`smoke.spec.ts` gained the CSP case).
+
+**AND ITS e2e IS THE FIRST THAT RUNS ON THREE ENGINES.** `pnpm test:e2e` is
+still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
+firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
+on demand. The WebKit third of that is worth its wall-clock all by itself —
+see the eighth lesson below.
 
 FIVE THINGS FROM IT, AND FOUR OF THEM WERE BROKEN BY THE WORLD RATHER THAN BY
 A COMMIT HERE.
@@ -150,6 +158,36 @@ docker run --rm --privileged --pid=host alpine \
 deleting millions of small files. `docker builder prune` and `docker image
 prune` do NOT touch it — both were run first here, reclaimed 4 GB of bytes, and
 moved the inode count by nothing.
+
+AN EIGHTH THING, AND IT IS A PRODUCT DEFECT THAT ONLY A THIRD ENGINE COULD
+FIND. **`secure: true` ON THE SESSION COOKIE MEANT NOBODY COULD SIGN IN TO A
+LOCAL INSTANCE IN SAFARI.** Adding the WebKit e2e project turned 98 of its 102
+specs red; 95 of the 98 page snapshots are the LOGIN FORM, which is what every
+authenticated route renders when the session never established. A
+three-engine probe against a plain-HTTP loopback server setting one `Secure`
+cookie says it in one line each:
+
+```
+chromium  cookie:pp_session=abc
+firefox   cookie:pp_session=abc
+webkit    cookie:(none)
+```
+
+Chromium and Firefox treat loopback as a trustworthy origin and store it;
+WebKit does not. `cookiesAreSecure` now exempts `localhost`, `127.0.0.1` and
+`[::1]` and NOTHING else — a plain-HTTP deployment reachable by hostname still
+gets `Secure` and still fails closed, which is the property worth keeping.
+`auth-cookies.test.ts` asserts both halves, because a test that only checked
+the exemption would pass just as happily against `secure: false` everywhere.
+
+**`URL.hostname` KEEPS THE BRACKETS ON AN IPv6 LITERAL** — it is `[::1]`, not
+`::1`. The first version of that comparison used the unbracketed form and only
+the `http://[::1]:3000` case caught it.
+
+**THE GENERAL LESSON IS ABOUT WHAT ONE ENGINE CANNOT TELL YOU.** Every unit
+test, every integration test and 102 Chromium e2e specs were green while a
+whole browser could not log in. Adding an engine is not redundant coverage; it
+is the only thing that can see a decision a spec leaves to the implementation.
 
 SECOND, **FLATTENING A MAVEN REPOSITORY IS NOT THE SAME AS RESOLVING ONE.**
 The obvious fix for the Gatling bundle was to copy every jar out of its

@@ -161,13 +161,23 @@ base URL Better Auth derives `trustedOrigins` from — its CSRF origin check.
 The default is fine locally; **set it to the service's public origin in any
 real deployment.**
 
-**The session cookie requires TLS.** `packages/persistence/src/auth.ts` mints
-it with `secure: true` unconditionally, so on a non-TLS deployment reachable
-by hostname (not `localhost`), a browser never stores it — every session
-attempt then looks identical to "no credential" and lands on `/v1`'s generic
-401. If session sign-in behaves as though it silently does nothing on a real
-deployment, check that the deployment is served over HTTPS before suspecting
-the auth code.
+**The session cookie requires TLS anywhere but loopback.**
+`packages/persistence/src/auth.ts` mints it `Secure` unless the base URL's
+host is `localhost`, `127.0.0.1` or `[::1]`. So on a non-TLS deployment
+reachable by hostname a browser never stores it — every session attempt looks
+identical to "no credential" and lands on `/v1`'s generic 401. That is
+deliberate: a session cookie a browser will send in the clear across a real
+network is one an attacker on the path can read. If sign-in behaves as though
+it silently does nothing on a real deployment, check that it is served over
+HTTPS before suspecting the auth code.
+
+**The loopback exemption exists because Safari needs it.** Measured with a
+three-engine probe against a plain-HTTP loopback server setting one `Secure`
+cookie: Chromium and Firefox stored it, WebKit did not. Loopback is a
+potentially-trustworthy origin by every browser's own spec — there is no
+network between the two ends — but WebKit does not extend `Secure` handling to
+it. Without the exemption **nobody can sign in to a local instance in
+Safari**, and the WebKit end-to-end project cannot get past the login form.
 
 ## Deploying it
 
