@@ -16,6 +16,27 @@ import { defineConfig, devices } from '@playwright/test';
  * database — the integration suite will wipe whatever this suite just
  * seeded, mid-assertion.
  */
+/**
+ * 3000 unless told otherwise. `reuseExistingServer` is deliberately false
+ * (see below), so ANYTHING already listening on this port fails the whole run
+ * before a single spec — including a completely unrelated project of yours,
+ * which is exactly how this was met:
+ *
+ *     Error: http://localhost:3000 is already used, make sure that nothing is
+ *     running on the port/url or set reuseExistingServer:true
+ *
+ * `PERFPORTAL_E2E_PORT=3100 pnpm test:e2e` moves the whole harness — the
+ * server's own PORT, the URL Playwright waits on, baseURL, AND
+ * `apps/web/e2e/fixtures.ts`, which reads the same variable because it seeds
+ * over plain fetch and cannot see `baseURL`. All four or none: moving three of
+ * them sent the browser to 3100 and the seeding to 3000, and 214 specs failed
+ * with a 404 from whatever else was listening there.
+ *
+ * It stays same-origin, which is the property the session cookie depends on.
+ */
+const PORT = process.env.PERFPORTAL_E2E_PORT ?? '3000';
+const ORIGIN = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: 'apps/web/e2e',
   fullyParallel: true,
@@ -24,7 +45,7 @@ export default defineConfig({
   reporter: 'list',
   timeout: 60_000,
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: ORIGIN,
     trace: 'on-first-retry',
   },
   /**
@@ -70,8 +91,8 @@ export default defineConfig({
     // apps/worker/dist/pipeline/pipeline.service.js directly to run the
     // ingest pipeline synchronously against the same database, with no live
     // worker — see fixtures.ts's own comment for why.
-    command: 'pnpm build && pnpm --filter @perfportal/api start',
-    url: 'http://localhost:3000',
+    command: `pnpm build && PORT=${PORT} pnpm --filter @perfportal/api start`,
+    url: ORIGIN,
     // A full workspace build (tsc -b across every package, plus the api,
     // worker and web builds) comfortably exceeds Playwright's 60s default
     // webServer timeout on a cold cache.

@@ -131,6 +131,30 @@ is built to carry (java, the Gatling runtime, and a production start with no
 auth secret). **Do not add anything to `infra/` without adding its check
 there**; the whole cost above was paid for a file nothing ran.
 
+THREE THINGS THE CROSS-BROWSER SUITE COST TO SET UP, AND ALL THREE WILL
+RECUR. **`pnpm test:e2e:cross` NEEDS `--workers=2` ON THIS MACHINE**, for the
+reason CLAUDE.md already records for the Chromium suite one paragraph over —
+except three engines is three times the load. At the default it reported 19
+Firefox failures, twelve of them `toHaveCount` on a chart that drew no SVG;
+the same spec passed in isolation on Firefox in 5.2s. **A chart that "did not
+draw" in one engine and drew in the other two is a worker-count symptom, not a
+rendering bug** — check it alone before believing it.
+
+**`PERFPORTAL_E2E_PORT` MOVES FOUR THINGS, NOT THREE.** `playwright.config.ts`
+owns `baseURL`, `webServer.url` and the server's own `PORT`; `fixtures.ts`
+owns its own copy, because it seeds over plain `fetch` and can never see
+`baseURL`. Moving three of them sent the browser to 3100 and the seeding to
+3000 — where an unrelated project was listening — and 214 of 306 specs failed
+with `POST /v1/runs expected 202, got 404` naming somebody else's server. The
+port is worth having because `reuseExistingServer` is deliberately false, so
+anything at all on 3000 fails the whole run before a single spec.
+
+**`test.skip(fn, reason)` AT FILE SCOPE SKIPS THE FILE.** Reaching for it to
+exempt ONE test from one engine silently drops that whole spec file on that
+engine. It belongs inside the test body, taking `browserName` from the
+fixture. `--list` is the check: `project-rail.spec.ts` collects 21 across
+three engines either way, and only a runtime skip leaves it at 21.
+
 A SEVENTH THING, AND IT IS THE ONE MOST LIKELY TO WASTE SOMEBODY'S AFTERNOON.
 **THE ANONYMOUS-VOLUME BUG ABOVE IS WHAT EVENTUALLY BREAKS THE INTEGRATION
 SUITE ON A LONG-LIVED MACHINE, AND IT DOES NOT REPORT ITSELF.** Postgres and
@@ -188,6 +212,23 @@ the `http://[::1]:3000` case caught it.
 test, every integration test and 102 Chromium e2e specs were green while a
 whole browser could not log in. Adding an engine is not redundant coverage; it
 is the only thing that can see a decision a spec leaves to the implementation.
+
+**AND SOME OF WHAT IT SEES IS THE OPERATING SYSTEM, NOT THE PAGE.** Whether
+Tab reaches a LINK is a macOS keyboard-navigation preference, and the three
+engines ship different defaults — measured against a two-element page on a
+real origin:
+
+```
+chromium  Tab order: lnk → btn
+firefox   Tab order: btn → btn        ← the link is skipped
+webkit    Tab order: (body) → (body)  ← nothing is focusable by Tab
+```
+
+So `project-rail.spec.ts`'s skip-link test is Chromium-only, and that is not a
+gap in the product: the markup is correct, and a keyboard user with full
+keyboard access on gets the link in every engine. Weakening the assertion to
+`focus()`-then-check would pass everywhere and stop testing the thing that
+matters, which is that the skip link is the FIRST stop.
 
 SECOND, **FLATTENING A MAVEN REPOSITORY IS NOT THE SAME AS RESOLVING ONE.**
 The obvious fix for the Gatling bundle was to copy every jar out of its

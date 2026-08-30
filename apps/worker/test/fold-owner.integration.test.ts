@@ -700,6 +700,34 @@ describe('LiveFoldOwner', () => {
   });
 
   /**
+   * ═══ WRAPPING THE SAME CLIENT TWICE IS INFINITE RECURSION ═══
+   *
+   * `wrapClient` captures `realQuery` by binding `client.query` and then spies
+   * on that same property. A pool HANDS THE SAME CLIENT OBJECT OUT AGAIN — that
+   * is what a pool is — so the second wrap binds the spy installed by the first,
+   * and the spy's implementation calls it: spy → realQuery(= spy) → spy, until
+   * the stack runs out.
+   *
+   * It went unnoticed under Vitest 2 and surfaced immediately on 4 as
+   * `RangeError: Maximum call stack size exceeded`, alternating between
+   * `@vitest/spy`'s `Client.query` and this file. It never depended on the
+   * runner: re-wrapping was always wrong, and the two tests that do it were
+   * always one pool-reuse away from this.
+   *
+   * `LiveFoldOwner` swallows a claim failure into `console.error` (`#guarded`),
+   * so the visible symptom was neither a crash nor a stack trace but
+   * `expect(owner.snapshotOf(goodRunId)).not.toBeNull()` failing — a claim that
+   * simply never happened. The error was in the run's stderr all along.
+   */
+  const WRAPPED = Symbol('perfportal.test.wrappedClient');
+
+  function alreadyWrapped(client: pg.PoolClient): boolean {
+    if ((client as unknown as Record<symbol, unknown>)[WRAPPED] === true) return true;
+    (client as unknown as Record<symbol, unknown>)[WRAPPED] = true;
+    return false;
+  }
+
+  /**
    * Fix round 1, Important 6. `close()` used to await `#release` in a
    * sequential loop with no per-run isolation, so one run's unlock query
    * throwing abandoned every run still left in `#owned` at that point in
@@ -751,6 +779,9 @@ describe('LiveFoldOwner', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#connect's own overloaded signature verbatim
     const realConnect = pool.connect.bind(pool) as (...a: any[]) => any;
     function wrapClient(client: pg.PoolClient): pg.PoolClient {
+      // See `alreadyWrapped`: a second wrap of the same client binds the first
+      // wrap's spy and recurses until the stack runs out.
+      if (alreadyWrapped(client)) return client;
       const realQuery = client.query.bind(client);
       vi.spyOn(client, 'query').mockImplementation(((...args: unknown[]) => {
         const [text, params] = args;
@@ -844,6 +875,8 @@ describe('LiveFoldOwner', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- forwarding pg.Pool#connect's own overloaded signature verbatim
     const realConnect = ownerPool.connect.bind(ownerPool) as (...a: any[]) => any;
     function wrapClient(client: pg.PoolClient): pg.PoolClient {
+      // Same guard, same reason as the test above.
+      if (alreadyWrapped(client)) return client;
       const realQuery = client.query.bind(client);
       vi.spyOn(client, 'query').mockImplementation(((...args: unknown[]) => {
         const [text] = args;

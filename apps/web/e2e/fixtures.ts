@@ -44,7 +44,23 @@ if (!DATABASE_URL) {
 // playwright.config.ts's use.baseURL, duplicated here rather than imported:
 // fixtures.ts talks to the server over plain HTTP (fetch), never through a
 // Playwright `page`, so it has no access to the test-level `baseURL` fixture.
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000';
+//
+// ═══ IT MUST READ THE SAME PORT playwright.config.ts DOES ═══
+//
+// The duplication above is unavoidable; letting the two DISAGREE is not. When
+// `PERFPORTAL_E2E_PORT` was added to the config and not here, the browser went
+// to 3100 and the seeding stayed on 3000 — where an unrelated project happened
+// to be listening. 214 of 306 specs failed with
+//
+//     POST /v1/runs expected 202, got 404: {"message":"The requested path
+//     (/var/folders/…/remotion-webpack-bundle-8yC7ug/v1/runs) could not be
+//     found"}
+//
+// which names somebody else's server and says nothing about a port. Both
+// halves read the variable now, so moving the harness moves all of it.
+const BASE_URL =
+  process.env.PLAYWRIGHT_BASE_URL ??
+  `http://localhost:${process.env.PERFPORTAL_E2E_PORT ?? '3000'}`;
 
 const prisma = createPrisma(DATABASE_URL);
 const pool = createPool(DATABASE_URL);

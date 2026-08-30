@@ -112,7 +112,39 @@ test('the rail sits left of the content column on a wide viewport', async ({ pag
   expect(railBox.x + railBox.width).toBeLessThanOrEqual(mainBox.x);
 });
 
-test('a skip link lets a keyboard user bypass the rail', async ({ page }) => {
+/**
+ * ═══ CHROMIUM ONLY, AND THE REASON IS THE OPERATING SYSTEM ═══
+ *
+ * This asserts that pressing Tab lands on the skip link. Whether Tab reaches
+ * a LINK at all is not a property of the page — it is a macOS/browser
+ * keyboard-navigation preference, and the three engines ship different
+ * defaults. Measured against a two-element page (`<a>` then `<button>`) on a
+ * real HTTP origin:
+ *
+ *     chromium  Tab order: lnk → btn
+ *     firefox   Tab order: btn → btn        ← the link is skipped
+ *     webkit    Tab order: (body) → (body)  ← nothing is focusable by Tab
+ *
+ * So on Firefox and WebKit this test asserts the OS default, not the markup.
+ * The skip link itself is correct and unchanged, and a keyboard user who has
+ * turned full keyboard access on — macOS Settings → Keyboard → "Keyboard
+ * navigation", or Safari's "Press Tab to highlight each item" — gets it in
+ * every engine; that setting is exactly what someone navigating by keyboard
+ * has on.
+ *
+ * Skipped rather than rewritten: an assertion weakened to
+ * `skipLink.focus()`-then-check would pass in all three and stop testing the
+ * thing that matters, which is that the skip link is the FIRST stop, ahead of
+ * the brand link and every rail row.
+ */
+test('a skip link lets a keyboard user bypass the rail', async ({ page, browserName }) => {
+  // INSIDE the test, not at file scope: `test.skip(fn, reason)` at the top
+  // level applies to every test in the FILE, which would silently drop the
+  // whole rail suite on two engines rather than this one assertion.
+  test.skip(
+    browserName !== 'chromium',
+    'Tab does not reach links under the macOS default keyboard-navigation setting — see the comment above this test.',
+  );
   const admin = await seedAdmin();
   await seedProjectWithRuns(admin.orgId, 'billing', 'Billing Exports', 2);
   await signIn(page, admin);
