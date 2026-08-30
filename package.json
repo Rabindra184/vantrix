@@ -16,7 +16,7 @@
     "test:unit": "vitest run",
     "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
-    "test:e2e:cross": "PERFPORTAL_E2E_BROWSERS=all playwright test",
+    "test:e2e:cross": "PERFPORTAL_E2E_BROWSERS=all playwright test --workers=1",
     "compose:check": "docker compose -f infra/docker-compose.yml config --quiet && docker compose -f infra/docker-compose.yml --profile onprem config --quiet",
     "lint": "eslint .",
     "typecheck": "tsc -b && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/api/test/tsconfig.json && tsc --noEmit -p apps/worker/tsconfig.json && tsc --noEmit -p apps/worker/test/tsconfig.json && tsc --noEmit -p apps/runner/tsconfig.json && tsc --noEmit -p apps/runner/test/tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json && tsc --noEmit -p apps/web/e2e/tsconfig.json && tsc --noEmit -p apps/web/test/tsconfig.json",

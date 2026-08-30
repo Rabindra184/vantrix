@@ -131,14 +131,26 @@ is built to carry (java, the Gatling runtime, and a production start with no
 auth secret). **Do not add anything to `infra/` without adding its check
 there**; the whole cost above was paid for a file nothing ran.
 
-THREE THINGS THE CROSS-BROWSER SUITE COST TO SET UP, AND ALL THREE WILL
-RECUR. **`pnpm test:e2e:cross` NEEDS `--workers=2` ON THIS MACHINE**, for the
-reason CLAUDE.md already records for the Chromium suite one paragraph over —
-except three engines is three times the load. At the default it reported 19
-Firefox failures, twelve of them `toHaveCount` on a chart that drew no SVG;
-the same spec passed in isolation on Firefox in 5.2s. **A chart that "did not
-draw" in one engine and drew in the other two is a worker-count symptom, not a
-rendering bug** — check it alone before believing it.
+FOUR THINGS THE CROSS-BROWSER SUITE COST TO SET UP, AND ALL FOUR WILL RECUR.
+
+**`test:e2e:cross` IS `--workers=1`, AND THAT IS MEASURED RATHER THAN
+CAUTIOUS.** At the default (5 workers here) it failed 19, then 7, then 9 — a
+DIFFERENT set each time, drifting between Firefox and WebKit, always timeouts
+or a chart that missed its 5s window. Serial: **303 passed, 3 skipped, 0
+failed, and FASTER** (6.7 min against 8.8), which is what contention looks
+like. Three engines is three times the Chromium suite's load, and CLAUDE.md
+already records that that one is unreliable at its default here. A chart that
+"did not draw" in one engine and drew in the other two is a worker-count
+symptom, not a rendering bug — check it alone before believing it.
+
+**AND THE TWO RUNS THAT LOOKED LIKE THEY PROVED THE WORKER COUNT PROVED
+NOTHING, BECAUSE THE FLAG NEVER APPLIED.** `pnpm test:e2e:cross -- --workers=2`
+SILENTLY DROPS THE FLAG — pnpm eats the `--` — and both runs reported
+`Running 306 tests using 5 workers` while being described as constrained. The
+19 → 7 "improvement" was the skip-link scoping plus noise. Write it as
+`pnpm test:e2e:cross --workers=1`, with no `--`, and **read the runner's own
+`Running N tests using M workers` line back** rather than trusting that an
+argument arrived.
 
 **AND AN EMULATED `colorScheme` DOES NOT REACH FIREFOX UNDER THE RUNNER.**
 Measured on Playwright 1.62.1 against a minimal spec with no fixtures and no
