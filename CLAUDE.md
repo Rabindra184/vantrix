@@ -140,6 +140,24 @@ the same spec passed in isolation on Firefox in 5.2s. **A chart that "did not
 draw" in one engine and drew in the other two is a worker-count symptom, not a
 rendering bug** — check it alone before believing it.
 
+**AND AN EMULATED `colorScheme` DOES NOT REACH FIREFOX UNDER THE RUNNER.**
+Measured on Playwright 1.62.1 against a minimal spec with no fixtures and no
+sign-in:
+
+```
+                      chromium  firefox  webkit
+page.emulateMedia       true     false    true
+test.use colorScheme    true     false    true
+```
+
+The same two calls through the LIBRARY api (`firefox.launch()` →
+`newContext()`), including with `devices['Desktop Firefox']`, report true. So
+`matchMedia('(prefers-color-scheme: dark)')` is genuinely false in the harness
+and the app painting its LIGHT background is CORRECT for what the browser told
+it — `run-charts.spec.ts`'s dark-mode case would be testing the runner. It is
+skipped on Firefox and still covered by the other two. **Before believing a
+theme assertion in a new engine, ask the page what `matchMedia` returns.**
+
 **`PERFPORTAL_E2E_PORT` MOVES FOUR THINGS, NOT THREE.** `playwright.config.ts`
 owns `baseURL`, `webServer.url` and the server's own `PORT`; `fixtures.ts`
 owns its own copy, because it seeds over plain `fetch` and can never see
