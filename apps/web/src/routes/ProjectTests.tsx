@@ -75,9 +75,15 @@ export default function ProjectTests() {
         <LayersIcon className="h-3.5 w-3.5" />
         Project runs
       </Link>
+      {/* "Add results", not "Setup" — review M15. The page it leads to used to
+          be four jobs at once and is now the three explicit ways to get a run
+          in; naming the destination after what the reader wants is half of
+          why the split was worth making. The SLA rules and Access pages are
+          one tab further, on that page's own nav, so this row stays three
+          buttons rather than five. */}
       <Link to={projectSetupPath(slug)} className={linkButtonClasses}>
         <SetupIcon className="h-3.5 w-3.5" />
-        Setup
+        Add results
       </Link>
       <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
         <PlayIcon className="h-3.5 w-3.5" />

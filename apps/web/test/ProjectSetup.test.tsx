@@ -1,12 +1,28 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fetchProjects } from '../src/api/projects.js';
-import { fetchProjectTokens, mintProjectToken, revokeProjectToken } from '../src/api/tokens.js';
+import { fetchRunnerJobs } from '../src/api/runner.js';
 import ProjectSetup from '../src/routes/ProjectSetup.js';
+
+/**
+ * ═══ REVIEW M15 — THE PAGE THAT WAS FOUR PAGES ═══
+ *
+ * `ProjectSetup` used to mint tokens, revoke tokens, explain importing and
+ * author SLA rules. The tokens moved to `ProjectAccess` (and their tests with
+ * them, in `ProjectAccess.test.tsx`, which is where this file's history is);
+ * the rules moved to their own page. What is left is the one job the review
+ * says was buried: getting a run into the project at all.
+ *
+ * So this file is about the THREE CHOICES and about their STATUS. The status
+ * is the half worth testing hardest, because it is the half that is easy to
+ * fake: two of the three are available because an endpoint exists, and the
+ * third depends on a machine this instance cannot see. The cases below spend
+ * most of their effort on the states that must NOT read as "available".
+ */
 
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
@@ -17,234 +33,196 @@ vi.mock('../src/api/projects.js', async (importOriginal) => ({
   })),
 }));
 
-vi.mock('../src/api/tokens.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/api/tokens.js')>()),
-  fetchProjectTokens: vi.fn(async () => ({
-    tokens: [
-      {
-        prefix: 'pp_existing',
-        name: 'Existing CI',
-        scopes: ['ingest', 'read'],
-        createdAt: '2026-08-20T00:00:00.000Z',
-        lastUsedAt: null,
-        revokedAt: null,
-      },
-    ],
-  })),
-  mintProjectToken: vi.fn(async (_slug, body) => ({
-    token: 'pp_abc123_secret456',
-    prefix: 'pp_abc123',
-    name: body.name,
-    scopes: body.scopes,
-    createdAt: '2026-08-20T00:00:00.000Z',
-  })),
-  revokeProjectToken: vi.fn(async () => ({
-    prefix: 'pp_existing',
-    name: 'Existing CI',
-    scopes: ['ingest', 'read'],
-    createdAt: '2026-08-20T00:00:00.000Z',
-    lastUsedAt: null,
-    revokedAt: '2026-08-21T00:00:00.000Z',
-  })),
-}));
-
-/**
- * The rules panel is a third data-dependent section of this page, and this
- * file is not about it — but leaving it unmocked does not leave it silent:
- * its query fails against no server and it announces that, in a `role="alert"`
- * the token tests below then resolved to instead of their own. Mocked to a
- * quiet empty list, the same as projects and tokens above. `ProjectRules.test.tsx`
- * is where the panel's own behaviour is pinned.
- */
-vi.mock('../src/api/rules.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/api/rules.js')>()),
-  fetchProjectRules: vi.fn(async () => ({ rules: [] })),
+vi.mock('../src/api/runner.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/api/runner.js')>()),
+  fetchRunnerJobs: vi.fn(async () => ({ items: [] })),
 }));
 
 const fetchProjectsMock = vi.mocked(fetchProjects);
-const fetchProjectTokensMock = vi.mocked(fetchProjectTokens);
-const mintProjectTokenMock = vi.mocked(mintProjectToken);
-const revokeProjectTokenMock = vi.mocked(revokeProjectToken);
-
-beforeEach(() => {
-  Object.assign(navigator, {
-    clipboard: { writeText: vi.fn(async () => undefined) },
-  });
-});
+const fetchRunnerJobsMock = vi.mocked(fetchRunnerJobs);
 
 afterEach(() => {
   cleanup();
   fetchProjectsMock.mockClear();
-  fetchProjectTokensMock.mockClear();
-  mintProjectTokenMock.mockClear();
-  revokeProjectTokenMock.mockClear();
+  fetchRunnerJobsMock.mockClear();
 });
 
-describe('ProjectSetup', () => {
-  // The two token blocks, so an assertion can name the one it means rather
-  // than resolving to whichever of the page's alerts happened to render.
-  /** The mint form and the once-only secret it reveals. */
-  const mintCard = () => screen.getByTestId('token-mint');
-  /** The token table and the revoke alert that sits above it. */
-  const tokenList = () => screen.getByTestId('token-list');
+/** A runner job list item, shaped enough for the readiness rules. */
+function job(status: string, agedMs: number) {
+  const at = new Date(Date.now() - agedMs).toISOString();
+  return {
+    artifact: {
+      id: '00000000-0000-4000-8000-0000000000b1',
+      name: 'artifact',
+      filename: 'sim.jar',
+      kind: 'gatling_jar' as const,
+      simulationClass: 'example.BasicSimulation',
+      gatlingVersion: null,
+      sha256: 'x'.repeat(64),
+      bytes: 10,
+      createdAt: at,
+    },
+    job: {
+      id: '00000000-0000-4000-8000-0000000000c1',
+      artifactId: '00000000-0000-4000-8000-0000000000b1',
+      runId: null,
+      status,
+      requestedBy: 'someone@example.test',
+      environment: null,
+      branch: null,
+      commitSha: null,
+      testSlug: null,
+      javaOptions: null,
+      systemProperties: {},
+      error: null,
+      createdAt: at,
+      updatedAt: at,
+    },
+  } as unknown as Awaited<ReturnType<typeof fetchRunnerJobs>>['items'][number];
+}
 
-  function renderSetup() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    return render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/projects/alpha/setup']}>
-          <Routes>
-            <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  }
-
-  it('mints a scoped token and renders the once-only secret with the ingest command', async () => {
-    renderSetup();
-
-    expect(await screen.findByRole('heading', { name: 'Project setup' })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/token name/i), { target: { value: 'Nightly CI' } });
-    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
-
-    expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
-    expect(screen.getByText(/curl -H/)).toHaveTextContent('pp_abc123_secret456');
-    expect(mintProjectTokenMock).toHaveBeenCalledWith('alpha', {
-      name: 'Nightly CI',
-      scopes: ['ingest', 'read'],
-    });
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-
-  /**
-   * THE ONE ACTION WHERE SILENCE IS DANGEROUS, and the only path the mint
-   * side already covered by having its own `role="alert"`.
-   *
-   * A revoke that fails used to be indistinguishable from one that
-   * succeeded: the spinner stopped, the row still read "Active", and nothing
-   * was announced. An operator killing a LEAKED credential would conclude it
-   * was dead while it was still live — so this asserts the alert exists, is
-   * announced, names the token, and carries what the server actually said.
-   */
-  it('says so when a revoke fails, rather than looking like it worked', async () => {
-    revokeProjectTokenMock.mockRejectedValueOnce(new Error('network down'));
-    renderSetup();
-
-    expect(await screen.findByText('pp_existing')).toBeInTheDocument();
-    // Two clicks, because revoking is now deliberate: arm, then confirm.
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
-
-    // SCOPED to the token list, not `screen`. This page has several sections
-    // that each announce their own failures, so a page-wide alert query
-    // silently asks "did ANYTHING go wrong" rather than "did the revoke".
-    const alert = await within(tokenList()).findByRole('alert');
-    // Names the token, and does NOT overclaim: a request that failed on the
-    // way back may still have succeeded on the server.
-    expect(alert).toHaveTextContent('pp_existing');
-    expect(alert).toHaveTextContent(/may still be active/i);
-    // The server's own words reach the reader.
-    expect(alert).toHaveTextContent('network down');
-  });
-
-  it('lists existing tokens and revokes by prefix', async () => {
-    renderSetup();
-
-    expect(await screen.findByText('Existing CI')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
-    await waitFor(() => {
-      expect(revokeProjectTokenMock).toHaveBeenCalledWith('alpha', 'pp_existing');
-    });
-  });
-
-  /**
-   * THE CONFIRMATION IS THE TEST, not the revoke.
-   *
-   * This is the app's only destructive control, and it used to fire on one
-   * click of a `ghost` button sitting in a dense table row: a misclick
-   * revoked a live credential, every CI job using it began failing 401, and
-   * there is no undo — only minting a replacement and redistributing it.
-   *
-   * Asserting the NEGATIVE is the whole point: arming the control must not
-   * call the API. A test that only clicked twice and checked the call would
-   * pass against the original one-click code.
-   */
-  it('does not revoke on the first click, and can be cancelled', async () => {
-    renderSetup();
-
-    expect(await screen.findByText('Existing CI')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
-    expect(revokeProjectTokenMock).not.toHaveBeenCalled();
-
-    // Cancel disarms it and puts the original control back, so nothing is
-    // left primed in the row.
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Confirm revoke' })).toBeNull();
-    expect(revokeProjectTokenMock).not.toHaveBeenCalled();
-  });
-
-  /**
-   * The clipboard is absent on any page that is not a secure context —
-   * plain http on anything but localhost, i.e. an ordinary way to reach an
-   * on-prem install. The old code optional-chained it, so `await undefined`
-   * resolved and the button said "Copied" over a secret that had gone
-   * nowhere, shown once and never again.
-   */
-  it('admits it when the token could not be copied', async () => {
-    Object.assign(navigator, { clipboard: undefined });
-    renderSetup();
-
-    expect(await screen.findByRole('heading', { name: 'Project setup' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
-    expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-
-    expect(await within(mintCard()).findByRole('alert')).toHaveTextContent(/could not be copied/i);
-    // And it must NOT claim success.
-    expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
-  });
-});
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/projects/alpha/setup']}>
+        <Routes>
+          <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 /**
- * REVIEW M14 — THE ONBOARDING RECIPE COULD NOT BE RUN.
+ * One entry card, awaited.
  *
- * The curl example ended in a bare `/v1/runs`. A shell does not resolve that
- * against the page's origin, so the one command this page exists to hand a
- * new user fails with "URL rejected: No host part in the request URL". It is
- * the first thing anybody copies out of this product.
- *
- * The origin is knowable at render — the page is being served from it — so the
- * command carries a real, runnable URL.
+ * ASYNC because the whole page sits behind a project lookup — `ProjectConfigPage`
+ * renders a loading state until `fetchProjects` resolves, so a synchronous
+ * `getByTestId` here races the query and fails with "unable to find" for a
+ * card that is about to exist. Four cases were written that way first and
+ * failed for that reason alone.
  */
-describe('ProjectSetup — the upload command is runnable as shown', () => {
-  function render0() {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/projects/alpha/setup']}>
-          <Routes>
-            <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  }
+const entry = (name: string): Promise<HTMLElement> =>
+  screen.findByTestId(`entry-${name.toLowerCase().replace(/\s+/g, '-')}`);
 
-  it('carries an absolute URL, not a bare path', async () => {
-    render0();
-    const command = await screen.findByTestId('upload-command');
-    expect(command.textContent).toMatch(/https?:\/\/[^\s]+\/v1\/runs/);
+describe('ProjectSetup — the three ways in', () => {
+  it('offers import, run and CI as named choices rather than one recipe', async () => {
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Add results', level: 1 })).toBeInTheDocument();
+
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
+      expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
+    }
   });
 
-  it('does not leave a bare /v1/runs that a shell cannot resolve', async () => {
-    render0();
+  /**
+   * THE POINT OF THE SPLIT, ASSERTED AS AN ABSENCE AND A PRESENCE.
+   *
+   * Importing needs a credential, and the old page satisfied that by BEING
+   * the credentials page — which is what made it the only route to import
+   * instructions. Naming the prerequisite and linking to it is the opposite
+   * arrangement, so the presence of the link matters; so does the absence of
+   * a mint form, because re-adding one would quietly rebuild the old page.
+   */
+  it('names the token it needs and links to it, instead of managing tokens', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Add results', level: 1 });
+
+    const link = within(await entry('Import results')).getByRole('link', { name: /mint one under access/i });
+    expect(link).toHaveAttribute('href', '/projects/alpha/access');
+
+    expect(screen.queryByRole('button', { name: /mint token/i })).toBeNull();
+    expect(screen.queryByLabelText(/token name/i)).toBeNull();
+  });
+
+  /**
+   * REVIEW M14 — THE ONBOARDING RECIPE COULD NOT BE RUN.
+   *
+   * The curl example ended in a bare `/v1/runs`. A shell does not resolve that
+   * against the page's origin, so the one command this product hands a new
+   * user failed with "URL rejected: No host part in the request URL". Kept
+   * from the old file verbatim in intent: the command moved pages, and the
+   * defect it guards against is a property of the command, not of the page.
+   */
+  it('carries an absolute URL in both recipes, not a bare path', async () => {
+    renderPage();
+    for (const id of ['upload-command', 'ci-command']) {
+      const command = await screen.findByTestId(id);
+      expect(command.textContent).toMatch(/https?:\/\/[^\s]+\/v1\/runs/);
+      expect(command.textContent).not.toMatch(/\s\/v1\/runs\s*$/m);
+    }
+  });
+
+  /** The secret never appears in a command here: it is named as a variable,
+   *  which is also the only correct form for the CI recipe. */
+  it('refers to the token by environment variable rather than pasting one in', async () => {
+    renderPage();
     const command = await screen.findByTestId('upload-command');
-    expect(command.textContent).not.toMatch(/\s\/v1\/runs\s*$/m);
+    expect(command.textContent).toContain('$PERFPORTAL_TOKEN');
+  });
+});
+
+/* ======================================================================== *
+ * STATUS — WHAT MUST NOT READ AS "AVAILABLE"
+ * ======================================================================== */
+
+describe('ProjectSetup — the runner’s status is only as strong as the evidence', () => {
+  const runnerStatus = async () => within(await entry('Run a test')).getByTestId('entry-status');
+
+  it('says nothing is known when this project has never queued a job', async () => {
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Add results', level: 1 })).toBeInTheDocument();
+
+    const card = await entry('Run a test');
+    await within(card).findByText(/no runner seen yet/i);
+    expect(card.textContent ?? '').not.toMatch(/available|online/i);
+  });
+
+  it('reports a claimed job as a runner that is there', async () => {
+    fetchRunnerJobsMock.mockResolvedValueOnce({ items: [job('running', 5_000)] });
+    renderPage();
+    expect(await within(await entry('Run a test')).findByText(/a runner is working/i)).toBeInTheDocument();
+  });
+
+  /**
+   * THE CASE THAT WOULD HAVE BEEN GOT WRONG. A project whose jobs all
+   * finished proves a runner worked once and says nothing about now — the
+   * instance is never told when one connects or leaves. Rounding that up to
+   * "Available" is the failure this whole panel exists to avoid, because it
+   * sends an engineer to wait on a queue nothing is draining.
+   */
+  it('will not call a project with only finished jobs available', async () => {
+    fetchRunnerJobsMock.mockResolvedValueOnce({ items: [job('complete', 20 * 60_000)] });
+    renderPage();
+
+    const card = await entry('Run a test');
+    await within(card).findByText(/no job in flight/i);
+    expect(card.textContent ?? '').toMatch(/unknown/i);
+    expect((await runnerStatus()).textContent ?? '').not.toMatch(/available|ready|online/i);
+  });
+
+  /**
+   * A FAILED QUERY IS ITS OWN STATUS. "This page could not ask" is a
+   * different claim from "no runner is there", and rendering the second for
+   * the first sends somebody to restart a healthy machine.
+   */
+  it('distinguishes not being able to ask from a bad answer', async () => {
+    fetchRunnerJobsMock.mockRejectedValueOnce(new Error('gateway down'));
+    renderPage();
+
+    const card = await entry('Run a test');
+    await within(card).findByText(/status unavailable/i);
+    expect(card.textContent ?? '').toMatch(/nothing is known about the runner either way/i);
+  });
+
+  /** Whatever the status, the action is still reachable — a status panel that
+   *  hid the button would make an unknown state into a refusal. */
+  it('still offers the launch form when the status is unknown', async () => {
+    renderPage();
+    const link = await within(await entry('Run a test')).findByRole('link', { name: /new on-prem run/i });
+    expect(link).toHaveAttribute('href', '/projects/alpha/run/new');
   });
 });

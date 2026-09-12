@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **139 files / 1647 tests**, it
+`nvm use` first, and if a run reports fewer than **141 files / 1675 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,45 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The setup-and-launch branch (M15, M16) added TWO unit files —
+`apps/web/test/runnerReadiness.test.ts` (13) and a rewritten
+`apps/web/test/ProjectSetup.test.tsx` (9) — plus 7 cases to
+`NewRunnerRun.test.tsx`, from a floor of 139 / 1647; integration is **133 files
+/ 1674 tests** (only `runnerReadiness.test.ts` is a `.ts` file integration
+runs) and **e2e rises to 109**. `ProjectSetup.test.tsx` was RENAMED to
+`ProjectAccess.test.tsx` and a new file took its name, so `git log --follow`
+reads the token cases' history under the new name and the file count moves by
+two rather than three.
+
+**AN UNMOCKED QUERY CAN MAKE A SUITE TEST THE FALLBACK INSTEAD OF THE
+FEATURE.** `NewRunnerRun`'s test field became a PICKER over
+`GET /v1/projects/:slug/tests`, which degrades to the old typed field when that
+list cannot be loaded. The existing cases typed into
+`getByPlaceholderText('checkout-soak')` — and that placeholder survives on the
+FALLBACK input, so leaving `fetchProjectTests` unmocked would have kept them
+green while they exercised the degraded path and the picker went untested.
+Mocking it turned them red immediately, which is how the gap was found. This is
+the "malformed fixture exercises the fallback" trap this file already records,
+met from the other direction: there the fixture was wrong, here it was absent.
+
+**AND A SUMMARY THAT ECHOES A FIELD BREAKS EVERY UNSCOPED `getByText` FOR IT.**
+M16's review group reads back the chosen artifact, so
+`getByText(/alpha\.jar/i)` — which had the page to itself — resolved two
+elements. The fix is to name the one you mean, and the assertion is better for
+it: it now claims the REVIEW shows the file, which is the new behaviour, rather
+than that the string appears somewhere.
+
+**THERE IS NO RUNNER-HEALTH ENDPOINT, AND THAT SHAPED THE WHOLE ANSWER.** The
+on-prem runner POLLS for work, so nothing in the API is told when one connects
+or leaves; `runner_job` has no heartbeat column. M16 asks for availability
+"where supported, with explicit unknown/unavailable states", and the only
+evidence available is the project's own job list. `runnerReadiness` reads it
+and keeps each state's claim to what the evidence supports — a claimed job
+proves a node is there, a long-`queued` job proves nothing is claiming, and a
+project whose jobs are all terminal proves NOTHING about now. That last one is
+the case worth guarding: rounding it up to "available" is exactly the failure a
+status panel exists to prevent.
 
 The assertion-structure branch (M10, M11) added ONE unit file —
 `apps/web/test/toolAssertion.test.ts` (9) — and 4 unit cases (3 to

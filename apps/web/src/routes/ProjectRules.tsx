@@ -71,8 +71,25 @@ export default function ProjectRules({
   slug,
   testSlug = null,
   testName = null,
+  showTitle = true,
 }: {
   readonly slug: string;
+  /**
+   * False on the project's own SLA rules PAGE, whose `<h1>` already reads
+   * "SLA rules" — review M15 gave rules a destination of their own rather
+   * than a block at the foot of setup.
+   *
+   * The same rule `RunList.showHeading` follows, for the same reason: a
+   * heading's correctness is a property of the DOCUMENT, which no component
+   * can see from inside itself. Two headings with identical words is not a
+   * visual defect — it looks like a section title — but a screen-reader user
+   * navigating by heading meets the page twice.
+   *
+   * The DESCRIPTION is kept either way. It is the sentence that says what a
+   * rule does and that a run with none gets no verdict, and it is as true on
+   * a page as it is in a panel.
+   */
+  readonly showTitle?: boolean;
   /**
    * When given, this panel is on a TEST's page: it lists the rules that judge
    * that test — its own plus the project-wide ones — and every rule authored
@@ -249,7 +266,12 @@ export default function ProjectRules({
   return (
     <div className="flex flex-col gap-4">
       <Card
-        title="SLA rules"
+        // `title={undefined}` rather than a conditional spread: CLAUDE.md
+        // records that the excess-property check does not reach inside a
+        // spread, so a mistyped key there is accepted in silence. `title`
+        // is optional on `Card`, so passing undefined is the same thing and
+        // stays in front of the compiler.
+        title={showTitle ? 'SLA rules' : undefined}
         description={
           scopedToTest
             ? `Gates every run of ${testLabel} is judged against — this test's own, plus the project-wide ones. A run with no rules gets no verdict.`

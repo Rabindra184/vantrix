@@ -179,9 +179,13 @@ test('a test’s page carries the gates that judge it, and authors new ones agai
   await expect(appliesTo).toHaveCount(1);
   await expect(appliesTo).toHaveText('This test');
 
-  // And the project's own setup page sees it too, named by the test it judges
-  // — the same row, read from the other end of the union.
-  await page.goto('/projects/checkout/setup');
+  // And the project's own SLA rules page sees it too, named by the test it
+  // judges — the same row, read from the other end of the union.
+  //
+  // That page used to be `/setup`, which carried tokens, an import snippet and
+  // these rules in one scroll. Review M15 split it; rules have their own
+  // destination now and this is the URL that holds them.
+  await page.goto('/projects/checkout/rules');
   await expect(page.getByTestId('rule-applies-to')).toHaveText('Payments sweep');
 });
 
@@ -215,4 +219,50 @@ test('a test links to a comparison of its own latest runs, and it draws', async 
   const overlay = page.getByTestId('chart-compare-overlay');
   await expect(plot(overlay)).toHaveCount(1);
   await expect(overlay.locator('svg text[text-anchor="start"]')).toHaveCount(2);
+});
+
+/**
+ * ═══ REVIEW M15 — CONFIGURATION IS THREE DESTINATIONS, NOT ONE PAGE ═══
+ *
+ * `/projects/:slug/setup` used to mint tokens, revoke tokens, explain
+ * importing a report and author SLA rules in one scroll, which is why the
+ * import instructions were reachable only by opening a credentials screen and
+ * reading past them.
+ *
+ * WHAT ONLY A REAL BROWSER PROVES HERE. Rules and Access are new ROUTES behind
+ * `lazy()` imports, and a route that fails to resolve — a bad path, a chunk
+ * that does not load — is invisible to a component test that mounts the page
+ * under a hand-written `<Route>`. The walk below is therefore a real
+ * navigation through the real router on each of the three, by clicking the nav
+ * rather than by `goto`, because the nav is the thing the split added.
+ */
+test('the project configuration nav reaches three separate pages', async ({ page }) => {
+  const admin = await seedAdmin();
+  await signIn(page, admin);
+  await page.goto('/projects/checkout/setup');
+
+  // The entry choices the review asked for, named for what the reader wants.
+  await expect(page.getByRole('heading', { name: 'Add results', level: 1 })).toBeVisible();
+  for (const choice of ['Import results', 'Run a test', 'Configure CI']) {
+    await expect(page.getByRole('heading', { name: choice, level: 2 })).toBeVisible();
+  }
+
+  // And the credential is a NAMED prerequisite with a link, rather than a
+  // section of this page — the inversion is the whole fix.
+  await expect(page.getByRole('button', { name: 'Mint token' })).toHaveCount(0);
+
+  const nav = page.getByRole('navigation', { name: 'Project configuration' });
+  await nav.getByRole('link', { name: 'Access' }).click();
+  await expect(page.getByRole('heading', { name: 'Access', level: 1 })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mint token' })).toBeVisible();
+
+  await nav.getByRole('link', { name: 'SLA rules' }).click();
+  await expect(page.getByRole('heading', { name: 'SLA rules', level: 1 })).toBeVisible();
+  // ONE heading with those words, not two: the panel drops its own card title
+  // on this page because the `<h1>` already carries it, and a duplicate is
+  // invisible on screen while a screen-reader user meets the page twice.
+  await expect(page.getByRole('heading', { name: 'SLA rules' })).toHaveCount(1);
+
+  // The active tab says so to a screen reader, not only in colour.
+  await expect(nav.getByRole('link', { name: 'SLA rules' })).toHaveAttribute('aria-current', 'page');
 });
