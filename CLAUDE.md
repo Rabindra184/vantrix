@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **142 files / 1690 tests**, it
+`nvm use` first, and if a run reports fewer than **142 files / 1691 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -93,8 +93,8 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The mobile-summary branch (M18) added ONE unit file —
-`apps/web/test/RunList.compact.test.tsx` (8) — and 7 cases across
-`DesktopOnly`, `RunShell`, from a floor of 141 / 1675. Its integration floor is
+`apps/web/test/RunList.compact.test.tsx` (9) — and 7 cases across
+`DesktopOnly` and `RunShell`, from a floor of 141 / 1675. Its integration floor is
 UNCHANGED at **133 files / 1674 tests** (both new files are `.tsx`/e2e, which
 that config never runs) and **e2e rises to 113**
 (`apps/web/e2e/mobile.spec.ts`, the first spec in this repo to set its own
@@ -116,6 +116,16 @@ run page   the run's totals   1485     1110
 run page   p95                1801     1384
 run page   the time brush     394px    not mounted
 ```
+
+**AND THE ONE DEFECT IN THIS BRANCH WAS FOUND BY OPENING THE PAGE, NOT BY THE
+SUITE.** The compact filter summary read `Filter runs “undefined”` on every
+unfiltered list: `filtersFromParams` spells the search term
+`params.get('q') ?? undefined`, and the summary tested for `null` and `''`, so
+the absent case fell through into a template literal. Nothing threw, nothing
+failed — the case that existed rendered a FILTERED url, where the summary was
+correct. **A field that has been three things (absent, empty, a string) does
+not get a longer chain of falsy spellings; it gets a `typeof` check**, and the
+new assertion is on the unfiltered state, which is the half nobody had written.
 
 **THE THRESHOLDS IN THAT SPEC ARE THE MEASUREMENT, NOT THE GOAL** — the same
 discipline the run-page reading-order branch used for M01. p95 at 1384 is still
