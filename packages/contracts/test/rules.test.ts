@@ -11,6 +11,9 @@ import {
   slaMetricUnit,
   slaThresholdWarning,
   SLA_METRIC_UNITS,
+  formatSlaThreshold,
+  fractionToPercent,
+  percentToFraction,
 } from '../src/rules.js';
 
 /**
@@ -340,5 +343,63 @@ describe('slaThresholdWarning', () => {
     // The form calls this on every keystroke, so a half-typed value must not
     // flash a warning.
     expect(slaThresholdWarning('error_rate', Number.NaN)).toBeNull();
+  });
+});
+
+/**
+ * REVIEW M17 — THE AUTHOR SHOULD NOT BE THE ONE PLACE THAT CONVERTS.
+ *
+ * `error_rate` is `koCount / count`, so the evaluator compares against 0.0268
+ * while every other surface renders that as 2.68%. An author authoring a gate
+ * had to do the conversion in their head, and CLAUDE.md records what happens
+ * when they do not: `1` meaning "one percent" is a legal, resolvable,
+ * permanently PASSING rule of ≤ 100%.
+ *
+ * Nothing about the wire or the evaluator changes — the contract still carries
+ * a fraction and a run's verdict is computed from exactly the value it always
+ * was. Only the author's side of the boundary moves.
+ */
+describe('SLA threshold units', () => {
+  it('renders a fraction metric as the percentage every other surface shows', () => {
+    expect(formatSlaThreshold('error_rate', 0.0268)).toBe('2.68%');
+    expect(formatSlaThreshold('error_rate', 0.01)).toBe('1%');
+  });
+
+  it('names milliseconds for a latency metric', () => {
+    expect(formatSlaThreshold('p95', 800)).toBe('800 ms');
+    expect(formatSlaThreshold('mean', 250)).toBe('250 ms');
+  });
+
+  it('names the rate and count units too', () => {
+    expect(formatSlaThreshold('throughput_rps', 12)).toBe('12/s');
+    expect(formatSlaThreshold('count', 900)).toBe('900');
+  });
+
+  /** IEEE 754 makes the naive form ugly AND wrong-looking: `0.07 * 100` is
+   *  7.000000000000001, and extra digits in a gate invite a reader to wonder
+   *  what they mean. */
+  it('does not leak floating-point noise into a gate', () => {
+    expect(formatSlaThreshold('error_rate', 0.07)).toBe('7%');
+    expect(fractionToPercent(0.07)).toBe(7);
+    expect(fractionToPercent(0.001)).toBe(0.1);
+  });
+
+  it('round-trips a percentage an author would actually type', () => {
+    for (const percent of [1, 2.68, 0.5, 100, 0.01]) {
+      expect(fractionToPercent(percentToFraction(percent))).toBe(percent);
+    }
+  });
+
+  /** The stored value is what the evaluator compares, so the conversion has to
+   *  land on the fraction the old hand-entered rules already use. */
+  it('stores one percent as the fraction the evaluator expects', () => {
+    expect(percentToFraction(1)).toBe(0.01);
+    expect(percentToFraction(2.68)).toBe(0.0268);
+    expect(percentToFraction(100)).toBe(1);
+  });
+
+  it('passes a non-finite value through rather than inventing one', () => {
+    expect(Number.isNaN(fractionToPercent(Number.NaN))).toBe(true);
+    expect(Number.isNaN(percentToFraction(Number.NaN))).toBe(true);
   });
 });

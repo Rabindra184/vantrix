@@ -273,3 +273,51 @@ export type SlaRule = z.infer<typeof SlaRuleSchema>;
 
 export const SlaRuleListResponseSchema = z.object({ rules: z.array(SlaRuleSchema) });
 export type SlaRuleListResponse = z.infer<typeof SlaRuleListResponseSchema>;
+
+/**
+ * A threshold as an author should read it, with its unit.
+ *
+ * ═══ THE STORED VALUE IS A FRACTION AND THE READ VALUE IS A PERCENTAGE ═══
+ *
+ * `error_rate` is `koCount / count`, so the evaluator compares against 0.0268
+ * and every OTHER surface in this product renders that same number as 17.75%
+ * or 2.68%. An author authoring a gate had to be the one place that converted,
+ * and the trap this file already carries a warning for is what happens when
+ * they do not: `1` meaning "one percent" is a legal, resolvable, permanently
+ * PASSING rule of ≤ 100%.
+ *
+ * So the conversion moves out of the author's head. The form takes a
+ * percentage, `percentToFraction` stores a fraction, and this renders a stored
+ * fraction back as a percentage — the same number the tiles, the statistics
+ * table and the errors tab all show.
+ *
+ * NOTHING ABOUT THE WIRE OR THE EVALUATOR CHANGES. The contract still carries
+ * a fraction, older rules still read correctly, and a run's verdict is
+ * computed from exactly the value it always was.
+ */
+export function formatSlaThreshold(metric: string, threshold: number): string {
+  const unit = slaMetricUnit(metric);
+  if (unit === 'fraction') return `${fractionToPercent(threshold)}%`;
+  if (unit === 'ms') return `${threshold} ms`;
+  if (unit === 'req/s') return `${threshold}/s`;
+  if (unit === 'requests') return `${threshold}`;
+  return `${threshold}`;
+}
+
+/**
+ * ROUNDED, because floating point makes the naive form ugly and wrong-looking.
+ * `0.07 * 100` is `7.000000000000001` in IEEE 754, and a gate reading
+ * "≤ 7.000000000000001%" invites the reader to wonder what the extra digits
+ * mean. Four decimal places keeps 0.0001% — finer than any run this product
+ * measures can resolve — and discards the noise below it.
+ */
+export function fractionToPercent(fraction: number): number {
+  if (!Number.isFinite(fraction)) return fraction;
+  return Number((fraction * 100).toFixed(4));
+}
+
+/** The inverse, for the authoring form. Same rounding argument. */
+export function percentToFraction(percent: number): number {
+  if (!Number.isFinite(percent)) return percent;
+  return Number((percent / 100).toFixed(8));
+}

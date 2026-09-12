@@ -1,3 +1,4 @@
+import { formatSlaThreshold } from '@perfportal/contracts';
 import type { Assertion } from '@perfportal/contracts';
 
 /** One count per outcome, keyed by the outcome itself. */
@@ -21,7 +22,15 @@ export type AssertionCounts = Record<Assertion['outcome'], number>;
 export function describeAssertionRule(rule: Assertion['rule']): string {
   const target = rule.targetName ?? 'the run';
   const comparator = rule.comparator === 'lte' ? '≤' : '≥';
-  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${rule.threshold}`;
+  /* WITH ITS UNIT, and for `error_rate` that means a PERCENTAGE. The stored
+     value is a fraction — `koCount / count`, which is what the evaluator
+     compares — and every other surface in this product renders that same
+     number as a percentage. A rule reading "≤ 0.01" beside tiles reading
+     "2.68%" made the author the one person who had to convert, which is the
+     trap `slaThresholdWarning` exists to catch. `formatSlaThreshold` is the
+     single place that decision lives, so the table, the run page's evidence
+     panel and the CSV export cannot drift apart. */
+  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${formatSlaThreshold(rule.metric, rule.threshold)}`;
 }
 
 /**
