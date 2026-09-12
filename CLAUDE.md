@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **137 files / 1558 tests**, it
+`nvm use` first, and if a run reports fewer than **137 files / 1563 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -92,15 +92,16 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
-The review-criticals branch then added no unit FILE and **25** unit cases —
+The review-criticals branch then added no unit FILE and **30** unit cases —
 3 to `ProjectRules.test.tsx`, 6 to `TimeBrush.test.tsx`, 8 to
-`ErrorsTable.test.tsx`, 4 to `RunTabs.test.tsx` and 4 to `RunShell.test.tsx` —
-from a floor of 137 / 1533. Its integration floor is UNCHANGED at **130 files
-/ 1609 tests** (every file it touches is a `.tsx` integration never runs) and
-its **e2e rises to 104**.
+`ErrorsTable.test.tsx`, 4 to `RunTabs.test.tsx`, 4 to `RunShell.test.tsx` and 5
+to `transforms.compare.test.ts` — from a floor of 137 / 1533. Its integration
+floor is **130 files / 1614 tests** (that `transforms.compare.test.ts` is a
+`.ts` file integration runs too; everything else it touches is `.tsx`) and its
+**e2e rises to 106**.
 
-FOUR THINGS FROM IT, AND ALL FOUR ARE THE SAME SHAPE: A SENTENCE THE UI STATED
-CONFIDENTLY AND WRONGLY.
+SIX THINGS FROM IT, AND THE FIRST FOUR ARE THE SAME SHAPE: A SENTENCE THE UI
+STATED CONFIDENTLY AND WRONGLY.
 
 **A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION.** `ErrorsTable` is
 rendered by `RequestDetail` over a request-scoped payload, and its empty branch
@@ -134,6 +135,39 @@ travel, which is the other half: `useWindowSuffix` carries `from`/`to` across
 every tab and into request/group drill-downs, so the selection survives the
 whole investigation instead of being discarded on the first tab change. Only
 `from`/`to` travel; Compare's `runs=` belongs to Compare.
+
+**TWO SURFACES OF ONE SCREEN MEANT DIFFERENT POPULATIONS BY ONE WORD.** A
+`SeriesBucket` carries THREE percentile maps — `percentiles`, `percentilesOk`,
+`percentilesKo`. A `StatRow` carries exactly one, the combined set, and has no
+OK-only variant at all. The compare OVERLAY read `percentilesOk` while
+`metricValue` — which feeds the comparison matrix AND the summary tiles
+directly above that overlay — read `row.percentiles`. Combined is the only
+population all three CAN share without a backend change, so it is the one they
+share, and the chart's `limitation` says which it is.
+
+**AND THE POPULATION MIX-UP HID A REAL HOLE IN THE LINE.** `max` read
+`bucket.maxMs`, a COMBINED extremum, from behind a guard on `percentilesOk`
+being empty — so a bucket in which every request failed has no OK percentiles,
+a perfectly real maximum, and lost it. The overlay dropped the slowest
+measurement in exactly the buckets a regression hunt cares about most, with
+nothing thrown. **Order of branches, not arithmetic**: `max` comes before the
+percentile guard now.
+
+**A BREAKPOINT THAT ALSO MOVES THE LAYOUT AROUND IT IS THE WRONG QUESTION.**
+`RunDecisionBand` went three-up at `lg:` — 1024px of VIEWPORT, which is also
+where `ProjectRail` appears. So it took its widest layout at the exact moment
+it lost ~270px to the sidebar. Measured at 1024x900: tracks resolved to
+`338px 0px 336px`, the middle column collapsed to ZERO, and its explanation
+overflowed across the action column starting at the same x — 395px tall and
+unreadable. It is an `@container` query now, so the question is the width the
+BAND has: 309px and single-column at 1024, 190px and three-up at 1280, 151px at
+1440, no overlap at any of them. `minmax(14rem,1fr)` rather than
+`minmax(0,1fr)` for the explanation, because a zero minimum is what let the
+other two tracks take the whole row. **jsdom lays everything out at 0x0**, so
+every unit assertion over this component passed throughout — the same reason
+the `m-auto` dialog and the `truncate` rail needed Playwright. The e2e guard
+was verified red at 1024; at 1280 it PASSES against the original with this
+fixture, so that half is a regression guard rather than a reproduction.
 
 **AND ONE THING THE WINDOW STILL CANNOT DO.** `/v1/runs/:id/errors` takes no
 `from`/`to` — deliberately, per that handler's own comment — while its sibling

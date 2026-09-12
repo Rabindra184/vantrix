@@ -64,9 +64,26 @@ export default function RunDecisionBand({
   return (
     <section
       aria-label="Release decision"
-      className="overflow-hidden rounded-xl border border-default bg-surface shadow-panel"
+      /* ═══ A CONTAINER, NOT A VIEWPORT BREAKPOINT ═══
+       *
+       * This grid went three-up at `lg:` — 1024px of VIEWPORT, which is also
+       * the width at which `ProjectRail` appears. So the band got its widest
+       * layout at the exact moment it lost ~270px to the sidebar, and
+       * measured at 1024x900 the tracks resolved to `338px 0px 336px`: the
+       * middle column collapsed to ZERO and its text overflowed across the
+       * action column, which began at the same x. 395px tall, and unreadable.
+       *
+       * `@container` makes the query about the width this band actually HAS.
+       * `@4xl` (56rem) is above the ~677px it gets at 1024px with the rail, so
+       * it stacks there and goes three-up only where three columns fit. */
+      className="@container overflow-hidden rounded-xl border border-default bg-surface shadow-panel"
     >
-      <div className="grid grid-cols-1 gap-0 lg:grid-cols-[minmax(9rem,auto)_minmax(0,1fr)_minmax(18rem,auto)]">
+      {/* `minmax(14rem,1fr)` for the explanation, never `minmax(0,1fr)`: a
+          zero minimum is what let the other two tracks take the whole row and
+          leave it nothing. With a real floor the grid overflows visibly —
+          which is a bug you can SEE — rather than silently stacking text on
+          top of text. */}
+      <div className="grid grid-cols-1 gap-0 @4xl:grid-cols-[minmax(9rem,auto)_minmax(14rem,1fr)_minmax(18rem,auto)]">
         {/* THE VERDICT WORD — the redesign's signature, and NOT AN `<h2>`,
             though it is the largest text on the page. This band is SHELL
             CHROME — `RunShell` renders it above the `<Outlet/>`, so it is on
@@ -87,7 +104,7 @@ export default function RunDecisionBand({
             is a verdict OF. Reading order is word then overline —
             "Failed — release gate" — which is the verdict-first order the
             whole band exists to put on screen. */}
-        <div className="flex min-w-0 flex-col justify-center gap-1 border-b border-divider p-4 lg:border-r lg:border-b-0 lg:p-5">
+        <div className="flex min-w-0 flex-col justify-center gap-1 border-b border-divider p-4 @4xl:border-r @4xl:border-b-0 @4xl:p-5">
           {/* 36px, rising to 48px from `sm`. The first cut was 30px flat and
               read as a large label rather than as the page's verdict — this
               band is the one place the redesign spends size, and at 30px the
@@ -115,7 +132,7 @@ export default function RunDecisionBand({
           </p>
         </div>
 
-        <div className="flex min-w-0 flex-col justify-center gap-2.5 border-b border-divider p-4 lg:border-r lg:border-b-0 lg:p-5">
+        <div className="flex min-w-0 flex-col justify-center gap-2.5 border-b border-divider p-4 @4xl:border-r @4xl:border-b-0 @4xl:p-5">
           <div className="flex flex-wrap items-center gap-2">
             {decision !== 'unevaluated' && <Badge mark={DECISION[decision]} />}
             {evaluated && (
@@ -154,7 +171,7 @@ export default function RunDecisionBand({
           <p className="max-w-3xl text-[13px] leading-relaxed text-muted">{detail}</p>
         </div>
 
-        <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 lg:p-5">
+        <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 @4xl:p-5">
           {/* The counts, or nothing — never three zeros over a run whose
               rules have not been evaluated. See `assertions` above. */}
           {evaluated && (

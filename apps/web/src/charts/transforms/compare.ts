@@ -75,13 +75,32 @@ export const compareUnit = (metric: CompareMetric): string => (IS_RATE[metric] ?
 /**
  * One bucket's value for one metric, or `null` where it was not measured.
  *
- * Percentiles read `percentilesOk` — the OK-only set, matching
- * `PercentilesChart`'s default and G-22 — and a bucket whose map is empty
- * recorded no successful response, so it has no value rather than a zero. The
- * emptiness test is the map's, for the reason `transforms/percentiles.ts`
- * argues at length: the percentile sketches are fed on the START edge while
- * `okCount` counts ends, so the two disagree, and the map that is actually
- * read is the only thing that cannot disagree with itself.
+ * ═══ THE COMBINED POPULATION, BECAUSE THE MATRIX HAS NO OTHER ═══
+ *
+ * A `SeriesBucket` carries three percentile maps — `percentiles` (every
+ * response), `percentilesOk`, `percentilesKo`. A `StatRow` carries exactly
+ * one, the combined set, and no OK-only variant exists on it at all.
+ *
+ * This read `percentilesOk` while `metricValue` — which feeds the comparison
+ * matrix AND the summary tiles sitting directly above this overlay — read
+ * `row.percentiles`. One word, three surfaces of one screen, two populations,
+ * and nothing telling the reader which they had. The combined set is the only
+ * one all three CAN share without a backend change, so it is the one they
+ * share, and `limitation` says so on screen.
+ *
+ * ═══ `max` COMES FIRST, AND THAT ORDER IS THE FIX ═══
+ *
+ * `maxMs` is a COMBINED extremum, but the branch reading it used to sit behind
+ * a guard on `percentilesOk` being empty. A bucket in which every request
+ * failed has no OK percentiles and a perfectly real maximum — so the overlay
+ * dropped the slowest measurement in exactly the buckets a regression hunt
+ * cares about most, with nothing thrown and only a hole in the line to show
+ * for it.
+ *
+ * The emptiness test is still the map's own, for the reason
+ * `transforms/percentiles.ts` argues at length: the sketches are fed on the
+ * START edge while `okCount` counts ends, so the two disagree, and the map
+ * actually read is the only thing that cannot disagree with itself.
  *
  * Rates divide by THIS RUN'S width. See the file docstring.
  */
@@ -93,9 +112,30 @@ function valueOf(
   if (metric === 'throughput') return (bucket.okCount + bucket.koCount) / perSecond;
   if (metric === 'errors') return bucket.koCount / perSecond;
 
-  if (Object.keys(bucket.percentilesOk).length === 0) return null;
-  if (metric === 'max') return bucket.maxMs;
-  return bucket.percentilesOk[metric] ?? null;
+  // BEFORE the percentile guard — see the docstring. A failed-only bucket has
+  // a real maximum and an empty percentile map.
+  if (metric === 'max') {
+    return bucket.okCount + bucket.koCount === 0 ? null : bucket.maxMs;
+  }
+
+  if (Object.keys(bucket.percentiles).length === 0) return null;
+  return bucket.percentiles[metric] ?? null;
+}
+
+/**
+ * Which responses the drawn values are computed from.
+ *
+ * Stated rather than assumed: latency read over every response is a different
+ * quantity from latency read over successful ones, and a failing run is
+ * exactly when they diverge most. Rates carry no population question, so they
+ * get no note.
+ */
+function populationNote(metric: CompareMetric): string | undefined {
+  if (IS_RATE[metric]) return undefined;
+  return (
+    'Latency here is computed over every response, successful and failed — the same ' +
+    'population as the comparison table and the summary above it.'
+  );
 }
 
 function widthNote(widths: readonly number[]): string | undefined {
@@ -170,7 +210,14 @@ export function toCompare(runs: readonly CompareRun[], metric: CompareMetric): C
     axisLabels: [],
     columns,
     rows,
-    limitation: widthNote(runs.map((r) => r.series.bucketWidthMs)),
+    // `undefined` rather than an empty string when neither note applies: the
+    // field is optional, and a rate metric on runs of one width genuinely has
+    // nothing to say. An empty string would render an empty paragraph beside
+    // the chart.
+    limitation:
+      [populationNote(metric), widthNote(runs.map((r) => r.series.bucketWidthMs))]
+        .filter((note): note is string => note !== undefined)
+        .join(' ') || undefined,
   };
 }
 
