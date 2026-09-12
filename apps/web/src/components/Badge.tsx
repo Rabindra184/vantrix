@@ -63,10 +63,19 @@ export default function Badge({
     // here would change the accessible name Playwright computes (CLAUDE.md's
     // uppercase rule), so the LED look leans on face and tracking instead.
     <span
-      className={`tint inline-flex items-center whitespace-nowrap rounded-md border font-mono text-[10px] font-medium uppercase ${
-        size === 'compact'
-          ? 'gap-1 px-1.5 py-0.5 tracking-[0.02em]'
-          : 'gap-1.5 px-2 py-0.5 tracking-[0.08em]'
+      /* ═══ A WORD, NOT AN INSTRUMENT LABEL (review m01) ═══
+       *
+       * 10px uppercase mono, repeated down a status column and a verdict
+       * column and again in every metadata strip, made an analytical tool read
+       * as a wall of tiny stencilled labels — and spent width doing it, which
+       * is what pushed the rail's project names into `truncate`.
+       *
+       * 12px sentence-case sans, same colour, same dot, same silhouette. The
+       * mark data already carries its own casing, so nothing here transforms
+       * the text and the accessible name is untouched either way. Mono is kept
+       * for the things mono is FOR — run ids, commit shas, numeric columns. */
+      className={`tint inline-flex items-center whitespace-nowrap rounded-md border text-[12px] font-medium ${
+        size === 'compact' ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 px-2 py-0.5'
       }`}
       style={{ color: mark.colour }}
     >

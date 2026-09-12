@@ -1106,7 +1106,7 @@ function AssertionCount({
 }) {
   return (
     <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: mark.colour }}>
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</dt>
+      <dt className="text-[12px] font-medium text-muted">{label}</dt>
       <dd className="mt-1 font-mono text-lg font-semibold leading-none tabular-nums text-primary">
         {value}
       </dd>
@@ -1242,7 +1242,11 @@ function ToolAssertions({
     // branch renders, so the id cannot live on only one of them.
     <section id="simulation-assertions" className="flex flex-col gap-3">
       <SectionHeading>Simulation assertions</SectionHeading>
-      <TableFrame caption={TOOL_ASSERTIONS_CAPTION} label="Simulation assertions table">
+      <TableFrame
+        caption={TOOL_ASSERTIONS_CAPTION}
+        summary="Every assertion the simulation declared, re-checked against this run."
+        label="Simulation assertions table"
+      >
         <table className={TABLE}>
           <caption className="sr-only">{TOOL_ASSERTIONS_CAPTION}</caption>
           <thead className={THEAD}>

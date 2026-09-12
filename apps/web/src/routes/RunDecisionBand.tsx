@@ -164,7 +164,7 @@ export default function RunDecisionBand({
           {/* An overline, not a heading — same rule as `ProjectRail`'s
               "Projects" label, and `uppercase` is safe here for the same
               reason: nothing queries a `<p>` by accessible name. */}
-          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+          <p className="text-[12px] font-medium text-muted">
             Release gate
           </p>
         </div>
@@ -300,7 +300,7 @@ function DecisionCount({ label, value, mark }: { readonly label: string; readonl
       className="flex items-baseline gap-1.5 rounded-lg border border-default bg-surface px-2.5 py-1.5"
       style={{ color: mark.colour }}
     >
-      <p className="text-[10px] font-semibold tracking-[0.08em] text-muted">{label}</p>
+      <p className="text-[12px] font-medium text-muted">{label}</p>
       <p className="font-mono text-base font-semibold leading-none tabular-nums text-primary">{value}</p>
     </div>
   );

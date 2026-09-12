@@ -61,7 +61,7 @@ export default function SectionHeading({
   }
   return (
     <div className="flex flex-col gap-1">
-      <p className="font-mono text-[10px] font-semibold tracking-[0.14em] text-muted uppercase">
+      <p className="text-[12px] font-medium text-muted">
         {overline}
       </p>
       <h2 id={id} className="text-base font-semibold tracking-tight text-primary">

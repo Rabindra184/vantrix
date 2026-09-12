@@ -171,7 +171,7 @@ export default function ProjectRail() {
         )}
       >
         {!collapsed && (
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
+          <p className="text-[12px] font-medium text-muted">
             Projects
           </p>
         )}

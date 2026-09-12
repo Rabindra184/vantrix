@@ -1482,3 +1482,37 @@ describe('StatisticsTable — CSV export', () => {
     expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
   });
 });
+
+/**
+ * REVIEW m02 — THE EXPLANATION STOPS COMPETING WITH THE DATA.
+ *
+ * Most tables here open with a paragraph about ingestion behaviour, pagination
+ * semantics or percentile internals. The information is real and worth having
+ * — it is read once and then met on every visit, above the numbers somebody
+ * came for.
+ *
+ * THE `<caption>` IS UNTOUCHED, and that is the load-bearing half. It is the
+ * table's accessible NAME, this file reads its `textContent` for the
+ * denominator, and the e2e suite finds these tables by it. Shortening the name
+ * to tidy the page would break all of that AND tell a screen-reader user less
+ * than a sighted one.
+ */
+describe('StatisticsTable — the prose is available rather than present', () => {
+  it('keeps the full caption as the table’s accessible name', () => {
+    renderTable();
+    const table = screen.getByRole('table');
+    // The long text is still the name, exactly as before.
+    expect(table.querySelector('caption')?.textContent ?? '').toMatch(/percentile/i);
+  });
+
+  it('shows a short line and puts the detail behind a disclosure', () => {
+    renderTable();
+    // `getByText` throws when absent, so finding it IS the assertion — this
+    // file has no jest-dom matchers.
+    expect(screen.getByText(/with the run’s own totals first/i)).toBeTruthy();
+    // Closed by default: the point is that the prose is available, not present.
+    const disclosure = document.querySelector('details');
+    expect(disclosure).not.toBeNull();
+    expect((disclosure as HTMLDetailsElement).open).toBe(false);
+  });
+});

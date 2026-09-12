@@ -236,7 +236,11 @@ export default function RunList({
               programmatically inside the table — see `TableFrame`'s docstring for
               why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
               off the side of a phone. */}
-          <TableFrame caption={caption} label={`${heading} table`}>
+          <TableFrame
+            caption={caption}
+            summary="Every run in your organisation, newest first."
+            label={`${heading} table`}
+          >
               <table className={TABLE}>
                 <caption className="sr-only">{caption}</caption>
                 {/* No Tool column. TOOL_IDS has exactly one member, so it read

@@ -137,7 +137,11 @@ export default function ProjectTests() {
           }
         />
       ) : (
-        <TableFrame caption={caption} label="Tests table">
+        <TableFrame
+          caption={caption}
+          summary="Every test in this project, with its latest run."
+          label="Tests table"
+        >
           <table className={TABLE}>
             <caption className="sr-only">{caption}</caption>
             <thead className={THEAD}>
