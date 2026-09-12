@@ -369,13 +369,24 @@ export default function TestRuns() {
           a browser tab. `project-tests.spec.ts` caught it as
           `getByRole('button', { name: 'Add rule' }) resolved to 2 elements`,
           which names the symptom and not the cause. */}
-      <ProjectRules
-        key={`rules:${slug}/${testSlug}`}
-        slug={slug}
-        testSlug={testSlug}
-        testName={row.name}
-      />
-
+      {/* ═══ HISTORY FIRST, ADMINISTRATION AFTER ═══
+       *
+       * This opened with Rename/Delete and a fully-expanded SLA authoring form
+       * above the run history — so the page an engineer visits repeatedly to
+       * inspect RESULTS led with the occasional job of configuring them, and
+       * the latest run was below a form.
+       *
+       * The rules panel is unchanged and still on this page: a test's gates
+       * belong with the test, and splitting them onto a route of their own is
+       * the navigation redesign M04 also asks for, which is a bigger change
+       * than reordering two siblings. What changes is which one the reader
+       * meets first.
+       *
+       * The remount keys keep their prefixes. Two siblings keyed off the same
+       * route params get the SAME key, React renders one of them repeatedly
+       * behind a console warning nobody reads, and the e2e suite finds it as a
+       * strict-mode violation two layers from the cause — CLAUDE.md records
+       * exactly that happening on this page. */}
       <RunList
         // `key` for the same reason `ProjectRuns` carries one: moving from one
         // test to another matches the SAME route, so React reuses this
@@ -394,6 +405,13 @@ export default function TestRuns() {
           'This test exists because a run of it was parsed at some point, so an empty list here ' +
           'means those runs have since been deleted.'
         }
+      />
+
+      <ProjectRules
+        key={`rules:${slug}/${testSlug}`}
+        slug={slug}
+        testSlug={testSlug}
+        testName={row.name}
       />
     </div>
   );

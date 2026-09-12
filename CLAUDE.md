@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **138 files / 1603 tests**, it
+`nvm use` first, and if a run reports fewer than **138 files / 1618 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -102,6 +102,48 @@ integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
 `transforms.compare.test.ts` and `contracts.test.ts` are `.ts` files
 integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
 **e2e rises to 106**.
+
+The review-majors-workflow branch after that added no unit FILE and 15 cases,
+from a floor of 138 / 1603; integration is **131 files / 1645 tests** and e2e
+stays 108. Nine majors, chosen because each states something false, hands the
+reader a dead end, or drops context they need — the page-level redesigns
+(M11's column selector, M15/M16's setup and launch forms, M17's SLA
+vocabulary, M18's mobile restructure) are left, because they want product
+decisions rather than a correct answer.
+
+THREE THINGS FROM IT.
+
+**`data?.user.name` READS AS SAFE AND IS NOT.** The `?.` short-circuits only on
+a nullish `data`, so a session body that is an OBJECT WITHOUT a user throws on
+`.name` — and this was in `AppShell`, the chrome, so it took every page down.
+`AppShell.test.tsx`'s "renders the page even when the rail cannot load its
+projects" went red the moment it was added. **Optional at every hop, not just
+the first.**
+
+**THE SESSION CARRIES NO ORGANISATION AT ALL**, so M19 is half-done ON PURPOSE:
+the header names who is signed in and cannot name the tenant. The review is
+explicit that multi-tenant UI must not be invented, and `Session`
+(`api/session.ts`) has a user and nothing else. The same shape stopped M23
+short — `TestSummary.latestRun` is `{id, status, verdict}`, so the catalog can
+fix the duplicated class string and cannot show the latest run's date or p95
+without the contract widening M02 did for the run list.
+
+**SCROLL RESTORATION IS KEYED ON `pathname` ALONE, AND THE SEARCH STRING IS THE
+REASON.** A new path is a new thing and should start at its own top; a new
+QUERY is the same thing asked again — the analysis window and the compare
+selection both live there, and resetting scroll on every brush drag or
+checkbox would be its own defect. The first render is skipped so a deep link,
+including the decision band's own `#simulation-assertions`, still lands where
+the browser puts it.
+
+**AND TWO INTEGRATION RUNS FAILED WITH DIFFERENT TESTS EACH TIME, ONE OF THEM
+AT LOAD 5.** `rules.integration.test.ts` at load 18, then `parity.e2e.test.ts`
+plus `trends.integration.test.ts` at load 5.00 — each passing alone, and a
+third full run green at 1645/1645. Low load does NOT rule out the flake this
+file already documents; it only rules out the explanation. **Capture the full
+output, not a `grep` of it**: the first of those runs was piped through one and
+lost the assertion message, which is the only thing that separates a real
+ordering defect from noise.
 
 The run-page-reading-order branch after that added no unit case and TWO e2e
 (**e2e rises to 108**); unit stays 138 / 1603 and integration 131 / 1638.

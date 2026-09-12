@@ -254,7 +254,15 @@ export default function RunDecisionBand({
           <div className="flex flex-wrap items-center gap-2">
             <Link to={runComparePath(runId)} className={linkButtonClasses}>
               <CompareTabIcon className="h-3.5 w-3.5" />
-              Compare previous
+              {/* "Compare runs", not "Compare previous". The destination is a
+                  PICKER over this run's cohort, and both demo runs landed on
+                  "Nothing to compare yet" — the action named a comparison that
+                  may not exist. Worse, `compareSelection`'s default can pick a
+                  NEWER neighbour for the oldest run in a cohort, so the word
+                  "previous" was not even reliably true when a run did have
+                  one. The destination is unchanged and still discoverable;
+                  only the promise is corrected. */}
+              Compare runs
             </Link>
             <Button type="button" variant="secondary" onClick={exportRun}>
               <DownloadIcon className="h-3.5 w-3.5" />

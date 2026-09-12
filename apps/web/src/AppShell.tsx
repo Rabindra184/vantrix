@@ -1,5 +1,7 @@
-import { Suspense } from 'react';
-import { Link, Outlet } from 'react-router-dom';
+import { Suspense, useEffect, useRef } from 'react';
+import { Link, Outlet, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getSession, sessionQueryKey } from './api/session';
 import RouteFallback from './components/RouteFallback';
 import ProjectRail from './ProjectRail';
 import SignOutButton from './SignOutButton';
@@ -50,6 +52,46 @@ import { DEFAULT_ROUTE } from './routes/paths';
  * refocusing leaves a screen-reader user's focus behind at the link.
  */
 export default function AppShell() {
+  /* ═══ A NEW PAGE STARTS AT ITS OWN TOP ═══
+   *
+   * The router preserves scroll position across navigations, which is right
+   * for a BACK to a list and wrong for a forward move into a different thing.
+   * Observed: opening a request from the long chart page landed the reader
+   * part-way down the request's own charts, below its heading — so the first
+   * thing on screen belonged to a page they had not read the title of.
+   *
+   * KEYED ON `pathname` ALONE, deliberately. The search string carries the
+   * analysis window and the compare selection, and those change as a reader
+   * refines ONE view — scrolling them back to the top on every brush drag or
+   * checkbox would be its own defect. A different path is a different thing;
+   * a different query is the same thing, asked again.
+   *
+   * The FIRST render is skipped: a deep link should land where the browser
+   * puts it, including on a fragment like the decision band's
+   * `#simulation-assertions`, which this would otherwise undo.
+   */
+  /* The SAME query `AuthGate` already made, under the same key — this shell
+     only renders inside a resolved session, so it is a cache read rather than
+     a request. `name` before `email`: a person recognises their own name
+     faster, and the email is the fallback for an account that has none. */
+  const session = useQuery({ queryKey: sessionQueryKey, queryFn: getSession });
+  /* OPTIONAL AT EVERY HOP. `data?.user.name` reads as safe and is not: the
+     `?.` short-circuits only on a nullish `data`, so a session body that is an
+     object WITHOUT a user throws on `.name` — and this is the app's chrome, so
+     it takes every page down with it. `AppShell.test.tsx`'s "renders the page
+     even when the rail cannot load its projects" caught exactly that. */
+  const identity = session.data?.user?.name || session.data?.user?.email || null;
+
+  const { pathname } = useLocation();
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    window.scrollTo({ top: 0 });
+  }, [pathname]);
+
   return (
     <div className="min-h-screen">
       {/* EVERY VISUAL UTILITY HERE IS `focus:`-PREFIXED, INCLUDING THE
@@ -87,6 +129,35 @@ export default function AppShell() {
         </Link>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* ═══ WHO IS SIGNED IN ═══
+           *
+           * The header carried a brand, three theme choices and Sign out, and
+           * said nothing about WHO. In a tool where the next click can
+           * configure a release gate or launch load against an environment,
+           * "which identity am I using" is a question the chrome should answer
+           * without being asked.
+           *
+           * IDENTITY ONLY — no organisation, and that is a limit rather than
+           * an omission. `Session` (api/session.ts) carries a user and no org
+           * at all, and the review is explicit that multi-tenant UI must not
+           * be invented. Showing the tenant needs a field the session does not
+           * have.
+           *
+           * Hidden below `sm`: at 375px the header already holds a brand,
+           * three theme buttons and Sign out, and an email is the longest
+           * string of the four. The identity is not lost — it is simply not
+           * worth the row on a phone, where the reader is reading rather than
+           * configuring.
+           */}
+          {identity !== null && (
+            <span
+              data-testid="signed-in-as"
+              title={identity}
+              className="hidden max-w-[22ch] truncate text-[12px] text-muted sm:inline"
+            >
+              {identity}
+            </span>
+          )}
           <ThemeToggle />
           <SignOutButton />
         </div>

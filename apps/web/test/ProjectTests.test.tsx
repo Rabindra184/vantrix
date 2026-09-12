@@ -242,3 +242,35 @@ describe('ProjectTests', () => {
     expect(link).toHaveAttribute('href', '/projects/checkout/runs');
   });
 });
+
+/**
+ * REVIEW M23 — THE SAME LONG STRING IN TWO COLUMNS.
+ *
+ * A test nobody has renamed takes its simulation class AS its name, so both
+ * columns carried the same forty-character string and the row spent a third of
+ * its width saying one thing once. `ABANDONED` above is exactly that shape.
+ *
+ * The column stays: the two diverge the moment anybody renames a test, and the
+ * class is what a reader matches against their own simulation source. What
+ * changes is that identical values say so instead of repeating.
+ *
+ * The review also asks for the latest run's DATE and performance summary here.
+ * `TestSummary.latestRun` carries `{id, status, verdict}` and nothing else, so
+ * that half needs the same contract widening M02 did for the run list, and is
+ * deliberately not faked from what is on hand.
+ */
+describe('ProjectTests — the class column does not repeat the name', () => {
+  it('says so when the name is just the class', async () => {
+    stubFetch({ tests: { tests: [ABANDONED] } });
+    renderPage();
+    expect(await screen.findByTestId('test-class-same')).toBeInTheDocument();
+  });
+
+  it('still shows the class when a test has been renamed', async () => {
+    stubFetch({ tests: { tests: [CHECKOUT_SMOKE] } });
+    renderPage();
+    const row = await screen.findByTestId('test-row');
+    expect(row).toHaveTextContent('example.CheckoutSimulation');
+    expect(screen.queryByTestId('test-class-same')).not.toBeInTheDocument();
+  });
+});

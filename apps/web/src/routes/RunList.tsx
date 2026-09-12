@@ -522,7 +522,21 @@ function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
   return (
     <section
       aria-label="Run health on this page"
-      className="rounded-xl border border-default bg-surface p-4 shadow-panel"
+      /* ═══ A PAGE-LOCAL TALLY, DRAWN AS ONE ═══
+       *
+       * These counts are honest about being page-local and then took
+       * dashboard-card treatment anyway — four large tiles above the work
+       * list, in the position an organisation-wide health summary occupies.
+       * An overview should not change meaning when the reader presses Next,
+       * and this one does.
+       *
+       * Computing them across the filtered SET is the other repair the review
+       * offers and it needs an endpoint that counts — keyset pagination never
+       * learns a total, which is the same reason the heading says "6 runs" and
+       * not "6 of 42". So the tally is demoted rather than inflated: the same
+       * four numbers, at the weight of a caption, beside the list they
+       * describe instead of above it as a dashboard. */
+      className="rounded-lg border border-default bg-surface px-4 py-3"
     >
       {/* THE SECOND CAVEAT IS THE ONE THAT CHANGES A DECISION. The first says
           the counts are page-local. This one says WHICH SYSTEMS they count:
@@ -540,7 +554,7 @@ function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
         and this platform’s SLA verdict — not the assertions a simulation declares for itself, which
         each run’s own page reports.
       </p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <HealthTile
           label="Needs attention"
           value={summary.needsAttention}
@@ -582,10 +596,13 @@ function HealthTile({
   readonly colour: string;
 }) {
   return (
-    <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: colour }}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</p>
-      <p className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums text-primary">{value}</p>
-      <p className="mt-2 text-[11px] leading-snug text-muted">{detail}</p>
+    /* One line per count, not a card. The number leads and stays coloured —
+       it is still the thing being read — but at the weight of a caption
+       rather than a dashboard tile, because it describes this PAGE. */
+    <div className="flex items-baseline gap-2" style={{ color: colour }}>
+      <span className="font-mono text-base font-semibold tabular-nums text-primary">{value}</span>
+      <span className="text-[12px] text-primary">{label}</span>
+      <span className="text-[11px] text-muted">{detail}</span>
     </div>
   );
 }

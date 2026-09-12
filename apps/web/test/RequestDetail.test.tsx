@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import RequestDetail, { requestRow } from '../src/routes/RequestDetail';
@@ -159,5 +159,71 @@ describe('RequestDetail', () => {
       await screen.findByText('This run recorded no request named Nope/Not Here.'),
     ).toBeInTheDocument();
     expect(screen.queryByTestId('request-stat-count')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * REVIEW M08 — THE DETAIL PAGE DROPPED THE EXPERIMENT'S IDENTITY.
+ *
+ * Search opened with "Back to this run" and the word "Search". The run, its
+ * project, its test, its environment and its timestamp all disappeared — so
+ * two Search pages from different runs were indistinguishable, and a
+ * screenshot of one said nothing about where it came from.
+ *
+ * It costs no extra request: the run is read under the same cache key the run
+ * page itself already uses.
+ */
+describe('RequestDetail — it says which experiment this is', () => {
+  const RUN = {
+    state: 'ready' as const,
+    run: {
+      id: 'r1',
+      project: { id: 'p1', slug: 'checkout', name: 'Checkout' },
+      test: { id: 't1', slug: 'checkout-smoke', name: 'Checkout smoke' },
+      status: 'complete',
+      verdict: null,
+      tool: 'gatling',
+      simulation: 'example.ParitySimulation',
+      environment: 'staging',
+      branch: 'main',
+      durationMs: 63161,
+      startedAt: '2026-08-14T10:43:49.546Z',
+      toolStartedAt: null,
+      assertions: [],
+    },
+  };
+
+  function renderWithRun() {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response(JSON.stringify(RUN.run), { status: 200 })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['run', 'r1'], RUN);
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/r1/requests/Search']}>
+          <Routes>
+            <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('names the project, environment and start time', async () => {
+    renderWithRun();
+    const context = await screen.findByTestId('detail-run-context');
+    expect(context).toHaveTextContent('Checkout');
+    expect(context).toHaveTextContent(/staging/i);
+    expect(context).toHaveTextContent(/2026/);
+  });
+
+  it('links the project rather than only naming it', async () => {
+    renderWithRun();
+    const context = await screen.findByTestId('detail-run-context');
+    expect(within(context).getByRole('link', { name: 'Checkout' })).toHaveAttribute(
+      'href',
+      '/projects/checkout',
+    );
   });
 });

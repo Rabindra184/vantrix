@@ -27,9 +27,24 @@
  * Constructed once at module scope rather than per render: `Intl.DateTimeFormat`
  * is comparatively expensive to build, and a run list renders one per row.
  */
+/**
+ * A WALL TIME WITH NO ZONE IS TWO DIFFERENT FACTS.
+ *
+ * This rendered a local date and minute and stopped, so two engineers looking
+ * at the same run saw different wall times and neither could tell. On an
+ * incident call "it started at 14:03" then is not a shared statement.
+ *
+ * The zone is APPENDED, not converted to: a reader wants their own clock, plus
+ * enough to say which clock it is. `timeStyle: 'short'` cannot carry a zone
+ * name, so the parts are spelled out — the output is the same otherwise.
+ */
 const INSTANT_FORMAT = new Intl.DateTimeFormat(undefined, {
-  dateStyle: 'medium',
-  timeStyle: 'short',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZoneName: 'short',
 });
 
 export function formatInstant(iso: string): string {
@@ -48,9 +63,30 @@ export function formatInstant(iso: string): string {
  * rendering of that. `0s` would assert a measurement that was never taken,
  * and `NaNs` would assert nothing at all.
  */
+/**
+ * RAW SECONDS STOP SCANNING SOMEWHERE ABOVE A FEW MINUTES. A 63s run reads
+ * fine as "63s"; a four-hour soak as "14400s" does not.
+ *
+ * TEN MINUTES IS A JUDGEMENT AND DELIBERATELY GENEROUS. Below it, seconds are
+ * what every table and every existing expectation already reads, and churning
+ * "62s" into "1m 2s" buys a reader nothing. Above it, the number has stopped
+ * being a quantity anybody holds in their head.
+ *
+ * A zero component is omitted rather than printed: "2h" and not "2h 0m 0s".
+ */
+const LONG_RUN_MS = 10 * 60_000;
+
 export function formatDuration(durationMs: number | null | undefined): string {
   if (durationMs == null) return '—';
-  return `${Math.round(durationMs / 1000)}s`;
+  const seconds = Math.round(durationMs / 1000);
+  if (durationMs < LONG_RUN_MS) return `${seconds}s`;
+
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const sec = seconds % 60;
+  return [h > 0 ? `${h}h` : null, m > 0 ? `${m}m` : null, sec > 0 ? `${sec}s` : null]
+    .filter((part): part is string => part !== null)
+    .join(' ');
 }
 
 /**
