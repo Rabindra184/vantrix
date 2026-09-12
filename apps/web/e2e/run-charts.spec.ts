@@ -46,16 +46,33 @@ import { runChartsPath } from '../src/routes/paths.js';
  * how bad the tail gets. Read apart, the histogram invites eyeballing the area
  * under an unmarked stretch of its right-hand side.
  */
+/**
+ * DOCUMENT ORDER, AND THE ORDER IS THE ARGUMENT (review M12).
+ *
+ * This used to open with two aggregates — a response-time range bar and a
+ * large OK/KO donut — and put latency-over-time seventh, because the charts
+ * were grouped by which QUERY produced them. A reader correlating offered load
+ * against throughput, latency and failures scrolled past whole-run summaries
+ * to reach the series and then scrolled back.
+ *
+ * The four time series are adjacent now, in the order the question is asked:
+ * what was applied, what got through, what it cost. The whole-run
+ * distributions follow, because answering them does not need the reader's
+ * place in time.
+ *
+ * Asserted as a LIST rather than a set: the sequence is the fix, so a reorder
+ * that kept every figure present would silently undo it.
+ */
 const CHART_IDS = [
-  'indicators',
-  'request-counts',
   'concurrent-users',
   'user-start-rate',
-  'distribution',
-  'percentile-distribution',
-  'percentiles',
   'requests-per-second',
   'responses-per-second',
+  'percentiles',
+  'indicators',
+  'request-counts',
+  'distribution',
+  'percentile-distribution',
 ] as const;
 
 /** Every chart figure on the page, in document order. */
