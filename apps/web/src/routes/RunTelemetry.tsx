@@ -108,7 +108,7 @@ export default function RunTelemetry() {
 
   // EVERY HOOK ABOVE THIS LINE RUNS ON EVERY RENDER, UNCONDITIONALLY.
   // `useQuery` used to sit AFTER the `compact && !shown` early return below,
-  // which is a hook-order bug: a phone reader pressing "Show it anyway"
+  // which is a hook-order bug: a phone reader pressing the override button
   // flips `shown` false -> true on the SAME mounted instance, so the render
   // that follows calls a hook (`useQuery`, and `selectedHost`'s `useState`)
   // that the previous render never reached — "Rendered more hooks than
@@ -131,7 +131,7 @@ export default function RunTelemetry() {
   // its own `!terminal` return, and AHEAD OF THE COMPACT GATE BELOW for the
   // same reason that file states: this is a few sentences, not six ECharts
   // instances, so a phone reader is told the same thing a desktop is rather
-  // than a SECOND withheld notice ("Show it anyway") for content that was
+  // than a SECOND withheld notice for content that was
   // never coming this session regardless of viewport.
   if (!terminal) {
     return (
@@ -156,7 +156,12 @@ export default function RunTelemetry() {
 
   if (compact && !shown) {
     return (
-      <DesktopOnly compact what="Load-generator telemetry" onShow={() => setShown(true)}>
+      <DesktopOnly
+        compact
+        what="Load-generator telemetry"
+        action="Open telemetry charts"
+        onShow={() => setShown(true)}
+      >
         {() => null}
       </DesktopOnly>
     );

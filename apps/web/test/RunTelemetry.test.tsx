@@ -278,14 +278,14 @@ describe('RunTelemetry', () => {
    * THE HOOK-ORDER BUG THIS FIX ROUND CLOSES (pre-existing, not introduced by
    * Task 11 — `useRunTerminal` was correctly placed above this gate). The
    * `compact && !shown` early return used to sit ABOVE `useQuery`/
-   * `useState(selectedHost)`, so a phone reader pressing "Show it anyway"
+   * `useState(selectedHost)`, so a phone reader pressing the override button
    * flipped `shown` false -> true on the SAME mounted instance and the
    * following render called two hooks the previous one never reached —
    * "Rendered more hooks than during the previous render." A test that only
    * mounted compact and non-compact SEPARATELY could not catch this: the bug
    * is in the transition between two renders of the same fiber.
    */
-  it('survives pressing "Show it anyway" on a narrow viewport', async () => {
+  it('survives pressing the override button on a narrow viewport', async () => {
     useIsCompactMock.mockReturnValue(true);
     const user = userEvent.setup();
     renderRunTelemetry({

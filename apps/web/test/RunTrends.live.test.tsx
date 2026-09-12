@@ -203,7 +203,7 @@ describe('RunTrends — live', () => {
    * flipping. Both transitions used to change how many hooks a render
    * called; this covers the one `terminal` alone would not.
    */
-  it('survives pressing "Show it anyway" on a narrow viewport', async () => {
+  it('survives pressing the override button on a narrow viewport', async () => {
     useIsCompactMock.mockReturnValue(true);
     const user = userEvent.setup();
     renderTrends({ state: 'ready', run: COMPLETE_RUN });

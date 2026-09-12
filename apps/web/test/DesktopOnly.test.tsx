@@ -37,10 +37,40 @@ describe('DesktopOnly', () => {
   });
 
   it('says which thing is being withheld, rather than a generic apology', () => {
-    render(<DesktopOnly compact what="Comparing runs">{() => null}</DesktopOnly>);
+    render(<DesktopOnly compact what="A comparison of these runs">{() => null}</DesktopOnly>);
     expect(
-      screen.getByRole('heading', { name: 'Comparing runs is a desktop task' }),
+      screen.getByRole('heading', { name: 'A comparison of these runs' }),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ THE WORDING JUDGED THE READER, AND REVIEW M18 SAID SO ═══
+   *
+   * The heading read "{what} is a desktop task" over a button saying "Show it
+   * anyway": the first tells somebody holding a phone that what they want is
+   * not for them, and the second frames taking it as going against advice.
+   *
+   * Both halves are asserted as ABSENCES as well as presences, because the
+   * replacement is a wording change and a wording change is exactly what drifts
+   * back. `action` names the destination; the fallback is generic on purpose,
+   * so a caller that forgets one degrades to "Open it" rather than to a
+   * sentence about desktops.
+   */
+  it('names the destination on its button and does not judge the device', () => {
+    render(
+      <DesktopOnly compact what="The per-request statistics table" action="Open detailed table">
+        {() => null}
+      </DesktopOnly>,
+    );
+
+    const notice = screen.getByTestId('desktop-only');
+    expect(screen.getByRole('button', { name: 'Open detailed table' })).toBeInTheDocument();
+    expect(notice.textContent ?? '').not.toMatch(/desktop task|anyway|on a phone/i);
+  });
+
+  it('falls back to a generic action rather than to the old wording', () => {
+    render(<DesktopOnly compact what="Eight charts of this run">{() => null}</DesktopOnly>);
+    expect(screen.getByRole('button', { name: 'Open it' })).toBeInTheDocument();
   });
 
   it('is never a dead end — the override reveals the content', async () => {

@@ -49,7 +49,7 @@ export default function RunTrends() {
   // place on an already-mounted instance: a reader sitting on this tab while
   // the run they are watching finishes flips `terminal` false -> true (the
   // shell's own poll writes the shared `runQueryKey` entry this hook reads),
-  // and a phone reader pressing "Show it anyway" flips `wanted` false ->
+  // and a phone reader pressing the override button flips `wanted` false ->
   // true. Either transition changing how many hooks a render calls is
   // exactly "Rendered more hooks than during the previous render" — a
   // regression this file shipped with once already (fix round 1) by putting
@@ -64,7 +64,7 @@ export default function RunTrends() {
   // AHEAD OF THE COMPACT GATE BELOW, deliberately. This notice is cheap
   // text, not eight ECharts instances, so a phone is told the same thing a
   // desktop is rather than a SECOND withheld notice ("Comparing a run
-  // against its history is a desktop task") for content that was never
+  // against its history") for content that was never
   // coming this session regardless of viewport.
   if (!terminal) {
     return <LiveNotice kind="withheld" subject="Trends" />;
@@ -72,7 +72,12 @@ export default function RunTrends() {
 
   if (compact && !shown) {
     return (
-      <DesktopOnly compact what="Comparing a run against its history" onShow={() => setShown(true)}>
+      <DesktopOnly
+        compact
+        what="This run against its history"
+        action="Open the trend charts"
+        onShow={() => setShown(true)}
+      >
         {() => null}
       </DesktopOnly>
     );

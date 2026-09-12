@@ -36,6 +36,22 @@ import { CAPTION, SCROLLER } from './tableStyles';
  * also needs a name, hence `label` — an unnamed region is a landmark a screen
  * reader announces as nothing in particular.
  */
+/**
+ * The disclosure's two labels, exported because a SECOND surface now renders
+ * this same pattern: `RunList`'s compact card layout has no `<table>` and so
+ * no `TableFrame`, but it carries the same long caption behind the same
+ * control. Sharing the strings is what stops a phone offering "Show more" over
+ * a desktop offering "How these numbers are counted" for identical prose.
+ *
+ * The MARKUP is deliberately not shared. The block below is `aria-hidden`,
+ * because the real `<caption class="sr-only">` inside the table already gives
+ * assistive tech the same words; a card list has no caption element, so its
+ * copy must NOT be hidden. That is a genuine difference in contract rather
+ * than drift, and a shared component would have to take a prop for it.
+ */
+export const CAPTION_MORE = 'How these numbers are counted';
+export const CAPTION_LESS = 'Hide the detail';
+
 export default function TableFrame({
   caption,
   label,
@@ -90,8 +106,8 @@ export default function TableFrame({
               prose is available rather than present. */}
           <details className="group -mt-1 pb-3">
             <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
-              <span className="group-open:hidden">How these numbers are counted</span>
-              <span className="hidden group-open:inline">Hide the detail</span>
+              <span className="group-open:hidden">{CAPTION_MORE}</span>
+              <span className="hidden group-open:inline">{CAPTION_LESS}</span>
             </summary>
             <p className="pt-2 text-[13px] leading-relaxed text-muted">{caption}</p>
           </details>

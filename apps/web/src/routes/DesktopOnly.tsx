@@ -22,17 +22,36 @@ import Button from '../components/Button';
  * cost lands only on a reader who asked for it. `<Outlet/>`'s URL never
  * changes, so §22.1 tenet 3 ("every view is a URL") holds either way — which
  * redirecting to the summary instead would have broken.
+ *
+ * ═══ THE WORDING IS NEUTRAL NOW, AND THAT WAS A REAL FINDING ═══
+ *
+ * It read "{what} is a desktop task" over a button saying "Show it anyway".
+ * Both sentences judge the reader: the first tells somebody holding a phone
+ * that what they want is not for them, and the second frames taking it as
+ * going against advice. Review M18 asks for neutral wording, naming
+ * "Open detailed table" as the shape.
+ *
+ * So the heading states a fact about the LAYOUT rather than about the reader,
+ * and the button says what it opens. `action` is a prop because only the
+ * caller knows what the thing is called — a generic "Open it" is the fallback,
+ * not the intent.
  */
 export default function DesktopOnly({
   compact,
   what,
+  action,
   onShow,
   children,
 }: {
   /** `useIsCompact()`. Passed in rather than read here so a caller can test both paths. */
   readonly compact: boolean;
-  /** Names the thing being withheld, in the sentence "… is a desktop task." */
+  /** Names the thing being withheld — used as the notice's heading. */
   readonly what: string;
+  /**
+   * What the button says. Name the destination ("Open detailed table"), never
+   * the reader's decision to go there.
+   */
+  readonly action?: string;
   /**
    * CONTROLLED MODE. When the withheld content needs data, the decision has to
    * live with the caller — its queries are `enabled` on the same flag, so
@@ -60,13 +79,11 @@ export default function DesktopOnly({
       className="flex flex-col items-start gap-3 rounded-xl border border-default bg-surface p-5"
     >
       <div className="flex flex-col gap-1.5">
-        <h3 className="text-[15px] font-semibold tracking-tight text-primary">
-          {what} is a desktop task
-        </h3>
+        <h3 className="text-[15px] font-semibold tracking-tight text-primary">{what}</h3>
         <p className="text-[13px] leading-relaxed text-muted">
-          This screen is narrow enough that the charts and tables here would be too small to read,
-          and drawing them costs more than it is worth on a phone. The summary above carries the
-          verdict and the headline numbers.
+          Not drawn at this width — it would be too small to read here, and building it is work a
+          narrow screen does not need to do. The summary above carries the verdict and the headline
+          numbers.
         </p>
       </div>
       <Button
@@ -74,7 +91,7 @@ export default function DesktopOnly({
         onClick={() => (onShow === undefined ? setOverride(true) : onShow())}
         data-testid="desktop-only-show"
       >
-        Show it anyway
+        {action ?? 'Open it'}
       </Button>
     </section>
   );
