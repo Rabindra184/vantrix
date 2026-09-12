@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **137 files / 1533 tests**, it
+`nvm use` first, and if a run reports fewer than **137 files / 1558 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,57 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-criticals branch then added no unit FILE and **25** unit cases —
+3 to `ProjectRules.test.tsx`, 6 to `TimeBrush.test.tsx`, 8 to
+`ErrorsTable.test.tsx`, 4 to `RunTabs.test.tsx` and 4 to `RunShell.test.tsx` —
+from a floor of 137 / 1533. Its integration floor is UNCHANGED at **130 files
+/ 1609 tests** (every file it touches is a `.tsx` integration never runs) and
+its **e2e rises to 104**.
+
+FOUR THINGS FROM IT, AND ALL FOUR ARE THE SAME SHAPE: A SENTENCE THE UI STATED
+CONFIDENTLY AND WRONGLY.
+
+**A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION.** `ErrorsTable` is
+rendered by `RequestDetail` over a request-scoped payload, and its empty branch
+said "No errors were recorded for this run" and "Every request this run made
+came back OK" — on a request with no failures, inside a run with 24 of 895
+failed. Not a broken screen: a precisely wrong sentence, read by somebody
+checking whether a regression touched that request. The component cannot know
+its own scope (the payload carries a runId and nothing narrower), so the caller
+passes `scopeLabel` and the unscoped wording is untouched.
+
+**`onChange(null)` IS NOT A NEUTRAL FAILURE — IT IS "THE WHOLE RUN".**
+`TimeBrush.apply()` answered every unparseable, negative or reversed input with
+it, so typing From=30 To=10 silently WIDENED the analysis instead of refusing
+it. Of all the responses to bad input, a reset is the one that control must
+never produce. It refuses now, keeps the reader's typing and the previously
+applied window, and "Whole run" is still the deliberate way to widen.
+
+**AN EMPTY THRESHOLD IS NOT ZERO, AND A SCHEMA CANNOT TELL THEM APART.**
+`Number('')` is `0`, which is a legal threshold, so a blank SLA field authored
+a real gate. `p95 <= 0` breaches on any run recording one request — the mirror
+of the fraction trap recorded below, which silently PASSES forever. The check
+has to happen before the conversion, in the raw string, because that is the
+last place the difference still exists.
+
+**A CONTROL OVER A SECTION THAT IGNORES IT IS A CLAIM ABOUT THAT SECTION.** The
+brush lives in `RunShell`, so it sat above Trends and Compare, whose queries
+are historical and take no window at all: it accepted 10–30s there, announced
+it, and changed nothing. Withheld rather than disabled — a disabled control
+still asserts that a window is a property of the page. The PARAMETERS still
+travel, which is the other half: `useWindowSuffix` carries `from`/`to` across
+every tab and into request/group drill-downs, so the selection survives the
+whole investigation instead of being discarded on the first tab change. Only
+`from`/`to` travel; Compare's `runs=` belongs to Compare.
+
+**AND ONE THING THE WINDOW STILL CANNOT DO.** `/v1/runs/:id/errors` takes no
+`from`/`to` — deliberately, per that handler's own comment — while its sibling
+`errors/series` does. So a window narrows the errors CHART and leaves the table
+beneath it reporting the run's own totals. Windowed error aggregation is a
+backend change; `ErrorsTable` says which it is meanwhile, and the empty state
+is where that matters most, because "no errors" beside a visible 10–30s
+selection reads as "none in that interval".
 
 FIVE THINGS FROM IT, AND FOUR OF THEM WERE BROKEN BY THE WORLD RATHER THAN BY
 A COMMIT HERE.

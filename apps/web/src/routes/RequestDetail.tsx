@@ -1,6 +1,7 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
+import { useWindowSuffix } from './useRunWindow';
 import {
   distributionQuery,
   errorsQuery,
@@ -59,6 +60,11 @@ export function requestRow(stats: StatsResponse, path: string): StatRow | undefi
 
 export default function RequestDetail() {
   const { runId, name } = useParams<{ runId: string; name: string }>();
+  /* THE RETURN JOURNEY KEEPS THE INTERVAL. This page's own figures are
+     whole-run — its endpoints take no `from`/`to` — but the reader arrived
+     from a windowed table, and sending them back to an un-narrowed run would
+     discard the selection they were investigating with. */
+  const windowSuffix = useWindowSuffix();
 
   // The request's own path — the same string the `<h1>` renders, and the
   // reason a reader keeps two of these open at once.
@@ -107,7 +113,7 @@ export default function RequestDetail() {
             met the escape hatch after committing to the page. Above, it reads
             as the breadcrumb it actually is, matching `RunHeader`'s. */}
         <Link
-          to={`/runs/${encodeURIComponent(runId)}`}
+          to={`/runs/${encodeURIComponent(runId)}${windowSuffix}`}
           className="transition-ui inline-flex w-fit items-center gap-1 text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
         >
           <ChevronLeftIcon className="h-3.5 w-3.5" />
@@ -155,7 +161,7 @@ export default function RequestDetail() {
       </TableSection>
 
       <TableSection title="Errors" query={errors}>
-        {(data) => <ErrorsTable errors={data} />}
+        {(data) => <ErrorsTable errors={data} scopeLabel={name} />}
       </TableSection>
 
       <Payload query={stats} slots={[INDICATORS]}>

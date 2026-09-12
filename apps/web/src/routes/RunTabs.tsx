@@ -9,6 +9,7 @@ import {
   TrendsTabIcon,
 } from '../components/icons';
 import { cn } from '../lib/cn';
+import { useWindowSuffix } from './useRunWindow';
 import {
   runChartsPath,
   runComparePath,
@@ -61,6 +62,14 @@ export default function RunTabs({
   readonly runId: string;
   readonly errorCount: number | null;
 }) {
+  /* The window rides along so a tab change does not discard the reader's
+     selection — see `useWindowSuffix`, which owns the rule about which
+     parameters travel. Trends and Compare deliberately answer whole-run
+     questions (C03) but still RECEIVE the parameters: that is what lets them
+     hand the interval back when the reader returns to a tab that honours it. */
+  const suffix = useWindowSuffix();
+  const withWindow = (path: string): string => `${path}${suffix}`;
+
   return (
     // `overflow-x-auto` because three tabs plus a count do not fit 320px once
     // the count reaches four digits, and a tab strip that wraps to two lines
@@ -92,16 +101,16 @@ export default function RunTabs({
           verbatim, and `run-detail.spec.ts` selects by them. The COMPONENT is
           passed, not an element, so `Tab` sizes all six in one place and a
           future section cannot drift to the icon module's larger default. */}
-      <Tab to={runPath(runId)} end icon={OverviewTabIcon}>
+      <Tab to={withWindow(runPath(runId))} end icon={OverviewTabIcon}>
         Overview
       </Tab>
-      <Tab to={runChartsPath(runId)} icon={ChartsTabIcon}>
+      <Tab to={withWindow(runChartsPath(runId))} icon={ChartsTabIcon}>
         Charts
       </Tab>
-      <Tab to={runTelemetryPath(runId)} icon={TelemetryTabIcon}>
+      <Tab to={withWindow(runTelemetryPath(runId))} icon={TelemetryTabIcon}>
         Load generators
       </Tab>
-      <Tab to={runErrorsPath(runId)} icon={ErrorsTabIcon}>
+      <Tab to={withWindow(runErrorsPath(runId))} icon={ErrorsTabIcon}>
         {/* One text node, so the tab's accessible name is "Errors (2)" rather
             than a name assembled from two children — `run-detail.spec.ts`
             matches it with `getByRole('link', { name: /Errors/ })`, which
@@ -115,10 +124,10 @@ export default function RunTabs({
           the cohort view, and Compare is the editable overlay that follows
           from it, so they sit together at the end rather than beside Charts,
           which they superficially resemble. */}
-      <Tab to={runTrendsPath(runId)} icon={TrendsTabIcon}>
+      <Tab to={withWindow(runTrendsPath(runId))} icon={TrendsTabIcon}>
         Trends
       </Tab>
-      <Tab to={runComparePath(runId)} icon={CompareTabIcon}>
+      <Tab to={withWindow(runComparePath(runId))} icon={CompareTabIcon}>
         Compare
       </Tab>
     </nav>

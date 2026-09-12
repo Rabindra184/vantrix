@@ -631,7 +631,7 @@ export function RunErrorsTab() {
             the chart, which needs a time series, does not. */}
         <LiveNotice kind="withheld" subject="Errors per second" />
         <TableSection title="Errors" query={errors}>
-          {(data) => <ErrorsTable errors={data} />}
+          {(data) => <ErrorsTable errors={data} windowSelected={window !== null} />}
         </TableSection>
       </div>
     );
@@ -654,7 +654,7 @@ export function RunErrorsTab() {
       </Payload>
 
       <TableSection title="Errors" query={errors}>
-        {(data) => <ErrorsTable errors={data} />}
+        {(data) => <ErrorsTable errors={data} windowSelected={window !== null} />}
       </TableSection>
     </div>
   );

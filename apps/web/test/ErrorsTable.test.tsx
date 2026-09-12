@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom/vitest';
 import type { ErrorsResponse } from '@perfportal/contracts';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -417,5 +418,95 @@ describe('ErrorsTable — the folded remainder', () => {
       />,
     );
     expect(rows().map((row) => textIn(row, 'message'))).toEqual(['other', OTHER_LABEL]);
+  });
+});
+
+/**
+ * REVIEW C01 — A SCOPED EMPTY RESULT MUST NOT READ AS A WHOLE-RUN CONCLUSION.
+ *
+ * `RequestDetail` renders this same component over `errorsQuery(runId,
+ * 'request', name)`. Search has no failures of its own, so the empty branch
+ * fired and told the reader "No errors were recorded for this run" and "Every
+ * request this run made came back OK" — while the parent run had 24 failed
+ * requests out of 895.
+ *
+ * That is the worst failure this product can produce: not a broken screen, but
+ * a confident and precisely wrong sentence. An engineer checking whether a
+ * regression touched Search reads it as clearing the whole run.
+ *
+ * The component cannot know its own scope, so the caller has to say. Absence
+ * of the prop keeps the whole-run wording, which is what the two run-level
+ * call sites want.
+ */
+describe('ErrorsTable — the empty state says what it actually checked', () => {
+  const none = { runId: RUN_ID, errors: [] };
+
+  it('speaks for the run when nothing narrows it', () => {
+    render(<ErrorsTable errors={none} />);
+    expect(screen.getByText(/no errors were recorded for this run/i)).toBeInTheDocument();
+  });
+
+  it('names the scope instead of the run when given one', () => {
+    render(<ErrorsTable errors={none} scopeLabel="Search" />);
+    expect(screen.getByText(/no errors recorded for search/i)).toBeInTheDocument();
+  });
+
+  /** The specific sentence that was false. A request-scoped empty result says
+   *  nothing whatsoever about the requests this run made. */
+  it('never claims the whole run came back OK from a scoped empty result', () => {
+    render(<ErrorsTable errors={none} scopeLabel="Search" />);
+    expect(screen.queryByText(/every request this run made came back ok/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/for this run/i)).not.toBeInTheDocument();
+  });
+
+  /** Acceptance in the review: a scoped table with failures names that scope
+   *  in its caption too, so a screenshot of it cannot be misread as the run's. */
+  it('names the scope in the caption when there are rows', () => {
+    render(
+      <ErrorsTable
+        errors={{ runId: RUN_ID, errors: [{ message: 'boom', count: 2 }] }}
+        scopeLabel="Search"
+      />,
+    );
+    expect(screen.getByRole('table', { name: /search/i })).toBeInTheDocument();
+  });
+
+  it('keeps the run wording in the caption when unscoped', () => {
+    render(<ErrorsTable errors={{ runId: RUN_ID, errors: [{ message: 'boom', count: 2 }] }} />);
+    const table = screen.getByRole('table');
+    expect(table.textContent).toMatch(/recorded in this run/i);
+  });
+});
+
+/**
+ * REVIEW C03 — WHOLE-RUN TOTALS UNDER A WINDOW MUST SAY SO.
+ *
+ * `/v1/runs/:id/errors` takes no `from`/`to` at all — by construction, not by
+ * omission: the endpoint's sibling comment explains it deliberately has no
+ * scope parameters. So selecting 10–30s narrows the errors CHART and leaves
+ * this table at the run's own 24, directly beneath it. Two figures, one
+ * screen, different scopes, nothing saying which.
+ *
+ * Windowed error aggregation is a backend change; saying what the number
+ * actually covers is not, and it is the half that stops a wrong reading today.
+ */
+describe('ErrorsTable — it says when a window does not reach it', () => {
+  const rows = { runId: RUN_ID, errors: [{ message: 'boom', count: 2 }] };
+
+  it('says nothing extra when no window is selected', () => {
+    render(<ErrorsTable errors={rows} />);
+    expect(screen.queryByTestId('errors-window-note')).not.toBeInTheDocument();
+  });
+
+  it('states that the selected window does not narrow these totals', () => {
+    render(<ErrorsTable errors={rows} windowSelected />);
+    expect(screen.getByTestId('errors-window-note')).toHaveTextContent(/whole run/i);
+  });
+
+  /** The empty state is the more dangerous one under a window: "no errors"
+   *  plus a visible 10–30s selection reads as "no errors in that interval". */
+  it('states it on the empty result too, where the misreading is worst', () => {
+    render(<ErrorsTable errors={{ runId: RUN_ID, errors: [] }} windowSelected />);
+    expect(screen.getByTestId('errors-window-note')).toHaveTextContent(/whole run/i);
   });
 });

@@ -77,7 +77,10 @@ const TERMINAL_STATUSES: ReadonlySet<RunResponse['status']> = new Set([
 ]);
 
 /** `RunShell`, with `RUN`'s own props as defaults and any prop overridden. */
-function renderShellWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
+function renderShellWith(
+  overrides: Partial<ComponentProps<typeof RunShell>>,
+  at = `/runs/${RUN.id}`,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const status = overrides.status ?? RUN.status;
   const props = {
@@ -87,10 +90,14 @@ function renderShellWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
   };
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
+      <MemoryRouter initialEntries={[at]}>
         <Routes>
           <Route path="/runs/:runId" element={<RunShell {...props} />}>
             <Route index element={<div />} />
+            <Route path="trends" element={<div />} />
+            <Route path="compare" element={<div />} />
+            <Route path="charts" element={<div />} />
+            <Route path="errors" element={<div />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -416,5 +423,42 @@ describe('RunShell — the SLA breach banner', () => {
     // union. The finished report's own assertions replace this.
     renderShellWith({});
     expect(screen.queryByTestId('sla-banner')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * REVIEW C03 — THE WINDOW CONTROL MUST NOT APPEAR OVER SECTIONS THAT IGNORE IT.
+ *
+ * The brush is rendered by the shell, so it sat above every tab — including
+ * Trends, whose cohort query is historical and takes no window at all, and
+ * Compare, which is the same. The control accepted 10–30s there, announced
+ * that window, and changed nothing: an engineer reading a trend line had no
+ * way to know it still covered the whole run.
+ *
+ * Hiding it on those two is the honest half. The PARAMETERS still travel
+ * (`RunTabs`), so returning to Overview restores the selection — the reader
+ * loses the control where it is meaningless, not their place.
+ */
+describe('RunShell — the window control only appears where it applies', () => {
+  it('offers the brush on the tabs that honour a window', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/charts`);
+    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+  });
+
+  it('withholds it on Trends, whose query is whole-run by construction', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/trends`);
+    await screen.findByRole('navigation', { name: /run sections/i });
+    expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
+  });
+
+  it('withholds it on Compare for the same reason', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/compare`);
+    await screen.findByRole('navigation', { name: /run sections/i });
+    expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
+  });
+
+  it('still offers it on Overview', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
+    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
   });
 });

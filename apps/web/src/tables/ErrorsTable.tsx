@@ -77,7 +77,55 @@ const formatShare = (percent: number): string => `${Number(percent.toFixed(2))}%
  * 2. THE COMPONENT
  * ======================================================================== */
 
-export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
+export default function ErrorsTable({
+  errors,
+  scopeLabel,
+  windowSelected,
+}: {
+  readonly errors: ErrorsResponse;
+  /**
+   * What these rows actually cover, when it is not the whole run.
+   *
+   * ═══ A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION ═══
+   *
+   * `RequestDetail` renders this component over `errorsQuery(runId,
+   * 'request', name)`. Search has no failures of its own, so the empty branch
+   * fired and said "No errors were recorded for this run" and "Every request
+   * this run made came back OK" — while that run had 24 failed requests out
+   * of 895. Not a broken screen: a confident, precisely wrong sentence, read
+   * by someone checking whether a regression touched this request.
+   *
+   * The component cannot know its own scope — the payload carries a runId and
+   * nothing narrower — so the caller has to say. Leaving it undefined keeps
+   * the whole-run wording, which is what the two run-level call sites want.
+   */
+  readonly scopeLabel?: string;
+  /**
+   * Whether a time window is currently selected on the run page.
+   *
+   * ═══ THIS TABLE IS WHOLE-RUN, AND THE CHART ABOVE IT IS NOT ═══
+   *
+   * `/v1/runs/:id/errors` takes no `from`/`to` — deliberately; see that
+   * handler's own comment about not reproducing the `?name=` trap. Its
+   * sibling `errors/series` DOES narrow. So a reader who selects 10–30s gets
+   * a windowed chart and, directly beneath it, this table still reporting the
+   * run's own 24, with nothing distinguishing them.
+   *
+   * Windowed error aggregation is a backend change. Saying what the number
+   * covers is not, and it is the half that stops the wrong reading today.
+   */
+  readonly windowSelected?: boolean;
+}) {
+  /* Rendered in both branches — the empty one is where the misreading is
+     worst, because "no errors" beside a visible 10–30s selection reads as
+     "none in that interval" rather than "none in the whole run". */
+  const windowNote =
+    windowSelected === true ? (
+      <p data-testid="errors-window-note" className="text-[12px] text-muted">
+        These totals cover the whole run. The selected time window narrows the chart above, not
+        this table.
+      </p>
+    ) : null;
   const headingId = useId();
 
   /**
@@ -125,9 +173,22 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
             `ErrorState`'s `role="alert"` would interrupt a screen reader to
             announce success as a problem. */}
         <EmptyState
-          title="No errors were recorded for this run"
-          body="Every request this run made came back OK."
+          title={
+            scopeLabel === undefined
+              ? 'No errors were recorded for this run'
+              : `No errors recorded for ${scopeLabel}`
+          }
+          /* The scoped body deliberately says nothing about the run. The
+             sentence it replaces — "Every request this run made came back
+             OK" — was the false one: it is a claim about the whole run drawn
+             from one request's empty array. */
+          body={
+            scopeLabel === undefined
+              ? 'Every request this run made came back OK.'
+              : `Every request recorded under ${scopeLabel} came back OK. The run as a whole may still have failures — the run's Errors tab is the place that answers that.`
+          }
         />
+        {windowNote}
       </section>
     );
   }
@@ -136,17 +197,29 @@ export default function ErrorsTable({ errors }: { errors: ErrorsResponse }) {
   // the DENOMINATOR, from the same `total` the shares are divided by, so the
   // table cannot tell a reader it is showing shares of 24 errors while
   // dividing by something else.
-  const caption = (
-    <>
-      Every distinct error message recorded in this run, most frequent first. Each percentage is
-      that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run recorded —
-      not of the requests it made.
-    </>
-  );
+  const caption =
+    scopeLabel === undefined ? (
+      <>
+        Every distinct error message recorded in this run, most frequent first. Each percentage is
+        that message’s share of the {total} {total === 1 ? 'error' : 'errors'} this run recorded —
+        not of the requests it made.
+      </>
+    ) : (
+      /* The caption is this table's accessible NAME as well as its
+         explanation, so naming the scope here is what stops a screenshot — or
+         a screen reader moving by table — reading a request's failures as the
+         run's. */
+      <>
+        Every distinct error message recorded for {scopeLabel}, most frequent first. Each
+        percentage is that message’s share of the {total} {total === 1 ? 'error' : 'errors'}{' '}
+        {scopeLabel} recorded — not of the requests it made, and not of the run's total.
+      </>
+    );
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <SectionHeading id={headingId}>Errors</SectionHeading>
+      {windowNote}
 
       <TableFrame caption={caption} label="Errors table">
         <table className={TABLE}>
