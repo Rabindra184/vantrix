@@ -131,6 +131,73 @@ is built to carry (java, the Gatling runtime, and a production start with no
 auth secret). **Do not add anything to `infra/` without adding its check
 there**; the whole cost above was paid for a file nothing ran.
 
+**AND THE SECOND THING IN `infra/` GOT ITS OWN JOB RATHER THAN A LINE IN THAT
+ONE.** `infra/clean-test-residue.sql` deletes the orgs `pnpm test:e2e` leaves
+behind — that suite seeds through the real API and, unlike `test:integration`,
+never truncates. Measured 2026-09-12 on this machine: **1793 orgs, 2933 runs,
+1792 logins and 1,159,383 metrics rows**, in a database `VACUUM (FULL,
+ANALYZE)` then took from **728 MB to 10 MB**. It deletes by FIXTURE PATTERN
+(`org-<hex8>`, `acme-<uuid>`), never by "everything except X", so running it
+against real data is a no-op rather than a catastrophe.
+
+The `test-residue` job is separate from `compose` because what breaks that
+file is a MIGRATION, not an edit to it — so it needs a migrated schema, which
+means a Postgres service `compose` does not have.
+
+**SIX TABLES CARRY `org_id` AND ARE NOT REACHABLE FROM `org` BY ANY CASCADE**:
+`run_stat`, `run_error`, `run_error_bucket`, `run_series_bucket`,
+`run_user_bucket`, `telemetry_sample` — partitioned and deliberately FK-free
+for write throughput. `DELETE FROM org` does not touch them, and
+`schema.prisma` reads as though it would. `infra/test/fk-free-tables.sql`
+computes the CASCADE closure from `pg_constraint` and the job fails if a
+seventh table appears that the script does not name — the one drift no human
+will notice, because nothing raises when those rows are orphaned.
+
+**THE ORDER OF THE DELETES IS NOT WHAT MAKES IT CORRECT, AND THE FIRST VERSION
+OF THAT COMMENT SAID IT WAS.** Capturing the org ids in a temp table up front
+is; measured, the deletes can then be reordered freely with identical results.
+What actually breaks is resolving the org set INLINE and deleting orgs first —
+the subqueries match nothing, nothing raises, exit 0.
+`infra/test/residue-broken.sql` is exactly that shape, and the job re-runs the
+same assertion against it and fails if it PASSES. An assertion nobody has
+watched fail is a guess.
+
+**THE OBJECT STORE IS A SECOND RESIDUE, AND `test:integration` HAS NEVER
+TOUCHED IT.** That suite truncates the DATABASE on setup; it has never removed
+an S3 bucket. `packages/storage`'s two integration files each create a
+`test-${randomUUID()}` bucket, and measured 2026-09-12 there were **8 stale
+buckets holding 4,896 objects**. `infra/clean-test-buckets.mjs` removes them,
+by the same pattern-not-keep-list rule, and refuses the configured bucket a
+second time by NAME as well as by pattern.
+
+Two things it cost, both of which will recur:
+
+**A BARE `import '@aws-sdk/client-s3'` FROM `infra/` CANNOT RESOLVE, HOWEVER
+YOU INVOKE IT.** The SDK is a dependency of `@perfportal/storage`, not of the
+root, and pnpm does not hoist. Node resolves a bare specifier relative to the
+importing FILE, so `pnpm --filter @perfportal/storage exec node …` does not
+help either — it changes the working directory, which resolution never
+consults. `createRequire(new URL('../packages/storage/package.json',
+import.meta.url))` is what actually resolves it.
+
+**`DeleteObjects` FAILS AGAINST THE COMPOSE MinIO WITHOUT AN EXPLICIT
+Content-MD5.** RELEASE.2024-09-13 still enforces the legacy requirement, and
+aws-sdk 3.1105.0 sends a CRC32 trailer instead: `MissingContentMD5`, nothing
+deleted. The documented client option `requestChecksumCalculation:
+'WHEN_REQUIRED'` does NOT fix it — measured. Hashing the serialised body in a
+`build` middleware does, verified at 1000 objects in one request. The whole
+sweep then runs in **1.1 seconds**; one `DeleteObject` per key would have been
+~120k round trips.
+
+The bucket half needs no deliberately-broken fixture because
+`infra/test/buckets-fixture.mjs` asserts BOTH directions — a script that
+deletes nothing fails on the test bucket still existing, one whose pattern
+grew too broad fails on the real bucket or its object being gone. Both
+branches were red-verified by hand. **The first attempt at that
+red-verification proved nothing**: the test-bucket check fires first, so
+deleting the real bucket without also cleaning the test one fails on the wrong
+assertion and reads as a pass for the branch you meant to exercise.
+
 FOUR THINGS THE CROSS-BROWSER SUITE COST TO SET UP, AND ALL FOUR WILL RECUR.
 
 **`test:e2e:cross` IS `--workers=1`, AND THAT IS MEASURED RATHER THAN

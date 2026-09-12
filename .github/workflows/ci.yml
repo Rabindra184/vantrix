@@ -278,6 +278,124 @@ jobs:
           test "$status" -ne 0
           echo "$out" | grep -q "BETTER_AUTH_SECRET is required"
 
+  # ═══ THE CLEANUP SCRIPT NOTHING ELSE RUNS ═══
+  #
+  # `infra/clean-test-residue.sql` deletes the orgs `pnpm test:e2e` leaves
+  # behind. It is in no other gate — the same exposure the rest of `infra/`
+  # had when all four things in it had rotted, and for the same reason. What
+  # breaks this file is a MIGRATION, not an edit to it, so the check has to
+  # run against a real migrated schema rather than lint the SQL.
+  test-residue:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: perfportal
+          POSTGRES_PASSWORD: perfportal
+          POSTGRES_DB: perfportal
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U perfportal"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+      # Same image and digest as the `build` job, for the reasons spelled out
+      # there: minio/minio needs a command a service container cannot give it,
+      # and `bitnamilegacy` is an archival namespace that must stay pinned.
+      minio:
+        image: bitnamilegacy/minio@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+        env:
+          MINIO_ROOT_USER: perfportal
+          MINIO_ROOT_PASSWORD: perfportal123
+        ports: ['9000:9000']
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://perfportal:perfportal@localhost:5433/perfportal
+      PGPASSWORD: perfportal
+      PSQL: psql -h localhost -p 5433 -U perfportal -d perfportal -v ON_ERROR_STOP=1
+      S3_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY: perfportal
+      S3_SECRET_KEY: perfportal123
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
+
+      # DRIFT. The script names six FK-free tables by hand, and a migration
+      # adding a seventh would leave its rows orphaned with nothing failing.
+      # This asks the database which tables carrying `org_id` are NOT
+      # reachable from `org` by a CASCADE chain — exactly the set that must be
+      # deleted explicitly — and requires each to appear in the script.
+      - name: The script names every table org does not cascade to
+        run: |
+          $PSQL -At -f infra/test/fk-free-tables.sql > /tmp/fk-free.txt
+          echo "FK-free tables carrying org_id:"; cat /tmp/fk-free.txt
+          test -s /tmp/fk-free.txt || { echo "::error::query returned nothing — it has stopped testing anything"; exit 1; }
+          while read -r t; do
+            grep -q "DELETE FROM $t " infra/clean-test-residue.sql || {
+              echo "::error::$t carries org_id, is not reachable from org by CASCADE, and infra/clean-test-residue.sql does not delete from it"
+              exit 1
+            }
+          done < /tmp/fk-free.txt
+
+      # BEHAVIOUR. The half that matters most is the keeper: a pattern that
+      # grew too broad passes every "residue is gone" assertion while
+      # destroying real data.
+      - name: It removes residue and leaves everything else alone
+        run: |
+          $PSQL -q -f infra/test/residue-seed.sql
+          $PSQL -q -f infra/clean-test-residue.sql
+          $PSQL -q -f infra/test/residue-assert.sql
+
+      # RED-VERIFY. An assertion nobody has watched fail is a guess. This
+      # reruns the same assertion against a script that orphans every FK-free
+      # row, and fails the job if it passes.
+      - name: ...and that assertion is not vacuous
+        run: |
+          $PSQL -q -c "TRUNCATE org CASCADE" -c "TRUNCATE run_stat, run_series_bucket"
+          $PSQL -q -f infra/test/residue-seed.sql
+          $PSQL -q -f infra/test/residue-broken.sql
+          if $PSQL -q -f infra/test/residue-assert.sql 2>/dev/null; then
+            echo "::error::residue-assert.sql passed against residue-broken.sql — it has stopped testing anything"
+            exit 1
+          fi
+          echo "assertion correctly rejected the broken script"
+
+      # THE OBJECT-STORE HALF. `packages/storage`'s integration tests leave a
+      # `test-<uuid>` BUCKET behind apiece, and nothing has ever removed them:
+      # `test:integration` truncates the database on setup and never touches
+      # S3. Measured 2026-09-12 on a dev machine: 8 stale buckets holding
+      # 4,896 objects.
+      #
+      # The fixture asserts BOTH directions, which is why this half needs no
+      # deliberately-broken script: a no-op fails on the test bucket still
+      # existing, and an over-broad pattern fails on the real bucket or its
+      # object being gone. Both branches were red-verified by hand before
+      # this step was written.
+      - name: It removes test buckets and leaves the real one alone
+        run: |
+          node infra/test/buckets-fixture.mjs seed
+          node infra/clean-test-buckets.mjs
+          node infra/test/buckets-fixture.mjs assert
+
+      # A second run must be a clean no-op. The script is the kind of thing
+      # somebody pastes into a cron, and a non-zero exit on an already-clean
+      # store would read as a real failure.
+      - name: ...and is idempotent
+        run: |
+          node infra/clean-test-buckets.mjs
+          node infra/test/buckets-fixture.mjs assert
+
   # ═══ FIREFOX AND WEBKIT ═══
   #
   # `pnpm test:e2e` is Chromium-only and stays that way; see the comment on
