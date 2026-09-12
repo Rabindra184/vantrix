@@ -177,7 +177,9 @@ describe('ProjectRules — authoring', () => {
     await user.type(metric, 'error_rate');
     const threshold = screen.getByLabelText(/threshold/i);
     await user.clear(threshold);
-    await user.type(threshold, '0.01');
+    // ONE PERCENT, typed as a percentage (review M17) — and stored as the
+    // fraction the evaluator compares against. The author no longer converts.
+    await user.type(threshold, '1');
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
     await waitFor(() => expect(createProjectRule).toHaveBeenCalledTimes(1));
@@ -269,10 +271,22 @@ describe('ProjectRules — authoring', () => {
 
     // Asserting the label CHANGED is the point: a static "(ms)" would be
     // worse than no unit, since it would state the wrong one with authority.
-    expect(await screen.findByLabelText(/threshold \(fraction\)/i)).toBeInTheDocument();
+    //
+    // `%` RATHER THAN `fraction` SINCE M17: the field takes the unit every
+    // other surface renders, and `percentToFraction` stores what the evaluator
+    // compares. The author is no longer the one place that converts.
+    expect(await screen.findByLabelText(/threshold \(%\)/i)).toBeInTheDocument();
   });
 
-  it('warns when a fraction threshold is a gate no run could breach', async () => {
+  /**
+   * THE WARNING MOVED WITH THE UNIT (review M17).
+   *
+   * It used to catch a FRACTION above 1 — the "typed 1, meant 1%" case, which
+   * the field's own unit now prevents outright. What is still worth catching
+   * is a PERCENTAGE above 100: an error rate cannot exceed 1, so ≤ 150% is a
+   * gate no run can breach, exactly as ≤ 100% was.
+   */
+  it('warns when a percentage is a gate no run could breach', async () => {
     const user = userEvent.setup();
     renderRules();
 
@@ -281,13 +295,26 @@ describe('ProjectRules — authoring', () => {
     await user.type(metric, 'error_rate');
     const threshold = screen.getByLabelText(/threshold/i);
     await user.clear(threshold);
-    await user.type(threshold, '5');
+    await user.type(threshold, '150');
 
     const warning = await screen.findByRole('status');
-    expect(warning).toHaveTextContent('500%');
-    // The number to type INSTEAD, because a warning that only disapproves
-    // leaves the author to work out the conversion that confused them.
-    expect(warning).toHaveTextContent('0.05');
+    expect(warning).toHaveTextContent('cannot exceed 100%');
+  });
+
+  /** One percent is now an ordinary value, not a trap — the case the old
+   *  warning fired on is the case this field is designed for. */
+  it('stays quiet for a perfectly ordinary one percent', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const metric = await screen.findByLabelText(/metric/i);
+    await user.clear(metric);
+    await user.type(metric, 'error_rate');
+    const threshold = screen.getByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.type(threshold, '1');
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('stays quiet for an ordinary millisecond threshold', async () => {
@@ -310,7 +337,27 @@ describe('ProjectRules — the table', () => {
     renderRules();
     // `describeAssertionRule`'s own typeset comparator, so a rule reads
     // identically here and on the run it judged.
-    expect(await screen.findByText('p95 of the run (response_time) ≤ 800')).toBeInTheDocument();
+    //
+    // WITH ITS UNIT SINCE M17. A bare "≤ 800" left the reader to know that a
+    // percentile is milliseconds while `error_rate` is a fraction — and the
+    // fraction is the one that produced a permanently-passing gate.
+    // `formatSlaThreshold` is the single place that decision lives, so this
+    // string and the run page's evidence panel cannot drift.
+    expect(
+      await screen.findByText('p95 of the run (response_time) ≤ 800 ms'),
+    ).toBeInTheDocument();
+  });
+
+  /** The metric that motivated the whole change: stored as a fraction,
+   *  rendered as the percentage every other surface shows. */
+  it('renders an error-rate gate as the percentage the tiles show', async () => {
+    fetchProjectRules.mockResolvedValue({
+      rules: [rule({ metric: 'error_rate', threshold: 0.01 })],
+    });
+    renderRules();
+    expect(
+      await screen.findByText('error_rate of the run (response_time) ≤ 1%'),
+    ).toBeInTheDocument();
   });
 
   it('falls back to a dash for a rule nobody named', async () => {

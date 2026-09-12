@@ -31,9 +31,14 @@ import useDocumentTitle from '../useDocumentTitle';
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 const DISTRIBUTION: Slot = { id: 'distribution', title: 'Response time distribution' };
 const PERCENTILES: Slot = { id: 'percentiles', title: 'Response time percentiles over time' };
-// Gatling's own request-page titles — see RatesChart's `title` prop.
-const REQUESTS: Slot = { id: 'requests-per-second', title: 'Number of requests' };
-const RESPONSES: Slot = { id: 'responses-per-second', title: 'Number of responses' };
+/* NAMED FOR WHAT THEY PLOT. These mirrored Gatling's own request-page
+   headings — "Number of requests" — over an axis that is requests per SECOND,
+   and the run page titles the identical chart "Requests per second over time".
+   So one measure had two names, one of them wrong about its own units, and
+   the count that really is a count (the OK/KO donut) had the same title as the
+   rate. Matching another tool's heading is not worth being wrong about ours. */
+const REQUESTS: Slot = { id: 'requests-per-second', title: 'Requests per second' };
+const RESPONSES: Slot = { id: 'responses-per-second', title: 'Responses per second' };
 const SCATTER: Slot = {
   id: 'scatter',
   title: 'Response time against global requests per second',

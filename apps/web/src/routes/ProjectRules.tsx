@@ -7,11 +7,11 @@ import {
   SLA_RULE_FAMILIES,
   SLA_RULE_SCOPES,
   slaMetricUnit,
-  slaThresholdWarning,
   type Assertion,
   type CreateSlaRuleRequest,
   type SlaRule,
   type SlaRuleListResponse,
+  percentToFraction,
 } from '@perfportal/contracts';
 import Button from '../components/Button';
 import Card from '../components/Card';
@@ -129,8 +129,27 @@ export default function ProjectRules({
 
   // Both derived, never stored: a unit that could disagree with the metric box
   // beside it would be worse than no unit at all.
-  const thresholdUnit = slaMetricUnit(metric.trim());
-  const thresholdWarning = slaThresholdWarning(metric.trim(), Number(threshold));
+  const storedUnit = slaMetricUnit(metric.trim());
+  /* ═══ THE AUTHOR TYPES A PERCENTAGE; THE WIRE CARRIES A FRACTION ═══
+   *
+   * `error_rate` is `koCount / count`, so the evaluator compares 0.0268 while
+   * the tiles, the statistics table and the errors tab all render that same
+   * number as 2.68%. Asking the author to be the one place that converts is
+   * what produced the trap this form already warned about: `1` meaning "one
+   * percent" is a legal, resolvable, permanently PASSING gate of ≤ 100%.
+   *
+   * So the FIELD takes a percentage and `percentToFraction` stores a fraction.
+   * Nothing about the contract, the wire or the evaluator changes, and rules
+   * authored before this read back exactly as they did. */
+  const authorUnit = storedUnit === 'fraction' ? '%' : storedUnit;
+  /* The old warning caught a FRACTION above 1 — the "typed 1, meant 1%" case
+     that this field's own unit now prevents. What is still worth catching is a
+     percentage above 100: `error_rate` cannot exceed 1, so ≤ 150% is a gate no
+     run can breach, exactly as ≤ 100% was. */
+  const thresholdWarning =
+    storedUnit === 'fraction' && Number.isFinite(Number(threshold)) && Number(threshold) > 100
+      ? `An error rate cannot exceed 100%, so ${threshold}% is a gate no run can breach.`
+      : null;
 
   // One row armed at a time, exactly as `TokenTable`'s revoke does it: arming
   // a second disarms the first, so two destructive confirmations can never be
@@ -206,7 +225,10 @@ export default function ProjectRules({
       family,
       metric: metric.trim(),
       comparator,
-      threshold: Number(threshold),
+      // PERCENT IN, FRACTION OUT — see `authorUnit`. Non-fraction metrics are
+      // already in their stored unit and pass straight through.
+      threshold:
+        storedUnit === 'fraction' ? percentToFraction(Number(threshold)) : Number(threshold),
     });
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -377,7 +399,11 @@ export default function ProjectRules({
                   evaluated, and permanently PASSED. A placeholder vanishes the
                   moment they type; the label is still there when they choose
                   the number. */}
-              Threshold{thresholdUnit === null ? '' : ` (${thresholdUnit})`}
+              {/* THE AUTHORING UNIT, which for a fraction metric is now a
+                  PERCENTAGE rather than the stored fraction. See `authorUnit`
+                  above — the conversion moved out of the author's head and
+                  into `percentToFraction`. */}
+              Threshold{authorUnit === null ? '' : ` (${authorUnit})`}
               <input
                 className={INPUT}
                 inputMode="decimal"

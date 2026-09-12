@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **138 files / 1618 tests**, it
+`nvm use` first, and if a run reports fewer than **138 files / 1627 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -102,6 +102,42 @@ integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
 `transforms.compare.test.ts` and `contracts.test.ts` are `.ts` files
 integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
 **e2e rises to 106**.
+
+The sla-authoring-units branch after that added no unit FILE and 9 cases (7 to
+`packages/contracts/test/rules.test.ts`, 2 net to `ProjectRules.test.tsx`),
+from a floor of 138 / 1618; integration is **131 files / 1652 tests** and e2e
+stays 108. It carries M17's unit change and the two minors that are defects
+rather than taste (m03, m04).
+
+**THE AUTHOR WAS THE ONE PLACE IN THE PRODUCT THAT CONVERTED.** `error_rate` is
+`koCount / count`, so the evaluator compares 0.0268 while every read surface
+renders 2.68%. The SLA form took the fraction, which is the trap recorded
+further down this file: `1` meaning "one percent" is a legal, resolvable,
+permanently PASSING gate of ≤ 100%, and no schema can refuse it. The field
+takes a PERCENTAGE now and `percentToFraction` stores the fraction. **Nothing
+about the wire or the evaluator changes** — older rules read back identically.
+
+`formatSlaThreshold` lives beside `slaMetricUnit` and is the ONLY place the
+unit decision lives, so the rules table, the run page's evidence panel and the
+CSV export cannot drift about what `≤ 0.01` means. The warning MOVED rather
+than being deleted: it caught a fraction above 1, and now catches a percentage
+above 100 — and a new case pins that **one percent is quiet**, because the
+input the old warning fired on is the input the field is now designed for.
+
+**AND A PROCESS MISTAKE THAT INVALIDATED A WHOLE RUN.** An integration suite
+was started and then the branch was switched while it ran, so its 1652/1652
+was measured against a tree that changed underneath it — and the work was still
+UNCOMMITTED, so it travelled onto the next branch and left the old one pointing
+at someone else's commit. **Commit before starting a background suite, and do
+not touch the tree until it finishes.** The result is otherwise unfalsifiable:
+it neither passes nor fails anything in particular.
+
+TWO MINORS WERE LEFT ON PURPOSE. m01 (uppercase mono across every status pill
+and column heading) and m02 (the explanatory paragraphs above most tables) are
+labelled "design assessment" by the reviewer and are: that treatment is the
+control-room redesign's deliberate signature, and this file already records
+MEASURING it rather than assuming. A direction to be chosen, not a defect to
+be corrected.
 
 The review-majors-workflow branch after that added no unit FILE and 15 cases,
 from a floor of 138 / 1603; integration is **131 files / 1645 tests** and e2e

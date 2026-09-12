@@ -174,6 +174,7 @@ function ProjectSetupLoaded({
             adding the rules panel below broke two token tests that were never
             about rules. */}
         <Card
+        headingLevel={2}
           title="API tokens"
           description="Issue scoped credentials for CI, agents, and runners."
           data-testid="token-mint"
@@ -249,7 +250,7 @@ function ProjectSetupLoaded({
           )}
         </Card>
 
-        <Card title="Create tests" description="Two supported paths into this project.">
+        <Card headingLevel={2} title="Create tests" description="Two supported paths into this project.">
           <div className="flex flex-col gap-4 text-[13px]">
             <div className="flex flex-col gap-2">
               <p className="font-medium text-primary">Upload completed reports</p>

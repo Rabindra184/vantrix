@@ -29,6 +29,7 @@ export default function Card({
   actions,
   as: Element = 'section',
   padding = 'md',
+  headingLevel = 3,
   'data-testid': testId,
   children,
 }: {
@@ -60,8 +61,22 @@ export default function Card({
    */
   readonly padding?: 'none' | 'md';
   readonly 'data-testid'?: string;
+  /** 2, 3 or 4 — see the note by `Heading` in the body. Defaults to 3. */
+  readonly headingLevel?: 2 | 3 | 4;
   readonly children: ReactNode;
 }) {
+  /* The level is the CALLER's to choose, and the default is the level this
+     component always used. A card's title is a heading of whatever depth the
+     page puts it at: on setup and the runner form it follows the `<h1>`
+     directly, and a fixed `<h3>` there skipped `<h2>` — a screen-reader user
+     navigating by heading meets a gap and cannot tell whether they missed a
+     section.
+     NOT changed by default, deliberately: `Chart`, `TableFrame` and
+     `ScopedStatistics` all render cards inside run-page sections whose exact
+     `<h2>` outline `run-tables.spec.ts` asserts, and moving every card at once
+     would rewrite those outlines as a side effect. */
+  const Heading = `h${headingLevel}` as 'h2' | 'h3' | 'h4';
+
   return (
     <Element
       className={`flex flex-col rounded-xl border border-default bg-surface shadow-panel ${
@@ -72,7 +87,9 @@ export default function Card({
       {title !== undefined && (
         <div className={`flex items-start justify-between gap-3 ${padding === 'none' ? 'p-5 pb-3' : ''}`}>
           <div className="flex min-w-0 flex-col gap-1">
-            <h3 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
+            <Heading className="text-[15px] font-semibold tracking-tight text-primary">
+              {title}
+            </Heading>
             {description !== undefined && <p className="text-[13px] text-muted">{description}</p>}
           </div>
           {actions !== undefined && <div className="flex shrink-0 items-center gap-1">{actions}</div>}

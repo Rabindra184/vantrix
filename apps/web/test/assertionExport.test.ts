@@ -23,7 +23,13 @@ describe('assertionsCsv', () => {
     const csv = assertionsCsv([ASSERTION]);
 
     expect(csv).toContain('"Outcome","Rule","Actual","Message"');
-    expect(csv).toContain('"failed","p95 of =Catalog (response_time) \u2264 300","450","\'=slow endpoint"');
+    // `300 ms`, not a bare `300`, since M17: the rule string carries its unit
+    // on every surface, and the CSV is one of them. Built from
+    // `describeAssertionRule` rather than written out again, so this cannot
+    // drift from what the screen shows — the next case is what pins that.
+    expect(csv).toContain(
+      `"failed","${describeAssertionRule(ASSERTION.rule)}","450","'=slow endpoint"`,
+    );
   });
 
   /**
