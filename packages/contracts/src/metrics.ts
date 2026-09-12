@@ -343,6 +343,26 @@ export const TrendRunSchema = z.object({
   throughputRps: z.number(),
   /** Keys are p<number>, exactly as `StatRow.percentiles` are. */
   percentiles: z.record(z.number()),
+  /* ═══ WHAT MAKES TWO RUNS COMPARABLE, NOT JUST COHORTED ═══
+   *
+   * The cohort is (project, test): it says these runs exercised the same
+   * simulation, and nothing at all about whether they did so under the same
+   * conditions. The same simulation runs against staging and production, at
+   * very different offered loads, off different branches — and a lower p95 at
+   * half the load is not an improvement.
+   *
+   * OPTIONAL AS WELL AS NULLABLE, deliberately. `nullable` alone would make a
+   * response from an API pod that predates these fields fail the schema, and
+   * the browser drops any body that does not parse — so a rolling deploy would
+   * blank the compare page rather than degrade it. That is the same trap
+   * `live-delta.ts` records for its own newer fields.
+   *
+   * `undefined` therefore means "this server does not report it" and `null`
+   * means "this run did not record it". The UI says "unknown" for both rather
+   * than "compatible", because neither is evidence of sameness. */
+  environment: z.string().nullable().optional(),
+  branch: z.string().nullable().optional(),
+  commitSha: z.string().nullable().optional(),
 });
 export type TrendRun = z.infer<typeof TrendRunSchema>;
 

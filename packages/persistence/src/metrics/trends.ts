@@ -98,11 +98,17 @@ import type { Sketch } from '@perfportal/statistics';
  */
 export const TRENDS_SQL = `
   SELECT t.id, t.started_at, t.tool_started_at, t.duration_ms, t.verdict,
+         t.environment, t.branch, t.commit_sha,
          t.count, t.ok_count, t.ko_count, t.error_rate,
          t.min_ms, t.max_ms, t.mean_ms, t.throughput_rps, t.percentiles, t.sketch,
          t.cohort_size
     FROM (
       SELECT r.id, r.started_at, r.tool_started_at, r.duration_ms, r.verdict,
+             -- The cohort proves these runs exercised the same test; these
+             -- three are what say whether they did so under the same
+             -- conditions. See TrendRunSchema's own comment -- a lower p95 at
+             -- half the offered load is not an improvement.
+             r.environment, r.branch, r.commit_sha,
              s.count, s.ok_count, s.ko_count, s.error_rate,
              s.min_ms, s.max_ms, s.mean_ms, s.throughput_rps, s.percentiles, s.sketch,
              COALESCE(r.tool_started_at, r.started_at) AS effective,
@@ -153,6 +159,9 @@ export interface StoredTrendRun {
   readonly toolStartedAt: Date | null;
   readonly durationMs: number | null;
   readonly verdict: string | null;
+  readonly environment: string | null;
+  readonly branch: string | null;
+  readonly commitSha: string | null;
   readonly count: number;
   readonly okCount: number;
   readonly koCount: number;

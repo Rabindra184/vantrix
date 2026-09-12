@@ -229,6 +229,7 @@ export default function RunDetail() {
       // measuring.
       verdict={detail.state === 'ready' ? detail.run.verdict : undefined}
       assertions={detail.state === 'ready' ? detail.run.assertions : undefined}
+      toolAssertions={detail.state === 'ready' ? detail.run.toolAssertions : undefined}
       windowable={detail.state === 'ready' ? detail.run.windowable : undefined}
       live={detail.state === 'processing' ? live : null}
       capReached={capReached}
@@ -1134,7 +1135,10 @@ function ToolAssertions({
 
   if (assertions.length === 0) {
     return (
-      <section className="flex flex-col gap-3">
+      /* `id` is the target of the decision band's "See the failed simulation
+         check" link — the band is the first screen and these rows are far
+         below it, which is the whole reason that link exists. */
+      <section id="simulation-assertions" className="flex flex-col gap-3">
         <SectionHeading>Simulation assertions</SectionHeading>
         <EmptyState
           title="This simulation declared no assertions"
@@ -1145,7 +1149,9 @@ function ToolAssertions({
   }
 
   return (
-    <section className="flex flex-col gap-3">
+    // Same anchor as the empty branch above — the band links here whichever
+    // branch renders, so the id cannot live on only one of them.
+    <section id="simulation-assertions" className="flex flex-col gap-3">
       <SectionHeading>Simulation assertions</SectionHeading>
       <TableFrame caption={TOOL_ASSERTIONS_CAPTION} label="Simulation assertions table">
         <table className={TABLE}>

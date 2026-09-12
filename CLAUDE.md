@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **137 files / 1563 tests**, it
+`nvm use` first, and if a run reports fewer than **138 files / 1582 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -92,12 +92,15 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
-The review-criticals branch then added no unit FILE and **30** unit cases —
+The review-criticals branch then added ONE unit file
+(`apps/web/test/comparability.test.ts`, 10) and **49** unit cases —
 3 to `ProjectRules.test.tsx`, 6 to `TimeBrush.test.tsx`, 8 to
 `ErrorsTable.test.tsx`, 4 to `RunTabs.test.tsx`, 4 to `RunShell.test.tsx` and 5
-to `transforms.compare.test.ts` — from a floor of 137 / 1533. Its integration
-floor is **130 files / 1614 tests** (that `transforms.compare.test.ts` is a
-`.ts` file integration runs too; everything else it touches is `.tsx`) and its
+to `transforms.compare.test.ts`, 8 to `RunDecisionBand.test.tsx`, 1 to
+`RunList.test.tsx` and 10 in that new file — from a floor of 137 / 1533. Its
+integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
+`transforms.compare.test.ts` and `contracts.test.ts` are `.ts` files
+integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
 **e2e rises to 106**.
 
 SIX THINGS FROM IT, AND THE FIRST FOUR ARE THE SAME SHAPE: A SENTENCE THE UI
@@ -168,6 +171,54 @@ every unit assertion over this component passed throughout — the same reason
 the `m-auto` dialog and the `truncate` rail needed Playwright. The e2e guard
 was verified red at 1024; at 1280 it PASSES against the original with this
 fixture, so that half is a regression guard rather than a reproduction.
+
+**SHORT LABELS OVER ONE SYSTEM'S COUNTERS READ AS OVERALL HEALTH.** Both demo
+runs showed "Not evaluated — 0 passed · 0 failed" because those are
+PLATFORM-SLA counters and neither project had configured a rule; both also had
+FAILING assertions the simulation declared for itself, far below the fold. The
+band states three facts separately now — execution, platform gates, simulation
+checks — and links to the first failing check. It deliberately does NOT fold
+simulation results into the release verdict: a platform gate is the
+organisation's policy and a simulation assertion is the test author's, and
+merging them makes the gate mean something nobody configured.
+
+`evaluated` was `assertions !== undefined`, so an EMPTY array counted as
+evaluated and produced "0 passed · 0 failed" — the three zeros that read as
+health. For that row `[]` now says "not configured", because nothing judging a
+run is not the same as nothing failing.
+
+**AND THE RUN LIST CANNOT COUNT SIMULATION CHECKS AT ALL.**
+`RunListResponseSchema` picks nine fields and none carries assertions, so
+"Needs attention: 0" over a run with a failing check is not a bug in the tile —
+it is the tile claiming more than its data. It says which systems it counted
+now. The COUNT needs a field the list endpoint does not have; that is a backend
+change and is not in this branch.
+
+**A COHORT IS NOT A CONTROLLED EXPERIMENT.** `TRENDS_SQL` groups completed runs
+by (project, test) — same simulation, nothing about the conditions. The same
+test runs against staging and production at very different offered loads, and
+a p95 that fell because the load halved was presented as "Best selected".
+`TrendRun` carries `environment`, `branch` and `commitSha` now, and
+`comparability.ts` reports them beside throughput, request count and duration,
+BEFORE the deltas.
+
+**THOSE THREE ARE `nullable().optional()`, AND THE OPTIONAL HALF IS THE
+LOAD-BEARING ONE.** The browser drops any body that fails the schema, so
+`nullable` alone would make a response from an API pod that predates the fields
+fail to parse — blanking the compare page for a whole rolling deploy rather
+than degrading it. Same trap `live-delta.ts` already carries cases for;
+`contracts.test.ts` pins it for trends before somebody tidies the optionality
+away as redundant.
+
+**UNKNOWN IS NOT COMPATIBLE.** `undefined` means the server does not report it
+and `null` means the run did not record it; neither is evidence two runs agree,
+so both read "unknown" and neither is ever counted as matching. A comparison
+where every VISIBLE value agrees but something is missing still tells the
+reader to look.
+
+**AND A SQL COMMENT CANNOT CONTAIN A BACKTICK.** `TRENDS_SQL` is a template
+literal, so a `--` comment mentioning `TrendRunSchema` in backticks ended the
+string and produced `TS1005: ',' expected` two lines later.
 
 **AND ONE THING THE WINDOW STILL CANNOT DO.** `/v1/runs/:id/errors` takes no
 `from`/`to` — deliberately, per that handler's own comment — while its sibling

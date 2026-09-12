@@ -151,6 +151,14 @@ export class MetricsController {
         toolStartedAt: r.toolStartedAt?.toISOString() ?? null,
         durationMs: r.durationMs,
         verdict: (r.verdict ?? null) as TrendsResponse['runs'][number]['verdict'],
+        // NAMED, not spread. A conditional spread is a hole in type checking —
+        // `tsc` applies its excess-property check to object LITERALS and a
+        // spread is not one, so a mistyped key inside `...(x ? { … } : {})`
+        // compiles in silence. CLAUDE.md records a field that reached no
+        // repository for exactly that reason.
+        environment: r.environment,
+        branch: r.branch,
+        commitSha: r.commitSha,
         count: r.count,
         okCount: r.okCount,
         koCount: r.koCount,

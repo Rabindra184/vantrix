@@ -25,6 +25,11 @@ import {
   serialiseCompareSelection,
 } from './compareSelection';
 import { buildCompareSummary, type CompareSummaryModel } from './compareSummary';
+import {
+  comparability,
+  needsComparabilityCheck,
+  type ComparabilityFinding,
+} from './comparability';
 
 /**
  * Compare runs — two to five runs of one simulation, overlaid.
@@ -268,6 +273,16 @@ export default function RunCompare() {
                   </div>
                 </fieldset>
 
+                {/* BEFORE the numbers, deliberately. Cohort membership says
+                    these runs exercised the same test and nothing about the
+                    conditions — so whether a delta MEANS anything has to be
+                    settled before the delta is read, not after. */}
+                <Comparability
+                  findings={comparability(
+                    (cohort.data?.runs ?? []).filter((r) => selected.includes(r.id)),
+                  )}
+                />
+
                 {matrixRuns.length > 0 && (
                   <CompareSummary
                     summary={buildCompareSummary(matrixRuns, runId ?? '', metric)}
@@ -368,5 +383,64 @@ function CompareSummaryTile({
       </p>
       <p className="mt-2 text-[11px] leading-snug text-muted">{detail}</p>
     </div>
+  );
+}
+
+
+/**
+ * Whether the selected runs can be compared, shown before their numbers.
+ *
+ * Nothing here decides for the reader: comparing across environments or loads
+ * ON PURPOSE is legitimate, and the failure the review found is doing it
+ * unknowingly. So this states the differences and stops.
+ *
+ * `role="status"` rather than `alert`: a difference is a fact about the
+ * selection, not an error, and an alert would interrupt a screen reader to
+ * announce a comparison the reader deliberately assembled.
+ */
+function Comparability({ findings }: { readonly findings: readonly ComparabilityFinding[] }) {
+  if (findings.length === 0) return null;
+  const check = needsComparabilityCheck(findings);
+
+  return (
+    <section
+      aria-label="Comparability"
+      data-testid="comparability"
+      className="flex flex-col gap-2 rounded-xl border border-default bg-surface p-4"
+    >
+      <p role="status" className="text-[13px] leading-relaxed text-primary">
+        {check
+          ? 'These runs differ in ways that change what a comparison means. Read the deltas below against this.'
+          : 'These runs match on every dimension recorded here.'}
+      </p>
+      <dl className="grid gap-x-4 gap-y-1 text-[12px] sm:grid-cols-2">
+        {findings.map((finding) => (
+          <div
+            key={finding.label}
+            data-testid={`comparability-${finding.label.toLowerCase()}`}
+            className="flex flex-wrap items-baseline gap-x-2"
+          >
+            <dt className="font-medium text-muted">{finding.label}</dt>
+            <dd
+              className="min-w-0"
+              /* The status palette as data, the `Badge`/`StatTile` route: the
+                 status tokens live on `:root` and NOT in `@theme`, so a
+                 `text-status-*` utility emits nothing at all. */
+              style={{
+                color:
+                  finding.kind === 'differs'
+                    ? 'var(--color-status-failed)'
+                    : finding.kind === 'unknown'
+                      ? 'var(--color-text-muted)'
+                      : 'var(--color-text-primary)',
+              }}
+            >
+              {finding.values.join(' · ')}
+              {finding.kind === 'unknown' && ' — not recorded'}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }

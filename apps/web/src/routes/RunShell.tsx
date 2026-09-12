@@ -38,6 +38,7 @@ export default function RunShell({
   terminal,
   verdict,
   assertions,
+  toolAssertions,
   windowable,
   live,
   capReached,
@@ -74,6 +75,9 @@ export default function RunShell({
    */
   readonly verdict: RunResponse['verdict'] | undefined;
   readonly assertions?: readonly Assertion[];
+  /** The simulation's own checks — reported beside the platform gate, never
+   *  folded into it. See `RunDecisionBand`'s own prop docstring. */
+  readonly toolAssertions?: RunResponse['toolAssertions'];
   /**
    * `RunResponse` only — identity carries no such field, which is exactly why
    * a live run is never offered a brush (see the `TimeBrush` block below).
@@ -150,7 +154,13 @@ export default function RunShell({
         verdict={verdict}
         peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
       />
-      <RunDecisionBand identity={identity} status={status} verdict={verdict} assertions={assertions} />
+      <RunDecisionBand
+        identity={identity}
+        status={status}
+        verdict={verdict}
+        assertions={assertions}
+        toolAssertions={toolAssertions}
+      />
       {/* `null`, not `0`, until the errors payload has actually resolved —
           the same "zero is a measurement" rule `peakUsers` above already
           follows (`runUsers.ts`). `errors.data?.errors.length ?? 0` used to

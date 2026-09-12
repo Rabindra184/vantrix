@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { IngestMetadataSchema, ProblemDetailsSchema, RunResponseSchema } from '../src/index.js';
+import {
+  IngestMetadataSchema,
+  ProblemDetailsSchema,
+  RunResponseSchema,
+  TrendRunSchema,
+} from '../src/index.js';
 
 describe('IngestMetadataSchema', () => {
   it('accepts a minimal payload', () => {
@@ -212,5 +217,65 @@ describe('ProblemDetailsSchema', () => {
         detail: 'exceeded',
       }),
     ).toThrow();
+  });
+});
+
+/**
+ * REVIEW C06 — THE COMPARABILITY FIELDS MUST NOT BLANK AN OLDER RESPONSE.
+ *
+ * `environment`, `branch` and `commitSha` were added to `TrendRun` so the
+ * compare page can say whether two runs are actually comparable. They are
+ * `nullable().optional()`, and the OPTIONAL half is the load-bearing one: the
+ * browser drops any body that fails the schema, so a required field would make
+ * a response from an API pod that predates it fail to parse — blanking the
+ * compare page for the length of a rolling deploy rather than degrading it.
+ *
+ * That is the same trap `live-delta.ts` already carries its own cases for.
+ * This pins the property for trends before anybody "tidies" the optionality
+ * away as redundant beside `nullable`.
+ */
+describe('TrendRunSchema — comparability fields', () => {
+  const base = {
+    id: '11111111-1111-4111-8111-111111111111',
+    startedAt: '2026-08-14T10:43:49.546Z',
+    toolStartedAt: null,
+    durationMs: 60_000,
+    verdict: null,
+    count: 900,
+    okCount: 880,
+    koCount: 20,
+    errorRate: 0.02,
+    minMs: 10,
+    maxMs: 2500,
+    meanMs: 220,
+    throughputRps: 15,
+    percentiles: { p95: 650 },
+  };
+
+  it('parses a run from a server that never heard of them', () => {
+    const parsed = TrendRunSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+  });
+
+  it('parses a run that recorded none of them', () => {
+    const parsed = TrendRunSchema.safeParse({
+      ...base,
+      environment: null,
+      branch: null,
+      commitSha: null,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('carries them through when they are present', () => {
+    const parsed = TrendRunSchema.parse({
+      ...base,
+      environment: 'staging',
+      branch: 'main',
+      commitSha: 'abcdef1234567890',
+    });
+    expect(parsed.environment).toBe('staging');
+    expect(parsed.branch).toBe('main');
+    expect(parsed.commitSha).toBe('abcdef1234567890');
   });
 });
