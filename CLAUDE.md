@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **138 files / 1627 tests**, it
+`nvm use` first, and if a run reports fewer than **139 files / 1647 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,23 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The assertion-structure branch (M10, M11) added ONE unit file —
+`apps/web/test/toolAssertion.test.ts` (9) — and 4 unit cases (3 to
+`StatisticsTable.test.tsx`, 1 to `ScopedStatistics.test.tsx`), from a measured
+floor of 138 / 1634. Its integration floor is **132 files / 1661 tests** (that
+one new `.ts` file runs there too; the two `.tsx` files never do) and e2e
+stays 108 — its two spec changes are assertions inside existing `test(`
+blocks.
+
+**THE HEADLINE ABOVE HAD DRIFTED BY SEVEN, AND THE INTEGRATION NUMBER PROVES
+WHERE.** It said 138 / 1627; this tree measures 1647, of which 13 are this
+branch's. The integration figure recorded for the previous branch (1652) is
+EXACTLY 1661 minus this branch's 9 `.ts` cases — so the missing seven are
+`.tsx` cases, which integration never runs, added by the two review branches
+merged since and never written down. That is the drift the parenthetical
+above exists to catch, and it is worth knowing it can hide in ONE of the two
+numbers while the other stays perfect.
 
 The review-criticals branch then added ONE unit file
 (`apps/web/test/comparability.test.ts`, 10) and **49** unit cases —
