@@ -25,6 +25,7 @@ import {
 } from '../api/metrics';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
 import { formatCell } from '../charts/DataTable';
+import { formatActual, toolAssertionParts } from './toolAssertion';
 import DistributionChart from '../charts/DistributionChart';
 import ErrorsChart from '../charts/ErrorsChart';
 import PercentileDistributionChart from '../charts/PercentileDistributionChart';
@@ -1250,15 +1251,30 @@ function ToolAssertions({
         <table className={TABLE}>
           <caption className="sr-only">{TOOL_ASSERTIONS_CAPTION}</caption>
           <thead className={THEAD}>
+            {/* COLUMNS FROM THE DECODED STRUCTURE (review M10), not from
+                parsing the sentence. See `toolAssertion.ts` for why that
+                distinction is the whole design. The tool's own wording stays,
+                in the last column, because G-05's tolerance is exact wording
+                and because it is the only thing that can describe an assertion
+                shape this build does not recognise. */}
             <tr>
               <th scope="col" className={TH}>
                 Status
               </th>
               <th scope="col" className={TH}>
-                Assertion
+                Target
+              </th>
+              <th scope="col" className={TH}>
+                Metric
+              </th>
+              <th scope="col" className={TH}>
+                Bound
               </th>
               <th scope="col" className={TH}>
                 Actual
+              </th>
+              <th scope="col" className={TH}>
+                Assertion
               </th>
             </tr>
           </thead>
@@ -1277,11 +1293,31 @@ function ToolAssertions({
                 <td data-testid="tool-assertion-outcome" className={`${TD} whitespace-nowrap`}>
                   <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
                 </td>
-                <td className={`${TD} font-mono text-[12px]`}>{assertion.expression}</td>
-                {/* A dash, never `0` — see the SLA table's own note. */}
-                <td className={TD_NUM}>
-                  {assertion.actualValue === null ? '—' : formatCell(assertion.actualValue)}
+                {/* An em dash wherever the structure is absent — a run ingested
+                    before the decoder, or a Path this build does not know. The
+                    sentence in the last column still says what it is, which is
+                    why these cells can be honest about knowing nothing rather
+                    than guessing. */}
+                <td className={`${TD} whitespace-nowrap`}>
+                  {toolAssertionParts(assertion).target ?? '—'}
                 </td>
+                <td className={`${TD} whitespace-nowrap`}>
+                  {toolAssertionParts(assertion).metric ?? '—'}
+                </td>
+                <td className={`${TD} whitespace-nowrap tabular-nums`}>
+                  {(() => {
+                    const { operator, threshold } = toolAssertionParts(assertion);
+                    return operator === null || threshold === null
+                      ? '—'
+                      : `${operator} ${threshold}`;
+                  })()}
+                </td>
+                {/* WITH ITS UNIT. A bare 2643 beside a bare 100 left the
+                    reader to know that one is milliseconds and the other a
+                    percentage — and `not_applicable` still renders a dash,
+                    never a zero, because nothing was measured. */}
+                <td className={`${TD_NUM} whitespace-nowrap`}>{formatActual(assertion)}</td>
+                <td className={`${TD} font-mono text-[12px]`}>{assertion.expression}</td>
               </tr>
             ))}
           </tbody>

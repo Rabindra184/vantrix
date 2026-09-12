@@ -66,8 +66,18 @@ export interface RunRecord {
    * declared none. The two are different facts and the read path keeps them
    * apart rather than collapsing both to an empty table.
    */
+  /* `assertion` carries the decoded `{ path, target, condition }` the engine
+     evaluated. It has ALWAYS been written — the pipeline stringifies the whole
+     evaluated object — and this type simply stopped mentioning it, which is
+     what made the structure look absent all the way up to the UI. Optional
+     because a row written before the decoder existed has only the prose. */
   toolAssertions:
-    | { expression: string; actualValue: number | null; outcome: string }[]
+    | {
+        expression: string;
+        actualValue: number | null;
+        outcome: string;
+        assertion?: unknown;
+      }[]
     | null;
 }
 

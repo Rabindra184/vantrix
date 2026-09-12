@@ -121,6 +121,26 @@ function renderTable(payload: StatsResponse = stats) {
   );
 }
 
+/**
+ * Turn every optional column on.
+ *
+ * ═══ WHY SO MANY CASES BELOW CALL THIS ═══
+ *
+ * The table now opens on eight columns with the rest behind a picker (review
+ * M11). Most of the cases in this file are about a PROPERTY of columns —
+ * percentile clamping, the sort control, the exact value in a `title`, the
+ * group headings — and not about which ones happen to be default. Narrowing
+ * them to the default set would quietly shrink what they cover; the property
+ * is what they exist to pin, so they pin it over every column there is.
+ *
+ * The cases that ARE about the default set say so in their own names.
+ */
+function showAllColumns() {
+  for (const box of screen.getAllByRole('checkbox')) {
+    if (!(box as HTMLInputElement).checked) fireEvent.click(box);
+  }
+}
+
 /** The payload with every row's `percentiles` replaced. */
 const withPercentiles = (percentiles: Record<string, number>): StatsResponse => ({
   ...stats,
@@ -368,6 +388,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
    */
   it('lays out the §13.2 ⑤ column set in order, percentiles between Min and Max', () => {
     renderTable();
+    showAllColumns();
     expect(headers()).toEqual([
       'Requests',
       'Executions',
@@ -389,6 +410,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
 
     cleanup();
     renderTable(withPercentiles({ p50: 1, p90: 2, 'p99.9': 3 }));
+    showAllColumns();
     expect(headers()).toEqual([
       'Requests',
       'Executions',
@@ -422,6 +444,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
       ),
     };
     renderTable(mixed);
+    showAllColumns();
 
     // The union: `Search` carries only p50, and the other nine rows still get
     // their four columns.
@@ -492,6 +515,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
    */
   it('orders the percentile columns numerically, whatever order the keys arrive in', () => {
     renderTable(withPercentiles({ p99: 4, p50: 1, 'p99.9': 5, p75: 2, p95: 3 }));
+    showAllColumns();
     expect(headers().slice(-9)).toEqual([
       'Min',
       '50th',
@@ -704,6 +728,7 @@ describe('StatisticsTable — the run-scope totals row', () => {
    */
   it('renders the All Requests total, which is not one of the tree rows', () => {
     renderTable();
+    showAllColumns();
 
     const total = totalRow();
     expect(textIn(total, 'name')).toBe('All Requests');
@@ -735,6 +760,7 @@ describe('StatisticsTable — the run-scope totals row', () => {
   /** A payload with no run row does not get an invented one. */
   it('omits the totals row when the payload has none, rather than inventing zeros', () => {
     renderTable({ ...stats, stats: stats.stats.filter((r) => r.scope !== 'run') });
+    showAllColumns();
     expect(screen.queryByTestId('stat-row-total')).toBeNull();
     expect(screen.queryByText('All Requests')).toBeNull();
     expect([...pathsOf(bodyRows())].sort()).toEqual([...ROOT_PATHS].sort());
@@ -776,6 +802,7 @@ describe('StatisticsTable — the numbers a reader reads (G-12, §A.5)', () => {
    */
   it('renders every column of a row, rounded as Gatling rounds them', () => {
     renderTable();
+    showAllColumns();
     const cart = rowAt('Cart');
 
     expect(textIn(cart, 'count')).toBe('85');
@@ -801,6 +828,7 @@ describe('StatisticsTable — the numbers a reader reads (G-12, §A.5)', () => {
    */
   it('keeps the exact value beside the rounded one', () => {
     renderTable();
+    showAllColumns();
     const cart = rowAt('Cart');
     const source = stats.stats.find((r) => r.name === 'Cart' && r.family === 'group_cumulated')!;
 
@@ -818,6 +846,7 @@ describe('StatisticsTable — the numbers a reader reads (G-12, §A.5)', () => {
    */
   it('shows the group family Gatling s own global table shows', () => {
     renderTable();
+    showAllColumns();
     expect(textIn(rowAt('Cart'), 'minMs')).toBe('106');
     expect(textIn(rowAt('Cart'), 'meanMs')).toBe('141');
     // …and there is exactly one Cart row, not one per family.
@@ -876,6 +905,7 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
    */
   it('renders no percentile outside its own row s min and max, on any row', () => {
     renderTable();
+    showAllColumns();
     expandCatalog();
 
     for (const row of [totalRow(), ...bodyRows()]) {
@@ -906,6 +936,7 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
    */
   it('clamps the rows the ruling names, in the text and in the exact value', () => {
     renderTable();
+    showAllColumns();
     expandCatalog();
 
     const recommendations = rowAt('Catalog/Recommendations');
@@ -1137,6 +1168,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   /** G-15 is "sortable columns", plural: every column, and only the columns. */
   it('gives every column a sort control, and none to the two group headings', () => {
     renderTable();
+    showAllColumns();
 
     expect(
       screen.getAllByRole('button', { name: /^sort by /i }).map((b) => b.getAttribute('aria-label')),
@@ -1188,6 +1220,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
    */
   it('leaves the column headers own names alone — the sort control is not part of them', () => {
     renderTable();
+    showAllColumns();
 
     expect(screen.queryAllByRole('columnheader', { name: /sort by/i })).toEqual([]);
     expect(screen.getByRole('columnheader', { name: '95th' })).toBeTruthy();
@@ -1201,6 +1234,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
     // …so §9 checkpoint 6's negative is still live with the controls wired.
     cleanup();
     renderTable(withPercentiles({ p50: 1, p90: 2, 'p99.9': 3 }));
+    showAllColumns();
     expect(screen.queryByRole('columnheader', { name: /^95th$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /sort by 95th/i })).toBeNull();
   });
@@ -1208,6 +1242,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   /** The totals row is the run's own; it is not a row the sort can move. */
   it('never moves the totals row into the sorted rows', () => {
     renderTable();
+    showAllColumns();
     fireEvent.click(sortButton('Max'));
     expect(bodyRows()).not.toContain(totalRow());
     expect(textIn(totalRow(), 'count')).toBe('895');
@@ -1319,6 +1354,7 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   /** Filtering hides rows. It is not a re-sort, and not a re-shaping. */
   it('changes neither the sort nor the column set', () => {
     renderTable();
+    showAllColumns();
     fireEvent.click(sortButton('Min'));
     typeFilter('Product');
 
@@ -1341,6 +1377,7 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   /** G-14 is a filter BOX: a real labelled control, not a placeholder. */
   it('is a labelled text control that shows what was typed', () => {
     renderTable();
+    showAllColumns();
     const box = screen.getByLabelText(/filter/i);
     expect(box.tagName).toBe('INPUT');
     typeFilter('Search');
@@ -1356,6 +1393,7 @@ describe('StatisticsTable — the table itself', () => {
    */
   it('is a table, named, with column headers scoped as columns', () => {
     renderTable();
+    showAllColumns();
     const table = screen.getByRole('table', { name: /statistics/i });
     expect(table.tagName).toBe('TABLE');
     for (const header of screen.getAllByRole('columnheader')) {
@@ -1514,5 +1552,139 @@ describe('StatisticsTable — the prose is available rather than present', () =>
     const disclosure = document.querySelector('details');
     expect(disclosure).not.toBeNull();
     expect((disclosure as HTMLDetailsElement).open).toBe(false);
+  });
+});
+
+/**
+ * REVIEW M11 — FIFTEEN COLUMNS IS AN ARCHIVE, NOT A TABLE.
+ *
+ * The default showed every measure the payload carried. A reader scanning for
+ * a regression reads maybe four, and the other eleven cost width that pushed
+ * request names into `truncate` and the whole table into a horizontal
+ * scroller.
+ *
+ * NOTHING IS REMOVED — the rest are one disclosure away and the CSV export is
+ * untouched. These cases are about the DEFAULT, which is why they are the only
+ * ones in this file that do not call `showAllColumns`.
+ */
+describe('StatisticsTable — the columns it opens with', () => {
+  const headings = () =>
+    screen
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent?.trim() ?? '')
+      .filter((t) => t !== '');
+
+  it('opens on the triage columns rather than every measure', () => {
+    renderTable();
+    const shown = headings();
+    for (const wanted of ['Total', 'KO', '% KO', 'Cnt/s', '50th', '95th', '99th', 'Max']) {
+      expect(shown.some((h) => h.includes(wanted))).toBe(true);
+    }
+    // And the ones a reader rarely scans are not there at rest.
+    expect(shown.some((h) => h.includes('Std Dev'))).toBe(false);
+    expect(shown.some((h) => h.includes('Min'))).toBe(false);
+  });
+
+  it('reveals the rest through the picker', () => {
+    renderTable();
+    expect(headings().some((h) => h.includes('Std Dev'))).toBe(false);
+    showAllColumns();
+    expect(headings().some((h) => h.includes('Std Dev'))).toBe(true);
+    expect(headings().some((h) => h.includes('Min'))).toBe(true);
+  });
+
+  /**
+   * THE SORTED COLUMN IS ALWAYS VISIBLE, and this case exists because the
+   * first version of the change broke it. `worstFirstColumn` picks the HIGHEST
+   * percentile the payload configures, which need not be p99 — so a project on
+   * p99.9 opened sorted by a column the default list does not name, with the
+   * sort arrow nowhere on screen.
+   */
+  it('always shows the column it opens sorted by', () => {
+    renderTable(withPercentiles({ p50: 1, 'p99.9': 2 }));
+    expect(headings().some((h) => h.includes('99.9th'))).toBe(true);
+  });
+
+  /** A table of row names and nothing else is not a state worth being able to
+   *  click your way into, and there is no undo for it on screen. */
+  it('refuses to turn off the last remaining column', () => {
+    renderTable();
+    const boxes = screen.getAllByRole('checkbox');
+    for (const box of boxes) {
+      if ((box as HTMLInputElement).checked) fireEvent.click(box);
+    }
+    expect(headings().length).toBeGreaterThan(0);
+  });
+});
+
+/* ======================================================================== *
+ * A GROUP ROW SAYS IT IS ONE (review M11)
+ * ======================================================================== */
+
+/**
+ * ═══ WHY THIS NEEDED SAYING AT ALL ═══
+ *
+ * A group and a request rendered identically apart from the expand chevron —
+ * and the chevron is a property of having CHILDREN, not of being a group. So a
+ * childless group was indistinguishable from a request, and a running filter
+ * (which flattens the tree to the rows that matched) removed the distinction
+ * from every row at once.
+ *
+ * It matters because the two quantities are not comparable: a group's counts
+ * already contain the counts of the requests inside it, so adding a group row
+ * to a request row double-counts. The caption states that; the tag is what
+ * lets a reader apply the caption to the row in front of them.
+ */
+describe('StatisticsTable — a group row is marked as one', () => {
+  const typeTagIn = (row: HTMLElement): HTMLElement | null =>
+    within(row).queryByTestId('stat-row-type');
+
+  it('tags every group row and no request row', () => {
+    renderTable();
+    // Computed from the payload, never written down — `data-scope` is the
+    // row's own claim and the tag has to agree with it on every rendered row.
+    const rows = bodyRows();
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.some((r) => r.getAttribute('data-scope') === 'group')).toBe(true);
+    expect(rows.some((r) => r.getAttribute('data-scope') === 'request')).toBe(true);
+
+    for (const row of rows) {
+      const tagged = typeTagIn(row) !== null;
+      expect(tagged, `row ${row.getAttribute('data-path')} tagged`).toBe(
+        row.getAttribute('data-scope') === 'group',
+      );
+    }
+  });
+
+  /**
+   * THE ROW HEADER'S ACCESSIBLE NAME IS STILL THE ROW'S NAME, which is the
+   * half a visible tag most easily breaks. `run-tables.spec.ts` reaches these
+   * rows with `getByRole('rowheader', { name, exact: true })`, and the `<th>`
+   * pins its name with `aria-labelledby` for exactly this reason — measured
+   * here rather than assumed, because the tag is a new text node inside that
+   * `<th>` and a name computed from contents would now include it.
+   */
+  it('does not put the tag in the row header’s accessible name', () => {
+    renderTable();
+    const group = bodyRows().find((r) => r.getAttribute('data-scope') === 'group')!;
+    const name = group.querySelector('a')!.textContent!;
+    const header = within(group).getByRole('rowheader', { name });
+
+    // The cell that resolved is the NAME cell, and the tag really is inside
+    // it — without this second half the query above would pass just as well
+    // for a tag rendered in some other cell, which is not the construction at
+    // risk.
+    expect(header.getAttribute('data-column')).toBe('name');
+    expect(within(header).getByTestId('stat-row-type').textContent).toBe('group');
+  });
+
+  /** And the tag is explained where the table explains itself, rather than
+   *  being a convention the reader has to infer from two rows. */
+  it('says in the caption what a tagged row is, and that it does not add', () => {
+    renderTable();
+    const caption = screen.getByRole('table').querySelector('caption')?.textContent ?? '';
+    expect(caption).toMatch(/tagged group/i);
+    expect(caption).toMatch(/never be added/i);
+    expect(caption).toMatch(/untagged row is a single request/i);
   });
 });

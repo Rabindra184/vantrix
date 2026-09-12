@@ -68,6 +68,24 @@ test('every §13.3 element is on the page', async ({ page }) => {
     await expect(page.getByTestId(`chart-data-${id}`)).toHaveCount(1);
   }
 
+  /* ═══ THE UNIT, WHICH THIS PAGE USED NOT TO STATE (review M11) ═══
+   *
+   * The one-row table repeats the run table's columns, and until M11 it
+   * repeated them WITHOUT the `Response Time (ms)` heading that carries the
+   * unit — so `Min`, `95th` and `Max` were bare numbers on the page a reader
+   * reaches by drilling INTO a row of the table that did say so.
+   *
+   * Asserted in a browser rather than in jsdom because that is where the
+   * accessible name of a `scope="colgroup"` header is computed by something
+   * other than our own polyfill. */
+  const scoped = page.getByRole('region', { name: 'Statistics table' });
+  await expect(
+    scoped.getByRole('columnheader', { name: 'Response Time (ms)', exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    scoped.getByRole('columnheader', { name: 'Executions', exact: true }),
+  ).toHaveCount(1);
+
   // The request page titles its rate charts DIFFERENTLY from the global page,
   // as Gatling's own request pages do.
   //

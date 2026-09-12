@@ -86,6 +86,10 @@ export class RunsService {
             expression: a.expression,
             actualValue: a.actualValue,
             outcome: a.outcome as ToolAssertionOutcome,
+            // NAMED, not spread — the excess-property check does not reach
+            // inside a spread, which CLAUDE.md records costing a field its
+            // whole journey to the repository.
+            assertion: a.assertion as NonNullable<RunResponse['toolAssertions']>[number]['assertion'],
           })),
       error: run.error,
       assertions: assertions.map((a: RunAssertionRow) => {
