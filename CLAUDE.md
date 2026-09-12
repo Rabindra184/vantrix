@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **138 files / 1582 tests**, it
+`nvm use` first, and if a run reports fewer than **138 files / 1598 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -102,6 +102,43 @@ integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
 `transforms.compare.test.ts` and `contracts.test.ts` are `.ts` files
 integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
 **e2e rises to 106**.
+
+The review-majors branch after it added no unit FILE and 16 cases, from a
+floor of 138 / 1582; its integration floor is **131 files / 1636 tests** and
+its e2e stays 106. It took the MAJORS that state something false or unusable
+and left the page-level redesigns alone.
+
+FOUR THINGS FROM IT.
+
+**A ZERO BASELINE IS A BASELINE.** `deltaPercent === null` covered three
+different facts — nothing selected, nothing measured, and a baseline of ZERO
+making a relative change undefined — and the tile rendered all three as
+"Waiting for baseline". False for the third, and false in the case that
+matters most: errors rising from 0 to 2/s is the regression an engineer most
+needs to see, and it is exactly when the baseline is zero. The model carries
+`deltaUnavailable` now and the tile says which.
+
+**A SHARED LINK CARRIED THE RUNS AND NOT THE QUESTION.** `runs=` was
+serialised; the metric was component state defaulting to p95, so a link to an
+ERRORS comparison opened as p95 for whoever received it. It is in the URL now,
+and an unknown value falls back rather than throwing — a URL is something
+people hand-edit.
+
+**THE ONBOARDING RECIPE COULD NOT BE RUN.** Project setup's curl example ended
+in a bare `/v1/runs`; a shell does not resolve that against the page's origin,
+so the first command anybody copies out of this product failed with "No host
+part in the request URL". It carries `window.location.origin` now, which is
+right for a custom domain and a port alike where a hard-coded localhost would
+not be.
+
+**TWO TRUE NUMBERS AN ORDER OF MAGNITUDE APART, NEITHER LABELLED.** The tab
+counts distinct error MESSAGES ("Errors (2)") and the run totals count failed
+REQUESTS (24), so a reader reconciling them assumes one is wrong. `ErrorsTable`
+held both already — `rows.length` and the `total` it divides its shares by —
+and now says which is which. And "Export run" became "Export SLA summary
+(JSON)", because the file is identity, state, verdict and platform assertions
+and nothing else: somebody attaching it to a review as evidence sent something
+close to empty.
 
 SIX THINGS FROM IT, AND THE FIRST FOUR ARE THE SAME SHAPE: A SENTENCE THE UI
 STATED CONFIDENTLY AND WRONGLY.

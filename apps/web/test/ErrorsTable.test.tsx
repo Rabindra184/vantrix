@@ -510,3 +510,43 @@ describe('ErrorsTable — it says when a window does not reach it', () => {
     expect(screen.getByTestId('errors-window-note')).toHaveTextContent(/whole run/i);
   });
 });
+
+/**
+ * REVIEW M09 — "ERRORS (2)" AND "24 FAILED REQUESTS" ARE BOTH TRUE.
+ *
+ * The tab counts distinct error MESSAGES; the run totals count failed
+ * REQUESTS. Two numbers, an order of magnitude apart, neither labelled as to
+ * which it is — so a reader reconciling "Errors (2)" against "24 failed"
+ * assumes one of them is wrong.
+ *
+ * This table holds both already: `rows.length` is the type count and `total`
+ * is the occurrence count it divides its shares by. It just never said so.
+ */
+describe('ErrorsTable — it distinguishes error types from occurrences', () => {
+  const two = {
+    runId: RUN_ID,
+    errors: [
+      { message: 'status.find.is(200), but actually found 500', count: 15 },
+      { message: 'j.u.c.TimeoutException: Request timeout', count: 9 },
+    ],
+  };
+
+  it('states both counts and names which is which', () => {
+    render(<ErrorsTable errors={two} />);
+    const tally = screen.getByTestId('errors-tally');
+    expect(tally).toHaveTextContent(/2 error types/i);
+    expect(tally).toHaveTextContent(/24 failed requests/i);
+  });
+
+  it('reads in the singular for one of each', () => {
+    render(<ErrorsTable errors={{ runId: RUN_ID, errors: [{ message: 'boom', count: 1 }] }} />);
+    const tally = screen.getByTestId('errors-tally');
+    expect(tally).toHaveTextContent(/1 error type/i);
+    expect(tally).toHaveTextContent(/1 failed request/i);
+  });
+
+  it('says nothing at all when there are no errors', () => {
+    render(<ErrorsTable errors={{ runId: RUN_ID, errors: [] }} />);
+    expect(screen.queryByTestId('errors-tally')).not.toBeInTheDocument();
+  });
+});

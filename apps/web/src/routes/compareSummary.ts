@@ -9,6 +9,20 @@ export interface CompareSummaryModel {
   readonly currentValue: number | null;
   readonly baselineValue: number | null;
   readonly deltaPercent: number | null;
+  /**
+   * WHY there is no delta, when there is none.
+   *
+   * `deltaPercent === null` covered three different facts: nothing was
+   * selected to compare against, a value could not be measured, and the
+   * baseline is ZERO so a relative change is undefined. The UI rendered all
+   * three as "Waiting for baseline".
+   *
+   * That is false for the last, and false in the case that matters most:
+   * errors rising from 0 to 2/s is the regression an engineer most needs to
+   * see, and it is precisely when the baseline is zero. `null` here means the
+   * delta is real.
+   */
+  readonly deltaUnavailable: 'no-baseline' | 'not-measured' | 'zero-baseline' | null;
   readonly deltaGood: boolean | null;
   readonly bestLabel: string | null;
   readonly bestValue: number | null;
@@ -42,10 +56,19 @@ export function buildCompareSummary(
   const best = comparable.sort((a, b) => betterScore(a.value, b.value, metric))[0] ?? null;
   const currentValue = current?.value ?? null;
   const baselineValue = baseline?.value ?? null;
+  const deltaUnavailable: CompareSummaryModel['deltaUnavailable'] =
+    baseline === null
+      ? 'no-baseline'
+      : currentValue === null || baselineValue === null
+        ? 'not-measured'
+        : baselineValue === 0
+          ? 'zero-baseline'
+          : null;
+
   const deltaPercent =
-    currentValue === null || baselineValue === null || baselineValue === 0
+    deltaUnavailable !== null
       ? null
-      : ((currentValue - baselineValue) / baselineValue) * 100;
+      : ((currentValue! - baselineValue!) / baselineValue!) * 100;
 
   return {
     selectedCount: runs.length,
@@ -54,6 +77,7 @@ export function buildCompareSummary(
     currentValue,
     baselineValue,
     deltaPercent,
+    deltaUnavailable,
     deltaGood: deltaPercent === null ? null : isDeltaGood(deltaPercent, metric),
     bestLabel: best?.label ?? null,
     bestValue: best?.value ?? null,

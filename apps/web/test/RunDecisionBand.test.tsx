@@ -89,7 +89,9 @@ describe('RunDecisionBand', () => {
       'href',
       `/runs/${RUN.id}/compare`,
     );
-    expect(screen.getByRole('button', { name: 'Export run' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Export SLA summary (JSON)' }),
+    ).toBeInTheDocument();
   });
 
   /**
@@ -203,7 +205,7 @@ describe('RunDecisionBand', () => {
     Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: () => {} });
 
     renderBand();
-    fireEvent.click(screen.getByRole('button', { name: 'Export run' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export SLA summary (JSON)' }));
 
     if (held.blob === null) throw new Error('Export run produced no blob');
     const payload = JSON.parse(await held.blob.text()) as {
@@ -312,5 +314,25 @@ describe('RunDecisionBand — three outcomes, not one word', () => {
     // a legitimate counter label beside it, and asserting on the page text
     // would fail for a reason that is not this rule.
     expect(screen.getByTestId('decision-word')).toHaveTextContent(/^not evaluated$/i);
+  });
+});
+
+/**
+ * REVIEW M13 — THE EXPORT NAME PROMISED A RUN ARTIFACT.
+ *
+ * `runSummaryJson` writes identity, execution state, verdict and the platform
+ * assertions. It does NOT write the headline statistics, the errors, the
+ * simulation assertions, any chart data, or the selected window. "Export run"
+ * is a promise of a complete artifact, and somebody attaching it to a review
+ * as evidence sent something close to empty.
+ *
+ * Naming it after its contents is the whole fix; widening the payload is a
+ * separate change with its own format questions.
+ */
+describe('RunDecisionBand — the export says what it exports', () => {
+  it('names the SLA summary rather than promising the run', () => {
+    renderBand();
+    expect(screen.getByRole('button', { name: /SLA summary/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Export run$/ })).not.toBeInTheDocument();
   });
 });

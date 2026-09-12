@@ -1,3 +1,4 @@
+import { COMPARE_METRICS, type CompareMetric } from '../charts/transforms/compare';
 /**
  * `?runs=` — the entire state of the Compare page.
  *
@@ -112,3 +113,24 @@ function defaultSelection(cohort: readonly string[], current: string): string[] 
 
 /** The inverse, for writing the selection back to the URL. */
 export const serialiseCompareSelection = (ids: readonly string[]): string => ids.join(',');
+
+/**
+ * The metric a shared comparison link asks about.
+ *
+ * ═══ THE SELECTION WAS SHAREABLE AND THE QUESTION WAS NOT ═══
+ *
+ * `runs=` lived in the URL and the metric lived in component state, defaulting
+ * to p95 — so a colleague opening a link to an ERRORS comparison got a p95
+ * comparison instead. Everything about which runs to look at survived being
+ * pasted into a ticket; the thing being asked about did not.
+ *
+ * Unknown or absent falls back to the default rather than throwing: a URL is
+ * something people hand-edit, and a mistyped metric should open the page, not
+ * break it.
+ */
+export const DEFAULT_COMPARE_METRIC: CompareMetric = 'p95';
+
+export function parseCompareMetric(raw: string | null): CompareMetric {
+  const found = COMPARE_METRICS.find((m) => m.value === raw);
+  return found?.value ?? DEFAULT_COMPARE_METRIC;
+}
