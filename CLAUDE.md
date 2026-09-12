@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **142 files / 1691 tests**, it
+`nvm use` first, and if a run reports fewer than **142 files / 1693 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,37 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The sla-authoring-clarity branch (M17's remainder) added no unit FILE and 18
+cases — 11 to `apps/web/test/ProjectRules.test.tsx` and 7 to
+`packages/contracts/test/rules.test.ts` — from a floor of 142 / 1675 once M18
+had merged. Its integration floor is **133 files / 1681 tests** (that
+`rules.test.ts` is a `.ts` file integration runs too) and e2e stays 113.
+
+**THE PICKER'S ENDPOINTS HAD TO BE MOCKED OR THE SUITE WOULD HAVE TESTED THE
+FALLBACK.** The target field is now a choice over the names a run recorded, and
+it degrades to the typed input it replaced when either read fails. Left
+unmocked those reads fail, so every existing target case would have gone on
+passing against the fallback while the picker went untested. **This is the
+second branch in a row to meet that**, one component over — see the
+setup-and-launch entry. Whenever a control gains a data source AND a degraded
+path, the suite's default state is the degraded one.
+
+**AND ONE INTEGRATION RUN FAILED WITH A TEST THIS BRANCH CANNOT REACH.**
+`verdict.integration.test.ts`'s "keeps two declared tests of one simulation
+apart" reported `[ 'checkout-smoke' ]` against the expected pair — one test
+created where two were declared. The file then passed ALONE 16/16, the full
+suite passed 1681/1681 on a re-run, and `git diff origin/main --name-only`
+carries nothing under `apps/api`, `apps/worker` or `packages/persistence` at
+all. Recorded rather than glossed, as the review-majors-workflow entry asks:
+this is the same undiagnosed shape, and the branch-diff is the cheapest
+evidence that it is not the change under test.
+
+**THE GREP TRAP FROM THAT ENTRY BIT AGAIN, IMMEDIATELY.** The first failing run
+was piped through `grep -E "×|FAIL"` and the assertion message went with it,
+so the second run had to be spent re-finding what the first had already said.
+**Redirect the suite to a file and read the tail** — `tail -6` costs nothing
+and keeps the whole failure.
 
 The mobile-summary branch (M18) added ONE unit file —
 `apps/web/test/RunList.compact.test.tsx` (9) — and 7 cases across
