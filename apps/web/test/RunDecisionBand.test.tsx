@@ -85,7 +85,7 @@ const TOOL: NonNullable<RunResponse['toolAssertions']> = [
 describe('RunDecisionBand', () => {
   it('keeps compare as a real link and exposes export as a run action', () => {
     renderBand();
-    expect(screen.getByRole('link', { name: 'Compare previous' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Compare runs' })).toHaveAttribute(
       'href',
       `/runs/${RUN.id}/compare`,
     );
@@ -334,5 +334,25 @@ describe('RunDecisionBand — the export says what it exports', () => {
     renderBand();
     expect(screen.getByRole('button', { name: /SLA summary/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Export run$/ })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * REVIEW M07 — THE ACTION NAMED A COMPARISON THAT MAY NOT EXIST.
+ *
+ * Both demo runs offered "Compare previous" and both landed on "Nothing to
+ * compare yet". And `compareSelection`'s default can pick a NEWER neighbour
+ * for the oldest run in a cohort, so "previous" was not reliably true even
+ * when a run did have one.
+ *
+ * The destination is a picker over the whole cohort, so the honest name is
+ * what the picker does. The link itself is unchanged — the fix is the promise.
+ */
+describe('RunDecisionBand — the compare action promises only what it can', () => {
+  it('offers to compare runs rather than a specific previous one', () => {
+    renderBand();
+    const link = screen.getByRole('link', { name: 'Compare runs' });
+    expect(link).toHaveAttribute('href', `/runs/${RUN.id}/compare`);
+    expect(screen.queryByRole('link', { name: /previous/i })).not.toBeInTheDocument();
   });
 });

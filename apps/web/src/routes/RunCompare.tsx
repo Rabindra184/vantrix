@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { seriesQuery, statsQuery, trendsQuery } from '../api/metrics';
 import CompareChart from '../charts/CompareChart';
 import {
@@ -16,6 +16,8 @@ import CompareMatrix from '../tables/CompareMatrix';
 import type { CompareStats } from '../tables/buildCompareMatrix';
 import { Payload, type Slot } from './payload';
 import DesktopOnly from './DesktopOnly';
+import { linkButtonClasses } from '../components/Button';
+import { projectRunsPath, projectTestPath } from './paths';
 import LiveNotice from './LiveNotice';
 import { useRunTerminal } from './useRunWindow';
 import useIsCompact from '../useIsCompact';
@@ -78,7 +80,12 @@ export default function RunCompare() {
   // anyway (`RunTrends` only ever links here once it has cleared its own
   // `!terminal` return). It is reachable now, by a hand-typed URL, so it
   // gets the same `terminal` gate rather than a bespoke live view of its own.
-  const { terminal } = useRunTerminal(runId);
+  // `detail` as well as `terminal`: the empty state below needs the run's
+  // PROJECT to offer a way out, and the trends payload carries a test and a
+  // simulation but no project at all.
+  const { detail, terminal } = useRunTerminal(runId);
+  const projectSlug =
+    detail.data?.state === 'ready' ? detail.data.run.project.slug : null;
 
   // The cohort is the set of runs that can legitimately be compared, and the
   // only source of it — a client-supplied list would let a reader compare
@@ -253,6 +260,27 @@ export default function RunCompare() {
                       'against. A run joins a test when its simulation name is read from the log.'
                     : `This is the only completed run of ${data.test.name}. Compare becomes ` +
                       'available once a second run of it has been ingested.'
+                }
+                /* A VALID STATE WITH AN INCOMPLETE WORKFLOW (review M20). It
+                   said what was missing and left the reader on a page with no
+                   way to supply it. The route differs by CAUSE: a run with no
+                   test needs the project's other runs, and a lone run of a
+                   known test needs another run OF THAT TEST — which is what
+                   its own page lists. Neither invents a capability; both are
+                   pages that already exist. */
+                action={
+                  projectSlug === null ? undefined : data.test === null ? (
+                    <Link to={projectRunsPath(projectSlug)} className={linkButtonClasses}>
+                      See this project’s runs
+                    </Link>
+                  ) : (
+                    <Link
+                      to={projectTestPath(projectSlug, data.test.slug)}
+                      className={linkButtonClasses}
+                    >
+                      See every run of {data.test.name}
+                    </Link>
+                  )
                 }
               />
             ) : (

@@ -239,7 +239,21 @@ function TestRow({
           reason `RunHeader`'s `<h1>` uses it: a fully-qualified class name is
           long by design and the END is the part that distinguishes two of
           them. */}
-      <td className={`${TD} font-mono text-[12px] break-all text-muted`}>{test.simulationClass}</td>
+      {/* NOT PRINTED TWICE. A test nobody has renamed takes its class AS its
+          name, so both columns carried the same forty-character string and the
+          row spent a third of its width saying one thing. The cell still
+          exists — the two diverge the moment anybody renames a test, and the
+          class is what a reader matches against their own simulation source —
+          but when they are identical it says SO rather than repeating it. */}
+      <td className={`${TD} font-mono text-[12px] break-all text-muted`}>
+        {test.name === test.simulationClass ? (
+          <span data-testid="test-class-same" className="font-sans italic">
+            same as the name
+          </span>
+        ) : (
+          test.simulationClass
+        )}
+      </td>
       <td className={`${TD} font-mono tabular-nums`}>{test.runCount}</td>
       <td className={TD}>
         {test.latestRun === null ? (

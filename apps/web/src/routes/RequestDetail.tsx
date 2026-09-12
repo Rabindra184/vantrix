@@ -1,7 +1,9 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { useWindowSuffix } from './useRunWindow';
+import { useRunTerminal, useWindowSuffix } from './useRunWindow';
+import { formatInstant } from './format';
+import { projectPath, projectTestPath } from './paths';
 import {
   distributionQuery,
   errorsQuery,
@@ -65,6 +67,13 @@ export default function RequestDetail() {
      from a windowed table, and sending them back to an un-narrowed run would
      discard the selection they were investigating with. */
   const windowSuffix = useWindowSuffix();
+  /* THE EXPERIMENT'S IDENTITY, which this page used to drop entirely. It
+     opened with "Back to this run" and the request's own name, so two Search
+     pages from different runs were indistinguishable — and a screenshot of one
+     said nothing about which run it came from. Same cache key the run page
+     itself uses, so this costs no request of its own. */
+  const { detail } = useRunTerminal(runId);
+  const run = detail.data?.state === 'ready' ? detail.data.run : null;
 
   // The request's own path — the same string the `<h1>` renders, and the
   // reason a reader keeps two of these open at once.
@@ -127,6 +136,41 @@ export default function RequestDetail() {
             `break-all`: a request name is a slash-separated path with no
             spaces to wrap at, and on a phone `Catalog/Recommendations` would
             otherwise widen the whole page. */}
+        {/* ═══ WHICH EXPERIMENT THIS IS ═══
+         *
+         * The page carried the request's name and a back link and nothing
+         * else, so two Search pages from different runs were
+         * indistinguishable and a screenshot of one said nothing about where
+         * it came from. Project, test, run and environment are what make it
+         * identifiable without retracing the navigation.
+         *
+         * Rendered only when the run has arrived, and each field only when it
+         * exists — an em dash for a missing environment would be noise, since
+         * the whole strip is context rather than a measurement. */}
+        {run !== null && (
+          <p data-testid="detail-run-context" className="text-[12px] text-muted">
+            <Link
+              to={projectPath(run.project.slug)}
+              className="transition-ui text-accent hover:underline hover:underline-offset-2"
+            >
+              {run.project.name}
+            </Link>
+            {run.test !== null && run.test !== undefined && (
+              <>
+                {' · '}
+                <Link
+                  to={projectTestPath(run.project.slug, run.test.slug)}
+                  className="transition-ui text-accent hover:underline hover:underline-offset-2"
+                >
+                  {run.test.name}
+                </Link>
+              </>
+            )}
+            {run.environment != null && run.environment !== '' && ` · ${run.environment}`}
+            {run.branch != null && run.branch !== '' && ` · ${run.branch}`}
+            {` · ${formatInstant(run.startedAt)}`}
+          </p>
+        )}
         <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">{name}</h1>
       </header>
       {/* §13.3 ① and ⑪, ABOVE THE CHART STACK — same placement as the run

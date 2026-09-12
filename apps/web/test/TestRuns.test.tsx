@@ -562,3 +562,31 @@ describe('TestRuns — deleting a test', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Checkout smoke' })).toBeInTheDocument();
   });
 });
+
+/**
+ * REVIEW M04 — THE TEST PAGE OPENED ON CONFIGURATION.
+ *
+ * Rename/Delete and a fully-expanded SLA authoring form sat above the run
+ * history, so the page an engineer visits repeatedly to inspect RESULTS led
+ * with the occasional job of configuring them — and the latest run was below a
+ * form.
+ *
+ * Order only. The rules panel stays on this page: a test's gates belong with
+ * the test, and moving them to a route of their own is the navigation redesign
+ * M04 also asks for, which is a larger change than reordering two siblings.
+ * The existing "mounts exactly one rules panel" case above is what guards the
+ * remount keys through the move.
+ */
+describe('TestRuns — history before administration', () => {
+  it('puts the run history above the rules form', async () => {
+    stubFetch();
+    renderPage();
+    await screen.findByRole('heading', { level: 1, name: 'Checkout smoke' });
+    await waitFor(() => expect(screen.getAllByTestId('run-row').length).toBeGreaterThan(0));
+
+    const firstRun = screen.getAllByTestId('run-row')[0]!;
+    const addRule = screen.getByRole('button', { name: 'Add rule' });
+    // 4 === DOCUMENT_POSITION_FOLLOWING: the form comes after the runs.
+    expect(firstRun.compareDocumentPosition(addRule) & 4).toBeTruthy();
+  });
+});

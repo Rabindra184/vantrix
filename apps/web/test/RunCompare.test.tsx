@@ -164,3 +164,29 @@ describe('RunCompare — terminal gate (MINOR 5)', () => {
     expect(await screen.findByText(/nothing to compare yet/i)).toBeInTheDocument();
   });
 });
+
+/**
+ * REVIEW M20 — AN EMPTY STATE THAT NAMES ITS OWN REMEDY.
+ *
+ * "Nothing to compare yet" said exactly what was missing and then left the
+ * reader on a page with no way to supply it. These are valid data states with
+ * incomplete workflows, not errors.
+ *
+ * The destination differs by CAUSE — a lone run of a KNOWN test needs another
+ * run of that test, which is what the test's own page lists, while a run with
+ * no test needs the project's runs. `EMPTY_TRENDS` carries a test, so this
+ * pins the first; the second branch is the same `data.test === null`
+ * discriminant the body copy above it already switches on.
+ */
+describe('RunCompare — the empty state offers a way on', () => {
+  it('points a lone run of a known test at that test’s own runs', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN });
+    const link = await screen.findByRole('link', { name: /every run of/i });
+    expect(link).toHaveAttribute('href', '/projects/checkout/tests/example-paritysimulation');
+  });
+
+  it('still says what is missing, rather than replacing the explanation', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN });
+    expect(await screen.findByText(/only completed run/i)).toBeInTheDocument();
+  });
+});

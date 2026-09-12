@@ -41,7 +41,7 @@ import { countAssertions, describeAssertionRule, firstFailedAssertion } from './
 import { baselineRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
-import { DEFAULT_ROUTE } from './paths';
+import { DEFAULT_ROUTE, projectSetupPath } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
 import {
   useLiveFromShell,
@@ -535,7 +535,11 @@ export function RunOverviewTab() {
         </>
       )}
 
-      <Assertions runId={runId} assertions={runAssertions} />
+      <Assertions
+        runId={runId}
+        assertions={runAssertions}
+        projectSlug={run.data.run.project.slug}
+      />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
       <TableSection title="Statistics" query={stats}>
@@ -965,17 +969,35 @@ export function RunChartsTab() {
 function Assertions({
   runId,
   assertions,
+  projectSlug,
 }: {
   readonly runId: string;
   readonly assertions: readonly Assertion[];
+  /** For the empty state's own way out — see below. Optional because a run
+   *  whose project is not yet known still renders the section. */
+  readonly projectSlug?: string;
 }) {
   if (assertions.length === 0) {
     return (
       <section className="flex flex-col gap-3">
         <SectionHeading overline="Evidence">Assertions</SectionHeading>
+        {/* A VALID STATE WITH AN INCOMPLETE WORKFLOW. This explained the
+            absence accurately and then left the reader on a page with no way
+            to do anything about it — the rules live two navigations away and
+            the text did not say where. An empty state that names its own
+            remedy is the difference between a dead end and a step.
+            Also: the sentence says rules apply from INGEST, so a reader who
+            follows this link has to know the change affects future runs. */}
         <EmptyState
           title="No SLA rules were evaluated against this run"
-          body="Rules are configured per project, and only rules that existed when the run was ingested are applied to it."
+          body="Rules are configured per project, and only rules that existed when the run was ingested are applied to it — adding one affects future runs, not this one."
+          action={
+            projectSlug === undefined ? undefined : (
+              <Link to={projectSetupPath(projectSlug)} className={linkButtonClasses}>
+                Configure rules for this project
+              </Link>
+            )
+          }
         />
       </section>
     );
