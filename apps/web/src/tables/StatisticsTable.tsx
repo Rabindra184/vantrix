@@ -226,6 +226,37 @@ const TRAILING_TIME_COLUMNS: readonly Column[] = [
  * same columns. Two independent definitions of "the column set" is how a table
  * comes to render Mean under the Std Dev heading.
  */
+/**
+ * The columns a run page opens with — review M11.
+ *
+ * ═══ FIFTEEN COLUMNS IS AN ARCHIVE, NOT A TABLE ═══
+ *
+ * The default showed every measure the payload carried: Total, OK, KO, % KO,
+ * Cnt/s, Min, four percentiles, Max, Mean and Std Dev. A reader scanning for a
+ * regression reads maybe four of those, and the other eleven cost width that
+ * pushed request names into `truncate` and forced the whole table into a
+ * horizontal scroller on a laptop.
+ *
+ * These eight are the review's own list — what happened, what failed, how
+ * often, how fast at the ranks anybody quotes. NOTHING IS REMOVED: the rest
+ * are one disclosure away, the CSV export is unchanged, and a column a reader
+ * turns on stays on for the life of the page.
+ *
+ * `okCount` is the interesting omission. It is `count - koCount`, so a reader
+ * who has Total and KO already has it — which is not true of Min or Std Dev,
+ * and is why those are optional rather than gone.
+ */
+export const DEFAULT_STATISTIC_COLUMNS: ReadonlySet<string> = new Set([
+  'count',
+  'koCount',
+  'errorRate',
+  'throughputRps',
+  'p50',
+  'p95',
+  'p99',
+  'maxMs',
+]);
+
 export function columnsFor(rows: readonly StatRow[]): {
   readonly executions: readonly Column[];
   readonly responseTime: readonly Column[];
@@ -517,6 +548,52 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
     };
   }, [tree, total]);
 
+  /* ═══ WHICH COLUMNS ARE ON (review M11) ═══
+   *
+   * `null` until the reader touches the selector, and the default is applied
+   * on READ rather than seeded into state. Seeding would have to wait for
+   * `columns`, which depends on the payload — so a table whose percentile set
+   * arrives late would seed an empty selection and show nothing. Deriving it
+   * means the default is always the intersection of "what the review asks for"
+   * and "what this payload actually has".
+   *
+   * A percentile the project does not configure therefore cannot be turned on,
+   * which is the same rule the columns themselves already follow. */
+  const [chosen, setChosen] = useState<ReadonlySet<string> | null>(null);
+  const everyColumn = [...columns.executions, ...columns.responseTime];
+  /* THE COLUMN THE TABLE OPENS SORTED BY IS ALWAYS ONE OF THEM.
+   *
+   * `worstFirstColumn` picks the HIGHEST percentile the payload configures, so
+   * a project on p99.9 opens sorted by a column the review's default list does
+   * not name — and the first version of this hid it, leaving the table sorted
+   * by something invisible with a sort arrow nowhere on screen. Caught by
+   * "opens on whichever percentile the payload configures", which is exactly
+   * the case that exists because that column is NOT fixed at p99.
+   *
+   * Unioned rather than special-cased in the picker: the reader can still turn
+   * it off afterwards, and then the sort control moves with it, which is the
+   * behaviour any other column already has. */
+  const visible =
+    chosen ??
+    new Set([
+      ...everyColumn.map((c) => c.column).filter((c) => DEFAULT_STATISTIC_COLUMNS.has(c)),
+      ...(columns.worstFirst === null ? [] : [columns.worstFirst]),
+    ]);
+  const shown = {
+    executions: columns.executions.filter((c) => visible.has(c.column)),
+    responseTime: columns.responseTime.filter((c) => visible.has(c.column)),
+  };
+
+  const toggleColumn = (column: string) => {
+    const next = new Set(visible);
+    // NEVER EMPTY: a table of row names and nothing else is not a state worth
+    // being able to reach by clicking, and there is no undo for it on screen.
+    if (next.has(column) && next.size === 1) return;
+    if (next.has(column)) next.delete(column);
+    else next.add(column);
+    setChosen(next);
+  };
+
   /**
    * GROUPS START COLLAPSED — §9 checkpoint 4, and one of the two NON-NUMERIC
    * checkpoints this plan requires.
@@ -628,7 +705,10 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
     );
   }
 
-  const allColumns = [...columns.executions, ...columns.responseTime];
+  // The VISIBLE columns drive the header, the cells and the colspans. The
+  // CSV export below deliberately still uses every column — a download is an
+  // archive, and hiding a column on screen is not a decision about the file.
+  const allColumns = [...shown.executions, ...shown.responseTime];
 
   /**
    * `flatten(sorted)`, not `rows`: the export follows the sort and the filter
@@ -685,6 +765,34 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
         </div>
       </div>
 
+      {/* ═══ THE REST OF THE COLUMNS, ONE DISCLOSURE AWAY (review M11) ═══
+       *
+       * A native `<details>` so the keyboard behaviour is the browser's, and
+       * closed by default because the point of the change is that fifteen
+       * columns are not what a reader opens with.
+       *
+       * Checkboxes rather than a multi-select: the whole set is small, and a
+       * reader deciding which measures they want is comparing them against
+       * each other, which a collapsed control does not let them do. */}
+      <details data-testid="column-picker" className="group">
+        <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+          <span className="group-open:hidden">Choose columns</span>
+          <span className="hidden group-open:inline">Hide column choices</span>
+        </summary>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 pt-2">
+          {everyColumn.map((c) => (
+            <label key={c.column} className="flex items-center gap-1.5 text-[12px] text-primary">
+              <input
+                type="checkbox"
+                checked={visible.has(c.column)}
+                onChange={() => toggleColumn(c.column)}
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      </details>
+
       <TableFrame
         caption={CAPTION_TEXT}
         summary="Every request and group in this run, with the run’s own totals first. Times in milliseconds."
@@ -723,10 +831,10 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                   nothing to sort by, and a control here would have to guess
                   which of the five it meant. Centred over their span for the
                   same reason — see `TH_GROUP`. */}
-              <th colSpan={columns.executions.length} scope="colgroup" className={TH_GROUP}>
+              <th colSpan={shown.executions.length} scope="colgroup" className={TH_GROUP}>
                 Executions
               </th>
-              <th colSpan={columns.responseTime.length} scope="colgroup" className={TH_GROUP}>
+              <th colSpan={shown.responseTime.length} scope="colgroup" className={TH_GROUP}>
                 Response Time (ms)
               </th>
             </tr>
@@ -840,7 +948,10 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
  */
 const CAPTION_TEXT =
   'Statistics for every request and group in this run, with the run’s own totals in the first ' +
-  'row. Response times are in milliseconds. The percentile columns are estimates, accurate to ' +
+  'row. A row tagged GROUP is an aggregate — the cumulated response time of the requests inside ' +
+  'it — so its counts already include theirs and the two must never be added together; every ' +
+  'untagged row is a single request. ' +
+  'Response times are in milliseconds. The percentile columns are estimates, accurate to ' +
   'within 1%, and are shown clamped to their own row’s minimum and maximum — a percentile of a ' +
   'sample cannot lie outside that sample’s range.';
 
@@ -1102,6 +1213,36 @@ function Row({
           <Link id={nameId} to={`${detailPathFor(runId, row)}${windowSuffix}`} className="underline">
             {row.name}
           </Link>
+          {/* ═══ A GROUP SAYS SO, IN WORDS (review M11) ═══
+           *
+           * The only thing that distinguished a group from a request was the
+           * expand chevron — so a group with no children rendered EXACTLY like
+           * a request, and a filtered table (which flattens the tree to the
+           * rows that matched) lost even that. The two are not comparable
+           * quantities: a group's counts already contain the requests inside
+           * it. The caption says that; this tag is what lets a reader apply it
+           * to the row in front of them.
+           *
+           * AFTER the name rather than before it, so the indent that carries
+           * the tree stays the leftmost thing on every row.
+           *
+           * Requests get no tag. Untagged-means-request is stated in the
+           * caption, and a table whose every row but a handful carried the
+           * word "request" would be paying fifty rows of noise to say what the
+           * table is already called. */}
+          {row.scope === 'group' && (
+            // NOT aria-hidden, and not part of the row header's NAME either:
+            // the `<th>` takes its name from `nameId` above, so this word is
+            // there when a screen-reader user reads the CELL and absent from
+            // the row's own announcement. See the `aria-labelledby` note on
+            // that `<th>` for why the name is pinned.
+            <span
+              data-testid="stat-row-type"
+              className="rounded-sm border border-default px-1 font-mono text-[10px] font-medium tracking-[0.06em] text-muted uppercase"
+            >
+              group
+            </span>
+          )}
         </span>
       </th>
       <Cells row={row.row} columns={columns} />

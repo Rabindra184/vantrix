@@ -413,20 +413,35 @@ test('the column headings are the payload’s own, and name themselves in Chromi
   expect(keys.length, 'the reference run configures four percentiles').toBe(4);
 
   const table = statisticsTable(page);
+
+  /* ═══ THE DEFAULT SET, NOT EVERY MEASURE (review M11) ═══
+   *
+   * This used to assert all fifteen columns. The table opens on eight now —
+   * what happened, what failed, how often, how fast at the ranks anybody
+   * quotes — with the rest behind a picker. Nothing was removed; the CSV
+   * export still carries every column.
+   *
+   * `99.9th` rides along because `worstFirstColumn` opens the table sorted by
+   * the HIGHEST percentile the payload configures, and a column the table
+   * sorts by must be visible. The reference run configures four, so the
+   * default shows 50th, 95th, 99th and whichever is worst — which for this
+   * payload is the fourth.
+   *
+   * The negative below is unchanged and still the load-bearing half: a
+   * percentile the payload does NOT configure gets no column, whether or not
+   * the picker could otherwise offer it. */
+  const worst = keys.map(percentileLabel).at(-1)!;
+  const defaults = ['50th', '95th', '99th'].filter((p) => keys.map(percentileLabel).includes(p));
   const expected = [
     'Requests',
     'Executions',
     'Response Time (ms)',
     'Total',
-    'OK',
     'KO',
     '% KO',
     'Cnt/s',
-    'Min',
-    ...keys.map(percentileLabel),
+    ...Array.from(new Set([...defaults, worst])),
     'Max',
-    'Mean',
-    'Std Dev',
   ];
 
   /* THE ACCESSIBLE NAME OF EVERY HEADER, computed by Chromium rather than by
@@ -447,6 +462,46 @@ test('the column headings are the payload’s own, and name themselves in Chromi
   // Not one of them is named after the ACTION its control performs.
   await expect(table.getByRole('columnheader', { name: /sort by/i })).toHaveCount(0);
   // A percentile the payload does not configure gets no column.
+  await expect(table.getByRole('columnheader', { name: '99.9th', exact: true })).toHaveCount(0);
+
+  /* ═══ AND THE PICKER REVEALS THE REST, WHICH IS THE OTHER HALF ═══
+   *
+   * The set above is a default, not a ceiling — nothing was deleted. Ticking
+   * every box restores exactly the fifteen columns this test asserted before
+   * M11, so the old coverage is still here and now sits behind the disclosure.
+   *
+   * The negative survives the reveal too, and that is the point of repeating
+   * it: `99.9th` is absent because the PAYLOAD does not configure it, not
+   * because a checkbox is unticked. A picker built from a hard-coded column
+   * list would offer it and fail here. */
+  const picker = page.getByTestId('column-picker');
+  await picker.locator('summary').click();
+  for (const box of await picker.getByRole('checkbox').all()) {
+    if (!(await box.isChecked())) await box.check();
+  }
+
+  const everything = [
+    'Requests',
+    'Executions',
+    'Response Time (ms)',
+    'Total',
+    'OK',
+    'KO',
+    '% KO',
+    'Cnt/s',
+    'Min',
+    ...keys.map(percentileLabel),
+    'Max',
+    'Mean',
+    'Std Dev',
+  ];
+  for (const name of everything) {
+    await expect(
+      table.getByRole('columnheader', { name, exact: true }),
+      `columnheader named ${JSON.stringify(name)} once every box is ticked`,
+    ).toHaveCount(1);
+  }
+  await expect(table.getByRole('columnheader')).toHaveCount(everything.length);
   await expect(table.getByRole('columnheader', { name: '99.9th', exact: true })).toHaveCount(0);
 
   // D-8: the errors table has three columns and no fourth — its own tab now.

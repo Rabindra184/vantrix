@@ -41,3 +41,34 @@ describe('ScopedStatistics', () => {
     expect(mean).toHaveTextContent(String(Math.round(row.meanMs)));
   });
 });
+
+/**
+ * ═══ THE UNIT IS A HEADING HERE TOO (review M11) ═══
+ *
+ * This table repeats the run table's columns for ONE row, and repeated them
+ * without the group heading row that carries the unit — so `Min`, `95th` and
+ * `Max` were bare numbers on the page a reader reaches by drilling into the
+ * table that did say so.
+ *
+ * The spans are asserted as a PARTITION of the leaf headings rather than
+ * against written-down counts: a project configuring more percentiles widens
+ * the response-time span, and the failure worth catching is a span that stops
+ * matching the columns underneath it, which misaligns the whole header.
+ */
+describe('ScopedStatistics — the unit', () => {
+  const span = (name: string): number =>
+    Number(screen.getByRole('columnheader', { name }).getAttribute('colspan'));
+
+  it('states milliseconds in a group heading over the time columns', () => {
+    render(<ScopedStatistics row={row} rows={stats.stats} />);
+
+    const leaves = screen.getAllByRole('columnheader').length - 2;
+    expect(span('Executions') + span('Response Time (ms)')).toBe(leaves);
+
+    // Every configured percentile is a response-time column, so the span can
+    // never be smaller than the payload's own percentile count.
+    expect(span('Response Time (ms)')).toBeGreaterThanOrEqual(
+      Object.keys(row.percentiles).length,
+    );
+  });
+});

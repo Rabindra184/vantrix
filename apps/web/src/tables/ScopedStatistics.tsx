@@ -2,7 +2,7 @@ import type { StatRow } from '@perfportal/contracts';
 import { useId, useMemo } from 'react';
 import Card from '../components/Card';
 import SectionHeading from '../components/SectionHeading';
-import { ROW, SCROLLER, TABLE, TD_NUM, THEAD, TH_NUM } from '../components/tableStyles';
+import { ROW, SCROLLER, TABLE, TD_NUM, THEAD, TH_GROUP, TH_NUM } from '../components/tableStyles';
 import { columnsFor, type Column } from './StatisticsTable';
 
 /**
@@ -55,6 +55,29 @@ export default function ScopedStatistics({
               deferral; this pass is the sub-project it was deferred to. */}
           <table className={TABLE}>
             <thead className={THEAD}>
+              {/* ═══ THE UNIT LIVES UP HERE, AS IT DOES IN THE RUN'S OWN TABLE
+                  (review M11) ═══
+
+                  Without this row the one-row table showed `Min`, `95th` and
+                  `Max` as bare numbers. The run table says `Response Time
+                  (ms)` over exactly those columns — and this is the page a
+                  reader reaches by drilling INTO a row of that table, so it
+                  was the one surface where the unit had to be remembered
+                  rather than read. Same two headings, same `TH_GROUP`, same
+                  split from `columnsFor`, so the two cannot drift.
+
+                  The leaf headings below are untouched: their accessible
+                  names are still the bare labels, which is what
+                  `run-tables.spec.ts` matches on and what the comment on the
+                  `title` attribute below is about. */}
+              <tr>
+                <th colSpan={executions.length} scope="colgroup" className={TH_GROUP}>
+                  Executions
+                </th>
+                <th colSpan={responseTime.length} scope="colgroup" className={TH_GROUP}>
+                  Response Time (ms)
+                </th>
+              </tr>
               <tr>
                 {columns.map((c) => (
                   // `title` carries the column's hint. Left as a title
