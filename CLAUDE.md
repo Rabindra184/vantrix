@@ -103,6 +103,43 @@ integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
 integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
 **e2e rises to 106**.
 
+The run-page-reading-order branch after that added no unit case and TWO e2e
+(**e2e rises to 108**); unit stays 138 / 1603 and integration 131 / 1638.
+
+THREE THINGS FROM IT, AND THE LAST IS THE ONE TO READ.
+
+**THE CHARTS WERE ORDERED BY WHICH QUERY PRODUCED THEM.** The tab opened with
+two aggregates — a response-time range bar and a large OK/KO donut — and put
+latency-over-time seventh, because `stats`, `users`, `distribution` and
+`series` each rendered their own `Payload` in that order. A reader correlating
+offered load against throughput, latency and failures scrolled past whole-run
+summaries to reach the series and back again. The four time series are adjacent
+now, in the order the question is asked. `CHART_IDS` in `run-charts.spec.ts` is
+asserted as a LIST for this reason: a reorder that kept every figure present
+would otherwise undo it silently.
+
+**`compact` IS THE SPARKLINE MODE AND IT WAS THE WRONG TOOL FOR THE BRUSH.**
+Reaching for it to shorten the time selector stripped the axis labels with
+everything else — `TimeBrush.test.tsx`'s "labels that axis in seconds" went red
+immediately, and rightly: a control you DRAG with no time labels gives the
+reader no idea where they are. `navigator` is the middle setting — 160px, no
+legend, axes kept — and the legend is the safe thing to drop because the chart
+directly below names the same All/OK/KO.
+
+**AND M01's ACCEPTANCE IS NOT MET, WHICH IS RECORDED RATHER THAN ROUNDED UP.**
+Measured at 1440x900: the run's own totals began at **y=1570**; reordering the
+Overview and shortening the brush took them to **y=1001**. The review asks for
+them inside a 900px window. What is left is the decision band — **313px** at
+that width — and making it materially shorter trades against the three separate
+outcomes C02 put there and against the redesign's choice to make the verdict the
+largest text on the page. That is a design decision, not a defect.
+
+So the e2e case asserts the ORDER (which cannot regress silently — the tiles
+contribute no heading, so the heading-outline case cannot see them) and a
+geometry bound of 1100 (what was achieved), with the gap stated in its own
+docstring. **A threshold set to the goal rather than the measurement would be
+a failing test describing work nobody has agreed to do.**
+
 The run-list-triage branch after that added no unit FILE and 6 cases
 (`RunList.test.tsx`), from a floor of 138 / 1597; its integration floor is
 **131 files / 1638 tests** (2 new cases in `read.integration.test.ts`) and its

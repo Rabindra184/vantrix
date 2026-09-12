@@ -673,3 +673,78 @@ test('the errors chart carries its data table, like every other chart', async ({
   // The parity surface, and the screen-reader route to the same numbers.
   await expect(page.getByTestId('chart-data-errors-over-time')).toHaveCount(1);
 });
+
+/**
+ * REVIEW M01 — THE NUMBERS BEFORE THE NARRATIVE.
+ *
+ * Measured at 1440x900 before this change: the run's own totals began at
+ * y=1570 and the statistics table at y=1745, behind two assertion sections. An
+ * engineer opening a run to ask "how fast was it, and did anything break"
+ * scrolled past everything that answers neither.
+ *
+ * Two assertions, because they fail for different reasons. ORDER is the fix
+ * and cannot regress silently — the tiles contribute no heading, so the
+ * heading-outline case above cannot see them. GEOMETRY is the measure of
+ * whether the fix was enough.
+ *
+ * THE THRESHOLD IS WHAT WAS ACHIEVED, NOT WHAT THE REVIEW ASKED FOR, and the
+ * difference is deliberate. Reordering and shortening the brush took the
+ * totals from y=1570 to y=1001. Getting them inside a 900px window needs the
+ * decision band — 313px of it at this width — to become materially shorter,
+ * which trades against the three separate outcomes C02 put there and against
+ * the redesign's choice to make the verdict the largest text on the page.
+ * That is a design decision, not a defect, so this guards the ground gained
+ * rather than failing on ground nobody has agreed to take.
+ */
+test('the run totals come before the assertions, and near the top', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(runPath(runId));
+
+  const totals = page.getByRole('region', { name: 'Run totals' });
+  await expect(totals).toBeVisible();
+
+  // ORDER: the numbers precede the platform assertions in the document.
+  const totalsFirst = await page.evaluate(() => {
+    const t = document.querySelector('section[aria-label="Run totals"]');
+    const headings = Array.from(document.querySelectorAll('h2'));
+    const assertions = headings.find((h) => h.textContent?.trim() === 'Assertions');
+    if (!t || !assertions) return null;
+    // 4 === DOCUMENT_POSITION_FOLLOWING: `assertions` comes after `t`.
+    return (t.compareDocumentPosition(assertions) & 4) !== 0;
+  });
+  expect(totalsFirst).toBe(true);
+
+  // GEOMETRY: 1570 before, 1001 after. The margin catches a regression
+  // without pretending the review's own bar has been cleared.
+  const top = await totals.evaluate((el) => el.getBoundingClientRect().top);
+  expect(top).toBeLessThan(1100);
+});
+
+/**
+ * REVIEW M01 / M10 — FAILED CHECKS FIRST, THE REST BEHIND A DISCLOSURE.
+ *
+ * The list was in the tool's own order, so the parity run showed two PASSING
+ * checks above its failing one. The reader's question is "what broke".
+ */
+test('simulation assertions lead with the failures', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  const outcomes = page.getByTestId('tool-assertion-outcome');
+  await expect(outcomes.first()).toBeVisible();
+
+  // Whatever is on screen at rest is the failure, not a passing check above it.
+  expect(await outcomes.first().textContent()).toMatch(/failed/i);
+
+  // And the rest are one click away, counted rather than merely hinted at.
+  const toggle = page.getByTestId('tool-assertions-toggle');
+  await expect(toggle).toBeVisible();
+  const before = await outcomes.count();
+  await toggle.click();
+  expect(await outcomes.count()).toBeGreaterThan(before);
+});

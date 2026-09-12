@@ -135,6 +135,21 @@ export interface ChartProps {
    * cannot see the drawing.
    */
   readonly compact?: boolean;
+  /**
+   * A NAVIGATOR: shorter than a figure, no legend, axes KEPT.
+   *
+   * Between `compact` and a full plot, and the difference from `compact` is
+   * the whole reason it exists. A sparkline sits beside the number it
+   * describes, so it can drop its axes; a navigator is the control a reader
+   * DRAGS, and one with no time labels gives them no idea where they are.
+   *
+   * `TimeBrush` is the only caller. At the full 288px its strip plus header,
+   * legend, slider and fields came to ~460px of chrome above every tab's
+   * content — measured at 1440x900, what kept the run's own totals at y=1570.
+   * A control for choosing a stretch of time should not be the largest thing
+   * on the page.
+   */
+  readonly navigator?: boolean;
   /** `'line'` unless stated — the shape six of the eight overview charts take. */
   readonly kind?: 'line' | 'bar' | 'pie' | 'scatter';
   /** Stacked bars, for the indicator bands. Ignored by lines and pies. */
@@ -284,6 +299,7 @@ export default function Chart({
   data,
   controls,
   compact = false,
+  navigator = false,
   kind = 'line',
   stacked = false,
   horizontal = false,
@@ -653,7 +669,9 @@ export default function Chart({
             }
           : {}),
         legend:
-          !compact && drawn.length >= 2
+          // A navigator drops the legend for the room, and can: its series are
+          // the same All/OK/KO the chart directly below it labels.
+          !compact && !navigator && drawn.length >= 2
             ? {
                 // Under the plot, and above the slider when there is one, so
                 // the three never share a band. See `LEGEND_BAND`.
@@ -776,6 +794,7 @@ export default function Chart({
     unit,
     pairValue,
     compact,
+    navigator,
     yAxisType,
     yAxisName,
     xAxisName,
@@ -829,7 +848,15 @@ export default function Chart({
       // read axis ticks and legend fragments in visual order, which is noise
       // on top of a complete alternative.
       aria-hidden="true"
-      className={expanded ? 'min-h-0 w-full flex-1' : compact ? 'h-24 w-full' : 'h-72 w-full'}
+      className={
+        expanded
+          ? 'min-h-0 w-full flex-1'
+          : compact
+            ? 'h-24 w-full'
+            : navigator
+              ? 'h-40 w-full'
+              : 'h-72 w-full'
+      }
     />
   );
 
@@ -898,7 +925,10 @@ export default function Chart({
         // The canvas has moved into the dialog below. This keeps the space it
         // left, so closing the dialog does not drop the page's scroll position
         // by the height of a chart.
-        <div aria-hidden="true" className={compact ? 'h-24 w-full' : 'h-72 w-full'} />
+        <div
+          aria-hidden="true"
+          className={compact ? 'h-24 w-full' : navigator ? 'h-40 w-full' : 'h-72 w-full'}
+        />
       ) : (
         canvas
       )}

@@ -152,6 +152,22 @@ export default function TimeBrush({
           // requests-per-second chart below it look like the same measure
           // disagreeing.
           title="Requests per second, whole run"
+          /* ═══ A NAVIGATOR, NOT A FIGURE ═══
+           *
+           * This drew at the full 288px plot height, so the strip plus its
+           * header, legend, slider and fields came to ~460px of chrome ABOVE
+           * every tab's content — measured at 1440x900, it was what kept the
+           * run's own totals at y=1570. A control for choosing a stretch of
+           * time does not need to be the largest thing on the page.
+           *
+           * `navigator`, NOT `compact`. `compact` is the sparkline mode and
+           * strips the axis labels with everything else — measured, that broke
+           * `TimeBrush.test.tsx`'s "labels that axis in seconds" outright, and
+           * rightly: a control you DRAG with no time labels gives the reader no
+           * idea where they are. `navigator` keeps the axis and drops only the
+           * legend, whose All/OK/KO the chart below already names.
+           */
+          navigator
           data={rates}
           kind="line"
           // The app-wide status colours — see `RATE_ROLES`. WITHOUT THIS the

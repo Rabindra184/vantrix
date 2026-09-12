@@ -505,15 +505,39 @@ export function RunOverviewTab() {
 
   return (
     <>
+      {/* ═══ THE NUMBERS FIRST, THEN THE FAILURES, THEN THE DETAIL ═══
+       *
+       * Measured at 1440x900 before this: the run's own totals began at
+       * y=1570 and the statistics table at y=1745, behind two assertion
+       * sections and a 460px time selector. An engineer opening a run to ask
+       * "how fast was it, and did anything break" scrolled past everything
+       * that answers neither.
+       *
+       * `RunStats` used to render inside `TableSection`'s callback so that a
+       * failed `/stats` explained itself exactly once. That property is kept
+       * rather than traded: the tiles are gated on the data being PRESENT and
+       * say nothing when it is not, and the `TableSection` below — which owns
+       * the "Statistics" heading — is still the single place the failure is
+       * explained. What changes is only where the numbers sit when they
+       * arrive.
+       *
+       * The sparklines come with them: §22.6 names "key tiles, sparklines,
+       * verdict, error summary" as the mobile summary, and splitting that pair
+       * across two screens is what the rule exists to prevent. */}
+      {stats.data !== undefined && (
+        <>
+          <RunStats
+            stats={stats.data}
+            baseline={window === null ? baselineRun(trends.data, runId) : null}
+            assertions={runAssertions}
+          />
+          {compact && <Sparklines series={series} />}
+        </>
+      )}
+
       <Assertions runId={runId} assertions={runAssertions} />
       <ToolAssertions assertions={run.data.run.toolAssertions} />
 
-      {/* `RunStats` renders INSIDE `TableSection`'s own children callback,
-          from the SAME `data` the statistics table reads below it, rather
-          than behind a `TableSection` of its own: a failed or still-pending
-          `/stats` then explains itself once, in the one place this page
-          already says so, instead of the stat row silently rendering six
-          dashes above an error the reader has to notice separately. */}
       <TableSection title="Statistics" query={stats}>
         {(data) => (
           <>
@@ -531,17 +555,10 @@ export function RunOverviewTab() {
                 `/trends` is still loading, or this run is the oldest in its
                 window, the tiles omit deltas rather than inventing
                 comparison copy. */}
-            <RunStats
-              stats={data}
-              baseline={window === null ? baselineRun(trends.data, runId) : null}
-              assertions={runAssertions}
-            />
-            {/* THE TILES ARE NEVER WITHHELD. They are the whole point of the
-                mobile summary — §22.6 names "key tiles, sparklines, verdict,
-                error summary" — and they are already responsive. It is the
-                per-request TABLE below them that a phone cannot usefully
-                render, so only that is behind the notice. */}
-            {compact && <Sparklines series={series} />}
+            {/* THE TILES AND SPARKLINES MOVED ABOVE — see the block at the
+                top of this return. What stays here is the per-request TABLE,
+                which is the only part of this section a phone cannot usefully
+                render, and so the only part behind the notice. */}
             <DesktopOnly compact={compact} what="The per-request statistics table">
               {() => <StatisticsTable stats={data} runId={runId} />}
             </DesktopOnly>
@@ -871,15 +888,25 @@ export function RunChartsTab() {
       <h2 id="charts-heading" className="sr-only">
         Charts
       </h2>
-      <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
-        {(data) => (
-          <>
-            <IndicatorsChart stats={data} />
-            <RequestCountChart stats={data} />
-          </>
-        )}
-      </Payload>
-
+      {/* ═══ A DIAGNOSTIC SEQUENCE, NOT A REPORT INVENTORY ═══
+       *
+       * This opened with two AGGREGATES — a response-time range bar and a
+       * large OK/KO donut — and put latency-over-time seventh. So a reader
+       * correlating offered load against throughput, latency and failures
+       * scrolled past unrelated whole-run summaries to reach the series, then
+       * scrolled back. The charts were ordered by which query produced them,
+       * which is an implementation fact.
+       *
+       * The order now follows the question: WHAT WAS APPLIED (users), WHAT
+       * GOT THROUGH (requests/s, responses/s), WHAT IT COST (percentiles over
+       * time) — the four that share a crosshair and a time domain, adjacent so
+       * a single horizontal read crosses all of them. The whole-run
+       * distributions come after, because they answer a different question and
+       * answering it does not need the reader's place in time.
+       *
+       * The PAIRS are unchanged: distribution and percentile-distribution stay
+       * adjacent for the reason `run-charts.spec.ts` argues at length, and
+       * concurrent-users stays its own chart rather than an overlay. */}
       <Payload query={users} slots={[CONCURRENT_USERS, USER_START_RATE]}>
         {(data) => (
           <>
@@ -891,21 +918,33 @@ export function RunChartsTab() {
         )}
       </Payload>
 
+      {/* Throughput before latency, and both before any aggregate: "how much
+          got through" is the question a reader asks of a load number, and
+          "what did it cost" is the question they ask of the throughput. */}
+      <Payload query={series} slots={[REQUESTS_PER_SECOND, RESPONSES_PER_SECOND, PERCENTILES]}>
+        {(data) => (
+          <>
+            <RequestRateChart series={data} domainMs={domainMs} />
+            <ResponseRateChart series={data} domainMs={domainMs} />
+            <PercentilesChart series={data} domainMs={domainMs} />
+          </>
+        )}
+      </Payload>
+
+      <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
+        {(data) => (
+          <>
+            <IndicatorsChart stats={data} />
+            <RequestCountChart stats={data} />
+          </>
+        )}
+      </Payload>
+
       <Payload query={distribution} slots={[DISTRIBUTION, PERCENTILE_DISTRIBUTION]}>
         {(data) => (
           <>
             <DistributionChart distribution={data} />
             <PercentileDistributionChart distribution={data} />
-          </>
-        )}
-      </Payload>
-
-      <Payload query={series} slots={[PERCENTILES, REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>
-        {(data) => (
-          <>
-            <PercentilesChart series={data} domainMs={domainMs} />
-            <RequestRateChart series={data} domainMs={domainMs} />
-            <ResponseRateChart series={data} domainMs={domainMs} />
           </>
         )}
       </Payload>
@@ -1131,6 +1170,11 @@ function ToolAssertions({
 }: {
   readonly assertions: readonly ToolAssertion[] | null | undefined;
 }) {
+  // BEFORE the early returns: a hook cannot sit behind one. CLAUDE.md records
+  // this exact shape — "Rendered more hooks than during the previous render"
+  // — being shipped twice on this page.
+  const [expanded, setExpanded] = useState(false);
+
   if (assertions === null || assertions === undefined) return null;
 
   if (assertions.length === 0) {
@@ -1147,6 +1191,29 @@ function ToolAssertions({
       </section>
     );
   }
+
+  /* ═══ FAILED FIRST, PASSED BEHIND A DISCLOSURE ═══
+   *
+   * This was a flat list in the tool's own order, so the parity run showed two
+   * PASSING checks above its failing one and the assertion corpus buried a
+   * handful of failures in a hundred-odd rows. The reader's question is "what
+   * broke", and the answer was wherever the simulation author happened to put
+   * it.
+   *
+   * The rest is hidden only when hiding it HELPS: once something has failed,
+   * or once there are more than a handful to wade through. A run with three
+   * passing checks and nothing else has no signal to prioritise, and
+   * collapsing it would be ceremony.
+   *
+   * ONE TABLE, not two. A second table needs a second caption, and a caption
+   * is a table's accessible NAME — `run-tables.spec.ts` reaches these by name,
+   * and CLAUDE.md records five specs breaking at once the last time a new
+   * caption shared a distinctive word with an existing one.
+   */
+  const failed = assertions.filter((a) => a.outcome === 'failed');
+  const rest = assertions.filter((a) => a.outcome !== 'failed');
+  const collapsible = failed.length > 0 || rest.length > 5;
+  const shown = !collapsible || expanded ? [...failed, ...rest] : failed;
 
   return (
     // Same anchor as the empty branch above — the band links here whichever
@@ -1170,13 +1237,13 @@ function ToolAssertions({
             </tr>
           </thead>
           <tbody>
-            {assertions.map((assertion, i) => (
+            {shown.map((assertion, i) => (
               <tr
                 // The expression is not unique — a simulation may assert the
                 // same thing twice, and `forAll` expands to one row per request
                 // with only the name differing. Index is the row's identity
                 // here because the list is a fixed, ordered projection that is
-                // never sorted or filtered in the client.
+                // never re-sorted after the failed-first split below.
                 key={`${assertion.expression}-${i}`}
                 data-testid="tool-assertion-row"
                 className={ROW}
@@ -1194,6 +1261,19 @@ function ToolAssertions({
           </tbody>
         </table>
       </TableFrame>
+
+      {collapsible && (
+        <button
+          type="button"
+          data-testid="tool-assertions-toggle"
+          onClick={() => setExpanded((open) => !open)}
+          className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+        >
+          {expanded
+            ? `Hide the ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`
+            : `Show ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`}
+        </button>
+      )}
     </section>
   );
 }
