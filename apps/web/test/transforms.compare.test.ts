@@ -253,3 +253,76 @@ describe('compareLabels — ids that share a prefix', () => {
     for (const label of labels) expect(label).toHaveLength('08-15 22:15 · aaaaaa'.length);
   });
 });
+
+/**
+ * REVIEW C07 — THE OVERLAY AND THE MATRIX MUST MEAN THE SAME POPULATION.
+ *
+ * A `SeriesBucket` carries THREE percentile maps — `percentiles` (every
+ * response), `percentilesOk`, `percentilesKo`. A `StatRow` carries exactly
+ * one, the combined set, and has no OK-only variant at all.
+ *
+ * The overlay read `percentilesOk` while `metricValue` — which feeds both the
+ * comparison matrix and the summary tiles directly above the overlay — read
+ * `row.percentiles`. Same word on three surfaces of one screen, two different
+ * populations, and no way for a reader to know which they were looking at. The
+ * combined set is the only one all three CAN share without a backend change,
+ * so that is the one they share.
+ */
+describe('toCompare — one population, the same one the matrix uses', () => {
+  const bucketAt = (over: Partial<SeriesResponse['buckets'][number]>) => ({
+    ...REFERENCE.buckets[0]!,
+    ...over,
+  });
+
+  it('reads the combined percentiles, as `metricValue` does', () => {
+    const run = asRun('r', {
+      buckets: [bucketAt({ percentiles: { p95: 500 }, percentilesOk: { p95: 111 } })],
+    });
+    expect(points(toCompare([run], 'p95').series[0]!.data)[0]![1]).toBe(500);
+  });
+
+  /**
+   * THE BUG THE POPULATION MIX-UP HID.
+   *
+   * `max` read `bucket.maxMs` — a combined extremum — but sat BEHIND a guard
+   * on `percentilesOk` being empty. A bucket in which every request failed has
+   * no OK percentiles and a perfectly real maximum, so the overlay dropped the
+   * slowest measurement in exactly the buckets a regression hunt cares about
+   * most. Nothing threw; the line simply had a hole in it.
+   */
+  it('keeps the maximum of a bucket where every request failed', () => {
+    const run = asRun('r', {
+      buckets: [
+        bucketAt({
+          okCount: 0,
+          koCount: 7,
+          maxMs: 2503,
+          percentiles: {},
+          percentilesOk: {},
+        }),
+      ],
+    });
+    expect(points(toCompare([run], 'max').series[0]!.data)[0]![1]).toBe(2503);
+  });
+
+  /** A bucket that measured nothing at all still has no value — the fix must
+   *  not turn "no data" into a zero or a stale carry-forward. */
+  it('still has no percentile for a bucket that measured nothing', () => {
+    const run = asRun('r', {
+      buckets: [bucketAt({ percentiles: {}, percentilesOk: {}, okCount: 0, koCount: 0 })],
+    });
+    expect(points(toCompare([run], 'p95').series[0]!.data)).toHaveLength(0);
+  });
+
+  it('declares the population it drew, so the reader is not left guessing', () => {
+    expect(toCompare(TWO, 'p95').limitation ?? '').toMatch(
+      /every response|all responses|successful and failed/i,
+    );
+  });
+
+  /** A rate says nothing about response populations, so the note belongs only
+   *  on the metrics it actually qualifies. */
+  it('says nothing about populations for a rate metric', () => {
+    expect(toCompare(TWO, 'throughput').limitation ?? '').not.toMatch(/response/i);
+  });
+});

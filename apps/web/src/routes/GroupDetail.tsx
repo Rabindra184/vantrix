@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
+import { useWindowSuffix } from './useRunWindow';
 import { distributionQuery, seriesQuery, statsQuery } from '../api/metrics';
 import { linkButtonClasses } from '../components/Button';
 import { EmptyState } from '../components/States';
@@ -105,6 +106,11 @@ const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 
 export default function GroupDetail() {
   const { runId, name } = useParams<{ runId: string; name: string }>();
+  /* THE RETURN JOURNEY KEEPS THE INTERVAL. This page's own figures are
+     whole-run — its endpoints take no `from`/`to` — but the reader arrived
+     from a windowed table, and sending them back to an un-narrowed run would
+     discard the selection they were investigating with. */
+  const windowSuffix = useWindowSuffix();
 
   useDocumentTitle(name ?? null);
 
@@ -145,7 +151,7 @@ export default function GroupDetail() {
           its first section. */}
       <header className="flex flex-col gap-3">
         <Link
-          to={`/runs/${encodeURIComponent(runId)}`}
+          to={`/runs/${encodeURIComponent(runId)}${windowSuffix}`}
           className="transition-ui inline-flex w-fit items-center gap-1 text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
         >
           <ChevronLeftIcon className="h-3.5 w-3.5" />

@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { useWindowSuffix } from '../routes/useRunWindow';
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import {
   buildTree,
@@ -1031,6 +1032,10 @@ function Row({
    *  payload data is payload-controlled — a name containing the separator two
    *  ids collide on would be a run away from a broken `aria-labelledby`. */
   const nameId = useId();
+  /* The reader's selected interval travels with the drill-down, so opening a
+     request from a windowed table does not silently return them to the whole
+     run. `useWindowSuffix` owns which parameters travel. */
+  const windowSuffix = useWindowSuffix();
 
   return (
     <tr
@@ -1090,7 +1095,7 @@ function Row({
             // nothing is announced as a control.
             <span aria-hidden="true" className="inline-block w-4" />
           )}
-          <Link id={nameId} to={detailPathFor(runId, row)} className="underline">
+          <Link id={nameId} to={`${detailPathFor(runId, row)}${windowSuffix}`} className="underline">
             {row.name}
           </Link>
         </span>

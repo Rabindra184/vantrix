@@ -45,12 +45,14 @@ function renderBand(
     status: RunResponse['status'];
     verdict: RunResponse['verdict'] | undefined;
     assertions: readonly Assertion[] | undefined;
+    toolAssertions: RunResponse['toolAssertions'];
   }> = {},
 ) {
   const props = {
     status: RUN.status,
     verdict: RUN.verdict as RunResponse['verdict'] | undefined,
     assertions: ASSERTIONS as readonly Assertion[] | undefined,
+    toolAssertions: undefined as RunResponse['toolAssertions'],
     ...over,
   };
   return render(
@@ -60,10 +62,25 @@ function renderBand(
         status={props.status}
         verdict={props.verdict}
         assertions={props.assertions}
+        toolAssertions={props.toolAssertions}
       />
     </MemoryRouter>,
   );
 }
+
+/** One failing and one passing simulation check, as `ParitySimulation` has. */
+const TOOL: NonNullable<RunResponse['toolAssertions']> = [
+  {
+    expression: 'Global: max of response time is less than 10000.0',
+    actualValue: 2503,
+    outcome: 'passed',
+  },
+  {
+    expression: 'Search: 95th percentile of response time is less than 100.0',
+    actualValue: 1939.53,
+    outcome: 'failed',
+  },
+];
 
 describe('RunDecisionBand', () => {
   it('keeps compare as a real link and exposes export as a run action', () => {
@@ -214,5 +231,86 @@ describe('runSummaryJson', () => {
       run: { id: RUN.id, simulation: RUN.simulation, status: RUN.status, verdict: RUN.verdict },
       assertions: [{ ruleId: ASSERTIONS[0]?.ruleId, outcome: 'failed' }],
     });
+  });
+});
+
+/**
+ * REVIEW C02 — "NEEDS ATTENTION: 0" OVER A RUN WITH A FAILED CHECK.
+ *
+ * Both demo runs showed "Not evaluated" and "0 passed · 0 failed", because
+ * those are PLATFORM-SLA counters and neither project had configured a rule.
+ * Meanwhile `ParitySimulation` had a failed Search p95 assertion declared by
+ * the simulation itself, and the assertion corpus had many — all of them far
+ * below the fold, behind a 460px time selector.
+ *
+ * Short labels over one system's counters read as overall test health. The fix
+ * is to state the three facts SEPARATELY, so no single word has to carry them
+ * all.
+ *
+ * The release verdict deliberately does NOT absorb simulation results: a
+ * platform gate is the organisation's policy and a simulation assertion is the
+ * test author's, and quietly merging them would make the gate mean something
+ * nobody configured. The band reports both and conflates neither.
+ */
+describe('RunDecisionBand — three outcomes, not one word', () => {
+  it('states execution, platform gates and simulation checks separately', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
+    const outcomes = screen.getByTestId('run-outcomes');
+    expect(outcomes).toHaveTextContent(/execution/i);
+    expect(outcomes).toHaveTextContent(/platform gates/i);
+    expect(outcomes).toHaveTextContent(/simulation checks/i);
+  });
+
+  it('says the platform gates are not configured rather than showing three zeros', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
+    expect(screen.getByTestId('outcome-gates')).toHaveTextContent(/not configured/i);
+  });
+
+  it('counts the failed simulation checks', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/1 failed/i);
+  });
+
+  /** The acceptance: the failure is identifiable from the first screen. */
+  it('links to the failing check and names it', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
+    const link = screen.getByRole('link', { name: /simulation check/i });
+    expect(link).toHaveAttribute('href', `/runs/${RUN.id}#simulation-assertions`);
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/Search/);
+  });
+
+  it('says so plainly when every simulation check passed', () => {
+    renderBand({
+      verdict: 'not_evaluated',
+      assertions: [],
+      toolAssertions: [TOOL[0]!],
+    });
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/all 1 passed|1 passed/i);
+    expect(screen.queryByRole('link', { name: /simulation check/i })).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a simulation that declared none from one that passed', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: [] });
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/none declared/i);
+  });
+
+  /** A run from a server that predates the field must not be reported as
+   *  "none declared" — absent and empty are different facts. */
+  it('says the simulation checks are unknown when the field is absent', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: undefined });
+    expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/not reported|unknown/i);
+  });
+
+  /**
+   * THE LINE THE REVIEW DREW, AND IT MATTERS MORE THAN THE REST. A failed
+   * simulation check must not silently turn the RELEASE GATE red: that word
+   * answers the organisation's policy, and no rule was configured here.
+   */
+  it('does not let a failed simulation check redefine the release verdict', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
+    // The BAND'S OWN VERDICT WORD, not any text on the page: "Failed" is also
+    // a legitimate counter label beside it, and asserting on the page text
+    // would fail for a reason that is not this rule.
+    expect(screen.getByTestId('decision-word')).toHaveTextContent(/^not evaluated$/i);
   });
 });

@@ -1180,3 +1180,73 @@ test('a run with no metrics is offered no brush at all', async ({ page }) => {
 
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 });
+
+/**
+ * REVIEW C04 + C03 — THE INTERVAL SURVIVES THE INVESTIGATION.
+ *
+ * The tab links were built from bare paths, so narrowing to a window and then
+ * opening another tab silently returned the reader to the whole run: the
+ * From/To fields empty, every figure widened, and nothing saying why. That is
+ * the exact moment an engineer is following evidence, which is the worst
+ * moment to lose their place.
+ *
+ * Only a real router resolving real URLs can see this — the unit tests pin
+ * each link's `href`, which is not the same claim as "the selection is still
+ * applied after navigating".
+ *
+ * C03 rides along in the same journey: Trends answers a whole-run question and
+ * must not show a control implying otherwise, while still handing the interval
+ * back on return.
+ */
+test('the selected window survives moving between run tabs', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  await page.getByTestId('window-from').fill('0');
+  await page.getByTestId('window-to').fill('10');
+  await page.getByTestId('window-apply').click();
+  await expect(page).toHaveURL(/[?&]from=0/);
+
+  // Every tab keeps it — including the ones that deliberately ignore it, so
+  // the return journey is lossless.
+  for (const tab of ['Overview', 'Errors', 'Load generators']) {
+    await page.getByRole('link', { name: new RegExp(`^${tab}`) }).click();
+    await expect(page).toHaveURL(/[?&]from=0/);
+    await expect(page).toHaveURL(/[?&]to=10000/);
+    // And the control is still there, showing what is selected.
+    await expect(page.getByTestId('window-from')).toHaveValue('0');
+  }
+
+  // Trends is whole-run by construction: the control goes away, the
+  // parameters do not.
+  await page.getByRole('link', { name: /^Trends/ }).click();
+  await expect(page).toHaveURL(/[?&]from=0/);
+  await expect(page.getByTestId('time-brush')).toHaveCount(0);
+
+  // Back to a tab that honours it, and the selection is still the reader's.
+  await page.getByRole('link', { name: /^Overview/ }).click();
+  await expect(page.getByTestId('window-from')).toHaveValue('0');
+  await expect(page.getByTestId('window-to')).toHaveValue('10');
+});
+
+/**
+ * REVIEW C03 — the errors TABLE is whole-run while the chart above it is not,
+ * because `/v1/runs/:id/errors` takes no `from`/`to` at all. Under a window
+ * those two figures sit on one screen meaning different things.
+ */
+test('the errors table says its totals are whole-run under a window', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+
+  await page.getByTestId('window-from').fill('0');
+  await page.getByTestId('window-to').fill('10');
+  await page.getByTestId('window-apply').click();
+  await expect(page).toHaveURL(/[?&]from=0/);
+
+  await page.getByRole('link', { name: /^Errors/ }).click();
+  await expect(page.getByTestId('errors-window-note')).toContainText(/whole run/i);
+});

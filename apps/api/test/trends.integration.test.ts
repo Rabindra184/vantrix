@@ -105,6 +105,9 @@ async function seedRun(opts: {
   status?: string;
   withStat?: boolean;
   count?: number;
+  environment?: string | null;
+  branch?: string | null;
+  commitSha?: string | null;
 }): Promise<string> {
   const id = randomUUID();
   const startedAt = opts.startedAt;
@@ -127,6 +130,9 @@ async function seedRun(opts: {
       startedOn: startedAt,
       toolStartedAt: opts.toolStartedAt === undefined ? startedAt : opts.toolStartedAt,
       durationMs: 60_000,
+      environment: opts.environment ?? null,
+      branch: opts.branch ?? null,
+      commitSha: opts.commitSha ?? null,
       bundleKey: `k/${id}`,
       bundleSha256: 'x'.repeat(64),
       bundleBytes: BigInt(1),
@@ -543,5 +549,61 @@ describe('GET /v1/runs/:id/trends', () => {
       if (original === undefined) delete process.env.TZ;
       else process.env.TZ = original;
     }
+  });
+});
+
+
+/**
+ * REVIEW C06 — THE COMPARABILITY FIELDS HAVE TO CROSS THE SEAM.
+ *
+ * `comparability.test.ts` proves the UI classifies environments correctly —
+ * with the values the test itself hands it. That proves the consumer and
+ * nothing about whether the endpoint ever sends them, which is the exact shape
+ * CLAUDE.md records as having let a declared test slug reach no repository for
+ * four branches while every gate stayed green.
+ *
+ * So this reads the values back through the real HTTP response, off rows
+ * written to the real columns.
+ */
+describe('GET /v1/runs/:id/trends — comparability fields', () => {
+  it('reports each run’s environment, branch and commit', async () => {
+    ctx = await createTestApp();
+    const a = await seedRun({
+      simulation: 'checkout',
+      startedAt: at('2026-08-01T10:00:00Z'),
+      environment: 'staging',
+      branch: 'main',
+      commitSha: 'abcdef1234567890',
+    });
+    await seedRun({
+      simulation: 'checkout',
+      startedAt: at('2026-08-02T10:00:00Z'),
+      environment: 'production',
+      branch: 'release',
+      commitSha: '1234567890abcdef',
+    });
+
+    const body = TrendsResponseSchema.parse((await trends(a)).body);
+    const mine = body.runs.find((r) => r.id === a)!;
+    expect(mine.environment).toBe('staging');
+    expect(mine.branch).toBe('main');
+    expect(mine.commitSha).toBe('abcdef1234567890');
+
+    // And the OTHER run's differ — a cohort spanning two environments is
+    // exactly the selection the UI has to flag.
+    const environments = new Set(body.runs.map((r) => r.environment));
+    expect(environments).toEqual(new Set(['staging', 'production']));
+  });
+
+  /** A run that recorded nothing reports null rather than omitting the key —
+   *  the UI distinguishes "not recorded" from "not reported by this server". */
+  it('reports null for a run that recorded none of them', async () => {
+    ctx = await createTestApp();
+    const a = await seedRun({ simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z') });
+    const body = TrendsResponseSchema.parse((await trends(a)).body);
+    const mine = body.runs.find((r) => r.id === a)!;
+    expect(mine.environment).toBeNull();
+    expect(mine.branch).toBeNull();
+    expect(mine.commitSha).toBeNull();
   });
 });

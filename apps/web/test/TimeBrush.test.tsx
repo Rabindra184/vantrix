@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TimeBrush from '../src/charts/TimeBrush';
 import { RATE_ROLES } from '../src/charts/transforms/rates';
@@ -67,15 +68,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function renderBrush() {
+async function renderBrush(
+  props: { onChange?: (next: unknown) => void; window?: unknown } = {},
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <TimeBrush
         runId={RUN}
         runDurationMs={63_161}
-        window={null}
-        onChange={() => undefined}
+        window={(props.window ?? null) as never}
+        onChange={(props.onChange ?? (() => undefined)) as never}
       />
     </QueryClientProvider>,
   );
@@ -180,5 +183,114 @@ describe('TimeBrush — the strip the window is dragged on', () => {
     for (const categorical of CATEGORICAL) {
       expect(colors).not.toContain(categorical);
     }
+  });
+});
+
+/**
+ * REVIEW C08 — AN INVALID RANGE MUST NOT BROADEN THE SCOPE.
+ *
+ * `apply()` answered every unparseable, negative or reversed input with
+ * `onChange(null)`, which is the signal for "the whole run". So typing
+ * From=30 To=10 — a mistake — silently WIDENED the analysis instead of
+ * refusing it, and every figure on the page then described more data than the
+ * reader believed they had selected. A reset is the one response an input
+ * error must never produce here.
+ *
+ * The previously applied window has to survive too: a typo in one field
+ * cannot be allowed to discard a selection the reader already made.
+ */
+describe('TimeBrush — an invalid range is refused, never widened', () => {
+  const WINDOW = { fromMs: 10_000, toMs: 30_000, bucketWidthMs: 0 };
+
+  it('refuses a reversed range instead of resetting to the whole run', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange });
+
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '30');
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), '10');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+  });
+
+  it('refuses text that is not a number', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange });
+
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), 'abc');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+  });
+
+  it('keeps the reader’s typing so the mistake can be corrected in place', async () => {
+    const user = userEvent.setup();
+    await renderBrush({ onChange: vi.fn() });
+
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '30');
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), '10');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(screen.getByTestId('window-from')).toHaveValue('30');
+    expect(screen.getByTestId('window-to')).toHaveValue('10');
+  });
+
+  /** The already-applied selection must survive a typo — refusing is only
+   *  safe if it leaves the previous answer standing. */
+  it('leaves an applied window in place when the next input is invalid', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: WINDOW });
+
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), '5');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /** "Whole run" is still reachable — the fix must refuse bad input without
+   *  removing the deliberate way to widen. */
+  it('still clears to the whole run on the explicit control', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: WINDOW });
+
+    await user.click(screen.getByTestId('window-clear'));
+
+    expect(onChange).toHaveBeenCalledWith(null);
+  });
+
+  it('accepts a valid range, and drops the error once it does', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange });
+
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '30');
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), '10');
+    await user.click(screen.getByTestId('window-apply'));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), '40');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenCalledWith({
+      fromMs: 30_000,
+      toMs: 40_000,
+      bucketWidthMs: 0,
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

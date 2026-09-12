@@ -49,6 +49,11 @@ export default function TimeBrush({
 }) {
   const fromId = useId();
   const toId = useId();
+  const errorId = useId();
+
+  /** Set when `apply` refuses; cleared by a valid apply, and by any change to
+   *  the selection itself so a stale complaint never outlives its input. */
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
   // THE WHOLE RUN, deliberately unwindowed — see the docstring.
   const series = useQuery(seriesQuery(runId, 'run', '', 'response_time', null));
@@ -62,6 +67,7 @@ export default function TimeBrush({
   useEffect(() => {
     setFrom(window ? asSeconds(window.fromMs) : '');
     setTo(window ? asSeconds(window.toMs) : '');
+    setRangeError(null);
   }, [window]);
 
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -88,12 +94,33 @@ export default function TimeBrush({
     };
     const fromMs = parse(from, 0);
     const toMs = parse(to, runDurationMs);
-    // A range that makes no sense clears the window rather than sending
-    // something the API would reject — the page stays readable either way.
-    if (fromMs === null || toMs === null || fromMs >= toMs) {
-      onChange(null);
+
+    /* ═══ AN INVALID RANGE IS REFUSED, NEVER WIDENED ═══
+     *
+     * This used to answer every unparseable, negative or reversed input with
+     * `onChange(null)` — which is not a neutral failure, it is the signal for
+     * "the whole run". So a reader who typed From=30 To=10, a plain mistake,
+     * got a SILENTLY BROADER scope than the one they already had: every
+     * figure on the page then described more data than they believed they had
+     * selected, with nothing on screen saying so. Of all the responses to bad
+     * input, a reset is the one this control must never produce.
+     *
+     * Refusing leaves the previous window standing, which is the other half:
+     * `window` does not change, so the sync effect above does not fire, so the
+     * reader's typing stays put and the mistake can be corrected in place.
+     *
+     * Widening on purpose is still one click away — the "Whole run" button is
+     * the deliberate path, and `TimeBrush.test.tsx` pins that it survives. */
+    if (fromMs === null || toMs === null) {
+      setRangeError('Enter the window as seconds — for example 10 and 30.');
       return;
     }
+    if (fromMs >= toMs) {
+      setRangeError('End must be later than start.');
+      return;
+    }
+
+    setRangeError(null);
     onChange({ fromMs, toMs: Math.min(toMs, runDurationMs), bucketWidthMs: 0 });
   };
 
@@ -158,6 +185,8 @@ export default function TimeBrush({
             id={fromId}
             data-testid="window-from"
             inputMode="numeric"
+            aria-invalid={rangeError === null ? undefined : true}
+            aria-describedby={rangeError === null ? undefined : errorId}
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             placeholder="0"
@@ -173,6 +202,8 @@ export default function TimeBrush({
             id={toId}
             data-testid="window-to"
             inputMode="numeric"
+            aria-invalid={rangeError === null ? undefined : true}
+            aria-describedby={rangeError === null ? undefined : errorId}
             value={to}
             onChange={(e) => setTo(e.target.value)}
             placeholder={asSeconds(runDurationMs)}
@@ -198,6 +229,29 @@ export default function TimeBrush({
           >
             Whole run
           </button>
+        )}
+
+        {/* `role="alert"` because this is a response to the reader's own
+            action and nothing else on the page moves to signal it — the
+            figures deliberately do NOT change, which is the whole point of
+            refusing. Rendered only when there is something to say, so this
+            component never contributes an empty live region to a page that
+            already mounts several charts. */}
+        {rangeError !== null && (
+          <p
+            id={errorId}
+            role="alert"
+            data-testid="window-error"
+            className="w-full text-[12px]"
+            /* `var()`, not a `text-status-failed` utility: the status tokens
+               are declared on `:root` rather than inside `@theme inline`, so
+               Tailwind generates NO class for them and that spelling emits
+               nothing at all, silently. `StatTile` and `RunList` reference
+               them this way for the same reason. */
+            style={{ color: 'var(--color-status-failed)' }}
+          >
+            {rangeError}
+          </p>
         )}
 
         {/* THE SNAPPED RANGE, not the dragged one. `role="status"` so a screen

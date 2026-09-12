@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Assertion, RunIdentity, RunResponse, RunVerdict } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
@@ -5,7 +6,7 @@ import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
 import { ASSERTION_OUTCOME, STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
-import { runComparePath } from './paths';
+import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 
 /**
@@ -36,6 +37,7 @@ export default function RunDecisionBand({
   status,
   verdict,
   assertions,
+  toolAssertions,
 }: {
   readonly identity: Partial<RunIdentity> & { readonly id: string };
   readonly status: RunResponse['status'];
@@ -47,9 +49,43 @@ export default function RunDecisionBand({
    * arrived: three zeros are three measurements, and nobody took them.
    */
   readonly assertions?: readonly Assertion[];
+  /**
+   * The simulation's OWN assertions, as the tool reported them.
+   *
+   * ═══ A DIFFERENT SYSTEM'S ANSWER, REPORTED BESIDE OURS ═══
+   *
+   * Both demo runs read "Not evaluated — 0 passed · 0 failed" because those
+   * are PLATFORM-SLA counters and neither project had configured a rule. Both
+   * also had failing assertions declared by the simulation itself, sitting far
+   * below the fold. Short labels over one system's counters read as overall
+   * test health, and an engineer deciding ship/no-ship read zero failures over
+   * a run with one.
+   *
+   * So the band states three facts separately rather than making one word
+   * carry them. It deliberately does NOT fold these into the release verdict:
+   * a platform gate is the organisation's policy and a simulation assertion is
+   * the test author's, and merging them would make the gate mean something
+   * nobody configured.
+   *
+   * `undefined` is a server that predates the field, `[]` is a simulation that
+   * declared none — reported differently, because absence and emptiness are
+   * different facts.
+   */
+  readonly toolAssertions?: RunResponse['toolAssertions'];
 }) {
   const evaluated = assertions !== undefined;
   const counts = countAssertions(assertions ?? []);
+  const simulation = summariseToolAssertions(toolAssertions);
+  /* `evaluated` treats `[]` as evaluated, which is what produced "0 passed ·
+     0 failed" over a project with no rules at all — three zeros that read as
+     health. For THIS row the distinction is the whole point: an empty list
+     means nothing judged the run, which is not the same as nothing failing. */
+  const gatesText =
+    assertions === undefined
+      ? 'not reported yet'
+      : assertions.length === 0
+        ? 'not configured — no SLA rule judged this run'
+        : `${counts.passed} passed · ${counts.failed} failed`;
   const failed = firstFailedAssertion(assertions ?? []);
   const decision: Decision = verdict === undefined ? 'unevaluated' : (verdict ?? 'none');
   const word = decisionWord(decision, counts);
@@ -64,9 +100,26 @@ export default function RunDecisionBand({
   return (
     <section
       aria-label="Release decision"
-      className="overflow-hidden rounded-xl border border-default bg-surface shadow-panel"
+      /* ═══ A CONTAINER, NOT A VIEWPORT BREAKPOINT ═══
+       *
+       * This grid went three-up at `lg:` — 1024px of VIEWPORT, which is also
+       * the width at which `ProjectRail` appears. So the band got its widest
+       * layout at the exact moment it lost ~270px to the sidebar, and
+       * measured at 1024x900 the tracks resolved to `338px 0px 336px`: the
+       * middle column collapsed to ZERO and its text overflowed across the
+       * action column, which began at the same x. 395px tall, and unreadable.
+       *
+       * `@container` makes the query about the width this band actually HAS.
+       * `@4xl` (56rem) is above the ~677px it gets at 1024px with the rail, so
+       * it stacks there and goes three-up only where three columns fit. */
+      className="@container overflow-hidden rounded-xl border border-default bg-surface shadow-panel"
     >
-      <div className="grid grid-cols-1 gap-0 lg:grid-cols-[minmax(9rem,auto)_minmax(0,1fr)_minmax(18rem,auto)]">
+      {/* `minmax(14rem,1fr)` for the explanation, never `minmax(0,1fr)`: a
+          zero minimum is what let the other two tracks take the whole row and
+          leave it nothing. With a real floor the grid overflows visibly —
+          which is a bug you can SEE — rather than silently stacking text on
+          top of text. */}
+      <div className="grid grid-cols-1 gap-0 @4xl:grid-cols-[minmax(9rem,auto)_minmax(14rem,1fr)_minmax(18rem,auto)]">
         {/* THE VERDICT WORD — the redesign's signature, and NOT AN `<h2>`,
             though it is the largest text on the page. This band is SHELL
             CHROME — `RunShell` renders it above the `<Outlet/>`, so it is on
@@ -87,7 +140,7 @@ export default function RunDecisionBand({
             is a verdict OF. Reading order is word then overline —
             "Failed — release gate" — which is the verdict-first order the
             whole band exists to put on screen. */}
-        <div className="flex min-w-0 flex-col justify-center gap-1 border-b border-divider p-4 lg:border-r lg:border-b-0 lg:p-5">
+        <div className="flex min-w-0 flex-col justify-center gap-1 border-b border-divider p-4 @4xl:border-r @4xl:border-b-0 @4xl:p-5">
           {/* 36px, rising to 48px from `sm`. The first cut was 30px flat and
               read as a large label rather than as the page's verdict — this
               band is the one place the redesign spends size, and at 30px the
@@ -102,6 +155,7 @@ export default function RunDecisionBand({
               nothing computed from it — this band contributes no heading and
               no accessible name — changes. */}
           <p
+            data-testid="decision-word"
             className="font-display text-4xl leading-none font-semibold tracking-tight break-words uppercase sm:text-5xl"
             style={{ color: decisionColour(decision, counts) }}
           >
@@ -115,7 +169,7 @@ export default function RunDecisionBand({
           </p>
         </div>
 
-        <div className="flex min-w-0 flex-col justify-center gap-2.5 border-b border-divider p-4 lg:border-r lg:border-b-0 lg:p-5">
+        <div className="flex min-w-0 flex-col justify-center gap-2.5 border-b border-divider p-4 @4xl:border-r @4xl:border-b-0 @4xl:p-5">
           <div className="flex flex-wrap items-center gap-2">
             {decision !== 'unevaluated' && <Badge mark={DECISION[decision]} />}
             {evaluated && (
@@ -152,9 +206,38 @@ export default function RunDecisionBand({
             </div>
           )}
           <p className="max-w-3xl text-[13px] leading-relaxed text-muted">{detail}</p>
+
+          {/* THREE OUTCOMES, NAMED. Each row says which system answered, so no
+              reader has to infer that "0 failed" meant one system's rules and
+              not the test's own checks. */}
+          <dl data-testid="run-outcomes" className="flex flex-col gap-1 text-[12px]">
+            <Outcome testId="outcome-execution" label="Execution" value={executionText(status)} />
+            <Outcome
+              testId="outcome-gates"
+              label="Platform gates"
+              value={gatesText}
+            />
+            <Outcome
+              testId="outcome-simulation"
+              label="Simulation checks"
+              value={simulation.text}
+              action={
+                simulation.failedExpression === null ? null : (
+                  <Link
+                    to={`${runPath(identity.id)}#simulation-assertions`}
+                    className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
+                  >
+                    {simulation.failedCount === 1
+                      ? 'See the failed simulation check'
+                      : `See ${simulation.failedCount} failed simulation checks`}
+                  </Link>
+                )
+              }
+            />
+          </dl>
         </div>
 
-        <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 lg:p-5">
+        <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 @4xl:p-5">
           {/* The counts, or nothing — never three zeros over a run whose
               rules have not been evaluated. See `assertions` above. */}
           {evaluated && (
@@ -244,4 +327,67 @@ function decisionDetail(decision: Decision, counts: AssertionCounts): string {
   if (counts.failed > 0) return 'Assertions are available, but the run verdict is still resolving.';
   if (decision === 'none') return 'This run carries no release verdict yet.';
   return 'The run has not finished evaluation yet.';
+}
+
+
+/** What the RUN did, as distinct from what any gate concluded about it. */
+function executionText(status: RunResponse['status']): string {
+  if (status === 'complete') return 'completed';
+  if (status === 'failed') return 'could not be processed';
+  if (status === 'incomplete') return 'incomplete — the stream stopped early';
+  return 'in progress';
+}
+
+/**
+ * The simulation's own checks, reduced to one sentence and a target.
+ *
+ * `undefined`/`null` is NOT `[]`. A server written before `toolAssertions`
+ * existed reports nothing, and a simulation that declared no assertions
+ * reports an empty list — "not reported" and "none declared" are different
+ * facts, and collapsing them would invent a claim about a run nobody measured
+ * that way.
+ */
+function summariseToolAssertions(
+  toolAssertions: RunResponse['toolAssertions'],
+): { text: string; failedCount: number; failedExpression: string | null } {
+  if (toolAssertions === undefined || toolAssertions === null) {
+    return { text: 'not reported by this run', failedCount: 0, failedExpression: null };
+  }
+  if (toolAssertions.length === 0) {
+    return { text: 'none declared by this simulation', failedCount: 0, failedExpression: null };
+  }
+  const failed = toolAssertions.filter((a) => a.outcome === 'failed');
+  if (failed.length === 0) {
+    return {
+      text: `all ${toolAssertions.length} passed`,
+      failedCount: 0,
+      failedExpression: null,
+    };
+  }
+  return {
+    text: `${failed.length} failed — ${failed[0]!.expression}`,
+    failedCount: failed.length,
+    failedExpression: failed[0]!.expression,
+  };
+}
+
+/** One labelled outcome. A `<dl>` row, because each is a term and its value. */
+function Outcome({
+  testId,
+  label,
+  value,
+  action = null,
+}: {
+  readonly testId: string;
+  readonly label: string;
+  readonly value: string;
+  readonly action?: ReactNode;
+}) {
+  return (
+    <div data-testid={testId} className="flex flex-wrap items-baseline gap-x-2">
+      <dt className="shrink-0 font-medium text-muted">{label}</dt>
+      <dd className="min-w-0 text-primary">{value}</dd>
+      {action}
+    </div>
+  );
 }

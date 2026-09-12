@@ -94,3 +94,57 @@ describe('RunTabs', () => {
     expect(screen.queryByRole('link', { name: /Errors \(/ })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * REVIEW C04 — THE SELECTED INTERVAL MUST SURVIVE A TAB CHANGE.
+ *
+ * The window lives in the URL as `?from=&to=` (`useRunWindow`), and these
+ * links were built from `runChartsPath(runId)` and friends — paths with no
+ * query string. So narrowing to 10–30s on Overview and then opening Charts
+ * silently threw the selection away: the reader was returned to the whole run
+ * mid-investigation, with the From/To fields empty and nothing saying why.
+ *
+ * Carrying the parameters is also what makes the RETURN journey work. Trends
+ * and Compare deliberately answer whole-run questions (see C03), but they must
+ * still hand the interval back when the reader returns to a tab that honours
+ * it — so the parameters ride along everywhere rather than being stripped for
+ * the tabs that ignore them.
+ */
+describe('RunTabs — the analysis window rides along', () => {
+  const withWindow = (path: string) => `${path}?from=10000&to=30000`;
+
+  it('carries from/to onto every tab', () => {
+    renderAt(withWindow(`/runs/${RUN}`), 2);
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('href')).toMatch(/[?&]from=10000(&|$)/);
+      expect(link.getAttribute('href')).toMatch(/[?&]to=30000(&|$)/);
+    }
+  });
+
+  it('leaves the links clean when no window is selected', () => {
+    renderAt(`/runs/${RUN}`, 2);
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('href')).not.toContain('?');
+    }
+  });
+
+  /** A half-specified window is still the reader's selection and must travel;
+   *  `useRunWindow` is the one place that decides what it means. */
+  it('carries a from with no to', () => {
+    renderAt(`${`/runs/${RUN}`}?from=10000`, 2);
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.getAttribute('href')).toContain('from=10000');
+      expect(link.getAttribute('href')).not.toContain('to=');
+    }
+  });
+
+  /** Only the window travels. An unrelated parameter belongs to the tab that
+   *  set it, and carrying it would leak one tab's state onto another. */
+  it('does not carry unrelated query parameters between tabs', () => {
+    renderAt(`${`/runs/${RUN}`}?from=10000&runs=abc&metric=p99`, 2);
+    const href = screen.getAllByRole('link')[0]!.getAttribute('href') ?? '';
+    expect(href).toContain('from=10000');
+    expect(href).not.toContain('runs=abc');
+    expect(href).not.toContain('metric=p99');
+  });
+});

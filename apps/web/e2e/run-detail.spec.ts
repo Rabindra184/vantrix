@@ -669,3 +669,56 @@ test('a live run shows its identity in the header, not a bare id', async ({ page
   // claim about a run nobody has finished measuring yet.
   await expect(page.getByTestId('run-verdict')).toHaveCount(0);
 });
+
+/**
+ * REVIEW C05 — THE RELEASE PANEL BROKE AT A NORMAL 1024px DESKTOP.
+ *
+ * The band went three-up at `lg:`, which is ALSO the width at which
+ * `ProjectRail` appears — so it took its widest layout at the exact moment it
+ * lost ~270px to the sidebar. Measured at 1024x900 the tracks resolved to
+ * `338px 0px 336px`: the middle column collapsed to ZERO and its explanation
+ * overflowed across the action column, which started at the same x. 395px
+ * tall and unreadable.
+ *
+ * It is a container query now, so the question is the width this band HAS.
+ *
+ * ONLY A BROWSER CAN SEE THIS. jsdom lays everything out at 0x0, so every unit
+ * assertion about this component passed throughout — the same reason the
+ * `m-auto` dialog bug and the `truncate` rail bug needed Playwright.
+ *
+ * The assertion is geometric rather than visual: two cells on the same row
+ * whose boxes intersect horizontally is the defect, whatever it looks like.
+ */
+for (const [width, height] of [[1024, 900], [1280, 800]] as const) {
+  test(`the release band lays out without overlap at ${width}x${height}`, async ({ page }) => {
+    const admin = await seedAdmin();
+    const runId = await seedRunWithData(admin.orgId);
+    await signIn(page, admin);
+    await page.setViewportSize({ width, height });
+    await page.goto(runPath(runId));
+
+    const band = page.getByRole('region', { name: 'Release decision' });
+    await expect(band).toBeVisible();
+
+    const report = await band.evaluate((el) => {
+      const grid = el.firstElementChild as HTMLElement;
+      // `Array.from`, not a spread: the e2e tsconfig's lib does not give
+      // HTMLCollection a `[Symbol.iterator]`, so the spread form does not
+      // compile here even though it runs fine in a browser console.
+      const cells = Array.from(grid.children).map((c) => {
+        const r = c.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, width: r.width };
+      });
+      // Same visual row (tops within a few px) AND horizontally intersecting.
+      const overlapping = cells.some((c, i) =>
+        i > 0 && Math.abs(c.top - cells[i - 1]!.top) < 5 && c.left < cells[i - 1]!.right - 0.5,
+      );
+      return { overlapping, narrowest: Math.min(...cells.map((c) => c.width)) };
+    });
+
+    expect(report.overlapping).toBe(false);
+    // A track that collapses to nothing is the mechanism, so it is asserted
+    // directly rather than only through its visible consequence.
+    expect(report.narrowest).toBeGreaterThan(80);
+  });
+}

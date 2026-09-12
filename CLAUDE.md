@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **137 files / 1533 tests**, it
+`nvm use` first, and if a run reports fewer than **138 files / 1582 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,142 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-criticals branch then added ONE unit file
+(`apps/web/test/comparability.test.ts`, 10) and **49** unit cases —
+3 to `ProjectRules.test.tsx`, 6 to `TimeBrush.test.tsx`, 8 to
+`ErrorsTable.test.tsx`, 4 to `RunTabs.test.tsx`, 4 to `RunShell.test.tsx` and 5
+to `transforms.compare.test.ts`, 8 to `RunDecisionBand.test.tsx`, 1 to
+`RunList.test.tsx` and 10 in that new file — from a floor of 137 / 1533. Its
+integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
+`transforms.compare.test.ts` and `contracts.test.ts` are `.ts` files
+integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
+**e2e rises to 106**.
+
+SIX THINGS FROM IT, AND THE FIRST FOUR ARE THE SAME SHAPE: A SENTENCE THE UI
+STATED CONFIDENTLY AND WRONGLY.
+
+**A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION.** `ErrorsTable` is
+rendered by `RequestDetail` over a request-scoped payload, and its empty branch
+said "No errors were recorded for this run" and "Every request this run made
+came back OK" — on a request with no failures, inside a run with 24 of 895
+failed. Not a broken screen: a precisely wrong sentence, read by somebody
+checking whether a regression touched that request. The component cannot know
+its own scope (the payload carries a runId and nothing narrower), so the caller
+passes `scopeLabel` and the unscoped wording is untouched.
+
+**`onChange(null)` IS NOT A NEUTRAL FAILURE — IT IS "THE WHOLE RUN".**
+`TimeBrush.apply()` answered every unparseable, negative or reversed input with
+it, so typing From=30 To=10 silently WIDENED the analysis instead of refusing
+it. Of all the responses to bad input, a reset is the one that control must
+never produce. It refuses now, keeps the reader's typing and the previously
+applied window, and "Whole run" is still the deliberate way to widen.
+
+**AN EMPTY THRESHOLD IS NOT ZERO, AND A SCHEMA CANNOT TELL THEM APART.**
+`Number('')` is `0`, which is a legal threshold, so a blank SLA field authored
+a real gate. `p95 <= 0` breaches on any run recording one request — the mirror
+of the fraction trap recorded below, which silently PASSES forever. The check
+has to happen before the conversion, in the raw string, because that is the
+last place the difference still exists.
+
+**A CONTROL OVER A SECTION THAT IGNORES IT IS A CLAIM ABOUT THAT SECTION.** The
+brush lives in `RunShell`, so it sat above Trends and Compare, whose queries
+are historical and take no window at all: it accepted 10–30s there, announced
+it, and changed nothing. Withheld rather than disabled — a disabled control
+still asserts that a window is a property of the page. The PARAMETERS still
+travel, which is the other half: `useWindowSuffix` carries `from`/`to` across
+every tab and into request/group drill-downs, so the selection survives the
+whole investigation instead of being discarded on the first tab change. Only
+`from`/`to` travel; Compare's `runs=` belongs to Compare.
+
+**TWO SURFACES OF ONE SCREEN MEANT DIFFERENT POPULATIONS BY ONE WORD.** A
+`SeriesBucket` carries THREE percentile maps — `percentiles`, `percentilesOk`,
+`percentilesKo`. A `StatRow` carries exactly one, the combined set, and has no
+OK-only variant at all. The compare OVERLAY read `percentilesOk` while
+`metricValue` — which feeds the comparison matrix AND the summary tiles
+directly above that overlay — read `row.percentiles`. Combined is the only
+population all three CAN share without a backend change, so it is the one they
+share, and the chart's `limitation` says which it is.
+
+**AND THE POPULATION MIX-UP HID A REAL HOLE IN THE LINE.** `max` read
+`bucket.maxMs`, a COMBINED extremum, from behind a guard on `percentilesOk`
+being empty — so a bucket in which every request failed has no OK percentiles,
+a perfectly real maximum, and lost it. The overlay dropped the slowest
+measurement in exactly the buckets a regression hunt cares about most, with
+nothing thrown. **Order of branches, not arithmetic**: `max` comes before the
+percentile guard now.
+
+**A BREAKPOINT THAT ALSO MOVES THE LAYOUT AROUND IT IS THE WRONG QUESTION.**
+`RunDecisionBand` went three-up at `lg:` — 1024px of VIEWPORT, which is also
+where `ProjectRail` appears. So it took its widest layout at the exact moment
+it lost ~270px to the sidebar. Measured at 1024x900: tracks resolved to
+`338px 0px 336px`, the middle column collapsed to ZERO, and its explanation
+overflowed across the action column starting at the same x — 395px tall and
+unreadable. It is an `@container` query now, so the question is the width the
+BAND has: 309px and single-column at 1024, 190px and three-up at 1280, 151px at
+1440, no overlap at any of them. `minmax(14rem,1fr)` rather than
+`minmax(0,1fr)` for the explanation, because a zero minimum is what let the
+other two tracks take the whole row. **jsdom lays everything out at 0x0**, so
+every unit assertion over this component passed throughout — the same reason
+the `m-auto` dialog and the `truncate` rail needed Playwright. The e2e guard
+was verified red at 1024; at 1280 it PASSES against the original with this
+fixture, so that half is a regression guard rather than a reproduction.
+
+**SHORT LABELS OVER ONE SYSTEM'S COUNTERS READ AS OVERALL HEALTH.** Both demo
+runs showed "Not evaluated — 0 passed · 0 failed" because those are
+PLATFORM-SLA counters and neither project had configured a rule; both also had
+FAILING assertions the simulation declared for itself, far below the fold. The
+band states three facts separately now — execution, platform gates, simulation
+checks — and links to the first failing check. It deliberately does NOT fold
+simulation results into the release verdict: a platform gate is the
+organisation's policy and a simulation assertion is the test author's, and
+merging them makes the gate mean something nobody configured.
+
+`evaluated` was `assertions !== undefined`, so an EMPTY array counted as
+evaluated and produced "0 passed · 0 failed" — the three zeros that read as
+health. For that row `[]` now says "not configured", because nothing judging a
+run is not the same as nothing failing.
+
+**AND THE RUN LIST CANNOT COUNT SIMULATION CHECKS AT ALL.**
+`RunListResponseSchema` picks nine fields and none carries assertions, so
+"Needs attention: 0" over a run with a failing check is not a bug in the tile —
+it is the tile claiming more than its data. It says which systems it counted
+now. The COUNT needs a field the list endpoint does not have; that is a backend
+change and is not in this branch.
+
+**A COHORT IS NOT A CONTROLLED EXPERIMENT.** `TRENDS_SQL` groups completed runs
+by (project, test) — same simulation, nothing about the conditions. The same
+test runs against staging and production at very different offered loads, and
+a p95 that fell because the load halved was presented as "Best selected".
+`TrendRun` carries `environment`, `branch` and `commitSha` now, and
+`comparability.ts` reports them beside throughput, request count and duration,
+BEFORE the deltas.
+
+**THOSE THREE ARE `nullable().optional()`, AND THE OPTIONAL HALF IS THE
+LOAD-BEARING ONE.** The browser drops any body that fails the schema, so
+`nullable` alone would make a response from an API pod that predates the fields
+fail to parse — blanking the compare page for a whole rolling deploy rather
+than degrading it. Same trap `live-delta.ts` already carries cases for;
+`contracts.test.ts` pins it for trends before somebody tidies the optionality
+away as redundant.
+
+**UNKNOWN IS NOT COMPATIBLE.** `undefined` means the server does not report it
+and `null` means the run did not record it; neither is evidence two runs agree,
+so both read "unknown" and neither is ever counted as matching. A comparison
+where every VISIBLE value agrees but something is missing still tells the
+reader to look.
+
+**AND A SQL COMMENT CANNOT CONTAIN A BACKTICK.** `TRENDS_SQL` is a template
+literal, so a `--` comment mentioning `TrendRunSchema` in backticks ended the
+string and produced `TS1005: ',' expected` two lines later.
+
+**AND ONE THING THE WINDOW STILL CANNOT DO.** `/v1/runs/:id/errors` takes no
+`from`/`to` — deliberately, per that handler's own comment — while its sibling
+`errors/series` does. So a window narrows the errors CHART and leaves the table
+beneath it reporting the run's own totals. Windowed error aggregation is a
+backend change; `ErrorsTable` says which it is meanwhile, and the empty state
+is where that matters most, because "no errors" beside a visible 10–30s
+selection reads as "none in that interval".
 
 FIVE THINGS FROM IT, AND FOUR OF THEM WERE BROKEN BY THE WORLD RATHER THAN BY
 A COMMIT HERE.

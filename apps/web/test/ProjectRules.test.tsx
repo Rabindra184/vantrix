@@ -189,6 +189,61 @@ describe('ProjectRules — authoring', () => {
   });
 
   /**
+   * REVIEW C09 — AN EMPTY THRESHOLD IS NOT ZERO.
+   *
+   * `Number('')` and `Number('   ')` are both `0`, and `0` is a legal
+   * threshold, so a blank field submitted a real gate of `<= 0` rather than
+   * failing validation. The schema could never catch it: by the time it sees
+   * the value, absence and a deliberate zero are the same number.
+   *
+   * That gate is not inert. `p95 <= 0` breaches on every run that records a
+   * single request, so a blank field silently fails every future run of
+   * whatever it judges.
+   */
+  it('refuses a blank threshold rather than reading it as zero', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const threshold = await screen.findByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(createProjectRule).not.toHaveBeenCalled();
+  });
+
+  it('refuses a whitespace-only threshold too', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const threshold = await screen.findByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.type(threshold, '   ');
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(createProjectRule).not.toHaveBeenCalled();
+  });
+
+  /** A zero somebody deliberately typed is still a valid gate, and the fix
+   *  for the two cases above must not take it away. */
+  it('keeps an explicitly typed zero, which is a legal gate', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const metric = await screen.findByLabelText(/metric/i);
+    await user.clear(metric);
+    await user.type(metric, 'error_rate');
+    const threshold = screen.getByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.type(threshold, '0');
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    await waitFor(() => expect(createProjectRule).toHaveBeenCalledTimes(1));
+    expect(createProjectRule.mock.calls[0]?.[1]).toMatchObject({ threshold: 0 });
+  });
+
+  /**
    * THE UNIT TRAP, AND WHY A LABEL RATHER THAN A PLACEHOLDER.
    *
    * `error_rate` is a fraction — `koCount / count` — while the stat tiles, the

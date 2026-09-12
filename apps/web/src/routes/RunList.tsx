@@ -513,9 +513,21 @@ function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
       aria-label="Run health on this page"
       className="rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
+      {/* THE SECOND CAVEAT IS THE ONE THAT CHANGES A DECISION. The first says
+          the counts are page-local. This one says WHICH SYSTEMS they count:
+          execution state and the platform SLA verdict, which is all
+          `GET /v1/runs` returns — `RunListResponseSchema` picks nine fields
+          and none of them carries the simulation's own assertions.
+
+          Without it, "Needs attention: 0" sat above a run whose simulation had
+          a failing check, and a tile reading zero is a claim an engineer
+          triages on. Counting those here needs a field the list endpoint does
+          not have; saying so does not. */}
       <p className="text-[12px] leading-relaxed text-muted">
         Counted over the {items.length} {items.length === 1 ? 'run' : 'runs'} on this page. Paging or
-        filtering changes them; they are not totals for the whole list.
+        filtering changes them; they are not totals for the whole list. They count execution state
+        and this platform’s SLA verdict — not the assertions a simulation declares for itself, which
+        each run’s own page reports.
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <HealthTile

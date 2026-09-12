@@ -203,3 +203,32 @@ export function useTimeDomainFromShell(): readonly [number, number] | undefined 
   const span = durationMs ?? liveDurationMs;
   return span === null ? undefined : growingDomainMs(span);
 }
+
+/**
+ * The selected window as a query-string suffix, for links that must carry it.
+ *
+ * ═══ WHY LINKS HAVE TO DO THIS AT ALL ═══
+ *
+ * The window lives in the URL, so any link built from a bare path silently
+ * discards it. That is what made `RunTabs` throw away a 10–30s selection on
+ * every tab change, and what makes a statistics row link land on a request
+ * page with the reader's interval gone.
+ *
+ * ONLY `from`/`to`. The rest of a run page's query string belongs to whichever
+ * tab set it — Compare's `runs=` and its metric — and carrying those onto a
+ * destination that cannot mean anything by them leaks one tab's state into
+ * another.
+ *
+ * Returns `''` when nothing is selected, so a caller can concatenate
+ * unconditionally and still produce a clean path.
+ */
+export function useWindowSuffix(): string {
+  const [params] = useSearchParams();
+  const carried = new URLSearchParams();
+  for (const key of ['from', 'to'] as const) {
+    const value = params.get(key);
+    if (value !== null) carried.set(key, value);
+  }
+  const query = carried.toString();
+  return query === '' ? '' : `?${query}`;
+}

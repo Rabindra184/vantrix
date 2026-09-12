@@ -169,6 +169,30 @@ export default function ProjectRules({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
+
+    /* ═══ AN EMPTY THRESHOLD IS NOT ZERO, AND `Number` DISAGREES ═══
+     *
+     * `Number('')` and `Number('   ')` are both `0`, and `0` is a perfectly
+     * legal threshold — so a blank field used to author a real gate rather
+     * than fail validation. The schema cannot catch this and never could: by
+     * the time it sees the value, an absent threshold and a deliberate zero
+     * are the same number. The only place the difference still exists is
+     * here, in the raw string, which is why the check has to happen before
+     * the conversion rather than inside the contract.
+     *
+     * The resulting gate is not inert. `p95 <= 0` breaches on any run that
+     * records a single request, so a blank field silently FAILS every future
+     * run of whatever it judges — the mirror image of the fraction trap the
+     * threshold label already warns about, which silently passes.
+     *
+     * A zero somebody actually typed stays valid; `ProjectRules.test.tsx`
+     * pins that alongside the two refusals, so a fix that simply rejected
+     * falsy thresholds would fail there. */
+    if (threshold.trim() === '') {
+      setFormError('threshold: enter a number. An empty threshold is not zero.');
+      return;
+    }
+
     const parsed = CreateSlaRuleRequestSchema.safeParse({
       name: name.trim() === '' ? null : name.trim(),
       // On a test's page the answer is fixed; in project mode it is whatever

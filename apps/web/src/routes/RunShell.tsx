@@ -1,9 +1,10 @@
 import { Suspense } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import RouteFallback from '../components/RouteFallback';
 import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
+import { runComparePath, runTrendsPath } from './paths';
 import type { Assertion, RunIdentity, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -37,6 +38,7 @@ export default function RunShell({
   terminal,
   verdict,
   assertions,
+  toolAssertions,
   windowable,
   live,
   capReached,
@@ -73,6 +75,9 @@ export default function RunShell({
    */
   readonly verdict: RunResponse['verdict'] | undefined;
   readonly assertions?: readonly Assertion[];
+  /** The simulation's own checks — reported beside the platform gate, never
+   *  folded into it. See `RunDecisionBand`'s own prop docstring. */
+  readonly toolAssertions?: RunResponse['toolAssertions'];
   /**
    * `RunResponse` only — identity carries no such field, which is exactly why
    * a live run is never offered a brush (see the `TimeBrush` block below).
@@ -111,6 +116,24 @@ export default function RunShell({
   // declared BEFORE the fetches that key on it.
   const { window, setWindow } = useRunWindow(identity.durationMs ?? Number.MAX_SAFE_INTEGER);
 
+  /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
+   *
+   * The brush lives in the shell so one selection serves every tab — which
+   * also put it above the two tabs that cannot honour it. Trends' cohort query
+   * is historical and takes no window; Compare's is the same. The control
+   * accepted 10–30s there, announced that window, and changed nothing, so a
+   * reader had no way to tell a trend line still covered the whole run.
+   *
+   * Withheld rather than disabled: a disabled control still asserts that a
+   * window is a property of this page, which is the misreading.
+   *
+   * The PARAMETERS are untouched — `RunTabs` carries `from`/`to` across every
+   * tab — so this hides the control without discarding the selection, and
+   * Overview restores it on return. */
+  const { pathname } = useLocation();
+  const windowApplies =
+    pathname !== runTrendsPath(identity.id) && pathname !== runComparePath(identity.id);
+
   // THE ONE FETCH OVERVIEW MAKES WHOSE ONLY CONSUMER HERE IS A LINE OF
   // HEADER TEXT. `/users` exists for the two charts on the Charts tab
   // (design §4b); asking for it here so the header can state a peak means
@@ -131,7 +154,13 @@ export default function RunShell({
         verdict={verdict}
         peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
       />
-      <RunDecisionBand identity={identity} status={status} verdict={verdict} assertions={assertions} />
+      <RunDecisionBand
+        identity={identity}
+        status={status}
+        verdict={verdict}
+        assertions={assertions}
+        toolAssertions={toolAssertions}
+      />
       {/* `null`, not `0`, until the errors payload has actually resolved —
           the same "zero is a measurement" rule `peakUsers` above already
           follows (`runUsers.ts`). `errors.data?.errors.length ?? 0` used to
@@ -207,7 +236,7 @@ export default function RunShell({
           run never satisfies this either: identity carries no `windowable`
           at all, which is the mechanism — a live view is never narrowed,
           which is the reason (`useLiveRun`'s own module docstring). */}
-      {windowable === true && identity.durationMs != null && (
+      {windowable === true && identity.durationMs != null && windowApplies && (
         <TimeBrush
           runId={identity.id}
           runDurationMs={identity.durationMs}
