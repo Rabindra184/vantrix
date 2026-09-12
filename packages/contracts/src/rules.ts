@@ -321,3 +321,104 @@ export function percentToFraction(percent: number): number {
   if (!Number.isFinite(percent)) return percent;
   return Number((percent / 100).toFixed(8));
 }
+
+/* ======================================================================== *
+ * READING A RULE BACK IN WORDS (review M17)
+ * ======================================================================== */
+
+/**
+ * A metric as a reader says it, rather than as the evaluator spells it.
+ *
+ * ═══ WHY THIS LIVES BESIDE THE UNITS AND NOT IN THE FORM ═══
+ *
+ * `slaMetricUnit` already argues that the unit has to be a fact code can read
+ * rather than a sentence somebody remembers, because the one time it was prose
+ * it cost a permanently-passing gate. The NAME has exactly the same property:
+ * `error_rate` and `throughput_rps` are column names, and the review's
+ * objection to them is the same objection — the form exposes the data model.
+ *
+ * Percentiles are derived rather than listed, because the evaluator resolves
+ * ANY percentile in (0, 100) and a closed map would silently fall back to the
+ * raw key for the p99.95 somebody legitimately configured.
+ *
+ * Returns the metric unchanged when it resolves to nothing. That is the honest
+ * answer for a typo — inventing a label for `p95th` would dress up a string
+ * the engine is about to refuse.
+ */
+export function slaMetricLabel(metric: string): string {
+  const scalars: Record<SlaMetricScalar, string> = {
+    count: 'request count',
+    mean: 'mean response time',
+    min: 'fastest response',
+    max: 'slowest response',
+    stddev: 'response time spread',
+    error_rate: 'error rate',
+    throughput_rps: 'throughput',
+  };
+  const scalar = (scalars as Record<string, string | undefined>)[metric];
+  if (scalar !== undefined) return scalar;
+
+  const match = PERCENTILE.exec(metric);
+  if (match?.[1] !== undefined && isResolvableSlaMetric(metric)) {
+    return `${ordinal(match[1])} percentile response time`;
+  }
+  return metric;
+}
+
+/** `95` → `95th`, `99.9` → `99.9th`. The run page's own rule, restated. */
+function ordinal(digits: string): string {
+  const n = Number(digits);
+  // A fraction has no ordinal form, and "99.9th" is how they are conventionally
+  // written — the same decision `StatisticsTable.percentileColumnLabel` makes.
+  if (!Number.isInteger(n)) return `${digits}th`;
+  if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`;
+  return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th'}`;
+}
+
+/** What a rule judges: the whole run, or one named thing inside it. */
+export interface SlaRuleSubject {
+  readonly scope: SlaRuleScope;
+  readonly targetName: string | null;
+}
+
+/**
+ * The rule as a sentence — review M17's "Search p95 must be ≤ 800 ms."
+ *
+ * ═══ WHAT THIS IS FOR, AND IT IS NOT DECORATION ═══
+ *
+ * The form asks for Applies-to, Scope, Target, Family, Metric, Comparator and
+ * Threshold as seven independent controls, each individually reasonable and
+ * none of which states what the reader has actually built. Two of those
+ * controls are the ones that go wrong in silence: a metric whose unit the
+ * author misjudged (the fraction trap this file already carries a warning
+ * for), and a comparator pointing the wrong way — `throughput ≤ 50/s` is a
+ * legal rule that fails a run for being FAST.
+ *
+ * A sentence is the only rendering in which both are obvious, because it reads
+ * as a claim that is either true or absurd.
+ *
+ * ═══ IT TAKES THE STORED THRESHOLD, NOT THE TYPED ONE ═══
+ *
+ * `formatSlaThreshold` converts a fraction back to the percentage every other
+ * surface shows, so the caller must pass what would be SENT — the same value
+ * the rules table renders. A preview built from the raw input would agree with
+ * the form and disagree with the row it is about to create, which is the one
+ * way a preview can be worse than nothing.
+ */
+export function describeSlaRule(rule: {
+  readonly scope: SlaRuleScope;
+  readonly targetName: string | null;
+  readonly metric: string;
+  readonly comparator: SlaRuleComparator;
+  readonly threshold: number;
+}): string {
+  const subject =
+    rule.scope === 'run'
+      ? 'The whole run'
+      : rule.targetName === null || rule.targetName.trim() === ''
+        ? `Every ${rule.scope}`
+        : `${rule.scope === 'request' ? 'Request' : rule.scope === 'group' ? 'Group' : 'Scenario'} “${rule.targetName.trim()}”`;
+
+  const bound = rule.comparator === 'lte' ? 'at most' : 'at least';
+  return `${subject}: ${slaMetricLabel(rule.metric)} must be ${bound} ${formatSlaThreshold(rule.metric, rule.threshold)}.`;
+}

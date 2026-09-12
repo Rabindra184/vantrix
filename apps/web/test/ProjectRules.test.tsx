@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -16,6 +16,44 @@ const fetchProjectTests = vi.fn();
 vi.mock('../src/api/tests.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api/tests.js')>();
   return { ...actual, fetchProjectTests: (slug: string) => fetchProjectTests(slug) };
+});
+
+/**
+ * ═══ THE TARGET PICKER READS TWO ENDPOINTS, AND LEAVING THEM UNMOCKED TESTS
+ * THE FALLBACK ═══
+ *
+ * Review M17 turned the free-text target into a picker over the names a run
+ * actually recorded: the newest COMPLETE run in scope, then its statistics
+ * rows. When either read fails the field degrades to the typed input it
+ * replaced — which is correct, and is also exactly what an unmocked suite
+ * would exercise while the picker went untested. Same trap the launch form's
+ * test picker hit one branch earlier, so both are mocked here and the degraded
+ * path gets a case of its own that asks for it.
+ */
+const fetchRuns = vi.fn(async () => ({
+  items: [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+  nextCursor: null,
+}));
+vi.mock('../src/api/runs.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/runs.js')>();
+  return { ...actual, fetchRuns: () => fetchRuns() };
+});
+
+const fetchStats = vi.fn(async () => ({
+  runId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  stats: [
+    { scope: 'run', name: '', family: 'response_time' },
+    { scope: 'request', name: 'Search', family: 'response_time' },
+    { scope: 'request', name: 'Add to cart', family: 'response_time' },
+    { scope: 'group', name: 'Checkout', family: 'group_cumulated' },
+  ],
+}));
+vi.mock('../src/api/metrics.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/metrics.js')>();
+  return {
+    ...actual,
+    statsQuery: (id: string) => ({ queryKey: ['run', id, 'stats'], queryFn: () => fetchStats() }),
+  };
 });
 
 vi.mock('../src/api/rules.js', async (importOriginal) => {
@@ -147,9 +185,12 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    expect(screen.queryByLabelText(/target name/i)).toBeNull();
+    // "Target", not "Target name" — review M17 turned the free-text box into a
+    // picker over the names a run actually recorded, and the label lost the
+    // word that implied typing was the only option.
+    expect(screen.queryByLabelText(/^target/i)).toBeNull();
     await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
-    expect(screen.getByLabelText(/target name/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^target/i)).toBeInTheDocument();
   });
 
   it('refuses a request-scoped rule with no target, which would match nothing', async () => {
@@ -569,7 +610,21 @@ describe('ProjectRules — on a test’s page', () => {
    * would be a column of the same word. What a reader needs is which rows the
    * PROJECT applies to everything and which are this test's own.
    */
-  it('distinguishes an inherited project-wide rule from this test’s own', async () => {
+  /**
+   * ═══ TWO TABLES, NOT ONE COLUMN (review M17) ═══
+   *
+   * This used to assert an "Applies to" cell reading "Every test
+   * (project-wide)" beside one reading "This test" — the whole distinction
+   * carried by words in a column, on rows that looked identical otherwise.
+   *
+   * They are separate tables now, and the reason is that the rows are not
+   * equally safe to act on: deleting an inherited rule changes every OTHER
+   * test in the project, and a row indistinguishable from the one above it
+   * does not carry that warning. Inside each table the column would be the
+   * same word on every row, so it goes — the same argument `RunList` makes for
+   * dropping the Project column on a project's own list.
+   */
+  it('separates inherited project rules from this test’s own, and warns about the difference', async () => {
     fetchProjectRules.mockResolvedValue({
       rules: [
         rule({ id: '11111111-1111-4111-8111-111111111111', test: null }),
@@ -581,7 +636,206 @@ describe('ProjectRules — on a test’s page', () => {
     });
     renderRules({ testSlug: 'payments-sweep', testName: 'Payments sweep' });
 
+    const own = await screen.findByRole('region', { name: 'Test SLA rules' });
+    const inherited = screen.getByRole('region', { name: 'Inherited SLA rules' });
+    expect(within(own).getAllByRole('row')).toHaveLength(2); // header + one rule
+    expect(within(inherited).getAllByRole('row')).toHaveLength(2);
+
+    // The column is gone from both, because within a group it says nothing.
+    expect(screen.queryByTestId('rule-applies-to')).toBeNull();
+
+    // And the consequence of deleting an inherited rule is stated where the
+    // inherited rules are, not left to the reader to infer.
+    expect(inherited.textContent ?? '').toMatch(/every other test in the project/i);
+  });
+
+  /** On the PROJECT's own page there is one table and the column is back,
+   *  because there it genuinely varies from row to row. */
+  it('keeps the applies-to column on the project’s own list', async () => {
+    fetchProjectRules.mockResolvedValue({
+      rules: [
+        rule({ id: '11111111-1111-4111-8111-111111111111', test: null }),
+        rule({
+          id: '22222222-2222-4222-8222-222222222222',
+          test: { id: TEST.id, slug: TEST.slug, name: TEST.name },
+        }),
+      ],
+    });
+    renderRules();
+
     const cells = await screen.findAllByTestId('rule-applies-to');
-    expect(cells.map((c) => c.textContent)).toEqual(['Every test (project-wide)', 'This test']);
+    expect(cells.map((c) => c.textContent)).toEqual(['Every test', TEST.name]);
+  });
+});
+
+/* ======================================================================== *
+ * REVIEW M17 — THE FORM STOPS REQUIRING INTERNAL VOCABULARY
+ * ======================================================================== */
+
+describe('ProjectRules — the target is picked, not remembered', () => {
+  /**
+   * A typo cannot be refused here and never could: a target no run has
+   * reported YET is legal and useful, because a rule may be written before the
+   * endpoint it guards exists. So validation is not available and only the
+   * control can help — the same shape as the launch form's test picker.
+   */
+  it('offers the names the newest completed run recorded, for the chosen scope', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    const target = await screen.findByRole('combobox', { name: /^target/i });
+
+    // REQUEST names only. A group name in a request rule matches nothing, and
+    // offering one would be the picker recreating the typo it exists to stop.
+    const options = within(target).getAllByRole('option').map((o) => o.textContent);
+    expect(options).toContain('Search');
+    expect(options).toContain('Add to cart');
+    expect(options).not.toContain('Checkout');
+  });
+
+  it('follows the scope — a group rule is offered group names', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'group');
+    const target = await screen.findByRole('combobox', { name: /^target/i });
+    const options = within(target).getAllByRole('option').map((o) => o.textContent);
+    expect(options).toContain('Checkout');
+    expect(options).not.toContain('Search');
+  });
+
+  /** THE ESCAPE HATCH IS THE HALF THAT KEEPS THE FEATURE HONEST. A closed list
+   *  would refuse a rule written ahead of the endpoint it guards. */
+  it('keeps a typed target available behind an explicit choice', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    await user.selectOptions(screen.getByRole('combobox', { name: /^target/i }), '__custom__');
+
+    const typed = await screen.findByRole('textbox', { name: /^target/i });
+    await user.type(typed, 'GET /not-built-yet');
+    expect((typed as HTMLInputElement).value).toBe('GET /not-built-yet');
+  });
+
+  it('degrades to a typed field, saying why, when the names cannot be read', async () => {
+    fetchRuns.mockRejectedValueOnce(new Error('runs unavailable'));
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    const typed = await screen.findByRole('textbox', { name: /^target/i });
+    expect(typed).toBeInTheDocument();
+    // `getByLabelText` returns the CONTROL, whose textContent is empty — the
+    // sentence lives in the label's hint beside it.
+    expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
+  });
+});
+
+describe('ProjectRules — the rule reads back as a sentence', () => {
+  /**
+   * Seven controls, none of which states what was built. The two that go wrong
+   * in silence are a misjudged unit and a comparator pointing the wrong way —
+   * `throughput at most 50/s` is a legal gate that fails a run for being fast.
+   * A sentence is the only rendering in which both are obvious.
+   */
+  it('says what the rule gates, in the unit the rest of the product shows', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    await user.selectOptions(screen.getByRole('combobox', { name: /^target/i }), 'Search');
+    await user.clear(screen.getByLabelText(/metric/i));
+    await user.type(screen.getByLabelText(/metric/i), 'p95');
+    // CLEARED first: the form opens with a default threshold, and typing
+    // appends — "800" over "800" is "800800", which is how this case failed
+    // the first time it ran.
+    await user.clear(screen.getByLabelText(/threshold/i));
+    await user.type(screen.getByLabelText(/threshold/i), '800');
+
+    expect(screen.getByTestId('rule-preview').textContent ?? '').toContain(
+      'Request “Search”: 95th percentile response time must be at most 800 ms.',
+    );
+  });
+
+  /**
+   * THE PREVIEW SHOWS WHAT WILL BE SENT, NOT WHAT WAS TYPED. The form takes a
+   * PERCENTAGE for a fraction metric and stores a fraction; a preview built
+   * off the raw input would agree with the box above it and disagree with the
+   * row it is about to create, which is the one way a preview is worse than
+   * none.
+   */
+  it('converts a percentage the way the submit does', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.clear(await screen.findByLabelText(/metric/i));
+    await user.type(screen.getByLabelText(/metric/i), 'error_rate');
+    await user.clear(screen.getByLabelText(/threshold/i));
+    await user.type(screen.getByLabelText(/threshold/i), '1');
+
+    expect(screen.getByTestId('rule-preview').textContent ?? '').toContain(
+      'The whole run: error rate must be at most 1%.',
+    );
+  });
+
+  /** Nothing true to say yet, so it says nothing — and in particular it does
+   *  NOT render a sentence for a metric the engine would refuse. */
+  it('withholds the sentence for a metric that does not resolve', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.clear(await screen.findByLabelText(/metric/i));
+    await user.type(screen.getByLabelText(/metric/i), 'p95th');
+    await user.clear(screen.getByLabelText(/threshold/i));
+    await user.type(screen.getByLabelText(/threshold/i), '800');
+
+    expect(screen.getByTestId('rule-preview').textContent ?? '').toMatch(/will say, in words/i);
+  });
+
+  /** And it says when the rule starts judging, which is the question an author
+   *  asks straight after "did that save". */
+  it('states when a new rule takes effect', async () => {
+    renderRules();
+    expect((await screen.findByTestId('rule-preview')).textContent ?? '').toMatch(
+      /judges runs finished after it is added/i,
+    );
+  });
+});
+
+describe('ProjectRules — validation names the field, not the schema', () => {
+  /**
+   * The message was `${issue.path.join('.')}: ${issue.message}`, so a reader
+   * met `targetName: Required` — a Zod property name, which is the data model
+   * leaking into the one place somebody is being asked to fix something.
+   */
+  it('refuses a targetless request rule by its label and says what to do', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').toMatch(/^Target:/);
+    expect(alert.textContent ?? '').toMatch(/set the scope to Whole run/i);
+    // The schema path itself never appears.
+    expect(alert.textContent ?? '').not.toContain('targetName');
+  });
+
+  it('names the threshold field, and still refuses an empty box as not-zero', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    // The form opens with a default threshold; emptying it is the state this
+    // case is about, and `Number('')` being 0 is why the check cannot live in
+    // the schema.
+    await user.clear(await screen.findByLabelText(/threshold/i));
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').toMatch(/^Threshold:/);
+    expect(alert.textContent ?? '').toMatch(/not zero/i);
+    expect(createProjectRule).not.toHaveBeenCalled();
   });
 });
