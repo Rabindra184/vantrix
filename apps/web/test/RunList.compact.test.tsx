@@ -100,6 +100,35 @@ describe('RunList — the filters fold away on a phone', () => {
   });
 
   /**
+   * ═══ FOUND IN A BROWSER, NOT BY THIS SUITE ═══
+   *
+   * The summary read `Filter runs “undefined”` on every unfiltered list.
+   * `filtersFromParams` spells the search term `params.get('q') ?? undefined`,
+   * and the first version of the summary tested for `null` and `''` — so the
+   * absent case fell through and was interpolated. Nothing threw, no test
+   * failed, and the case below existed and PASSED because it only ever
+   * rendered the filtered URL.
+   *
+   * Asserting the unfiltered summary is the half that was missing: a control
+   * that names what it is filtering by has to say nothing when it is filtering
+   * by nothing.
+   */
+  it('names no filter when none is applied', async () => {
+    renderList();
+    const details = await screen.findByTestId('compact-filters');
+    // The `<summary>` itself, not "whatever says Filter runs" — the form
+    // inside no longer repeats the words, and pinning the element rather than
+    // the text is what keeps this about the disclosure's own label.
+    const summary = details.querySelector('summary')!;
+    expect(summary.textContent ?? '').not.toMatch(/undefined|null|“”/);
+    expect((summary.textContent ?? '').trim()).toBe('Filter runs');
+
+    // And the words appear ONCE on the page: the panel inside drops its own
+    // header when the disclosure is carrying it.
+    expect(screen.getAllByText(/^filter runs$/i)).toHaveLength(1);
+  });
+
+  /**
    * COLLAPSED BY DEFAULT IS RIGHT ONLY WHEN NOTHING IS FILTERING.
    *
    * A shortened list under a closed control is a list that looks like it is

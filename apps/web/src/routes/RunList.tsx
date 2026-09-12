@@ -137,7 +137,22 @@ export default function RunList({
      its filters are collapsed — see `CompactFilters` and `RunCards` below for
      why each of those is a different component rather than a class. */
   const compact = useIsCompact();
-  const filterForm = (
+  const controls = compact ? (
+    <CompactFilters active={filtersActive || ignored.length > 0} filters={filters}>
+      {/* `showHeader={false}`: the disclosure's own summary already reads
+          "Filter runs", and two identical labels eight pixels apart is the
+          same duplicate-heading problem `ProjectRules.showTitle` solves one
+          page over. */}
+      <RunListControls
+        filters={filters}
+        ignored={ignored}
+        active={filtersActive || ignored.length > 0}
+        onApply={applyFilters}
+        onClear={clearFilters}
+        showHeader={false}
+      />
+    </CompactFilters>
+  ) : (
     <RunListControls
       filters={filters}
       ignored={ignored}
@@ -145,13 +160,6 @@ export default function RunList({
       onApply={applyFilters}
       onClear={clearFilters}
     />
-  );
-  const controls = compact ? (
-    <CompactFilters active={filtersActive || ignored.length > 0} filters={filters}>
-      {filterForm}
-    </CompactFilters>
-  ) : (
-    filterForm
   );
   const headingAction = action ?? (projectSlug === null ? (
     <Link to={NEW_PROJECT_ROUTE} className={linkButtonClasses}>
@@ -429,6 +437,7 @@ function RunListControls({
   active,
   onApply,
   onClear,
+  showHeader = true,
 }: {
   readonly filters: RunListFilters;
   /**
@@ -443,6 +452,8 @@ function RunListControls({
   readonly active: boolean;
   readonly onApply: (filters: RunListFilters) => void;
   readonly onClear: () => void;
+  /** False inside `CompactFilters`, whose own summary carries these words. */
+  readonly showHeader?: boolean;
 }) {
   const [q, setQ] = useState(filters.q ?? '');
   const [status, setStatus] = useState(filters.status ?? '');
@@ -469,10 +480,12 @@ function RunListControls({
       onSubmit={submit}
       className="flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
-      <div className="flex items-center gap-2 text-[13px] font-medium text-primary">
-        <FilterIcon className="h-3.5 w-3.5" />
-        Filter runs
-      </div>
+      {showHeader && (
+        <div className="flex items-center gap-2 text-[13px] font-medium text-primary">
+          <FilterIcon className="h-3.5 w-3.5" />
+          Filter runs
+        </div>
+      )}
 
       {ignored.length > 0 && (
         // NO `role="status"`, deliberately. This is not an announcement — it
@@ -905,8 +918,19 @@ function CompactFilters({
   readonly filters: RunListFilters;
   readonly children: ReactNode;
 }) {
+  /* ═══ `q` IS `undefined` WHEN ABSENT, NOT `null` ═══
+   *
+   * `filtersFromParams` spells it `params.get('q') ?? undefined`, so the first
+   * version of this — which tested for `null` and `''` — rendered the literal
+   * summary `Filter runs “undefined”` on every unfiltered list. Nothing threw,
+   * no test failed, and it was found by opening the page at 375px.
+   *
+   * A `typeof` check rather than another value in the comparison chain: this
+   * field has now been three things (absent, empty, a string) and a list of
+   * falsy spellings is exactly how it came to be wrong once. */
+  const query = typeof filters.q === 'string' ? filters.q.trim() : '';
   const on = [
-    filters.q === null || filters.q === '' ? null : `“${filters.q}”`,
+    query === '' ? null : `“${query}”`,
     filters.status,
     filters.verdict === null ? null : VERDICT_FILTERS.find((v) => v.value === filters.verdict)?.label,
   ].filter((value): value is string => value != null && value !== '');
