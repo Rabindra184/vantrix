@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchProjects } from '../src/api/projects.js';
 import { fetchProjectTokens, mintProjectToken, revokeProjectToken } from '../src/api/tokens.js';
-import ProjectSetup from '../src/routes/ProjectSetup.js';
+import ProjectAccess from '../src/routes/ProjectAccess.js';
 
 vi.mock('../src/api/projects.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/api/projects.js')>()),
@@ -49,17 +49,19 @@ vi.mock('../src/api/tokens.js', async (importOriginal) => ({
 }));
 
 /**
- * The rules panel is a third data-dependent section of this page, and this
- * file is not about it — but leaving it unmocked does not leave it silent:
- * its query fails against no server and it announces that, in a `role="alert"`
- * the token tests below then resolved to instead of their own. Mocked to a
- * quiet empty list, the same as projects and tokens above. `ProjectRules.test.tsx`
- * is where the panel's own behaviour is pinned.
+ * ═══ THE RULES MOCK IS GONE, BECAUSE THE RULES PANEL IS ═══
+ *
+ * It used to be mocked here for a reason worth keeping in mind: the panel was
+ * a third data-dependent section of this page, its query failed against no
+ * server, and it announced that in a `role="alert"` the token tests below then
+ * resolved to instead of their own.
+ *
+ * Review M15 moved rules to `/projects/:slug/rules`. Two independently-failing
+ * sections are left, and both assertions below are still SCOPED to the block
+ * they mean (`token-mint`, `token-list`) rather than relying on there being
+ * only one alert on the page — the scoping is what survives a page growing a
+ * section again, and the mock was only ever the other half of it.
  */
-vi.mock('../src/api/rules.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/api/rules.js')>()),
-  fetchProjectRules: vi.fn(async () => ({ rules: [] })),
-}));
 
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchProjectTokensMock = vi.mocked(fetchProjectTokens);
@@ -80,7 +82,7 @@ afterEach(() => {
   revokeProjectTokenMock.mockClear();
 });
 
-describe('ProjectSetup', () => {
+describe('ProjectAccess', () => {
   // The two token blocks, so an assertion can name the one it means rather
   // than resolving to whichever of the page's alerts happened to render.
   /** The mint form and the once-only secret it reveals. */
@@ -92,28 +94,57 @@ describe('ProjectSetup', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     return render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/projects/alpha/setup']}>
+        <MemoryRouter initialEntries={['/projects/alpha/access']}>
           <Routes>
-            <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
+            <Route path="/projects/:slug/access" element={<ProjectAccess />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
   }
 
-  it('mints a scoped token and renders the once-only secret with the ingest command', async () => {
+  it('mints a scoped token and renders the once-only secret', async () => {
     renderSetup();
 
-    expect(await screen.findByRole('heading', { name: 'Project setup' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Access', level: 1 })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/token name/i), { target: { value: 'Nightly CI' } });
     fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
 
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
-    expect(screen.getByText(/curl -H/)).toHaveTextContent('pp_abc123_secret456');
     expect(mintProjectTokenMock).toHaveBeenCalledWith('alpha', {
       name: 'Nightly CI',
       scopes: ['ingest', 'read'],
     });
+  });
+
+  /**
+   * ═══ THE COMMAND USED TO BE ON THIS PAGE, WITH THE SECRET PASTED IN ═══
+   *
+   * Minting rendered a ready-to-run `curl` carrying the plaintext token, which
+   * was genuinely convenient and was exactly what tied importing a report to
+   * the credentials screen — review M15's objection. The command moved to
+   * `Add results` and names an environment variable instead.
+   *
+   * What replaces it is a link, asserted here because the convenience is the
+   * part a split most easily loses: somebody who came to get started should
+   * not have to work out where to go next from a page that just handed them a
+   * secret.
+   */
+  it('points a freshly-minted token at the page that uses it', async () => {
+    renderSetup();
+
+    // The project resolves before the form exists — this page is behind a
+    // `ProjectConfigPage` lookup, so a `getBy` here races the query.
+    expect(await screen.findByRole('heading', { name: 'Access', level: 1 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
+    expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
+
+    const next = within(mintCard()).getByRole('link', { name: /add results/i });
+    expect(next).toHaveAttribute('href', '/projects/alpha/setup');
+
+    // And the secret is NOT pasted into a command here any more — the whole
+    // point of the move. Nothing on this page is a runnable ingest recipe.
+    expect(screen.queryByText(/curl -H/)).toBeNull();
   });
 
   /**
@@ -196,7 +227,7 @@ describe('ProjectSetup', () => {
     Object.assign(navigator, { clipboard: undefined });
     renderSetup();
 
-    expect(await screen.findByRole('heading', { name: 'Project setup' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Access', level: 1 })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
 
@@ -206,45 +237,5 @@ describe('ProjectSetup', () => {
     // And it must NOT claim success.
     expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
-  });
-});
-
-/**
- * REVIEW M14 — THE ONBOARDING RECIPE COULD NOT BE RUN.
- *
- * The curl example ended in a bare `/v1/runs`. A shell does not resolve that
- * against the page's origin, so the one command this page exists to hand a
- * new user fails with "URL rejected: No host part in the request URL". It is
- * the first thing anybody copies out of this product.
- *
- * The origin is knowable at render — the page is being served from it — so the
- * command carries a real, runnable URL.
- */
-describe('ProjectSetup — the upload command is runnable as shown', () => {
-  function render0() {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/projects/alpha/setup']}>
-          <Routes>
-            <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-  }
-
-  it('carries an absolute URL, not a bare path', async () => {
-    render0();
-    const command = await screen.findByTestId('upload-command');
-    expect(command.textContent).toMatch(/https?:\/\/[^\s]+\/v1\/runs/);
-  });
-
-  it('does not leave a bare /v1/runs that a shell cannot resolve', async () => {
-    render0();
-    const command = await screen.findByTestId('upload-command');
-    expect(command.textContent).not.toMatch(/\s\/v1\/runs\s*$/m);
   });
 });

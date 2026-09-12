@@ -28,6 +28,8 @@ const NewProject = lazy(() => import('./routes/NewProject'));
 const NoOrg = lazy(() => import('./routes/NoOrg'));
 const ProjectRuns = lazy(() => import('./routes/ProjectRuns'));
 const ProjectSetup = lazy(() => import('./routes/ProjectSetup'));
+const ProjectRulesPage = lazy(() => import('./routes/ProjectRulesPage'));
+const ProjectAccess = lazy(() => import('./routes/ProjectAccess'));
 const ProjectTests = lazy(() => import('./routes/ProjectTests'));
 const TestRuns = lazy(() => import('./routes/TestRuns'));
 const NewRunnerRun = lazy(() => import('./routes/NewRunnerRun'));
@@ -68,6 +70,11 @@ export default function App() {
             <Route path={NEW_PROJECT_ROUTE} element={<NewProject />} />
             <Route path="/projects/:slug/run/new" element={<NewRunnerRun />} />
             <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
+            {/* Rules and Access were sections of the setup page until review M15
+                asked for them to be separate destinations. The setup SEGMENT is
+                unchanged on purpose — see `projectSetupPath`. */}
+            <Route path="/projects/:slug/rules" element={<ProjectRulesPage />} />
+            <Route path="/projects/:slug/access" element={<ProjectAccess />} />
             {/* `Organization → Project → Test → Run`. A project's own page is
                 its TESTS; the run list across every test moved one segment
                 deeper rather than the test list taking a child segment, so an

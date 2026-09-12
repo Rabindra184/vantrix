@@ -1,478 +1,285 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import {
-  TOKEN_SCOPES,
-  type MintedToken,
-  type TokenListResponse,
-  type TokenScopeName,
-} from '@perfportal/contracts';
-import Button, { linkButtonClasses } from '../components/Button';
+import type { ReactNode } from 'react';
+import type { RunnerJobListResponse } from '@perfportal/contracts';
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
-import { EmptyState, ErrorState, LoadingState } from '../components/States';
-import TableFrame from '../components/TableFrame';
-import { CheckIcon, ChevronLeftIcon, CopyIcon, PlayIcon, TokenIcon } from '../components/icons';
-import { ProblemError } from '../api/fetch';
-import { fetchProjects, projectsQueryKey } from '../api/projects';
-import {
-  fetchProjectTokens,
-  mintProjectToken,
-  projectTokensQueryKey,
-  revokeProjectToken,
-} from '../api/tokens';
-import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
-import { formatInstant } from './format';
-import ProjectRules from './ProjectRules';
-import useDocumentTitle from '../useDocumentTitle';
-import { projectNewRunnerRunPath, projectPath } from './paths';
+import { PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
+import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
+import ProjectConfigPage from './ProjectConfigPage';
+import { projectAccessPath, projectNewRunnerRunPath } from './paths';
+import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
 
-const DEFAULT_SCOPES: TokenScopeName[] = ['ingest', 'read'];
-const SCOPE_LABELS: Record<TokenScopeName, string> = {
-  ingest: 'Completed reports',
-  read: 'Read dashboards',
-  telemetry: 'Generator telemetry',
-  stream: 'Live run stream',
-  runner: 'On-prem runner',
-};
-
+/**
+ * HOW A RUN GETS INTO THIS PROJECT — review M15.
+ *
+ * ═══ WHAT THIS PAGE USED TO BE ═══
+ *
+ * Token minting, token revocation, an import snippet and SLA rules, in one
+ * scroll. The review's objection is sharper than "it was long": the ONLY
+ * route to importing a completed report was a `curl` sitting inside token
+ * management, under a card headed "Create tests". So the first thing a new
+ * user needs was reachable only by opening a credentials screen and reading
+ * past it, and the most prominent action on the page was "New on-prem run" —
+ * useless to somebody who already has a results bundle in their hand.
+ *
+ * ═══ THREE EXPLICIT CHOICES, EACH WITH A STATUS ═══
+ *
+ * The three are the three real ways in, named for what the reader is trying
+ * to do rather than for the mechanism:
+ *
+ *   Import results   — a bundle already exists. `POST /v1/runs`.
+ *   Run a test       — no bundle yet; the on-prem runner makes one.
+ *   Configure CI     — the same import, but from a pipeline, every build.
+ *
+ * The review asks for a "clear guide and status" rather than burial, and the
+ * STATUS half is the part that is easy to fake. Two of these are available
+ * because the endpoint exists; the third depends on a machine this instance
+ * cannot see, so its status is computed from evidence and says "unknown" when
+ * that is the truth. See `runnerReadiness`.
+ *
+ * ═══ THE CREDENTIAL IS A NAMED PREREQUISITE, NOT A PLACE TO HIDE ═══
+ *
+ * Importing still needs a token. The fix is not to drop the dependency, it is
+ * to state it and link to it — the opposite of the old arrangement, where the
+ * import instructions were a paragraph inside the credentials screen.
+ */
 export default function ProjectSetup() {
-  const { slug = '' } = useParams<{ slug: string }>();
-  const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
-  const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
-  const title = project?.name ? `Setup · ${project.name}` : 'Project setup';
-  useDocumentTitle(title);
-
-  if (projects.isPending) return <LoadingState label="Loading project…" />;
-  if (projects.isError) {
-    const error = projects.error;
-    const problem = error instanceof ProblemError ? error : null;
-    return (
-      <ErrorState
-        titleAs="h1"
-        title="The project could not be loaded"
-        detail={problem?.detail ?? error.message}
-        remediation={problem?.remediation}
-      />
-    );
-  }
-  if (project === null) {
-    return (
-      <ErrorState
-        titleAs="h1"
-        title="Project not found"
-        detail={`No project "${slug}" is visible to this session.`}
-        action={<BackToProject slug={slug} />}
-      />
-    );
-  }
-
-  return <ProjectSetupLoaded slug={slug} projectName={project.name} />;
+  return (
+    <ProjectConfigPage
+      current="setup"
+      heading="Add results"
+      intro="Three ways to get a run into this project. Pick the one that matches what you already have."
+    >
+      {({ slug }) => <AddResults key={slug} slug={slug} />}
+    </ProjectConfigPage>
+  );
 }
 
-function ProjectSetupLoaded({
-  slug,
-  projectName,
-}: {
-  readonly slug: string;
-  readonly projectName: string;
-}) {
-  const queryClient = useQueryClient();
-  const tokens = useQuery({
-    queryKey: projectTokensQueryKey(slug),
-    queryFn: () => fetchProjectTokens(slug),
-  });
-  const [tokenName, setTokenName] = useState('CI ingest');
-  const [scopes, setScopes] = useState<Set<TokenScopeName>>(() => new Set(DEFAULT_SCOPES));
-  const [minted, setMinted] = useState<MintedToken | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const selectedScopes = useMemo(() => TOKEN_SCOPES.filter((scope) => scopes.has(scope)), [scopes]);
-
-  const mintMutation = useMutation({
-    mutationFn: () => mintProjectToken(slug, { name: tokenName.trim(), scopes: selectedScopes }),
-    onSuccess: (token) => {
-      setMinted(token);
-      setCopied(false);
-      void queryClient.invalidateQueries({ queryKey: projectTokensQueryKey(slug) });
-    },
-  });
-  const revokeMutation = useMutation({
-    mutationFn: (prefix: string) => revokeProjectToken(slug, prefix),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: projectTokensQueryKey(slug) });
-    },
-  });
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    mintMutation.mutate();
-  };
-
-  /**
-   * NEVER CLAIM A COPY THAT DID NOT HAPPEN, which the optional chain used to
-   * do. `await navigator.clipboard?.writeText(token)` evaluates to
-   * `await undefined` wherever the Clipboard API is absent — any page not in
-   * a secure context, i.e. plain http on anything but localhost, which is an
-   * ordinary way to reach an on-prem install. That resolves, `setCopied(true)`
-   * runs, the button says "Copied" with a tick, and the reader navigates away
-   * from a secret they will never be shown again.
-   *
-   * The explicit guard turns the absent API into the same branch as a
-   * rejected write (permission denied, or a document that is not focused),
-   * so both surface as one honest failure with a real alternative: the token
-   * is on screen in a <pre>, so selecting it by hand always works.
-   */
-  const copyToken = async () => {
-    if (minted === null) return;
-    try {
-      if (typeof navigator.clipboard?.writeText !== 'function') {
-        throw new Error('The clipboard is not available on this page.');
-      }
-      await navigator.clipboard.writeText(minted.token);
-      setCopied(true);
-      setCopyFailed(false);
-    } catch {
-      // The message is the same either way, so the reason is not worth
-      // surfacing: what the reader needs is "it did not copy, select it
-      // yourself", not a DOMException name.
-      setCopyFailed(true);
-      setCopied(false);
-    }
-  };
-
-  const problem = mintMutation.error instanceof ProblemError ? mintMutation.error : null;
-  const revokeProblem =
-    revokeMutation.error instanceof ProblemError ? revokeMutation.error : null;
+function AddResults({ slug }: { readonly slug: string }) {
   /* The instance the reader is already talking to. A hard-coded localhost
      would be wrong for every real deployment, and a relative path is not
-     runnable at all — see the `<pre>` below. */
-  const instanceOrigin =
-    typeof window === 'undefined' ? '' : window.location.origin;
-  const commandToken = minted?.token ?? '$PERFPORTAL_TOKEN';
+     runnable at all: this ended in a bare `/v1/runs` once, so the one command
+     this page exists to hand a new user failed with "No host part in the
+     request URL". `window.location.origin` is the honest source — the reader
+     is being served this page FROM the instance they need to post to, so it
+     is right for a custom domain and a port alike. */
+  const instanceOrigin = typeof window === 'undefined' ? '' : window.location.origin;
+
+  /* The SAME query the launch form runs, so the status quoted here and the
+     panel over there cannot disagree. Polled only while something is in
+     flight — a page nobody is launching from should not hold a two-second
+     timer open forever. */
+  const jobs = useQuery({
+    queryKey: runnerJobsQueryKey(slug),
+    queryFn: () => fetchRunnerJobs(slug),
+    refetchInterval: 15_000,
+  });
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
-          <Link to={projectPath(slug)} className="inline-flex items-center gap-1 text-[13px] font-medium text-muted hover:text-primary">
-            <ChevronLeftIcon className="h-3.5 w-3.5" />
-            {projectName}
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+      <EntryCard
+        title="Import results"
+        icon={<UploadIcon className="h-4 w-4" />}
+        description="You already have a finished Gatling report. Post the bundle and PerfPortal parses it."
+        status={{ kind: 'ready', label: 'Available now' }}
+      >
+        <p className="text-[13px] leading-relaxed text-muted">
+          Needs a token with the <span className="text-primary">Completed reports</span> scope.{' '}
+          <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+            Mint one under Access
           </Link>
-          <h1 className="text-xl font-semibold tracking-tight">Project setup</h1>
-        </div>
-        <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-          <PlayIcon className="h-3.5 w-3.5" />
-          New on-prem run
-        </Link>
-      </div>
+          , then export it as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code>.
+        </p>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        {/* `data-testid` so a test can scope a query to THIS block. The page
-            holds several independently-failing sections that each announce
-            their own failure, so a bare page-wide `getByRole('alert')` asks
-            "did anything go wrong" rather than "did the mint" — which is how
-            adding the rules panel below broke two token tests that were never
-            about rules. */}
-        <Card
-        headingLevel={2}
-          title="API tokens"
-          description="Issue scoped credentials for CI, agents, and runners."
-          data-testid="token-mint"
+        <pre
+          data-testid="upload-command"
+          className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
         >
-          <form className="flex flex-col gap-4" onSubmit={submit}>
-            <label className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-[13px] font-medium text-primary">Token name</span>
-              <input className={INPUT} value={tokenName} onChange={(event) => setTokenName(event.target.value)} required />
-            </label>
-
-            <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <legend className="mb-1 text-[13px] font-medium text-primary">Scopes</legend>
-              {TOKEN_SCOPES.map((scope) => (
-                <label key={scope} className="flex items-center gap-2 rounded-lg border border-default bg-surface px-3 py-2 text-[13px] text-primary">
-                  <input
-                    type="checkbox"
-                    checked={scopes.has(scope)}
-                    onChange={(event) => {
-                      setScopes((current) => {
-                        const next = new Set(current);
-                        if (event.target.checked) next.add(scope);
-                        else next.delete(scope);
-                        return next;
-                      });
-                    }}
-                  />
-                  <span>{SCOPE_LABELS[scope]}</span>
-                </label>
-              ))}
-            </fieldset>
-
-            {mintMutation.isError && (
-              <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary">
-                {problem?.detail ?? mintMutation.error.message}
-                {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
-              </div>
-            )}
-
-            <Button type="submit" variant="primary" loading={mintMutation.isPending}>
-              <TokenIcon className="h-3.5 w-3.5" />
-              Mint token
-            </Button>
-          </form>
-
-          {minted !== null && (
-            <div className="rounded-lg border border-default bg-sunken p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[13px] font-semibold text-primary">Token shown once</p>
-                  <p className="text-[12px] text-muted">Copy it before leaving this page.</p>
-                </div>
-                <Button size="sm" onClick={copyToken}>
-                  {copied ? <CheckIcon className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />}
-                  {copied ? 'Copied' : 'Copy'}
-                </Button>
-              </div>
-              <pre className="mt-3 overflow-x-auto rounded-md border border-default bg-surface p-3 font-mono text-xs text-primary">
-                {minted.token}
-              </pre>
-              {/* Announced, because the reader may already be reaching for the
-                  next thing — and this is their one chance at the secret. It
-                  points at the `<pre>` above rather than apologising: the
-                  token is on screen and selectable whatever the clipboard
-                  does. */}
-              {copyFailed && (
-                <p role="alert" className="mt-2 text-[12px] leading-snug text-muted">
-                  The token could not be copied automatically — a browser only
-                  allows that on a secure (https) page. Select it above and copy
-                  it by hand before you leave.
-                </p>
-              )}
-            </div>
-          )}
-        </Card>
-
-        <Card headingLevel={2} title="Create tests" description="Two supported paths into this project.">
-          <div className="flex flex-col gap-4 text-[13px]">
-            <div className="flex flex-col gap-2">
-              <p className="font-medium text-primary">Upload completed reports</p>
-              {/* AN ABSOLUTE URL, because a shell cannot resolve a bare path.
-                  This ended in `/v1/runs`, so the one command this page exists
-                  to hand a new user failed with "No host part in the request
-                  URL" — the first thing anybody copies out of the product.
-
-                  `window.location.origin` is the honest source: the reader is
-                  being served this page FROM the instance they need to post
-                  to, so it is correct for a custom domain and a port alike,
-                  which a hard-coded localhost would not be. */}
-              <pre
-                data-testid="upload-command"
-                className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-              >
-{`curl -H "Authorization: Bearer ${commandToken}" \\
+{`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
   -F bundle=@results.tgz \\
   -F 'metadata={"tool":"gatling"}' \\
   ${instanceOrigin}/v1/runs`}
-              </pre>
-            </div>
-            <div className="flex flex-col gap-2">
-              <p className="font-medium text-primary">Run from the web</p>
-              <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-                <PlayIcon className="h-3.5 w-3.5" />
-                Queue on-prem run
-              </Link>
-            </div>
-          </div>
-        </Card>
-      </div>
+        </pre>
 
-      {/* Grouped, and at a TIGHTER gap than the page's own: the alert below
-          is about a row in the table below it, and the comment on it says as
-          much. The grouping is also the scope a test names to reach the
-          revoke alert rather than whichever alert the page happens to hold —
-          see `token-mint` above. */}
-      <div className="flex flex-col gap-3" data-testid="token-list">
-        {/* A FAILED REVOKE HAS TO SAY SO, and this is the one action where
-            silence is dangerous rather than merely unhelpful. Without it the
-            spinner simply stopped: the row still read "Active", nothing was
-            announced, and an operator revoking a LEAKED credential could not
-            tell that from success — the failure mode being "the attacker keeps
-            the token and you stop looking".
+        {/* ═══ SAYING WHAT IS NOT BUILT, RATHER THAN LETTING IT BE INFERRED
+            ═══
 
-            The wording does not claim the token is still live, because a
-            request that failed on the way back may well have succeeded on the
-            server. "May still be active" is what is actually known, and the
-            reload is how the reader finds out which it was. `role="alert"` so
-            it is announced when it appears, and it sits directly above the
-            table whose row the reader just acted on. */}
-        {revokeMutation.isError && (
-          <div
-            role="alert"
-            className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
-          >
-            <p className="font-medium">
-              {revokeMutation.variables === undefined
-                ? 'That token may still be active — revoking it did not complete.'
-                : `Token ${revokeMutation.variables} may still be active — revoking it did not complete.`}
-            </p>
-            <p className="mt-1 text-muted">{revokeProblem?.detail ?? revokeMutation.error.message}</p>
-            <p className="mt-1 text-muted">
-              {revokeProblem?.remediation ?? 'Reload the page to see its current state, then try again.'}
-            </p>
-          </div>
-        )}
+            The review allows that "a completed-report import can be a later
+            feature" and asks for a clear guide and status meanwhile. A page
+            offering "Import results" with only a shell command invites the
+            reader to hunt for the file picker they assume is somewhere; one
+            sentence ends that hunt. It also stops the endpoint reading as a
+            workaround — it is the supported route, and the browser form would
+            be a convenience on top of it. */}
+        <p className="text-[12px] leading-snug text-muted">
+          There is no browser upload form yet — this endpoint is the supported route, and it is
+          what the CI recipe below uses.
+        </p>
+        <p className="text-[12px] leading-snug text-muted">
+          The bundle is a <code className="font-mono">.tgz</code> containing the run directory
+          Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
+          a 202 with the run’s id; the worker parses it in the background.
+        </p>
+      </EntryCard>
 
-        <TokenTable
-          query={tokens}
-          revoking={revokeMutation.isPending ? revokeMutation.variables ?? null : null}
-          onRevoke={(prefix) => revokeMutation.mutate(prefix)}
-        />
-      </div>
+      <EntryCard
+        title="Run a test"
+        icon={<PlayIcon className="h-4 w-4" />}
+        description="No bundle yet. Upload a Gatling jar or bundle and let an on-prem runner execute it."
+        status={runnerStatus(jobs.isPending, jobs.isError, jobs.data?.items ?? [])}
+      >
+        <p className="text-[13px] leading-relaxed text-muted">
+          The runner streams the log as it is written, so the run’s page is live while the test is
+          still going. It executes one job at a time.
+        </p>
+        <div>
+          <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
+            <PlayIcon className="h-3.5 w-3.5" />
+            New on-prem run
+          </Link>
+        </div>
+      </EntryCard>
 
-      {/* Rules live BELOW tokens, and the order is the setup order: a project
-          needs a credential before it can receive a run, and a run before a
-          gate has anything to judge. `ProjectRules` owns its own queries and
-          mutations — this page composes it rather than growing a third
-          stateful section. */}
-      <ProjectRules slug={slug} />
+      <EntryCard
+        title="Configure CI"
+        icon={<TokenIcon className="h-4 w-4" />}
+        description="Every build posts its own report, so the trend line keeps itself up to date."
+        status={{ kind: 'ready', label: 'Available now' }}
+      >
+        <p className="text-[13px] leading-relaxed text-muted">
+          Add one step after your existing Gatling task. The token belongs in the pipeline’s secret
+          store, never in the repository.
+        </p>
+        <pre
+          data-testid="ci-command"
+          className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+        >
+{`# after gradlew gatlingRun
+tar -czf results.tgz -C build/reports/gatling .
+curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+  -F bundle=@results.tgz \\
+  -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
+  ${instanceOrigin}/v1/runs`}
+        </pre>
+        <p className="text-[12px] leading-snug text-muted">
+          <span className="text-primary">branch</span> and{' '}
+          <span className="text-primary">commitSha</span> are what let the Compare page tell a
+          regression from a different build, so they are worth wiring up even though both are
+          optional.
+        </p>
+        {/* NO VERSION NUMBER. The Gradle plugin is built from this repository
+            and is not on a public plugin portal, so a coordinate quoted here
+            would be a string this page cannot verify — which is exactly how
+            the plugin's own e2e script came to name a version that had not
+            existed for two releases. */}
+        <p className="text-[12px] leading-snug text-muted">
+          For a LIVE view while the build runs rather than a report afterwards, there is a Gradle
+          plugin (<code className="font-mono">dev.vantrix.gatling</code>) that streams the log as
+          Gatling writes it. It ships with this repository under{' '}
+          <code className="font-mono">clients/gatling-gradle</code>; its README carries the
+          coordinates and its JDK 21 requirement.
+        </p>
+      </EntryCard>
     </div>
   );
 }
 
-/**
- * The token list, and the app's ONLY destructive control.
- *
- * REVOKING TAKES TWO DELIBERATE CLICKS, and the reason it is a two-step
- * button rather than a modal is the same one `ProjectRail` gives for not
- * being a drawer: a dialog needs focus capture, an escape handler, a scrim
- * and return-focus-on-close to be correct, and this repo runs Playwright with
- * a single Desktop Chrome project — so every one of those would ship
- * unverified. A button that changes its own label needs none of it, is
- * reachable by keyboard for free, and announces the change because the
- * accessible name really is different.
- *
- * `window.confirm` was the other candidate and is worse: it blocks the event
- * loop, cannot be styled, and reads as a browser malfunction rather than as
- * part of the page.
- */
-function TokenTable({
-  query,
-  revoking,
-  onRevoke,
-}: {
-  readonly query: UseQueryResult<TokenListResponse, Error>;
-  readonly revoking: string | null;
-  readonly onRevoke: (prefix: string) => void;
-}) {
-  // The prefix awaiting confirmation, or null. ONE at a time: arming a second
-  // row disarms the first, so there is never more than one primed destructive
-  // control on screen to mis-click.
-  const [confirming, setConfirming] = useState<string | null>(null);
+/* ======================================================================== *
+ * STATUS — THE HALF THAT MUST NOT OVERCLAIM
+ * ======================================================================== */
 
-  if (query.isPending) return <LoadingState label="Loading tokens…" />;
-  if (query.isError) {
-    const problem = query.error instanceof ProblemError ? query.error : null;
-    return (
-      <ErrorState
-        title="Tokens could not be loaded"
-        detail={problem?.detail ?? query.error.message}
-        remediation={problem?.remediation}
-      />
-    );
+type EntryStatus = {
+  readonly kind: 'ready' | 'unknown' | 'busy' | 'problem';
+  readonly label: string;
+  readonly note?: string;
+};
+
+/**
+ * The runner's own status, phrased for a card that is offering a choice.
+ *
+ * The query's OWN failure is a status too, and a distinct one: "this page
+ * could not ask" is not the same claim as "no runner is there", and rendering
+ * the second for the first would send somebody to restart a healthy machine.
+ */
+function runnerStatus(
+  pending: boolean,
+  errored: boolean,
+  items: RunnerJobListResponse['items'],
+): EntryStatus {
+  if (pending) return { kind: 'unknown', label: 'Checking…' };
+  if (errored) {
+    return {
+      kind: 'unknown',
+      label: 'Status unavailable',
+      note: 'The job list could not be loaded, so nothing is known about the runner either way.',
+    };
   }
-  if (query.data.tokens.length === 0) {
-    return <EmptyState title="No tokens yet" body="Mint a scoped project token when CI, telemetry, or runner hosts need access." />;
-  }
-  const caption = 'Project API tokens. Plaintext secrets are never listed after minting.';
-  return (
-    <TableFrame caption={caption} label="Project tokens table">
-      <table className={TABLE}>
-        <caption className="sr-only">{caption}</caption>
-        <thead className={THEAD}>
-          <tr>
-            <th scope="col" className={TH}>Name</th>
-            <th scope="col" className={TH}>Prefix</th>
-            <th scope="col" className={TH}>Scopes</th>
-            <th scope="col" className={TH}>Created</th>
-            <th scope="col" className={TH}>Last used</th>
-            <th scope="col" className={TH}>Status</th>
-            <th scope="col" className={TH}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {query.data.tokens.map((token) => (
-            <tr key={token.prefix} className={ROW}>
-              <td className={TD}>{token.name}</td>
-              <td className={`${TD} font-mono`}>{token.prefix}</td>
-              <td className={TD}>{token.scopes.join(', ')}</td>
-              <td className={TD}>{formatInstant(token.createdAt)}</td>
-              <td className={TD}>{token.lastUsedAt === null ? 'Never' : formatInstant(token.lastUsedAt)}</td>
-              <td className={TD}>{token.revokedAt === null ? 'Active' : 'Revoked'}</td>
-              <td className={TD}>
-                {confirming === token.prefix ? (
-                  // ARMED. The accessible name changes from "Revoke" to
-                  // "Confirm revoke", so a screen reader announces that the
-                  // control now does something different — which is the whole
-                  // point of the step, and something a modal would have had
-                  // to arrange by hand.
-                  <div className="flex flex-col gap-1.5">
-                    {/* THE CONSEQUENCE AS VISIBLE TEXT, and never as a
-                        `title` on the button. A tooltip is hover-only, so a
-                        touch user never sees it — and putting one on a
-                        control that already has a label makes the ACCESSIBLE
-                        NAME ambiguous: with both present, Chromium's
-                        accessibility tree reported this button as
-                        "Revoking is permanent…" rather than "Revoke", while
-                        jsdom kept reading the text content, so the unit suite
-                        saw nothing wrong. That is the exact class of defect
-                        CLAUDE.md records as visible only in a browser.
-                        Sibling text carries the warning without touching any
-                        button's name. */}
-                    <p className="text-[12px] leading-snug text-muted">
-                      Permanent. Anything still using it starts failing.
-                    </p>
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        loading={revoking === token.prefix}
-                        onClick={() => {
-                          setConfirming(null);
-                          onRevoke(token.prefix);
-                        }}
-                      >
-                        Confirm revoke
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={revoking === token.prefix}
-                    disabled={token.revokedAt !== null}
-                    // NO `title` here — see the armed branch above for why a
-                    // tooltip on a labelled control is not a free addition.
-                    onClick={() => setConfirming(token.prefix)}
-                  >
-                    Revoke
-                  </Button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </TableFrame>
-  );
+  const readiness = runnerReadiness(items);
+  return { kind: STATUS_KIND[readiness.kind], label: readiness.headline, note: readiness.detail };
 }
 
-function BackToProject({ slug }: { readonly slug: string }) {
+const STATUS_KIND: Record<RunnerReadinessKind, EntryStatus['kind']> = {
+  busy: 'busy',
+  waiting: 'busy',
+  stalled: 'problem',
+  // NOT 'ready'. An idle project proves a runner worked once, and nothing at
+  // all about now — see `runnerReadiness`'s docstring.
+  idle: 'unknown',
+  unknown: 'unknown',
+};
+
+/* The status tokens are declared on `:root` rather than inside `@theme`, so
+   Tailwind generates NO `text-status-*` utility for them — a class here would
+   emit nothing and the label would silently inherit the body colour. CLAUDE.md
+   records this trap twice; `var()` is how every other consumer reads them. */
+const STATUS_COLOR: Record<EntryStatus['kind'], string> = {
+  ready: 'var(--color-status-passed)',
+  busy: 'var(--color-status-pending)',
+  problem: 'var(--color-status-failed)',
+  unknown: 'var(--color-status-not-applicable)',
+};
+
+function EntryCard({
+  title,
+  icon,
+  description,
+  status,
+  children,
+}: {
+  readonly title: string;
+  readonly icon: ReactNode;
+  readonly description: string;
+  readonly status: EntryStatus;
+  readonly children: ReactNode;
+}) {
   return (
-    <Link to={projectPath(slug)} className={linkButtonClasses}>
-      <ChevronLeftIcon className="h-3.5 w-3.5" />
-      Back to project
-    </Link>
+    <Card headingLevel={2} data-testid={`entry-${title.toLowerCase().replace(/\s+/g, '-')}`}>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-muted">{icon}</span>
+            <h2 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h2>
+          </div>
+          {/* The dot is `aria-hidden` and the WORDS carry the state, so the
+              status is not a colour a reader has to have learnt. */}
+          <span
+            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase"
+            style={{ color: STATUS_COLOR[status.kind] }}
+            data-testid="entry-status"
+          >
+            <span aria-hidden="true">●</span>
+            {status.label}
+          </span>
+        </div>
+        <p className="text-[13px] leading-relaxed text-muted">{description}</p>
+        {status.note !== undefined && (
+          <p className="rounded-lg border border-default bg-sunken p-3 text-[12px] leading-snug text-muted">
+            {status.note}
+          </p>
+        )}
+        {children}
+      </div>
+    </Card>
   );
 }

@@ -117,8 +117,46 @@ export function projectNewRunnerRunPath(slug: string): string {
   return `${projectPath(slug)}/run/new`;
 }
 
+/**
+ * How results get into this project — the three explicit entry choices
+ * (import, run, CI) the M15 review asked for.
+ *
+ * ═══ THE SEGMENT IS STILL `setup`, AND THAT IS DELIBERATE ═══
+ *
+ * This page used to be everything at once: tokens, an import snippet and SLA
+ * rules. Two of those moved to `projectRulesPath` and `projectAccessPath`
+ * below, so what is left really is "add results" and the heading says so.
+ *
+ * Renaming the SEGMENT to match would break every bookmark and every link
+ * anybody has pasted into a runbook, to correct a word that appears in no URL
+ * a reader reads. This file already argues that case for `projectPath`, which
+ * kept its meaning rather than moving to `/tests` for the same reason.
+ */
 export function projectSetupPath(slug: string): string {
   return `${projectPath(slug)}/setup`;
+}
+
+/**
+ * The SLA rules that judge this project's runs.
+ *
+ * Its own page rather than a block at the bottom of setup: a rule is authored
+ * long after a project is wired up, by somebody who has no interest in
+ * credentials, and burying it under two sections nobody scrolls past made it
+ * look like part of first-run configuration.
+ */
+export function projectRulesPath(slug: string): string {
+  return `${projectPath(slug)}/rules`;
+}
+
+/**
+ * API tokens — minting, listing and revoking.
+ *
+ * `access` rather than `tokens` because that is the question being answered
+ * (who and what may reach this project), and because a token is not the only
+ * credential this page could ever hold.
+ */
+export function projectAccessPath(slug: string): string {
+  return `${projectPath(slug)}/access`;
 }
 
 /**
