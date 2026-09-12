@@ -353,7 +353,7 @@ function Chip({
           the gate strip's "Release gate": nothing queries a `<p>` by
           accessible name, so `uppercase` is safe HERE in a way it is not on
           a column heading. */}
-      <p className="text-[10px] font-semibold tracking-[0.1em] text-muted uppercase">{name}</p>
+      <p className="text-[12px] font-medium text-muted">{name}</p>
       {/* THE GROUP, THE NAME AND THE TESTID ALL STAY ON THE VALUE NODE, and
           the visible label above sits OUTSIDE it. That is what keeps the
           three text-content pins in the module docstring true while the cell

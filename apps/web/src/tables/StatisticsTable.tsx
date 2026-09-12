@@ -685,7 +685,11 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
         </div>
       </div>
 
-      <TableFrame caption={CAPTION_TEXT} label="Statistics table">
+      <TableFrame
+        caption={CAPTION_TEXT}
+        summary="Every request and group in this run, with the run’s own totals first. Times in milliseconds."
+        label="Statistics table"
+      >
         <table className={TABLE}>
           {/* The caption is the table's ACCESSIBLE NAME as well as its
               explanation — `getByRole('table', { name: /statistics/i })` is how

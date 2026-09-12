@@ -66,7 +66,7 @@ export default function StatTile({
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-default bg-surface p-4 shadow-panel">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted">{label}</dt>
+      <dt className="text-[12px] font-medium text-muted">{label}</dt>
       {/* 24px — `text-2xl leading-8`, the size the redesign's own screens set
           this number at — and it is the unit SPLIT that pays for it. The old
           20px was measured against `14.40 req/s`, eleven monospace characters,

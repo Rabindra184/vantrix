@@ -430,7 +430,7 @@ function CompareSummaryTile({
 }) {
   return (
     <div className="rounded-lg border border-default bg-surface px-3 py-3 shadow-panel">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted">{label}</p>
+      <p className="text-[12px] font-medium text-muted">{label}</p>
       <p className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums" style={{ color: colour }}>
         {value}
       </p>

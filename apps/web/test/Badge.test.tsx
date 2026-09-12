@@ -69,17 +69,45 @@ describe('Badge', () => {
     expect(screen.getByText('not evaluated')).toBeInTheDocument();
   });
 
-  it('spends less letter-spacing when compact, which is where the width goes', () => {
+  /**
+   * REVIEW m01 — THE COMPACT/DEFAULT DIFFERENCE MOVED FROM TRACKING TO PADDING.
+   *
+   * This used to assert that `compact` spent less letter-spacing while keeping
+   * `uppercase` and `font-mono` — the LED look the control-room redesign chose.
+   * That treatment is gone: 10px uppercase mono, repeated down a status column
+   * and a verdict column and again in every metadata strip, read as a wall of
+   * tiny stencilled labels and spent width doing it.
+   *
+   * The size distinction still exists and still matters, so it is still pinned
+   * — it is just carried by padding and gap now, which is where the width
+   * actually goes once the tracking is gone.
+   */
+  it('spends less padding when compact, which is where the width goes', () => {
     const { rerender } = render(<Badge mark={VERDICT.passed} />);
     const wide = screen.getByText('passed').className;
     rerender(<Badge mark={VERDICT.passed} size="compact" />);
     const tight = screen.getByText('passed').className;
 
-    expect(wide).toContain('tracking-[0.08em]');
-    expect(tight).toContain('tracking-[0.02em]');
-    // `uppercase` and the mono face are the LED look and survive both sizes;
-    // only the spacing either side of the letters gives way.
-    expect(tight).toContain('uppercase');
-    expect(tight).toContain('font-mono');
+    expect(wide).toContain('px-2');
+    expect(wide).toContain('gap-1.5');
+    expect(tight).toContain('px-1.5');
+    expect(tight).toContain('gap-1');
+  });
+
+  /**
+   * PINNED SO IT CANNOT SILENTLY RETURN. The mono face and the uppercase were
+   * a deliberate choice once, which is exactly why removing them needs an
+   * assertion: without one, the next person restoring "the LED look" changes
+   * the whole product's texture and no test says a word.
+   *
+   * Mono is kept for what mono is FOR — run ids, commit shas, numeric columns.
+   * A status word is none of those.
+   */
+  it('reads as a word rather than an instrument label', () => {
+    render(<Badge mark={VERDICT.passed} />);
+    const className = screen.getByText('passed').className;
+    expect(className).not.toContain('font-mono');
+    expect(className).not.toContain('uppercase');
+    expect(className).toContain('text-[12px]');
   });
 });

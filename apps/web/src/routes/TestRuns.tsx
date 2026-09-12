@@ -590,7 +590,7 @@ function Chip({
 }) {
   return (
     <div className="min-w-0 sm:px-4 sm:first:pl-0 sm:last:pr-0">
-      <p className="text-[10px] font-semibold tracking-[0.1em] text-muted uppercase">{name}</p>
+      <p className="text-[12px] font-medium text-muted">{name}</p>
       <span
         role="group"
         aria-label={label}
