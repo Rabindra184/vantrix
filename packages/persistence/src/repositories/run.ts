@@ -197,7 +197,42 @@ interface RunSqlRow extends Omit<RunRow, 'project' | 'test'> {
   testId: string | null;
   testSlug: string | null;
   testName: string | null;
+  /* The run-scope response-time row, LEFT JOINed. All four are null together
+     for a run with no statistics — still parsing, or a bundle that produced
+     none — which is a real state and not a missing join. */
+  statCount: number | null;
+  statErrorRate: number | null;
+  statThroughputRps: number | null;
+  statPercentiles: Record<string, number> | null;
 }
+
+/**
+ * A list row's headline numbers, or null where the run has none.
+ *
+ * SEPARATE FROM `RunRecord` on purpose. A record is the canonical run, read by
+ * `findById` and half the worker; bolting list-only statistics onto it would
+ * make every other caller carry a field that is null for reasons peculiar to
+ * one query. The list's own return type says it instead.
+ */
+export interface RunListMetrics {
+  readonly count: number;
+  readonly errorRate: number;
+  readonly throughputRps: number;
+  /** Null when the project's percentile set does not include p95. */
+  readonly p95Ms: number | null;
+}
+
+/**
+ * A run, plus the headline numbers only the list query fetches.
+ *
+ * AN INTERSECTION AT THIS ONE RETURN TYPE, not a field on `RunRecord`. A
+ * record is the canonical run — `findById`, the worker, the pipeline — and
+ * giving it a `metrics` that is null for reasons peculiar to one query would
+ * make every other caller carry a question they never asked. This way the
+ * extra field exists exactly where it is populated, and every existing caller
+ * that reads `item.id` keeps working.
+ */
+export type RunListItem = RunRecord & { readonly metrics: RunListMetrics | null };
 
 /** A verdict filter, plus the one value that is the ABSENCE of a verdict. */
 export type RunVerdictFilter = RunVerdict | 'none';
@@ -229,8 +264,30 @@ export interface RunListOptions {
   readonly testId?: string;
 }
 
+function metricsFrom(row: RunSqlRow): RunListMetrics | null {
+  // `count` is the discriminant: the LEFT JOIN either matched a stat row or it
+  // did not, and a half-populated one would be a bug in the query rather than
+  // a state to represent — the same argument the test triple below makes.
+  if (row.statCount === null) return null;
+  const p95 = row.statPercentiles?.['p95'];
+  return {
+    count: row.statCount,
+    errorRate: row.statErrorRate ?? 0,
+    throughputRps: row.statThroughputRps ?? 0,
+    // NOT a neighbouring percentile. The set is a project setting, so a
+    // project that does not configure p95 genuinely has no answer here, and
+    // p99 is a different question.
+    p95Ms: typeof p95 === 'number' && Number.isFinite(p95) ? p95 : null,
+  };
+}
+
 function fromSqlRow(row: RunSqlRow): RunRecord {
-  const { projectSlug, projectName, testId, testSlug, testName, ...rest } = row;
+  const {
+    projectSlug, projectName, testId, testSlug, testName,
+    statCount, statErrorRate, statThroughputRps, statPercentiles,
+    ...rest
+  } = row;
+  void statCount; void statErrorRate; void statThroughputRps; void statPercentiles;
   return toRecord({
     ...rest,
     project: { id: row.projectId, slug: projectSlug, name: projectName },
@@ -707,7 +764,7 @@ export class RunRepository {
   async list(
     scope: TenantScope,
     opts: RunListOptions,
-  ): Promise<{ items: RunRecord[]; nextCursor: string | null }> {
+  ): Promise<{ items: RunListItem[]; nextCursor: string | null }> {
     let cursorKey: { effective: Date; id: string } | null = null;
     if (opts.cursor) {
       const cursorRun = await this.prisma.run.findFirst({
@@ -833,9 +890,32 @@ export class RunRepository {
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
         r.tool_assertions AS "toolAssertions",
         p.slug AS "projectSlug", p.name AS "projectName",
-        t.id AS "testId", t.slug AS "testSlug", t.name AS "testName"
+        t.id AS "testId", t.slug AS "testSlug", t.name AS "testName",
+        -- THE TRIAGE NUMBERS. Without them a reader had to OPEN every run to
+        -- learn whether it was interesting, which is what a list exists to
+        -- answer. The frozen percentiles column rather than the sketch: a
+        -- list row is a scan target, and re-quantiling 25 sketches per page to
+        -- move a column by fractions of a millisecond is not a trade this
+        -- surface wants. (No backticks in here -- this is a template literal,
+        -- and one of those ends the string; CLAUDE.md records the same cut on
+        -- TRENDS_SQL.)
+        s.count AS "statCount", s.error_rate AS "statErrorRate",
+        s.throughput_rps AS "statThroughputRps", s.percentiles AS "statPercentiles"
       FROM run r
       JOIN project p ON p.id = r.project_id
+      -- LEFT, for the same reason the test join is: a run still parsing, or
+      -- one whose bundle produced nothing, is an ordinary row in this list and
+      -- an inner join would silently drop it. The scope/name/family triple is
+      -- the run-scope response-time row -- the same selection the stats
+      -- endpoint calls the run's totals, so this column and the run page
+      -- cannot disagree.
+      LEFT JOIN run_stat s
+        ON s.run_id = r.id
+       AND s.org_id = r.org_id
+       AND s.project_id = r.project_id
+       AND s.scope = 'run'
+       AND s.name = ''
+       AND s.family = 'response_time'
       -- LEFT, and that is the whole point: a run with no test is an ordinary
       -- run — still pending, or a bundle that never parsed — and an inner join
       -- would drop it out of the list it belongs in.
@@ -848,6 +928,9 @@ export class RunRepository {
     ) as RunSqlRow[];
     const page = rows.slice(0, opts.limit);
     const next = rows.length > opts.limit ? (page[page.length - 1]?.id ?? null) : null;
-    return { items: page.map(fromSqlRow), nextCursor: next };
+    return {
+      items: page.map((row) => ({ ...fromSqlRow(row), metrics: metricsFrom(row) })),
+      nextCursor: next,
+    };
   }
 }

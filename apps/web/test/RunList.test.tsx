@@ -272,3 +272,79 @@ describe('RunList — the health summary says which systems it counted', () => {
     expect(health).toHaveTextContent(/not totals for the whole list/i);
   });
 });
+
+/**
+ * REVIEW M02 + C02 — A LIST ROW HAD TO BE OPENED TO BE TRIAGED.
+ *
+ * The list carried Started, Project, Simulation, Status, Verdict — and no
+ * latency, no error rate, no environment. Deciding whether a run was
+ * interesting meant opening it, one at a time.
+ *
+ * The row data was already in the repository's SQL; the CONTRACT dropped it.
+ * `RunListResponseSchema` picked nine fields, so `environment`, `durationMs`
+ * and `toolAssertions` were fetched and discarded — which is also why "Needs
+ * attention" could read zero over a run whose simulation had a failing check.
+ */
+const TRIAGE_ROW = {
+  id: '66666666-6666-4666-8666-666666666666',
+  status: 'complete' as const,
+  verdict: 'passed' as const,
+  tool: 'gatling',
+  startedAt: '2026-08-16T09:00:00.000Z',
+  toolStartedAt: '2026-08-16T09:00:00.000Z',
+  project: { id: '55555555-5555-4555-8555-555555555555', slug: 'catalog', name: 'Catalog' },
+  simulation: 'example.CatalogSimulation',
+  environment: 'staging',
+  branch: 'main',
+  commitSha: 'abcdef1234567890',
+  durationMs: 63_161,
+  test: null,
+  checks: { failed: 1, total: 3 },
+  metrics: { count: 895, errorRate: 0.0268, throughputRps: 14.4, p95Ms: 659 },
+};
+
+describe('RunList — a row carries enough to triage on', () => {
+  it('shows p95, error rate and environment without opening the run', async () => {
+    renderList([TRIAGE_ROW]);
+    const row = (await screen.findAllByRole('row')).find((r) =>
+      r.textContent?.includes('CatalogSimulation'),
+    )!;
+    expect(row).toHaveTextContent('659');
+    expect(row).toHaveTextContent('2.68%');
+    expect(row).toHaveTextContent('staging');
+  });
+
+  /** A run with no statistics row has no p95. That is an absence, and "—" is
+   *  the honest cell — a zero would be a measurement. */
+  it('renders unavailable metrics as absent, never as zero', async () => {
+    renderList([{ ...TRIAGE_ROW, metrics: null }]);
+    const row = (await screen.findAllByRole('row')).find((r) =>
+      r.textContent?.includes('CatalogSimulation'),
+    )!;
+    expect(row).not.toHaveTextContent('0.00%');
+    expect(row).toHaveTextContent('—');
+  });
+
+  /**
+   * THE C02 HALF. A passing platform verdict over a failing simulation check
+   * is exactly the run "Needs attention: 0" was hiding.
+   */
+  it('counts a failing simulation check as needing attention', async () => {
+    renderList([TRIAGE_ROW]);
+    const health = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('1');
+  });
+
+  it('does not count a run whose checks all passed', async () => {
+    renderList([{ ...TRIAGE_ROW, checks: { failed: 0, total: 3 } }]);
+    const health = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('0');
+  });
+
+  /** A server that reports no checks must not be counted either way. */
+  it('does not count a run that reported no checks at all', async () => {
+    renderList([{ ...TRIAGE_ROW, checks: null }]);
+    const health = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('0');
+  });
+});

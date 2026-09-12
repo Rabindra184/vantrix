@@ -660,3 +660,71 @@ describe('ingest provenance', () => {
     expect(res.body.commitSha).toBeNull();
   });
 });
+
+/**
+ * REVIEW M02 + C02 — THE TRIAGE FIELDS HAVE TO CROSS THE SEAM.
+ *
+ * The repository's list SQL already selected `environment`, `branch`,
+ * `commit_sha`, `duration_ms` and `tool_assertions`; the CONTRACT picked nine
+ * fields, so all of it was fetched and thrown away. That is why the list could
+ * not be triaged on, and why "Needs attention" could read zero over a run with
+ * a failing simulation check — the outcomes were never sent.
+ *
+ * `RunList.test.tsx` proves the UI renders these, from fixtures it writes
+ * itself. That proves the consumer and nothing about whether the endpoint
+ * sends them. This reads them back off a really-ingested run, which is the
+ * only thing that can.
+ */
+describe('GET /v1/runs — the triage fields', () => {
+  it('carries identity, metrics and a check tally for a really-ingested run', async () => {
+    ctx = await createTestApp();
+    const id = await ingested({ environment: 'staging', branch: 'main' });
+
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
+    expect(res.status).toBe(200);
+
+    const parsed = RunListResponseSchema.parse(res.body);
+    const mine = parsed.items.find((r) => r.id === id)!;
+    expect(mine).toBeDefined();
+
+    expect(mine.environment).toBe('staging');
+    expect(mine.branch).toBe('main');
+    expect(mine.durationMs).toBeGreaterThan(0);
+
+    // The reference bundle's own numbers, so this cannot pass against a
+    // hard-coded fixture: 895 requests at a 2.68% error rate.
+    expect(mine.metrics).not.toBeNull();
+    expect(mine.metrics!.count).toBe(895);
+    expect(mine.metrics!.errorRate).toBeCloseTo(24 / 895, 6);
+    expect(mine.metrics!.p95Ms).toBeGreaterThan(0);
+
+    // And the simulation's own checks, which the list never used to send at
+    // all — ParitySimulation declares three, one of which fails.
+    expect(mine.checks).not.toBeNull();
+    expect(mine.checks!.total).toBe(3);
+    expect(mine.checks!.failed).toBe(1);
+  });
+
+  /** The same numbers the run's own page reports, from the same stat row —
+   *  a list column that disagreed with the run it links to would be worse
+   *  than no column. */
+  it('agrees with the run’s own statistics', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const list = RunListResponseSchema.parse(
+      (await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth())).body,
+    );
+    const stats = (
+      await request(ctx.app.getHttpServer())
+        .get(`/v1/runs/${id}/stats?scope=run&name=`)
+        .set(auth())
+    ).body;
+
+    const row = stats.stats[0];
+    const mine = list.items.find((r) => r.id === id)!;
+    expect(mine.metrics!.count).toBe(row.count);
+    expect(mine.metrics!.errorRate).toBeCloseTo(row.errorRate, 9);
+    expect(mine.metrics!.throughputRps).toBeCloseTo(row.throughputRps, 9);
+  });
+});
