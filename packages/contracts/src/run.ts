@@ -51,6 +51,39 @@ export type ToolAssertionOutcome = z.infer<typeof ToolAssertionOutcomeSchema>;
 
 export const ToolAssertionSchema = z.object({
   expression: z.string(),
+  /* ═══ THE STRUCTURE WAS ALWAYS THERE, TYPED AWAY ═══
+   *
+   * The engine evaluates `{ path, target, condition }` and `describe()` renders
+   * it to `expression`; the pipeline then `JSON.stringify`s the WHOLE
+   * evaluated object, so every stored row already carries the structure.
+   * Verified against a real ingest before this was written — the column's keys
+   * are `outcome`, `assertion`, `expression`, `actualValue`.
+   *
+   * It was dropped twice on the way out: the persistence type named three
+   * fields, and `runs.service.ts` mapped those three. So the UI had prose and
+   * nothing else, and the only way to columns looked like PARSING another
+   * tool's sentences back apart. It is not — this just stops discarding them.
+   *
+   * `expression` STAYS, and not as a fallback. `tool-assertions.ts` records
+   * that G-05's tolerance is EXACT WORDING, recovered from a 29-assertion
+   * corpus run rather than invented; the review asks for the tool's own phrasing
+   * to remain available, and it is the only thing that can render an assertion
+   * shape this client does not know about.
+   *
+   * `.optional()` for the usual reason: a response from an API pod that
+   * predates this would otherwise fail the schema and blank the run page for
+   * the length of a rolling deploy. */
+  assertion: z
+    .object({
+      path: z.object({ kind: z.string(), parts: z.array(z.string()).optional() }).passthrough(),
+      target: z
+        .object({ kind: z.string(), stat: z.string().optional(), rank: z.number().optional(), status: z.string().optional() })
+        .passthrough(),
+      condition: z
+        .object({ kind: z.string(), value: z.number().optional(), lo: z.number().optional(), hi: z.number().optional() })
+        .passthrough(),
+    })
+    .optional(),
   /** Null when nothing could be measured — see `not_applicable`. */
   actualValue: z.number().nullable(),
   /**
