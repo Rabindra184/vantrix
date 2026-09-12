@@ -196,7 +196,12 @@ export default function RunCompare() {
 
   if (compact && !shown) {
     return (
-      <DesktopOnly compact what="Comparing runs" onShow={() => setShown(true)}>
+      <DesktopOnly
+        compact
+        what="A comparison of these runs"
+        action="Open the comparison"
+        onShow={() => setShown(true)}
+      >
         {() => null}
       </DesktopOnly>
     );

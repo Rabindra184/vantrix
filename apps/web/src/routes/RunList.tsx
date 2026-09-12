@@ -7,9 +7,10 @@ import Button, { linkButtonClasses } from '../components/Button';
 import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
-import TableFrame from '../components/TableFrame';
+import TableFrame, { CAPTION_LESS, CAPTION_MORE } from '../components/TableFrame';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
+import useIsCompact from '../useIsCompact';
 import {
   fetchRuns,
   runsQueryKey,
@@ -132,7 +133,26 @@ export default function RunList({
     setCursor(null);
     setSearchParams({}, { replace: true });
   };
-  const controls = (
+  /* §22.6's one JS breakpoint. Below 768px this list is a stack of cards and
+     its filters are collapsed — see `CompactFilters` and `RunCards` below for
+     why each of those is a different component rather than a class. */
+  const compact = useIsCompact();
+  const controls = compact ? (
+    <CompactFilters active={filtersActive || ignored.length > 0} filters={filters}>
+      {/* `showHeader={false}`: the disclosure's own summary already reads
+          "Filter runs", and two identical labels eight pixels apart is the
+          same duplicate-heading problem `ProjectRules.showTitle` solves one
+          page over. */}
+      <RunListControls
+        filters={filters}
+        ignored={ignored}
+        active={filtersActive || ignored.length > 0}
+        onApply={applyFilters}
+        onClear={clearFilters}
+        showHeader={false}
+      />
+    </CompactFilters>
+  ) : (
     <RunListControls
       filters={filters}
       ignored={ignored}
@@ -200,6 +220,16 @@ export default function RunList({
 
   const { items, nextCursor } = runs.data;
 
+  /* THE SHORT LINE BOTH LAYOUTS SHOW. It was written inline on the
+     `TableFrame` below as "Every run in your organisation, newest first." —
+     true on `/runs` and false on a project's own list, which is the same
+     scope mistake the long caption directly beneath it takes care to avoid.
+     One expression now, so the two cannot disagree. */
+  const summaryLine =
+    projectSlug === null
+      ? 'Every run in your organisation, newest first.'
+      : 'Every run in this project, newest first.';
+
   const caption = captionOverride ?? (
     <>
       {projectSlug === null ? 'Every run in your organisation' : 'Every run in this project'},
@@ -231,14 +261,35 @@ export default function RunList({
         />
       ) : (
         <>
-          <RunListHealth items={items} />
-          {/* ONE `caption` NODE, rendered visibly outside the scroll box and
-              programmatically inside the table — see `TableFrame`'s docstring for
-              why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
-              off the side of a phone. */}
+          <RunListHealth items={items} compact={compact} />
+          {/* ═══ NINE COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
+              SIDEWAYS IS NOT A FIX (review M18) ═══
+
+              `TableFrame` already stops the caption running off the side, but
+              the TABLE still scrolls horizontally inside its box — so a reader
+              at 375px sees Started and Project and has to drag to reach the
+              two columns triage actually turns on, p95 and Errors. Measured
+              there, the first row began at y=908 on an 812px screen: nothing
+              about any run was visible without scrolling.
+
+              A card stacks the same fields per run, which is the shape that
+              fits. Same data, same links, same testids — see `RunCards`. */}
+          {compact ? (
+            <RunCards
+              items={items}
+              showProject={projectSlug === null}
+              identifyByRunId={testSlug !== null}
+              caption={caption}
+              summary={summaryLine}
+            />
+          ) : (
+          /* ONE `caption` NODE, rendered visibly outside the scroll box and
+             programmatically inside the table — see `TableFrame`'s docstring for
+             why a `<caption>` inside `overflow-x-auto` stops wrapping and runs
+             off the side of a phone. */
           <TableFrame
             caption={caption}
-            summary="Every run in your organisation, newest first."
+            summary={summaryLine}
             label={`${heading} table`}
           >
               <table className={TABLE}>
@@ -308,6 +359,7 @@ export default function RunList({
                 </tbody>
               </table>
           </TableFrame>
+          )}
         </>
       )}
 
@@ -385,6 +437,7 @@ function RunListControls({
   active,
   onApply,
   onClear,
+  showHeader = true,
 }: {
   readonly filters: RunListFilters;
   /**
@@ -399,6 +452,8 @@ function RunListControls({
   readonly active: boolean;
   readonly onApply: (filters: RunListFilters) => void;
   readonly onClear: () => void;
+  /** False inside `CompactFilters`, whose own summary carries these words. */
+  readonly showHeader?: boolean;
 }) {
   const [q, setQ] = useState(filters.q ?? '');
   const [status, setStatus] = useState(filters.status ?? '');
@@ -425,10 +480,12 @@ function RunListControls({
       onSubmit={submit}
       className="flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
-      <div className="flex items-center gap-2 text-[13px] font-medium text-primary">
-        <FilterIcon className="h-3.5 w-3.5" />
-        Filter runs
-      </div>
+      {showHeader && (
+        <div className="flex items-center gap-2 text-[13px] font-medium text-primary">
+          <FilterIcon className="h-3.5 w-3.5" />
+          Filter runs
+        </div>
+      )}
 
       {ignored.length > 0 && (
         // NO `role="status"`, deliberately. This is not an announcement — it
@@ -520,7 +577,15 @@ function RunListControls({
  * so it was never the right test anyway: on page three of five it is true
  * and on page five it is false, and the counts are page-local in both.
  */
-function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
+function RunListHealth({
+  items,
+  compact,
+}: {
+  readonly items: readonly RunListItem[];
+  /** Below 768px the two caveats are one disclosure rather than a paragraph —
+   *  see the note on the `<p>` below. */
+  readonly compact?: boolean;
+}) {
   const summary = healthSummary(items);
 
   return (
@@ -552,13 +617,36 @@ function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
           a failing check, and a tile reading zero is a claim an engineer
           triages on. Counting those here needs a field the list endpoint does
           not have; saying so does not. */}
-      <p className="text-[12px] leading-relaxed text-muted">
-        Counted over the {items.length} {items.length === 1 ? 'run' : 'runs'} on this page. Paging or
-        filtering changes them; they are not totals for the whole list. They count execution state
-        and this platform’s SLA verdict — not the assertions a simulation declares for itself, which
-        each run’s own page reports.
-      </p>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {/* ═══ THE SAME WORDS, BEHIND A DISCLOSURE ON A PHONE (review M18) ═══
+
+          Both caveats are load-bearing and neither is being deleted: one says
+          the counts are page-local, the other says WHICH systems they count,
+          and the second is why "Needs attention: 0" is not a claim about a
+          simulation's own assertions.
+
+          They are also 117px of prose above four tiles, measured at 375px, on
+          a screen where the first run row already began at y=908. A
+          `<details>` keeps every word one tap away and gives back the height
+          to the list the page is actually for. It is NOT collapsed on a
+          desktop, where the paragraph costs two lines and reads as part of
+          the tally. */}
+      {compact === true ? (
+        <details className="group">
+          <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+            <span className="group-open:hidden">What these count</span>
+            <span className="hidden group-open:inline">Hide the detail</span>
+          </summary>
+          <p className="pt-1.5 text-[12px] leading-relaxed text-muted">{HEALTH_CAVEAT(items.length)}</p>
+        </details>
+      ) : (
+        <p className="text-[12px] leading-relaxed text-muted">{HEALTH_CAVEAT(items.length)}</p>
+      )}
+      {/* TWO ACROSS FROM THE NARROWEST WIDTH, not one. Measured at 375px:
+          stacked one per row these four tiles were 326px, and they sit between
+          the heading and the list the page is for — so the first run card
+          began at y=561 on an 812px screen. Two columns halves that for four
+          counts that are each a word and a number. */}
+      <div className="mt-2 grid grid-cols-2 gap-2 xl:grid-cols-4">
         <HealthTile
           label="Needs attention"
           value={summary.needsAttention}
@@ -781,6 +869,274 @@ function isStatusFilter(value: string | null): value is RunListStatusFilter {
 
 function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
   return VERDICT_FILTERS.some((option) => option.value === value);
+}
+
+/**
+ * The tally's two caveats, as one string both layouts render.
+ *
+ * A function rather than a constant because the first clause counts the page.
+ * Shared so the collapsed and the expanded form cannot drift — the failure
+ * that would hide is a phone quietly reading a WEAKER caveat than a desktop,
+ * which nobody would notice until somebody triaged on it.
+ */
+const HEALTH_CAVEAT = (count: number): string =>
+  `Counted over the ${count} ${count === 1 ? 'run' : 'runs'} on this page. Paging or filtering ` +
+  'changes them; they are not totals for the whole list. They count execution state and this ' +
+  'platform’s SLA verdict — not the assertions a simulation declares for itself, which each ' +
+  'run’s own page reports.';
+
+/**
+ * The filter form, folded away on a phone — review M18.
+ *
+ * ═══ WHY THIS IS A DISCLOSURE AND NOT A CLASS ═══
+ *
+ * Measured at 375px: the expanded form is 314px — a search box, two selects
+ * and an Apply button — sitting between the heading and a list whose first row
+ * then began at y=908 on an 812px screen. Hiding it with `hidden` would cost
+ * the same DOM and give back the height; a `<details>` gives back the height
+ * AND keeps every control one tap away, with the browser's own keyboard
+ * behaviour.
+ *
+ * ═══ IT OPENS ITSELF WHEN A FILTER IS ON ═══
+ *
+ * Collapsed-by-default is right for the ordinary case and wrong for a reader
+ * who followed a filtered link: a shortened list under a closed control is a
+ * list that looks like it is missing runs. `open` therefore tracks whether
+ * anything is actually narrowing the view — including a query parameter this
+ * list had to ignore, which is the case where the explanation matters most and
+ * lives inside the form.
+ *
+ * The summary says WHICH filters are on rather than that some are, because
+ * "Filters (2)" is a number a reader then has to open the panel to read.
+ */
+function CompactFilters({
+  active,
+  filters,
+  children,
+}: {
+  readonly active: boolean;
+  readonly filters: RunListFilters;
+  readonly children: ReactNode;
+}) {
+  /* ═══ `q` IS `undefined` WHEN ABSENT, NOT `null` ═══
+   *
+   * `filtersFromParams` spells it `params.get('q') ?? undefined`, so the first
+   * version of this — which tested for `null` and `''` — rendered the literal
+   * summary `Filter runs “undefined”` on every unfiltered list. Nothing threw,
+   * no test failed, and it was found by opening the page at 375px.
+   *
+   * A `typeof` check rather than another value in the comparison chain: this
+   * field has now been three things (absent, empty, a string) and a list of
+   * falsy spellings is exactly how it came to be wrong once. */
+  const query = typeof filters.q === 'string' ? filters.q.trim() : '';
+  const on = [
+    query === '' ? null : `“${query}”`,
+    filters.status,
+    filters.verdict === null ? null : VERDICT_FILTERS.find((v) => v.value === filters.verdict)?.label,
+  ].filter((value): value is string => value != null && value !== '');
+
+  return (
+    <details open={active} data-testid="compact-filters" className="group">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg border border-default bg-surface px-3 py-2 text-[13px] font-medium text-primary">
+        <FilterIcon className="h-3.5 w-3.5 text-muted" />
+        Filter runs
+        {on.length > 0 && <span className="font-normal text-muted">{on.join(' · ')}</span>}
+      </summary>
+      <div className="pt-2">{children}</div>
+    </details>
+  );
+}
+
+/* ======================================================================== *
+ * THE LIST, AS CARDS (review M18)
+ * ======================================================================== */
+
+/**
+ * One card per run, for viewports where nine columns cannot be columns.
+ *
+ * ═══ THE SAME FIELDS, RE-STACKED — NOTHING IS DROPPED ═══
+ *
+ * Started, project, simulation, status, verdict, p95, errors, environment and
+ * focus are all here. A phone list that quietly showed fewer facts than a
+ * desktop one would be the harder failure to notice: the reader has no way to
+ * know what they are not being shown, and triage decisions would differ by
+ * device.
+ *
+ * What changes is the ORDER, because a card is read top-to-bottom and a row is
+ * scanned left-to-right. The link and the two triage numbers come first; the
+ * provenance a reader checks second (project, environment, when) follows.
+ *
+ * ═══ A LIST, NOT A TABLE WITH `display: block` ═══
+ *
+ * Restyling the `<table>` responsively is the tempting move and it breaks the
+ * semantics: cells stripped of their row and column lose the header
+ * association that makes a data table readable at all with a screen reader.
+ * A `<ul>` of cards claims to be what it is. The `caption` prose travels with
+ * it, so the explanation of what the list holds is not desktop-only either.
+ *
+ * The testids are UNCHANGED from `RunRow` on purpose — `run-row`, `run-p95`,
+ * `run-error-rate` and the rest are a contract this file's own docstring
+ * records, and a compact layout is not a reason for a spec to have to know
+ * which one it is looking at.
+ */
+function RunCards({
+  items,
+  showProject,
+  identifyByRunId,
+  caption,
+  summary,
+}: {
+  readonly items: readonly RunListItem[];
+  readonly showProject: boolean;
+  readonly identifyByRunId: boolean;
+  readonly caption: ReactNode;
+  readonly summary: string;
+}) {
+  return (
+    <section aria-label="Runs" className="flex flex-col gap-3">
+      {/* ═══ THE SHORT LINE, THEN THE REST ON REQUEST ═══
+       *
+       * `TableFrame` already does this for every table in the app and the
+       * reason applies here twice over: measured at 375px, the full caption
+       * was a 127px paragraph sitting directly above the list it describes —
+       * on the very screen this whole change exists to shorten.
+       *
+       * NOT `aria-hidden`, unlike `TableFrame`'s copy. That one is hidden
+       * because the table's own `<caption class="sr-only">` carries the same
+       * words; a list of cards has no caption element, so hiding this would
+       * simply delete the explanation for a screen-reader user. Same pattern,
+       * opposite a11y contract — which is why the labels are shared and the
+       * markup is not. */}
+      <div>
+        <p className="text-[13px] leading-relaxed text-muted">{summary}</p>
+        <details className="group">
+          <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+            <span className="group-open:hidden">{CAPTION_MORE}</span>
+            <span className="hidden group-open:inline">{CAPTION_LESS}</span>
+          </summary>
+          <p className="pt-2 text-[13px] leading-relaxed text-muted">{caption}</p>
+        </details>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {items.map((run) => (
+          <RunCard
+            key={run.id}
+            run={run}
+            showProject={showProject}
+            identifyByRunId={identifyByRunId}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function RunCard({
+  run,
+  showProject,
+  identifyByRunId,
+}: {
+  readonly run: RunListItem;
+  readonly showProject: boolean;
+  readonly identifyByRunId: boolean;
+}) {
+  // The value the API ORDERS BY, spelled the same way here as in `RunRow` —
+  // see that component for why displaying anything else renders a
+  // correctly-sorted list that reads as mis-sorted.
+  const startedAt = run.toolStartedAt ?? run.startedAt;
+  const isIngestTime = run.toolStartedAt == null;
+  const label =
+    identifyByRunId || run.simulation === null || run.simulation === undefined
+      ? run.id.slice(0, 8)
+      : run.simulation;
+
+  return (
+    <li
+      data-testid="run-row"
+      data-run-id={run.id}
+      className="flex flex-col gap-2 rounded-xl border border-default bg-surface p-3"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div data-testid="run-simulation" className="min-w-0">
+          <Link
+            to={runPath(run.id)}
+            aria-label={`View run ${run.id}`}
+            className="transition-ui font-medium break-all text-accent hover:underline hover:underline-offset-2"
+          >
+            {label}
+          </Link>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <Badge mark={STATUS[run.status]} />
+          <Badge mark={VERDICT[run.verdict ?? 'none']} />
+        </div>
+      </div>
+
+      {/* THE TWO TRIAGE NUMBERS, SIDE BY SIDE AND FIRST. On the table these
+          are columns 6 and 7 and a phone had to scroll sideways to reach
+          them; they are the whole reason a reader looks at this list without
+          opening a run. `—` rather than `0` for anything unavailable, exactly
+          as in `RunRow`: a zero in a latency column is a measurement. */}
+      <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px]">
+        <div className="flex items-baseline gap-1.5">
+          <dt className="text-muted">p95</dt>
+          <dd data-testid="run-p95" className="tabular-nums text-primary">
+            {run.metrics?.p95Ms == null ? '—' : `${Math.round(run.metrics.p95Ms)} ms`}
+          </dd>
+        </div>
+        <div className="flex items-baseline gap-1.5">
+          <dt className="text-muted">Errors</dt>
+          <dd data-testid="run-error-rate" className="tabular-nums">
+            {run.metrics == null ? (
+              <span className="text-primary">—</span>
+            ) : (
+              <span
+                /* The status palette as data — those tokens live on `:root`
+                   and NOT in `@theme`, so `text-status-failed` emits nothing
+                   at all. Same route `RunRow` and `Badge` take. */
+                style={
+                  run.metrics.errorRate > 0
+                    ? { color: 'var(--color-status-failed)' }
+                    : undefined
+                }
+                className={run.metrics.errorRate > 0 ? undefined : 'text-primary'}
+              >
+                {`${(run.metrics.errorRate * 100).toFixed(2)}%`}
+              </span>
+            )}
+          </dd>
+        </div>
+        <div className="flex items-baseline gap-1.5">
+          <dt className="text-muted">Focus</dt>
+          <dd>
+            <FocusHint focus={focusFor(run)} />
+          </dd>
+        </div>
+      </dl>
+
+      {/* PROVENANCE LAST: which project, which environment, and when. The
+          reader who needs these is confirming a row they have already picked
+          out by the numbers above. */}
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
+        {showProject && (
+          <>
+            <span className="text-primary">{run.project.name}</span>
+            <span aria-hidden="true">·</span>
+          </>
+        )}
+        <span data-testid="run-environment">
+          {run.environment == null || run.environment === '' ? 'no environment' : run.environment}
+        </span>
+        <span aria-hidden="true">·</span>
+        <span data-testid="run-started">
+          <time dateTime={startedAt} className="tabular-nums">
+            {formatInstant(startedAt)}
+          </time>
+          {isIngestTime && <span className="ml-1">(ingest time)</span>}
+        </span>
+      </p>
+    </li>
+  );
 }
 
 function RunRow({

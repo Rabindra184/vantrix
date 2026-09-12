@@ -7,7 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, RunResponse } from '@perfportal/contracts';
 import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
+import useIsCompact from '../src/useIsCompact';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+
+/* NOT compact by default, which is what every case above this file's last
+   describe assumes and what `useIsCompact` itself falls back to where
+   `matchMedia` does not exist. The M18 block at the foot flips it. */
+vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
+const useIsCompactMock = vi.mocked(useIsCompact);
 
 afterEach(cleanup);
 
@@ -112,7 +119,10 @@ function ContextProbe() {
 }
 
 /** Same as `renderShellWith`, but mounts `<ContextProbe/>` as the index child. */
-function renderProbeWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
+function renderProbeWith(
+  overrides: Partial<ComponentProps<typeof RunShell>>,
+  at = `/runs/${RUN.id}`,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const status = overrides.status ?? RUN.status;
   const props = {
@@ -122,7 +132,7 @@ function renderProbeWith(overrides: Partial<ComponentProps<typeof RunShell>>) {
   };
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
+      <MemoryRouter initialEntries={[at]}>
         <Routes>
           <Route path="/runs/:runId" element={<RunShell {...props} />}>
             <Route index element={<ContextProbe />} />
@@ -460,5 +470,81 @@ describe('RunShell — the window control only appears where it applies', () => 
   it('still offers it on Overview', async () => {
     renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
     expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+  });
+});
+
+/**
+ * ═══ REVIEW M18 — THE BRUSH IS NOT A PHONE CONTROL ═══
+ *
+ * Measured in Chromium at 375x812: the brush was 394px tall and sat between
+ * the decision band and the run's own numbers, which began at y=1485 — two
+ * screens down. It is also a DRAG control, the deepest kind of analysis §22.6
+ * already calls a desktop task and the one gesture a phone is worst at.
+ *
+ * ═══ WITHHOLDING THE CONTROL IS NOT IGNORING THE WINDOW ═══
+ *
+ * That distinction is the whole of what these cases guard. A link carrying
+ * `?from=&to=` is exactly the link most likely to be opened on a phone —
+ * somebody pasted it into a chat BECAUSE of what it shows — so the data stays
+ * narrowed and every tab keeps reading the same range. Dropping the control
+ * silently would leave that reader looking at a tenth of a run with nothing
+ * on screen admitting it.
+ *
+ * An implementation that simply hid the brush passes the first case below and
+ * fails the second; one that also cleared the window passes both and fails the
+ * third.
+ */
+describe('RunShell — the time brush on a narrow viewport', () => {
+  const windowed = `/runs/${RUN.id}?from=10000&to=30000`;
+
+  it('does not mount the brush', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    renderShellWith({ windowable: true }, windowed);
+    await screen.findByRole('navigation', { name: /run sections/i });
+    expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
+  });
+
+  it('says which stretch is being shown, rather than dropping the fact', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    renderShellWith({ windowable: true }, windowed);
+
+    const notice = await screen.findByTestId('compact-window-notice');
+    // SECONDS, because that is what the brush's own axis and every time chart
+    // on this page label their ticks with. Derived from the URL rather than
+    // written down, so a different link moves the assertion with it.
+    expect(notice).toHaveTextContent('10–30 s');
+    expect(notice.textContent ?? '').toMatch(/whole run/i);
+  });
+
+  it('carries the window into the tabs, so the data really is narrowed', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    renderProbeWith({ windowable: true }, windowed);
+
+    const context = JSON.parse(
+      (await screen.findByTestId('context-probe')).textContent ?? '{}',
+    ) as RunWindowContext;
+    // `toMatchObject`, not `toEqual`: the window object carries a third field
+    // (the snapped/derived bound) that is not what this case is about, and
+    // pinning it here would make an unrelated change to `useRunWindow` fail a
+    // test about the compact layout.
+    expect(context.window).toMatchObject({ fromMs: 10_000, toMs: 30_000 });
+  });
+
+  /** An unwindowed run is not told about a control it is not being offered:
+   *  the notice exists for the reader who followed a narrowed link. */
+  it('renders nothing at all when no window is applied', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
+    await screen.findByRole('navigation', { name: /run sections/i });
+    expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
+  });
+
+  /** And a desktop is untouched — the brush, not the notice. */
+  it('leaves the brush in place on a wide viewport', async () => {
+    useIsCompactMock.mockReturnValue(false);
+    renderShellWith({ windowable: true }, windowed);
+    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+    expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
   });
 });

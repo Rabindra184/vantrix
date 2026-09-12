@@ -15,6 +15,8 @@ import SlaBanner from './SlaBanner';
 import RunDecisionBand from './RunDecisionBand';
 import type { LiveRunState } from '../api/live';
 import useDocumentTitle from '../useDocumentTitle';
+import useIsCompact from '../useIsCompact';
+import Button from '../components/Button';
 
 /**
  * The chrome around one run's identity and its run-section navigation.
@@ -115,6 +117,10 @@ export default function RunShell({
   // Read here and written here, so every tab below shares one window — and
   // declared BEFORE the fetches that key on it.
   const { window, setWindow } = useRunWindow(identity.durationMs ?? Number.MAX_SAFE_INTEGER);
+  // §22.6's one JS breakpoint, read here because the brush below is a drag
+  // control and a class could only hide it — leaving a phone to build a
+  // 394px ECharts instance in order not to show it.
+  const compact = useIsCompact();
 
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
@@ -236,19 +242,39 @@ export default function RunShell({
           run never satisfies this either: identity carries no `windowable`
           at all, which is the mechanism — a live view is never narrowed,
           which is the reason (`useLiveRun`'s own module docstring). */}
-      {windowable === true && identity.durationMs != null && windowApplies && (
-        <TimeBrush
-          runId={identity.id}
-          runDurationMs={identity.durationMs}
-          window={window}
-          // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
-          // typed. Taken from `/users`, which this shell already fetches for
-          // the header's peak-users figure — every windowed response carries
-          // the same snapped range, so this needs no request of its own.
-          applied={users.data?.window ?? null}
-          onChange={setWindow}
-        />
-      )}
+      {/* ═══ NOT ON A PHONE, AND NOT SILENTLY EITHER (review M18) ═══
+       *
+       * Measured at 375x812 before this: the brush was 394px tall and sat
+       * between the decision and the run's own numbers, which began at
+       * y=1485 — two screens down. It is also a DRAG control, which is the
+       * deepest kind of analysis §22.6 already calls a desktop task, and the
+       * one gesture a phone is worst at.
+       *
+       * WITHHOLDING THE CONTROL IS NOT THE SAME AS IGNORING THE WINDOW. A
+       * link carrying `?from=&to=` is exactly the link most likely to be
+       * opened on a phone — somebody pasted it into a chat because of what it
+       * shows — so the data stays narrowed and every tab keeps reading the
+       * same range. What a compact reader loses is only the ability to DRAG a
+       * new one, and dropping the control without saying so would leave them
+       * reading a tenth of a run with nothing on screen admitting it. The
+       * notice is one line and carries the one action that cannot be
+       * reconstructed: widen back to the whole run. */}
+      {windowable === true && identity.durationMs != null && windowApplies &&
+        (compact ? (
+          <CompactWindowNotice window={window} onClear={() => setWindow(null)} />
+        ) : (
+          <TimeBrush
+            runId={identity.id}
+            runDurationMs={identity.durationMs}
+            window={window}
+            // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
+            // typed. Taken from `/users`, which this shell already fetches for
+            // the header's peak-users figure — every windowed response carries
+            // the same snapped range, so this needs no request of its own.
+            applied={users.data?.window ?? null}
+            onChange={setWindow}
+          />
+        ))}
 
       {/* THE WINDOW TRAVELS DOWN, it is not re-parsed per tab.
           Each tab used to call `useRunWindow` with its own duration, and a URL
@@ -273,6 +299,50 @@ export default function RunShell({
           } satisfies RunWindowContext}
         />
       </Suspense>
+    </div>
+  );
+}
+
+/**
+ * The window a compact reader arrived with, and the one control they need.
+ *
+ * `null` — the ordinary case — renders NOTHING. A phone opening a run with no
+ * window should not be told about a feature it is not being offered; the
+ * notice exists for the reader who followed a narrowed link, and for nobody
+ * else.
+ *
+ * Seconds, not milliseconds, because that is what the brush's own axis and
+ * every time chart on this page label their ticks with. A notice reading
+ * "10000–30000 ms" beside charts reading "10–30" would be the same number
+ * spelled two ways on one screen.
+ */
+function CompactWindowNotice({
+  window,
+  onClear,
+}: {
+  readonly window: { readonly fromMs: number; readonly toMs: number } | null;
+  readonly onClear: () => void;
+}) {
+  if (window === null) return null;
+  const seconds = (ms: number) => Math.round(ms / 1000);
+  return (
+    <div
+      data-testid="compact-window-notice"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-default bg-sunken px-3 py-2 text-[13px]"
+    >
+      <p className="text-muted">
+        Showing{' '}
+        <span className="text-primary tabular-nums">
+          {seconds(window.fromMs)}–{seconds(window.toMs)} s
+        </span>{' '}
+        of this run.
+      </p>
+      {/* A BUTTON, not a link back to the bare URL: the window lives in the
+          query string that every tab carries, and `setWindow(null)` is the one
+          thing that clears it everywhere at once. */}
+      <Button size="sm" variant="secondary" onClick={onClear}>
+        Show whole run
+      </Button>
     </div>
   );
 }

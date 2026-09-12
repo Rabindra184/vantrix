@@ -491,7 +491,13 @@ export function RunOverviewTab() {
             below — same `what` text — because the table needs per-endpoint
             rows the live wire excludes, so there is no live version of it at
             any width. */}
-        <DesktopOnly compact={compact} what="The per-request statistics table">
+        <DesktopOnly
+          compact={compact}
+          what="The per-request statistics table"
+          // Review M18 names this wording. It says what the button opens
+          // rather than judging the reader for opening it.
+          action="Open detailed table"
+        >
           {() => <LiveNotice kind="withheld" subject="Statistics" />}
         </DesktopOnly>
       </div>
@@ -564,7 +570,13 @@ export function RunOverviewTab() {
                 top of this return. What stays here is the per-request TABLE,
                 which is the only part of this section a phone cannot usefully
                 render, and so the only part behind the notice. */}
-            <DesktopOnly compact={compact} what="The per-request statistics table">
+            <DesktopOnly
+          compact={compact}
+          what="The per-request statistics table"
+          // Review M18 names this wording. It says what the button opens
+          // rather than judging the reader for opening it.
+          action="Open detailed table"
+        >
               {() => <StatisticsTable stats={data} runId={runId} />}
             </DesktopOnly>
           </>
@@ -830,7 +842,12 @@ export function RunChartsTab() {
     // build five ECharts instances for a screen too narrow to read them.
     if (compact && !shown) {
       return (
-        <DesktopOnly compact what="Reading five charts" onShow={() => setShown(true)}>
+        <DesktopOnly
+          compact
+          what="Five charts of this run"
+          action="Open the charts"
+          onShow={() => setShown(true)}
+        >
           {() => null}
         </DesktopOnly>
       );
@@ -869,7 +886,12 @@ export function RunChartsTab() {
 
   if (compact && !shown) {
     return (
-      <DesktopOnly compact what="Reading eight charts" onShow={() => setShown(true)} >
+      <DesktopOnly
+        compact
+        what="Eight charts of this run"
+        action="Open the charts"
+        onShow={() => setShown(true)}
+      >
         {() => null}
       </DesktopOnly>
     );

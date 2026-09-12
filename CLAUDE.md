@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **141 files / 1675 tests**, it
+`nvm use` first, and if a run reports fewer than **142 files / 1691 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,54 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The mobile-summary branch (M18) added ONE unit file —
+`apps/web/test/RunList.compact.test.tsx` (9) — and 7 cases across
+`DesktopOnly` and `RunShell`, from a floor of 141 / 1675. Its integration floor is
+UNCHANGED at **133 files / 1674 tests** (both new files are `.tsx`/e2e, which
+that config never runs) and **e2e rises to 113**
+(`apps/web/e2e/mobile.spec.ts`, the first spec in this repo to set its own
+viewport).
+
+**A HEIGHT CLAIM CANNOT BE TESTED ANYWHERE BUT A BROWSER, AND THIS FINDING IS
+ALL HEIGHTS.** M18 is measured in pixels — "the first run table begins around
+y=1123", "the basic decision must fit in the initial mobile screen" — and jsdom
+lays everything out at 0x0, the same reason this file already records for
+`m-auto`, `truncate` and the decision band's collapsed column. So the unit
+cases assert what EXISTS (a closed disclosure, a list instead of a table, every
+field still present) and `mobile.spec.ts` asserts the geometry at 375x812.
+Measured there against a real seeded run, before and after:
+
+```
+                              before   after
+run list   first row/card      908      472
+run page   the run's totals   1485     1110
+run page   p95                1801     1384
+run page   the time brush     394px    not mounted
+```
+
+**AND THE ONE DEFECT IN THIS BRANCH WAS FOUND BY OPENING THE PAGE, NOT BY THE
+SUITE.** The compact filter summary read `Filter runs “undefined”` on every
+unfiltered list: `filtersFromParams` spells the search term
+`params.get('q') ?? undefined`, and the summary tested for `null` and `''`, so
+the absent case fell through into a template literal. Nothing threw, nothing
+failed — the case that existed rendered a FILTERED url, where the summary was
+correct. **A field that has been three things (absent, empty, a string) does
+not get a longer chain of falsy spellings; it gets a `typeof` check**, and the
+new assertion is on the unfiltered state, which is the half nobody had written.
+
+**THE THRESHOLDS IN THAT SPEC ARE THE MEASUREMENT, NOT THE GOAL** — the same
+discipline the run-page reading-order branch used for M01. p95 at 1384 is still
+the second screen and the review asks for it in a compact summary; what is left
+in front of it is the decision band, 555px at 375px, and shortening that
+materially trades against the three separate outcomes C02 put there. That is
+the design decision M01 already recorded, met again one viewport down.
+
+**AND `test.use({ viewport })` IS FILE-SCOPED, WHICH IS WHAT YOU WANT HERE AND
+IS THE OPPOSITE OF `test.skip`.** The skip form at file scope silently drops the
+whole spec on an engine (recorded above); `use` at file scope is the documented
+way to run every case in one file at one viewport, and putting it inside a test
+body would apply to nothing.
 
 The setup-and-launch branch (M15, M16) added TWO unit files —
 `apps/web/test/runnerReadiness.test.ts` (13) and a rewritten
