@@ -258,7 +258,13 @@ export default function RunDecisionBand({
             </Link>
             <Button type="button" variant="secondary" onClick={exportRun}>
               <DownloadIcon className="h-3.5 w-3.5" />
-              Export run
+              {/* NAMED AFTER WHAT IT WRITES. "Export run" promised a run
+                  artifact; the file is identity, execution state, verdict and
+                  the platform assertions — no statistics, no errors, no
+                  simulation assertions, no chart data, no selected window. A
+                  reader who attached it to a review expecting evidence sent
+                  something close to empty. */}
+              Export SLA summary (JSON)
             </Button>
           </div>
         </div>

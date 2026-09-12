@@ -20,7 +20,9 @@ import LiveNotice from './LiveNotice';
 import { useRunTerminal } from './useRunWindow';
 import useIsCompact from '../useIsCompact';
 import {
+  DEFAULT_COMPARE_METRIC,
   MAX_COMPARE,
+  parseCompareMetric,
   parseCompareSelection,
   serialiseCompareSelection,
 } from './compareSelection';
@@ -51,7 +53,23 @@ const OVERLAY: Slot = { id: 'compare-overlay', title: 'Comparison' };
 export default function RunCompare() {
   const { runId } = useParams<{ runId: string }>();
   const [params, setParams] = useSearchParams();
-  const [metric, setMetric] = useState<CompareMetric>('p95');
+
+  /* ═══ THE METRIC IS PART OF THE QUESTION, SO IT LIVES IN THE URL ═══
+   *
+   * `runs=` was serialised and the metric was component state defaulting to
+   * p95 — so a link to an ERRORS comparison opened as a p95 comparison for
+   * whoever received it. The selection survived being pasted into a ticket and
+   * the thing being asked about did not, which is the half that matters.
+   *
+   * Same `replace: true` reasoning as `toggle` below: changing metric refines
+   * one view rather than being a new destination. */
+  const metric = parseCompareMetric(params.get('metric'));
+  const setMetric = (next: CompareMetric) => {
+    const updated = new URLSearchParams(params);
+    if (next === DEFAULT_COMPARE_METRIC) updated.delete('metric');
+    else updated.set('metric', next);
+    setParams(updated, { replace: true });
+  };
 
   // MINOR 5: gated the same way every tab is — a live run has no `RunStat`
   // rows of its own to plot a cohort point from (`RunTrends.tsx`'s own
@@ -327,10 +345,17 @@ function CompareSummary({
   readonly metricLabel: string;
   readonly unit: string;
 }) {
+  /* Each reason reads differently, because they are different facts. A zero
+     baseline in particular is NOT a missing one: 0 → 2/s is the regression an
+     engineer most needs to see, and "Waiting for baseline" hid it. */
   const deltaText =
-    summary.deltaPercent === null
-      ? 'Waiting for baseline'
-      : `${summary.deltaPercent > 0 ? '+' : ''}${formatCell(summary.deltaPercent)}%`;
+    summary.deltaUnavailable === 'no-baseline'
+      ? 'Select a baseline run'
+      : summary.deltaUnavailable === 'not-measured'
+        ? 'Not measured'
+        : summary.deltaUnavailable === 'zero-baseline'
+          ? `${formatCell(summary.baselineValue ?? 0)} → ${formatCell(summary.currentValue ?? 0)} ${unit} · relative change undefined`
+          : `${summary.deltaPercent! > 0 ? '+' : ''}${formatCell(summary.deltaPercent!)}%`;
   const deltaColour =
     summary.deltaGood === null
       ? 'var(--color-status-not-applicable)'

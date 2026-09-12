@@ -143,6 +143,11 @@ function ProjectSetupLoaded({
   const problem = mintMutation.error instanceof ProblemError ? mintMutation.error : null;
   const revokeProblem =
     revokeMutation.error instanceof ProblemError ? revokeMutation.error : null;
+  /* The instance the reader is already talking to. A hard-coded localhost
+     would be wrong for every real deployment, and a relative path is not
+     runnable at all — see the `<pre>` below. */
+  const instanceOrigin =
+    typeof window === 'undefined' ? '' : window.location.origin;
   const commandToken = minted?.token ?? '$PERFPORTAL_TOKEN';
 
   return (
@@ -248,11 +253,23 @@ function ProjectSetupLoaded({
           <div className="flex flex-col gap-4 text-[13px]">
             <div className="flex flex-col gap-2">
               <p className="font-medium text-primary">Upload completed reports</p>
-              <pre className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary">
+              {/* AN ABSOLUTE URL, because a shell cannot resolve a bare path.
+                  This ended in `/v1/runs`, so the one command this page exists
+                  to hand a new user failed with "No host part in the request
+                  URL" — the first thing anybody copies out of the product.
+
+                  `window.location.origin` is the honest source: the reader is
+                  being served this page FROM the instance they need to post
+                  to, so it is correct for a custom domain and a port alike,
+                  which a hard-coded localhost would not be. */}
+              <pre
+                data-testid="upload-command"
+                className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+              >
 {`curl -H "Authorization: Bearer ${commandToken}" \\
   -F bundle=@results.tgz \\
   -F 'metadata={"tool":"gatling"}' \\
-  /v1/runs`}
+  ${instanceOrigin}/v1/runs`}
               </pre>
             </div>
             <div className="flex flex-col gap-2">

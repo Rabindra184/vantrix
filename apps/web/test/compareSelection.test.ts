@@ -1,8 +1,11 @@
+import { COMPARE_METRICS } from '../src/charts/transforms/compare';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_COMPARE,
   parseCompareSelection,
   serialiseCompareSelection,
+  DEFAULT_COMPARE_METRIC,
+  parseCompareMetric,
 } from '../src/routes/compareSelection';
 
 /**
@@ -119,5 +122,37 @@ describe('serialiseCompareSelection', () => {
 
   it('is empty for an empty selection, so the parameter can be dropped', () => {
     expect(serialiseCompareSelection([])).toBe('');
+  });
+});
+
+/**
+ * REVIEW M06 — A SHARED LINK MUST CARRY THE QUESTION, NOT JUST THE RUNS.
+ *
+ * `runs=` was serialised; the metric was component state defaulting to p95. So
+ * a link to an ERRORS comparison opened as a p95 comparison for whoever
+ * received it — everything about WHICH runs survived being pasted into a
+ * ticket, and the thing being asked about did not.
+ */
+describe('parseCompareMetric', () => {
+  it('reads a metric the page offers', () => {
+    expect(parseCompareMetric('errors')).toBe('errors');
+    expect(parseCompareMetric('p99')).toBe('p99');
+  });
+
+  it('falls back to the default when absent', () => {
+    expect(parseCompareMetric(null)).toBe(DEFAULT_COMPARE_METRIC);
+  });
+
+  /** A URL is something people hand-edit; a mistyped metric should open the
+   *  page rather than break it. */
+  it('falls back rather than throwing on something unknown', () => {
+    expect(parseCompareMetric('p42')).toBe(DEFAULT_COMPARE_METRIC);
+    expect(parseCompareMetric('')).toBe(DEFAULT_COMPARE_METRIC);
+  });
+
+  it('offers every metric the compare chart does', () => {
+    for (const { value } of COMPARE_METRICS) {
+      expect(parseCompareMetric(value)).toBe(value);
+    }
   });
 });

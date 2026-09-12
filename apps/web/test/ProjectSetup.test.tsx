@@ -208,3 +208,43 @@ describe('ProjectSetup', () => {
     expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
   });
 });
+
+/**
+ * REVIEW M14 — THE ONBOARDING RECIPE COULD NOT BE RUN.
+ *
+ * The curl example ended in a bare `/v1/runs`. A shell does not resolve that
+ * against the page's origin, so the one command this page exists to hand a
+ * new user fails with "URL rejected: No host part in the request URL". It is
+ * the first thing anybody copies out of this product.
+ *
+ * The origin is knowable at render — the page is being served from it — so the
+ * command carries a real, runnable URL.
+ */
+describe('ProjectSetup — the upload command is runnable as shown', () => {
+  function render0() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/projects/alpha/setup']}>
+          <Routes>
+            <Route path="/projects/:slug/setup" element={<ProjectSetup />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('carries an absolute URL, not a bare path', async () => {
+    render0();
+    const command = await screen.findByTestId('upload-command');
+    expect(command.textContent).toMatch(/https?:\/\/[^\s]+\/v1\/runs/);
+  });
+
+  it('does not leave a bare /v1/runs that a shell cannot resolve', async () => {
+    render0();
+    const command = await screen.findByTestId('upload-command');
+    expect(command.textContent).not.toMatch(/\s\/v1\/runs\s*$/m);
+  });
+});

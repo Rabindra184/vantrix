@@ -219,6 +219,16 @@ export default function ErrorsTable({
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <SectionHeading id={headingId}>Errors</SectionHeading>
+
+      {/* TWO COUNTS, AN ORDER OF MAGNITUDE APART, BOTH TRUE. The tab strip
+          counts distinct MESSAGES ("Errors (2)") and the run totals count
+          failed REQUESTS (24) — so a reader reconciling them assumes one is
+          wrong. This table already holds both: the row count and the `total`
+          it divides its shares by. It simply never said which was which. */}
+      <p data-testid="errors-tally" className="text-[13px] text-primary">
+        {rows.length} {rows.length === 1 ? 'error type' : 'error types'} ·{' '}
+        {total} {total === 1 ? 'failed request' : 'failed requests'}
+      </p>
       {windowNote}
 
       <TableFrame caption={caption} label="Errors table">
