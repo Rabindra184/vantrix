@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **138 files / 1598 tests**, it
+`nvm use` first, and if a run reports fewer than **138 files / 1603 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -102,6 +102,36 @@ integration floor is **131 files / 1629 tests** (`comparability.test.ts`,
 `transforms.compare.test.ts` and `contracts.test.ts` are `.ts` files
 integration runs too, plus 2 new cases in `trends.integration.test.ts`) and its
 **e2e rises to 106**.
+
+The run-list-triage branch after that added no unit FILE and 6 cases
+(`RunList.test.tsx`), from a floor of 138 / 1597; its integration floor is
+**131 files / 1638 tests** (2 new cases in `read.integration.test.ts`) and its
+e2e stays 106.
+
+TWO THINGS FROM IT, AND THE FIRST IS WHY IT WAS CHEAP.
+
+**THE LIST WAS ALREADY FETCHING WHAT IT NEEDED AND THROWING IT AWAY.**
+`RunRepository.list`'s SQL selected `r.environment`, `r.branch`,
+`r.commit_sha`, `r.duration_ms` and `r.tool_assertions` all along;
+`RunListResponseSchema` picked NINE fields, so the rest died between the
+repository and the wire. That is why a row could not be triaged without opening
+it, and why "Needs attention" read zero over a run whose simulation had a
+failing check — the outcomes were fetched and discarded. Only the statistics
+needed a new join. **Check what a query already selects before adding one.**
+
+**`RunListItem` IS AN INTERSECTION AT ONE RETURN TYPE, NOT A FIELD ON
+`RunRecord`.** The first shape was `{ run, metrics }`, which broke every
+existing `items[].id` in `repositories.integration.test.ts`. `RunRecord &
+{ metrics }` keeps the canonical record free of a field that is null for
+reasons peculiar to one query, AND leaves every caller working. The tally
+rather than the array for the same reason: a corpus run declares hundreds of
+assertions, and a page of 25 would carry every expression to render one number.
+
+**AND THE BACKTICK TRAP BIT TWICE MORE, AN HOUR AFTER BEING WRITTEN DOWN.**
+Two SQL comments in the new LEFT JOIN mentioned identifiers in backticks. The
+list query is a template literal, so each one ended the string and failed two
+lines later as `TS1005`. Writing the lesson down is evidently not the same as
+remembering it: **no backticks in SQL comments, in any of these files.**
 
 The review-majors branch after it added no unit FILE and 16 cases, from a
 floor of 138 / 1582; its integration floor is **131 files / 1636 tests** and

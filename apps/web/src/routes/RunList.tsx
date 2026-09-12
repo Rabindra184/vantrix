@@ -276,6 +276,17 @@ export default function RunList({
                     <th scope="col" className={TH}>
                       Verdict
                     </th>
+                    {/* THE TRIAGE COLUMNS. Without them "is this run
+                        interesting" could only be answered by opening it. */}
+                    <th scope="col" className={TH}>
+                      p95
+                    </th>
+                    <th scope="col" className={TH}>
+                      Errors
+                    </th>
+                    <th scope="col" className={TH}>
+                      Environment
+                    </th>
                     <th scope="col" className={TH}>
                       Focus
                     </th>
@@ -832,6 +843,40 @@ function RunRow({
       <td className={TD}>
         <Badge mark={VERDICT[run.verdict ?? 'none']} />
       </td>
+
+      {/* ═══ THE TRIAGE CELLS ═══
+       *
+       * `—` for anything unavailable, never `0`. A run still parsing, or one
+       * whose bundle produced no statistics, HAS no p95 — and a zero in a
+       * latency column is a measurement, which is the wrong claim entirely.
+       * The em dash is the same absence the statistics table draws.
+       *
+       * `tabular-nums` so the digits line up down the column; these exist to
+       * be scanned against each other rather than read one at a time. */}
+      <td className={`${TD} tabular-nums whitespace-nowrap`} data-testid="run-p95">
+        {run.metrics?.p95Ms == null ? '—' : `${Math.round(run.metrics.p95Ms)} ms`}
+      </td>
+      <td className={`${TD} tabular-nums whitespace-nowrap`} data-testid="run-error-rate">
+        {run.metrics == null ? (
+          '—'
+        ) : (
+          <span
+            /* The status palette as data, the `Badge`/`StatTile` route: those
+               tokens live on `:root` and NOT in `@theme`, so a
+               `text-status-failed` utility emits nothing at all. */
+            style={
+              run.metrics.errorRate > 0
+                ? { color: 'var(--color-status-failed)' }
+                : undefined
+            }
+          >
+            {`${(run.metrics.errorRate * 100).toFixed(2)}%`}
+          </span>
+        )}
+      </td>
+      <td className={TD} data-testid="run-environment">
+        {run.environment == null || run.environment === '' ? '—' : run.environment}
+      </td>
       {/* PLAIN COLOURED TEXT, NOT A BADGE, and the distinction is what the
           column means. Status and Verdict beside it are STATES the platform
           recorded — a stamp is right for those, and the pill is what makes
@@ -885,7 +930,17 @@ function focusFor(run: RunListItem): Focus {
 }
 
 function needsAttention(run: RunListItem): boolean {
-  return run.status === 'failed' || run.status === 'incomplete' || run.verdict === 'failed';
+  return (
+    run.status === 'failed' ||
+    run.status === 'incomplete' ||
+    run.verdict === 'failed' ||
+    // THE CHECK THIS TILE USED TO MISS ENTIRELY. A run whose platform verdict
+    // passed while its simulation's own assertion failed is exactly what
+    // "Needs attention: 0" was hiding — the list endpoint never sent the
+    // outcomes, so the count could not see them. `checks` is null for a run
+    // that reported none, which is not a failure.
+    (run.checks != null && run.checks.failed > 0)
+  );
 }
 
 function isInFlight(run: RunListItem): boolean {

@@ -279,6 +279,56 @@ export const RunListResponseSchema = z.object({
       startedAt: true,
       toolStartedAt: true,
       simulation: true,
+    }).extend({
+      /* ═══ WHAT A TRIAGE ROW NEEDS, AND WHY IT IS ALL OPTIONAL ═══
+       *
+       * The list carried identity and two verdicts, so deciding whether a run
+       * was interesting meant OPENING it. Worse, "Needs attention" counted
+       * execution state and the platform SLA only — `toolAssertions` was never
+       * sent, so a tile read zero over a run whose simulation had a failing
+       * check.
+       *
+       * Every field here is `.optional()`, and that is the load-bearing part
+       * rather than politeness: the browser drops any body that fails the
+       * schema, so a REQUIRED field would blank the whole run list against an
+       * API pod that predates it — for the length of a rolling deploy. Same
+       * trap `live-delta.ts` and `TrendRunSchema` already carry cases for.
+       *
+       * `null` and absent then mean different things, and the UI shows both as
+       * unavailable rather than as zero: a run with no statistics row has no
+       * p95, and "—" is the honest cell. */
+      environment: z.string().nullable().optional(),
+      branch: z.string().nullable().optional(),
+      commitSha: z.string().nullable().optional(),
+      durationMs: z.number().int().nullable().optional(),
+      test: TestRefSchema.nullable().optional(),
+      /**
+       * The simulation's OWN checks, reduced to a tally.
+       *
+       * The array itself is deliberately NOT sent: a corpus run declares
+       * hundreds, and a page of 25 such runs would carry them all to render
+       * one number. The run's own page is where the expressions belong.
+       */
+      checks: z
+        .object({ failed: z.number().int(), total: z.number().int() })
+        .nullable()
+        .optional(),
+      /**
+       * The run-scope response-time row, when one exists.
+       *
+       * Null for a run that has no statistics — still parsing, or a bundle
+       * that never produced any. Not zero: a zero p95 is a measurement, and
+       * this is the absence of one.
+       */
+      metrics: z
+        .object({
+          count: z.number().int(),
+          errorRate: z.number(),
+          throughputRps: z.number(),
+          p95Ms: z.number().nullable(),
+        })
+        .nullable()
+        .optional(),
     }),
   ),
   nextCursor: z.string().nullable(),

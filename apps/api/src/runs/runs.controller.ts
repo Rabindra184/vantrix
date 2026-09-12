@@ -9,7 +9,7 @@ import {
   type RunListResponse,
   type RunStatus,
 } from '@perfportal/contracts';
-import { ProjectRepository, TestRepository, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
+import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { RunsService } from './runs.service.js';
 
@@ -137,7 +137,7 @@ export class RunsController {
  * response shapes cannot drift — the same "same code for the same state"
  * guarantee respondWithRun makes for a single run's status mapping.
  */
-function toListItem(r: RunRecord): RunListResponse['items'][number] {
+function toListItem(r: RunListItem): RunListResponse['items'][number] {
   return {
     id: r.id,
     project: r.project,
@@ -147,6 +147,39 @@ function toListItem(r: RunRecord): RunListResponse['items'][number] {
     tool: r.tool,
     startedAt: r.startedAt.toISOString(),
     toolStartedAt: r.toolStartedAt ? r.toolStartedAt.toISOString() : null,
+    // NAMED, never spread. `tsc`'s excess-property check applies to object
+    // LITERALS and not to a spread, so a mistyped key inside one compiles in
+    // silence — CLAUDE.md records a field that reached no repository at all
+    // for exactly that reason.
+    environment: r.environment,
+    branch: r.branch,
+    commitSha: r.commitSha,
+    durationMs: r.durationMs,
+    test: r.test,
+    checks: checkTally(r.toolAssertions),
+    metrics: r.metrics,
+  };
+}
+
+/**
+ * The simulation's own checks as a tally, or null when there are none to tally.
+ *
+ * THE ARRAY IS DELIBERATELY NOT SENT. A corpus run declares hundreds of
+ * assertions, and a page of 25 such runs would carry every expression across
+ * the wire to render one number. The run's own page is where they belong.
+ *
+ * `null` for a run that reported none at all, which is not the same as a run
+ * whose checks all passed — the list renders the first as unavailable and the
+ * second as zero failures.
+ */
+function checkTally(
+  toolAssertions: RunRecord['toolAssertions'],
+): { failed: number; total: number } | null {
+  if (toolAssertions === null || toolAssertions === undefined) return null;
+  if (toolAssertions.length === 0) return null;
+  return {
+    failed: toolAssertions.filter((a) => a.outcome === 'failed').length,
+    total: toolAssertions.length,
   };
 }
 
