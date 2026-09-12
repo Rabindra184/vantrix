@@ -105,7 +105,7 @@ test('both families and both distributions are on the page', async ({ page }) =>
 
   // GR-07 does not exist (§A.9 F-4). Asserted by ID, not by title: a rate
   // chart at group scope would be headed like the request page's own
-  // ("Number of requests"/"Number of responses", RatesChart's `title` prop),
+  // ("Requests per second"/"Responses per second", RatesChart's `title` prop),
   // and its data-table columns read "Elapsed (s)", "All", "OK", "KO" — no
   // "per second" text of any kind reaches the DOM. That string only ever
   // appears in the ECharts y-axis name, drawn into the canvas, so a

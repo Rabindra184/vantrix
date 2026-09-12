@@ -73,11 +73,16 @@ function RateChart({ id, title, yName, data, domainMs, compact }: {
 }
 
 /**
- * `title` is a prop because the REQUEST detail page titles this chart
- * differently — Gatling's own request pages head it "Number of requests" where
- * the global page says "Requests per second over time" (§13.3 ⑦). The data,
- * the transform and the axis are identical; only the heading differs, so this
- * is one component with two names rather than two components.
+ * `title` is a prop because the detail pages want a shorter heading than the
+ * run page's "Requests per second over time" — the data, the transform and the
+ * axis are identical, so this is one component with two names rather than two
+ * components.
+ *
+ * BOTH NAMES NOW SAY "PER SECOND". They did not: the detail pages mirrored
+ * Gatling's own "Number of requests", over an axis that is a RATE — and the
+ * OK/KO donut, which really is a count, carried that same title. One measure
+ * with two names, one of them wrong about its units, colliding with a
+ * different measure. Mirroring another tool's heading is not worth that.
  */
 /** ⑩ — requests per second over time, bucketed by START time (G-23). */
 export function RequestRateChart({

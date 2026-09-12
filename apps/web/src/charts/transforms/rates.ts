@@ -106,11 +106,17 @@ const END_EDGE: Edge = {
  * window that is not a second, so a one-second spike inside a wide bucket is
  * flattened and cannot be recovered from what is drawn.
  */
+/* STATE THE RECORDED FACT, DO NOT INFER A REASON FOR IT. This opened "This run
+   is long enough that…", which reads the run's DURATION off its bucket width —
+   and the two are not the same thing. The assertion-corpus run lasts three
+   seconds and is bucketed at 3000 ms, so the sentence told the reader a
+   three-second run was long. The width is what the producer chose; what a
+   reader needs is the resolution and its consequence. */
 function widthNote(widthMs: number, what: string): string {
   return (
-    `This run is long enough that ${what} in ${widthMs} ms buckets rather than one-second ` +
-    'ones, so each point is an average across that window. A shorter spike inside a bucket ' +
-    'is not visible at this resolution.'
+    `Data resolution: ${widthMs} ms — ${what} in buckets of that width rather than ` +
+    'one-second ones, so each point is an average across that window. A shorter spike ' +
+    'inside a bucket is not visible at this resolution.'
   );
 }
 

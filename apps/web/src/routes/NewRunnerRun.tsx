@@ -206,6 +206,7 @@ function NewRunnerRunProject({
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <Card
+        headingLevel={2}
           title="Gatling artifact"
           description="Artifact and execution metadata."
         >
@@ -325,7 +326,7 @@ function NewRunnerRunProject({
           </form>
         </Card>
 
-        <Card title="Node policy" description="Single-node on-prem execution.">
+        <Card headingLevel={2} title="Node policy" description="Single-node on-prem execution.">
           <dl className="grid grid-cols-1 gap-4 text-[13px]">
             <div>
               <dt className="text-muted">Concurrency</dt>
@@ -364,9 +365,22 @@ function Field({
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
+      {/* ═══ THE ACCESSIBLE NAME IS THE WHOLE LABEL, CONCATENATED ═══
+       *
+       * `{label}{<span>optional</span>}` has no text node between the two, so
+       * the computed name was "Environmentoptional" — announced as one word,
+       * and matched by nothing a test or a user would think to write. The
+       * parentheses and the space are not decoration; they are what makes the
+       * name a phrase.
+       *
+       * Still one `<label>` rather than a label plus `aria-describedby`:
+       * "(optional)" qualifies WHICH field this is, not how to fill it in, and
+       * a describedby is announced after a pause — too late to stop someone
+       * filling in a field they could have skipped. `hint` below is the part
+       * that is genuinely a description. */}
       <label htmlFor={id} className="text-[13px] font-medium text-primary">
         {label}
-        {optional && <span className="ml-1 font-normal text-muted">optional</span>}
+        {optional && <span className="ml-1 font-normal text-muted">(optional)</span>}
       </label>
       {children}
       {/* The id is derived, not passed, so a caller cannot wire
@@ -384,7 +398,7 @@ function Field({
 
 function QueuedJob({ response }: { readonly response: RunnerStartResponse }) {
   return (
-    <Card title="Run queued">
+    <Card headingLevel={2} title="Run queued">
       <dl className="grid grid-cols-1 gap-3 text-[13px] sm:grid-cols-3">
         <div>
           <dt className="text-muted">Job</dt>
@@ -558,7 +572,7 @@ function RunnerLogsPanel({
 }) {
   const problem = query.error instanceof ProblemError ? query.error : null;
   return (
-    <Card title="Runner logs" description={jobId.slice(0, 8)}>
+    <Card headingLevel={2} title="Runner logs" description={jobId.slice(0, 8)}>
       {query.isPending && <LoadingState label="Loading runner logs…" />}
       {query.isError && (
         <ErrorState

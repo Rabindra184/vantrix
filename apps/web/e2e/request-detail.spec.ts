@@ -76,15 +76,18 @@ test('every §13.3 element is on the page', async ({ page }) => {
   //
   // `getByText` (as the brief originally wrote it) is ambiguous here: each
   // chart's data-table `<caption>` opens with the same words as the chart's
-  // own `<h3>` title ("Number of requests — every value this chart
+  // own `<h3>` title ("Requests per second — every value this chart
   // plots…", from `DataTable`'s caption), so an un-exact text locator
   // resolves to two elements and Playwright's strict mode rejects it. Scoped
   // to the heading role instead, which is what the title actually is.
   await expect(
-    page.getByRole('heading', { name: 'Number of requests', exact: true }),
+    // NAMED FOR ITS AXIS (review m04). These mirrored Gatling's own
+    // "Number of requests" over a chart whose axis is requests per SECOND —
+    // and the OK/KO donut, which really is a count, carried the same title.
+    page.getByRole('heading', { name: 'Requests per second', exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole('heading', { name: 'Number of responses', exact: true }),
+    page.getByRole('heading', { name: 'Responses per second', exact: true }),
   ).toBeVisible();
   await expect(page.getByText('Requests per second over time')).toHaveCount(0);
 
