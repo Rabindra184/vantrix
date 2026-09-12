@@ -198,6 +198,48 @@ red-verification proved nothing**: the test-bucket check fires first, so
 deleting the real bucket without also cleaning the test one fails on the wrong
 assertion and reads as a pass for the branch you meant to exercise.
 
+**A THIRD RESIDUE LIVES INSIDE THE REAL BUCKET, AND IT IS THE BIGGEST.**
+Measured 2026-09-12: **129,465 objects / 48.2 MB against ONE surviving run**,
+swept to 1 object by `infra/clean-orphaned-objects.mjs`. Most of it is not a
+bug — `LiveChunkStore.finalize` deletes a run's chunks after writing the
+assembled log, and when that delete fails it says so and leaves the debris
+"for a lifecycle rule to reap". There is no lifecycle rule on the compose
+MinIO. That script is the reaper.
+
+**THE TWO KEY SHAPES ARE NOT KEYED THE SAME WAY, AND THIS IS THE TRAP:**
+
+```
+live/{runId}/{offset}.bin     packages/storage/src/live-chunks.ts
+runs/{projectId}/{uuid}.tgz   apps/api/src/ingest/ingest.service.ts
+                 ^^^^^^^^^ PROJECT id, not run id
+```
+
+The obvious rule — "the uuid after the prefix is the run" — is right for
+`live/` and WRONG for `runs/`, where it would delete every bundle of a project
+whose id never appears in `run.id`. The `runs/` rule therefore parses nothing:
+`run.bundle_key` stores the FULL object key, so that column is an exact
+keep-list, and it disposes of storage's own `runs/test/…` and `runs/collide/…`
+fixtures for free. Both shapes were read out of the source. **This was caught
+by checking the writers before writing the sweep, not by a test** — a sweep
+built on the inferred rule would have passed every assertion that only looked
+at `live/`.
+
+**IT IS DRY-RUN BY DEFAULT, UNLIKE ITS TWO SIBLINGS.** They delete by a pattern
+only a fixture can produce, so their worst case is doing nothing. This one
+deletes from the bucket holding real bundles, and its keep-list is computed
+from live database state — the wrong `DATABASE_URL` makes every rule compute
+the right answer to the wrong question. It also **refuses outright** when the
+run table is empty, because that state classifies every object as orphaned and
+is far more likely to be a mis-pointed URL, or a database a test run has just
+truncated, than a real instance.
+
+**THE AGE GUARD IS WHAT MAKES THE SNAPSHOT RACE SAFE** (default 24h): the
+database is read before the bucket is listed, so a run opened mid-sweep has no
+row yet and its chunks look orphaned. CI passes `--min-age-hours 0` because
+every fixture object is seconds old and the default would exempt all of them —
+the step would pass while deleting nothing — and a separate step runs the same
+seed at the default age asserting everything SURVIVES.
+
 FOUR THINGS THE CROSS-BROWSER SUITE COST TO SET UP, AND ALL FOUR WILL RECUR.
 
 **`test:e2e:cross` IS `--workers=1`, AND THAT IS MEASURED RATHER THAN

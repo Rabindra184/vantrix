@@ -396,6 +396,51 @@ jobs:
           node infra/clean-test-buckets.mjs
           node infra/test/buckets-fixture.mjs assert
 
+      # THE THIRD RESIDUE: objects inside the REAL bucket whose run is gone.
+      # Mostly `live/{runId}/` chunks that LiveChunkStore.finalize failed to
+      # delete and explicitly left "for a lifecycle rule to reap" — there is
+      # no lifecycle rule on the compose MinIO.
+      #
+      # `--min-age-hours 0` because every object the fixture writes is seconds
+      # old, and the default 24h guard would exempt all of them — the step
+      # would pass while deleting nothing. The guard gets its own step below.
+      #
+      # The fixture holds BOTH key shapes at once because they are keyed
+      # differently — `live/{runId}/` by run, `runs/{projectId}/` by project,
+      # with `run.bundle_key` the only exact keep-list. A rule that read the
+      # second path segment as the run would keep an unreferenced bundle; one
+      # that keyed `live/` off bundle_key would delete a live run's chunks.
+      # Only a fixture carrying both can tell those two mistakes apart, and
+      # both were red-verified by hand.
+      - name: It removes orphaned objects and keeps live ones
+        run: |
+          node infra/test/orphans-fixture.mjs seed
+          node infra/clean-orphaned-objects.mjs --delete --min-age-hours 0
+          node infra/test/orphans-fixture.mjs assert
+
+      # The age guard is what makes the database-snapshot race safe: a run
+      # opened mid-sweep has no row yet, so its chunks look orphaned. Same
+      # seed, default age, everything must survive.
+      - name: ...the age guard exempts everything recent
+        run: |
+          node infra/test/orphans-fixture.mjs seed
+          node infra/clean-orphaned-objects.mjs --delete
+          node infra/test/orphans-fixture.mjs assert-guard
+
+      # An empty run table classifies EVERY object as orphaned, and is far
+      # more likely to be the wrong DATABASE_URL than a real empty instance.
+      # It must refuse rather than compute the right answer to the wrong
+      # question — and must still classify in a dry run.
+      - name: ...and it refuses to delete against an empty run table
+        run: |
+          $PSQL -q -c "TRUNCATE org CASCADE"
+          if node infra/clean-orphaned-objects.mjs --delete --min-age-hours 0; then
+            echo "::error::the sweep deleted against an empty run table instead of refusing"
+            exit 1
+          fi
+          node infra/clean-orphaned-objects.mjs --min-age-hours 0
+          echo "refused with --delete, still classified in a dry run"
+
   # ═══ FIREFOX AND WEBKIT ═══
   #
   # `pnpm test:e2e` is Chromium-only and stays that way; see the comment on
