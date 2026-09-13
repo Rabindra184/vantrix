@@ -83,6 +83,18 @@ describe('ChartActions — the table toggle', () => {
   it('points at the table it opens, by the id that table actually has', async () => {
     renderActions();
     const user = userEvent.setup();
+
+    /* AND THE TRIGGER IS NAMED AFTER ITS OWN CHART, which is the same claim
+       one element up. Ten overflow buttons all called "Chart actions" in one
+       document is the duplicate-accessible-name defect CLAUDE.md records three
+       separate times — and `openMenu`'s own `/data and exports$/` cannot see
+       it, because a static name matches that just as happily. Only an
+       assertion naming the TITLE can, and Testing Library matches a name
+       EXACTLY, so this pins the whole string. */
+    expect(
+      screen.getByRole('button', { name: 'Requests per second: data and exports' }),
+    ).toBeInTheDocument();
+
     await openMenu(user);
     expect(screen.getByRole('menuitem', { name: 'Show the data table' })).toHaveAttribute(
       'aria-controls',
