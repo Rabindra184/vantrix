@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **143 files / 1724 tests**, it
+`nvm use` first, and if a run reports fewer than **144 files / 1747 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,99 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-0913-majors branch added ONE unit file —
+`apps/web/test/ToolAssertions.test.tsx` (9) — and 14 cases (12 to
+`ProjectRules.test.tsx`, 2 to `RunList.test.tsx`), from a floor of 143 / 1724
+MEASURED on `origin/main` rather than inferred by subtraction. Its integration
+floor is UNCHANGED at **133 files / 1681 tests** — the only `.ts` file it
+touches, `runnerReadiness.test.ts`, gained no case — and its **e2e rises to
+114**. Ten of the 09-13 review's eighteen majors; the other eight want product
+decisions rather than a correct answer and are left.
+
+**A `<label>` THAT WRAPS ITS CONTROL LEAVES THAT CONTROL WITH NO id, AND THREE
+THINGS NEED ONE.** Every field on the SLA form associates perfectly and was
+unreachable: `aria-describedby` needs an id on the message, `aria-invalid` has
+to sit on the control, and moving the caret needs a handle. So a refusal named
+the field in a sentence and left focus on the submit button. M08 adds
+`fieldId(...)` keyed by the same request property name `FIELD_GUIDANCE` uses,
+so there is one spelling of "which field".
+
+**AND THE FOCUS HAS TO MOVE IN AN EFFECT, NOT IN THE HANDLER.** Focusing inside
+`onSubmit` runs BEFORE React commits the render carrying `aria-invalid` and
+`aria-describedby`, so a screen reader announces the field in its old,
+valid-looking state and never reads the message. `setFormError` is called with
+a fresh object on every refusal, which is what makes a second identical submit
+pull the caret back rather than sit still.
+
+**A SCHEMA MESSAGE DESCRIBES THE WHOLE REFINEMENT; A FORM KNOWS WHICH HALF.**
+`targetMatchesScope` reads "a run-scoped rule takes no target name; a scenario,
+group or request rule needs one" — right for an API consumer, who can send
+either, and half-irrelevant to an author who picked Request and left the box
+empty. The form cannot even produce the other mistake: a run rule renders no
+target field.
+
+**AND A WARNING THAT OVERSTATES ITS CASE TEACHES THE READER TO DISCOUNT IT.**
+The empty-threshold help said a blank box authors "a gate of ≤ 0, which every
+run breaches". True for `lte` on a response time; false the moment either half
+moves — `p95 ≥ 0` passes on every run there will ever be, and `count ≤ 0`
+passes on a run that recorded nothing. It names the field's own unit now, which
+is a fact the form already computes and can always defend.
+
+**A TEST THAT WRITES BOTH SIDES OF A JOIN PROVES NEITHER.** M13's Target link
+resolves a decoded assertion path against the run's statistics.
+`ToolAssertions.test.tsx` supplies BOTH — a path spelling `Search` and a stats
+fixture holding a request called `Search` — so it can only prove the component
+links what it is told to. The e2e case added to `run-tables.spec.ts` takes the
+path from a real decoded `simulation.log` and the name from the statistics
+engine that read the same file, then FOLLOWS the link and asserts the heading:
+a link built from the displayed label (`Cart / Add To Cart`) rather than the
+identity (`Cart/Add To Cart`) satisfies `toHaveURL(/\/requests\//)` perfectly
+and lands on a page saying no such request exists.
+
+**AND TWO e2e ASSERTIONS THIS BRANCH'S OWN RENAMES BROKE, WHICH THE UNIT SUITE
+COULD NOT SEE.** The component tests moved with the rename and the browser
+assertions did not — `Percentage` → `Share of errors`, and the telemetry empty
+state. The second was asking the wrong question before this branch touched it:
+it matched `/no telemetry was recorded/i` and a comment called that exact
+phrase load-bearing, when the load-bearing thing is the DISTINCTION between
+"never measured" and "measured and found idle". Rewording that state to say
+what to do about it then read as a regression. It asserts the claim now. This
+is the verbatim-prose trap recorded for the review-criticals branch, met again
+one suite over.
+
+**AND A GATLING ASSERTION ON A GROUP HAS NEVER BEEN EVALUABLE — RECORDED, NOT
+FIXED HERE.** `evaluateToolAssertions` filters to `family === 'response_time'`
+before building `byKey`, and `engine.ts` files a group's timings ONLY under
+`group_cumulated` and `group_duration` — so `rowFor`'s `byKey.get(\`group
+${name}\`)` is unreachable and every group-scoped assertion reports
+`not_applicable`. Nothing in the repo exercised it: the assertion corpus
+declares no group at all, the reference simulation has three groups but asserts
+only on `details("Search")`, and every event fixture in
+`tool-assertions.test.ts` sets `groups: []`.
+
+Measured with a real Gatling run (the fixture project regenerates standalone —
+Java 21 plus `target-server.js`, no database, API or worker, so it races no
+suite). Gatling RESOLVES the path rather than reporting "Could not find stats":
+`Cart: max of response time is less than 150.0 : false (actual : 193.0)`
+against a group page reporting Max 193 — and that page's stats table is this
+repo's `group_cumulated` to the millisecond (reference run: 106/141/179 against
+`group_duration`'s 188/225/264, the ~80ms being the group's own inter-request
+pause). Counts resolve too (85 group instances), and so do nested paths
+(`Catalog / Recommendations`).
+
+**`forAll()` DOES NOT RANGE OVER GROUPS, AND ONLY A RUN WITH GROUPS COULD SAY
+SO.** The corpus answered "one row per request" from a run with one request and
+NO groups, which cannot distinguish the two. The probe run has 7 requests and 3
+groups and expands to exactly 7 rows, all requests. So a fix belongs in the
+path lookup alone.
+
+**AND THE SAME PROBE FOUND A SECOND DEFECT NOBODY WAS LOOKING FOR.** Gatling
+renders a request inside groups as `Cart / Add To Cart`, spaced. The `details`
+branch matches that (`parts.join(' / ')`); the `forAll` branch labels its row
+`row.name`, which is `Cart/Add To Cart`, unspaced. G-05's tolerance is exact
+WORDING, and the corpus could not catch it because a run with one request and
+no groups has nothing to space.
 
 The review-0913-c01 branch added no unit FILE and 1 net case (one INVERTED,
 one added) to `RunDecisionBand.test.tsx`, from a floor of 143 / 1723.
