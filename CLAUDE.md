@@ -92,6 +92,60 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m02-prose branch (M02, PARTIAL) added no unit FILE and no unit case;
+unit stays 147 / 1809. Its **e2e rises to 118** (`mobile.spec.ts`).
+
+**M02's BAR IS NOT CLEARED, AND THIS ENTRY IS THE RECORD OF HOW CLOSE.**
+Measured at 375x812, the run-totals top:
+
+```
+  1485  as found
+  1110  once the brush stopped mounting on a phone (M18)
+   928  after C01 shortened the decision band
+   876  after this branch withheld the band's prose restatement
+   812  the viewport — the bar M02 asks for
+```
+
+Sixty-four pixels. The `mobile.spec.ts` bound is 950 — the measurement, not the
+goal, the same way `run-tables.spec.ts` carried 1100 for three branches until
+M01 could honestly clear 900.
+
+**THE BAND STATED THREE OUTCOMES AS ROWS AND THEN RESTATED THEM AS PROSE.** At
+375 the band was 424px of the 812 available: verdict 91px, explanation 219px (a
+42px paragraph over a 134px `<dl>`), actions 112px. On a run with no rules the
+paragraph read "This run completed, but no SLA rule produced a release verdict"
+directly above a row reading "Platform gates — not configured". One fact twice,
+in the screen a phone reader has instead of a page. That is exactly the
+"stacked repeated status prose" M02 names, and the labelled rows it asks for
+were already there — C02 built them.
+
+**WITHHELD ONLY WHERE IT IS A RESTATEMENT.** When a gate has failed, `detail`
+is that gate's OWN message — it names a rule, and is never a summary of the
+rows — so it survives at every width. A blanket `max-sm:hidden` would have
+silently dropped the one sentence that says why a run failed.
+
+**A CLASS, NOT `useIsCompact`.** This app's one JS breakpoint exists because a
+class can only HIDE the charts while the real cost is MOUNTING them; nothing
+here is mounted that a phone pays for, and the rows carry the same facts at
+every width. `max-sm:hidden` is the whole decision.
+
+**AND THE FIRST VERSION OF THE GUARD FAILED AGAINST A PRODUCT THAT WAS ALREADY
+CORRECT.** It asserted `not.toContainText('produced a release verdict')` — and
+`toContainText` reads `textContent`, which includes text `display: none` has
+hidden. The band had already measured 424px -> 372px, so the paragraph WAS
+hidden; the test simply could not see it. Same shape as the `truncate` lesson
+this file records: `textContent` is identical whether a string is clipped,
+hidden or shown. **Only a visibility check can assert a visibility claim** —
+it is `toBeHidden()` on a testid now, and red-verified.
+
+**WHAT IS LEFT IS THE 191px CHIP STRIP**, and M02 names it: "keep run name,
+environment, outcome, and primary metrics BEFORE secondary metadata". Version,
+branch, started, duration and peak users are that metadata, in a `grid-cols-2`
+strip between the `<h1>` and the band. Deferring them on a phone alone needs
+either a second consumer of `useIsCompact` or a duplicated chip row that would
+put two copies of every value in the accessibility tree — CSS cannot toggle a
+`<details>`'s open state responsively. Neither is a change to make in passing.
+
 The review-m01-window branch (M01) added no unit FILE and 4 cases to
 `apps/web/test/TimeBrush.test.tsx`, from a floor of 147 / 1805. Integration is
 UNCHANGED and **e2e stays 117** — three specs changed inside existing `test(`
