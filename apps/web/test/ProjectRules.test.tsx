@@ -782,7 +782,7 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
 
   /** Nothing true to say yet, so it says nothing — and in particular it does
    *  NOT render a sentence for a metric the engine would refuse. */
-  it('withholds the sentence for a metric that does not resolve', async () => {
+  it('withholds the sentence for a metric that does not resolve, and says which field', async () => {
     const user = userEvent.setup();
     renderRules();
 
@@ -791,7 +791,77 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
     await user.clear(screen.getByLabelText(/threshold/i));
     await user.type(screen.getByLabelText(/threshold/i), '800');
 
-    expect(screen.getByTestId('rule-preview').textContent ?? '').toMatch(/will say, in words/i);
+    // NAMES THE FIELD. "Fill in the metric and the threshold" was wrong for
+    // the reader whose threshold was already fine — it listed everything and
+    // so pointed at nothing.
+    expect(screen.getByTestId('rule-preview').textContent ?? '').toMatch(/name a metric/i);
+  });
+
+  /**
+   * ═══ THE PREVIEW PROMISED A RULE THE BUTTON WOULD NOT CREATE
+   * (review 09-13 M07) ═══
+   *
+   * `describeSlaRule` renders "Every request: …" for a scoped rule with no
+   * target. That is a fair reading of a STORED rule — and a false description
+   * of this form, whose submit refuses that draft outright because the schema
+   * requires a target for every scope but `run`.
+   *
+   * So the describer keeps the branch (the run page's evidence panel uses the
+   * same function) and the FORM stops asking for it while the draft is
+   * incomplete. Asserted as an absence AND a presence: the invented semantic
+   * must be gone, and what is missing must be named.
+   */
+  it('does not preview a scoped rule that has no target yet', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    const preview = screen.getByTestId('rule-preview');
+
+    expect(preview.textContent ?? '').not.toMatch(/every request/i);
+    expect(preview.textContent ?? '').toMatch(/choose a request to preview/i);
+  });
+
+  /** And it appears the moment the draft is complete — without which the case
+   *  above would pass against a preview that never renders at all. */
+  it('previews it as soon as a target is chosen', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    await user.selectOptions(
+      await screen.findByRole('combobox', { name: /^target/i }),
+      'Search',
+    );
+
+    expect(screen.getByTestId('rule-preview').textContent ?? '').toMatch(/Request “Search”/);
+  });
+
+  /**
+   * ═══ ONE STATEMENT ABOUT WHEN A RULE STARTS JUDGING (review 09-13 M06) ═══
+   *
+   * The form carried two, ~190 lines apart: "Every rule here applies to a live
+   * run as soon as its log header names the simulation" and "a run streaming
+   * right now keeps the rules it started under". Both describe real mechanisms
+   * — `#identify` widening the set, and `FoldState.rules` loading once — and
+   * read together they contradict each other about the one question an author
+   * asks after saving.
+   *
+   * The Applies-to hint now says only what is true of it alone: which runs a
+   * test's rules judge. The lifecycle is stated once, beside the button.
+   */
+  it('makes exactly one claim about when a new rule takes effect', async () => {
+    renderRules();
+    await screen.findByLabelText(/applies to/i);
+
+    const lifecycle = screen.getAllByText(/judges runs finished after it is added/i);
+    expect(lifecycle).toHaveLength(1);
+
+    // And the contradicting half is gone: nothing else promises a live run
+    // picks up a rule created while it streams.
+    expect(document.body.textContent ?? '').not.toMatch(
+      /every rule here applies to a live run/i,
+    );
   });
 
   /** And it says when the rule starts judging, which is the question an author

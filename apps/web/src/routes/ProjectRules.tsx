@@ -372,8 +372,21 @@ export default function ProjectRules({
      refuses, which is a preview that lies in the one case the author most
      needs to be told. */
   const thresholdNumber = threshold.trim() === '' ? Number.NaN : Number(threshold);
+  /* ═══ A SCOPED RULE WITH NO TARGET HAS NO PREVIEW (review 09-13 M07) ═══
+   *
+   * `describeSlaRule` renders "Every request: …" when a scoped rule names no
+   * target, which is a reasonable reading of the DATA and a false description
+   * of what this form will do: the submit refuses that draft outright, because
+   * the schema requires a target for every scope but `run`. So the preview
+   * promised a rule the button would not create.
+   *
+   * The describer keeps that branch — a STORED rule can legitimately be read
+   * that way, and the run page's evidence panel uses the same function — and
+   * the FORM stops asking for it while the draft is incomplete. The missing
+   * field is named instead; see `previewBlocker`. */
+  const needsTarget = scope !== 'run' && targetName.trim() === '';
   const preview =
-    !Number.isFinite(thresholdNumber) || slaMetricUnit(metric.trim()) === null
+    needsTarget || !Number.isFinite(thresholdNumber) || slaMetricUnit(metric.trim()) === null
       ? null
       : describeSlaRule({
           scope,
@@ -383,6 +396,13 @@ export default function ProjectRules({
           threshold:
             storedUnit === 'fraction' ? percentToFraction(thresholdNumber) : thresholdNumber,
         });
+
+  /** What the preview is waiting for, in the order the form asks for it. */
+  const previewBlocker = needsTarget
+    ? `Choose a ${scope === 'request' ? 'request' : scope === 'group' ? 'group' : 'scenario'} to preview this rule.`
+    : slaMetricUnit(metric.trim()) === null
+      ? 'Name a metric this run can resolve — a percentile such as p95, or one of the listed measures.'
+      : 'Enter a threshold and this will say, in words, what the rule gates.';
   /* The old warning caught a FRACTION above 1 — the "typed 1, meant 1%" case
      that this field's own unit now prevents. What is still worth catching is a
      percentage above 100: `error_rate` cannot exceed 1, so ≤ 150% is a gate no
@@ -549,9 +569,32 @@ export default function ProjectRules({
                   </option>
                 ))}
               </select>
+              {/* ═══ TWO SENTENCES IN ONE FORM SAID OPPOSITE THINGS
+                  (review 09-13 M06) ═══
+
+                  This read "Every rule here applies to a live run as soon as
+                  its log header names the simulation", while the preview below
+                  says a run streaming right now keeps the rules it started
+                  under. Read together they contradict each other about the one
+                  question an author asks after saving.
+
+                  Both describe real mechanisms and neither was a lie — they are
+                  about DIFFERENT things. `LiveFoldOwner.#identify` resolves the
+                  run's test from the log header and widens the rule set to that
+                  test's rules, which is the initial load COMPLETING; and
+                  `FoldState.rules` is loaded once per run on purpose, so an
+                  edit mid-run cannot make a breach appear with no change in the
+                  data. What was missing is that both are true of rules that
+                  ALREADY EXISTED when the run was claimed.
+
+                  So this sentence stops making a claim about newly-added rules
+                  and says the thing that is only true here: which runs a
+                  test-scoped rule judges. The lifecycle is stated once, beside
+                  the button that creates one. */}
               <span className="text-[11px] font-normal text-muted">
-                A rule for one test judges only that test’s runs. Every rule here applies to a live
-                run as soon as its log header names the simulation.
+                A rule for one test judges only that test’s runs. A live run is matched to its
+                test as soon as the log header names the simulation, so the rules written for that
+                test apply from that moment on.
               </span>
             </label>
           )}
@@ -725,10 +768,12 @@ export default function ProjectRules({
             className="rounded-lg border border-default bg-sunken p-3 text-[13px]"
           >
             {preview === null ? (
-              <p className="text-muted">
-                Fill in the metric and the threshold and this will say, in words, what the rule
-                gates.
-              </p>
+              /* NAMES WHAT IS MISSING rather than listing everything. "Fill in
+                 the metric and the threshold" was wrong for the reader whose
+                 metric and threshold were already fine and whose TARGET was
+                 not — which is the draft the submit refuses, and so exactly the
+                 one that needed telling. */
+              <p className="text-muted">{previewBlocker}</p>
             ) : (
               <p className="text-primary">{preview}</p>
             )}

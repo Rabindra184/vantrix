@@ -210,9 +210,9 @@ export default function ErrorsTable({
          a screen reader moving by table — reading a request's failures as the
          run's. */
       <>
-        Every distinct error message recorded for {scopeLabel}, most frequent first. Each
-        percentage is that message’s share of the {total} {total === 1 ? 'error' : 'errors'}{' '}
-        {scopeLabel} recorded — not of the requests it made, and not of the run's total.
+        Every distinct error message recorded for {scopeLabel}, most frequent first. Shares are
+        of the {total} {total === 1 ? 'error' : 'errors'} {scopeLabel} recorded, not of the
+        requests it made.
       </>
     );
 
@@ -254,8 +254,14 @@ export default function ErrorsTable({
               <th scope="col" className={TH}>
                 Count
               </th>
+              {/* "Share of errors", not "Percentage" (review 09-13 M15). A
+                  bare percentage has no denominator, so the caption had to
+                  carry one — and a reader who took it for a share of REQUESTS
+                  misread the table by a factor of thirty-seven (24 failures of
+                  895 requests). The header names the denominator now, which is
+                  where a reader looks when they wonder what a column means. */}
               <th scope="col" className={TH}>
-                Percentage
+                Share of errors
               </th>
             </tr>
           </thead>
