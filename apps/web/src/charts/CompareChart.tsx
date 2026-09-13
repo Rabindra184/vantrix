@@ -65,7 +65,22 @@ export default function CompareChart({
         // meet at real elapsed times rather than being indexed against each
         // other by bucket position — see `toCompare`'s docstring for why this
         // replaces the resampling the spec originally called for.
-        xAxis={{ type: 'value', name: 'Elapsed (ms)' }}
+        /* ═══ SECONDS, LIKE ITS OWN TABLE AND EVERY OTHER TIME CHART ═══
+         *
+         * `toCompare` plots `[bucket.startOffsetMs, value]` — raw
+         * milliseconds, because a value axis carries x per point — and the
+         * TABLE beneath this chart writes `offset / 1000` under a column
+         * headed `Elapsed (s)`. So one screen showed one quantity in two
+         * units: a bucket at 42 s was drawn at 42000 and tabulated at 42,
+         * and the axis pointer's label said 42000 too.
+         *
+         * `tickUnit: 'ms-as-s'` is how every other time chart in this product
+         * reconciles the two (`RatesChart`, `UsersChart`, `ErrorsChart`,
+         * `PercentilesChart`, `TelemetryCharts`, `TimeBrush` — twelve axes,
+         * twelve declarations). This one was the only exception, and it named
+         * its axis `Elapsed (ms)` rather than converting, which made the
+         * mismatch honest about the ticks and silent about the table. */
+        xAxis={{ type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' }}
         yAxis={{ name: label }}
         unit={compareUnit(metric)}
       />
