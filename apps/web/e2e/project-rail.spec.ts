@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { seedAdmin, seedProjectWithRuns } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { openAccountMenu, signIn } from './helpers.js';
 
 /**
  * `exact: true` on every name query. Playwright's default is a
@@ -16,7 +16,14 @@ test('Sign out exists exactly once in the document', async ({ page }) => {
   // toHaveCount(1), NOT toBeVisible(): a second CSS-hidden copy is still in
   // the DOM, so strict mode would make toBeVisible() throw — reporting a real
   // regression as a harness error rather than as this assertion failing.
-  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(1);
+  //
+  // BOTH COUNTS ARE ASSERTED since N03 moved it into the account menu. Zero
+  // while shut is what proves the panel really unmounts rather than hiding;
+  // one while open is the duplication guard this test has always been. A
+  // CSS-hidden panel would satisfy the second and fail the first.
+  await expect(page.getByRole('menuitem', { name: 'Sign out', exact: true })).toHaveCount(0);
+  await openAccountMenu(page);
+  await expect(page.getByRole('menuitem', { name: 'Sign out', exact: true })).toHaveCount(1);
 });
 
 test('the rail navigates to a project', async ({ page }) => {

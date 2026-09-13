@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { seedAdmin, seedRunWithData, seedRunsAt, seedUserWithoutOrg } from './fixtures.js';
-import { signIn } from './helpers.js';
+import { openAccountMenu, signIn } from './helpers.js';
 
 /**
  * The cookie round trip in a real browser — the reason this sub-project
@@ -39,7 +39,11 @@ test('the session survives a full page reload', async ({ page }) => {
   await signIn(page, admin);
   await page.reload();
   await expect(page).toHaveURL(/\/runs$/);
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  // Sign out lives in the account menu now (review 09-13 N03), and the panel
+  // is unmounted while shut — so this opens it rather than asserting on a
+  // control the closed header no longer contains.
+  await openAccountMenu(page);
+  await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   // The session survived far enough to fetch org-scoped data and render it,
   // not merely far enough to keep a Sign out button on screen.
   await expect(page.getByRole('table')).toBeVisible();
@@ -72,7 +76,8 @@ test('an unauthenticated deep link redirects to login and comes back', async ({ 
 
 test('signing out clears the session', async ({ page }) => {
   await signIn(page, admin);
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await openAccountMenu(page);
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/login/);
   await page.goto('/runs');
   await expect(page).toHaveURL(/\/login/);
