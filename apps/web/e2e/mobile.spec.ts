@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { seedAdmin, seedRunWithData } from './fixtures.js';
+import { seedAdmin, seedRunWithData, seedRunWithProvenance } from './fixtures.js';
 import { signIn } from './helpers.js';
 import { runPath } from '../src/routes/paths.js';
 
@@ -116,31 +116,31 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
      exists to guarantee elsewhere. */
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 
-  /* ═══ THE NUMBERS' TOP, AND M02's BAR IS STILL NOT CLEARED ═══
+  /* ═══ THE NUMBERS' TOP, AND THE BOUND IS THE VIEWPORT NOW ═══
    *
    *     1485  as found
    *     1110  once the brush stopped mounting here (M18)
    *      928  after C01 shortened the decision band
    *      876  after M02 withheld the band's prose restatement on a phone
-   *      812  the viewport — the bar M02 actually asks for
+   *      802  after M02 folded the header's secondary metadata away
+   *      812  the viewport
    *
-   * Sixty-four pixels short, and the bound below is the MEASUREMENT rather
-   * than the bar, the same way `run-tables.spec.ts` carried 1100 for three
-   * branches until M01 could honestly clear 900. A threshold set to an unmet
-   * goal is a failing test describing work nobody has agreed to do.
+   * Every earlier bound in this file was the MEASUREMENT rather than the goal,
+   * because the goal was unmet and a threshold set to an unmet goal is a
+   * failing test describing work nobody agreed to do. This is the first one
+   * where the two meet: 802 against an 812 viewport, so the bound is 812 and
+   * it is the thing M02 is about rather than a waypoint towards it.
    *
-   * WHAT IS LEFT IS THE 191px CHIP STRIP, and M02 names it: "keep run name,
-   * environment, outcome, and primary metrics BEFORE secondary metadata".
-   * Version, branch, started, duration and peak users are that metadata.
-   * Deferring them on a phone alone needs either a second consumer of
-   * `useIsCompact` — this app's one JS breakpoint, which CLAUDE.md argues
-   * exists because a class can only hide what a phone has already paid to
-   * mount — or a duplicated chip row, which would put two copies of every
-   * value in the accessibility tree. Neither is a change to make in passing,
-   * so it is recorded rather than rounded up. */
+   * TEN PIXELS OF HEADROOM, AND WHAT IT DOES NOT COVER. `seedRunWithData`
+   * ingests `{ tool: 'gatling', waitMs: 0 }` and no provenance, so this run
+   * draws four chips. A run carrying environment, branch and commit draws
+   * seven, and its metadata box measures 96px against this one's 44 — putting
+   * its totals near 854, still inside the second screen rather than the first.
+   * Measured, both, rather than inferred; the case below is the one that seeds
+   * provenance, and it asserts placement rather than height for that reason. */
   await expect(page.getByTestId('stat-total-requests')).toBeVisible();
   const totals = await topOf(page, '[data-testid="stat-total-requests"]');
-  expect(totals).toBeLessThan(950);
+  expect(totals, 'the run’s own numbers start inside the first screen').toBeLessThan(812);
 });
 
 /**
@@ -208,4 +208,59 @@ test('a narrowed link still narrows on a phone, and says so', async ({ page }) =
   await notice.getByRole('button', { name: 'Show whole run' }).click();
   await expect(page.getByTestId('compact-window-notice')).toHaveCount(0);
   await expect(page).toHaveURL((url) => !url.searchParams.has('from'));
+});
+
+/**
+ * ═══ REVIEW M02 — WHAT THE HEADER LEADS WITH ═══
+ *
+ * "Keep run name, environment, outcome, and primary metrics BEFORE secondary
+ * metadata." The chip strip put seven values between the `<h1>` and the
+ * decision band; six of them now sit behind a disclosure on a phone, and
+ * ENVIRONMENT does not, because the finding names it beside the run name and
+ * the outcome — and because it decides what every number below it means.
+ *
+ * ═══ WHY THIS CANNOT BE A UNIT CASE, AND WHAT IS ═══
+ *
+ * jsdom applies no CSS, so a closed `<details>` keeps every child queryable
+ * there: `RunHeader.test.tsx` can prove the chips are INSIDE the disclosure
+ * and cannot prove a reader does not see them. Only a browser can, and the
+ * assertion has to be `toBeHidden()` — never `toHaveCount(0)`, and never a
+ * `toContainText` absence, which reads `textContent` and includes text no one
+ * can see. That correction cost M02's own first half a round: its guard passed
+ * against a product that was already right.
+ *
+ * SEEDS PROVENANCE, unlike every other case in this file. `seedRunWithData`
+ * posts no environment, branch or commit, so on that run the three chips this
+ * is about do not exist and every assertion below would pass vacuously.
+ * `seedRunWithProvenance` writes the run row directly and attaches no metrics,
+ * which is why this case asserts placement and the case above asserts height.
+ */
+test('a phone leads with the environment and folds the rest one tap away', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithProvenance(admin.orgId, {
+    environment: 'staging',
+    branch: 'release/24.8',
+    commitSha: 'abc1234def5678',
+  });
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // OUTSIDE the disclosure and on screen without a tap — the half of the
+  // finding that says which value is primary.
+  await expect(page.getByTestId('run-environment')).toBeVisible();
+  await expect(page.getByTestId('run-environment')).toHaveText('staging');
+
+  const metadata = page.getByTestId('run-metadata');
+  await expect(metadata).not.toHaveAttribute('open', /.*/);
+  // Present in the DOM and unread — the distinction jsdom cannot draw.
+  await expect(page.getByTestId('run-branch')).toBeHidden();
+  await expect(page.getByTestId('run-commit')).toBeHidden();
+
+  // ONE TAP AWAY, not withheld. Nothing a phone reader could see before this
+  // change is unreachable after it, which is what makes folding honest rather
+  // than lossy — the same standard M02's first half had to meet.
+  await page.getByTestId('run-metadata-toggle').click();
+  await expect(page.getByTestId('run-branch')).toBeVisible();
+  await expect(page.getByTestId('run-commit')).toBeVisible();
+  await expect(page.getByTestId('run-duration')).toBeVisible();
 });

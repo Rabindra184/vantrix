@@ -8,6 +8,37 @@ import { STATUS, VERDICT, type Mark } from './marks';
 import { projectPath, projectTestPath } from './paths';
 
 /**
+ * The bordered box the metadata sits in, at each of the two widths that draw
+ * one.
+ *
+ * ═══ NO `sm:` HERE, AND THAT IS THE WHOLE REASON THESE ARE TWO CONSTANTS ═══
+ *
+ * The strip used to be `grid grid-cols-2 … sm:flex … sm:divide-x`: a
+ * two-column grid on a phone, a divided row from 640px up. `useIsCompact` is
+ * `max-width: 767px`. So the class boundary and the JS boundary DISAGREED over
+ * a 127px band — between 640 and 767 a viewport is compact to the hook and
+ * wide to the stylesheet — and a component that reads both would have taken
+ * the phone's structure with the desktop's spacing there.
+ *
+ * Splitting them removes the question rather than answering it. Neither
+ * carries a responsive variant, so neither can disagree with anything: the
+ * ONE caller picks by the same 767 the hook uses, and the dead
+ * `grid grid-cols-2` that `sm:flex` used to override goes with it. (That the
+ * caller picks correctly is a property of `RunHeader`, not of these strings —
+ * `RunHeader.test.tsx` is where it is asserted.)
+ *
+ * **When a JS breakpoint and a CSS breakpoint describe the same decision, they
+ * have to be the same number — or one of them has to stop existing.**
+ *
+ * `Chip`'s own cell padding moved from `sm:` to `md:` for exactly this reason:
+ * 768 is where the divided row it belongs to starts.
+ */
+const BOX =
+  'rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[12px] text-muted shadow-panel';
+const STRIP = `flex flex-wrap items-start gap-y-3 divide-x divide-default ${BOX}`;
+const COMPACT_STRIP = `flex flex-col gap-3 ${BOX}`;
+
+/**
  * What this run IS, before anything about how it went.
  *
  * Everything here comes from payloads the page already holds. Environment,
@@ -52,6 +83,7 @@ export default function RunHeader({
   status,
   verdict,
   peakUsers,
+  compact,
 }: {
   /**
    * PARTIAL, and the partiality is the point. A terminal run supplies every
@@ -73,6 +105,20 @@ export default function RunHeader({
    */
   readonly verdict: RunResponse['verdict'] | undefined;
   readonly peakUsers: number | null;
+  /**
+   * `useIsCompact()`, PASSED IN — the shape `DesktopOnly` already uses and for
+   * its stated reason: "so a caller can test both paths". `RunShell` already
+   * calls that hook for the time brush, so this is one more CONSUMER of the
+   * app's single JS breakpoint rather than a second breakpoint. What it
+   * decides, and why a Tailwind class could not, is at the metadata strip
+   * below.
+   *
+   * REQUIRED, with no default. `= false` would keep every existing caller
+   * compiling and leave the one caller that knows the answer silently not
+   * giving it — the shape CLAUDE.md records costing `listEnabled` a whole
+   * class of SLA gate. `DesktopOnly` requires it for the same reason.
+   */
+  readonly compact: boolean;
 }) {
   // See the Duration chip below for why this is `activityMs` first.
   const runDurationMs = identity.activityMs ?? identity.durationMs;
@@ -85,6 +131,135 @@ export default function RunHeader({
   // dash — see the Started/Received chip below.
   const startedAt = identity.toolStartedAt ?? identity.startedAt ?? null;
   const isIngestTime = identity.toolStartedAt == null;
+
+  /* ═══ ONE SET OF CHIPS, PLACED BY EXACTLY ONE OF TWO STRIPS — review M02 ═══
+   *
+   * M02's remaining half: "keep run name, environment, outcome, and primary
+   * metrics BEFORE secondary metadata". At 375px this strip was a 191px
+   * `grid-cols-2` block between the `<h1>` and the decision band, so the run's
+   * own totals began at y=876 on an 812px screen — the last stretch of the
+   * finding, after M18 stopped mounting the brush here and C01 and M02's first
+   * half shortened the band.
+   *
+   * Version, branch, commit, started, duration and peak users are that
+   * secondary metadata. ENVIRONMENT IS NOT: the finding names it beside the
+   * run name and the outcome, and it is the one chip that changes what every
+   * number below it MEANS — a p95 from staging and a p95 from production are
+   * not the same measurement.
+   *
+   * EACH CHIP IS BUILT ONCE AND PLACED BY EXACTLY ONE STRIP. The obvious
+   * alternative — draw both arrangements and hide one with `max-sm:hidden` —
+   * puts two copies of every value in the accessibility tree, and a
+   * screen-reader user hears the commit twice with nothing to say which is
+   * which. Every `textContent` assertion over this header would keep passing
+   * throughout, the way CLAUDE.md records for `truncate` and for M02's own
+   * first half.
+   *
+   * The desktop strip keeps the order it has always had — version,
+   * environment, then the rest — so nothing about this is visible above
+   * 768px. */
+  const versionChip = (
+    <>
+        {/* Omitted entirely when the identity carries no tool — same
+            rolling-deploy render as the breadcrumb above. */}
+        {identity.tool != null && (
+          <Chip
+            name="Version"
+            label={`Tool: ${identity.tool}${identity.toolVersion ? ` ${identity.toolVersion}` : ''}`}
+          >
+            {identity.toolVersion ? `${identity.tool} ${identity.toolVersion}` : identity.tool}
+          </Chip>
+        )}
+    </>
+  );
+  const environmentChip = (
+    <>
+        {/* Provenance from ingest metadata. Each renders only when the run
+            carries it: a run submitted without them looks exactly as it did
+            before this existed, rather than growing three dashes. The
+            spec's §2 promise, now that the platform actually stores them.
+
+            role="group" + aria-label for the same reason every other chip
+            here has them: a bare <span>'s implicit role is "generic", which
+            is Name-from-PROHIBITED, so aria-label alone does nothing. */}
+        {identity.environment != null && identity.environment !== '' && (
+          <Chip name="Environment" label={`Environment: ${identity.environment}`} testId="run-environment">
+            {identity.environment}
+          </Chip>
+        )}
+    </>
+  );
+  const restChips = (
+    <>
+        {identity.branch != null && identity.branch !== '' && (
+          <Chip name="Branch" label={`Branch: ${identity.branch}`} testId="run-branch">
+            {identity.branch}
+          </Chip>
+        )}
+        {identity.commitSha != null && identity.commitSha !== '' && (
+          // Seven characters visible, the WHOLE sha in the accessible name —
+          // the same short-versus-full treatment the run list gives a run id.
+          // NOT a link: the platform does not know the repository host, and a
+          // chip that looks like a link but is not is worse than plain text.
+          <Chip name="Commit" label={`Commit: ${identity.commitSha}`} testId="run-commit">
+            <code>{identity.commitSha.slice(0, 7)}</code>
+          </Chip>
+        )}
+        {/* Omitted entirely when neither the tool's own start nor an ingest
+            time is known yet — a run read from a pod old enough to send only
+            an id has neither. */}
+        {startedAt !== null && (
+          <Chip
+            name={isIngestTime ? 'Received' : 'Started'}
+            label={`${isIngestTime ? 'Received' : 'Started'}: ${formatInstant(startedAt)}${
+              isIngestTime ? ' (ingest time — the tool reported no start)' : ''
+            }`}
+          >
+            {/* <time dateTime> carries the machine-readable instant beside the
+                human one; the text itself is localised. Same treatment as the
+                run list. The wrapping `role="group"` + `aria-label` is what
+                says this timestamp is a START (or, when the tool reported
+                none, a RECEIVED) time — the `Started`/`Received` distinction
+                the old `<dl>`'s `Field` label carried, restated here since a
+                bare `<time>` names nothing on its own either. */}
+            <time dateTime={startedAt} className="tabular-nums">
+              {formatInstant(startedAt)}
+            </time>
+            {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
+          </Chip>
+        )}
+        {/* `activityMs`, NOT `durationMs`, AND THE FALLBACK IS THE OLD VALUE.
+            `durationMs` is the span the SERIES OFFSETS live in — header start
+            to last event — which the time axis needs and a reader does not
+            mean by "Duration". Showing it here made this page contradict
+            itself: the throughput tile divides by the ACTIVITY span, so
+            `throughput x duration` did not equal the request count on the
+            same screen (14.32 req/s over a stated 63s is 907, printed beside
+            a stated 895). Gatling's own report anchors at the first event too
+            and reads "1m 2s" where `durationMs` rounds to 63s.
+
+            `?? durationMs` for runs ingested before migration 20260822090000,
+            which have no `activityMs` and cannot be backfilled — those keep
+            rendering exactly what they rendered before rather than a dash. */}
+        <Chip name="Duration" label={`Duration: ${formatDuration(runDurationMs)}`} testId="run-duration">
+          <span className="tabular-nums">{formatDuration(runDurationMs)}</span>
+        </Chip>
+        {peakUsers !== null && (
+          // The aria-label restates the visible text exactly, rather than
+          // prefixing a "Peak users:" name onto it — the same shape
+          // `NamedBadge` below uses, measured there not to double-announce
+          // (see its own docstring) precisely because the two strings match.
+          //
+          // ONE ELEMENT, ONE STRING. `run-detail.spec.ts` asserts
+          // `getByText('8 peak users')` is visible, which only resolves while
+          // the count and the words share a single text container — splitting
+          // the number into its own styled span would break it.
+          <Chip name="Peak users" label={`${peakUsers.toLocaleString()} peak users`}>
+            {peakUsers.toLocaleString()} peak users
+          </Chip>
+        )}
+    </>
+  );
 
   return (
     <header className="flex flex-col gap-3">
@@ -220,98 +395,87 @@ export default function RunHeader({
           rather than six, and the commit's own <code> stops being the odd
           one out. Classes only; the chip TEXT is pinned three ways (module
           docstring) and gains nothing. */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[12px] text-muted shadow-panel sm:flex sm:flex-wrap sm:items-start sm:gap-x-0 sm:gap-y-3 sm:divide-x sm:divide-default">
-        {/* Omitted entirely when the identity carries no tool — same
-            rolling-deploy render as the breadcrumb above. */}
-        {identity.tool != null && (
-          <Chip
-            name="Version"
-            label={`Tool: ${identity.tool}${identity.toolVersion ? ` ${identity.toolVersion}` : ''}`}
-          >
-            {identity.toolVersion ? `${identity.tool} ${identity.toolVersion}` : identity.tool}
-          </Chip>
-        )}
-        {/* Provenance from ingest metadata. Each renders only when the run
-            carries it: a run submitted without them looks exactly as it did
-            before this existed, rather than growing three dashes. The
-            spec's §2 promise, now that the platform actually stores them.
+      {compact ? (
+        /* ═══ A PROP, NOT A CLASS, AND THE DISTINCTION IS THE POINT ═══
+         *
+         * M02's first half WAS a class (`max-sm:hidden` on the band's prose),
+         * and `RunDecisionBand` argues for that at length: this app has one JS
+         * breakpoint, and it exists because a class can only HIDE what a phone
+         * has already paid to mount. Nothing here is expensive to mount —
+         * seven `<span>`s — so by that rule this should have been a class too.
+         *
+         * A class cannot express it. The metadata must not be HIDDEN on a
+         * phone, it must be ONE TAP AWAY, and `<details>` is how this repo
+         * already does that (the run list's filters, the percentile method,
+         * the glossary). `open` is a DOM ATTRIBUTE, and no media query writes
+         * one. **A class can change how a thing LOOKS; it cannot change a
+         * control's STATE.**
+         *
+         * MEASURED, because the obvious objection is that CSS can force the
+         * content visible instead — `@media (min-width: 768px) { summary {
+         * display: none } details::details-content { content-visibility:
+         * visible } }`. On Playwright 1.62.1's browsers that paints in
+         * chromium, firefox AND webkit, so this is not the engine-support
+         * problem an earlier draft of this comment claimed. What it costs is
+         * that the e2e suite could no longer see it: Playwright's WebKit path
+         * SKIPS `Element.checkVisibility()` and substitutes "has a closed
+         * `<details>` ancestor", reading the attribute and never the CSS — so
+         * a forced-open chip reports `isVisible: false` and vanishes from
+         * `getByRole` and `ariaSnapshot` on one of the three engines
+         * `test:e2e:cross` runs, while WebKit itself paints it and answers
+         * `checkVisibility(): true`.
+         *
+         * THAT IS A HARNESS FACT, NOT AN ACCESSIBILITY ONE, and this file
+         * writes it down as such deliberately: CLAUDE.md already records
+         * costing the redesign its uppercase headings by promoting a measured
+         * Playwright behaviour into a design prohibition. The reason above —
+         * a media query cannot write an attribute — stands on its own.
+         *
+         * So `compact` is a prop, off the `useIsCompact()` call `RunShell`
+         * already makes for the brush: a second CONSUMER of the app's one
+         * breakpoint, not a second breakpoint. */
+        <div className={COMPACT_STRIP}>
+          {environmentChip}
+          <details className="group" data-testid="run-metadata">
+            {/* A `<summary>` contributes an ARIA group and NOT a heading — the
+                mechanism `RunGlossary` documents. A heading here would put a
+                rung in the run page's outline between its one `<h1>` and the
+                `<h2>`s the tab specs assert as exact lists.
 
-            role="group" + aria-label for the same reason every other chip
-            here has them: a bare <span>'s implicit role is "generic", which
-            is Name-from-PROHIBITED, so aria-label alone does nothing. */}
-        {identity.environment != null && identity.environment !== '' && (
-          <Chip name="Environment" label={`Environment: ${identity.environment}`} testId="run-environment">
-            {identity.environment}
-          </Chip>
-        )}
-        {identity.branch != null && identity.branch !== '' && (
-          <Chip name="Branch" label={`Branch: ${identity.branch}`} testId="run-branch">
-            {identity.branch}
-          </Chip>
-        )}
-        {identity.commitSha != null && identity.commitSha !== '' && (
-          // Seven characters visible, the WHOLE sha in the accessible name —
-          // the same short-versus-full treatment the run list gives a run id.
-          // NOT a link: the platform does not know the repository host, and a
-          // chip that looks like a link but is not is worse than plain text.
-          <Chip name="Commit" label={`Commit: ${identity.commitSha}`} testId="run-commit">
-            <code>{identity.commitSha.slice(0, 7)}</code>
-          </Chip>
-        )}
-        {/* Omitted entirely when neither the tool's own start nor an ingest
-            time is known yet — a run read from a pod old enough to send only
-            an id has neither. */}
-        {startedAt !== null && (
-          <Chip
-            name={isIngestTime ? 'Received' : 'Started'}
-            label={`${isIngestTime ? 'Received' : 'Started'}: ${formatInstant(startedAt)}${
-              isIngestTime ? ' (ingest time — the tool reported no start)' : ''
-            }`}
-          >
-            {/* <time dateTime> carries the machine-readable instant beside the
-                human one; the text itself is localised. Same treatment as the
-                run list. The wrapping `role="group"` + `aria-label` is what
-                says this timestamp is a START (or, when the tool reported
-                none, a RECEIVED) time — the `Started`/`Received` distinction
-                the old `<dl>`'s `Field` label carried, restated here since a
-                bare `<time>` names nothing on its own either. */}
-            <time dateTime={startedAt} className="tabular-nums">
-              {formatInstant(startedAt)}
-            </time>
-            {isIngestTime && <span className="ml-1">(ingest time — the tool reported no start)</span>}
-          </Chip>
-        )}
-        {/* `activityMs`, NOT `durationMs`, AND THE FALLBACK IS THE OLD VALUE.
-            `durationMs` is the span the SERIES OFFSETS live in — header start
-            to last event — which the time axis needs and a reader does not
-            mean by "Duration". Showing it here made this page contradict
-            itself: the throughput tile divides by the ACTIVITY span, so
-            `throughput x duration` did not equal the request count on the
-            same screen (14.32 req/s over a stated 63s is 907, printed beside
-            a stated 895). Gatling's own report anchors at the first event too
-            and reads "1m 2s" where `durationMs` rounds to 63s.
-
-            `?? durationMs` for runs ingested before migration 20260822090000,
-            which have no `activityMs` and cannot be backfilled — those keep
-            rendering exactly what they rendered before rather than a dash. */}
-        <Chip name="Duration" label={`Duration: ${formatDuration(runDurationMs)}`} testId="run-duration">
-          <span className="tabular-nums">{formatDuration(runDurationMs)}</span>
-        </Chip>
-        {peakUsers !== null && (
-          // The aria-label restates the visible text exactly, rather than
-          // prefixing a "Peak users:" name onto it — the same shape
-          // `NamedBadge` below uses, measured there not to double-announce
-          // (see its own docstring) precisely because the two strings match.
-          //
-          // ONE ELEMENT, ONE STRING. `run-detail.spec.ts` asserts
-          // `getByText('8 peak users')` is visible, which only resolves while
-          // the count and the words share a single text container — splitting
-          // the number into its own styled span would break it.
-          <Chip name="Peak users" label={`${peakUsers.toLocaleString()} peak users`}>
-            {peakUsers.toLocaleString()} peak users
-          </Chip>
-        )}
-      </div>
+                "Run details", NOT "Branch, commit and timing". Naming the
+                contents reads better and is a LIE on some runs: the tool,
+                branch and commit chips are all conditional, so a summary
+                promising them describes a run that carried them. That is the
+                stale-cross-reference shape this review has already paid for
+                twice — the `Cnt/s` hint naming a deleted tile, and "Mint one
+                under Access" naming a renamed page — and the answer is the one
+                `RunGlossary` settled on: say something that stays true. */}
+            <summary
+              data-testid="run-metadata-toggle"
+              className="w-fit cursor-pointer list-none font-sans text-[12px] font-medium text-accent hover:underline hover:underline-offset-2"
+            >
+              <span className="group-open:hidden">Run details</span>
+              <span className="hidden group-open:inline">Hide run details</span>
+            </summary>
+            {/* CLOSED, ALWAYS — unlike the run list's filter disclosure and the
+                time window, both of which open themselves because a URL can
+                arrive already filtered or already narrowed, and a shortened
+                list under a shut control reads as data that is missing.
+                Nothing here is ever in a state a reader has to be told about:
+                these are the same six values on every run. */}
+            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+              {versionChip}
+              {restChips}
+            </div>
+          </details>
+        </div>
+      ) : (
+        <div className={STRIP}>
+          {versionChip}
+          {environmentChip}
+          {restChips}
+        </div>
+      )}
     </header>
   );
 }
@@ -348,7 +512,7 @@ function Chip({
   readonly children: ReactNode;
 }) {
   return (
-    <div className="min-w-0 sm:px-4 sm:first:pl-0 sm:last:pr-0">
+    <div className="min-w-0 md:px-4 md:first:pl-0 md:last:pr-0">
       {/* An overline, not a heading — same rule as the rail's "Projects" and
           the gate strip's "Release gate": nothing queries a `<p>` by
           accessible name, so `uppercase` is safe HERE in a way it is not on
