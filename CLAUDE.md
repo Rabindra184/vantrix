@@ -115,6 +115,103 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m02-metadata branch (M02, the REMAINDER — the finding is closed)
+added no unit FILE and 4 cases to `apps/web/test/RunHeader.test.tsx`, from a
+floor of 147 / 1822. Integration is UNCHANGED (every file it touches is a
+`.tsx` or a `.spec.ts`, and `vitest.integration.config.ts` includes neither)
+and its **e2e rises to 120**.
+
+**A CLASS CAN CHANGE HOW A THING LOOKS; IT CANNOT CHANGE A CONTROL'S STATE.**
+M02's first half WAS a class — `max-sm:hidden` on the band's prose — and
+`RunDecisionBand` argues at length that this app has one JS breakpoint because
+a class can only HIDE what a phone has already paid to mount. Nothing in the
+header is expensive to mount (seven `<span>`s), so by that rule this should
+have been a class too. It could not be: the metadata must not be hidden on a
+phone, it must be ONE TAP AWAY, and `open` is a DOM ATTRIBUTE that no media
+query writes. So `compact` is a PROP, off the `useIsCompact()` call `RunShell`
+already makes for the brush — a second CONSUMER of the one breakpoint, not a
+second breakpoint, the shape `DesktopOnly` already uses ("passed in rather than
+read here so a caller can test both paths").
+
+**AND THE CSS-OVERRIDE ALTERNATIVE IS REAL — ITS COST IS THE HARNESS, NOT THE
+ENGINE.** The first draft of that comment said a media query forcing
+`::details-content { content-visibility: visible }` was "engine-specific". That
+is FALSE, and it was measured false on Playwright 1.62.1's own browsers: it
+paints in chromium, firefox AND webkit. What actually breaks is the SUITE.
+`computeElementStyleVisibilityVisible` in playwright-core skips
+`Element.checkVisibility()` when `browserNameForWorkarounds === 'webkit'` and
+substitutes "has a closed `<details>` ancestor" — reading the ATTRIBUTE and
+never the CSS. So a forced-open chip reports `isVisible: false` and disappears
+from `getByRole` and `ariaSnapshot` on WebKit, while WebKit itself paints it
+and answers `checkVisibility(): true`; force a `<details open>` shut with CSS
+and Playwright's verdicts invert the other way. **That is a harness fact, not
+an accessibility fact**, and this file already records what it costs to promote
+one into a design prohibition — see the `text-transform` correction, which cost
+the redesign its uppercase headings on a constraint that no longer existed. The
+reason that survives is the plain one: a media query cannot write an attribute.
+
+**A JS BREAKPOINT AND A CSS BREAKPOINT DESCRIBING ONE DECISION HAVE TO BE THE
+SAME NUMBER.** `useIsCompact` is `max-width: 767px`; the strip was
+`grid grid-cols-2 … sm:flex … sm:divide-x`, and `sm:` is 640. Between 640 and
+767 a viewport is compact to the hook and wide to the stylesheet, so a
+component reading BOTH would have taken the phone's structure with the
+desktop's spacing. The fix is not to pick a winner: `STRIP` and
+`COMPACT_STRIP` are separate constants with no responsive variant at all, each
+rendered on one side of the one boundary, and `Chip`'s cell padding moved
+`sm:` → `md:` to match the row it belongs to. **When a JS breakpoint and a CSS
+breakpoint describe the same decision, either they are the same number or one
+of them stops existing.**
+
+**A CLOSED `<details>` KEEPS ITS CHILDREN QUERYABLE, SO THE GUARD ASSERTS
+CONTAINMENT.** jsdom applies no CSS, so `getByTestId('run-branch')` resolves
+identically whether that chip is inside the disclosure, beside it, or in the
+desktop strip — the M04 lesson, met again. Every unit case asks WHERE a chip is
+(`toContainElement` / `not.toContainElement`), not whether it exists.
+Red-verified four ways, each landing on the right case: folding Environment in
+too (1 fails), never taking the compact branch (3 fail), shipping the
+disclosure `open` (1 fails), and drawing BOTH strips so every value appears
+twice in the accessibility tree (2 fail). The browser half — that a reader
+cannot SEE the folded chips — is `mobile.spec.ts`'s, with `toBeHidden()` and
+never `toHaveCount(0)`, for the reason M02's own first half had to be corrected
+for.
+
+**MEASURED, BEFORE AND AFTER, ON THE SAME SEEDED RUN AT 375x812:**
+
+```
+                              before   after
+  metadata strip height        118      44
+  run totals top               876     802     (the viewport is 812)
+  p95 tile top                1146    1072
+```
+
+So `mobile.spec.ts`'s bound is **812** now — the first in that file that is the
+GOAL rather than the measurement, because for once they met. Ten pixels of
+headroom, and it is honest about what it does not cover: `seedRunWithData`
+posts no provenance, so that run draws four chips. A run carrying environment,
+branch and commit draws seven, and its metadata box measures **96px against
+this one's 44** — measured, not inferred — putting its totals near 854. The
+placement case seeds `seedRunWithProvenance` for exactly that reason, and
+asserts placement rather than height because that fixture attaches no metrics.
+
+**THE 191px IN THE OLD COMMENT WAS NEVER WRONG AND WAS NEVER UNIVERSAL.** It is
+a provenanced run's strip; the e2e fixture's is 118. Both are real, and a
+figure like that needs the run it was measured on attached to it.
+
+**AND A SUBAGENT WROTE A TEST FILE INTO THE REPO, WHICH MOVED THE FLOOR.** A
+verification agent created `apps/web/test/ZZRefute.test.tsx` to probe the
+change — reasonable of it, and it left behind a real idea (assert containment,
+not presence). It also put the unit suite at 148 / 1823 and made a
+"did my change move the floor?" check read wrong in both directions, since one
+of its own cases failed. **Run `git status` before believing a floor
+measured while agents are working**, and delete what they leave.
+
+**AND `git stash --include-untracked` IS STILL THE WRONG TOOL HERE.** This tree
+holds `docs/ui-review-2026-09-13/`, `review.md` and `scripts/seed-manual-test.mjs`
+untracked; `-u` sweeps all three into the stash, which is how they were
+destroyed once already. To measure `main` while holding a change, stash BY
+PATHSPEC — `git stash push apps/web/src/routes/RunHeader.tsx …` — which leaves
+untracked files alone entirely.
+
 The review-m17-chart-menu branch (M17, PART ONE) added no unit FILE and no
 unit case — it rewrote thirteen existing ones in `ChartActions.test.tsx` — so
 unit stays 147 / 1822, and e2e stays 119.

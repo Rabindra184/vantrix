@@ -159,6 +159,11 @@ export default function RunShell({
         status={status}
         verdict={verdict}
         peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
+        /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
+           review M02 folds the header's secondary metadata behind a
+           disclosure on a phone, and a `<details>`'s open state is the one
+           thing a media query cannot set. See `RunHeader`'s own note. */
+        compact={compact}
       />
       <RunDecisionBand
         identity={identity}

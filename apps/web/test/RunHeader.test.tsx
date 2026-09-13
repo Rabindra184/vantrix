@@ -36,10 +36,16 @@ const RUN: RunResponse = {
 // identity/status/verdict/peakUsers — so the existing terminal-run cases
 // below stay expressed the way they always were: a full run in, an assertion
 // on the render out.
-function renderHeader(run: RunResponse, peakUsers: number | null = null) {
+function renderHeader(run: RunResponse, peakUsers: number | null = null, compact = false) {
   return render(
     <MemoryRouter>
-      <RunHeader identity={run} status={run.status} verdict={run.verdict} peakUsers={peakUsers} />
+      <RunHeader
+        identity={run}
+        status={run.status}
+        verdict={run.verdict}
+        peakUsers={peakUsers}
+        compact={compact}
+      />
     </MemoryRouter>,
   );
 }
@@ -185,7 +191,7 @@ describe('RunHeader', () => {
     render(
       <MemoryRouter>
         <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8' }}
-                   status="running" verdict={undefined} peakUsers={null} />
+                   status="running" verdict={undefined} peakUsers={null} compact={false} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
@@ -204,7 +210,7 @@ describe('RunHeader', () => {
                                project: { id: '11111111-1111-4111-8111-111111111111',
                                           slug: 'checkout', name: 'Checkout' },
                                tool: 'gatling', startedAt: '2026-08-20T10:43:49.546Z' }}
-                   status="running" verdict={undefined} peakUsers={null} />
+                   status="running" verdict={undefined} peakUsers={null} compact={false} />
       </MemoryRouter>,
     );
     expect(screen.queryByTestId('run-verdict')).toBeNull();
@@ -214,9 +220,89 @@ describe('RunHeader', () => {
   it('still renders the verdict badge for a terminal run', () => {
     render(
       <MemoryRouter>
-        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} peakUsers={8} />
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} peakUsers={8} compact={false} />
       </MemoryRouter>,
     );
     expect(screen.getByTestId('run-verdict')).toBeInTheDocument();
+  });
+});
+
+/**
+ * ═══ REVIEW M02's REMAINDER — WHAT A PHONE LEADS WITH ═══
+ *
+ * "Keep run name, environment, outcome, and primary metrics BEFORE secondary
+ * metadata." At 375px the chip strip was a 191px `grid-cols-2` block between
+ * the `<h1>` and the decision band, and the run's own totals began at y=876 on
+ * an 812px screen. Version, branch, commit, started, duration and peak users
+ * fold into a closed disclosure there; ENVIRONMENT does not, because the
+ * finding names it beside the run name and the outcome — and because it
+ * changes what every number below it means.
+ *
+ * ═══ THESE ASSERT CONTAINMENT, AND THE OBVIOUS SPELLING IS VACUOUS ═══
+ *
+ * A closed `<details>` keeps its children in the DOM: jsdom applies no CSS, so
+ * `getByTestId('run-branch')` resolves identically whether that chip sits in
+ * the disclosure, beside it, or in the desktop strip. `RunList.compact.test.tsx`
+ * records the same trap one component over — its folded filter prose is still
+ * in `textContent` — and CLAUDE.md's M04 entry states the rule: assert on the
+ * RELATIONSHIP, never on presence.
+ *
+ * So every case below asks WHERE a chip is, not whether it exists. The
+ * geometry — that the fold actually buys the height M02 is about — is
+ * `mobile.spec.ts`'s, at a real 375x812, which is the division of labour that
+ * file's own docstring sets out.
+ */
+describe('RunHeader — the metadata a phone leads with', () => {
+  const details = () => screen.getByTestId('run-metadata');
+
+  it('folds the secondary metadata into a disclosure that starts closed', () => {
+    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8', commitSha: 'abc1234def5678' }, 8, true);
+
+    expect(details().tagName).toBe('DETAILS');
+    // CLOSED. One tap away is the whole point — hidden would be a different
+    // change, and 24px of summary against 191px of grid is the saving.
+    expect(details()).not.toHaveAttribute('open');
+
+    for (const id of ['run-branch', 'run-commit', 'run-duration']) {
+      expect(details(), `${id} belongs inside the disclosure`).toContainElement(
+        screen.getByTestId(id),
+      );
+    }
+    // Peak users carries no testid — it is pinned by its own whole text
+    // elsewhere (see the module docstring) — so it is found the same way.
+    expect(details()).toContainElement(screen.getByText('8 peak users'));
+  });
+
+  it('keeps environment out of the disclosure, where the finding puts it', () => {
+    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8' }, 8, true);
+
+    const environment = screen.getByTestId('run-environment');
+    expect(environment).toHaveTextContent('staging');
+    // The assertion that separates this from folding EVERYTHING away, which
+    // is the mutation a presence-only case cannot see.
+    expect(details()).not.toContainElement(environment);
+  });
+
+  it('draws no disclosure at all above the breakpoint, and nothing moves', () => {
+    renderHeader({ ...RUN, environment: 'staging', branch: 'release/24.8', commitSha: 'abc1234def5678' }, 8, false);
+
+    expect(screen.queryByTestId('run-metadata')).toBeNull();
+    // The paired positive: "no disclosure" passes just as happily against a
+    // header that failed to render, which is the shape CLAUDE.md records for
+    // every absence assertion in this repo.
+    for (const id of ['run-environment', 'run-branch', 'run-commit', 'run-duration']) {
+      expect(screen.getByTestId(id)).toBeInTheDocument();
+    }
+    expect(screen.getByText('8 peak users')).toBeInTheDocument();
+  });
+
+  it('names the action the summary will perform, in both directions', () => {
+    // Both spellings are in the DOM at all times and CSS chooses between them
+    // — `RunGlossary`'s pattern, and why the accessible name is stable and no
+    // state lives in JavaScript. It also means the summary's own textContent
+    // is both strings at once, so nothing may assert on that.
+    renderHeader({ ...RUN, environment: 'staging' }, null, true);
+    expect(screen.getByText('Run details')).toBeInTheDocument();
+    expect(screen.getByText('Hide run details')).toBeInTheDocument();
   });
 });
