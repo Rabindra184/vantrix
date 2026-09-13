@@ -63,6 +63,45 @@ const FAMILY_LABELS: Record<(typeof SLA_RULE_FAMILIES)[number], string> = {
   group_duration: 'Group duration',
 };
 
+/**
+ * ═══ WHICH MEASUREMENTS EXIST AT WHICH SCOPE — review M09 ═══
+ *
+ * The form offered all four families at every scope, and two of those
+ * combinations can never resolve. `engine.ts` files a group's timings ONLY
+ * under `group_cumulated` and `group_duration`, and it files those ONLY with
+ * `scope === 'group'` — which is why `tool-assertions.ts` selects them as
+ * `s.family === 'group_cumulated' && s.scope === 'group'`.
+ *
+ * So "Group cumulated" on a whole-run gate authored a rule the evaluator will
+ * report `not_applicable` for on every run, for ever, while reading as
+ * configured protection. That is the same silent-gate class as the fraction
+ * trap this file already records: legal, resolvable-looking, and never firing.
+ * The schema cannot refuse it — both fields are independently valid enums —
+ * so the FORM is the only place it can be prevented.
+ */
+const FAMILIES_FOR_SCOPE: Record<
+  (typeof SLA_RULE_SCOPES)[number],
+  readonly (typeof SLA_RULE_FAMILIES)[number][]
+> = {
+  run: ['response_time', 'latency'],
+  scenario: ['response_time', 'latency'],
+  request: ['response_time', 'latency'],
+  group: ['group_cumulated', 'group_duration'],
+};
+
+/**
+ * What the two group measurements actually measure, since neither name says.
+ * M09 asks for "a short example for uncommon group measurements"; this is the
+ * difference a reader cannot guess, measured on the reference run: a group's
+ * cumulated time is the sum of its requests' own times, its duration also
+ * counts the waiting between them, and on that fixture the second runs about
+ * 80ms higher at every percentile.
+ */
+const FAMILY_EXAMPLE: Partial<Record<(typeof SLA_RULE_FAMILIES)[number], string>> = {
+  group_cumulated: 'Time inside the group’s own requests, added up — what Gatling’s group page reports.',
+  group_duration: 'The same, plus the waiting between those requests, so it reads higher.',
+};
+
 const COMPARATOR_LABELS: Record<(typeof SLA_RULE_COMPARATORS)[number], string> = {
   lte: 'at most (≤)',
   gte: 'at least (≥)',
@@ -98,17 +137,32 @@ const FIELD_GUIDANCE: Record<string, { label: string; help: string }> = {
     label: 'Target',
     help: 'Name the request, group or scenario this rule judges — or set the scope to Whole run, which needs no target.',
   },
+  /* ═══ THE QUESTION IS PLAIN; THE ANSWER IS STILL THE SYSTEM'S WORD ═══
+   *
+   * M09 objects that `Family`, `Metric` and `Threshold` "require
+   * implementation knowledge" and asks for Measurement, Statistic, Limit.
+   * Those are the LABELS, and they move.
+   *
+   * The VALUES do not. `p95` stays `p95`, because review N01 spent four
+   * branches making that one word mean one thing everywhere — it is the
+   * statistics table's column, the run-totals tile, and what
+   * `formatSlaThreshold` and the preview sentence below render. Renaming it
+   * here would re-open exactly the drift that pass closed, and would leave a
+   * reader unable to find on the run page the thing they had just gated.
+   * M09 lists "raw p95" among its examples; this is the half of that finding
+   * it is right to decline, and it is declined on the evidence of the other
+   * one. */
   family: {
-    label: 'Family',
-    help: 'Which family of timings to read. Response time is the usual one; the group families apply to group scopes.',
+    label: 'Measurement',
+    help: 'What is being measured. Response time is the usual one; a group gate measures the group’s own timings.',
   },
   metric: {
-    label: 'Metric',
-    help: 'A percentile such as p95 or p99.9 (strictly between 0 and 100), or one of the named measures in the list.',
+    label: 'Statistic',
+    help: 'Which figure from that measurement: a percentile such as p95 or p99.9 (strictly between 0 and 100), or one of the named measures in the list.',
   },
-  comparator: { label: 'Must be', help: 'Whether the measured value has to stay below or above the threshold.' },
+  comparator: { label: 'Must be', help: 'Whether the measured value has to stay below or above the limit.' },
   threshold: {
-    label: 'Threshold',
+    label: 'Limit',
     help: 'A number, in the unit shown beside the field. Error rate is authored as a percentage.',
   },
 };
@@ -390,6 +444,14 @@ export default function ProjectRules({
   const [targetName, setTargetName] = useState('');
   const [family, setFamily] = useState<(typeof SLA_RULE_FAMILIES)[number]>('response_time');
   const [metric, setMetric] = useState('p95');
+
+  /* KEEPS THE PAIR VALID WHEN THE SCOPE MOVES UNDER IT. Changing the scope can
+     leave `family` naming a measurement that scope has no rows for — the very
+     combination `FAMILIES_FOR_SCOPE` exists to prevent — and a `<select>` whose
+     value is not among its options renders BLANK rather than correcting
+     itself, so the form would submit the stale family while showing nothing.
+     Derived in the scope handler rather than an effect: this is a consequence
+     of one event, not a synchronisation between two states. */
   const [comparator, setComparator] = useState<(typeof SLA_RULE_COMPARATORS)[number]>('lte');
   const [threshold, setThreshold] = useState('800');
   /* ═══ A FIELD AND A SENTENCE, NEVER A SCHEMA PATH (review M17) ═══
@@ -557,7 +619,7 @@ export default function ProjectRules({
     if (threshold.trim() === '') {
       setFormError({
         field: 'threshold',
-        title: `Threshold: enter a number${authorUnit === null ? '' : ` in ${authorUnit}`}.`,
+        title: `Limit: enter a number${authorUnit === null ? '' : ` in ${authorUnit}`}.`,
         help: 'An empty box is not zero — leaving it blank would author a bound of 0, which is not the gate you are choosing.',
       });
       return;
@@ -727,7 +789,14 @@ export default function ProjectRules({
               <select
                 className={INPUT}
                 value={scope}
-                onChange={(e) => setScope(e.target.value as typeof scope)}
+                onChange={(e) => {
+                  const next = e.target.value as typeof scope;
+                  setScope(next);
+                  // See the note by `metric`'s state: a scope change can strand
+                  // the family on a measurement this scope has no rows for.
+                  const allowed = FAMILIES_FOR_SCOPE[next];
+                  if (!allowed.includes(family)) setFamily(allowed[0]!);
+                }}
               >
                 {SLA_RULE_SCOPES.map((value) => (
                   <option key={value} value={value}>
@@ -754,21 +823,30 @@ export default function ProjectRules({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-              Family
+              Measurement
+              {/* ONLY WHAT CAN RESOLVE AT THIS SCOPE — see `FAMILIES_FOR_SCOPE`.
+                  Offering a group measurement on a whole-run gate authored a
+                  rule that reports `not_applicable` on every run for ever. */}
               <select
                 className={INPUT}
                 value={family}
                 onChange={(e) => setFamily(e.target.value as typeof family)}
               >
-                {SLA_RULE_FAMILIES.map((value) => (
+                {FAMILIES_FOR_SCOPE[scope].map((value) => (
                   <option key={value} value={value}>
                     {FAMILY_LABELS[value]}
                   </option>
                 ))}
               </select>
+              {/* The one thing neither group name says out loud. */}
+              {FAMILY_EXAMPLE[family] !== undefined && (
+                <span className="font-normal text-[12px] leading-snug text-muted">
+                  {FAMILY_EXAMPLE[family]}
+                </span>
+              )}
             </label>
             <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-              Metric
+              Statistic
               {/* A datalist, not a select: the evaluator accepts ANY percentile
                   in (0, 100), so a closed list would refuse p99.95 while the
                   engine answers it. The suggestions cover what is reached for;
@@ -814,7 +892,7 @@ export default function ProjectRules({
                   PERCENTAGE rather than the stored fraction. See `authorUnit`
                   above — the conversion moved out of the author's head and
                   into `percentToFraction`. */}
-              Threshold{authorUnit === null ? '' : ` (${authorUnit})`}
+              Limit{authorUnit === null ? '' : ` (${authorUnit})`}
               <input
                 id={fieldId('threshold')}
                 className={INPUT}

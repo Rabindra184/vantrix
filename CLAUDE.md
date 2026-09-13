@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1813 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1817 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,54 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-m09-labels branch (M09) added no unit FILE and 4 cases to
+`apps/web/test/ProjectRules.test.tsx`, from a floor of 147 / 1813. Integration
+is UNCHANGED and e2e stays 119.
+
+**A FORM CAN AUTHOR A GATE THE EVALUATOR CAN NEVER RESOLVE, AND THIS ONE DID.**
+`family` and `scope` are independent enums, so the schema accepts
+`group_cumulated` on a whole-run rule — and `engine.ts` files a group's timings
+ONLY under `group_cumulated`/`group_duration` and ONLY with `scope === 'group'`
+(which is why `tool-assertions.ts` selects them as
+`family === 'group_cumulated' && s.scope === 'group'`). Such a rule reports
+`not_applicable` on every run for ever while reading as configured protection.
+
+That is the silent-gate class this file already records for the error-rate
+fraction: legal, resolvable-looking, never firing. **A SCHEMA CANNOT REFUSE
+IT** — both halves are valid on their own — so the FORM is the only place it
+can be prevented, and `FAMILIES_FOR_SCOPE` is that place. M09 reads as a
+labelling finding and this was underneath it.
+
+**AND A `<select>` WHOSE VALUE IS NOT AMONG ITS OPTIONS RENDERS BLANK.** It
+does not correct itself and it does not clear the state, so narrowing the
+options without moving the value would have submitted the stale family while
+showing an empty control. Handled in the scope handler rather than an effect:
+it is a consequence of one event, not a synchronisation between two states.
+
+**THE LABELS MOVED AND THE VALUES DID NOT, AND THAT IS A DELIBERATE REFUSAL OF
+HALF THE FINDING.** M09 asks for `Measurement`, `Statistic`, `Limit` in place of
+`Family`, `Metric`, `Threshold` — those are the QUESTIONS and they move. It also
+lists "raw `p95`" as requiring implementation knowledge; that half is declined
+on the evidence of review N01, which spent four branches making `p95` mean one
+thing across the statistics table, the run-totals tile, `formatSlaThreshold`
+and this form's own preview sentence. A reader who gates `p95` has to be able
+to find `p95` on the run page afterwards. **When two findings conflict, say
+which one you are following and why** — the alternative is renaming in one
+place and re-opening drift somewhere else.
+
+**RENAMING A FIELD MOVES ITS ERROR MESSAGE TOO**, because `FIELD_GUIDANCE` is
+the one place a field's name lives (M08). `Threshold: enter a number in ms.`
+became `Limit: …` with no code change, and the case pinning it was rewritten to
+follow — its claim is that the error NAMES the field, not that it says
+"Threshold".
+
+**SIXTEEN TEST QUERIES SELECTED THOSE FIELDS BY LABEL**, in four spellings
+(`/threshold/i`, `/limit \(ms\)/i` after the dynamic unit, `/^metric$/i`,
+`/metric/i`). Renaming a `<label>` breaks every `getByLabelText` that names it,
+and the anchored and unanchored forms have to be found separately — `grep` for
+the bare word misses `/^metric$/i` if you search for `metric/i` with a leading
+slash.
 
 The review-m04-choices branch (M04) added no unit FILE and 4 cases to
 `apps/web/test/ProjectSetup.test.tsx`, from a floor of 147 / 1809. Integration

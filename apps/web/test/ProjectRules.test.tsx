@@ -141,7 +141,7 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const metric = await screen.findByLabelText(/metric/i);
+    const metric = await screen.findByLabelText(/statistic/i);
     await user.clear(metric);
     await user.type(metric, 'p95th');
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
@@ -213,10 +213,10 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const metric = await screen.findByLabelText(/metric/i);
+    const metric = await screen.findByLabelText(/statistic/i);
     await user.clear(metric);
     await user.type(metric, 'error_rate');
-    const threshold = screen.getByLabelText(/threshold/i);
+    const threshold = screen.getByLabelText(/limit/i);
     await user.clear(threshold);
     // ONE PERCENT, typed as a percentage (review M17) — and stored as the
     // fraction the evaluator compares against. The author no longer converts.
@@ -247,7 +247,7 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const threshold = await screen.findByLabelText(/threshold/i);
+    const threshold = await screen.findByLabelText(/limit/i);
     await user.clear(threshold);
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
@@ -259,7 +259,7 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const threshold = await screen.findByLabelText(/threshold/i);
+    const threshold = await screen.findByLabelText(/limit/i);
     await user.clear(threshold);
     await user.type(threshold, '   ');
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
@@ -274,10 +274,10 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const metric = await screen.findByLabelText(/metric/i);
+    const metric = await screen.findByLabelText(/statistic/i);
     await user.clear(metric);
     await user.type(metric, 'error_rate');
-    const threshold = screen.getByLabelText(/threshold/i);
+    const threshold = screen.getByLabelText(/limit/i);
     await user.clear(threshold);
     await user.type(threshold, '0');
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
@@ -304,9 +304,9 @@ describe('ProjectRules — authoring', () => {
     renderRules();
 
     // The default metric is a percentile, which is milliseconds.
-    expect(await screen.findByLabelText(/threshold \(ms\)/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/limit \(ms\)/i)).toBeInTheDocument();
 
-    const metric = await screen.findByLabelText(/metric/i);
+    const metric = await screen.findByLabelText(/statistic/i);
     await user.clear(metric);
     await user.type(metric, 'error_rate');
 
@@ -316,7 +316,7 @@ describe('ProjectRules — authoring', () => {
     // `%` RATHER THAN `fraction` SINCE M17: the field takes the unit every
     // other surface renders, and `percentToFraction` stores what the evaluator
     // compares. The author is no longer the one place that converts.
-    expect(await screen.findByLabelText(/threshold \(%\)/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/limit \(%\)/i)).toBeInTheDocument();
   });
 
   /**
@@ -331,10 +331,10 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const metric = await screen.findByLabelText(/metric/i);
+    const metric = await screen.findByLabelText(/statistic/i);
     await user.clear(metric);
     await user.type(metric, 'error_rate');
-    const threshold = screen.getByLabelText(/threshold/i);
+    const threshold = screen.getByLabelText(/limit/i);
     await user.clear(threshold);
     await user.type(threshold, '150');
 
@@ -348,10 +348,10 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const metric = await screen.findByLabelText(/metric/i);
+    const metric = await screen.findByLabelText(/statistic/i);
     await user.clear(metric);
     await user.type(metric, 'error_rate');
-    const threshold = screen.getByLabelText(/threshold/i);
+    const threshold = screen.getByLabelText(/limit/i);
     await user.clear(threshold);
     await user.type(threshold, '1');
 
@@ -362,7 +362,7 @@ describe('ProjectRules — authoring', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const threshold = await screen.findByLabelText(/threshold/i);
+    const threshold = await screen.findByLabelText(/limit/i);
     await user.clear(threshold);
     await user.type(threshold, '30000');
 
@@ -760,13 +760,13 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
 
     await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
     await user.selectOptions(screen.getByRole('combobox', { name: /^target/i }), 'Search');
-    await user.clear(screen.getByLabelText(/metric/i));
-    await user.type(screen.getByLabelText(/metric/i), 'p95');
+    await user.clear(screen.getByLabelText(/statistic/i));
+    await user.type(screen.getByLabelText(/statistic/i), 'p95');
     // CLEARED first: the form opens with a default threshold, and typing
     // appends — "800" over "800" is "800800", which is how this case failed
     // the first time it ran.
-    await user.clear(screen.getByLabelText(/threshold/i));
-    await user.type(screen.getByLabelText(/threshold/i), '800');
+    await user.clear(screen.getByLabelText(/limit/i));
+    await user.type(screen.getByLabelText(/limit/i), '800');
 
     expect(screen.getByTestId('rule-preview').textContent ?? '').toContain(
       'Request “Search”: 95th percentile response time must be at most 800 ms.',
@@ -784,10 +784,10 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
     const user = userEvent.setup();
     renderRules();
 
-    await user.clear(await screen.findByLabelText(/metric/i));
-    await user.type(screen.getByLabelText(/metric/i), 'error_rate');
-    await user.clear(screen.getByLabelText(/threshold/i));
-    await user.type(screen.getByLabelText(/threshold/i), '1');
+    await user.clear(await screen.findByLabelText(/statistic/i));
+    await user.type(screen.getByLabelText(/statistic/i), 'error_rate');
+    await user.clear(screen.getByLabelText(/limit/i));
+    await user.type(screen.getByLabelText(/limit/i), '1');
 
     expect(screen.getByTestId('rule-preview').textContent ?? '').toContain(
       'The whole run: error rate must be at most 1%.',
@@ -800,10 +800,10 @@ describe('ProjectRules — the rule reads back as a sentence', () => {
     const user = userEvent.setup();
     renderRules();
 
-    await user.clear(await screen.findByLabelText(/metric/i));
-    await user.type(screen.getByLabelText(/metric/i), 'p95th');
-    await user.clear(screen.getByLabelText(/threshold/i));
-    await user.type(screen.getByLabelText(/threshold/i), '800');
+    await user.clear(await screen.findByLabelText(/statistic/i));
+    await user.type(screen.getByLabelText(/statistic/i), 'p95th');
+    await user.clear(screen.getByLabelText(/limit/i));
+    await user.type(screen.getByLabelText(/limit/i), '800');
 
     // NAMES THE FIELD. "Fill in the metric and the threshold" was wrong for
     // the reader whose threshold was already fine — it listed everything and
@@ -956,10 +956,15 @@ describe('ProjectRules — validation names the field, not the schema', () => {
     // The form opens with a default threshold; emptying it is the state this
     // case is about, and `Number('')` being 0 is why the check cannot live in
     // the schema.
-    await user.clear(await screen.findByLabelText(/threshold/i));
+    await user.clear(await screen.findByLabelText(/limit/i));
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent ?? '').toMatch(/^Threshold:/);
+    /* `Limit:`, not `Threshold:` — review M09 renamed the field's LABEL (the
+       question) while leaving its VALUES alone. The message is generated from
+       `FIELD_GUIDANCE`, so it follows the label automatically; this assertion
+       exists to prove the error still NAMES THE FIELD rather than describing
+       it in the abstract, which is the property M08 added it for. */
+    expect(alert.textContent ?? '').toMatch(/^Limit:/);
     expect(alert.textContent ?? '').toMatch(/not zero/i);
     expect(createProjectRule).not.toHaveBeenCalled();
   });
@@ -975,7 +980,7 @@ describe('ProjectRules — validation names the field, not the schema', () => {
     const user = userEvent.setup();
     renderRules();
 
-    await user.clear(await screen.findByLabelText(/threshold/i));
+    await user.clear(await screen.findByLabelText(/limit/i));
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
     const alert = await screen.findByRole('alert');
@@ -990,9 +995,9 @@ describe('ProjectRules — validation names the field, not the schema', () => {
     const user = userEvent.setup();
     renderRules();
 
-    await user.clear(await screen.findByLabelText(/^metric$/i));
-    await user.type(screen.getByLabelText(/^metric$/i), 'error_rate');
-    await user.clear(screen.getByLabelText(/threshold/i));
+    await user.clear(await screen.findByLabelText(/^statistic$/i));
+    await user.type(screen.getByLabelText(/^statistic$/i), 'error_rate');
+    await user.clear(screen.getByLabelText(/limit/i));
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
     expect((await screen.findByRole('alert')).textContent ?? '').toMatch(
@@ -1042,7 +1047,7 @@ describe('ProjectRules — the refusal points at the field', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const threshold = await screen.findByLabelText(/threshold/i);
+    const threshold = await screen.findByLabelText(/limit/i);
     await user.clear(threshold);
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
@@ -1061,11 +1066,11 @@ describe('ProjectRules — the refusal points at the field', () => {
     const user = userEvent.setup();
     renderRules();
 
-    await user.clear(await screen.findByLabelText(/threshold/i));
+    await user.clear(await screen.findByLabelText(/limit/i));
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
     await screen.findByRole('alert');
 
-    for (const label of [/^metric$/i, /name \(optional\)/i]) {
+    for (const label of [/^statistic$/i, /name \(optional\)/i]) {
       const control = screen.getByLabelText(label);
       expect(control).not.toHaveAttribute('aria-invalid');
       expect(association(control)).toEqual([]);
@@ -1083,7 +1088,7 @@ describe('ProjectRules — the refusal points at the field', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const threshold = await screen.findByLabelText(/threshold/i);
+    const threshold = await screen.findByLabelText(/limit/i);
     await user.clear(threshold);
     const submit = screen.getByRole('button', { name: 'Add rule' });
 
@@ -1113,10 +1118,10 @@ describe('ProjectRules — the refusal points at the field', () => {
     const user = userEvent.setup();
     renderRules();
 
-    await user.clear(await screen.findByLabelText(/^metric$/i));
-    await user.type(screen.getByLabelText(/^metric$/i), 'error_rate');
+    await user.clear(await screen.findByLabelText(/^statistic$/i));
+    await user.type(screen.getByLabelText(/^statistic$/i), 'error_rate');
 
-    const threshold = screen.getByLabelText(/threshold/i);
+    const threshold = screen.getByLabelText(/limit/i);
     await user.clear(threshold);
     await user.type(threshold, '150');
 
@@ -1131,5 +1136,93 @@ describe('ProjectRules — the refusal points at the field', () => {
     await user.click(screen.getByRole('button', { name: 'Add rule' }));
     const alert = await screen.findByRole('alert');
     expect(association(threshold)).toEqual([alert]);
+  });
+
+  /* ====================================================================== *
+   * REVIEW M09 — THE DATA MODEL STOPS BEING THE INTERFACE
+   * ====================================================================== */
+
+  /**
+   * ═══ THE COMBINATION THAT COULD NEVER FIRE ═══
+   *
+   * `family` and `scope` are independent enums, so the schema accepts
+   * `group_cumulated` on a whole-run gate — and the evaluator can never
+   * resolve it. `engine.ts` files a group's timings only under
+   * `group_cumulated`/`group_duration`, and only with `scope === 'group'`,
+   * which is why `tool-assertions.ts` selects them as
+   * `family === 'group_cumulated' && scope === 'group'`.
+   *
+   * That rule reports `not_applicable` on every run, for ever, while reading
+   * as configured protection — the same silent-gate class as the fraction
+   * trap CLAUDE.md records, where a legal, resolvable-looking value simply
+   * never fires. A schema cannot refuse it; the FORM is the only place it can
+   * be prevented, which is why this is a case and not a validator.
+   */
+  it('offers only measurements the chosen scope can resolve', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const measurement = await screen.findByLabelText(/measurement/i);
+    const optionsNow = () =>
+      [...measurement.querySelectorAll('option')].map((o) => o.textContent?.trim());
+
+    // Whole run: the group measurements have no rows at this scope.
+    expect(optionsNow()).toEqual(['Response time', 'Latency']);
+
+    await user.selectOptions(screen.getByLabelText(/^scope$/i), 'group');
+    expect(optionsNow()).toEqual(['Group cumulated', 'Group duration']);
+  });
+
+  /**
+   * A `<select>` whose value is not among its options renders BLANK and keeps
+   * the stale value — so moving the scope has to move the measurement with it,
+   * or the form submits one thing while showing nothing. Asserted on the
+   * SUBMITTED body rather than on the control, because that is where the
+   * damage would land.
+   */
+  it('moves the measurement when the scope moves under it', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/^scope$/i), 'group');
+    const measurement = screen.getByLabelText(/measurement/i) as HTMLSelectElement;
+    expect(measurement.value).toBe('group_cumulated');
+
+    // And back again — the reverse strands it just as easily.
+    await user.selectOptions(screen.getByLabelText(/^scope$/i), 'run');
+    expect((screen.getByLabelText(/measurement/i) as HTMLSelectElement).value).toBe('response_time');
+  });
+
+  /**
+   * M09 asks for "a short example for uncommon group measurements". Neither
+   * group name says what it measures, and the difference is the one thing a
+   * reader cannot guess: cumulated time is the requests' own, duration also
+   * counts the waiting between them.
+   */
+  it('says what a group measurement measures, since its name does not', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/^scope$/i), 'group');
+    expect(screen.getByText(/what Gatling’s group page reports/i)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(/measurement/i), 'group_duration');
+    expect(screen.getByText(/waiting between those requests/i)).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ THE LABELS MOVED AND THE VALUES DID NOT ═══
+   *
+   * M09 lists "raw `p95`" among the things requiring implementation
+   * knowledge. That half is declined, on the evidence of review N01: `p95` is
+   * the statistics table's column, the run-totals tile, and what
+   * `formatSlaThreshold` and the preview sentence render. Four branches went
+   * into making that one word mean one thing everywhere, and a reader who
+   * gated `p95` has to be able to find `p95` on the run page afterwards.
+   */
+  it('keeps the metric vocabulary the rest of the product uses', async () => {
+    renderRules();
+    const statistic = (await screen.findByLabelText(/^statistic$/i)) as HTMLInputElement;
+    expect(statistic.value).toBe('p95');
   });
 });
