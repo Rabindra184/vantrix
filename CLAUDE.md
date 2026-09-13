@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **142 files / 1693 tests**, it
+`nvm use` first, and if a run reports fewer than **143 files / 1716 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,64 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-0913-criticals branch added ONE unit file —
+`apps/web/test/TableFrame.test.tsx` (5) — and 2 cases to
+`RunList.compact.test.tsx`, from a MEASURED floor of 142 / 1709. Integration is
+**133 files / 1681 tests** (both files are `.tsx`) and e2e stays 113. It takes
+the three criticals a second review found in the branches immediately above.
+
+**THE HEADLINE SAID 1693 AND MAIN MEASURED 1709 — SIXTEEN TESTS OF SLACK.** Not
+drift from an unrecorded branch this time: the number was simply written down
+wrong. The sla-authoring run that produced it reported *141* files, the entry
+recorded 142, and the test count went with the file count rather than with the
+run. **Read the floor off the runner's own last two lines and paste both**; a
+floor below the truth catches nothing, and a silently-skipped run of up to
+sixteen tests would have read as a pass. Re-measured by stashing the branch and
+running `test:unit` on clean `main`, which is the only way to get this number
+without inferring it.
+
+**ALL THREE CRITICALS WERE THE SAME MISTAKE: SOMETHING MOVED AND THE THING
+DESCRIBING IT DID NOT.**
+
+  - A link labelled "Configure rules for this project" still used
+    `projectSetupPath`. M15 moved rules to `projectRulesPath` and turned
+    `/setup` into "Add results", so the one remedy a no-rules empty state
+    offered opened a page about uploading bundles. The path still resolved, the
+    page still rendered, and **no test asserted where a link GOES** — only that
+    it exists. `ProjectRuns` carried the other half: its label said "Setup"
+    while `ProjectTests` said "Add results" for the same destination. **When a
+    page is split, grep every caller of the old path for what it MEANT.**
+
+  - The run-health caveat read "NOT the assertions a simulation declares for
+    itself" while `needsAttention` had been counting exactly those since M02
+    widened the list contract. One complete run, no SLA verdict, "Needs
+    attention 1", under a paragraph denying it.
+
+  - `TableFrame` wrapped a `<details>`/`<summary>` in `aria-hidden="true"`.
+    That attribute removes an element from the accessibility tree and NOT from
+    the tab order, so six tables shared a tab stop a screen reader cannot
+    describe.
+
+**A TEST THAT PINS PROSE VERBATIM PROTECTS IT FROM CORRECTION.** The M18 branch
+moved that caveat and asserted "the words are not weakened" — which kept a
+sentence that had already become false, and turned the suite into the reason it
+survived. Assert the CLAIM instead: the new case says the denial must not come
+back, whatever words carry it.
+
+**AND REASONING ABOUT HALF A RULE IS HOW IT SURVIVES BEING READ.** The
+`aria-hidden` was examined during M18 — there is a comment three lines away
+explaining why `RunCards` must NOT copy it — and the question "is hiding an
+interactive control valid at all" was never asked. `TableFrame` had no test
+file, which is how a component six tables share acquired the defect at all.
+
+**THE INTEGRATION FLAKE NOW CORRELATES WITH LOAD, TWICE IN A ROW.** A different
+single test failed each time — `verdict.integration.test.ts` on the branch
+above, `tests.integration.test.ts` here — each in a file the branch's own
+`git diff origin/main --name-only` cannot reach, each passing alone and on a
+re-run. Here the failing run STARTED at load **17.32** and the clean one at
+**5.43**. This file already says to gate the start on load; printing `uptime`
+and running anyway is not gating it.
 
 The sla-authoring-clarity branch (M17's remainder) added no unit FILE and 18
 cases — 11 to `apps/web/test/ProjectRules.test.tsx` and 7 to

@@ -52,9 +52,14 @@ export default function ProjectRuns() {
             <TestIcon className="h-3.5 w-3.5" />
             All tests
           </Link>
+          {/* "Add results", matching `ProjectTests`. M15 renamed this label
+              there and missed it here, so one project page called the
+              destination Setup and the other called it Add results — the
+              same split that left the rules link above pointing at the wrong
+              page. */}
           <Link to={projectSetupPath(slug)} className={linkButtonClasses}>
             <SetupIcon className="h-3.5 w-3.5" />
-            Setup
+            Add results
           </Link>
           <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
             <PlayIcon className="h-3.5 w-3.5" />

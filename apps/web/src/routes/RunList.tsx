@@ -650,7 +650,10 @@ function RunListHealth({
         <HealthTile
           label="Needs attention"
           value={summary.needsAttention}
-          detail="Failed, incomplete, or SLA failed"
+          // The FOURTH condition was missing here too — see `needsAttention`,
+          // which has read a simulation's own checks since M02 widened the
+          // list contract.
+          detail="Failed, incomplete, SLA failed, or a failed check"
           colour="var(--color-status-failed)"
         />
         <HealthTile
@@ -879,11 +882,43 @@ function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
  * that would hide is a phone quietly reading a WEAKER caveat than a desktop,
  * which nobody would notice until somebody triaged on it.
  */
+/**
+ * ═══ THIS SENTENCE WENT STALE UNDER ITS OWN FEATURE (review 09-13 C05) ═══
+ *
+ * It used to read "They count execution state and this platform's SLA verdict
+ * — NOT the assertions a simulation declares for itself", and that was exactly
+ * right when it was written: `RunListResponseSchema` picked nine fields and
+ * none of them carried a simulation's own outcomes, so the count genuinely
+ * could not see them.
+ *
+ * M02 then put `checks` on the list and `needsAttention` started reading it —
+ * which is the whole point of that work, and is what makes "Needs attention"
+ * usable. The caveat was never revisited, so the page spent two branches
+ * telling the reader the opposite of what the number beneath it meant. The
+ * sample makes it obvious: one complete run, no SLA verdict, "Needs attention
+ * 1", under a paragraph swearing checks are not counted.
+ *
+ * Worse, the M18 branch MOVED this paragraph and pinned it with a test
+ * asserting "the words are not weakened" — preserving a sentence that had
+ * already become false. **Prose that describes a calculation has to be re-read
+ * against the calculation, not carried across intact.** This file already
+ * records the same lesson for `tokens.test.ts`, one layer down: a stale
+ * comment naming an old spelling is exactly as misleading as a stale class.
+ *
+ * ═══ AND THE FOUR ARE NOT A PARTITION ═══
+ *
+ * Said out loud now rather than left to be discovered. `needsAttention` and
+ * `unjudged` are independent questions — "is something wrong" and "did a gate
+ * judge it" — so the run in the sample is counted by both, correctly. Four
+ * numbers sitting in a row read as a breakdown that sums to the page, and this
+ * one does not.
+ */
 const HEALTH_CAVEAT = (count: number): string =>
   `Counted over the ${count} ${count === 1 ? 'run' : 'runs'} on this page. Paging or filtering ` +
-  'changes them; they are not totals for the whole list. They count execution state and this ' +
-  'platform’s SLA verdict — not the assertions a simulation declares for itself, which each ' +
-  'run’s own page reports.';
+  'changes them; they are not totals for the whole list. A run can be counted more than once — ' +
+  '“Needs attention” asks whether anything failed, and “Unjudged” asks whether a gate reached a ' +
+  'verdict, which are different questions. Failures counted here are execution state, this ' +
+  'platform’s SLA verdict, and the checks a simulation declares for itself.';
 
 /**
  * The filter form, folded away on a phone — review M18.

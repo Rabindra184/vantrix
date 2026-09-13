@@ -98,8 +98,35 @@ export default function TableFrame({
           {caption}
         </p>
       ) : (
-        <div aria-hidden="true" className="px-4 pt-4">
-          <p className={CAPTION}>{summary}</p>
+        <div className="px-4 pt-4">
+          {/* ═══ `aria-hidden` MOVED OFF THE WRAPPER (review 09-13 C06) ═══
+           *
+           * It used to sit on this `<div>`, which put a focusable, interactive
+           * `<summary>` inside an `aria-hidden` subtree. That is the one
+           * combination the attribute must never be used for: the control is
+           * removed from the accessibility tree and stays in the tab order, so
+           * a keyboard screen-reader user lands on something their software
+           * cannot describe.
+           *
+           * The REASON it was hidden is still true of this paragraph and only
+           * of this paragraph — the table's own `<caption class="sr-only">`
+           * carries the same words, so announcing them twice is pure noise.
+           * So the attribute goes where that argument holds and nowhere else.
+           *
+           * THE DISCLOSURE IS NOW ANNOUNCED, and its expanded prose repeats
+           * the caption for a screen-reader user who opens it. That
+           * redundancy is the honest trade: there is no way to mark a
+           * focusable control "redundant" — it is either exposed or it is a
+           * trap — and opt-in repetition beats an undescribable tab stop.
+           *
+           * What this does NOT fix is the review's other half: the table's
+           * accessible NAME is still the whole methodology paragraph. Making
+           * it a short line changes what `getByRole('table', { name })`
+           * matches in six specs, so it is a separate change rather than one
+           * smuggled in behind an a11y fix. */}
+          <p aria-hidden="true" className={CAPTION}>
+            {summary}
+          </p>
           {/* `<details>`, not a button and state: it is a native disclosure
               with native keyboard behaviour, and this is exactly the content
               it exists for. Closed by default — the whole point is that the

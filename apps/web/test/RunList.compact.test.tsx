@@ -247,7 +247,38 @@ describe('RunList — the tally keeps both caveats', () => {
     const details = within(section).getByRole('group');
     expect(details).not.toHaveAttribute('open');
     expect(details.textContent ?? '').toMatch(/not totals for the whole list/i);
-    expect(details.textContent ?? '').toMatch(/not the assertions a simulation declares/i);
+    expect(details.textContent ?? '').toMatch(/checks a simulation declares/i);
+  });
+
+  /**
+   * ═══ THE CAVEAT HAS TO AGREE WITH `needsAttention`, AND ONCE DID NOT ═══
+   *
+   * It read "NOT the assertions a simulation declares for itself" — true when
+   * the list endpoint could not see them, and false from the moment M02 put
+   * `checks` on the contract and `needsAttention` started counting them. The
+   * page then spent two branches contradicting its own number.
+   *
+   * THIS FILE HELPED. The case above asserted the words were "not weakened"
+   * and so pinned a sentence that had already gone false. A test that pins
+   * prose verbatim protects it from correction as effectively as from
+   * regression, which is why the assertion here is on the CLAIM rather than on
+   * the wording: the denial must not come back, whatever words carry it.
+   */
+  it('does not deny counting the checks it counts', async () => {
+    renderList();
+    await screen.findAllByTestId('run-row');
+    const section = screen.getByRole('region', { name: 'Run health on this page' });
+    expect(section.textContent ?? '').not.toMatch(/not the assertions a simulation declares/i);
+  });
+
+  /** The four are independent questions, not a breakdown that sums to the
+   *  page — a run with a failed check and no verdict is in two of them. Said
+   *  on screen rather than left for a reader to reconcile. */
+  it('admits that a run can be counted in more than one tile', async () => {
+    renderList();
+    await screen.findAllByTestId('run-row');
+    const section = screen.getByRole('region', { name: 'Run health on this page' });
+    expect(section.textContent ?? '').toMatch(/counted more than once/i);
   });
 
   it('leaves them as plain prose on a wide viewport', async () => {

@@ -42,7 +42,7 @@ import { countAssertions, describeAssertionRule, firstFailedAssertion } from './
 import { baselineRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
-import { DEFAULT_ROUTE, projectSetupPath } from './paths';
+import { DEFAULT_ROUTE, projectRulesPath } from './paths';
 import { Payload, TableSection, type Slot } from './payload';
 import {
   useLiveFromShell,
@@ -1010,14 +1010,27 @@ function Assertions({
             the text did not say where. An empty state that names its own
             remedy is the difference between a dead end and a step.
             Also: the sentence says rules apply from INGEST, so a reader who
-            follows this link has to know the change affects future runs. */}
+            follows this link has to know the change affects future runs.
+
+            ═══ AND IT LED SOMEWHERE ELSE ENTIRELY (review 09-13 C03) ═══
+
+            This pointed at `projectSetupPath`, which was the right answer when
+            that page carried the rules. M15 split it — rules moved to
+            `projectRulesPath` and `/setup` became "Add results" — and this
+            link was not repointed, so the one remedy this empty state offers
+            opened a page about uploading bundles.
+
+            Nothing failed: the path still resolves, the page still renders,
+            and no test asserted where this link GOES. **When a page is split,
+            grep every caller of the old path for what it MEANT**, not for
+            whether it still compiles. */}
         <EmptyState
           title="No SLA rules were evaluated against this run"
           body="Rules are configured per project, and only rules that existed when the run was ingested are applied to it — adding one affects future runs, not this one."
           action={
             projectSlug === undefined ? undefined : (
-              <Link to={projectSetupPath(projectSlug)} className={linkButtonClasses}>
-                Configure rules for this project
+              <Link to={projectRulesPath(projectSlug)} className={linkButtonClasses}>
+                Configure SLA rules
               </Link>
             )
           }
