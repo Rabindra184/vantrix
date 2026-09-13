@@ -250,11 +250,16 @@ test('a completed run shows every request and group in one table', async ({ page
    * heading that said Overview would say it twice.
    *
    * `Simulation assertions` joined the list with G-05. It is a SEPARATE section
-   * from `Assertions` on purpose and the two must not be collapsed: the first
-   * is this platform's SLA rules, which a project configures and the 200/422
-   * verdict gates on; the second is what the load test itself declared, fixed
-   * at run time and able to express comparisons (`between`, `in`) the SLA
-   * comparator set has no member for.
+   * from `Platform gates` on purpose and the two must not be collapsed: the
+   * first is this platform's SLA rules, which a project configures and the
+   * 200/422 verdict gates on; the second is what the load test itself
+   * declared, fixed at run time and able to express comparisons (`between`,
+   * `in`) the SLA comparator set has no member for.
+   *
+   * BOTH WERE CALLED "ASSERTIONS" UNTIL REVIEW N01, which is the drift that
+   * finding names. Only the platform's moved: `Simulation assertions` keeps
+   * its word because that word is right — the PRD gives "Assertions table" to
+   * G-05, the tool's own feature.
    *
    * It appears here because this run was ingested through the real pipeline, so
    * the plugin decoded the reference simulation's own assertions. A run seeded
@@ -262,7 +267,7 @@ test('a completed run shows every request and group in one table', async ({ page
    * deliberately distinct from `[]`, "the simulation declared none".
    */
   expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
-    'Assertions',
+    'Platform gates',
     'Simulation assertions',
     'Statistics',
   ]);
@@ -765,14 +770,20 @@ test('the run totals come before the assertions, and near the top', async ({ pag
   const totals = page.getByRole('region', { name: 'Run totals' });
   await expect(totals).toBeVisible();
 
-  // ORDER: the numbers precede the platform assertions in the document.
+  /* ORDER: the numbers precede the platform gates in the document.
+
+     THE HEADING TEXT IS LOAD-BEARING HERE AND FAILS LOUDLY, which is why it is
+     safe: `find` returns undefined for a heading that has been renamed, the
+     guard returns null, and `expect(null).toBe(true)` fails with the stale
+     string visible. Contrast the `not.toContain` guard in `run-charts.spec.ts`,
+     which goes vacuously green on the same rename. */
   const totalsFirst = await page.evaluate(() => {
     const t = document.querySelector('section[aria-label="Run totals"]');
     const headings = Array.from(document.querySelectorAll('h2'));
-    const assertions = headings.find((h) => h.textContent?.trim() === 'Assertions');
-    if (!t || !assertions) return null;
-    // 4 === DOCUMENT_POSITION_FOLLOWING: `assertions` comes after `t`.
-    return (t.compareDocumentPosition(assertions) & 4) !== 0;
+    const gates = headings.find((h) => h.textContent?.trim() === 'Platform gates');
+    if (!t || !gates) return null;
+    // 4 === DOCUMENT_POSITION_FOLLOWING: `gates` comes after `t`.
+    return (t.compareDocumentPosition(gates) & 4) !== 0;
   });
   expect(totalsFirst).toBe(true);
 

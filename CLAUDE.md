@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **146 files / 1778 tests**, it
+`nvm use` first, and if a run reports fewer than **146 files / 1781 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,64 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-n01-gates branch (N01, step 2 of 4) added no unit FILE and 1 case to
+`apps/web/test/ToolAssertions.test.tsx`, from a floor of 146 / 1780.
+Integration is UNCHANGED (the files it touches are `.tsx` and `.spec.ts`, and
+`vitest.integration.config.ts` includes neither) and **e2e stays 117** — three
+specs changed inside existing `test(` blocks.
+
+**TWO SYSTEMS JUDGED A RUN AND BOTH WERE CALLED "ASSERTIONS".** The
+organisation's SLA rules and the assertions a simulation declares for ITSELF,
+one `<h2>` apart, on the tab where a reader decides whether a release is safe.
+That is the mixing N01's second sentence names.
+
+**ONLY THE PLATFORM'S MOVED, AND THAT IS THE NON-OBVIOUS HALF.** The instinct
+is to rename the simulation's — "Simulation checks" reads well. It is wrong:
+`PerfPortal_Enterprise_PRD.md:2480` gives "Assertions table — expression,
+expected, actual, status" to G-05, which is the TOOL's own feature, and §13.2 ②
+calls the platform's "a second, clearly separated group". Gatling's assertions
+really are assertions; the platform's had borrowed the word. **When two
+surfaces share a name, ask which one owns it before renaming either.**
+
+And the replacement was already on the page: `RunDecisionBand` has labelled its
+outcome row `Platform gates` since C02. The heading moves onto that anchor
+rather than adding a third noun — an invented "SLA gates" would have been the
+same drift one word further on.
+
+**A NEGATIVE ASSERTION OVER A RENAMEABLE VALUE IS GREEN IN EXACTLY THE CASE IT
+GUARDS.** `run-charts.spec.ts` asserted `expect(headings).not.toContain('Assertions')`
+to prove the Charts tab draws no Overview heading. After this rename it passes
+against a string the product no longer contains — still green, guarding
+nothing, forever. Its sibling in `run-tables.spec.ts` has the opposite shape
+and fails loudly: `headings.find((h) => h.textContent?.trim() === 'Assertions')`
+returns undefined, the guard returns null, and `expect(null).toBe(true)` reports
+the stale string. **Prefer the shape that goes RED on a rename**, and when a
+`not.toContain` is the right assertion anyway, keep a positive beside it.
+
+**BOTH HEADING BRANCHES CARRY THE SAME WORDS.** An empty run renders that `<h2>`
+from one branch of `AssertionEvidence` and a populated run from another;
+renaming one makes the Overview tab's heading outline differ BY RUN, which
+`run-tables.spec.ts` asserts as an exact list — so the e2e fixture's run would
+pass while an unevaluated one silently did not.
+
+**`Status` ON THE SIMULATION TABLE BECAME `Outcome`.** `Status` is this
+product's word for a RUN's execution state — the run list gives it a column,
+the decision band a row. A check has a result, not a state, and the platform
+table one section up has spelled that column `Outcome` all along.
+
+**THE NEW CASE ASSERTS EXCLUSIVITY, NOT TWO STRINGS** — that no single word
+names both systems (`h2s.filter(/assertion/i)` is exactly the simulation's,
+`/gate/i` exactly the platform's). The e2e outline already pins the literal
+list; what this adds is the property that survives the next rename.
+
+**AND THE WHOLE PLAN CAME FROM AN ADVERSARIAL PASS THAT CORRECTED IT TWICE.**
+The first table said "SLA gates" and "Simulation checks"; a verifier reading
+the PRD and the decision band produced both corrections above, plus the vacuous
+`not.toContain`. It also found two defects in the branch BELOW this one after
+that branch's CI had already gone green — see the tiles entry. A second reader
+that is required to name the test it would break is worth more than a careful
+first draft.
 
 The review-n01-tiles branch (N01, step 1 of 4) added no unit FILE and 3 cases
 to `apps/web/test/RunStats.test.tsx`, from a floor of 146 / 1775. Integration is

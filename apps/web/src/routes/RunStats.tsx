@@ -177,7 +177,7 @@ export default function RunStats({
        * that, and it is the kind of thing they need once.
        *
        * NO HEADING. `run-tables.spec.ts` asserts the Overview tab's heading
-       * outline is exactly ['Assertions', 'Simulation assertions',
+       * outline is exactly ['Platform gates', 'Simulation assertions',
        * 'Statistics']; a `<summary>` contributes a group, not a heading, so
        * this cannot break that outline the way an <h2> would. */}
       <details className="group mt-3" data-testid="percentile-method">
