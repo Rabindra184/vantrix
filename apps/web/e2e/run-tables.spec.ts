@@ -505,9 +505,13 @@ test('the column headings are the payload’s own, and name themselves in Chromi
   await expect(table.getByRole('columnheader', { name: '99.9th', exact: true })).toHaveCount(0);
 
   // D-8: the errors table has three columns and no fourth — its own tab now.
+  //
+  // `Share of errors`, not `Percentage` (review 09-13 M15): a bare "Percentage"
+  // needed a paragraph underneath to say percentage OF WHAT, and the column
+  // that needs a footnote to be read is the column that is named wrong.
   await page.goto(runErrorsPath(runId));
   const errorHeaders = errorsTable(page).getByRole('columnheader');
-  await expect(errorHeaders).toHaveText(['Error', 'Count', 'Percentage']);
+  await expect(errorHeaders).toHaveText(['Error', 'Count', 'Share of errors']);
 });
 
 /* ======================================================================== *
