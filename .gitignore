@@ -23,3 +23,21 @@ blob-report/
 # still belongs in the repo — `.claude/skills/running-perfportal-locally` is
 # committed precisely because it is.
 .mcp.json
+
+# On-prem runner and ingest working state. `RUNNER_ARTIFACT_DIR`,
+# `RUNNER_WORK_DIR` and `RUNNER_LOG_DIR` all default to a path under
+# `.perfportal/`, and that default is RELATIVE — so each process resolves it
+# against its own working directory. Run the API and the runner the way this
+# repo's own docs do (`pnpm --filter …`, which starts each app in its own
+# package directory) and you get `apps/api/.perfportal/` and
+# `apps/runner/.perfportal/` as separate trees inside the checkout.
+#
+# It is uploaded jars, extracted bundles and per-job logs: megabytes on the
+# first on-prem run, unbounded after that, and none of it reproducible or
+# shared. No leading slash, so this matches wherever a process happens to
+# start.
+#
+# (The same relative default is why an artifact uploaded through the API is
+# invisible to a runner started from a different directory — point both at one
+# absolute path, or give them a shared volume, as `infra/` does.)
+.perfportal/
