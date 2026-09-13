@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **143 files / 1716 tests**, it
+`nvm use` first, and if a run reports fewer than **143 files / 1723 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,69 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-0913-c02-c04 branch added no unit FILE and 7 cases (4 to
+`Chart.test.tsx`, 3 to `AppShell.test.tsx`), from a floor of 143 / 1716.
+Integration is **133 files / 1681 tests** and e2e stays 113.
+
+**TWO EXPRESSIONS DECIDING ONE THING WILL EVENTUALLY DISAGREE.** The legend is
+withheld from a NAVIGATOR (`!compact && !navigator && drawn.length >= 2`) while
+`grid.bottom` reserved its band on `drawn.length >= 2` alone — so the run
+page's time selector kept 26px of clearance for a legend it never draws.
+Measured in Chromium at 1440x900, before and after:
+
+```
+                          before   after
+y-axis tick labels          7        3
+spacing between them      4-5px    33px      (line height is 14px)
+overlapping pairs           5        0
+plotted path height      a stripe   63px     (canvas is 160px)
+```
+
+`showLegend` is computed once now and both consumers read it. Two supporting
+changes: a navigator names no value axis so its top band has nothing to clear,
+and its axis asks for `splitNumber: 2` — ECharts' default asks for six labels
+and draws them whether or not they fit, which is how six numbers came to
+overprint each other in a 34px plot.
+
+**A `<Link>` TO THE PATH YOU ARE ALREADY ON DOES NOT SCROLL TO ITS FRAGMENT.**
+React Router answers a same-path navigation with `pushState`, and a browser
+scrolls to a fragment only on a real hash navigation or a document load. The
+decision band's "See the failed simulation check" therefore set
+`#simulation-assertions` and moved nothing — measured at scrollY 0 with the
+target 1463px below. `AppShell` owns scroll behaviour and owns this now: it
+reveals the target, MOVES FOCUS to it (scrolling without refocusing leaves a
+keyboard user reading the link they just followed), and retries across
+animation frames because the same URL opened FRESH is worse — the target
+belongs to a lazy route child behind a query, so at first paint there is
+nothing for anyone to scroll to.
+
+The other half is `scroll-margin-top`, and it is CSS on purpose: the run page
+has two sticky bands (header at `top: 0`, tabs at `top: var(--header-height)`)
+so a fragment flush to the viewport top lands under both — and CSS is what the
+BROWSER honours on the fresh-load case this code never sees.
+
+**`pnpm typecheck` CAUGHT WHAT A GREEN SUITE DID NOT.** The new `Chart` cases
+passed 33/33 while omitting a required `brush.value`; vitest does not
+typecheck, so the gate's FIRST command is the only thing that sees a test
+building a prop wrong. Worth remembering whenever a new case constructs a
+component's props by hand.
+
+**AND THE LOAD GATE NEEDS THE 5-MINUTE AVERAGE, NOT JUST THE 1-MINUTE.** This
+branch waited for the 1-minute figure to reach 10.8 and started anyway while
+the 5-minute was 21.9. The run took **986s against a usual ~540s** and failed
+one test with a **503 after 40.5 seconds** — a single request the API could not
+serve, which is what resource exhaustion looks like from inside a suite. The
+1-minute average decays fastest and is therefore the one that most easily says
+"settled" over a machine still working through a backlog. Gated on BOTH
+(1 < 8 and 5 < 10) it settled in 210s and the same suite passed 1681/1681.
+
+**THE SIGNATURE IS WORTH RECOGNISING**, because it is now three sessions of the
+same shape: ONE test fails, in a file `git diff origin/main --name-only` says
+the branch cannot reach, passing alone and on a re-run. The tells that separate
+it from a real defect are the DURATION (a sub-second test taking tens of
+seconds) and the ERROR CLASS (503, connection, deadlock — not an assertion
+about a value).
 
 The review-0913-criticals branch added ONE unit file —
 `apps/web/test/TableFrame.test.tsx` (5) — and 2 cases to
