@@ -173,11 +173,18 @@ test('a test’s page carries the gates that judge it, and authors new ones agai
 
   await page.getByRole('button', { name: 'Add rule' }).click();
 
-  // The row appears, and says the rule belongs to THIS test rather than to the
-  // project — which is the whole difference this feature adds.
-  const appliesTo = page.getByTestId('rule-applies-to');
-  await expect(appliesTo).toHaveCount(1);
-  await expect(appliesTo).toHaveText('This test');
+  /* The rule appears under THIS TEST's own heading rather than the project's —
+     which is the whole difference this feature adds.
+
+     It used to be a cell reading "This test" in an Applies-to column beside
+     one reading "Every test (project-wide)". Review M17 split the two into
+     separate tables, because the rows are not equally safe to act on: deleting
+     an inherited rule changes every OTHER test in the project, and a row that
+     looks identical to the one above it does not carry that warning. Inside a
+     group the column would be one word repeated, so it went. */
+  const own = page.getByRole('region', { name: 'Test SLA rules' });
+  await expect(own.getByRole('row')).toHaveCount(2); // the header, and one rule
+  await expect(page.getByTestId('rule-applies-to')).toHaveCount(0);
 
   // And the project's own SLA rules page sees it too, named by the test it
   // judges — the same row, read from the other end of the union.

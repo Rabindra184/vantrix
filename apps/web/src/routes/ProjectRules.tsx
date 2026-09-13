@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
   CreateSlaRuleRequestSchema,
@@ -7,10 +7,12 @@ import {
   SLA_RULE_FAMILIES,
   SLA_RULE_SCOPES,
   slaMetricUnit,
+  describeSlaRule,
   type Assertion,
   type CreateSlaRuleRequest,
   type SlaRule,
   type SlaRuleListResponse,
+  type SlaRuleScope,
   percentToFraction,
 } from '@perfportal/contracts';
 import Button from '../components/Button';
@@ -26,6 +28,8 @@ import {
   updateProjectRule,
 } from '../api/rules';
 import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
+import { fetchRuns, runsQueryKey } from '../api/runs';
+import { statsQuery } from '../api/metrics';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { describeAssertionRule } from './assertions';
 
@@ -63,6 +67,200 @@ const COMPARATOR_LABELS: Record<(typeof SLA_RULE_COMPARATORS)[number], string> =
   lte: 'at most (≤)',
   gte: 'at least (≥)',
 };
+
+/**
+ * WHAT EACH FIELD IS CALLED ON SCREEN, AND WHAT TO DO ABOUT IT.
+ *
+ * Keyed by the request's own property names because that is what a Zod issue
+ * path carries — which is exactly the string the reader must never see. The
+ * label is the form's own wording, so the message points at a control they can
+ * find; the help is the action, in the vocabulary of this form rather than of
+ * the schema.
+ *
+ * A field missing from this map degrades to "This rule: <the schema's
+ * message>", which is still better than a path and is the honest answer for a
+ * field nobody has written guidance for yet.
+ */
+const FIELD_GUIDANCE: Record<string, { label: string; help: string }> = {
+  name: {
+    label: 'Name',
+    help: 'A short label for this gate. Leave it empty and the rule is named by what it measures.',
+  },
+  testSlug: {
+    label: 'Applies to',
+    help: 'Pick one of this project’s tests, or leave it on every test.',
+  },
+  scope: {
+    label: 'Scope',
+    help: 'Whole run judges the run’s own totals; the others judge one named request, group or scenario.',
+  },
+  targetName: {
+    label: 'Target',
+    help: 'Name the request, group or scenario this rule judges — or set the scope to Whole run, which needs no target.',
+  },
+  family: {
+    label: 'Family',
+    help: 'Which family of timings to read. Response time is the usual one; the group families apply to group scopes.',
+  },
+  metric: {
+    label: 'Metric',
+    help: 'A percentile such as p95 or p99.9 (strictly between 0 and 100), or one of the named measures in the list.',
+  },
+  comparator: { label: 'Must be', help: 'Whether the measured value has to stay below or above the threshold.' },
+  threshold: {
+    label: 'Threshold',
+    help: 'A number, in the unit shown beside the field. Error rate is authored as a percentage.',
+  },
+};
+
+/* ======================================================================== *
+ * THE TARGET, PICKED FROM WHAT A RUN ACTUALLY RECORDED (review M17)
+ * ======================================================================== */
+
+/**
+ * ═══ FREE TEXT AGAINST A SET THIS PRODUCT ALREADY KNOWS ═══
+ *
+ * The target was an `<input>` with a `GET /catalog` placeholder, matched
+ * against "the name this run recorded" — a name the author had to remember
+ * exactly, from a table on another page, while this product had a list of them
+ * the whole time. A typo is not refused, because a target no run has reported
+ * yet is LEGAL and useful: the rule reads "not checked" until one does. So
+ * validation cannot help here and only the control can, exactly as with the
+ * test picker on the launch form.
+ *
+ * ═══ WHERE THE NAMES COME FROM ═══
+ *
+ * The most recent COMPLETE run in this scope — the project's, or the test's
+ * when this panel is on a test's page — and its statistics rows, filtered to
+ * the scope the rule is being written for. Two requests, made only when the
+ * scope actually needs a target, and both already cached by the run page a
+ * reader has usually just come from.
+ *
+ * It is deliberately a suggestion and not a constraint. "Something else" keeps
+ * the typed field, because a rule written BEFORE the endpoint it guards exists
+ * is a legitimate thing to do and refusing it would be the schema's mistake
+ * made in the UI instead.
+ */
+const CUSTOM_TARGET = '__custom__';
+
+function TargetField({
+  slug,
+  testSlug,
+  scope,
+  value,
+  onChange,
+}: {
+  readonly slug: string;
+  readonly testSlug: string | null;
+  readonly scope: Exclude<SlaRuleScope, 'run'>;
+  readonly value: string;
+  readonly onChange: (next: string) => void;
+}) {
+  // The newest complete run tells us what this project records. `status`
+  // complete only: a pending or failed run has no statistics rows to read.
+  const runs = useQuery({
+    queryKey: runsQueryKey(null, slug, { status: 'complete' }, testSlug),
+    queryFn: () => fetchRuns(null, slug, { status: 'complete' }, testSlug),
+  });
+  const latestRunId = runs.data?.items[0]?.id ?? null;
+  const stats = useQuery({ ...statsQuery(latestRunId ?? ''), enabled: latestRunId !== null });
+
+  const recorded = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of stats.data?.stats ?? []) {
+      if (row.scope === scope && row.name !== '') names.add(row.name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [stats.data, scope]);
+
+  /* TYPING MODE IS STICKY ONCE CHOSEN, and it also starts true whenever the
+     current value is not one of the recorded names — which is what happens
+     when the reader changes the SCOPE after picking, since a request name is
+     not a group name. Without that the select would silently show its
+     placeholder over a value the form is still holding. */
+  const [custom, setCustom] = useState(false);
+  const typing = custom || (value !== '' && !recorded.includes(value));
+
+  const label = scope === 'request' ? 'request' : scope === 'group' ? 'group' : 'scenario';
+
+  // NO LIST TO OFFER — no complete run yet, or the reads failed. The field
+  // degrades to what it was, with a line saying why rather than an empty
+  // select that looks like the project has no requests.
+  if (runs.isError || stats.isError || (!runs.isPending && latestRunId === null)) {
+    return (
+      <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+        Target
+        <input
+          className={INPUT}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="GET /catalog"
+        />
+        <span className="text-[11px] font-normal text-muted">
+          {runs.isError || stats.isError
+            ? `The recorded ${label} names could not be loaded, so type the name this run reports.`
+            : `No completed run here yet, so there are no recorded ${label} names to choose from. Type the name a run will report.`}
+        </span>
+      </label>
+    );
+  }
+
+  return (
+    <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+      Target
+      {typing ? (
+        <>
+          <input
+            className={INPUT}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="GET /catalog"
+            autoFocus={custom}
+          />
+          {recorded.length > 0 && (
+            <button
+              type="button"
+              className="w-fit text-[11px] font-normal text-accent hover:underline hover:underline-offset-2"
+              onClick={() => {
+                setCustom(false);
+                onChange('');
+              }}
+            >
+              Choose from the {recorded.length} recorded {label}
+              {recorded.length === 1 ? '' : 's'} instead
+            </button>
+          )}
+        </>
+      ) : (
+        <select
+          className={INPUT}
+          value={value}
+          onChange={(e) => {
+            if (e.target.value === CUSTOM_TARGET) {
+              setCustom(true);
+              onChange('');
+              return;
+            }
+            onChange(e.target.value);
+          }}
+        >
+          <option value="">Choose a recorded {label}…</option>
+          {recorded.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+          <option value={CUSTOM_TARGET}>Something else…</option>
+        </select>
+      )}
+      <span className="text-[11px] font-normal text-muted">
+        {stats.isPending && latestRunId !== null
+          ? `Reading the ${label} names from the newest completed run…`
+          : `Matched against the name a run records. A target no run has reported yet is allowed — its rule reads “not checked” until one does.`}
+      </span>
+    </label>
+  );
+}
 
 /** The scalars, plus the percentiles a reader reaches for most often. */
 const METRIC_SUGGESTIONS = ['p50', 'p75', 'p95', 'p99', ...SLA_METRIC_SCALARS];
@@ -142,7 +340,15 @@ export default function ProjectRules({
   const [metric, setMetric] = useState('p95');
   const [comparator, setComparator] = useState<(typeof SLA_RULE_COMPARATORS)[number]>('lte');
   const [threshold, setThreshold] = useState('800');
-  const [formError, setFormError] = useState<string | null>(null);
+  /* ═══ A FIELD AND A SENTENCE, NEVER A SCHEMA PATH (review M17) ═══
+   *
+   * This was one string built as `${issue.path.join('.')}: ${issue.message}`,
+   * so a reader met `targetName: Required` — a property name from a Zod
+   * object, which is the data model leaking into the one place somebody is
+   * being asked to fix something. The `title` still carries the schema's own
+   * reason, which is often specific and worth keeping; `help` is what the
+   * reader should DO, named in the form's own vocabulary. */
+  const [formError, setFormError] = useState<{ title: string; help?: string } | null>(null);
 
   // Both derived, never stored: a unit that could disagree with the metric box
   // beside it would be worse than no unit at all.
@@ -159,6 +365,24 @@ export default function ProjectRules({
    * Nothing about the contract, the wire or the evaluator changes, and rules
    * authored before this read back exactly as they did. */
   const authorUnit = storedUnit === 'fraction' ? '%' : storedUnit;
+
+  /* THE SENTENCE, or null while there is nothing true to say. `null` for an
+     unresolvable metric as well as an unparseable threshold: `describeSlaRule`
+     would happily render "p95th must be at most 800" for a metric the engine
+     refuses, which is a preview that lies in the one case the author most
+     needs to be told. */
+  const thresholdNumber = threshold.trim() === '' ? Number.NaN : Number(threshold);
+  const preview =
+    !Number.isFinite(thresholdNumber) || slaMetricUnit(metric.trim()) === null
+      ? null
+      : describeSlaRule({
+          scope,
+          targetName: scope === 'run' ? null : targetName.trim() === '' ? null : targetName.trim(),
+          metric: metric.trim(),
+          comparator,
+          threshold:
+            storedUnit === 'fraction' ? percentToFraction(thresholdNumber) : thresholdNumber,
+        });
   /* The old warning caught a FRACTION above 1 — the "typed 1, meant 1%" case
      that this field's own unit now prevents. What is still worth catching is a
      percentage above 100: `error_rate` cannot exceed 1, so ≤ 150% is a gate no
@@ -225,7 +449,10 @@ export default function ProjectRules({
      * pins that alongside the two refusals, so a fix that simply rejected
      * falsy thresholds would fail there. */
     if (threshold.trim() === '') {
-      setFormError('threshold: enter a number. An empty threshold is not zero.');
+      setFormError({
+        title: 'Threshold: enter a number.',
+        help: 'An empty box is not zero — leaving it blank would author a gate of ≤ 0, which every run breaches.',
+      });
       return;
     }
 
@@ -249,11 +476,19 @@ export default function ProjectRules({
     });
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
-      setFormError(
-        issue === undefined
-          ? 'The rule is not valid.'
-          : `${issue.path.join('.') || 'rule'}: ${issue.message}`,
-      );
+      if (issue === undefined) {
+        setFormError({ title: 'The rule is not valid.' });
+        return;
+      }
+      /* The FIRST path segment, because every field on this form is a
+         top-level key of the request — and `String()` because a Zod path
+         segment can be a number for an array index, which none of these are
+         but which would otherwise read as `[object Object]` if one ever is. */
+      const field = FIELD_GUIDANCE[String(issue.path[0] ?? '')];
+      setFormError({
+        title: `${field?.label ?? 'This rule'}: ${issue.message}`,
+        help: field?.help,
+      });
       return;
     }
     setFormError(null);
@@ -351,19 +586,13 @@ export default function ProjectRules({
               the run's own aggregate row and has nothing to target, so the
               field would be a box that must stay empty. */}
           {scope !== 'run' && (
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-              Target name
-              <input
-                className={INPUT}
-                value={targetName}
-                onChange={(e) => setTargetName(e.target.value)}
-                placeholder="GET /catalog"
-              />
-              <span className="text-[11px] font-normal text-muted">
-                Matched against the name this run recorded. A target no run has yet reported is
-                allowed — its rule reads “not checked” until one does.
-              </span>
-            </label>
+            <TargetField
+              slug={slug}
+              testSlug={testSlug}
+              scope={scope}
+              value={targetName}
+              onChange={setTargetName}
+            />
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -456,9 +685,12 @@ export default function ProjectRules({
           )}
 
           {formError !== null && (
-            <p role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px]">
-              {formError}
-            </p>
+            <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px]">
+              <p className="text-primary">{formError.title}</p>
+              {formError.help !== undefined && (
+                <p className="mt-1 leading-snug text-muted">{formError.help}</p>
+              )}
+            </div>
           )}
 
           {createMutation.isError && (
@@ -473,6 +705,45 @@ export default function ProjectRules({
             </div>
           )}
 
+          {/* ═══ THE RULE AS A SENTENCE (review M17) ═══
+           *
+           * Seven controls, each individually reasonable, and none of them
+           * states what the reader has actually built. Two go wrong in
+           * silence: a metric whose unit was misjudged — the fraction trap
+           * this form already warns about — and a comparator pointing the
+           * wrong way, since `throughput at most 50/s` is a legal gate that
+           * fails a run for being FAST. A sentence is the only rendering in
+           * which both are obvious, because it reads as a claim that is
+           * either true or absurd.
+           *
+           * Built from the value that would be SENT, not the one typed: for a
+           * fraction metric the form takes a percentage and stores a
+           * fraction, so a preview off the raw input would agree with the box
+           * above it and disagree with the row it is about to create. */}
+          <div
+            data-testid="rule-preview"
+            className="rounded-lg border border-default bg-sunken p-3 text-[13px]"
+          >
+            {preview === null ? (
+              <p className="text-muted">
+                Fill in the metric and the threshold and this will say, in words, what the rule
+                gates.
+              </p>
+            ) : (
+              <p className="text-primary">{preview}</p>
+            )}
+            {/* WHEN IT STARTS JUDGING, which is the question an author asks
+                straight after "did that save". A run is judged by the rules
+                that existed when it was finalized, and a run already streaming
+                keeps the set it was claimed with — `FoldState.rules` is loaded
+                once per run on purpose, so that a rule edited mid-run cannot
+                make a breach appear with no change in the data. */}
+            <p className="mt-2 text-[12px] leading-snug text-muted">
+              A new rule judges runs finished after it is added. Runs already complete keep their
+              verdicts, and a run streaming right now keeps the rules it started under.
+            </p>
+          </div>
+
           <div>
             <Button type="submit" variant="primary" loading={createMutation.isPending}>
               Add rule
@@ -481,7 +752,7 @@ export default function ProjectRules({
         </form>
       </Card>
 
-      <RulesTable
+      <RulesPanel
         rules={rules}
         scopedToTest={scopedToTest}
         confirming={confirming}
@@ -497,7 +768,21 @@ export default function ProjectRules({
   );
 }
 
-function RulesTable({
+/**
+ * ═══ INHERITED RULES ARE A SEPARATE TABLE NOW (review M17) ═══
+ *
+ * On a test's page this listed the union — the test's own rules and the
+ * project-wide ones it inherits — distinguished only by the words in one
+ * column. The review asks for them shown separately, and the reason is that
+ * they are not equally editable in the reader's mind: deleting an inherited
+ * rule changes every OTHER test in the project, and a row that looks like the
+ * one above it does not carry that warning.
+ *
+ * Split, the Applies-to column becomes a constant within each table and goes —
+ * the same argument `RunList` makes for dropping the Project column on a
+ * project's own list. The heading carries what the column used to say.
+ */
+function RulesPanel({
   rules,
   scopedToTest,
   confirming,
@@ -547,6 +832,13 @@ function RulesTable({
   }
 
   const problem = deleteError instanceof ProblemError ? deleteError : null;
+  const all = rules.data.rules;
+  /* `test == null` is a project-wide rule. Nullable AND optional, and both
+     read the same: null is a genuine project rule, undefined is a response
+     from an API pod that predates the field, and a reader can act on neither
+     difference. */
+  const own = all.filter((rule) => rule.test != null);
+  const inherited = all.filter((rule) => rule.test == null);
 
   return (
     <div className="flex flex-col gap-3">
@@ -564,23 +856,105 @@ function RulesTable({
         </div>
       )}
 
-      <TableFrame
-        caption="Every SLA rule in this project, newest first. A disabled rule stays here but is not evaluated."
-        label="SLA rules"
-      >
+      {scopedToTest ? (
+        <>
+          <RulesTable
+            items={own}
+            caption={`Rules written for this test, newest first. They judge its runs and no other test’s. A disabled rule stays here but is not evaluated.`}
+            label="Test SLA rules"
+            emptyNote="No rule has been written for this test yet — it is judged by the project-wide rules below."
+            confirming={confirming}
+            onConfirming={onConfirming}
+            togglingId={togglingId}
+            deletingId={deletingId}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
+          <RulesTable
+            items={inherited}
+            caption="Project-wide rules, which judge every test here including this one. Deleting one changes every other test in the project."
+            label="Inherited SLA rules"
+            emptyNote="This project has no project-wide rules, so nothing is inherited."
+            confirming={confirming}
+            onConfirming={onConfirming}
+            togglingId={togglingId}
+            deletingId={deletingId}
+            onToggle={onToggle}
+            onDelete={onDelete}
+          />
+        </>
+      ) : (
+        <RulesTable
+          items={all}
+          caption="Every SLA rule in this project, newest first. A disabled rule stays here but is not evaluated."
+          label="SLA rules"
+          showAppliesTo
+          confirming={confirming}
+          onConfirming={onConfirming}
+          togglingId={togglingId}
+          deletingId={deletingId}
+          onToggle={onToggle}
+          onDelete={onDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+/** One table of rules. See `RulesPanel` for why there can be two. */
+function RulesTable({
+  items,
+  caption,
+  label,
+  emptyNote,
+  showAppliesTo = false,
+  confirming,
+  onConfirming,
+  togglingId,
+  deletingId,
+  onToggle,
+  onDelete,
+}: {
+  readonly items: readonly SlaRule[];
+  readonly caption: string;
+  readonly label: string;
+  /** Shown instead of the table when this group is empty. Splitting one list
+   *  in two creates a state neither half had: a group with no rows, which is
+   *  information rather than an error. */
+  readonly emptyNote?: string;
+  /** Only on the project-wide list, where the column varies. Inside a group it
+   *  would be the same word on every row. */
+  readonly showAppliesTo?: boolean;
+  readonly confirming: string | null;
+  readonly onConfirming: (id: string | null) => void;
+  readonly togglingId?: string;
+  readonly deletingId?: string;
+  readonly onToggle: (ruleId: string, enabled: boolean) => void;
+  readonly onDelete: (ruleId: string) => void;
+}) {
+  if (items.length === 0) {
+    return emptyNote === undefined ? null : (
+      <p className="rounded-lg border border-default bg-sunken p-3 text-[13px] leading-relaxed text-muted">
+        {emptyNote}
+      </p>
+    );
+  }
+
+  return (
+      <TableFrame caption={caption} label={label}>
         <table className={TABLE}>
-          <caption className="sr-only">SLA rules for this project</caption>
+          <caption className="sr-only">{caption}</caption>
           <thead className={THEAD}>
             <tr>
               <th className={TH}>Name</th>
-              <th className={TH}>Applies to</th>
+              {showAppliesTo && <th className={TH}>Applies to</th>}
               <th className={TH}>Rule</th>
               <th className={TH}>Status</th>
               <th className={TH}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {rules.data.rules.map((rule) => (
+            {items.map((rule) => (
               <tr key={rule.id} className={ROW}>
                 {/* An unnamed rule falls back to an em dash rather than to its
                     own expression, which the next column already carries. */}
@@ -591,17 +965,15 @@ function RulesTable({
                     render the same, because a reader can act on neither
                     difference and "every test" is the truthful reading of an
                     absent one. */}
-                <td data-testid="rule-applies-to" className={TD}>
-                  {rule.test == null ? (
-                    <span className="text-muted">
-                      {scopedToTest ? 'Every test (project-wide)' : 'Every test'}
-                    </span>
-                  ) : scopedToTest ? (
-                    'This test'
-                  ) : (
-                    rule.test.name
-                  )}
-                </td>
+                {showAppliesTo && (
+                  <td data-testid="rule-applies-to" className={TD}>
+                    {rule.test == null ? (
+                      <span className="text-muted">Every test</span>
+                    ) : (
+                      rule.test.name
+                    )}
+                  </td>
+                )}
                 {/* The SAME describer the run page and the evaluator's own
                     message use, so a rule reads identically everywhere it
                     appears. */}
@@ -651,7 +1023,6 @@ function RulesTable({
           </tbody>
         </table>
       </TableFrame>
-    </div>
   );
 }
 

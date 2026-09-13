@@ -8,6 +8,8 @@ import {
   SlaRuleSchema,
   UpdateSlaRuleRequestSchema,
   isResolvableSlaMetric,
+  slaMetricLabel,
+  describeSlaRule,
   slaMetricUnit,
   slaThresholdWarning,
   SLA_METRIC_UNITS,
@@ -401,5 +403,110 @@ describe('SLA threshold units', () => {
   it('passes a non-finite value through rather than inventing one', () => {
     expect(Number.isNaN(fractionToPercent(Number.NaN))).toBe(true);
     expect(Number.isNaN(percentToFraction(Number.NaN))).toBe(true);
+  });
+});
+
+/* ======================================================================== *
+ * READING A RULE BACK IN WORDS (review M17)
+ * ======================================================================== */
+
+describe('slaMetricLabel', () => {
+  /**
+   * `error_rate` and `throughput_rps` are COLUMN NAMES, and the review's
+   * objection to the authoring form was exactly that it exposed them. The
+   * labels live here rather than in the form for the reason `slaMetricUnit`
+   * gives one function up: a fact about a metric that code can read does not
+   * drift, and a sentence somebody has to remember does.
+   */
+  it('names the scalars the way a reader says them', () => {
+    expect(slaMetricLabel('error_rate')).toBe('error rate');
+    expect(slaMetricLabel('throughput_rps')).toBe('throughput');
+    expect(slaMetricLabel('stddev')).toBe('response time spread');
+  });
+
+  /**
+   * DERIVED, NOT LISTED. The evaluator resolves any percentile strictly
+   * between 0 and 100, so a closed map would fall back to the raw key for the
+   * p99.95 somebody legitimately configured — the same argument the form's
+   * `<datalist>` makes against being a `<select>`.
+   */
+  it('derives a percentile label rather than looking one up', () => {
+    expect(slaMetricLabel('p50')).toBe('50th percentile response time');
+    expect(slaMetricLabel('p99.9')).toBe('99.9th percentile response time');
+    expect(slaMetricLabel('p1')).toBe('1st percentile response time');
+    expect(slaMetricLabel('p2')).toBe('2nd percentile response time');
+    expect(slaMetricLabel('p13')).toBe('13th percentile response time');
+  });
+
+  /** A metric the engine would refuse gets NO label. Dressing up `p95th` would
+   *  make the preview read as valid in the one case the author needs telling. */
+  it('returns an unresolvable metric unchanged', () => {
+    expect(slaMetricLabel('p95th')).toBe('p95th');
+    expect(slaMetricLabel('p100')).toBe('p100');
+    expect(slaMetricLabel('nonsense')).toBe('nonsense');
+  });
+});
+
+describe('describeSlaRule', () => {
+  it('names the target, the measure, the direction and the unit', () => {
+    expect(
+      describeSlaRule({
+        scope: 'request',
+        targetName: 'Search',
+        metric: 'p95',
+        comparator: 'lte',
+        threshold: 800,
+      }),
+    ).toBe('Request “Search”: 95th percentile response time must be at most 800 ms.');
+  });
+
+  /**
+   * THE COMPARATOR IS ONE OF THE TWO THINGS THAT GO WRONG IN SILENCE, and a
+   * sentence is where it stops being silent: `throughput at least 50/s` reads
+   * as a floor, which is what it is, while `at most` over the same numbers
+   * reads as a gate that fails a run for being FAST.
+   */
+  it('reads a floor as a floor', () => {
+    expect(
+      describeSlaRule({
+        scope: 'run',
+        targetName: null,
+        metric: 'throughput_rps',
+        comparator: 'gte',
+        threshold: 50,
+      }),
+    ).toBe('The whole run: throughput must be at least 50/s.');
+  });
+
+  /**
+   * AND THE UNIT IS THE OTHER. The stored value is a fraction and every read
+   * surface shows a percentage; this takes the STORED value and renders it the
+   * way the rules table does, so a preview cannot agree with the form and
+   * disagree with the row it creates.
+   */
+  it('renders a stored fraction as the percentage every other surface shows', () => {
+    expect(
+      describeSlaRule({
+        scope: 'run',
+        targetName: null,
+        metric: 'error_rate',
+        comparator: 'lte',
+        threshold: 0.01,
+      }),
+    ).toBe('The whole run: error rate must be at most 1%.');
+  });
+
+  /** A scoped rule with no target yet judges every one of them — which is what
+   *  the evaluator does, and is worth saying rather than leaving blank. */
+  it('says “every” for a scoped rule that names nothing', () => {
+    expect(
+      describeSlaRule({
+        scope: 'group',
+        targetName: '   ',
+        metric: 'mean',
+        comparator: 'lte',
+        threshold: 200,
+      }),
+    ).toBe('Every group: mean response time must be at most 200 ms.');
   });
 });
