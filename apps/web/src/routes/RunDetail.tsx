@@ -1308,24 +1308,33 @@ function ToolAssertions({
    *
    * ═══ THE FAMILY FILTER IS PART OF THE MIRROR, NOT A TIDY-UP ═══
    *
-   * `response_time` is the only family the evaluator reads. Its `byKey` also
-   * holds `group <name>` entries, and — measured against the reference payload
-   * — nothing ever lands in them: the engine files a group's timings under
-   * `group_cumulated` and `group_duration` and never under `response_time`
-   * (`engine.ts`), so a Gatling assertion naming a GROUP resolves to no row
-   * and reports `not_applicable`. Linking it to `/groups/<name>`, which is a
-   * page with real data on it, would put a working link on a row whose own
-   * status says this run has no data for that name. The group arm below is
-   * kept so this stays a faithful mirror of `rowFor` rather than a second
-   * opinion about it, and it is the evaluator that decides whether it fires.
+   * A request and the run live in `response_time`; a GROUP has no row in that
+   * family at all, because `engine.ts` files a group's timings under
+   * `group_cumulated` and `group_duration`. `rowFor` reads BOTH — one family
+   * per scope — and so does this.
+   *
+   * IT READ ONE FAMILY UNTIL THE EVALUATOR DID TOO. While the evaluator
+   * filtered to `response_time` alone, a group-scoped assertion could never
+   * resolve and always reported `not_applicable`, so linking it to
+   * `/groups/<name>` would have put a working link on a row whose own status
+   * said this run had no data for that name. Both moved together, which is the
+   * only arrangement in which the link and the verdict cannot disagree — see
+   * `evaluateToolAssertions`, whose comment carries the measurements.
    */
   const recorded = useMemo(() => {
     const byName = new Map<string, 'requests' | 'groups'>();
     for (const row of stats ?? []) {
-      if (row.family !== 'response_time') continue;
-      // REQUEST WINS, in the same order `rowFor` tries them.
-      if (row.scope === 'request') byName.set(row.name, 'requests');
-      else if (row.scope === 'group' && !byName.has(row.name)) byName.set(row.name, 'groups');
+      // REQUEST WINS, in the same order `rowFor` tries them: a name that is
+      // both resolves to the request, so the link has to go there too.
+      if (row.scope === 'request' && row.family === 'response_time') {
+        byName.set(row.name, 'requests');
+      } else if (
+        row.scope === 'group' &&
+        row.family === 'group_cumulated' &&
+        !byName.has(row.name)
+      ) {
+        byName.set(row.name, 'groups');
+      }
     }
     return byName;
   }, [stats]);

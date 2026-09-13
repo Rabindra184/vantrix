@@ -32,7 +32,32 @@ reference-report/    outputs — what the matrix was verified against
   index.html               global page
   req_*.html   (7)         request detail pages
   group_*.html (3)         group detail pages
+group-assertions/    a second real run, for assertions that name a GROUP
+  simulation.log           BINARY, header carries the group assertions
+  GroupAssertions.kt       this simulation plus eight probe assertions
+  gatling-report-assertions.txt   what Gatling printed, verbatim
 ```
+
+### Why `group-assertions/` exists as its own run
+
+Neither fixture above can exercise a group-scoped assertion. `assertion-corpus/`
+declares no group at all — its only non-request path is `details("A","B")`,
+which names nothing on purpose — and `reference-report/` has three groups but
+asserts only on `details("Search")`, a request. So the evaluator's group branch
+had never been executed by anything, and a Gatling assertion naming a group
+reported `not applicable` on every run.
+
+This run answers the questions that needed the tool rather than an argument:
+Gatling DOES resolve `details(<group>)` (`actual : 193.0`, not "Could not find
+stats matching assertion path"); it reads a group's **cumulated** response time,
+not its duration (the group page reports Max 193, matching GR-01 and not GR-02);
+count targets and nested paths resolve too; and `forAll()` expands over requests
+ONLY — 7 requests and 3 groups in, exactly 7 rows out, which the corpus could
+never have shown, having one request and no groups.
+
+`gatling-report-assertions.txt` is kept beside the log because G-05's tolerance
+is exact WORDING: it is the tool's own rendering, and
+`packages/statistics/test/group-assertions.test.ts` compares against it.
 
 Gatling's bundled `js/` and `style/` assets (Highcharts, Bootstrap, jQuery) are **excluded** — third-party minified vendor code, not needed for parity verification, and regenerated on every run.
 

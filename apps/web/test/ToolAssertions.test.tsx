@@ -273,6 +273,28 @@ describe('ToolAssertions — the target leads somewhere', () => {
   });
 
   /**
+   * ═══ A GROUP TARGET LINKS TO ITS GROUP PAGE ═══
+   *
+   * The evaluator resolves a `details` path against requests first and then
+   * groups, reading a group from `group_cumulated` — the family the engine
+   * actually files it under. This mirror has to agree, or the link and the
+   * verdict beside it disagree about whether the run has data for that name.
+   *
+   * `Cart` is a GROUP in the reference payload (`group_cumulated`), and is
+   * deliberately not also a request, so the section in the href is the whole
+   * assertion.
+   */
+  it('links a group target to its group analysis, not to a request', async () => {
+    renderOverview([details(['Cart'], 'passed'), details(['Search'], 'passed')]);
+    const table = await tableWithLinks('Search');
+
+    expect(within(table).getByRole('link', { name: 'Cart' })).toHaveAttribute(
+      'href',
+      `/runs/${RUN_ID}/groups/Cart`,
+    );
+  });
+
+  /**
    * A `not_applicable` row names something this run has no data for — that is
    * what the outcome MEANS. Linking it would send the reader to a page whose
    * only content is that the request was not found: the same dead end, one
