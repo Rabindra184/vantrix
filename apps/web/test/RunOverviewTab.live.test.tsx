@@ -205,4 +205,36 @@ describe('RunOverviewTab — live', () => {
     expect(urls.some((u) => u.includes('/stats'))).toBe(false);
     expect(urls.some((u) => u.includes('/series'))).toBe(false);
   });
+
+  /**
+   * ═══ THE LIVE ROW IS A TWIN, AND TWINS DRIFT — review N01 ═══
+   *
+   * `LiveSummary` shows the same six quantities as `RunStats` for a run that
+   * is still going. N01's vocabulary pass renamed the terminal row first and
+   * left this one saying "871 OK, 24 KO" — so the live and finished views of
+   * ONE run disagreed about what its own numbers are called, for the minutes
+   * that matter most. Caught by an adversarial read of the branch, not by any
+   * test: every case here reaches these tiles by `data-testid`, which is
+   * exactly what makes a label change invisible to them.
+   *
+   * Asserted as the CLAIM — this row speaks the product's words, not the
+   * tool's — so the sentence stays rewritable while the vocabulary does not
+   * regress. `RunStats.test.tsx` carries the identical case for the terminal
+   * row; either one failing alone is the twins drifting apart again.
+   */
+  it('speaks the same vocabulary as the finished run’s totals', () => {
+    renderOverview({ live: liveWith({ count: 1200, errorRate: 0.02, maxUsers: 8 }) });
+    const section = document.querySelector('section[aria-label="Run totals so far"]')!;
+    const text = section.textContent ?? '';
+
+    expect(text).toMatch(/successful/i);
+    expect(text).toMatch(/failed/i);
+    // As WORDS — Gatling's spellings, which no parity requirement binds here.
+    expect(text).not.toMatch(/\bOK\b/);
+    expect(text).not.toMatch(/\bKO\b/);
+    // And the percentiles are named the way a gate names them.
+    const labels = [...section.querySelectorAll('dt')].map((d) => (d.textContent ?? '').trim());
+    expect(labels).toContain('p95');
+    expect(labels).toContain('p99');
+  });
 });

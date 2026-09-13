@@ -71,15 +71,22 @@ export default function RunStats({
           only goes to six when there is room for it. */}
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile
-          label="Total Requests"
+          label="Requests"
           value={formatCount(run.count)}
           tone={slaTone(assertions, 'count')}
-          hint={`${formatCount(run.okCount)} OK, ${formatCount(run.koCount)} KO`}
+          /* "successful / failed", not "OK / KO" — review N01. Those two are
+             Gatling's words, and nothing in this repo requires them: the PRD
+             binds QUANTITIES (count, ok/ko count, % KO, count/second…) and
+             both parity suites compare only numbers, never a label. The
+             statistics table keeps them where a reader may be diffing this
+             against Gatling's own report side by side; a totals tile is not
+             that surface. */
+          hint={`${formatCount(run.okCount)} successful, ${formatCount(run.koCount)} failed`}
           delta={deltaFor(run.count, baseline?.count, 'neutral')}
           data-testid="stat-total-requests"
         />
         <StatTile
-          label="Error Rate"
+          label="Error rate"
           // The field and expression `StatisticsTable`'s `% KO` column uses
           // (`r.errorRate * 100`), at the same two-decimal precision — never
           // `koCount / count`, which would be a second definition of one
@@ -91,16 +98,40 @@ export default function RunStats({
           data-testid="stat-error-rate"
         />
         <StatTile
-          label="Mean Throughput"
+          /* "Requests/s", the spelling N01 standardises on, and it replaces
+             BOTH halves of the old tile: the label said "Mean Throughput" and
+             the unit said "req/s", so the row named one quantity twice and
+             agreed with neither the chart axis nor the statistics column. The
+             unit is gone because the label now carries it — repeating it would
+             render "Requests/s 14.40 req/s". */
+          label="Requests/s"
           value={formatRate(run.throughputRps)}
-          unit="req/s"
           tone={slaTone(assertions, 'throughput_rps')}
           hint={`${formatCount(run.count)} requests over the run`}
           delta={deltaFor(run.throughputRps, baseline?.throughputRps, 'higher')}
           data-testid="stat-throughput"
         />
         <StatTile
-          label="Mean Response"
+          /* ═══ "Mean", "p95", "p99" — THE TABLE'S OWN WORDS ═══
+           *
+           * Review N01 asks for `p95 response time` as the standard spelling,
+           * and these three deliberately fall short of it. MEASURED: at
+           * 1280x800 the six-across grid gives each tile 147px and the label
+           * box 113px, where "Mean response time" wraps to two lines (h=36
+           * against 18) and pushes that tile's value 18px below its five
+           * neighbours — the baseline defect the grid comment above records
+           * fixing once already. Every other width was clear (1440, 1024, 390).
+           *
+           * What the finding is actually about is DRIFT: one quantity spelled
+           * differently on each surface. These now match `StatisticsTable`'s
+           * columns and `SLA_METRIC_SCALARS`' own names exactly, so the tile,
+           * the table and the metric a gate is authored against are one word.
+           * That is a stronger standardisation than the review's phrasing, and
+           * it fits. The long form belongs in PROSE, where `ProjectRules`
+           * already writes it out in full.
+           *
+           * The `ms` unit beside each value is what says these are times. */
+          label="Mean"
           value={formatMs(run.meanMs)}
           unit="ms"
           tone={slaTone(assertions, 'mean')}
@@ -109,7 +140,7 @@ export default function RunStats({
           data-testid="stat-mean-response"
         />
         <StatTile
-          label="95th Percentile"
+          label="p95"
           value={percentileValue(run, 'p95')}
           unit={percentileUnit(run, 'p95')}
           tone={slaTone(assertions, 'p95')}
@@ -118,7 +149,7 @@ export default function RunStats({
           data-testid="stat-p95"
         />
         <StatTile
-          label="99th Percentile"
+          label="p99"
           value={percentileValue(run, 'p99')}
           unit={percentileUnit(run, 'p99')}
           tone={slaTone(assertions, 'p99')}

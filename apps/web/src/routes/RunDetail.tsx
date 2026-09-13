@@ -305,13 +305,19 @@ export function LiveSummary({
     <section aria-label="Run totals so far">
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile
-          label="Requests So Far"
+          /* ═══ THE LIVE TWIN OF `RunStats`' TILES, AND IT MOVES WITH THEM ═══
+             Review N01 renamed the terminal row's vocabulary; this row shows
+             the SAME six quantities for a run that is still going, so leaving
+             it behind makes the live and finished views of one run disagree
+             about what its numbers are called. "So Far" stays — that is a
+             fact about this row, not drift. */
+          label="Requests so far"
           value={formatCount(summary.count)}
-          hint={`${formatCount(summary.okCount)} OK, ${formatCount(summary.koCount)} KO`}
+          hint={`${formatCount(summary.okCount)} successful, ${formatCount(summary.koCount)} failed`}
           data-testid="live-stat-total-requests"
         />
         <StatTile
-          label="Error Rate"
+          label="Error rate"
           // Same field and expression `RunStats`' own tile uses
           // (`errorRate * 100`, two decimals) — never `koCount / count`,
           // a second definition of the one number a few tiles away.
@@ -320,25 +326,25 @@ export function LiveSummary({
           data-testid="live-stat-error-rate"
         />
         <StatTile
-          label="Peak Users"
+          label="Peak users"
           value={formatCount(summary.maxUsers)}
           hint="concurrent, so far"
           data-testid="live-stat-peak-users"
         />
         <StatTile
-          label="Duration So Far"
+          label="Duration so far"
           value={formatDuration(summary.durationMs)}
           hint={frozen ? 'when streaming stopped' : 'still streaming'}
           data-testid="live-stat-duration"
         />
         <StatTile
-          label="95th Percentile"
+          label="p95"
           value={livePercentileValue(summary, 'p95')}
           hint="an estimate, so far"
           data-testid="live-stat-p95"
         />
         <StatTile
-          label="99th Percentile"
+          label="p99"
           value={livePercentileValue(summary, 'p99')}
           hint="an estimate, so far"
           data-testid="live-stat-p99"
