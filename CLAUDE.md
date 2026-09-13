@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1804 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1805 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
