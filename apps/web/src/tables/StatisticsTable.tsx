@@ -190,7 +190,16 @@ const EXECUTION_COLUMNS: readonly Column[] = [
   {
     column: 'throughputRps',
     label: 'Cnt/s',
-    hint: 'Count of events per second',
+    /* ═══ GATLING'S NAME, WITH OURS IN THE HINT (review 09-13 N01) ═══
+     *
+     * The review asks for one word per quantity and allows `Cnt/s` to stay
+     * "when explicitly needed for Gatling parity" — which this is: the
+     * statistics table IS the parity surface, and `formatRate`'s own docstring
+     * cites `Cnt/s` (14.21) as the tool's spelling. So the column keeps it and
+     * the `<abbr>` carries the bridge, because the run totals directly above
+     * call the same number `req/s` and a reader should not have to guess that
+     * two labels are one measurement. */
+    hint: 'Count of events per second — the same measurement the run totals call req/s',
     value: (r) => r.throughputRps,
     format: formatRate,
   },

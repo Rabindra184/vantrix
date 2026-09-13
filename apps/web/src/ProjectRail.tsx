@@ -285,7 +285,32 @@ export default function ProjectRail() {
                 name, while the badge is supplementary state a collapsed rail
                 legitimately does not carry — the expanded rail and the page
                 the row links to both still do. */}
-            <span className={cn('ml-auto shrink-0 whitespace-nowrap', collapsed && 'lg:hidden')}>
+            {/* ═══ WHAT THE BADGE SUMMARISES (review 09-13 N03) ═══
+             *
+             * `not evaluated` beside a project name reads as a claim about the
+             * PROJECT. It is the latest run's, and nothing said so — the rail
+             * is also the one place the badge has no column header to lean on,
+             * which is exactly why the review calls it ambiguous here and not
+             * on the run list.
+             *
+             * `aria-label` on the wrapper, NOT a visible or `sr-only` word.
+             * This span is inside the `NavLink`, so any text added here joins
+             * the row's textContent — and this file pins every row's exact
+             * textContent, deliberately, because the collapse is CSS-only and
+             * both states must read identically. `aria-label` replaces this
+             * subtree in the link's accessible NAME while leaving textContent
+             * untouched, so the clarification costs the rail no width and
+             * breaks no invariant. `title` carries the same fact to a sighted
+             * reader on hover.
+             *
+             * jsdom will not show this: `dom-accessibility-api` does not
+             * consult a descendant's `aria-label` and Chromium does, which
+             * CLAUDE.md already records — so the assertion for it belongs in
+             * `project-rail.spec.ts`, where it is. */}
+            <span
+              className={cn('ml-auto shrink-0 whitespace-nowrap', collapsed && 'lg:hidden')}
+              {...latestRunSummary(project.latestRun)}
+            >
               {badgeFor(project.latestRun)}
             </span>
           </NavLink>
@@ -435,11 +460,35 @@ const RAIL_INGEST_FAILED: Mark = {
  * itself — see that constant's docstring for why the rail cannot reuse the
  * shared mark here, the way it safely does for `pending`/`parsing`/`complete`.
  */
-function badgeFor(latestRun: ProjectItem['latestRun']) {
+/**
+ * The `aria-label`/`title` pair naming what the badge is about, or nothing at
+ * all when there is no badge to describe.
+ *
+ * Spread rather than passed as two props so the no-run case adds NEITHER
+ * attribute: an empty `title` is a tooltip that flashes blank, and an
+ * `aria-label` on a span with no content would give the row a name fragment
+ * describing a badge that is not there.
+ */
+function latestRunSummary(
+  latestRun: ProjectItem['latestRun'],
+): { 'aria-label': string; title: string } | Record<string, never> {
+  const mark = markFor(latestRun);
+  if (mark === null) return {};
+  return { 'aria-label': `Latest run: ${mark.label}`, title: `Latest run: ${mark.label}` };
+}
+
+/** The mark a latest run resolves to, or null when there is no run to mark. */
+function markFor(latestRun: ProjectItem['latestRun']): Mark | null {
   if (latestRun === null) return null;
   if (latestRun.status !== 'complete') {
-    const mark = latestRun.status === 'failed' ? RAIL_INGEST_FAILED : STATUS[latestRun.status];
-    return <Badge mark={mark} size="compact" />;
+    return latestRun.status === 'failed' ? RAIL_INGEST_FAILED : STATUS[latestRun.status];
   }
-  return <Badge mark={VERDICT[latestRun.verdict ?? 'none']} size="compact" />;
+  return VERDICT[latestRun.verdict ?? 'none'];
+}
+
+function badgeFor(latestRun: ProjectItem['latestRun']) {
+  // THROUGH `markFor`, so the badge and the label naming it cannot disagree
+  // about which mark this row is showing.
+  const mark = markFor(latestRun);
+  return mark === null ? null : <Badge mark={mark} size="compact" />;
 }

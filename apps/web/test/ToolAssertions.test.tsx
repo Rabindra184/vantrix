@@ -222,6 +222,27 @@ describe('ToolAssertions — the tool’s own wording', () => {
   });
 
   /**
+   * ═══ REVIEW 09-13 N04 — `Other checks (N)`, NOT A SENTENCE ═══
+   *
+   * "Show 2 checks that did not fail" spent eight words on a control whose own
+   * state already says show-or-hide, and defined the remaining rows by what
+   * they are NOT. The count is the useful part and it survives.
+   */
+  it('names the rest of the checks by what they are, not by what they are not', async () => {
+    const user = userEvent.setup();
+    // One failure forces the collapse, so the toggle is rendered.
+    renderOverview([details(['Search'], 'failed'), GLOBAL_ASSERTION, FOR_ALL_ASSERTION]);
+    await assertionTable();
+
+    const toggle = screen.getByTestId('tool-assertions-toggle');
+    expect(toggle).toHaveTextContent('Other checks (2)');
+    expect(toggle.textContent ?? '').not.toMatch(/did not fail/i);
+
+    await user.click(toggle);
+    expect(screen.getByTestId('tool-assertions-toggle')).toHaveTextContent('Hide other checks (2)');
+  });
+
+  /**
    * THE ROW THAT HAS NOTHING ELSE TO SAY. `assertion` is `.optional()` on the
    * wire — a run ingested before the decoder, or an API pod that predates it —
    * and such a row renders four em dashes. Withholding the sentence there

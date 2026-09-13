@@ -401,12 +401,20 @@ export default function RunList({
           {/* Disabled rather than hidden: a control that vanishes at the end
               of the list leaves the reader wondering whether it was ever
               there. `disabled` alone is silent for a sighted user, so the
-              reason is spelled out — and tied to the button by
+              reason is still spelled out — and tied to the button by
               aria-describedby so a screen reader hears it with the control,
-              not adrift after it. */}
+              not adrift after it.
+
+              THREE WORDS, NOT EIGHT (review 09-13 N04). The review asks for
+              "disabled pagination" instead of the sentence, and the button
+              has been disabled all along — what it is really objecting to is
+              narrating a convention every reader already knows. The label
+              cannot go to nothing, because `aria-describedby` pointing at an
+              empty node tells a screen-reader user less than the disabled
+              state alone; it goes to the fact, with no sentence around it. */}
           {nextCursor === null && (
             <p id="no-more-runs" className="text-[13px] text-muted">
-              You have reached the end of the list.
+              No more runs.
             </p>
           )}
         </nav>

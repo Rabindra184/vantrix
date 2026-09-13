@@ -204,6 +204,44 @@ describe('RunStats', () => {
   const colourOf = (testId: string) =>
     screen.getByTestId(testId).style.color;
 
+  /**
+   * ═══ REVIEW 09-13 N02 — THE METHODOLOGY ONCE, NOT ONCE PER TILE ═══
+   *
+   * Both percentile tiles carried "an estimate, accurate to within 1%": the
+   * same sentence twice, in a row where every other hint is a fact about its
+   * own tile.
+   *
+   * BOTH HALVES MATTER AND THE TEST SAYS SO. Deleting the caveat would also
+   * satisfy "stop repeating it" and would be wrong — a reader would then take
+   * p95 as exact — so the tiles must still mark the value as an estimate, and
+   * the 1% claim must still be reachable. It is a claim about this platform
+   * rather than a disclaimer: the tool's own percentiles are histogram
+   * estimates and drift further.
+   */
+  it('marks each percentile as an estimate without repeating the methodology', () => {
+    render(<RunStats stats={stats} />);
+
+    for (const id of ['stat-p95', 'stat-p99']) {
+      const tile = screen.getByTestId(id);
+      expect(tile.parentElement?.textContent ?? '').toMatch(/estimate/i);
+    }
+    // The sentence appears nowhere on the row any more...
+    expect(document.body.textContent ?? '').not.toMatch(/an estimate, accurate to within/i);
+    // ...and the 1% claim is still reachable, exactly once.
+    const method = screen.getByTestId('percentile-method');
+    expect(method.textContent ?? '').toMatch(/within 1%/);
+    expect(document.body.textContent?.match(/within 1%/g) ?? []).toHaveLength(1);
+  });
+
+  /** NO HEADING. `run-tables.spec.ts` asserts the Overview tab's heading
+   *  outline verbatim, and a disclosure that contributed one would break it on
+   *  every tab — the shell-must-not-add-an-h2 rule, one component over. */
+  it('adds the disclosure without contributing a heading', () => {
+    render(<RunStats stats={stats} />);
+    expect(screen.getByTestId('percentile-method').tagName).toBe('DETAILS');
+    expect(screen.queryAllByRole('heading')).toHaveLength(0);
+  });
+
   it('tints a metric whose SLA rule failed, and leaves an ungated one alone', () => {
     render(
       <RunStats
