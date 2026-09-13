@@ -586,6 +586,28 @@ export function RunOverviewTab() {
   );
 }
 
+/**
+ * How far a fragment target keeps from the top of the viewport — review 09-13
+ * C04's other half.
+ *
+ * The run page has TWO sticky bands: `AppShell`'s header at `top: 0` and
+ * `RunTabs` at `top: var(--header-height)`. A fragment scrolled flush to the
+ * viewport top therefore lands UNDER both of them, heading first, which is a
+ * different way of not revealing the thing the link named.
+ *
+ * `scroll-margin-top` rather than an offset computed in the scroll call,
+ * because it is also what the BROWSER honours: the same URL opened fresh is a
+ * real fragment navigation that this file never sees, and it lands correctly
+ * for free.
+ *
+ * The header is read from its token — this file may not spell `3.5rem`, and
+ * `tokens.test.ts` enforces that. The tab strip's own 42px is not tokenised
+ * and is measured rather than guessed; being a few pixels out here is a
+ * cosmetic gap above a heading, not a defect, which is why it does not warrant
+ * a second token.
+ */
+const FRAGMENT_SCROLL_MARGIN = 'calc(var(--header-height) + 2.625rem)';
+
 /** Overview keeps its cohort page for five minutes; see the `trends` query. */
 const OVERVIEW_TRENDS_STALE_MS = 5 * 60_000;
 
@@ -1240,7 +1262,11 @@ function ToolAssertions({
       /* `id` is the target of the decision band's "See the failed simulation
          check" link — the band is the first screen and these rows are far
          below it, which is the whole reason that link exists. */
-      <section id="simulation-assertions" className="flex flex-col gap-3">
+      <section
+        id="simulation-assertions"
+        className="flex flex-col gap-3"
+        style={{ scrollMarginTop: FRAGMENT_SCROLL_MARGIN }}
+      >
         <SectionHeading>Simulation assertions</SectionHeading>
         <EmptyState
           title="This simulation declared no assertions"
@@ -1276,7 +1302,11 @@ function ToolAssertions({
   return (
     // Same anchor as the empty branch above — the band links here whichever
     // branch renders, so the id cannot live on only one of them.
-    <section id="simulation-assertions" className="flex flex-col gap-3">
+    <section
+        id="simulation-assertions"
+        className="flex flex-col gap-3"
+        style={{ scrollMarginTop: FRAGMENT_SCROLL_MARGIN }}
+      >
       <SectionHeading>Simulation assertions</SectionHeading>
       <TableFrame
         caption={TOOL_ASSERTIONS_CAPTION}

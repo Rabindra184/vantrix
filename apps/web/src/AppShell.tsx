@@ -82,15 +82,74 @@ export default function AppShell() {
      even when the rail cannot load its projects" caught exactly that. */
   const identity = session.data?.user?.name || session.data?.user?.email || null;
 
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   const first = useRef(true);
   useEffect(() => {
     if (first.current) {
       first.current = false;
       return;
     }
+    // A fragment is a move WITHIN this page, and the effect below takes it.
+    // Scrolling to the top first would undo it.
+    if (hash !== '') return;
     window.scrollTo({ top: 0 });
-  }, [pathname]);
+  }, [pathname, hash]);
+
+  /* ═══ A FRAGMENT LINK HAS TO BE HONOURED BY US (review 09-13 C04) ═══
+   *
+   * The decision band's "See the failed simulation check" is a `<Link>` to
+   * `/runs/:id#simulation-assertions` — the SAME path the reader is already
+   * on. React Router answers that with `pushState`, and **a browser does not
+   * scroll to a fragment on `pushState`**; native fragment scrolling happens
+   * on a real hash navigation or a document load. So the URL gained the
+   * fragment and nothing moved: measured at scrollY 82 with the target 1482px
+   * below the viewport. The primary investigation shortcut on the run page
+   * changed the address bar and nothing else.
+   *
+   * ═══ WHY IT RETRIES ═══
+   *
+   * The same URL typed fresh is worse, not better: the target belongs to a
+   * lazy route child behind a query, so at first paint there is no element to
+   * scroll to and the browser's own attempt finds nothing either. A bounded
+   * retry across animation frames covers the chunk and the fetch without
+   * spinning forever — it gives up rather than waiting on an id that will
+   * never exist, which is what a typo'd fragment is.
+   *
+   * ═══ AND IT MOVES FOCUS, NOT ONLY THE VIEWPORT ═══
+   *
+   * The same argument the skip link below makes: scrolling without refocusing
+   * leaves a keyboard or screen-reader user exactly where they were, reading
+   * the link they just followed. The target is a `<section>` and not natively
+   * focusable, so it is made focusable for the move; `preventScroll` keeps
+   * `scrollIntoView`'s own placement, which is the one that honours the
+   * section's `scroll-margin-top` under the sticky header.
+   */
+  useEffect(() => {
+    if (hash === '') return;
+    const id = decodeURIComponent(hash.slice(1));
+    let cancelled = false;
+    let frame = 0;
+
+    const reveal = (attemptsLeft: number): void => {
+      if (cancelled) return;
+      const target = document.getElementById(id);
+      if (target === null) {
+        if (attemptsLeft > 0) frame = requestAnimationFrame(() => reveal(attemptsLeft - 1));
+        return;
+      }
+      target.scrollIntoView({ block: 'start' });
+      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+      target.focus({ preventScroll: true });
+    };
+
+    // ~60 frames is about a second at 60Hz: long enough for a lazy chunk and
+    // its query, short enough that a fragment naming nothing stops quietly.
+    reveal(60);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [pathname, hash]);
 
   return (
     <div className="min-h-screen">

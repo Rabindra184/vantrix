@@ -608,3 +608,100 @@ describe('Chart — the shared time axis', () => {
     expect(axis.axisPointer?.label?.formatter?.({ value: 49_000 })).toBe('49 s');
   });
 });
+
+/* ======================================================================== *
+ * REVIEW 09-13 C02 — THE NAVIGATOR'S OWN GUTTERS
+ * ======================================================================== */
+
+/**
+ * ═══ TWO EXPRESSIONS DECIDED ONE THING AND DISAGREED ═══
+ *
+ * The legend is withheld from a navigator (`!compact && !navigator && …`)
+ * while `grid.bottom` reserved its band on `drawn.length >= 2` alone — so a
+ * navigator kept 26px of clearance for a legend it never draws. On the run
+ * page's time selector, a 160px canvas, that left a 34px plot with SEVEN
+ * y-axis tick labels 14px tall drawn 4–5px apart: a smear, measured in
+ * Chromium at 1440×900 before this change and 3 labels 33px apart after it.
+ *
+ * jsdom lays every chart out at 0×0, so none of that can be measured here —
+ * the same reason `Chart.test.tsx` already asserts the layout NUMBERS rather
+ * than the rendering. What these cases pin is the arithmetic that produced
+ * them, which is where the defect actually was.
+ */
+describe('Chart — a navigator reserves no room for the legend it does not draw', () => {
+  const threeSeries = seriesData(['All', 'OK', 'KO']);
+
+  it('draws no legend, and leaves no gap for one', () => {
+    render(
+      <Chart
+        id="nav"
+        title="Requests per second"
+        data={threeSeries}
+        navigator
+        // NAMED, because `TimeBrush` names it — and the band the name needs is
+        // one of the three terms in `grid.bottom`. A test that omitted it
+        // would be measuring a chart no caller builds.
+        xAxis={{ type: 'value', name: 'Elapsed (s)' }}
+        brush={{ onChange: () => {}, value: null }}
+      />,
+    );
+    const option = lastOption();
+    expect((option['legend'] as { show?: boolean }).show).toBe(false);
+
+    const grid = option['grid'] as { top: number; bottom: number };
+    // The brush band and the named axis stay; only the legend's does not.
+    // Derived from the same constants the component uses rather than written
+    // down, so a change to either moves this with it.
+    const BRUSH_BAND = 4 + 28;
+    const NAMED_AXIS = 56;
+    expect(grid.bottom).toBe(NAMED_AXIS + BRUSH_BAND);
+  });
+
+  /**
+   * THE COMPARISON THAT MAKES THE CASE ABOVE MEAN SOMETHING. A full chart with
+   * the same three series DOES draw a legend, so it must still reserve the
+   * band — an implementation that simply stopped reserving it everywhere would
+   * pass the first case and put the legend back on top of the slider.
+   */
+  it('still reserves it on a full chart, which draws one', () => {
+    render(
+      <Chart
+        id="full"
+        title="Requests per second"
+        data={threeSeries}
+        xAxis={{ type: 'value', name: 'Elapsed (s)' }}
+        brush={{ onChange: () => {}, value: null }}
+      />,
+    );
+    const option = lastOption();
+    expect((option['legend'] as { show?: boolean }).show).not.toBe(false);
+
+    const grid = option['grid'] as { bottom: number };
+    const LEGEND_BAND = 24 + 2;
+    expect(grid.bottom).toBe(56 + (4 + 28) + LEGEND_BAND);
+  });
+
+  /** A navigator names no value axis, so the top band has nothing to clear. */
+  it('gives the top band back to the plot', () => {
+    render(<Chart id="nav" title="Requests per second" data={threeSeries} navigator />);
+    expect((lastOption()['grid'] as { top: number }).top).toBe(4);
+    cleanup();
+    render(<Chart id="full" title="Requests per second" data={threeSeries} />);
+    expect((lastOption()['grid'] as { top: number }).top).toBe(12);
+  });
+
+  /**
+   * AND THE TICKS CANNOT CROWD, whatever the height. ECharts' default asks for
+   * six labels; in a navigator's plot they do not fit and it draws them
+   * anyway. Two splits is three labels — floor, middle, ceiling — which is
+   * what an axis a reader DRAGS against is for.
+   */
+  it('asks its value axis for a readable number of ticks', () => {
+    render(<Chart id="nav" title="Requests per second" data={threeSeries} navigator />);
+    expect((lastOption()['yAxis'] as { splitNumber?: number }).splitNumber).toBe(2);
+    cleanup();
+    // Untouched on an analytical chart, which is read rather than dragged.
+    render(<Chart id="full" title="Requests per second" data={threeSeries} />);
+    expect((lastOption()['yAxis'] as { splitNumber?: number }).splitNumber).toBeUndefined();
+  });
+});

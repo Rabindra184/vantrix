@@ -622,7 +622,36 @@ export default function Chart({
       splitLine: { show: false },
     };
     const catAxis = compact ? { ...categoryAxis, ...bare } : categoryAxis;
-    const valAxis = compact ? { ...valueAxis, ...bare } : valueAxis;
+    /**
+     * ═══ A NAVIGATOR'S VALUE AXIS IS A SENSE OF SCALE, NOT A READING ═══
+     *
+     * ECharts' default `splitNumber` is 5, which asks for six labels. In a
+     * navigator's plot that is tens of pixels tall they cannot all fit, and
+     * ECharts draws them anyway: measured at 4-5px apart with a 14px line
+     * height, so six numbers overprinted each other and none was legible.
+     *
+     * Two splits is three labels — floor, middle, ceiling — which is what this
+     * axis is for: the reader is DRAGGING a time range, and the y values tell
+     * them the shape of what they are selecting rather than a number they will
+     * quote. The full treatment stays on every analytical chart.
+     */
+    /**
+     * WHETHER A LEGEND IS DRAWN — asked once, because two places need the
+     * answer and they used to compute it separately. The `grid.bottom` that
+     * has to CLEAR the legend tested only the series count, so a navigator
+     * (which is never given one) reserved its band regardless. See the note on
+     * `grid.bottom` for what that cost.
+     *
+     * One series is named by the title, and a one-entry legend is a label
+     * pretending to be a control — which is why the floor is two.
+     */
+    const showLegend = !compact && !navigator && drawn.length >= 2;
+
+    const valAxis = compact
+      ? { ...valueAxis, ...bare }
+      : navigator
+        ? { ...valueAxis, splitNumber: 2 }
+        : valueAxis;
     const numAxis = compact ? { ...numericAxis, ...bare } : numericAxis;
 
     instance.setOption(
@@ -671,7 +700,7 @@ export default function Chart({
         legend:
           // A navigator drops the legend for the room, and can: its series are
           // the same All/OK/KO the chart directly below it labels.
-          !compact && !navigator && drawn.length >= 2
+          showLegend
             ? {
                 // Under the plot, and above the slider when there is one, so
                 // the three never share a band. See `LEGEND_BAND`.
@@ -720,8 +749,9 @@ export default function Chart({
                 // The legend no longer sits above the plot, so the only thing
                 // this band still has to clear is the value axis' own name —
                 // which is exactly what it was competing with. See
-                // `LEGEND_BAND`.
-                top: 12,
+                // `LEGEND_BAND`. A navigator names no value axis, so it has
+                // nothing up here to clear and gives the room to the plot.
+                top: navigator ? 4 : 12,
                 // A horizontal chart's category labels sit in the left gutter
                 // and are words, not axis ticks, so they need the room.
                 left: horizontal ? 104 : 56,
@@ -733,10 +763,17 @@ export default function Chart({
                 // `nameGap` under the axis line at `grid.bottom`; without this
                 // term the two share a band, and "Elapsed (ms)" was drawn
                 // across the middle of the scrubber on every run page.
+                // `showLegend`, NOT `drawn.length >= 2` (review 09-13 C02).
+                // These two expressions decided the same thing and disagreed:
+                // the legend is withheld from a NAVIGATOR, and this reserved
+                // its band anyway. Measured at 1440x900 on the run page's time
+                // selector — a 160px canvas whose plot was 34px, with seven
+                // y-axis tick labels 14px tall drawn 4-5px apart, i.e. a
+                // smear. One name now, read by both.
                 bottom:
                   (xAxisName === undefined ? 32 : 56) +
                   (hasBrush ? BRUSH_BAND : 0) +
-                  (drawn.length >= 2 ? LEGEND_BAND : 0),
+                  (showLegend ? LEGEND_BAND : 0),
               },
               ...(horizontal
                 ? { xAxis: valAxis, yAxis: catAxis }
