@@ -28,7 +28,7 @@ import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
  * The three are the three real ways in, named for what the reader is trying
  * to do rather than for the mechanism:
  *
- *   Import results   — a bundle already exists. `POST /v1/runs`.
+ *   Import via API   — a bundle already exists. `POST /v1/runs`.
  *   Run a test       — no bundle yet; the on-prem runner makes one.
  *   Configure CI     — the same import, but from a pipeline, every build.
  *
@@ -82,10 +82,28 @@ function AddResults({ slug }: { readonly slug: string }) {
      short enough that a column is the right shape: a list of choices. */
   return (
     <div className="flex flex-col gap-4">
+        {/* ═══ "Import via API", NOT "Import results" — review M05 ═══
+         *
+         * The finding is a capability mismatch: the card promised an import and
+         * then told the reader there is no browser upload, so the one thing its
+         * title offered was the one thing it could not do. The review asks for a
+         * real file picker "for a polished manual workflow" and, until that
+         * exists, for the path to be labelled honestly.
+         *
+         * IT CANNOT BE BUILT FROM HERE, WHICH IS WHY THE LABEL IS THE ANSWER
+         * TODAY. `POST /v1/runs` is the only route that accepts a bundle, and
+         * it REFUSES a browser session by design: `ingest.controller.ts` reads
+         * `tenant.projectId` and answers `PROJECT_REQUIRED` — "Ingest requires
+         * a project-scoped credential" — because a session is org-scoped and
+         * names no project, while a token is minted against exactly one. A
+         * picker therefore needs a project-scoped ingest route that does not
+         * exist, plus its contract, its OpenAPI entry and its own tests. That
+         * is a feature; a label that lies is worse than one that is plain while
+         * it is being built. */}
       <EntryCard
-        title="Import results"
+        title="Import via API"
         icon={<UploadIcon className="h-4 w-4" />}
-        description="You already have a finished Gatling report. Post the bundle and PerfPortal parses it."
+        description="You already have a finished Gatling report. Post the bundle to the API and PerfPortal parses it."
         steps={
           <>
           <pre
@@ -103,14 +121,14 @@ function AddResults({ slug }: { readonly slug: string }) {
 
               The review allows that "a completed-report import can be a later
               feature" and asks for a clear guide and status meanwhile. A page
-              offering "Import results" with only a shell command invites the
+              offering "Import results" with only a shell command invited the
               reader to hunt for the file picker they assume is somewhere; one
               sentence ends that hunt. It also stops the endpoint reading as a
               workaround — it is the supported route, and the browser form would
               be a convenience on top of it. */}
           <p className="text-[12px] leading-snug text-muted">
-            There is no browser upload form yet — this endpoint is the supported route, and it is
-            what the CI recipe below uses.
+            There is no browser upload form yet. This endpoint is the supported route, and the
+            CI recipe below posts to the same one.
           </p>
           <p className="text-[12px] leading-snug text-muted">
             The bundle is a <code className="font-mono">.tgz</code> containing the run directory
