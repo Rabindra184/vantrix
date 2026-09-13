@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AppShell from '../src/AppShell';
@@ -52,11 +53,19 @@ describe('AppShell', () => {
   });
 
   it('renders the rail and exactly one Sign out control', async () => {
+    const user = userEvent.setup();
     renderShell();
     expect(await screen.findByRole('navigation', { name: 'Projects' })).toBeInTheDocument();
-    // Count, not visibility. jsdom applies no CSS, so a second copy hidden by
-    // a `lg:` class is fully present here — which makes this the cheapest
-    // place to catch the duplication that would break auth.spec.ts.
+
+    /* Sign out moved into the account menu (review 09-13 N03), and that panel
+       is UNMOUNTED while shut — so the closed shell carries none, which is
+       itself worth asserting: a panel hidden with a class would be fully
+       present here, because jsdom applies no CSS. */
+    expect(screen.queryAllByRole('button', { name: 'Sign out' })).toHaveLength(0);
+
+    await user.click(screen.getByTestId('account-menu-trigger'));
+    // Count, not visibility — still the cheapest place to catch the
+    // duplication that would break auth.spec.ts under strict mode.
     expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(1);
   });
 });

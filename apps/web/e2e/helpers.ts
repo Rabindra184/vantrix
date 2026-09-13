@@ -98,3 +98,18 @@ export async function apiJson<T>(page: Page, path: string): Promise<T> {
     return res.json();
   }, path);
 }
+
+/**
+ * Opens the header's account menu, where the theme control and Sign out live
+ * since review 09-13 N03.
+ *
+ * A helper rather than three copies of the same two lines: the panel is
+ * UNMOUNTED while shut, so every assertion about either control has to open it
+ * first, and a future move should be one edit here rather than a hunt through
+ * the specs.
+ */
+export async function openAccountMenu(page: Page): Promise<void> {
+  const trigger = page.getByTestId('account-menu-trigger');
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+}

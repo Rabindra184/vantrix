@@ -4,8 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getSession, sessionQueryKey } from './api/session';
 import RouteFallback from './components/RouteFallback';
 import ProjectRail from './ProjectRail';
-import SignOutButton from './SignOutButton';
-import ThemeToggle from './components/ThemeToggle';
+import AccountMenu from './AccountMenu';
 import { ActivityIcon } from './components/icons';
 import { DEFAULT_ROUTE } from './routes/paths';
 
@@ -44,7 +43,12 @@ import { DEFAULT_ROUTE } from './routes/paths';
  *   `lg:` class is still in the DOM, so `getByRole('button', { name: 'Sign
  *   out' })` would resolve to two nodes and throw under strict mode — and two
  *   identical controls sharing one accessible name is a defect whatever the
- *   CSS says. `ThemeToggle` is likewise rendered once.
+ *   CSS says. The same holds for the theme control.
+ *
+ *   Both now live inside `AccountMenu`, which UNMOUNTS its panel when shut —
+ *   so the count is one while the menu is open and zero while it is closed,
+ *   and every assertion about them opens the menu first. That is the claim
+ *   those tests were always making; only where it holds has moved.
  *
  * The skip link jumps to `#main`, which carries `tabIndex={-1}` so activating
  * it actually moves focus onto `<main>` rather than merely scrolling to it:
@@ -187,38 +191,21 @@ export default function AppShell() {
           <span className="text-[15px] font-semibold tracking-tight text-primary">PerfPortal</span>
         </Link>
 
+        {/* ═══ ONE CONTROL, NOT THREE (review 09-13 N03) ═══
+         *
+         * This held a truncated email, a three-segment theme control and Sign
+         * out, side by side at equal weight. The review's point is that the
+         * two least-used controls in the product were holding permanent
+         * chrome while the question the chrome should answer — which identity
+         * am I using — was a 12px span that vanished below `sm`.
+         *
+         * Identity is the control now and the two settings live inside it;
+         * see `AccountMenu` for why it is a disclosure and not a `role="menu"`.
+         * The full address is legible in the panel at every width, which the
+         * old header could not manage at any.
+         */}
         <div className="ml-auto flex items-center gap-2">
-          {/* ═══ WHO IS SIGNED IN ═══
-           *
-           * The header carried a brand, three theme choices and Sign out, and
-           * said nothing about WHO. In a tool where the next click can
-           * configure a release gate or launch load against an environment,
-           * "which identity am I using" is a question the chrome should answer
-           * without being asked.
-           *
-           * IDENTITY ONLY — no organisation, and that is a limit rather than
-           * an omission. `Session` (api/session.ts) carries a user and no org
-           * at all, and the review is explicit that multi-tenant UI must not
-           * be invented. Showing the tenant needs a field the session does not
-           * have.
-           *
-           * Hidden below `sm`: at 375px the header already holds a brand,
-           * three theme buttons and Sign out, and an email is the longest
-           * string of the four. The identity is not lost — it is simply not
-           * worth the row on a phone, where the reader is reading rather than
-           * configuring.
-           */}
-          {identity !== null && (
-            <span
-              data-testid="signed-in-as"
-              title={identity}
-              className="hidden max-w-[22ch] truncate text-[12px] text-muted sm:inline"
-            >
-              {identity}
-            </span>
-          )}
-          <ThemeToggle />
-          <SignOutButton />
+          <AccountMenu identity={identity} />
         </div>
       </header>
 
