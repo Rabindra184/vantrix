@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **146 files / 1775 tests**, it
+`nvm use` first, and if a run reports fewer than **146 files / 1778 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,67 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-n01-tiles branch (N01, step 1 of 4) added no unit FILE and 3 cases
+to `apps/web/test/RunStats.test.tsx`, from a floor of 146 / 1775. Integration is
+UNCHANGED (that file is a `.tsx`) and **e2e stays 117** — the geometry below was
+measured with a THROWAWAY spec, deleted after reading, because what it proves is
+a one-off design decision rather than an invariant worth 20s on every run.
+
+**PARITY BINDS QUANTITIES, NOT LABELS, AND THIS FILE IMPLIED OTHERWISE.** The
+minors entry above says `Cnt/s` STAYS because "the statistics table is the
+parity surface". Measured, that is not a constraint anything enforces:
+`PerfPortal_Enterprise_PRD.md:708` binds total count, OK/KO counts, % KO,
+count/second, min, max, mean, standard deviation, indicator bands, error counts
+and the distribution bin midpoints — all VALUES; the one entry reading "labels"
+means the numeric midpoints `floor(min + step*i + step/2 + 0.5)`. And
+`apps/api/test/parity.e2e.test.ts` and `packages/statistics/test/parity.test.ts`
+compare only numbers: **zero assertions against the strings `OK`, `KO`, `% KO`
+or `Cnt/s` in either file.**
+
+The argument for keeping Gatling's words in the STATISTICS TABLE survives, and
+it is worth keeping — a reader may be diffing that table against Gatling's own
+HTML report column by column. But it is a USABILITY argument, and it had been
+inherited as a parity one. A totals tile is not that surface, so this branch
+changes the tiles and leaves the table for step 3. **Check whether a constraint
+you are honouring is one anything actually enforces.**
+
+**AND THE LABEL THE REVIEW ASKED FOR DOES NOT FIT THE GRID.** N01 names `p95
+response time` as the standard spelling. Measured at four viewports with the
+real fixture run:
+
+```
+                       1440   1280   1024    390
+tile width             174px  147px  221px  173px
+"Mean response time"     ok   WRAP     ok     ok
+```
+
+At 1280 the six-across grid gives each tile 147px and the label box 113px,
+where that string wraps to two lines (36px against 18) and pushes its value
+18px below its five neighbours — the exact baseline defect the grid's own
+comment in `RunStats.tsx` records fixing once already, from the other
+direction (a wrapping VALUE). The tiles read `Mean`, `p95`, `p99` instead,
+which match `StatisticsTable`'s columns AND `SLA_METRIC_SCALARS`' own names —
+so the word on the tile is the word a reader types into the gate that judges
+it. That is a stronger answer to "one word per quantity" than the review's
+phrasing and it fits; the long form belongs in prose, where `ProjectRules`
+already writes it out. **Recorded as a deviation with its measurement, not
+rounded up to compliance** — the discipline M01's geometry bound already set.
+
+**THE NEW CASES PIN THE JOIN, NOT THE STRINGS.** A tile label asserted
+verbatim passes while the table beneath it drifts, which IS the finding. They
+assert instead that each response-time tile's label is a member of the
+contract's own metric vocabulary (`isResolvableSlaMetric`), that throughput's
+label and `slaMetricUnit('throughput_rps')` do not both spell the unit, and
+that the section says "successful"/"failed" and not `\bOK\b`/`\bKO\b`. All
+three were red-verified by restoring one old label at a time.
+
+**AND AN EXISTING CASE PINNED THE HINT'S WORDS.** `RunStats.test.tsx`'s
+four-digit-count case asserted `` `${bigOk} OK, ${bigKo} KO` `` — a claim about
+DIGIT GROUPING that had taken the surrounding vocabulary hostage, so renaming
+the hint failed a test about commas. It matches the two numbers with a loose
+separator now. Third time this file records that shape; grep a test for the
+words around the value before renaming one.
 
 The token-mint-copy branch added no unit FILE and 3 cases to
 `apps/web/test/ProjectAccess.test.tsx`, from a floor of 146 / 1772. Integration

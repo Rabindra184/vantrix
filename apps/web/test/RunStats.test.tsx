@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Assertion, StatsResponse } from '@perfportal/contracts';
+import { SLA_METRIC_SCALARS, isResolvableSlaMetric, slaMetricUnit } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import RunStats from '../src/routes/RunStats';
 
@@ -62,9 +63,17 @@ describe('RunStats', () => {
     // be inferred from a plain string mismatch.
     expect(tile.textContent).not.toMatch(/,/);
 
-    // Same rule applies to the hint text (`okCount`/`koCount`), the "lower
-    // stakes" half of the same defect the review flagged.
-    expect(screen.getByText(`${bigOk} OK, ${bigKo} KO`)).toBeInTheDocument();
+    /* Same rule applies to the hint text (`okCount`/`koCount`), the "lower
+       stakes" half of the same defect the review flagged.
+
+       THE WORDS MOVED AND THE CLAIM DID NOT. This read `${bigOk} OK, ${bigKo}
+       KO` until review N01 replaced Gatling's vocabulary with the product's
+       own on this tile — so the assertion is written against the NUMBERS and a
+       loose separator, which is what it was always about. Pinning the two
+       words here would have made the suite the reason they could not be
+       corrected, the trap CLAUDE.md records for the run-health caveat. */
+    expect(screen.getByText(new RegExp(`\\b${bigOk}\\b.*\\b${bigKo}\\b`))).toBeInTheDocument();
+    expect(screen.getByTestId('stat-total-requests').textContent).not.toMatch(/\bKO\b|\bOK\b/);
   });
 
   /**
@@ -321,5 +330,82 @@ describe('RunStats', () => {
   it('renders nothing when the payload has no run-scope row', () => {
     const { container } = render(<RunStats stats={{ ...stats, stats: [] }} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  /* ====================================================================== *
+   * REVIEW N01 — ONE QUANTITY, ONE WORD, ACROSS EVERY SURFACE
+   * ====================================================================== */
+
+  /**
+   * The finding is DRIFT: the same number spelled differently wherever it
+   * appears. Requests per second was `Mean Throughput` here, `Cnt/s` in the
+   * statistics table, `req/s` on the chart axis and `requests per second` in a
+   * chart title — four names, one measurement.
+   *
+   * These cases pin the JOIN rather than the strings. A tile label asserted
+   * verbatim would pass while the table below it drifted, which is the defect
+   * itself; asserted against `SLA_METRIC_SCALARS` and the percentile
+   * suggestions, it cannot. That set is the vocabulary a reader authors a gate
+   * in (`ProjectRules`' `METRIC_SUGGESTIONS`), so matching it means the word
+   * on the tile is the word they type into the rule that judges it.
+   */
+  it('names each response-time tile after the metric a gate is authored against', () => {
+    render(<RunStats stats={stats} />);
+    const labels = [...document.querySelectorAll('section[aria-label="Run totals"] dt')].map(
+      (dt) => (dt.textContent ?? '').trim(),
+    );
+
+    // `mean` is a scalar in the contract; p95/p99 are resolvable percentiles.
+    expect(SLA_METRIC_SCALARS).toContain('mean');
+    for (const metric of ['mean', 'p95', 'p99']) {
+      expect(isResolvableSlaMetric(metric)).toBe(true);
+      // Case-insensitive: the tile capitalises "Mean" as a label; the metric
+      // is lower-case. The claim is that they are the same WORD.
+      expect(labels.map((l) => l.toLowerCase())).toContain(metric);
+    }
+  });
+
+  /**
+   * `throughput_rps`'s unit in the contract is `req/s`, and the tile used to
+   * say "Mean Throughput" with `req/s` as a separate unit — naming one
+   * quantity twice and agreeing with neither the table nor the axis. It reads
+   * `Requests/s` now, and the unit is gone because the label carries it.
+   */
+  it('gives throughput one name, not a label and a unit that disagree', () => {
+    render(<RunStats stats={stats} />);
+    const section = document.querySelector('section[aria-label="Run totals"]')!;
+    const labels = [...section.querySelectorAll('dt')].map((dt) => (dt.textContent ?? '').trim());
+
+    expect(labels).toContain('Requests/s');
+    expect(slaMetricUnit('throughput_rps')).toBe('req/s');
+    // Not repeated beside the value: "Requests/s 14.40 req/s" says it twice.
+    expect(screen.getByTestId('stat-throughput').textContent ?? '').not.toMatch(/req\/s/);
+  });
+
+  /**
+   * ═══ GATLING'S WORDS ARE NOT THIS SURFACE'S WORDS ═══
+   *
+   * N01 allows OK/KO to stay "only when explicitly needed for Gatling parity".
+   * Measured, parity needs them NOWHERE in the UI: the PRD binds QUANTITIES
+   * (count, OK/KO count, % KO, count/second, min/max/mean/stddev, indicator
+   * bands, error counts, and the numeric distribution bin midpoints), and both
+   * parity suites — `apps/api/test/parity.e2e.test.ts` and
+   * `packages/statistics/test/parity.test.ts` — compare only numbers. Neither
+   * contains a single assertion against the string `OK`, `KO` or `Cnt/s`.
+   *
+   * The statistics table is a different argument and keeps them: a reader may
+   * be diffing it against Gatling's own HTML report column by column. A totals
+   * tile is not that surface, so it speaks the product's own language.
+   */
+  it('states successes and failures in the product’s words, not the tool’s', () => {
+    render(<RunStats stats={stats} />);
+    const section = document.querySelector('section[aria-label="Run totals"]')!;
+    const text = section.textContent ?? '';
+
+    expect(text).toMatch(/successful/i);
+    expect(text).toMatch(/failed/i);
+    // As a WORD — `\b` so a future "OKAY" or a hex id cannot satisfy it.
+    expect(text).not.toMatch(/\bOK\b/);
+    expect(text).not.toMatch(/\bKO\b/);
   });
 });
