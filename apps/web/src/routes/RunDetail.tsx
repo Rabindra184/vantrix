@@ -1034,7 +1034,25 @@ function Assertions({
   if (assertions.length === 0) {
     return (
       <section className="flex flex-col gap-3">
-        <SectionHeading overline="Evidence">Assertions</SectionHeading>
+        {/* ═══ "Platform gates", NOT "Assertions" — review N01 ═══
+         *
+         * Two systems judge a run and both were called assertions: the
+         * organisation's SLA rules, and the assertions the simulation declares
+         * for itself. The section below is the FIRST; `Simulation assertions`
+         * one section down is the second, and it keeps its name because that
+         * name is correct — the PRD gives "Assertions table" to G-05, the
+         * TOOL's own feature. It was the platform's that was misnamed.
+         *
+         * The word is not invented here either. `RunDecisionBand` has called
+         * this system "Platform gates" since C02 (its outcome row), so this
+         * heading moves onto an anchor the same page already carries rather
+         * than adding a third noun.
+         *
+         * BOTH BRANCHES OF THIS COMPONENT CARRY IT. An empty run renders the
+         * heading from here and a populated one from the branch below; leaving
+         * either behind makes the tab's heading outline differ by run, which
+         * `run-tables.spec.ts` asserts as an exact list. */}
+        <SectionHeading overline="Evidence">Platform gates</SectionHeading>
         {/* A VALID STATE WITH AN INCOMPLETE WORKFLOW. This explained the
             absence accurately and then left the reader on a page with no way
             to do anything about it — the rules live two navigations away and
@@ -1085,7 +1103,9 @@ function Assertions({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeading overline="Evidence">Assertions</SectionHeading>
+        {/* The populated branch's copy of the heading — see the empty branch
+            above for why both must carry the same words. */}
+        <SectionHeading overline="Evidence">Platform gates</SectionHeading>
         <Button
           size="sm"
           onClick={() => downloadCsv(`run-${runId}-assertions.csv`, assertionsCsv(assertions))}
@@ -1095,7 +1115,7 @@ function Assertions({
         </Button>
       </div>
       <AssertionEvidencePanel assertions={assertions} />
-      <TableFrame caption={ASSERTIONS_CAPTION} label="Assertions table">
+      <TableFrame caption={ASSERTIONS_CAPTION} label="Platform gates table">
           <table className={TABLE}>
             {/* `sr-only`, with the same node drawn visibly outside the scroll
                 box — see `TableFrame`. */}
@@ -1417,8 +1437,15 @@ function ToolAssertions({
                 is the only thing that can describe an assertion shape this
                 build does not recognise. */}
             <tr>
+              {/* "Outcome", not "Status" — review N01. `Status` is this
+                  product's word for a RUN's execution state (pending, running,
+                  complete), which the run list gives a column of its own and
+                  the decision band reports on its own row. A check does not
+                  have an execution state; it has a result. The platform table
+                  one section up has spelled this column `Outcome` all along,
+                  so the two tables now agree. */}
               <th scope="col" className={TH}>
-                Status
+                Outcome
               </th>
               <th scope="col" className={TH}>
                 Target

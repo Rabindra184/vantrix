@@ -191,7 +191,9 @@ describe('ToolAssertions — the tool’s own wording', () => {
     const table = await assertionTable();
 
     // The structured columns are what is on screen at rest.
-    for (const name of ['Status', 'Target', 'Metric', 'Bound', 'Actual']) {
+    // `Outcome`, not `Status` — review N01. `Status` is a RUN's execution
+    // state in this product; a check has a result, not a state.
+    for (const name of ['Outcome', 'Target', 'Metric', 'Bound', 'Actual']) {
       expect(within(table).getByRole('columnheader', { name })).toBeInTheDocument();
     }
     expect(within(table).queryByRole('columnheader', { name: 'Assertion' })).toBeNull();
@@ -379,5 +381,42 @@ describe('ToolAssertions — the target leads somewhere', () => {
     await waitFor(() =>
       expect(within(row).getByRole('link', { name: 'Search' })).toBeInTheDocument(),
     );
+  });
+
+  /**
+   * ═══ REVIEW N01 — TWO SYSTEMS, TWO NOUNS ═══
+   *
+   * The finding's second sentence asks the product to stop "mixing assertions,
+   * checks, gates, and verdicts without scope". The worst case was the run
+   * page's own headings: the organisation's SLA rules and the assertions a
+   * simulation declares for ITSELF were both headed "Assertions", one section
+   * apart, on the tab where a reader decides whether a release is safe.
+   *
+   * ONLY THE PLATFORM'S MOVED. "Simulation assertions" is correct and stays —
+   * the PRD gives "Assertions table" to G-05, which is the TOOL's own feature,
+   * so Gatling's assertions really are assertions. It was the platform's that
+   * had borrowed the word. And the replacement is not invented: the decision
+   * band above has called this system "Platform gates" since C02, so the
+   * heading moves onto an anchor the page already carried.
+   *
+   * ASSERTED AS EXCLUSIVITY, not as two strings. `run-tables.spec.ts` already
+   * pins the exact outline; what this adds is the property that survives the
+   * next rename — that no single word names both systems. A future heading
+   * reintroducing "assertions" for the platform fails here with the reason
+   * attached, rather than as a list mismatch in a browser spec.
+   */
+  it('gives the two judging systems different nouns', async () => {
+    renderOverview([details(['Search'], 'failed')]);
+    await assertionTable();
+
+    const h2s = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((h) => (h.textContent ?? '').trim());
+
+    expect(h2s).toContain('Platform gates');
+    expect(h2s).toContain('Simulation assertions');
+    // The exclusivity, in both directions.
+    expect(h2s.filter((h) => /assertion/i.test(h))).toEqual(['Simulation assertions']);
+    expect(h2s.filter((h) => /gate/i.test(h))).toEqual(['Platform gates']);
   });
 });

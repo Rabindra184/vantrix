@@ -217,11 +217,20 @@ test('a completed run shows the eight overview charts, in §13.2 order, on their
   // `sr-only` — present in the heading list below (so a screen-reader user
   // navigating by heading can actually reach this section, which
   // `aria-label` alone never let them do) but invisible on screen, so
-  // "Assertions" and "Overview" still appear nowhere on this tab.
+  // "Platform gates" and "Overview" still appear nowhere on this tab.
+  //
+  // THIS ASSERTION IS THE DANGEROUS SHAPE AND IS WORTH KNOWING ABOUT. It said
+  // `not.toContain('Assertions')`, and review N01 renamed that heading to
+  // "Platform gates" — so it would have gone on PASSING, vacuously, against a
+  // string no longer in the product, while no longer guarding anything at all.
+  // A negative assertion over a value that can be RENAMED is green in exactly
+  // the case it exists to catch. Kept (the tab split is worth guarding) and
+  // re-pointed, with the positive `toContain('Charts')` above it as the
+  // paired check that the page rendered at all.
   const headings = await page.getByRole('heading').allTextContents();
   expect(headings[0]).toMatch(/ParitySimulation/);
   expect(headings).toContain('Charts');
-  expect(headings).not.toContain('Assertions');
+  expect(headings).not.toContain('Platform gates');
   expect(headings).not.toContain('Overview');
 });
 

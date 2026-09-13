@@ -387,10 +387,10 @@ function decisionColour(decision: Decision, counts: AssertionCounts): string {
 }
 
 function decisionDetail(decision: Decision, counts: AssertionCounts): string {
-  if (decision === 'failed') return 'One or more SLA rules failed. Start with the failed assertions below.';
+  if (decision === 'failed') return 'One or more SLA rules failed. Start with the failed gates below.';
   if (decision === 'passed') return 'All evaluated SLA rules passed for this run.';
   if (decision === 'not_evaluated') return 'This run completed, but no SLA rule produced a release verdict.';
-  if (counts.failed > 0) return 'Assertions are available, but the run verdict is still resolving.';
+  if (counts.failed > 0) return 'Gate results are available, but the run verdict is still resolving.';
   if (decision === 'none') return 'This run carries no release verdict yet.';
   return 'The run has not finished evaluation yet.';
 }
