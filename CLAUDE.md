@@ -165,12 +165,31 @@ three extra `Map` entries in a pure function and cannot make `/v1/ping` 404.
 
 **AND CI PASSED THE SAME SUITE FIRST TRY** — `build` green in 14m37s on a clean
 runner with fresh service containers, which is the controlled version of the
-same experiment. So the defect, if there is one, is in this machine's
-accumulated state and not in the change. Recorded because the branch/main
-asymmetry is real (5 fails against 0) and nothing here explains it: the next
-person to see a streak like this should reach for CI as the arbiter early
-rather than spending five local runs on it, and should not assume the
-documented single-test flake covers a run of this length.
+same experiment.
+
+**THE CAUSE WAS FOUND ON THE NEXT BRANCH, AND IT WAS MEMORY.** This entry first
+recorded the streak as unexplained. It was not: `sysctl vm.swapusage` showed
+**18,872 MB of 20,480 MB of swap in use (92%)**, `vm_stat` 241 million swapouts
+against 210 million swapins, and **8,973 free pages — about 35 MB**. The
+machine was thrashing, which is the everything-is-broken shape this file
+already documents one section down.
+
+**AND THE LOAD GATE CANNOT SEE IT, WHICH IS THE WHOLE LESSON.** That earlier
+entry met thrashing at load 174 and 278, so load was the tell. Here load was
+**4.39** while swap was 92% gone — a gate of `1-min < 8 AND 5-min < 10` passed
+every single time and the suite failed anyway. Low load is not evidence of a
+healthy machine; it is evidence of a machine that is not computing, which is
+also what a machine waiting on swap looks like. **Check `sysctl vm.swapusage`
+and `vm_stat` alongside `uptime` before believing OR disbelieving an
+integration result.**
+
+The branch/main asymmetry that made this look like a code defect was luck:
+`main`'s three passes and the branches' six failures fell either side of the
+pressure, not either side of a change. The tell that should have redirected the
+search sooner is the ERROR CLASS — among them a
+`Parse Error: Expected HTTP/, RTSP/ or ICE/`, which is a socket receiving
+non-HTTP bytes and cannot be produced by any application-level diff, let alone
+one touching only `apps/web`.
 
 The review-0913-majors branch added ONE unit file —
 `apps/web/test/ToolAssertions.test.tsx` (9) — and 14 cases (12 to
