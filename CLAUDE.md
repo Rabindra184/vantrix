@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1817 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1821 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,48 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-m11-onetitle branch (M11) added no unit FILE and 4 cases to
+`apps/web/test/NewRunnerRun.test.tsx`, from a floor of 147 / 1817. Integration
+is UNCHANGED and e2e stays 119.
+
+**THE TASK WAS NAMED FOUR TIMES BEFORE A READER REACHED A FIELD.** "New on-prem
+run" (`<h1>`), "Queue a run" (the card), "Three steps: what to run, how to run
+it, and what will be sent" (its description), then "1 · Artifact / 2 · Execution
+/ 3 · Review". The heading stays and the card now carries the form and says
+nothing — which also removes an `<h2>` that repeated the `<h1>` one level down,
+so a screen-reader user stops meeting the page twice. `Card` draws no heading
+without a `title`, so deleting the title was the whole change.
+
+**AN ORDINAL PROMISES A FLOW THAT GATES STEP 2 BEHIND STEP 1.** This form has
+always shown all three groups at once and submitted in one go, which is exactly
+"staged labels without staged interaction". The numbers go; the GROUPING stays,
+because `<fieldset>`/`<legend>` is what tells a screen reader these eleven
+controls come in three parts and M16 ordered them by when the decisions are
+made. The case asserts the legends SURVIVE without their numbers rather than
+asserting they are gone — the difference between correcting a claim and
+deleting a structure.
+
+**AN EMPTY REVIEW IS NOT A REVIEW.** Untouched, the summary listed all eight
+fields, four of them as em dashes. A dash there is not a fact about the run; it
+is an optional value nobody has chosen to set. Unset optional rows are omitted
+now — and the REQUIRED ones are not optional rows: Artifact, Simulation and Run
+name stay whether filled or not, drawn as missing, because showing the gap
+before the button is pressed is the panel's entire purpose. Hiding those too
+would blank the card exactly when it is most useful, so both halves are
+asserted; either alone passes against the wrong design.
+
+**AND THREE THINGS ABOUT APPENDING A CASE TO AN UNFAMILIAR SUITE, ALL OF WHICH
+COST A ROUND TRIP HERE.** A block appended after the file's last `});` lands
+OUTSIDE the describe that owns the render helper — and a naive "strip the last
+`});` and re-add it" slices into whatever closed last, which here was
+`function mount`'s body, producing `TS1005` forty lines later. Insert before
+the final line instead. `NewRunnerRun.test.tsx` does NOT import
+`@testing-library/jest-dom/vitest`, so `toBeInTheDocument` is an "Invalid Chai
+property" rather than a failed assertion — read the file's existing matchers
+before writing new ones. And `Field`'s optional marker renders inside the
+`<label>`, so the accessible name is "Branch (optional)" and `/^branch$/i`
+matches nothing.
 
 The review-m09-labels branch (M09) added no unit FILE and 4 cases to
 `apps/web/test/ProjectRules.test.tsx`, from a floor of 147 / 1813. Integration
