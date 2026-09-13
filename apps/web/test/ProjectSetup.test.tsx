@@ -293,3 +293,88 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
     expect(link).toHaveAttribute('href', '/projects/alpha/run/new');
   });
 });
+
+/* ======================================================================== *
+ * REVIEW M04 — THREE CHOICES, NOT THREE DOCUMENTS
+ * ======================================================================== */
+
+describe('ProjectSetup — the workflows are choices before they are documents', () => {
+  /**
+   * The finding is that this page "presented documentation as task UI": all
+   * three paths showed their explanations, prerequisites, code and
+   * implementation caveats at once. What it asks for is three short choices,
+   * with only the chosen workflow expanded.
+   *
+   * ASSERTED ON `open`, NOT ON ABSENCE. jsdom applies no CSS and a closed
+   * `<details>` keeps its children in the DOM, so `queryByTestId` finds the
+   * curl command either way — the same reason the `truncate` and `max-sm:hidden`
+   * claims elsewhere in this repo need a browser or an attribute. The
+   * attribute is the honest thing to read here.
+   */
+  it('keeps each path’s commands closed until they are asked for', async () => {
+    renderPage();
+    await ready();
+
+    for (const [name, command] of [
+      ['Import results', 'upload-command'],
+      ['Configure CI', 'ci-command'],
+    ] as const) {
+      const card = await entry(name);
+      const disclosure = card.querySelector('details');
+      expect(disclosure, `${name} shows its commands with no disclosure`).not.toBeNull();
+      expect(disclosure!.open, `${name} starts expanded`).toBe(false);
+      // The content is still THERE — closed, not deleted, so a reader who
+      // opens it needs no request and the page needs no state.
+      expect(card.querySelector(`[data-testid="${command}"]`)).not.toBeNull();
+    }
+  });
+
+  /**
+   * ═══ AN ACCORDION WITH NO JAVASCRIPT ═══
+   *
+   * A shared `name` is what makes a browser close the others — "expand only
+   * the chosen workflow", for free. Where it is unsupported they open
+   * independently, which is the behaviour this replaced and not a defect, so
+   * the NAME is what this pins; `project-tests.spec.ts` proves the exclusion
+   * itself in a real engine.
+   */
+  it('groups the disclosures so a browser can close the others', async () => {
+    renderPage();
+    await ready();
+
+    const names = [...document.querySelectorAll('details')].map((d) => d.getAttribute('name'));
+    expect(names.length).toBeGreaterThan(1);
+    expect(new Set(names)).toEqual(new Set(['add-results']));
+  });
+
+  /**
+   * THE RUNNER PATH HAS NOTHING TO HIDE, and wrapping it anyway would bury an
+   * action rather than shorten a document. Its whole body is a sentence and
+   * the button that starts a run — which is the choice, not documentation
+   * about the choice. Stated as a case because "collapse everything" is the
+   * tidier-looking change and the wrong one.
+   */
+  it('leaves the path whose content is already a choice alone', async () => {
+    renderPage();
+    await ready();
+
+    const card = await entry('Run a test');
+    expect(card.querySelector('details')).toBeNull();
+    expect(within(card).getByRole('link', { name: /new on-prem run/i })).toBeInTheDocument();
+  });
+
+  /**
+   * The three choices themselves stay on screen — the status badge included,
+   * since M16 built it to be the one varying signal on this page. A page that
+   * collapsed the titles too would be a menu, not a set of choices.
+   */
+  it('still shows all three choices, and the one status that varies', async () => {
+    renderPage();
+    await ready();
+
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
+      expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
+    }
+    expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
+  });
+});

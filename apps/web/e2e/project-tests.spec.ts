@@ -290,3 +290,43 @@ test('the project nav reaches the three configuration pages', async ({ page }) =
     'page',
   );
 });
+
+/**
+ * ═══ REVIEW M04 — EXPAND ONLY THE CHOSEN WORKFLOW ═══
+ *
+ * Add results presented documentation as task UI: all three paths showed their
+ * explanations, prerequisites, code and implementation caveats at once. The
+ * choices stay on screen; the commands moved behind a `<details name>`, which
+ * is an accordion a browser closes for you.
+ *
+ * ONLY A REAL ENGINE CAN SEE THIS. The shared `name` is pinned in jsdom
+ * (`ProjectSetup.test.tsx`), but the EXCLUSION is the browser's own behaviour
+ * — no JavaScript in this product implements it — so nothing short of an
+ * engine proves it happens. Where it is unsupported the two open
+ * independently, which is the behaviour this replaced and is why the case
+ * asserts the CHOSEN one opened rather than asserting the other is shut.
+ */
+test('opening one workflow on Add results collapses the other', async ({ page }) => {
+  const admin = await seedAdmin();
+  await signIn(page, admin);
+  await page.goto('/projects/checkout/setup');
+
+  const importCmd = page.getByTestId('upload-command');
+  const ciCmd = page.getByTestId('ci-command');
+
+  // Three short choices, no commands: the state the review asks the page to
+  // open in.
+  await expect(importCmd).toBeHidden();
+  await expect(ciCmd).toBeHidden();
+
+  const importCard = page.getByTestId('entry-import-results');
+  await importCard.getByRole('group').locator('summary').click();
+  await expect(importCmd).toBeVisible();
+
+  // And the chosen one is the only one — the browser closed the first when the
+  // second opened, because they share a `name`.
+  const ciCard = page.getByTestId('entry-configure-ci');
+  await ciCard.getByRole('group').locator('summary').click();
+  await expect(ciCmd).toBeVisible();
+  await expect(importCmd).toBeHidden();
+});
