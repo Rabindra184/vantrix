@@ -278,3 +278,55 @@ describe('the time axis is named once', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * ═══ AN ELAPSED AXIS IN SECONDS ALWAYS CONVERTS ═══
+ *
+ * Every time series in this product plots raw `startOffsetMs` — a value axis
+ * carries x per point — and every one of them names that axis `Elapsed (s)`
+ * and passes `tickUnit: 'ms-as-s'`, so the ticks, and the axis POINTER's
+ * label, read in seconds. The two are a pair: a name without the conversion
+ * draws `42000` under a heading that says seconds, while the data table
+ * beneath the same chart writes `42`.
+ *
+ * `CompareChart` was the one exception. It named its axis `Elapsed (ms)`,
+ * which made it honest about its own ticks and silent about the table directly
+ * below it listing the identical buckets in seconds — one screen, one
+ * quantity, two units, and an axis pointer reading `42000`.
+ *
+ * COUNTED PER FILE, not globally: a file could otherwise gain an unconverted
+ * axis while a sibling gained a spare `tickUnit`, and the totals would still
+ * agree. And `Elapsed (ms)` is refused outright on a chart axis, because the
+ * plotted value is always milliseconds — a chart that wants to say so is a
+ * chart that forgot to convert.
+ */
+describe('every elapsed axis converts its own ticks', () => {
+  it('pairs each “Elapsed (s)” axis with a tickUnit, in every chart file', () => {
+    const dir = fromRepo('apps/web/src/charts');
+    const files = (
+      readdirSync(dir, { recursive: true, encoding: 'utf8' }) as unknown as string[]
+    ).filter((f) => typeof f === 'string' && f.endsWith('.tsx'));
+
+    const mismatched: string[] = [];
+    let namedAxes = 0;
+    for (const f of files) {
+      // Comments stripped — the comment explaining this rule quotes both
+      // spellings, and a scan that counts prose as product reads the
+      // documentation instead of the thing documented. Third time in this
+      // review; see `RunGlossary.test.tsx`.
+      const src = readFileSync(join(dir, f), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '');
+      const names = src.match(/name: 'Elapsed \(s\)'/g)?.length ?? 0;
+      const units = src.match(/tickUnit: 'ms-as-s'/g)?.length ?? 0;
+      namedAxes += names;
+      if (names !== units) mismatched.push(`${f}: ${names} axes, ${units} tickUnit`);
+      if (/name: 'Elapsed \(ms\)'/.test(src)) mismatched.push(`${f}: names an axis in milliseconds`);
+    }
+
+    expect(mismatched).toEqual([]);
+    // A positive beside the absence: an empty chart directory would satisfy
+    // the check above and prove nothing at all.
+    expect(namedAxes).toBeGreaterThan(10);
+  });
+});

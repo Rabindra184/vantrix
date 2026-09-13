@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **146 files / 1782 tests**, it
+`nvm use` first, and if a run reports fewer than **146 files / 1783 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,46 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The compare-axis-unit branch added no unit FILE and 1 case to
+`apps/web/test/timeAxis.test.ts`, from a floor of 146 / 1782. Integration is
+UNCHANGED and **e2e stays 117**. It fixes a defect the N01 review pass found
+and deliberately did not fix, because it is a units bug rather than a
+vocabulary one.
+
+**ONE SCREEN SHOWED ONE QUANTITY IN TWO UNITS.** `toCompare` plots
+`[bucket.startOffsetMs, value]` — raw milliseconds, because a value axis
+carries x per point — and the DATA TABLE beneath the same chart writes
+`offset / 1000` under a column headed `Elapsed (s)`. `CompareChart` passed no
+`tickUnit`, so a bucket at 42 seconds was drawn at 42000, tabulated at 42, and
+announced by the axis pointer as 42000.
+
+**THE TABLE WAS RIGHT AND THE CHART WAS WRONG**, which is worth stating because
+the first report of this had it the other way round. `users.ts` and `rates.ts`
+head the identical column `Elapsed (s)` and also write `offset / 1000`; the
+compare transform agrees with both. Only the axis dissented, and it dissented
+HONESTLY — naming itself `Elapsed (ms)` described its own ticks correctly while
+saying nothing about the table under it. **A label that is locally true can
+still be the defect**; check what the value is next to, not only what it is.
+
+**THE INVARIANT WAS ALREADY PERFECT EVERYWHERE ELSE, WHICH IS WHAT MADE IT
+CHEAP TO PIN.** Measured across `apps/web/src/charts/*.tsx`: twelve
+`name: 'Elapsed (s)'` and twelve `tickUnit: 'ms-as-s'`, matched file by file —
+`RatesChart` 1/1, `UsersChart` 2/2, `TelemetryCharts` 6/6, `ErrorsChart`,
+`PercentilesChart` and `TimeBrush` 1/1 each. `CompareChart` was 0/0 only
+because it spelled its axis in the other unit. The new case counts the pair PER
+FILE (a global total would let one file lose an axis while another gained a
+spare `tickUnit`) and refuses `Elapsed (ms)` on a chart axis outright, since
+the plotted value is always milliseconds — a chart that wants to say so is a
+chart that forgot to convert. Both failure modes were red-verified and report
+differently: `names an axis in milliseconds` against `1 axes, 0 tickUnit`.
+
+**AND A STASH ACROSS A STALE `main` COST A CONFLICT THAT DID NOT NEED TO
+EXIST.** The branch was cut from a local `main` three merges behind the server,
+so the file it appended to lacked the guard that had just landed in it.
+`git pull` before `git checkout -b`, every time — `git ls-remote origin
+refs/heads/main` is the check this file already recommends for merges and it is
+just as useful before a branch.
 
 The review-n01-axes branch (N01, step 3 of 4) added no unit FILE and 1 case to
 `apps/web/test/timeAxis.test.ts`, from a floor of 146 / 1781. Integration and
