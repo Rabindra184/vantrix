@@ -249,6 +249,31 @@ jobs:
           docker compose -f infra/docker-compose.yml config --quiet
           docker compose -f infra/docker-compose.yml --profile onprem config --quiet
 
+      # `config --quiet` only proves the file PARSES. The API and the runner
+      # also have to agree about where an uploaded artifact lives: both default
+      # RUNNER_ARTIFACT_DIR to a RELATIVE path, so a moved mount, a renamed
+      # volume or a relative override all parse fine and then fail at runtime
+      # as ARTIFACT_NOT_FOUND — which reads like a failed upload rather than
+      # two services looking in different directories.
+      - name: The API and the runner agree about the artifact directory
+        env:
+          PERFPORTAL_DB_PASSWORD: ci-only
+          PERFPORTAL_S3_ACCESS_KEY: ci-only
+          PERFPORTAL_S3_SECRET_KEY: ci-only-secret
+        run: |
+          node infra/test/runner-paths.mjs
+
+          # And the check has to be able to FAIL, or it is a guess. The
+          # override moves the runner's mount by one path segment — the exact
+          # defect, in the shape that still parses.
+          if node infra/test/runner-paths.mjs \
+               -f infra/docker-compose.yml \
+               -f infra/test/runner-paths-broken.yml > /dev/null 2>&1; then
+            echo "runner-paths.mjs PASSED against the deliberately broken override"
+            exit 1
+          fi
+          echo "the broken override is rejected, as it must be"
+
       # The whole image, not a cached prefix. Both breaks above were in RUN
       # steps that a layer cache would have skipped.
       - name: Build the production image

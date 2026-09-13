@@ -1,0 +1,17 @@
+# A compose OVERRIDE that reintroduces the exact defect `runner-paths.mjs`
+# exists to catch, so the check is something somebody has watched fail rather
+# than an assertion taken on trust — the same discipline `residue-broken.sql`
+# applies to the residue sweep.
+#
+# It changes only the runner, and only by ONE path segment. That is the point:
+# the compose file still parses, `docker compose config --quiet` still passes,
+# every service still starts, and the failure appears later as
+# ARTIFACT_NOT_FOUND on somebody's first on-prem run.
+services:
+  runner:
+    environment:
+      RUNNER_ARTIFACT_DIR: /var/lib/perfportal/runner-artifacts-2
+    volumes:
+      - runner-artifacts:/var/lib/perfportal/runner-artifacts-2:ro
+      - runner-work:/var/lib/perfportal/runner-work
+      - runner-logs:/var/log/perfportal/runner
