@@ -29,7 +29,7 @@ describe('toScatter', () => {
   it('tables every point, because the table is the parity surface', () => {
     const data = toScatter(scatter);
     expect(data.rows).toHaveLength(scatter.ok.length + scatter.ko.length);
-    expect(data.columns).toEqual(['Series', 'Requests per second', 'p95 (ms)']);
+    expect(data.columns).toEqual(['Outcome', 'Requests per second', 'p95 (ms)']);
   });
 
   it('says why it is empty rather than drawing empty axes', () => {

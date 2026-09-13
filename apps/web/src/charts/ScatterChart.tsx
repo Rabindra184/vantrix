@@ -21,7 +21,7 @@ export default function ScatterChart({ scatter }: { readonly scatter: ScatterRes
       // OK and KO mean an outcome, so they wear the status tokens rather than
       // the categorical palette — the same rule DistributionChart follows.
       roles={SCATTER_ROLES}
-      xAxis={{ name: 'Requests per second (all requests)' }}
+      xAxis={{ name: 'Requests/s (all requests)' }}
       yAxis={{ name: 'p95 response time (ms)' }}
       // NO `unit`, deliberately. Every other chart's values share one unit;
       // this one's are `[x, y]` pairs spanning TWO — requests per second and

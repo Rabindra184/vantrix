@@ -7,6 +7,8 @@
 // every path a git-blame or another task's brief already points at. Every
 // existing assertion above is plain data and runs identically under jsdom.
 // @vitest-environment jsdom
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { createElement, Fragment, type ReactNode } from 'react';
 import { renderHook } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
@@ -218,4 +220,61 @@ it('growingDomainMs and useTimeDomainFromShell agree on the growing-run domain f
     wrapper: wrapperFor({ window: null, durationMs: null, liveDurationMs: durationMs, live: null }),
   });
   expect(result.current).toEqual(growingDomainMs(durationMs));
+});
+
+/**
+ * ═══ REVIEW N01 — ONE AXIS, ONE NAME ═══
+ *
+ * Every time series on the run page shares a crosshair group and one
+ * `[0, durationMs]` domain, which is what lets a reader correlate offered load
+ * against latency and failures by eye. They did not share a NAME: the users
+ * charts headed their time column `Time (s)` while every other chart, and
+ * every telemetry chart, said `Elapsed (s)`.
+ *
+ * Asserted over the SOURCE rather than over one transform's output, because
+ * the drift is between modules that never meet: `users.ts` owns its own column
+ * constant and nothing imports it. CLAUDE.md records the same shape for
+ * `tokens.test.ts` (reads the emitted CSS) and `paths.test.ts` (reads
+ * `App.tsx`) — some agreements exist only between files.
+ *
+ * `Elapsed (ms)` is deliberately NOT swept up. Two charts really do draw
+ * milliseconds on that axis (the telemetry label column and the compare
+ * overlay, which passes no `tickUnit`), so their names are honest about what
+ * is drawn; renaming them to seconds would put a false unit on a real axis.
+ * That mismatch is a separate defect, recorded rather than papered over here.
+ */
+/** A repo-root-relative path, wherever the runner was invoked from. */
+function fromRepo(rel: string): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i += 1) {
+    if (existsSync(resolve(dir, rel))) return resolve(dir, rel);
+    dir = resolve(dir, '..');
+  }
+  throw new Error(`could not find ${rel} from ${process.cwd()}`);
+}
+
+describe('the time axis is named once', () => {
+  it('never calls elapsed time anything but “Elapsed”', () => {
+    const dir = fromRepo('apps/web/src/charts');
+    const files = readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter(
+      (f) => typeof f === 'string' && (f.endsWith('.ts') || f.endsWith('.tsx')),
+    ) as string[];
+
+    const offenders: string[] = [];
+    for (const f of files) {
+      /* COMMENTS STRIPPED FIRST, and that is not an optimisation. The comment
+         explaining a rule quotes the spelling the rule forbids — this guard's
+         own `/* "Elapsed (s)", not "Time (s)" *\/` in `users.ts` made it fail
+         against the very file it had just corrected. Same shape as the bridge
+         regex in `RunStats.test.tsx`, which matched the paragraph documenting
+         the defect instead of the product. A source-scanning assertion has to
+         read CODE; prose about the rule is not a violation of it. */
+      const src = readFileSync(join(dir, f), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '');
+      // A quoted label spelling the time axis any other way.
+      for (const m of src.matchAll(/['"]Time \((?:s|ms)\)['"]/g)) offenders.push(`${f}: ${m[0]}`);
+    }
+    expect(offenders).toEqual([]);
+  });
 });

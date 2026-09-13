@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **146 files / 1781 tests**, it
+`nvm use` first, and if a run reports fewer than **146 files / 1782 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,55 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-n01-axes branch (N01, step 3 of 4) added no unit FILE and 1 case to
+`apps/web/test/timeAxis.test.ts`, from a floor of 146 / 1781. Integration and
+e2e are UNCHANGED (**e2e stays 117**).
+
+**STEP 3 WAS PLANNED AS THE BIG ONE AND IS THE SMALL ONE, BECAUSE THE EVIDENCE
+REFUSED IT.** The plan was to rename the statistics table — `OK` to Successful,
+`KO` to Failed, `Cnt/s` to Requests/s, ~17 test references. An adversarial pass
+killed all of it on two grounds, both checkable:
+
+  - **THE TABLE IS A BYTE-FOR-BYTE MIRROR OF GATLING'S OWN REPORT.**
+    `fixtures/gatling-3.15.1.2/reference-report/index.html` carries
+    `<span>Requests</span>`, `Total`, `OK`, `KO`, `Min`, `Max`, `Mean`,
+    `Count`, `Error` — the same column headers, in the same order. N01 allows
+    these "when explicitly needed for Gatling parity", and this is what that
+    looks like with evidence rather than assertion: a reader diffing the two
+    reports column by column is doing something the fixture proves is possible.
+    The step-1 entry above is right that no TEST binds a label; this is the
+    other half of the argument and it survives.
+
+  - **`Cnt/s` IS NOT REQUESTS ON EVERY ROW.** `throughputRps` is
+    `count / windowMs * 1000` (`rollup.ts:91`), and on a GROUP row `count` is
+    group executions. Renaming the column `Requests/s` would put a false label
+    on six of the reference run's fourteen rows. The tile may say Requests/s
+    because the run scope really is requests; the column may not.
+
+**SO THE FINDING IS ANSWERED BY LEAVING IT ALONE, AND THAT IS A RESULT.** What
+actually changed is five AXIS names, where nothing mirrors anything:
+`Time (s)` to `Elapsed (s)` (the users charts were the only ones disagreeing,
+on the chart a reader correlates the others against), `Series` to `Outcome` in
+the scatter CSV (the column holds OK/KO — an outcome, not a chart-internal
+structure), and three `Requests per second` / `Responses per second` axis names
+to `Requests/s` / `Responses/s`. Chart TITLES keep the long form: a title is
+prose, an axis is a unit.
+
+**A SOURCE-SCANNING GUARD MUST STRIP COMMENTS, AND THIS IS THE SECOND TIME.**
+The new case greps `apps/web/src/charts` for any other spelling of the time
+axis — and failed against the very file it had just corrected, because the
+comment explaining the rename quotes `"Time (s)"` to say what it replaced.
+`RunStats.test.tsx`'s bridge regex had done the identical thing an hour
+earlier, matching the paragraph documenting the defect instead of the product.
+**Prose about a rule is not a violation of it**; strip `/* */` and `//` before
+matching, or anchor to the syntax that can only be code.
+
+**AND A HAND-BUILT COPY OF ANOTHER MODULE'S CONSTANT GOES STALE, NOT RED.**
+`Chart.test.tsx`'s scatter fixture restates `SCATTER_COLUMNS` by hand; renaming
+the real constant leaves that copy describing nothing, with every assertion
+still passing. It is the mirror of the vacuous `not.toContain` from step 2:
+both are tests that survive the change they exist to notice.
 
 The review-n01-gates branch (N01, step 2 of 4) added no unit FILE and 1 case to
 `apps/web/test/ToolAssertions.test.tsx`, from a floor of 146 / 1780.

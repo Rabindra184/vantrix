@@ -67,7 +67,7 @@ export default function TrendsCharts({ trends }: { readonly trends: TrendsRespon
         stacked
         roles={OUTCOME_ROLES}
         unit="/s"
-        yAxis={{ name: 'Requests per second' }}
+        yAxis={{ name: 'Requests/s' }}
         xAxis={{ name: 'Run' }}
       />
     </>

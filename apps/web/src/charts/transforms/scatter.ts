@@ -23,7 +23,12 @@ import type { ChartData, ChartTableRow } from '../types';
  */
 export const SCATTER_ROLES: readonly StatusRole[] = ['passed', 'failed'];
 
-const SCATTER_COLUMNS = ['Series', 'Requests per second', 'p95 (ms)'] as const;
+/* `Outcome`, not `Series` — review N01. The column holds OK/KO, which is an
+   outcome; "Series" named the CHART's internal structure rather than the
+   value, and the distribution export one file over already heads the same
+   split `Outcome`. `Requests per second` stays spelled out here: a CSV header
+   is read in a spreadsheet with no axis beside it to borrow units from. */
+const SCATTER_COLUMNS = ['Outcome', 'Requests per second', 'p95 (ms)'] as const;
 
 export function toScatter(s: ScatterResponse): ChartData {
   const rows: ChartTableRow[] = [

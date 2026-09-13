@@ -98,7 +98,7 @@ export function RequestRateChart({
   readonly compact?: boolean;
 }) {
   const data = useMemo(() => toRequestRate(series, { x: 'ms' }), [series]);
-  return <RateChart id="requests-per-second" title={title} yName="Requests per second" data={data} domainMs={domainMs} compact={compact} />;
+  return <RateChart id="requests-per-second" title={title} yName="Requests/s" data={data} domainMs={domainMs} compact={compact} />;
 }
 
 /** ⑪ — responses per second over time, bucketed by END time (G-24). */
@@ -115,5 +115,5 @@ export function ResponseRateChart({
   readonly compact?: boolean;
 }) {
   const data = useMemo(() => toResponseRate(series, { x: 'ms' }), [series]);
-  return <RateChart id="responses-per-second" title={title} yName="Responses per second" data={data} domainMs={domainMs} compact={compact} />;
+  return <RateChart id="responses-per-second" title={title} yName="Responses/s" data={data} domainMs={domainMs} compact={compact} />;
 }
