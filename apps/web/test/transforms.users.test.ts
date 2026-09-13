@@ -227,8 +227,8 @@ describe('the data table both charts expose', () => {
   const rate = toUserStartRate(users);
 
   it('heads one column per series, after the time column', () => {
-    expect(conc.columns).toEqual(['Time (s)', 'Browse', 'Checkout', 'All users']);
-    expect(rate.columns).toEqual(['Time (s)', 'Browse', 'Checkout', 'All users']);
+    expect(conc.columns).toEqual(['Elapsed (s)', 'Browse', 'Checkout', 'All users']);
+    expect(rate.columns).toEqual(['Elapsed (s)', 'Browse', 'Checkout', 'All users']);
   });
 
   it('labels the rows with elapsed seconds, one row per bucket', () => {
@@ -405,7 +405,7 @@ describe('a run with more scenarios than the palette has hues', () => {
   it('keeps every scenario in the data table, drawn or not', () => {
     const d = toConcurrentUsers(many);
     expect(d.columns).toEqual([
-      'Time (s)',
+      'Elapsed (s)',
       'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7',
       'All users',
     ]);
@@ -431,7 +431,7 @@ describe('a run with no recorded users', () => {
     // The data table renders unconditionally, so its header still has to
     // exist — built from the same list as a populated chart's, which with no
     // scenarios is the time column and the total.
-    expect(d.columns).toEqual(['Time (s)', 'All users']);
+    expect(d.columns).toEqual(['Elapsed (s)', 'All users']);
     expect(JSON.stringify(d)).not.toMatch(/NaN|Infinity/);
   });
 });

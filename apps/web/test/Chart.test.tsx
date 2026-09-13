@@ -381,7 +381,12 @@ describe('Chart — the tooltip formats an array-valued (scatter) point', () => 
         data={{
           series: [{ name: 'OK', data: [[3, 120]] }],
           axisLabels: [],
-          columns: ['Series', 'Requests per second', 'p95 (ms)'],
+          // Mirrors `SCATTER_COLUMNS`. A hand-built copy of another module's
+          // constant goes STALE rather than red when that constant moves —
+          // it never fails, it just stops describing the thing it stands in
+          // for. Renamed with it (review N01: the column holds OK/KO, an
+          // outcome, not a "series").
+          columns: ['Outcome', 'Requests per second', 'p95 (ms)'],
           rows: [{ label: 'OK', values: [3, 120] }],
         }}
       />,
