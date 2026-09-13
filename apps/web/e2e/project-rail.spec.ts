@@ -180,6 +180,46 @@ test('a skip link lets a keyboard user bypass the rail', async ({ page, browserN
   await expect(page.getByRole('main')).toBeFocused();
 });
 
+/**
+ * ═══ REVIEW 09-13 N03 — THE BADGE SAYS WHAT IT SUMMARISES ═══
+ *
+ * `not evaluated` beside a project name reads as a claim about the PROJECT.
+ * It is the latest run's, and the rail is the one surface where the badge has
+ * no column header to lean on — which is why the review calls it ambiguous
+ * here and not on the run list.
+ *
+ * THIS CANNOT BE A UNIT TEST. The clarification is an `aria-label` on a span
+ * INSIDE the link, because this file pins every row's exact textContent (the
+ * collapse is CSS-only and both states must read identically), so visible or
+ * `sr-only` words were not available. `dom-accessibility-api` does not consult
+ * a descendant's `aria-label` and Chromium does — CLAUDE.md records exactly
+ * that asymmetry — so only a real engine can see the name this produces.
+ */
+test('the rail badge says which run its verdict belongs to', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedProjectWithRuns(admin.orgId, 'search-svc', 'Search Service', 2, null);
+
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
+  const row = rail.getByRole('link', { name: /Search Service/ });
+  await expect(row).toBeVisible();
+
+  // The badge's own wrapper names what it is about. Read from the element
+  // rather than from the row's whole accessible name, so this says something
+  // specific when it fails.
+  const summary = row.locator('[aria-label^="Latest run:"]');
+  await expect(summary).toHaveCount(1);
+  const label = await summary.getAttribute('aria-label');
+  expect(label).toMatch(/^Latest run: .+/);
+
+  /* AND THE ROW'S OWN TEXT IS UNCHANGED, which is the constraint that forced
+     `aria-label` in the first place: the visible row is still the name plus
+     the badge word, with no narration added to it. */
+  expect((await row.textContent())?.includes('Latest run:')).toBe(false);
+});
+
 test('a status badge does not clip the project name beside it', async ({ page }) => {
   const admin = await seedAdmin();
   // FOURTEEN CHARACTERS, which is not a long name — it is shorter than three

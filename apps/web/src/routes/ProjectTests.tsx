@@ -123,6 +123,7 @@ export default function ProjectTests() {
       Every test in this project, newest first. A test is created the first time PerfPortal sees a
       run of it, named by whatever that run declared — or after its simulation class, if it declared
       nothing — until somebody renames it. “Runs” counts this test’s whole history, not a page of it.
+      An em dash under “Simulation class” means the class is the same as the name.
     </>
   );
 
@@ -257,8 +258,23 @@ function TestRow({
           but when they are identical it says SO rather than repeating it. */}
       <td className={`${TD} font-mono text-[12px] break-all text-muted`}>
         {test.name === test.simulationClass ? (
-          <span data-testid="test-class-same" className="font-sans italic">
-            same as the name
+          /* ═══ AN EM DASH, WITH THE CONVENTION IN THE CAPTION (review N04) ═══
+           *
+           * "same as the name" was accurate and spent a sentence saying it in
+           * every untouched test's row. The dash is the table convention and
+           * the caption defines it once — the pattern N02 uses one component
+           * over for the percentile caveat.
+           *
+           * IT CANNOT BE MISREAD AS "ABSENT" HERE, which is the usual reason
+           * not to reach for a dash: `TestSummary.simulationClass` is
+           * `z.string()`, not nullable, so no row in this column is ever
+           * empty and the dash has only one possible meaning.
+           *
+           * The accessible name still carries the fact, because a screen
+           * reader announcing a bare dash would be worse than the sentence
+           * this replaces. */
+          <span data-testid="test-class-same" aria-label="Same as the name">
+            —
           </span>
         ) : (
           test.simulationClass

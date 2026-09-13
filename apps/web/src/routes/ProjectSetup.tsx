@@ -82,12 +82,11 @@ function AddResults({ slug }: { readonly slug: string }) {
         title="Import results"
         icon={<UploadIcon className="h-4 w-4" />}
         description="You already have a finished Gatling report. Post the bundle and PerfPortal parses it."
-        status={{ kind: 'ready', label: 'Available now' }}
       >
         <p className="text-[13px] leading-relaxed text-muted">
           Needs a token with the <span className="text-primary">Completed reports</span> scope.{' '}
           <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
-            Mint one under Access
+            Create one under API tokens
           </Link>
           , then export it as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code>.
         </p>
@@ -144,8 +143,7 @@ function AddResults({ slug }: { readonly slug: string }) {
       <EntryCard
         title="Configure CI"
         icon={<TokenIcon className="h-4 w-4" />}
-        description="Every build posts its own report, so the trend line keeps itself up to date."
-        status={{ kind: 'ready', label: 'Available now' }}
+        description="Send reports from your CI pipeline, so the trend line keeps itself up to date."
       >
         <p className="text-[13px] leading-relaxed text-muted">
           Add one step after your existing Gatling task. The token belongs in the pipeline’s secret
@@ -250,7 +248,15 @@ function EntryCard({
   readonly title: string;
   readonly icon: ReactNode;
   readonly description: string;
-  readonly status: EntryStatus;
+  /* ═══ OPTIONAL, BECAUSE ONLY ONE CARD HAS A STATE (review 09-13 N04) ═══
+   *
+   * Two of the three read `Available now`, which was true the moment the
+   * endpoint existed and could never say anything else — a badge that cannot
+   * vary is decoration, and three identical green dots taught the reader to
+   * skip the one that matters. The runner's IS a real state (unknown / busy /
+   * waiting / stalled / idle, computed from the project's own job history),
+   * and it reads as a status again now that it is the only one. */
+  readonly status?: EntryStatus;
   readonly children: ReactNode;
 }) {
   return (
@@ -263,17 +269,19 @@ function EntryCard({
           </div>
           {/* The dot is `aria-hidden` and the WORDS carry the state, so the
               status is not a colour a reader has to have learnt. */}
-          <span
-            className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase"
-            style={{ color: STATUS_COLOR[status.kind] }}
-            data-testid="entry-status"
-          >
-            <span aria-hidden="true">●</span>
-            {status.label}
-          </span>
+          {status !== undefined && (
+            <span
+              className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase"
+              style={{ color: STATUS_COLOR[status.kind] }}
+              data-testid="entry-status"
+            >
+              <span aria-hidden="true">●</span>
+              {status.label}
+            </span>
+          )}
         </div>
         <p className="text-[13px] leading-relaxed text-muted">{description}</p>
-        {status.note !== undefined && (
+        {status?.note !== undefined && (
           <p className="rounded-lg border border-default bg-sunken p-3 text-[12px] leading-snug text-muted">
             {status.note}
           </p>

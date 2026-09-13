@@ -1501,9 +1501,13 @@ function ToolAssertions({
               onClick={() => setExpanded((open) => !open)}
               className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
             >
-              {expanded
-                ? `Hide the ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`
-                : `Show ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`}
+              {/* `Other checks (N)` (review 09-13 N04). "Show 2 checks that
+                  did not fail" spends eight words on a control whose own
+                  state already says show-or-hide, and defines the rest of the
+                  table by what they are NOT. The count is the useful part and
+                  it stays; the statuses are one column away in the rows this
+                  opens, which is where a reader wanting them is going. */}
+              {expanded ? `Hide other checks (${rest.length})` : `Other checks (${rest.length})`}
             </button>
           )}
           {/* No aria state attribute, deliberately: the label names the action

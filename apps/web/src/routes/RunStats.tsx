@@ -113,7 +113,7 @@ export default function RunStats({
           value={percentileValue(run, 'p95')}
           unit={percentileUnit(run, 'p95')}
           tone={slaTone(assertions, 'p95')}
-          hint="an estimate, accurate to within 1%"
+          hint="estimate"
           delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
           data-testid="stat-p95"
         />
@@ -122,11 +122,46 @@ export default function RunStats({
           value={percentileValue(run, 'p99')}
           unit={percentileUnit(run, 'p99')}
           tone={slaTone(assertions, 'p99')}
-          hint="an estimate, accurate to within 1%"
+          hint="estimate"
           delta={deltaFor(percentileMs(run, 'p99'), percentileMs(baseline, 'p99'), 'lower')}
           data-testid="stat-p99"
         />
       </dl>
+
+      {/* ═══ THE METHODOLOGY ONCE, NOT ONCE PER TILE (review 09-13 N02) ═══
+       *
+       * Both percentile tiles carried "an estimate, accurate to within 1%" —
+       * the same sentence, twice, in a six-tile row where every other hint is
+       * a fact about ITS OWN tile. The tiles keep the one word that is a
+       * property of the value (`estimate`, so nobody reads p95 as exact) and
+       * the reasoning moves here, where it is said once and can be longer for
+       * it.
+       *
+       * IT IS WORTH SAYING AT ALL, which is why this is a disclosure and not a
+       * deletion: the 1% is a CLAIM ABOUT THIS PLATFORM, not a disclaimer.
+       * Gatling's own percentiles are histogram estimates — measured 9.47% low
+       * on the p99 of a real run, reporting a value that occurs nowhere in the
+       * data — and the sketch behind these answers the same question within 1%
+       * against the true distribution. A reader comparing the two reports needs
+       * that, and it is the kind of thing they need once.
+       *
+       * NO HEADING. `run-tables.spec.ts` asserts the Overview tab's heading
+       * outline is exactly ['Assertions', 'Simulation assertions',
+       * 'Statistics']; a `<summary>` contributes a group, not a heading, so
+       * this cannot break that outline the way an <h2> would. */}
+      <details className="group mt-3" data-testid="percentile-method">
+        <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+          <span className="group-open:hidden">How percentiles are measured</span>
+          <span className="hidden group-open:inline">Hide how percentiles are measured</span>
+        </summary>
+        <p className="pt-2 text-[12px] leading-relaxed text-muted">
+          Percentiles are read from a sketch of the whole run rather than from a bucketed
+          histogram, which answers any rank — p95, p99, p99.9 — to within 1% of the true
+          distribution. The tool&rsquo;s own report estimates from fixed bands and can drift
+          further: on this fixture&rsquo;s p99 it reads 9.47% low, reporting a number that occurs
+          nowhere in the data. Minimum, maximum, mean and every count on this row are exact.
+        </p>
+      </details>
     </section>
   );
 }

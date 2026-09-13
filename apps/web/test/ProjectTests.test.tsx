@@ -260,10 +260,21 @@ describe('ProjectTests', () => {
  * deliberately not faked from what is on hand.
  */
 describe('ProjectTests — the class column does not repeat the name', () => {
-  it('says so when the name is just the class', async () => {
+  /**
+   * AN EM DASH, AND THE ACCESSIBLE NAME STILL CARRIES THE FACT (review N04).
+   * "same as the name" was a sentence in every untouched test's row; the dash
+   * is the table convention and the caption defines it once. A screen reader
+   * announcing a bare dash would be worse than the sentence it replaces, so
+   * the `aria-label` is asserted alongside the glyph rather than instead.
+   */
+  it('says so with a dash when the name is just the class', async () => {
     stubFetch({ tests: { tests: [ABANDONED] } });
     renderPage();
-    expect(await screen.findByTestId('test-class-same')).toBeInTheDocument();
+    const cell = await screen.findByTestId('test-class-same');
+    expect(cell.textContent?.trim()).toBe('—');
+    expect(cell).toHaveAttribute('aria-label', 'Same as the name');
+    // And the convention is stated once, where a reader meets the table.
+    expect(document.body.textContent ?? '').toMatch(/em dash under .Simulation class./i);
   });
 
   it('still shows the class when a test has been renamed', async () => {

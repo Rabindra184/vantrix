@@ -131,8 +131,20 @@ describe('ProjectSetup — the three ways in', () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Add results', level: 1 });
 
-    const link = within(await entry('Import results')).getByRole('link', { name: /mint one under access/i });
+    /* ═══ THE LINK CALLS ITS DESTINATION WHAT THAT PAGE CALLS ITSELF ═══
+     *
+     * This read "Mint one under Access" — wording M18 had already retired on
+     * the page it points at, which is now headed "API tokens" with a "Create
+     * a token" button. A cross-reference that names a screen by a word the
+     * screen no longer uses sends the reader looking for something that is
+     * not there, and it is exactly the vocabulary drift review 09-13 N01 is
+     * about. Asserted by DESTINATION plus the two words that must agree, so a
+     * future rename of that page fails here rather than drifting again. */
+    const link = within(await entry('Import results')).getByRole('link', {
+      name: /create one under api tokens/i,
+    });
     expect(link).toHaveAttribute('href', '/projects/alpha/access');
+    expect(link.textContent ?? '').not.toMatch(/mint/i);
 
     expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
     expect(screen.queryByLabelText(/token name/i)).toBeNull();
@@ -186,6 +198,31 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
     expect(card.textContent ?? '').not.toMatch(/\bavailable now\b|\bonline\b/i);
     // And it does not ask for work as a diagnostic.
     expect(card.textContent ?? '').not.toMatch(/queue one to find out/i);
+  });
+
+  /**
+   * ═══ REVIEW 09-13 N04 — ONLY THE CARD WITH A STATE WEARS A BADGE ═══
+   *
+   * Import and CI both read `Available now`, which was true the moment the
+   * endpoint existed and could never have said anything else. Three identical
+   * green dots teach a reader to skip the one that varies — and the runner's
+   * is the one that varies, which is the whole point of the panel M16 built.
+   *
+   * Asserted as a PAIR. "No badge on Import" alone would pass just as well
+   * against a page that had lost the runner's status too, which is the
+   * regression that would actually matter.
+   */
+  it('wears a status badge only where there is a state to report', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Add results', level: 1 });
+
+    for (const name of ['Import results', 'Configure CI']) {
+      const card = await entry(name);
+      expect(within(card).queryByTestId('entry-status')).toBeNull();
+      expect(card.textContent ?? '').not.toMatch(/available now/i);
+    }
+    // And the one that does vary still reports.
+    expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
   });
 
   it('reports a claimed job as a runner that is there', async () => {
