@@ -1,4 +1,4 @@
-import ProjectConfigPage from './ProjectConfigPage';
+import ProjectShell from './ProjectShell';
 import ProjectRules from './ProjectRules';
 
 /**
@@ -11,9 +11,14 @@ import ProjectRules from './ProjectRules';
  * somebody with no interest in tokens, and putting it below two sections they
  * had no reason to scroll past made it read as part of first-run setup.
  *
- * `showTitle={false}` because this page's `<h1>` already says "SLA rules" —
- * see that prop's own note for why a duplicate heading is invisible on screen
- * and not to a screen reader.
+ * `showTitle={false}` because the section is already named — by the `SLA
+ * rules` tab in `ProjectShell`, carrying `aria-current="page"`. It used to be
+ * named by this page's own `<h1>`; M10 made the `<h1>` the PROJECT and left
+ * the section to the nav, which is the same arrangement `RunShell` uses (no
+ * tab repeats its own name as a heading). The panel's DESCRIPTION is kept
+ * either way — `Card` renders it on its own when there is no title — and it is
+ * the sentence that says what a rule does and that a run with none gets no
+ * verdict.
  *
  * `key={slug}` for the reason `ProjectRuns` and `TestRuns` carry one: a
  * same-route param change otherwise reuses the instance and carries a
@@ -23,8 +28,8 @@ import ProjectRules from './ProjectRules';
  */
 export default function ProjectRulesPage() {
   return (
-    <ProjectConfigPage current="rules" heading="SLA rules">
+    <ProjectShell current="rules">
       {({ slug }) => <ProjectRules key={`rules:${slug}`} slug={slug} showTitle={false} />}
-    </ProjectConfigPage>
+    </ProjectShell>
   );
 }

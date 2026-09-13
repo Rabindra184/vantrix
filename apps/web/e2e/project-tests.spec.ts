@@ -99,15 +99,22 @@ test('the project run list moved to /runs and still shows every test’s runs', 
   await signIn(page, admin);
   await page.goto('/projects/checkout');
 
-  await page.getByRole('link', { name: 'Project runs', exact: true }).click();
+  /* ═══ ACROSS, THROUGH THE SHELL'S NAV — review M10 ═══
+     This used to be a "Project runs" button on the tests page, answered by an
+     "All tests" button on the run list: the same relationship spelled two
+     different ways depending on which end you stood at, and neither page
+     mentioning that rules or tokens existed. One strip now, so the same two
+     links do both directions. */
+  const sections = page.getByRole('navigation', { name: 'Project sections' });
+  await sections.getByRole('link', { name: 'Runs', exact: true }).click();
   await page.waitForURL('**/projects/checkout/runs');
 
   // Every run of every test in the project — the view no test's page can give,
   // and the only one that would show a run belonging to no test at all.
   await expect(page.getByTestId('run-row')).toHaveCount(4);
 
-  // And back up, which is the whole reason this page carries the link.
-  await page.getByRole('link', { name: 'All tests', exact: true }).click();
+  // And back up, through the same strip.
+  await sections.getByRole('link', { name: 'Tests', exact: true }).click();
   await page.waitForURL('**/projects/checkout');
   await expect(page.getByTestId('test-row')).toHaveCount(2);
 });
@@ -243,13 +250,12 @@ test('a test links to a comparison of its own latest runs, and it draws', async 
  * navigation through the real router on each of the three, by clicking the nav
  * rather than by `goto`, because the nav is the thing the split added.
  */
-test('the project configuration nav reaches three separate pages', async ({ page }) => {
+test('the project nav reaches the three configuration pages', async ({ page }) => {
   const admin = await seedAdmin();
   await signIn(page, admin);
   await page.goto('/projects/checkout/setup');
 
   // The entry choices the review asked for, named for what the reader wants.
-  await expect(page.getByRole('heading', { name: 'Add results', level: 1 })).toBeVisible();
   for (const choice of ['Import results', 'Run a test', 'Configure CI']) {
     await expect(page.getByRole('heading', { name: choice, level: 2 })).toBeVisible();
   }
@@ -258,21 +264,29 @@ test('the project configuration nav reaches three separate pages', async ({ page
   // section of this page — the inversion is the whole fix.
   await expect(page.getByRole('button', { name: 'Create token' })).toHaveCount(0);
 
-  const nav = page.getByRole('navigation', { name: 'Project configuration' });
-  // "API tokens", not "Access" — review 09-13 M18. The tab and the page it
+  const nav = page.getByRole('navigation', { name: 'Project sections' });
+  // "API tokens", not "Access" — review 09-13 M18. The section and the page it
   // opens must agree about what the page is, and "Access" promised members and
   // roles this product does not have.
-  await nav.getByRole('link', { name: 'API tokens' }).click();
-  await expect(page.getByRole('heading', { name: 'API tokens', level: 1 })).toBeVisible();
+  //
+  // SCOPED TO THE NAV, and that is not decoration: the Add results page
+  // carries its own "Create one under API tokens" link, and Playwright matches
+  // accessible names as a case-insensitive SUBSTRING — so a page-wide query
+  // for 'API tokens' resolves two elements here and fails strict mode.
+  await nav.getByRole('link', { name: 'API tokens', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Create token' })).toBeVisible();
 
-  await nav.getByRole('link', { name: 'SLA rules' }).click();
-  await expect(page.getByRole('heading', { name: 'SLA rules', level: 1 })).toBeVisible();
-  // ONE heading with those words, not two: the panel drops its own card title
-  // on this page because the `<h1>` already carries it, and a duplicate is
+  await nav.getByRole('link', { name: 'SLA rules', exact: true }).click();
+  // ONE heading with those words, not two — and on this page, none: review M10
+  // made the `<h1>` the PROJECT and left the section to the nav, so the panel
+  // drops its own card title here the way it always did. A duplicate is
   // invisible on screen while a screen-reader user meets the page twice.
-  await expect(page.getByRole('heading', { name: 'SLA rules' })).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: 'SLA rules' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Checkout');
 
-  // The active tab says so to a screen reader, not only in colour.
-  await expect(nav.getByRole('link', { name: 'SLA rules' })).toHaveAttribute('aria-current', 'page');
+  // The active section says so to a screen reader, not only in colour.
+  await expect(nav.getByRole('link', { name: 'SLA rules', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });

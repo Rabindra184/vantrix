@@ -66,6 +66,7 @@ export default function RunList({
   testSlug = null,
   heading = 'Runs',
   showHeading = true,
+  titlesDocument = true,
   caption: captionOverride,
   emptyBody,
   action,
@@ -93,6 +94,21 @@ export default function RunList({
    * for the thing.
    */
   readonly showHeading?: boolean;
+  /**
+   * Whether to name the DOCUMENT after `heading`. False when a caller above
+   * has already done it — `ProjectRuns` sits inside `ProjectShell`, which
+   * titles the page `Runs · <project>` and would be racing this one.
+   *
+   * Separate from `showHeading` because the two are genuinely independent:
+   * `TestRuns` suppresses the `<h1>` and still wants the title from here (one
+   * call, in the component that holds the name), while `ProjectRuns`
+   * suppresses both. Folding them into one flag would force whichever page
+   * came second to take a title it does not want.
+   *
+   * Passing `null` to `useDocumentTitle` is a no-op by design, which is what
+   * makes this a two-line change rather than a branch around the hook.
+   */
+  readonly titlesDocument?: boolean;
   /**
    * The table's own description. Defaults to the org/project sentence below;
    * a caller with a narrower scope supplies a truer one, because the default
@@ -168,11 +184,11 @@ export default function RunList({
     </Link>
   ) : undefined);
 
-  // `heading` is the project's name on `/projects/:slug` and the literal
-  // "Runs" on the org-wide list, so one call covers both — and on the project
-  // page it resolves from the slug to the real name as the rail's query lands,
-  // which is exactly the behaviour `ProjectRuns` documents for the `<h1>`.
-  useDocumentTitle(heading);
+  // `heading` is the literal "Runs" on the org-wide list and the TEST's name
+  // on `/projects/:slug/tests/:testSlug`, so one call covers both. The
+  // project's run list is the exception and says so: `ProjectShell` titles
+  // that page, because it owns the heading there too.
+  useDocumentTitle(titlesDocument ? heading : null);
 
   const runs = useQuery({
     queryKey: runsQueryKey(cursor, projectSlug, filters, testSlug),

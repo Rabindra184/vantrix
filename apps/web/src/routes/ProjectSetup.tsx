@@ -6,7 +6,7 @@ import { linkButtonClasses } from '../components/Button';
 import Card from '../components/Card';
 import { PlayIcon, TokenIcon, UploadIcon } from '../components/icons';
 import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
-import ProjectConfigPage from './ProjectConfigPage';
+import ProjectShell from './ProjectShell';
 import { projectAccessPath, projectNewRunnerRunPath } from './paths';
 import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
 
@@ -46,13 +46,12 @@ import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
  */
 export default function ProjectSetup() {
   return (
-    <ProjectConfigPage
+    <ProjectShell
       current="setup"
-      heading="Add results"
       intro="Three ways to get a run into this project. Pick the one that matches what you already have."
     >
       {({ slug }) => <AddResults key={slug} slug={slug} />}
-    </ProjectConfigPage>
+    </ProjectShell>
   );
 }
 

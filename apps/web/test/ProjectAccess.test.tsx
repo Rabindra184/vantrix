@@ -103,10 +103,22 @@ describe('ProjectAccess', () => {
     );
   }
 
+  /**
+   * The page is ready when its own section is the current one in the shell's nav.
+   *
+   * IT USED TO BE A LEVEL-1 HEADING QUERY for "API tokens". Review M10 made the
+   * `<h1>` the PROJECT and left the section to `ProjectShell`'s nav, which marks
+   * exactly one link `aria-current="page"` — and that matters more here than
+   * anywhere, because this page ALSO carries a plain "Add results" link beside
+   * the minted secret. Two links can share a name; only one can be current.
+   */
+  const ready = (): Promise<HTMLElement> =>
+    screen.findByRole('link', { name: 'API tokens', current: 'page' });
+
   it('mints a scoped token and renders the once-only secret', async () => {
     renderSetup();
 
-    expect(await screen.findByRole('heading', { name: 'API tokens', level: 1 })).toBeInTheDocument();
+    expect(await ready()).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/token name/i), { target: { value: 'Nightly CI' } });
     fireEvent.click(screen.getByRole('button', { name: /create token/i }));
 
@@ -133,9 +145,7 @@ describe('ProjectAccess', () => {
   it('points a freshly-minted token at the page that uses it', async () => {
     renderSetup();
 
-    // The project resolves before the form exists — this page is behind a
-    // `ProjectConfigPage` lookup, so a `getBy` here races the query.
-    expect(await screen.findByRole('heading', { name: 'API tokens', level: 1 })).toBeInTheDocument();
+    expect(await ready()).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /create token/i }));
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
 
@@ -227,7 +237,7 @@ describe('ProjectAccess', () => {
     Object.assign(navigator, { clipboard: undefined });
     renderSetup();
 
-    expect(await screen.findByRole('heading', { name: 'API tokens', level: 1 })).toBeInTheDocument();
+    expect(await ready()).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /create token/i }));
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
 

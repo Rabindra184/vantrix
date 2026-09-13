@@ -225,21 +225,42 @@ describe('ProjectTests', () => {
   });
 
   /**
-   * The way DOWN is the row; the way ACROSS is this. The run list is the only
-   * view that can show a run belonging to no test, so a project page with no
-   * route to it would hide those runs entirely.
+   * The way DOWN is the row; the way ACROSS is the shell's nav. The run list
+   * is the only view that can show a run belonging to no test, so a project
+   * page with no route to it would hide those runs entirely.
+   *
+   * ═══ THE LINK MOVED INTO `ProjectShell`, AND SO DID ITS NAME ═══
+   *
+   * This page used to draw a "Project runs" button of its own, named that way
+   * — rather than "All runs" — because `ProjectRail` puts an "All runs" row,
+   * the ORG-wide list, into every authenticated document, and shipping the
+   * same accessible name twice was a real defect `project-tests.spec.ts`
+   * caught. Review M10 replaced the button with a section in the shared nav,
+   * where the word is simply "Runs": the strip is already scoped to one
+   * project by the heading above it, and "Runs" collides with nothing.
+   *
+   * Asserted here as a DESTINATION rather than just a presence, because the
+   * failure this guards is a tab that exists and goes to the wrong project.
    */
-  it('offers the project run list, which is the only place a testless run appears', async () => {
+  it('reaches the project run list, which is the only place a testless run appears', async () => {
     stubFetch({ tests: { tests: [CHECKOUT_SMOKE] } });
     renderPage();
-    // "Project runs", NOT "All runs": `ProjectRail` puts an "All runs" row —
-    // the ORG-wide list — into every authenticated document, and this link
-    // shipped carrying the same accessible name. jsdom cannot see that
-    // collision (it renders one component at a time), so the guard is
-    // `project-tests.spec.ts`; what this case holds is WHICH component owns
-    // which name, so a rename back fails here with the cause attached.
-    const link = await screen.findByRole('link', { name: 'Project runs' });
+    const link = await screen.findByRole('link', { name: 'Runs' });
     expect(link).toHaveAttribute('href', '/projects/checkout/runs');
+  });
+
+  /**
+   * THE NAME THE RAIL RESERVES IS STILL RESERVED. `ProjectRail`'s vocabulary
+   * — "All runs", and every project name — cannot be reused by a page's own
+   * controls, and a five-tab strip is five new chances to break that. jsdom
+   * renders one component at a time so it cannot see the collision itself;
+   * what this case holds is that this page contributes no link claiming it.
+   */
+  it('names its run section without borrowing the rail’s “All runs”', async () => {
+    stubFetch({ tests: { tests: [CHECKOUT_SMOKE] } });
+    renderPage();
+    await screen.findByRole('link', { name: 'Runs' });
+    expect(screen.queryByRole('link', { name: /all runs/i })).toBeNull();
   });
 });
 
