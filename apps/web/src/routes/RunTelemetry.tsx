@@ -181,9 +181,28 @@ export default function RunTelemetry() {
           // terminal and `available: false` really is the agent's own
           // silence — there is no ternary left to get wrong.
           return (
+/* ═══ ONE SENTENCE, AND A WAY FORWARD (review 09-13 M16) ═══
+             *
+             * This said the same thing twice — "No telemetry was recorded" and
+             * "No load generator reported" are one fact in two sentences — and
+             * then left the reader on a tab with nothing to do about it.
+             * Telemetry is opt-in: it arrives only when an agent runs beside
+             * the load generator, so the absence is far more often "nobody set
+             * it up" than "it broke", and saying which is the whole value.
+             *
+             * NO EXTERNAL LINK. This is an on-prem product and the repository
+             * it was built from is not something this page can name with any
+             * confidence — the same reason the Add results page describes the
+             * Gradle plugin's location instead of quoting a coordinate. What
+             * the reader needs is WHAT to run and WHICH scope it needs, both
+             * of which are facts about this instance. */
             <EmptyState
-              title="No telemetry was recorded for this run."
-              body="No load generator reported for this run's window."
+              title="No generator telemetry recorded"
+              body={
+                'Telemetry arrives only when the load-generator agent runs alongside the test, ' +
+                'posting with a token that carries the Generator telemetry scope. Nothing ' +
+                'reported for this run — the agent ships in this repository under agent/.'
+              }
             />
           );
         }

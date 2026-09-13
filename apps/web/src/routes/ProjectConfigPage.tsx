@@ -31,7 +31,7 @@ import { projectAccessPath, projectPath, projectRulesPath, projectSetupPath } fr
  *   Add results   — how a run gets into this project at all. Three explicit
  *                   entry choices, each with a guide and a status.
  *   SLA rules     — what judges a run once it is here.
- *   Access        — the credentials the first of those needs.
+ *   API tokens    — the credentials the first of those needs.
  *
  * `Add results` needs a token, and that is a dependency rather than a reason
  * to merge them: it names the prerequisite and links to it, which is what the
@@ -50,7 +50,10 @@ export type ProjectConfigTab = 'setup' | 'rules' | 'access';
 const TABS: readonly { tab: ProjectConfigTab; label: string; path: (slug: string) => string }[] = [
   { tab: 'setup', label: 'Add results', path: projectSetupPath },
   { tab: 'rules', label: 'SLA rules', path: projectRulesPath },
-  { tab: 'access', label: 'Access', path: projectAccessPath },
+  /* "API tokens", matching the page's own heading (review 09-13 M18). A tab
+     and the page it opens must not disagree about what the page is — and
+     "Access" promised members and roles that do not exist here. */
+  { tab: 'access', label: 'API tokens', path: projectAccessPath },
 ];
 
 /**

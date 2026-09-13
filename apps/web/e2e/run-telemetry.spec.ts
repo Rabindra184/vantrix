@@ -154,10 +154,24 @@ test.describe('Load generators', () => {
     await signIn(page, admin);
     await page.goto(runTelemetryPath(runId));
 
-    // This exact phrase is load-bearing: RunTelemetry.tsx's own comment says
-    // Task 11's e2e suite matches it, and it is the one sentence on the page
-    // that distinguishes "never measured" from "measured and found idle".
-    await expect(page.getByText(/no telemetry was recorded/i)).toBeVisible();
+    /* ═══ THE CLAIM, NOT THE SENTENCE (review 09-13 M16) ═══
+     *
+     * This used to match `/no telemetry was recorded/i` and called that exact
+     * phrase load-bearing. It was not the PHRASE that mattered — it was the
+     * distinction between "never measured" and "measured and found idle", and
+     * pinning the wording verbatim is what CLAUDE.md records as turning a
+     * suite into the reason a stale sentence survives. M16 reworded this to
+     * name the agent and the scope, i.e. to say what to DO about it, and a
+     * verbatim matcher would have made that an obstacle rather than a fix.
+     *
+     * So: assert that the page says nothing was recorded, and — the half that
+     * actually carries the distinction — that it never claims a measurement
+     * was taken and came back empty. */
+    const emptyState = page.getByText(/no generator telemetry recorded/i);
+    await expect(emptyState).toBeVisible();
+    await expect(page.getByText(/\b(idle|zero|0%) *(usage|utilisation|utilization)\b/i)).toHaveCount(
+      0,
+    );
     // Zero TELEMETRY figures — not zero figures on the page. This run is
     // ordinarily windowable, so TimeBrush's own scrubber figure is still
     // there; `figures()` excludes it for exactly this reason (see the file

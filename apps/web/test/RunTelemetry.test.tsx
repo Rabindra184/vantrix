@@ -150,7 +150,13 @@ describe('RunTelemetry', () => {
     });
 
     // The exact phrase Task 11's e2e suite matches — see RunTelemetry.tsx.
-    expect(await screen.findByText(/no telemetry was recorded for this run/i)).toBeInTheDocument();
+    /* One sentence and a way forward — review 09-13 M16. This asserted a
+       title that was half of a two-sentence restatement of one fact ("No
+       telemetry was recorded" / "No load generator reported"). What a reader
+       needs is WHY it is absent, since telemetry is opt-in and the usual cause
+       is that nobody set the agent up. */
+    expect(await screen.findByText(/no generator telemetry recorded/i)).toBeInTheDocument();
+    expect(screen.getByText(/agent runs alongside the test/i)).toBeInTheDocument();
 
     // Not a chart with nothing in it: NO figure on the page at all, which is
     // the whole reason `available: false` gets a dedicated branch rather than

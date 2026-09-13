@@ -345,7 +345,11 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
   it('never claims a runner is available on no evidence', async () => {
     mount();
     const status = await screen.findByTestId('runner-status');
-    expect(status.textContent ?? '').toMatch(/no runner seen yet/i);
+    // "Runner availability unknown" — review 09-13 M12. The old headline
+    // paired with a sentence asking the reader to QUEUE A LOAD TEST to find
+    // out whether a node was connected.
+    expect(status.textContent ?? '').toMatch(/runner availability unknown/i);
+    expect(status.textContent ?? '').not.toMatch(/queue one to find out/i);
     expect(status.textContent ?? '').not.toMatch(/available|online/i);
     // And it says where the claim comes from, so nobody reads it as health.
     expect(status.textContent ?? '').toMatch(/inferred from the jobs/i);

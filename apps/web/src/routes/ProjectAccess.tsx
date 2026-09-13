@@ -56,7 +56,11 @@ export default function ProjectAccess() {
   return (
     <ProjectConfigPage
       current="access"
-      heading="Access"
+      /* "API tokens", not "Access" (review 09-13 M18). "Access" promises
+         members and roles; this page issues and revokes API tokens and
+         nothing else. The URL stays `/access` — a heading is not a bookmark,
+         and `paths.ts` already argues that case for `/setup`. */
+      heading="API tokens"
       intro="Scoped API tokens for CI, load generators and runner hosts."
     >
       {({ slug }) => <AccessLoaded key={slug} slug={slug} />}
@@ -140,7 +144,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
           go wrong" rather than "did the mint". */}
       <Card
         headingLevel={2}
-        title="Mint a token"
+        title="Create a token"
         description="Issue scoped credentials for CI, agents, and runners. The secret is shown once."
         data-testid="token-mint"
       >
@@ -156,7 +160,9 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
           </label>
 
           <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <legend className="mb-1 text-[13px] font-medium text-primary">Scopes</legend>
+            {/* "Permissions", not "Scopes" — the word a reader brings with them
+                  rather than the one the schema uses. */}
+            <legend className="mb-1 text-[13px] font-medium text-primary">Permissions</legend>
             {TOKEN_SCOPES.map((scope) => (
               <label
                 key={scope}
@@ -192,7 +198,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
           <div>
             <Button type="submit" variant="primary" loading={mintMutation.isPending}>
               <TokenIcon className="h-3.5 w-3.5" />
-              Mint token
+              Create token
             </Button>
           </div>
         </form>
@@ -351,7 +357,7 @@ function TokenTable({
           <tr>
             <th scope="col" className={TH}>Name</th>
             <th scope="col" className={TH}>Prefix</th>
-            <th scope="col" className={TH}>Scopes</th>
+            <th scope="col" className={TH}>Permissions</th>
             <th scope="col" className={TH}>Created</th>
             <th scope="col" className={TH}>Last used</th>
             <th scope="col" className={TH}>Status</th>
@@ -363,7 +369,17 @@ function TokenTable({
             <tr key={token.prefix} className={ROW}>
               <td className={TD}>{token.name}</td>
               <td className={`${TD} font-mono`}>{token.prefix}</td>
-              <td className={TD}>{token.scopes.join(', ')}</td>
+                            {/* THE SAME WORDS THE FORM USED. This printed the raw enum —
+                  `ingest, read` — beside a form whose checkboxes said
+                  "Completed reports" and "Read dashboards", so the thing you
+                  created and the thing you are looking at did not share a
+                  vocabulary. An unknown scope falls back to its own name
+                  rather than disappearing. */}
+              <td className={TD}>
+                {token.scopes
+                  .map((scope) => (SCOPE_LABELS as Record<string, string | undefined>)[scope] ?? scope)
+                  .join(', ')}
+              </td>
               <td className={TD}>{formatInstant(token.createdAt)}</td>
               <td className={TD}>
                 {token.lastUsedAt === null ? 'Never' : formatInstant(token.lastUsedAt)}

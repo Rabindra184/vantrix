@@ -256,12 +256,15 @@ test('the project configuration nav reaches three separate pages', async ({ page
 
   // And the credential is a NAMED prerequisite with a link, rather than a
   // section of this page — the inversion is the whole fix.
-  await expect(page.getByRole('button', { name: 'Mint token' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Create token' })).toHaveCount(0);
 
   const nav = page.getByRole('navigation', { name: 'Project configuration' });
-  await nav.getByRole('link', { name: 'Access' }).click();
-  await expect(page.getByRole('heading', { name: 'Access', level: 1 })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Mint token' })).toBeVisible();
+  // "API tokens", not "Access" — review 09-13 M18. The tab and the page it
+  // opens must agree about what the page is, and "Access" promised members and
+  // roles this product does not have.
+  await nav.getByRole('link', { name: 'API tokens' }).click();
+  await expect(page.getByRole('heading', { name: 'API tokens', level: 1 })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create token' })).toBeVisible();
 
   await nav.getByRole('link', { name: 'SLA rules' }).click();
   await expect(page.getByRole('heading', { name: 'SLA rules', level: 1 })).toBeVisible();

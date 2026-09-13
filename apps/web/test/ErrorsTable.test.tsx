@@ -286,7 +286,12 @@ describe('ErrorsTable — the columns, and the one that is absent (D-8)', () => 
    */
   it('has exactly the three columns the payload can support', () => {
     render(<ErrorsTable errors={errors} />);
-    expect(headers()).toEqual(['Error', 'Count', 'Percentage']);
+    // "Share of errors", not "Percentage" — review 09-13 M15. A bare
+    // percentage carries no denominator, so the caption had to supply one and
+    // a reader who took it for a share of REQUESTS was out by a factor of
+    // thirty-seven. The header is where somebody looks when they wonder what a
+    // column means.
+    expect(headers()).toEqual(['Error', 'Count', 'Share of errors']);
     for (const row of rows()) expect(row.children).toHaveLength(3);
   });
 

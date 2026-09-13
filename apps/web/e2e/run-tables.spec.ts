@@ -505,9 +505,13 @@ test('the column headings are the payload’s own, and name themselves in Chromi
   await expect(table.getByRole('columnheader', { name: '99.9th', exact: true })).toHaveCount(0);
 
   // D-8: the errors table has three columns and no fourth — its own tab now.
+  //
+  // `Share of errors`, not `Percentage` (review 09-13 M15): a bare "Percentage"
+  // needed a paragraph underneath to say percentage OF WHAT, and the column
+  // that needs a footnote to be read is the column that is named wrong.
   await page.goto(runErrorsPath(runId));
   const errorHeaders = errorsTable(page).getByRole('columnheader');
-  await expect(errorHeaders).toHaveText(['Error', 'Count', 'Percentage']);
+  await expect(errorHeaders).toHaveText(['Error', 'Count', 'Share of errors']);
 });
 
 /* ======================================================================== *
@@ -802,4 +806,51 @@ test('simulation assertions lead with the failures', async ({ page }) => {
   const before = await outcomes.count();
   await toggle.click();
   expect(await outcomes.count()).toBeGreaterThan(before);
+});
+
+/**
+ * ═══ REVIEW 09-13 M13 — THE FAILING CHECK IS A ROUTE TO THE EVIDENCE ═══
+ *
+ * WHY THIS IS NOT COVERED BY `ToolAssertions.test.tsx`. That suite builds both
+ * sides of the join by hand: a `details` path spelling `Search`, and a stats
+ * fixture holding a request called `Search`. It proves the component links
+ * what it is told to link and cannot prove the two agree in the real world —
+ * exactly the "a test that supplies the value it is checking" trap CLAUDE.md
+ * records costing this project a whole feature that never worked.
+ *
+ * Here the path comes out of a REAL simulation.log, decoded by the plugin
+ * during a real ingest, and the request name comes out of the statistics
+ * engine that read the same file. Nothing in this test writes either one down.
+ * If the decoder ever joined its parts differently from the way the engine
+ * names a row — a space around the separator is all it would take — this is
+ * the only place that would notice.
+ */
+test('a failing simulation check leads to the request it is about', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  const failing = page.getByTestId('tool-assertion-row').first();
+  await expect(failing.getByTestId('tool-assertion-outcome')).toContainText(/failed/i);
+
+  // The Target cell, which was plain text: the reader could read the name of
+  // the request that broke and had nowhere to go with it.
+  const target = failing.getByRole('link');
+  await expect(target).toHaveCount(1);
+  const name = (await target.textContent())?.trim() ?? '';
+  expect(name).not.toBe('');
+
+  await target.click();
+  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/requests/`));
+
+  /* AND THE PAGE IT REACHES IS ABOUT THAT REQUEST.
+   *
+   * The two spellings are the assertion. The cell READS `Cart / Add To Cart`,
+   * because a path is easier to scan with air in it; the row is ADDRESSED as
+   * `Cart/Add To Cart`, which is what `rowFor` keys on and what `buildTree`
+   * splits — and `RequestDetail`'s `<h1>` renders the URL parameter verbatim.
+   * A link built from the displayed label would still satisfy the URL check
+   * above and land on a page that says it found no such request. */
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(name.replace(/ \/ /g, '/'));
 });

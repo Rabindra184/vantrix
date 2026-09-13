@@ -134,7 +134,7 @@ describe('ProjectSetup — the three ways in', () => {
     const link = within(await entry('Import results')).getByRole('link', { name: /mint one under access/i });
     expect(link).toHaveAttribute('href', '/projects/alpha/access');
 
-    expect(screen.queryByRole('button', { name: /mint token/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
     expect(screen.queryByLabelText(/token name/i)).toBeNull();
   });
 
@@ -177,8 +177,15 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
     expect(await screen.findByRole('heading', { name: 'Add results', level: 1 })).toBeInTheDocument();
 
     const card = await entry('Run a test');
-    await within(card).findByText(/no runner seen yet/i);
-    expect(card.textContent ?? '').not.toMatch(/available|online/i);
+    /* "Runner availability unknown", not "No runner seen yet" — review 09-13
+       M12. The old copy ended "Queue one to find out whether a node is
+       connected", which asks the reader to schedule a LOAD TEST to answer a
+       connectivity question. */
+    await within(card).findByText(/runner availability unknown/i);
+    // Still the load-bearing half: no claim of availability anywhere in it.
+    expect(card.textContent ?? '').not.toMatch(/\bavailable now\b|\bonline\b/i);
+    // And it does not ask for work as a diagnostic.
+    expect(card.textContent ?? '').not.toMatch(/queue one to find out/i);
   });
 
   it('reports a claimed job as a runner that is there', async () => {

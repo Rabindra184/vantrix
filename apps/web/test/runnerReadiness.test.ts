@@ -49,7 +49,14 @@ describe('runnerReadiness', () => {
     expect(state.kind).toBe('unknown');
     expect(state.ahead).toBe(0);
     // The load-bearing half: no claim of availability anywhere in the text.
-    expect(`${state.headline} ${state.detail}`).not.toMatch(/available|online|ready|connected now/i);
+    // The HEADLINE may now say "availability unknown", which is the point —
+    // what must never appear is a claim that one IS available.
+    expect(state.headline).toMatch(/unknown/i);
+    expect(`${state.headline} ${state.detail}`).not.toMatch(
+      /\bavailable now\b|\bonline\b|\bready\b/i,
+    );
+    // And it must not ask the reader to queue work as a health check.
+    expect(state.detail).not.toMatch(/queue one to find out/i);
   });
 
   it('reports a claimed job as proof a runner is there, with the queue depth', () => {
