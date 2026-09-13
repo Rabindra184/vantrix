@@ -64,10 +64,23 @@ export function runnerReadiness(
     return {
       kind: 'unknown',
       ahead: 0,
-      headline: 'No runner seen yet',
+      headline: 'Runner availability unknown',
+      /* ═══ DO NOT ASK FOR WORK AS A HEALTH CHECK (review 09-13 M12) ═══
+       *
+       * This ended "Queue one to find out whether a node is connected", which
+       * asks the reader to SCHEDULE A LOAD TEST to answer a question about
+       * connectivity. The honest version says what is and is not known and
+       * points at the thing that would make a runner exist, which is a
+       * deployment step rather than a run.
+       *
+       * A heartbeat would replace all of this with a fact. That needs a
+       * backend the on-prem runner does not have — it polls, so nothing is
+       * told when one connects — and is a product decision rather than a
+       * wording one. */
       detail:
         'No run has been queued from this project, so nothing here has ever seen a runner. ' +
-        'Queue one to find out whether a node is connected.',
+        'A runner is a process you deploy alongside this instance; until one claims a job, ' +
+        'this page cannot tell whether any are connected.',
     };
   }
 

@@ -1046,17 +1046,29 @@ function Assertions({
             and no test asserted where this link GOES. **When a page is split,
             grep every caller of the old path for what it MEANT**, not for
             whether it still compiles. */}
-        <EmptyState
-          title="No SLA rules were evaluated against this run"
-          body="Rules are configured per project, and only rules that existed when the run was ingested are applied to it — adding one affects future runs, not this one."
-          action={
-            projectSlug === undefined ? undefined : (
-              <Link to={projectRulesPath(projectSlug)} className={linkButtonClasses}>
-                Configure SLA rules
-              </Link>
-            )
-          }
-        />
+        {/* ═══ ONE ROW, NOT A CARD (review 09-13 M03) ═══
+         *
+         * The decision band at the top of this page already states this —
+         * "Platform gates: not configured — no SLA rule judged this run" — so
+         * a full `EmptyState` card beneath it spent a third of a screen
+         * repeating a fact the reader met before they scrolled. An empty state
+         * earns its size when it is the first time something is said; this one
+         * is the second.
+         *
+         * What it must NOT lose is the remedy and the caveat: where to
+         * configure rules, and that doing so does not change this run. Both
+         * survive, in one line. */}
+        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-default bg-sunken px-3 py-2 text-[13px] text-muted">
+          <span>No SLA rules judged this run — adding one affects future runs, not this one.</span>
+          {projectSlug !== undefined && (
+            <Link
+              to={projectRulesPath(projectSlug)}
+              className="font-medium text-accent underline-offset-2 hover:underline"
+            >
+              Configure SLA rules
+            </Link>
+          )}
+        </p>
       </section>
     );
   }

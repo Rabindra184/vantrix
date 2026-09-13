@@ -474,10 +474,24 @@ describe('ProjectRules — the table', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/may still be active/i);
   });
 
-  it('says what an empty project needs rather than showing a bare table', async () => {
+  /**
+   * ═══ THE CONSEQUENCE SURVIVES; THE CARD DOES NOT (review 09-13 M03) ═══
+   *
+   * This asserted a full `EmptyState` — heading and body — telling the reader
+   * to "add one above", directly beneath the form for adding one. An empty
+   * state earns its size when it explains an absence the reader cannot
+   * otherwise account for; this one sat under the explanation AND the remedy,
+   * both already on screen.
+   *
+   * What must not be lost is the CONSEQUENCE: a project with no rules gets no
+   * verdict. That is the half a reader cannot infer from an empty table, so it
+   * is the half the assertion keeps.
+   */
+  it('says what an empty project costs, without a card repeating the form above it', async () => {
     renderRules();
-    expect(await screen.findByText('No SLA rules yet')).toBeInTheDocument();
-    expect(screen.getByText(/no release verdict/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no release verdict/i)).toBeInTheDocument();
+    // Not a heading-and-body empty state any more.
+    expect(screen.queryByRole('heading', { name: /no sla rules yet/i })).toBeNull();
   });
 });
 

@@ -1144,7 +1144,7 @@ function RunCard({
         <div className="flex items-baseline gap-1.5">
           <dt className="text-muted">Focus</dt>
           <dd>
-            <FocusHint focus={focusFor(run)} />
+            <FocusHint focus={focusFor(run)} runId={run.id} />
           </dd>
         </div>
       </dl>
@@ -1302,18 +1302,49 @@ function RunRow({
           is emphasis rather than information, and WCAG 1.4.1 is satisfied
           without the glyph the badge used to add. */}
       <td className={TD}>
-        <FocusHint focus={focusFor(run)} />
+        <FocusHint focus={focusFor(run)} runId={run.id} />
       </td>
     </tr>
   );
 }
 
-function FocusHint({ focus }: { readonly focus: Focus }) {
+/**
+ * ═══ IT LOOKS LIKE AN ACTION, SO IT IS ONE (review 09-13 M14) ═══
+ *
+ * The caption calls Focus "the first operational action to take from the row",
+ * and `investigate` was drawn in the failed-status colour with medium
+ * weight — every affordance of a link, on a `<span>` nothing happens when you
+ * click.
+ *
+ * The review offers both repairs: make it real, or rename it so it stops
+ * pretending. Real is better here because the destination exists and is
+ * exactly where the reader was going — the run, which opens on the decision
+ * band that names the failed check and links to it. The other four states are
+ * genuinely statuses (there is nothing to do about "processing"), so they stay
+ * text: a row's Focus cell is a link exactly when it is worth following.
+ *
+ * The accessible name carries the RUN, not the word: "investigate" repeated
+ * down a column names nothing, which is the same reason the simulation cell's
+ * link spells out `View run ${id}`.
+ */
+function FocusHint({ focus, runId }: { readonly focus: Focus; readonly runId: string }) {
   const { label, colour } = FOCUS_MARKS[focus];
+  if (focus !== 'investigate') {
+    return (
+      <span className="font-medium whitespace-nowrap" style={{ color: colour }}>
+        {label}
+      </span>
+    );
+  }
   return (
-    <span className="font-medium whitespace-nowrap" style={{ color: colour }}>
+    <Link
+      to={runPath(runId)}
+      aria-label={`Investigate run ${runId}`}
+      className="font-medium whitespace-nowrap underline-offset-2 hover:underline"
+      style={{ color: colour }}
+    >
       {label}
-    </span>
+    </Link>
   );
 }
 

@@ -186,7 +186,13 @@ describe('RunDetail — one shell, for every state', () => {
     // none), which is proof this is the real content branch, not a stale
     // waiting screen.
     expect(screen.queryByText(/still processing/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/no sla rules were evaluated/i)).toBeInTheDocument();
+    /* The Assertions section's own empty text. It was a full `EmptyState`
+       headed "No SLA rules were evaluated against this run"; review 09-13 M03
+       cut it to one row, because the decision band at the top of the same page
+       already says "Platform gates: not configured — no SLA rule judged this
+       run". The assertion still proves this is the real content branch — it
+       just names the sentence that survived. */
+    expect(screen.getByText(/no sla rules judged this run/i)).toBeInTheDocument();
   });
 
   it('renders the shell even when the 202 carried no identity', () => {

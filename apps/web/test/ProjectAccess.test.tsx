@@ -106,9 +106,9 @@ describe('ProjectAccess', () => {
   it('mints a scoped token and renders the once-only secret', async () => {
     renderSetup();
 
-    expect(await screen.findByRole('heading', { name: 'Access', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'API tokens', level: 1 })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/token name/i), { target: { value: 'Nightly CI' } });
-    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
+    fireEvent.click(screen.getByRole('button', { name: /create token/i }));
 
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
     expect(mintProjectTokenMock).toHaveBeenCalledWith('alpha', {
@@ -135,8 +135,8 @@ describe('ProjectAccess', () => {
 
     // The project resolves before the form exists — this page is behind a
     // `ProjectConfigPage` lookup, so a `getBy` here races the query.
-    expect(await screen.findByRole('heading', { name: 'Access', level: 1 })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
+    expect(await screen.findByRole('heading', { name: 'API tokens', level: 1 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /create token/i }));
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
 
     const next = within(mintCard()).getByRole('link', { name: /add results/i });
@@ -227,8 +227,8 @@ describe('ProjectAccess', () => {
     Object.assign(navigator, { clipboard: undefined });
     renderSetup();
 
-    expect(await screen.findByRole('heading', { name: 'Access', level: 1 })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /mint token/i }));
+    expect(await screen.findByRole('heading', { name: 'API tokens', level: 1 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /create token/i }));
     expect(await screen.findByText('pp_abc123_secret456')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));

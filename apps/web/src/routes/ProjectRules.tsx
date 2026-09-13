@@ -17,7 +17,7 @@ import {
 } from '@perfportal/contracts';
 import Button from '../components/Button';
 import Card from '../components/Card';
-import { EmptyState, ErrorState, LoadingState } from '../components/States';
+import { ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ProblemError } from '../api/fetch';
 import {
@@ -868,11 +868,19 @@ function RulesPanel({
     );
   }
   if (rules.data.rules.length === 0) {
+    /* ═══ THE FORM IS RIGHT THERE (review 09-13 M03) ═══
+     *
+     * A full `EmptyState` card told the reader to "add one above" directly
+     * beneath the form for adding one. An empty state earns its size when it
+     * explains an absence the reader cannot otherwise account for; this one
+     * sits under the explanation AND the remedy, both already visible.
+     *
+     * The consequence is the part worth keeping — a project with no rules gets
+     * no verdict — so it stays, as one line. */
     return (
-      <EmptyState
-        title="No SLA rules yet"
-        body="Add one above. Until a project has a rule, its runs complete with no release verdict."
-      />
+      <p className="rounded-lg border border-default bg-sunken px-3 py-2 text-[13px] text-muted">
+        No rules yet. Until this project has one, its runs complete with no release verdict.
+      </p>
     );
   }
 

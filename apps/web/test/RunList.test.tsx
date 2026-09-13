@@ -60,6 +60,40 @@ const ROWS: RunListResponse['items'] = [
   },
 ];
 
+/* ======================================================================== *
+ * REVIEW 09-13 M14 — FOCUS LOOKED LIKE AN ACTION AND WAS A SPAN
+ * ======================================================================== */
+
+describe('RunList — the Focus cell', () => {
+  /**
+   * The caption calls Focus "the first operational action to take from the
+   * row", and `investigate` was drawn in the failed-status colour with medium
+   * weight — every affordance of a link, on a `<span>` that does nothing.
+   *
+   * Made real rather than renamed, because the destination exists and is where
+   * the reader was going: the run, which opens on the decision band that names
+   * the failed check. The accessible name carries the RUN, since "investigate"
+   * repeated down a column names nothing.
+   */
+  it('links investigate to the run, named by the run', async () => {
+    renderList([{ ...ROWS[0]!, status: 'failed', verdict: 'failed' }]);
+    const link = await screen.findByRole('link', { name: `Investigate run ${ROWS[0]!.id}` });
+    expect(link).toHaveAttribute('href', `/runs/${ROWS[0]!.id}`);
+    expect(link).toHaveTextContent('investigate');
+  });
+
+  /**
+   * AND THE OTHER STATES STAY TEXT, which is the half that keeps the first
+   * one meaningful. There is nothing to do about "processing", so a link there
+   * would be the same false affordance pointing somewhere else.
+   */
+  it('leaves a status-only focus as plain text', async () => {
+    renderList([{ ...ROWS[0]!, status: 'complete', verdict: 'passed' }]);
+    expect(await screen.findByText('clear')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /investigate/i })).toBeNull();
+  });
+});
+
 describe('RunList columns', () => {
   it('names each row by its project and simulation', async () => {
     renderList(ROWS);
