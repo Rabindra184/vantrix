@@ -369,4 +369,91 @@ describe('NewRunnerRun — what will be sent, and what is known about the node',
     fireEvent.change(screen.getByLabelText(/jvm options/i), { target: { value: '-Xmx2g' } });
     expect(screen.getByTestId('advanced').textContent ?? '').toMatch(/\(1 set\)/);
   });
+
+  /* ====================================================================== *
+   * REVIEW M11 — STAGED LABELS WITHOUT STAGED INTERACTION
+   * ====================================================================== */
+
+  /**
+   * ═══ THE TASK WAS NAMED FOUR TIMES BEFORE A SINGLE FIELD ═══
+   *
+   * "New on-prem run" (the `<h1>`), "Queue a run" (the card), "Three steps:
+   * what to run, how to run it, and what will be sent" (its description), then
+   * "1 · Artifact / 2 · Execution / 3 · Review". One title now.
+   *
+   * ASSERTED ON THE HEADING OUTLINE, because that is what a repeated title
+   * costs: a screen-reader user navigating by heading met the page, then met
+   * it again one level down. The `<h2>` went with the card's title — `Card`
+   * draws none without one — and that is right rather than incidental: the
+   * form is not a second section of this page, it IS the page.
+   */
+  it('names the task once', async () => {
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual([
+      'New on-prem run',
+    ]);
+    expect(screen.queryByRole('heading', { name: /queue a run/i })).toBeNull();
+    expect(document.body.textContent ?? '').not.toMatch(/three steps/i);
+  });
+
+  /**
+   * An ordinal promises a flow that gates step 2 behind step 1. This form has
+   * always shown all three groups at once and submitted in one go, so the
+   * numbers described an interaction that does not exist — the finding's own
+   * words, "staged labels without staged interaction".
+   *
+   * The GROUPING is real and stays: `<fieldset>`/`<legend>` is what tells a
+   * screen reader these eleven controls come in three parts, and M16 put them
+   * in the order the decisions are made. So this asserts the legends SURVIVE
+   * without their numbers, not that they are gone.
+   */
+  it('groups the fields without claiming they are a sequence', async () => {
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    const legends = [...document.querySelectorAll('legend')].map((l) => l.textContent?.trim());
+    expect(legends).toEqual(['Artifact', 'Execution', 'Review']);
+  });
+
+  /**
+   * ═══ AN EMPTY REVIEW IS NOT A REVIEW ═══
+   *
+   * Untouched, the summary listed all eight fields, four as em dashes. A dash
+   * is not a fact about this run — it is an optional value nobody chose to set.
+   *
+   * THE REQUIRED ROWS ARE NOT OPTIONAL ROWS. Artifact and Simulation stay
+   * whether or not they are filled, drawn as missing: showing the gap before
+   * the button is pressed is this panel's whole job, and hiding them when unset
+   * would blank the card exactly when it is most useful. Both halves are
+   * asserted, because either alone passes against the wrong design.
+   */
+  it('shows what is set and what is still needed, and nothing else', async () => {
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+    const summary = screen.getByTestId('review-summary');
+
+    expect(within(summary).getByText('Artifact')).toBeDefined();
+    expect(within(summary).getByText('none chosen')).toBeDefined();
+    expect(within(summary).getByText('Simulation')).toBeDefined();
+
+    for (const label of ['Environment', 'Branch', 'Commit', 'JVM options']) {
+      expect(within(summary).queryByText(label)).toBeNull();
+    }
+    expect(within(summary).queryByText('—')).toBeNull();
+  });
+
+  /** And an optional value appears as soon as it is one. */
+  it('adds an optional row once it has something to say', async () => {
+    mount();
+    await screen.findByLabelText(/artifact file/i);
+
+    const summary = () => screen.getByTestId('review-summary');
+    expect(within(summary()).queryByText('Branch')).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(/^branch\b/i), { target: { value: 'main' } });
+    expect(within(summary()).getByText('Branch')).toBeDefined();
+    expect(within(summary()).getByText('main')).toBeDefined();
+  });
 });

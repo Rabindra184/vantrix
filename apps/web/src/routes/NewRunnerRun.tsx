@@ -242,7 +242,19 @@ function NewRunnerRunProject({
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <Card headingLevel={2} title="Queue a run" description="Three steps: what to run, how to run it, and what will be sent.">
+        {/* ═══ ONE TITLE — review M11 ═══
+         *
+         * "New on-prem run" (the `<h1>` above), "Queue a run" (this card) and
+         * "Three steps: what to run, how to run it, and what will be sent"
+         * named one task three times before a reader reached a single field,
+         * and the three legends below named it a fourth. The heading stays;
+         * the card carries the form and says nothing.
+         *
+         * The `<h2>` goes with the title — `Card` draws none without one — and
+         * that is the right outcome rather than a side effect: the form is not
+         * a second section of this page, it IS the page, and an `<h2>`
+         * repeating the `<h1>` is what a screen-reader user meets twice. */}
+        <Card headingLevel={2}>
           {/* ═══ THREE GROUPS, IN THE ORDER THE DECISIONS ARE MADE (review M16)
               ═══
 
@@ -253,13 +265,20 @@ function NewRunnerRunProject({
 
               `<fieldset>`/`<legend>` rather than headings: a legend groups
               CONTROLS, which is what these are, and it contributes nothing to
-              the document's heading outline. This page already has an `<h1>`
-              and the card's own `<h2>`; three more headings inside one form
-              would make the outline claim the form is three sections of the
-              page rather than three parts of one control. */}
+              the document's heading outline. This page already has an `<h1>`;
+              three more headings inside one form would make the outline claim
+              the form is three sections of the page rather than three parts of
+              one control.
+
+              AND THE NUMBERS ARE GONE (review M11). "1 · Artifact", "2 ·
+              Execution", "3 · Review" are "staged labels without staged
+              interaction": an ordinal promises a flow that gates step 2 behind
+              step 1, and this form has always shown all three at once and
+              submitted in one go. The grouping is real and stays; only the
+              claim that it is a sequence goes. */}
           <form className="flex flex-col gap-6" onSubmit={submit}>
             <fieldset className="flex flex-col gap-4">
-              <legend className={LEGEND}>1 · Artifact</legend>
+              <legend className={LEGEND}>Artifact</legend>
 
               <label className="flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-default bg-sunken p-4 transition-ui hover:bg-page">
                 <span className="flex items-center gap-2 text-sm font-medium text-primary">
@@ -302,7 +321,7 @@ function NewRunnerRunProject({
             </fieldset>
 
             <fieldset className="flex flex-col gap-4">
-              <legend className={LEGEND}>2 · Execution</legend>
+              <legend className={LEGEND}>Execution</legend>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Field label="Run name" id="runner-name">
@@ -376,7 +395,7 @@ function NewRunnerRunProject({
             </fieldset>
 
             <fieldset className="flex flex-col gap-4">
-              <legend className={LEGEND}>3 · Review</legend>
+              <legend className={LEGEND}>Review</legend>
               <ReviewSummary form={form} artifact={artifact} properties={parsedProperties} />
 
               {(formError !== null || mutation.isError) && (
@@ -565,6 +584,26 @@ function ReviewSummary({
   readonly artifact: File | null;
   readonly properties: ReturnType<typeof parseSystemProperties>;
 }) {
+  /* ═══ ONLY THE ROWS THAT SAY SOMETHING — review M11 ═══
+   *
+   * The summary listed all eight fields always, so an untouched form showed
+   * four em dashes under "Environment", "Branch", "Commit" and "JVM options" —
+   * "an empty review present at once", which the finding names. A dash is not
+   * a fact about this run; it is the absence of an optional value nobody has
+   * chosen to set, and reading it takes a reader's attention for nothing.
+   *
+   * THE REQUIRED ROWS ARE NOT OPTIONAL ROWS AND DO NOT DISAPPEAR. Artifact,
+   * Simulation and Run name stay whether or not they are filled, drawn as
+   * MISSING — that is the whole job of this panel, to show the gap before the
+   * button is pressed rather than after the server refuses. Hiding them when
+   * unset would turn a checklist into a blank card at exactly the moment it is
+   * most useful.
+   *
+   * `Test` stays too, because its default is a real answer ("grouped by
+   * simulation class") rather than an absence. */
+  const optional = (label: string, value: string) =>
+    value.trim() === '' ? null : { label, value: value.trim() };
+
   const rows: readonly { label: string; value: string; missing?: boolean }[] = [
     { label: 'Artifact', value: artifact?.name ?? 'none chosen', missing: artifact === null },
     { label: 'Simulation', value: form.simulationClass.trim() || 'not set', missing: form.simulationClass.trim() === '' },
@@ -577,11 +616,11 @@ function ReviewSummary({
           : form.test.trim() || 'not set',
       missing: form.testMode !== 'default' && form.test.trim() === '',
     },
-    { label: 'Environment', value: form.environment.trim() || '—' },
-    { label: 'Branch', value: form.branch.trim() || '—' },
-    { label: 'Commit', value: form.commitSha.trim() || '—' },
-    { label: 'JVM options', value: form.javaOptions.trim() || '—' },
-  ];
+    optional('Environment', form.environment),
+    optional('Branch', form.branch),
+    optional('Commit', form.commitSha),
+    optional('JVM options', form.javaOptions),
+  ].filter((row): row is { label: string; value: string; missing?: boolean } => row !== null);
 
   return (
     <div className="rounded-xl border border-default bg-sunken p-4" data-testid="review-summary">
