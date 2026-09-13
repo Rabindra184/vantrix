@@ -148,9 +148,67 @@ describe('RunDecisionBand', () => {
     expect(screen.getByText('Passed')).toBeInTheDocument();
   });
 
-  it('counts an evaluated run with no rules as zero rather than hiding the counts', () => {
+  /**
+   * ═══ INVERTED, NOT DELETED (review 09-13 C01) ═══
+   *
+   * This asserted the opposite — that an evaluated run with NO rules still
+   * drew "Passed 0 / Failed 0 / N/A 0" — on the reading that `[]` is a real
+   * evaluation and zero is a real count.
+   *
+   * It is not. `gatesText` in the same component had already reached the other
+   * conclusion for its own row, and says so: "an empty list means nothing
+   * judged the run, which is not the same as nothing failing." The counts
+   * sentence and these tiles kept the old reading, so a run with no SLA rules
+   * and one FAILED simulation check stated the same non-fact four times — the
+   * 48px word, the badge, the sentence, and these tiles — while the failure
+   * appeared once in 12px underneath. A fast scan finds the zeros.
+   *
+   * The distinction that survives is the one below this: `undefined` (nobody
+   * has evaluated) and `[]` (nothing to evaluate) both draw no counts, for
+   * different reasons, and neither is the same as a real zero. A run WITH
+   * rules still shows them — asserted directly above, which is what stops this
+   * change from being "hide the counts".
+   */
+  it('draws no counts for an evaluated run that has no rules to count', () => {
     renderBand({ verdict: 'not_evaluated', assertions: [] });
-    expect(screen.getByText('N/A')).toBeInTheDocument();
+    for (const label of ['Passed', 'Failed', 'N/A']) {
+      expect(screen.queryByText(label)).toBeNull();
+    }
+    // And the row that CAN say something true about it still does.
+    expect(screen.getByTestId('outcome-gates')).toHaveTextContent(/not configured/i);
+  });
+
+  /**
+   * ═══ THE FAILURE IS THE LOUDEST THING IN THE BAND (review 09-13 C01) ═══
+   *
+   * The three outcome rows were identical 12px entries, so a run whose
+   * simulation failed read exactly like one whose simulation passed — beneath
+   * a verdict word saying "NOT EVALUATED", which is true of the platform gate
+   * and says nothing about the check that failed.
+   *
+   * Asserted as emphasis on the VALUE and not on the label, so the row still
+   * reads "Simulation checks: 1 failed — …" in order; and colour is never the
+   * only signal, which is why the word "failed" has to be in the text too.
+   */
+  it('marks the simulation row when a check failed, and leaves the others plain', () => {
+    renderBand({
+      verdict: 'not_evaluated',
+      assertions: [],
+      toolAssertions: [
+        { expression: 'Search: 95th percentile of response time is less than 100.0', actualValue: 1939.53, outcome: 'failed' },
+      ],
+    });
+
+    const simulation = screen.getByTestId('outcome-simulation');
+    const value = simulation.querySelector('dd')!;
+    expect(value).toHaveTextContent(/1 failed/);
+    expect(value.getAttribute('style') ?? '').toContain('--color-status-failed');
+
+    // The other two rows are not competing for the same attention.
+    for (const id of ['outcome-execution', 'outcome-gates']) {
+      const other = screen.getByTestId(id).querySelector('dd')!;
+      expect(other.getAttribute('style') ?? '').not.toContain('--color-status-failed');
+    }
   });
 
   /**

@@ -73,7 +73,24 @@ export default function RunDecisionBand({
    */
   readonly toolAssertions?: RunResponse['toolAssertions'];
 }) {
-  const evaluated = assertions !== undefined;
+  /**
+   * ═══ THE DISTINCTION `gatesText` ALREADY MADE, NOW MADE EVERYWHERE
+   * (review 09-13 C01) ═══
+   *
+   * `evaluated` is `assertions !== undefined`, so an EMPTY array counts as
+   * evaluated. The note on `gatesText` below already says why that is wrong
+   * for a row of counts — nothing judging a run is not the same as nothing
+   * failing — and fixed it for that row alone. Its two siblings, the counts
+   * SENTENCE and the count TILES, kept reading `evaluated` and kept printing
+   * three zeros.
+   *
+   * What that cost is the finding: for a run with no SLA rules and one failed
+   * simulation check, the band said the same non-fact four times — the 48px
+   * word, the badge beside it, "0 passed · 0 failed · 0 not applicable", and
+   * "Passed 0 Failed 0 N/A 0" — while the actual failure appeared once, in
+   * 12px, below all of it. A fast scan finds the zeros and misses the failure.
+   */
+  const judged = assertions !== undefined && assertions.length > 0;
   const counts = countAssertions(assertions ?? []);
   const simulation = summariseToolAssertions(toolAssertions);
   /* `evaluated` treats `[]` as evaluated, which is what produced "0 passed ·
@@ -170,14 +187,33 @@ export default function RunDecisionBand({
         </div>
 
         <div className="flex min-w-0 flex-col justify-center gap-2.5 border-b border-divider p-4 @4xl:border-r @4xl:border-b-0 @4xl:p-5">
-          <div className="flex flex-wrap items-center gap-2">
-            {decision !== 'unevaluated' && <Badge mark={DECISION[decision]} />}
-            {evaluated && (
-              <span className="text-[12px] font-medium text-muted">
-                {counts.passed} passed · {counts.failed} failed · {counts.not_applicable} not applicable
-              </span>
-            )}
-          </div>
+          {/* ═══ THE BADGE STAYS ONLY WHERE IT IS NOT A SECOND COPY ═══
+           *
+           * For `passed`, `failed` and `not_evaluated` the 48px word beside it
+           * says the same state in the same colour — two statements of one
+           * fact, and the sample run showed the cost: "NOT EVALUATED" at 48px,
+           * "○ not evaluated" beneath it, and the actual failed check in 12px
+           * below both.
+           *
+           * `none` is the exception, and checking rather than assuming is what
+           * caught it. `decisionWord` has no branch for `none`: it falls
+           * through to "Pending" (or "Needs attention"), while the badge reads
+           * "no verdict yet". A run that FINISHED with no verdict is not
+           * pending, so those are different claims and the badge is the
+           * accurate one. Dropping it there would have deleted the only true
+           * statement on the row — the same `unevaluated` IS NOT `none`
+           * distinction this file's own type comment opens with.
+           *
+           * The counts sentence is gated on `judged` rather than `evaluated`:
+           * a project with no rules has nothing to count, and
+           * "0 passed · 0 failed · 0 not applicable" over it is the
+           * three-zeros overclaim this file already fixed one row down. */}
+          {decision === 'none' && <Badge mark={DECISION.none} />}
+          {judged && (
+            <p className="text-[12px] font-medium text-muted">
+              {counts.passed} passed · {counts.failed} failed · {counts.not_applicable} not applicable
+            </p>
+          )}
           {/* THE TICK STRIP — one tick per SLA rule, in the order the counts
               sentence above reads them. `aria-hidden` because it repeats
               exactly what that sentence already says; it is the sentence's
@@ -189,7 +225,7 @@ export default function RunDecisionBand({
               fewer ticks than rules ("no silent caps"). Tick colours are the
               outcome marks' own, as data through style — the `Badge`
               pattern. */}
-          {evaluated && (
+          {judged && (
             <div aria-hidden="true" data-testid="gate-ticks" className="flex flex-wrap items-center gap-1">
               {tickMarks(counts).map((mark, index) => (
                 // 10px × 32px, squared rather than pill: this is a TEST STRIP,
@@ -221,6 +257,19 @@ export default function RunDecisionBand({
               testId="outcome-simulation"
               label="Simulation checks"
               value={simulation.text}
+              /* ═══ THE ONE ROW THAT IS BAD NEWS LOOKS LIKE BAD NEWS ═══
+               *
+               * All three rows were identical 12px `<dl>` entries, so the run
+               * whose simulation failed read exactly like the run whose
+               * simulation passed — and sat under a verdict word saying "NOT
+               * EVALUATED", which is true of the platform gate and says
+               * nothing about the check that failed.
+               *
+               * The emphasis is on the VALUE and never on the label, so the
+               * row still reads "Simulation checks: 1 failed — …" in order.
+               * Colour is not the only signal: the word "failed" is in the
+               * text, and the link below names the count. */
+              tone={simulation.failedCount > 0 ? 'failed' : undefined}
               action={
                 simulation.failedExpression === null ? null : (
                   <Link
@@ -239,8 +288,11 @@ export default function RunDecisionBand({
 
         <div className="flex min-w-0 flex-col justify-center gap-3 bg-sunken/45 p-4 @4xl:p-5">
           {/* The counts, or nothing — never three zeros over a run whose
-              rules have not been evaluated. See `assertions` above. */}
-          {evaluated && (
+              rules have not been evaluated, AND never over a run that has no
+              rules at all. `judged`, not `evaluated`: the review's "remove
+              empty SLA count tiles", which is the same correction the counts
+              sentence and the tick strip above just took. */}
+          {judged && (
             <div className="flex flex-wrap gap-2">
               <DecisionCount label="Passed" value={counts.passed} mark={ASSERTION_OUTCOME.passed} />
               <DecisionCount label="Failed" value={counts.failed} mark={ASSERTION_OUTCOME.failed} />
@@ -390,17 +442,34 @@ function Outcome({
   testId,
   label,
   value,
+  tone,
   action = null,
 }: {
   readonly testId: string;
   readonly label: string;
   readonly value: string;
+  /**
+   * `'failed'` puts the status palette on the VALUE — the one row carrying bad
+   * news, drawn so a scan lands on it rather than on the three zeros that used
+   * to be louder than it.
+   *
+   * Read through `var()` rather than a `text-status-failed` utility: those
+   * tokens live on `:root` and not inside `@theme`, so Tailwind generates no
+   * utility for them and the class would emit nothing at all. `Badge`,
+   * `StatTile` and `RunList` all take this same route.
+   */
+  readonly tone?: 'failed';
   readonly action?: ReactNode;
 }) {
   return (
     <div data-testid={testId} className="flex flex-wrap items-baseline gap-x-2">
       <dt className="shrink-0 font-medium text-muted">{label}</dt>
-      <dd className="min-w-0 text-primary">{value}</dd>
+      <dd
+        className={`min-w-0 ${tone === 'failed' ? 'font-semibold' : 'text-primary'}`}
+        style={tone === 'failed' ? { color: 'var(--color-status-failed)' } : undefined}
+      >
+        {value}
+      </dd>
       {action}
     </div>
   );

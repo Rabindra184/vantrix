@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **143 files / 1723 tests**, it
+`nvm use` first, and if a run reports fewer than **143 files / 1724 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,37 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-0913-c01 branch added no unit FILE and 1 net case (one INVERTED,
+one added) to `RunDecisionBand.test.tsx`, from a floor of 143 / 1723.
+Integration and e2e are unchanged at **133 / 1681** and **113**.
+
+**A COMPONENT DREW ONE DISTINCTION CORRECTLY AND THEN IGNORED IT THREE TIMES.**
+`evaluated` is `assertions !== undefined`, so an EMPTY array counts as
+evaluated. `gatesText` already knew better and says so in its own comment — "an
+empty list means nothing judged the run, which is not the same as nothing
+failing" — and fixed it for that row ALONE. The counts sentence, the tick strip
+and the count tiles kept reading `evaluated`, so a run with no SLA rules and
+one FAILED simulation check stated the same non-fact four times (the 48px word,
+a badge repeating it, "0 passed · 0 failed · 0 not applicable", and "Passed 0
+Failed 0 N/A 0") while the failure appeared once in 12px underneath.
+
+**WHEN A COMMENT ARGUES A DISTINCTION, GREP FOR ITS SIBLINGS.** The reasoning
+was already written down and already right; what was missing was applying it to
+the other three readers of the same flag.
+
+**AND REMOVING A DUPLICATE IS ONLY SAFE WHERE IT REALLY IS ONE.** Dropping the
+badge looked obviously correct — same state, same colour, beside a 48px word.
+It is correct for `passed`, `failed` and `not_evaluated` and WRONG for `none`:
+`decisionWord` has no branch for `none` and falls through to "Pending", while
+the badge reads "no verdict yet", and a run that FINISHED with no verdict is
+not pending. The existing test went red and was right to. That is the
+`unevaluated` IS NOT `none` distinction the component's own type comment opens
+with, met from a third direction.
+
+Measured at 1440x900, the viewport the review used: the band went from **316px
+to 171px**, run totals from **y1007 to y905**, and the failed check from 12px
+below three zeros to the second row, in the failed-status colour.
 
 The review-0913-c02-c04 branch added no unit FILE and 7 cases (4 to
 `Chart.test.tsx`, 3 to `AppShell.test.tsx`), from a floor of 143 / 1716.
