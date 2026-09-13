@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **146 files / 1772 tests**, it
+`nvm use` first, and if a run reports fewer than **146 files / 1775 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,69 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The token-mint-copy branch added no unit FILE and 3 cases to
+`apps/web/test/ProjectAccess.test.tsx`, from a floor of 146 / 1772. Integration
+and e2e are UNCHANGED at their `main` values and **e2e stays 117**: the diff is
+five user-facing strings and three assertions, all in `.tsx` files, and
+`grep -rniE "scoped?s?\b|mint|Completed reports" apps/web/e2e/*.ts` matches
+only comments and fixture code (`mintToken`, a seeded `scopes:` array) — no
+spec asserts any sentence this branch touches.
+
+**M18 RENAMED THE CONTROLS AND FOUR SENTENCES AROUND THEM SURVIVED, FOR THREE
+BRANCHES.** The review's finding was that "Mint" and "Scopes" are avoidable
+jargon. The visible CONTROLS were corrected — "Create a token", "Create token",
+"Permissions", a table cell printing `Completed reports` instead of `ingest` —
+and the PROSE was not:
+
+```
+ProjectAccess  intro       "Scoped API tokens for CI, load generators…"
+ProjectAccess  card        "Issue scoped credentials for CI, agents, and runners."
+ProjectAccess  empty state "Mint a scoped project token when…"
+ProjectAccess  caption     "…never listed after minting."
+ProjectSetup   prose       "Needs a token with the Completed reports scope."
+```
+
+That last one is the worst of the five: it is a CROSS-PAGE reference, and the
+branch that fixed the link beside it ("Mint one under Access" → "Create one
+under API tokens") left the clause carrying it alone — because the assertion it
+added reads `link.textContent`, which stops at the anchor.
+
+**NOTHING COULD HAVE CAUGHT ANY OF IT.** Every case in both files queries a
+CONTROL by accessible name; no test in any of the three suites reads the
+sentences a page says about itself. Found by opening the page in a browser
+after the branch above had already merged — the same way the `Filter runs
+"undefined"` defect and the M15 label split were found. **When a rename lands,
+grep the PROSE, not just the controls** — and scope a prose assertion to the
+block, not to the element you happened to fix.
+
+**THE GUARD IS AN ABSENCE, WITH A PAIRED POSITIVE, AND IT IS RED-VERIFIED
+PER-STRING.** Asserting the new sentences verbatim is the trap this file
+already records costing a false caveat its correction: the words must stay
+rewritable, the jargon must not come back. So the cases assert
+`not.toMatch(/\bmint/i)` and `not.toMatch(/\bscoped?s?\b/i)` over
+`document.body.textContent`, in BOTH list states — the caption needs a token
+and the empty state needs none, so neither branch can see the other — beside a
+positive that "Permissions" really is on screen, because an absence assertion
+passes just as happily against a page that failed to render. Each retired
+string was put back one at a time and failed its own case.
+
+**AND THE FIRST REPLACEMENT SENTENCE WAS FALSE, WHICH IS THE REAL LESSON.**
+The empty state was going to read "Without a token, nothing can post results to
+this project from outside PerfPortal." `auth.middleware.ts:44` gives a browser
+SESSION `['read', 'ingest', 'runner']`, so a signed-in human can post a run
+with a cookie and no token at all — the claim would have been a new wrong
+sentence replacing an old jargon one. It says what a token is FOR instead ("how
+a machine reaches this project without a browser session"), which is the fact
+that survives checking. **Verify the replacement, not only the thing being
+replaced**; a copy fix is a claim like any other.
+
+**`TableFrame` DRAWS ITS CAPTION TWICE, SO A CAPTION QUERY NEEDS `findAllBy`.**
+A visible `aria-hidden` copy sits outside the scroll box and the real `sr-only`
+`<caption>` inside it — deliberately, so the sentence wraps at the viewport
+instead of scrolling sideways with the columns. `findByText` over a caption
+therefore fails with "Found multiple elements" and reads like a duplicate-render
+bug.
 
 The project-shell branch (M10) added ONE unit file —
 `apps/web/test/ProjectShell.test.tsx` (11) — and 1 NET case to
