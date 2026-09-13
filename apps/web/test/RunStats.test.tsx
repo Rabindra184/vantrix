@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,6 +18,16 @@ const runRow = stats.stats.find((r) => r.scope === 'run')!;
 // (`stat-total-requests` etc.), so a leftover mount from an earlier test
 // collides on `screen.getByTestId` regardless of what the hint text says.
 afterEach(cleanup);
+
+/** A repo-root-relative path, wherever the runner was invoked from. */
+function fromRepo(rel: string): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i += 1) {
+    if (existsSync(resolve(dir, rel))) return resolve(dir, rel);
+    dir = resolve(dir, '..');
+  }
+  throw new Error(`could not find ${rel} from ${process.cwd()}`);
+}
 
 describe('RunStats', () => {
   it('shows the run row’s own totals', () => {
@@ -407,5 +419,53 @@ describe('RunStats', () => {
     // As a WORD — `\b` so a future "OKAY" or a hex id cannot satisfy it.
     expect(text).not.toMatch(/\bOK\b/);
     expect(text).not.toMatch(/\bKO\b/);
+  });
+
+  /**
+   * ═══ A BRIDGE NAMES THE OTHER END, SO IT BREAKS WHEN THAT END MOVES ═══
+   *
+   * `StatisticsTable`'s `Cnt/s` column keeps Gatling's spelling and carries a
+   * hint pointing at this row — "the same measurement the run totals call X" —
+   * so a reader does not have to guess that two labels are one number. This
+   * branch renamed X and the hint went on naming the old word, which is a
+   * cross-reference to a surface by a spelling that surface no longer uses:
+   * the same defect as "Mint one under Access", one file over, reintroduced
+   * within the hour of fixing it.
+   *
+   * READS BOTH SOURCES, which is the only way to see it — the two files share
+   * no symbol, so nothing in the type system or in either file's own suite
+   * connects them. `paths.test.ts` reads `App.tsx` and `tokens.test.ts` reads
+   * the emitted CSS for the same reason: some agreements exist only between
+   * files, and the alternative is prose that is wrong for a release.
+   */
+  it('keeps the statistics table’s bridge pointing at a label this row renders', () => {
+    /* NOT `new URL(..., import.meta.url)`, which is what `paths.test.ts` uses
+       one project over: that file runs under the NODE environment, where
+       `import.meta.url` is a `file:` URL. This suite is jsdom, where it is an
+       `http:` one, and `readFileSync` rejects it with "The URL must be of
+       scheme file". Resolved from the repo root instead, found by walking up
+       from the working directory so the suite does not care where it is
+       invoked from. */
+    const here = readFileSync(fromRepo('apps/web/src/routes/RunStats.tsx'), 'utf8');
+    const table = readFileSync(fromRepo('apps/web/src/tables/StatisticsTable.tsx'), 'utf8');
+
+    /* ANCHORED TO THE `hint:` PROPERTY, not to the phrase. The first version
+       matched the phrase anywhere and found it inside the COMMENT that
+       explains this very defect — which quotes the old spelling on purpose —
+       so the guard read the documentation instead of the product and failed
+       against a string nobody ships. */
+    const bridge = /hint:\s*'[^']*the run totals call ([^']+)'/.exec(table);
+    expect(bridge, 'StatisticsTable no longer bridges to the run totals').not.toBeNull();
+
+    const named = bridge![1].trim();
+    // The word the hint promises must be a label this file actually renders.
+    expect(here).toContain(`label="${named}"`);
+
+    // And it must be on screen, not merely in the source.
+    render(<RunStats stats={stats} />);
+    const labels = [
+      ...document.querySelectorAll('section[aria-label="Run totals"] dt'),
+    ].map((dt) => (dt.textContent ?? '').trim());
+    expect(labels).toContain(named);
   });
 });

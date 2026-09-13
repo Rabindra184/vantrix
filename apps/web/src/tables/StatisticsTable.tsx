@@ -197,9 +197,16 @@ const EXECUTION_COLUMNS: readonly Column[] = [
      * statistics table IS the parity surface, and `formatRate`'s own docstring
      * cites `Cnt/s` (14.21) as the tool's spelling. So the column keeps it and
      * the `<abbr>` carries the bridge, because the run totals directly above
-     * call the same number `req/s` and a reader should not have to guess that
-     * two labels are one measurement. */
-    hint: 'Count of events per second — the same measurement the run totals call req/s',
+     * call the same number something else and a reader should not have to
+     * guess that two labels are one measurement.
+     *
+     * THE BRIDGE NAMES THE OTHER END, SO IT MOVES WHEN THAT END DOES. This
+     * said "the run totals call req/s" while the same change renamed that tile
+     * to `Requests/s` and deleted its separate unit — a cross-reference naming
+     * a surface by a word that surface no longer uses, which is precisely the
+     * defect the "Mint one under Access" fix had just corrected one file over.
+     * Whenever a label changes, grep for prose that names it from elsewhere. */
+    hint: 'Count of events per second — the same measurement the run totals call Requests/s',
     value: (r) => r.throughputRps,
     format: formatRate,
   },
