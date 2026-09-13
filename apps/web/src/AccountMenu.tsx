@@ -1,180 +1,209 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import ThemeToggle from './components/ThemeToggle';
-import SignOutButton from './SignOutButton';
-import { ChevronRightIcon } from './components/icons';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './components/ui/dropdown-menu';
+import {
+  AlertIcon,
+  ChevronRightIcon,
+  MonitorIcon,
+  MoonIcon,
+  SignOutIcon,
+  SunIcon,
+} from './components/icons';
+import { applyTheme, readTheme, type ThemeChoice } from './theme';
+import { signOut } from './api/session';
 
 /**
  * Who is signed in, the theme, and the way out — behind one control.
  *
- * ═══ WHAT THIS REPLACES, AND WHY (review 09-13 N03) ═══
+ * ═══ WHAT THIS REPLACES (review 09-13 N03) ═══
  *
  * The header carried a brand, a truncated email, three theme buttons and Sign
- * out, all competing at the same weight. The review's complaint is that the
- * two least-used controls in the product hold permanent chrome while the
- * question the chrome should answer — which identity am I using — was a 12px
- * span that disappeared below `sm`. Theme is set once and Sign out is pressed
- * at the end of a session; neither earns a persistent slot.
+ * out at equal weight. Theme is set once and Sign out is pressed at the end of
+ * a session; meanwhile the question the chrome should answer — which identity
+ * am I using — was a 12px span that disappeared below `sm`, because it was the
+ * longest of the four and lost the contest for the row. Identity is the
+ * control now and the settings live inside it, where the full address is
+ * legible at every width.
  *
- * So identity becomes the control, and the two settings live inside it. The
- * full identity is legible in the panel at every width, which is the half the
- * old header could not do at all.
+ * ═══ A REAL MENU, WHICH IS WHY IT IS RADIX ═══
  *
- * ═══ A DISCLOSURE, NOT A `role="menu"` ═══
+ * The first cut of this was a hand-rolled disclosure that deliberately refused
+ * `role="menu"`, on the argument that a menu promises arrow keys, typeahead,
+ * Home/End and a focus trap, and that half-keeping a role is worse than not
+ * claiming it — the lesson the old `ThemeToggle` earned by shipping
+ * `role="radio"` with no arrow handling.
  *
- * `role="menu"` is the obvious reach and it would be wrong twice over.
+ * That was right about the promise and wrong about the conclusion: the answer
+ * is to KEEP the promise. `@radix-ui/react-dropdown-menu` implements the APG
+ * pattern, `menuitemradio` included, so the theme control is three real menu
+ * radios with working arrows and a tick showing which is current — rather than
+ * a `radiogroup` smuggled inside a menu (invalid ARIA) or a disclosure that
+ * declines to be a menu at all.
  *
- * First it is invalid: a menu's children must be `menuitem`,
- * `menuitemradio` or `menuitemcheckbox`, and this panel holds a
- * `role="radiogroup"` (the theme control) and an ordinary button. Wrapping
- * them in a menu would either break that contract or force the theme control
- * to be rebuilt as menu radios, losing the segmented control the redesign
- * chose deliberately.
+ * `ThemeToggle` is deleted with it. It existed to be a segmented control in a
+ * header that no longer has room for one, and its whole interaction model —
+ * roving tabindex, arrow handling, selection following focus — is what Radix
+ * now provides inside the menu.
  *
- * Second, and the reason it matters more: a role is a promise about keyboard
- * behaviour. `ThemeToggle`'s own docstring records this exact lesson costing
- * this project a release — it shipped `role="radio"` with no arrow handling,
- * so a screen reader announced "radio button, 1 of 3" and the arrow keys its
- * user then pressed did nothing. A menu promises arrows, typeahead, and
- * Home/End across its items. This does not implement those, so it does not
- * claim them.
+ * ═══ SIGN OUT IS INLINE HERE, AND THE ORDER MATTERS ═══
  *
- * A disclosure promises exactly what it delivers: a button whose
- * `aria-expanded` says whether the thing it controls is open. Escape closes
- * and returns the caret, because the one keyboard affordance a popup genuinely
- * owes its user is a way out that does not strand focus.
- *
- * ═══ THE PANEL IS UNMOUNTED WHEN CLOSED ═══
- *
- * Not hidden with a class. `AppShell.test.tsx` and two e2e specs assert there
- * is exactly ONE Sign out control in the document, and jsdom applies no CSS —
- * so a CSS-hidden copy is fully present there and would read as the
- * duplication those assertions exist to catch. Unmounting also keeps the
- * closed menu out of the tab order without a `tabindex` sweep.
+ * `SignOutButton` was a `<button>`, and a menu's children must be menu items,
+ * so its three steps moved here rather than being wrapped. They are unchanged
+ * and the middle one is the one with teeth: post, then CLEAR THE QUERY CACHE,
+ * then redirect. The cache holds the previous user's runs in memory, so
+ * skipping it leaves that data one back-button away with no server-side
+ * component to the leak. A failed sign-out does not redirect — the cookie may
+ * still be valid, and sending someone to /login while they are in fact signed
+ * in tells them the opposite of the truth.
  */
 export default function AccountMenu({ identity }: { readonly identity: string | null }) {
-  const [open, setOpen] = useState(false);
-  const panelId = useId();
-  const trigger = useRef<HTMLButtonElement | null>(null);
-  const panel = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [failed, setFailed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  /* Read once, not in an effect: `theme.ts` has already written the choice to
+     <html> before React runs, so an effect here would re-apply what is on
+     screen and risk a flash. */
+  const [choice, setChoice] = useState<ThemeChoice>(() => readTheme());
 
-  /* Escape closes and gives the caret back; a click outside closes and leaves
-     it where the reader put it. Both listeners exist only while open — an
-     always-registered document handler on a component mounted by the shell is
-     a listener on every page, for a control that is shut most of the time. */
-  useEffect(() => {
-    if (!open) return;
+  async function onSignOut(): Promise<void> {
+    if (submitting) return; // two posts race; the second 401s against a cleared cookie
+    setFailed(false);
+    setSubmitting(true);
+    try {
+      await signOut();
+    } catch {
+      setFailed(true);
+      setSubmitting(false);
+      return;
+    }
+    queryClient.clear();
+    navigate('/login', { replace: true });
+  }
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setOpen(false);
-      trigger.current?.focus();
-    };
-    /* `pointerdown`, not `click`: a click that begins inside the panel and
-       ends outside it (a drag off a button, a text selection that runs past
-       the edge) fires `click` on the document and would close the panel out
-       from under the reader's own gesture. */
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (panel.current?.contains(target) === true) return;
-      if (trigger.current?.contains(target) === true) return;
-      setOpen(false);
-    };
-
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [open]);
-
-  /* The first character of whatever identifies this person. Decorative — it is
-     derived from the name beside it and carries nothing of its own, so it is
-     hidden rather than announced as a stray letter before the email. */
   const initial = (identity ?? '?').trim().charAt(0).toUpperCase() || '?';
 
   return (
-    <div className="relative">
-      <button
-        ref={trigger}
-        type="button"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((v) => !v)}
-        data-testid="account-menu-trigger"
-        className="transition-ui flex max-w-[16rem] items-center gap-2 rounded-full border border-default bg-sunken py-1 pr-2 pl-1 text-[13px] text-primary hover:border-strong"
-      >
-        <span
-          aria-hidden="true"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-mark text-[11px] font-semibold text-on-brand"
+    /* NOT MODAL. Radix's default traps focus, locks scroll and marks the rest
+       of the document inert — right for a destructive confirm, wrong for a
+       settings menu in the chrome: it makes the page behind it unreadable to
+       assistive technology and unscrollable, for a control someone opened to
+       flip a theme. Caught by `auth.spec.ts`, which could no longer see the
+       run table while the menu was open. Escape and outside-click still close
+       it; only the trap and the inerting are dropped. */
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-testid="account-menu-trigger"
+          className="transition-ui flex max-w-[16rem] items-center gap-2 rounded-full border border-default bg-sunken py-1 pr-2 pl-1 text-[13px] text-primary hover:border-strong data-[state=open]:border-strong"
         >
-          {initial}
-        </span>
-        {/* ═══ THE NAME IS ONE NODE, THE VISIBLE TEXT IS DECORATIVE ═══
-         *
-         * The obvious arrangement — an `sr-only` "Account:" beside an identity
-         * that is `sr-only` only below `sm` — produces the name
-         * "Account:qa@example.test", with no space. The accessible-name
-         * algorithm TRIMS each element's contribution before joining them, so
-         * whitespace written at a tag boundary cannot survive; it is not a JSX
-         * problem and `{' '}` does not fix it either.
-         *
-         * So the whole name lives in one `sr-only` node, and the visible copy
-         * is `aria-hidden` — present for the eye above `sm`, contributing
-         * nothing to the name. WCAG 2.5.3 still holds: the visible label
-         * (the identity) is contained in the accessible name.
-         *
-         * "Account" prefixes it so the control says what it OPENS rather than
-         * merely whose it is, and the name is identical at every width. */}
-        <span className="sr-only">Account: {identity ?? 'signed in'}</span>
-        <span
-          aria-hidden="true"
-          className="hidden max-w-[14ch] truncate sm:inline"
-        >
-          {identity ?? 'signed in'}
-        </span>
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${open ? '-rotate-90' : 'rotate-90'}`}
-        />
-      </button>
+          <span
+            aria-hidden="true"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-mark text-[11px] font-semibold text-on-brand"
+          >
+            {initial}
+          </span>
+          {/* ═══ THE NAME IS ONE NODE; THE VISIBLE COPY IS DECORATIVE ═══
+           *
+           * An `sr-only` "Account:" beside an identity that is `sr-only` only
+           * below `sm` yields "Account:qa@example.test", with no space: the
+           * accessible-name algorithm TRIMS each element's contribution before
+           * joining, so whitespace at a tag boundary cannot survive and
+           * `{' '}` does not rescue it either. One node carries the whole name
+           * and the visible copy is `aria-hidden`, so the name is identical at
+           * every width. WCAG 2.5.3 still holds — the visible label is
+           * contained in the accessible name. */}
+          <span className="sr-only">Account: {identity ?? 'signed in'}</span>
+          <span aria-hidden="true" className="hidden max-w-[14ch] truncate sm:inline">
+            {identity ?? 'signed in'}
+          </span>
+          <ChevronRightIcon
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0 rotate-90 text-muted transition-transform"
+          />
+        </button>
+      </DropdownMenuTrigger>
 
-      {open && (
-        <div
-          ref={panel}
-          id={panelId}
-          className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-default bg-surface p-3 shadow-panel"
+      <DropdownMenuContent align="end" className="w-[15rem]">
+        {/* IDENTITY IN FULL — the one place the whole address is legible, which
+            is what the header could not manage at any width. IDENTITY ONLY:
+            `Session` (api/session.ts) carries a user and no organisation, and
+            the review is explicit that multi-tenant UI must not be invented. */}
+        <DropdownMenuLabel>Signed in as</DropdownMenuLabel>
+        <p data-testid="signed-in-as" className="px-2 pb-1 text-[13px] break-all text-primary">
+          {identity ?? 'an account this page could not read'}
+        </p>
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuLabel>Theme</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={choice}
+          onValueChange={(next) => {
+            const picked = next as ThemeChoice;
+            setChoice(picked);
+            applyTheme(picked);
+          }}
         >
-          {/* ═══ IDENTITY IN FULL, WHICH THE HEADER COULD NOT DO ═══
-           *
-           * `break-all` and no truncation: this is the one place the whole
-           * address is legible, and an email clipped at 22 characters in the
-           * header was the original complaint.
-           *
-           * IDENTITY ONLY — no organisation. `Session` (api/session.ts)
-           * carries a user and nothing else, and the review is explicit that
-           * multi-tenant UI must not be invented. */}
-          <p className="text-[11px] tracking-wide text-faint uppercase">Signed in as</p>
-          <p data-testid="signed-in-as" className="mt-0.5 text-[13px] break-all text-primary">
-            {identity ?? 'an account this page could not read'}
+          {(
+            [
+              ['system', 'System', MonitorIcon],
+              ['light', 'Light', SunIcon],
+              ['dark', 'Dark', MoonIcon],
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <DropdownMenuRadioItem key={value} value={value}>
+              <Icon aria-hidden="true" className="h-3.5 w-3.5 text-muted" />
+              {label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuItem
+          data-testid="sign-out"
+          disabled={submitting}
+          /* Selecting an item closes the menu, which would unmount this one
+             mid-request and take its failure message with it. So selection is
+             prevented: a success closes the menu by navigating away, and a
+             failure leaves it open with the reason on screen. */
+          onSelect={(event) => {
+            event.preventDefault();
+            void onSignOut();
+          }}
+        >
+          <SignOutIcon aria-hidden="true" className="h-3.5 w-3.5 text-muted" />
+          Sign out
+        </DropdownMenuItem>
+
+        {failed && (
+          <p
+            role="alert"
+            className="flex items-start gap-1.5 px-2 pt-1 text-[12px]"
+            /* INLINE, not a `text-status-failed` utility: the status colours
+               live on `:root` rather than in `@theme inline`, so Tailwind
+               generates no utility for them and the class would emit nothing
+               at all — silently. `StatTile` and `RunList` reference them this
+               same way. */
+            style={{ color: 'var(--color-status-failed)' }}
+          >
+            <AlertIcon aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Sign out failed. You are still signed in — try again.
           </p>
-
-          <div className="my-3 border-t border-default" />
-
-          <div className="flex items-center justify-between gap-3">
-            {/* A visible label beside the group, whose own `aria-label`
-                ("Colour theme") already names it for assistive technology —
-                so this is orientation for the eye, not a second name. */}
-            <span className="text-[13px] text-muted">Theme</span>
-            <ThemeToggle />
-          </div>
-
-          <div className="my-3 border-t border-default" />
-
-          <SignOutButton />
-        </div>
-      )}
-    </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

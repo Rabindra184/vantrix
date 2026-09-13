@@ -21,9 +21,9 @@ test('Sign out exists exactly once in the document', async ({ page }) => {
   // while shut is what proves the panel really unmounts rather than hiding;
   // one while open is the duplication guard this test has always been. A
   // CSS-hidden panel would satisfy the second and fail the first.
-  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Sign out', exact: true })).toHaveCount(0);
   await openAccountMenu(page);
-  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('menuitem', { name: 'Sign out', exact: true })).toHaveCount(1);
 });
 
 test('the rail navigates to a project', async ({ page }) => {

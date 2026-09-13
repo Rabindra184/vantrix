@@ -43,7 +43,7 @@ test('the session survives a full page reload', async ({ page }) => {
   // is unmounted while shut — so this opens it rather than asserting on a
   // control the closed header no longer contains.
   await openAccountMenu(page);
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   // The session survived far enough to fetch org-scoped data and render it,
   // not merely far enough to keep a Sign out button on screen.
   await expect(page.getByRole('table')).toBeVisible();
@@ -77,7 +77,7 @@ test('an unauthenticated deep link redirects to login and comes back', async ({ 
 test('signing out clears the session', async ({ page }) => {
   await signIn(page, admin);
   await openAccountMenu(page);
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/login/);
   await page.goto('/runs');
   await expect(page).toHaveURL(/\/login/);

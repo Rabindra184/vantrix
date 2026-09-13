@@ -61,12 +61,12 @@ describe('AppShell', () => {
        is UNMOUNTED while shut — so the closed shell carries none, which is
        itself worth asserting: a panel hidden with a class would be fully
        present here, because jsdom applies no CSS. */
-    expect(screen.queryAllByRole('button', { name: 'Sign out' })).toHaveLength(0);
+    expect(screen.queryAllByRole('menuitem', { name: /sign out/i })).toHaveLength(0);
 
     await user.click(screen.getByTestId('account-menu-trigger'));
     // Count, not visibility — still the cheapest place to catch the
     // duplication that would break auth.spec.ts under strict mode.
-    expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(1);
+    expect(await screen.findAllByRole('menuitem', { name: /sign out/i })).toHaveLength(1);
   });
 });
 
