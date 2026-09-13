@@ -86,11 +86,24 @@ test('every project page carries the same five sections, under the project’s o
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Checkout');
 
-    // Launch stays an ACTION, which M10 asks for explicitly: the five are
-    // places you can sit on and bookmark, this is a thing you do. Asserted as
-    // a pair, because "not in the nav" alone passes just as well against a
-    // page that lost the action altogether.
-    await expect(page.getByRole('link', { name: 'New on-prem run', exact: true })).toBeVisible();
+    /* Launch stays an ACTION, which M10 asks for explicitly: the five are
+       places you can sit on and bookmark, this is a thing you do. Asserted as
+       a pair, because "not in the nav" alone passes just as well against a
+       page that lost the action altogether.
+
+       BY TESTID, and the first version of this was a page-wide query by name
+       that failed on `/setup` — the "Run a test" card links to the same form
+       under the same label. That is correct rather than a defect: WCAG asks
+       for identical text where the destination is identical, and the pattern
+       this repo has actually been bitten by is the opposite one (two labels
+       for one destination, which M15 shipped and a later branch had to fix).
+       So the claim is narrowed to the element it is about instead of the
+       product being changed to suit the assertion. */
+    await expect(page.getByTestId('project-launch')).toBeVisible();
+    await expect(page.getByTestId('project-launch')).toHaveAttribute(
+      'href',
+      '/projects/checkout/run/new',
+    );
     await expect(nav.getByRole('link', { name: 'New on-prem run' })).toHaveCount(0);
 
     // THE RAIL'S VOCABULARY IS STILL THE RAIL'S. "All runs" is the org-wide

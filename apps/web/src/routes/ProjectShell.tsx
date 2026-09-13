@@ -200,7 +200,19 @@ export default function ProjectShell({
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="min-w-0 text-xl font-semibold tracking-tight">{name}</h1>
-        <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
+        {/* ═══ A TESTID, BECAUSE THE NAME IS LEGITIMATELY NOT UNIQUE ═══
+            The Add results page's "Run a test" card links to this same form
+            under this same name, which is CORRECT — WCAG asks for identical
+            text where the destination is identical, and the anti-pattern this
+            repo records is the opposite one (`ProjectRuns` and `ProjectTests`
+            calling ONE destination two different things). So a page-wide query
+            for the label resolves two elements there, and a spec asserting the
+            SHELL contributes this action needs to say which one it means. */}
+        <Link
+          to={projectNewRunnerRunPath(slug)}
+          data-testid="project-launch"
+          className={linkButtonClasses}
+        >
           <PlayIcon className="h-3.5 w-3.5" />
           New on-prem run
         </Link>
