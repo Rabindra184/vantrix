@@ -113,3 +113,25 @@ export async function openAccountMenu(page: Page): Promise<void> {
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
 }
+
+/**
+ * Opens the time-window control if it is closed.
+ *
+ * Review M01 collapsed it: measured at 1440x900 it ran 332px and pushed the
+ * run's own totals to y937, eighty pixels below the fold on the page a reader
+ * opens to read four numbers. It is 44px closed, and it OPENS ITSELF whenever
+ * a window is applied — so a spec arriving at a narrowed URL needs nothing,
+ * while one that means to narrow a fresh run has to open it first, exactly as
+ * a reader does.
+ *
+ * Checks before clicking rather than toggling blindly: a spec that applies a
+ * window, navigates, and comes back would otherwise CLOSE the control the
+ * product had deliberately opened.
+ */
+export async function openTimeWindow(page: Page): Promise<void> {
+  const details = page.locator('[data-testid="time-brush"] details');
+  await details.waitFor();
+  const open = await details.evaluate((d) => (d as HTMLDetailsElement).open);
+  if (!open) await page.getByTestId('time-window-toggle').click();
+  await expect(page.getByTestId('window-from')).toBeVisible();
+}

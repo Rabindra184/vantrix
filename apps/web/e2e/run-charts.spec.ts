@@ -5,7 +5,7 @@ import {
   seedPendingRun,
   seedRunWithData,
 } from './fixtures.js';
-import { apiJson, plot, signIn } from './helpers.js';
+import { apiJson, openTimeWindow, plot, signIn } from './helpers.js';
 import { SURFACE_TOKENS } from '../src/charts/theme.js';
 import { runChartsPath } from '../src/routes/paths.js';
 
@@ -1028,6 +1028,9 @@ test('the brush writes the window into the URL and states what it computed', asy
   const brush = page.getByTestId('time-brush');
   await expect(brush).toBeVisible();
 
+  // The control is collapsed by default (review M01); a reader opens it
+  // before typing a range, and so does this.
+  await openTimeWindow(page);
   await page.getByTestId('window-from').fill('0');
   await page.getByTestId('window-to').fill('10');
   await page.getByTestId('window-apply').click();
@@ -1112,6 +1115,13 @@ test('dragging the scrubber commits a window in milliseconds, not axis noise', a
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));
+
+  /* OPENED FIRST. Review M01 collapsed this control, and a closed `<details>`
+     does not render its children at all — so the strip is not merely below the
+     fold, it does not exist to be measured. `plot()` would report 0 and the
+     drag would land on empty page, which is the same silent failure the
+     scroll note below was written for, one cause earlier. */
+  await openTimeWindow(page);
 
   const strip = plot(page.getByTestId('chart-time-window'));
   await expect(strip).toHaveCount(1);
@@ -1230,6 +1240,9 @@ test('the selected window survives moving between run tabs', async ({ page }) =>
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));
 
+  // The control is collapsed by default (review M01); a reader opens it
+  // before typing a range, and so does this.
+  await openTimeWindow(page);
   await page.getByTestId('window-from').fill('0');
   await page.getByTestId('window-to').fill('10');
   await page.getByTestId('window-apply').click();
@@ -1268,6 +1281,9 @@ test('the errors table says its totals are whole-run under a window', async ({ p
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));
 
+  // The control is collapsed by default (review M01); a reader opens it
+  // before typing a range, and so does this.
+  await openTimeWindow(page);
   await page.getByTestId('window-from').fill('0');
   await page.getByTestId('window-to').fill('10');
   await page.getByTestId('window-apply').click();
