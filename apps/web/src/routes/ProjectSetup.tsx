@@ -75,12 +75,50 @@ function AddResults({ slug }: { readonly slug: string }) {
     refetchInterval: 15_000,
   });
 
+  /* ONE COLUMN, NOT `xl:grid-cols-2`. Review M04 objects to "the third card
+     below the first two" — a 2-up grid leaves the CI path orphaned in a row of
+     its own at every width that fits two, which reads as an afterthought
+     rather than the third of three equal choices. Collapsed, the three are
+     short enough that a column is the right shape: a list of choices. */
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+    <div className="flex flex-col gap-4">
       <EntryCard
         title="Import results"
         icon={<UploadIcon className="h-4 w-4" />}
         description="You already have a finished Gatling report. Post the bundle and PerfPortal parses it."
+        steps={
+          <>
+          <pre
+            data-testid="upload-command"
+            className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+          >
+  {`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+    -F bundle=@results.tgz \\
+    -F 'metadata={"tool":"gatling"}' \\
+    ${instanceOrigin}/v1/runs`}
+          </pre>
+
+          {/* ═══ SAYING WHAT IS NOT BUILT, RATHER THAN LETTING IT BE INFERRED
+              ═══
+
+              The review allows that "a completed-report import can be a later
+              feature" and asks for a clear guide and status meanwhile. A page
+              offering "Import results" with only a shell command invites the
+              reader to hunt for the file picker they assume is somewhere; one
+              sentence ends that hunt. It also stops the endpoint reading as a
+              workaround — it is the supported route, and the browser form would
+              be a convenience on top of it. */}
+          <p className="text-[12px] leading-snug text-muted">
+            There is no browser upload form yet — this endpoint is the supported route, and it is
+            what the CI recipe below uses.
+          </p>
+          <p className="text-[12px] leading-snug text-muted">
+            The bundle is a <code className="font-mono">.tgz</code> containing the run directory
+            Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
+            a 202 with the run’s id; the worker parses it in the background.
+          </p>
+          </>
+        }
       >
         <p className="text-[13px] leading-relaxed text-muted">
           Needs a token with the <span className="text-primary">Completed reports</span> permission.{' '}
@@ -88,36 +126,6 @@ function AddResults({ slug }: { readonly slug: string }) {
             Create one under API tokens
           </Link>
           , then export it as <code className="font-mono text-primary">PERFPORTAL_TOKEN</code>.
-        </p>
-
-        <pre
-          data-testid="upload-command"
-          className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-        >
-{`curl -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
-  -F bundle=@results.tgz \\
-  -F 'metadata={"tool":"gatling"}' \\
-  ${instanceOrigin}/v1/runs`}
-        </pre>
-
-        {/* ═══ SAYING WHAT IS NOT BUILT, RATHER THAN LETTING IT BE INFERRED
-            ═══
-
-            The review allows that "a completed-report import can be a later
-            feature" and asks for a clear guide and status meanwhile. A page
-            offering "Import results" with only a shell command invites the
-            reader to hunt for the file picker they assume is somewhere; one
-            sentence ends that hunt. It also stops the endpoint reading as a
-            workaround — it is the supported route, and the browser form would
-            be a convenience on top of it. */}
-        <p className="text-[12px] leading-snug text-muted">
-          There is no browser upload form yet — this endpoint is the supported route, and it is
-          what the CI recipe below uses.
-        </p>
-        <p className="text-[12px] leading-snug text-muted">
-          The bundle is a <code className="font-mono">.tgz</code> containing the run directory
-          Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
-          a 202 with the run’s id; the worker parses it in the background.
         </p>
       </EntryCard>
 
@@ -143,39 +151,43 @@ function AddResults({ slug }: { readonly slug: string }) {
         title="Configure CI"
         icon={<TokenIcon className="h-4 w-4" />}
         description="Send reports from your CI pipeline, so the trend line keeps itself up to date."
+        steps={
+          <>
+          <pre
+            data-testid="ci-command"
+            className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
+          >
+  {`# after gradlew gatlingRun
+  tar -czf results.tgz -C build/reports/gatling .
+  curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
+    -F bundle=@results.tgz \\
+    -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
+    ${instanceOrigin}/v1/runs`}
+          </pre>
+          <p className="text-[12px] leading-snug text-muted">
+            <span className="text-primary">branch</span> and{' '}
+            <span className="text-primary">commitSha</span> are what let the Compare page tell a
+            regression from a different build, so they are worth wiring up even though both are
+            optional.
+          </p>
+          {/* NO VERSION NUMBER. The Gradle plugin is built from this repository
+              and is not on a public plugin portal, so a coordinate quoted here
+              would be a string this page cannot verify — which is exactly how
+              the plugin's own e2e script came to name a version that had not
+              existed for two releases. */}
+          <p className="text-[12px] leading-snug text-muted">
+            For a LIVE view while the build runs rather than a report afterwards, there is a Gradle
+            plugin (<code className="font-mono">dev.vantrix.gatling</code>) that streams the log as
+            Gatling writes it. It ships with this repository under{' '}
+            <code className="font-mono">clients/gatling-gradle</code>; its README carries the
+            coordinates and its JDK 21 requirement.
+          </p>
+          </>
+        }
       >
         <p className="text-[13px] leading-relaxed text-muted">
           Add one step after your existing Gatling task. The token belongs in the pipeline’s secret
           store, never in the repository.
-        </p>
-        <pre
-          data-testid="ci-command"
-          className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
-        >
-{`# after gradlew gatlingRun
-tar -czf results.tgz -C build/reports/gatling .
-curl -fsS -H "Authorization: Bearer $PERFPORTAL_TOKEN" \\
-  -F bundle=@results.tgz \\
-  -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
-  ${instanceOrigin}/v1/runs`}
-        </pre>
-        <p className="text-[12px] leading-snug text-muted">
-          <span className="text-primary">branch</span> and{' '}
-          <span className="text-primary">commitSha</span> are what let the Compare page tell a
-          regression from a different build, so they are worth wiring up even though both are
-          optional.
-        </p>
-        {/* NO VERSION NUMBER. The Gradle plugin is built from this repository
-            and is not on a public plugin portal, so a coordinate quoted here
-            would be a string this page cannot verify — which is exactly how
-            the plugin's own e2e script came to name a version that had not
-            existed for two releases. */}
-        <p className="text-[12px] leading-snug text-muted">
-          For a LIVE view while the build runs rather than a report afterwards, there is a Gradle
-          plugin (<code className="font-mono">dev.vantrix.gatling</code>) that streams the log as
-          Gatling writes it. It ships with this repository under{' '}
-          <code className="font-mono">clients/gatling-gradle</code>; its README carries the
-          coordinates and its JDK 21 requirement.
         </p>
       </EntryCard>
     </div>
@@ -243,6 +255,7 @@ function EntryCard({
   description,
   status,
   children,
+  steps,
 }: {
   readonly title: string;
   readonly icon: ReactNode;
@@ -257,6 +270,14 @@ function EntryCard({
    * and it reads as a status again now that it is the only one. */
   readonly status?: EntryStatus;
   readonly children: ReactNode;
+  /**
+   * The commands and caveats — everything review M04 says must not be on
+   * screen for all three paths at once. Optional: a path whose whole content
+   * is already one short choice (running a test is a button) has no steps to
+   * hide, and wrapping it in a disclosure would bury an action rather than
+   * shorten a document.
+   */
+  readonly steps?: ReactNode;
 }) {
   return (
     <Card headingLevel={2} data-testid={`entry-${title.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -286,6 +307,39 @@ function EntryCard({
           </p>
         )}
         {children}
+
+        {/* ═══ THE WORKFLOW, BEHIND ONE CLICK — review M04 ═══
+         *
+         * The finding is that this page "presented documentation as task UI":
+         * all three paths showed their explanations, prerequisites, code and
+         * implementation caveats at once. What it asks for is three short
+         * choices with only the chosen workflow expanded.
+         *
+         * So the CHOICE stays on screen — icon, title, status and the one
+         * sentence saying when this path is the right one — and the commands
+         * and caveats move in here.
+         *
+         * `name` MAKES IT AN ACCORDION WITH NO JAVASCRIPT. Browsers close the
+         * other `<details>` sharing a name, which is exactly "expand only the
+         * chosen workflow"; where that is unsupported they simply open
+         * independently, which is the old behaviour and not a defect.
+         *
+         * THE `<h2>` STAYS OUTSIDE THE `<summary>`. A heading inside one is
+         * valid HTML and a trap: a `<summary>`'s descendants are presentational
+         * in the accessibility tree, so the page's entire heading outline would
+         * vanish — and `project-tests.spec.ts` and `ProjectSetup.test.tsx` both
+         * query these three by `level: 2`. The same shape as the `aria-hidden`
+         * TableFrame defect this repo already paid for: markup that looks
+         * tidier and quietly removes something only a screen reader uses. */}
+        {steps !== undefined && (
+          <details name="add-results" className="group">
+            <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+              <span className="group-open:hidden">Show me how</span>
+              <span className="hidden group-open:inline">Hide the steps</span>
+            </summary>
+            <div className="mt-3 flex flex-col gap-3">{steps}</div>
+          </details>
+        )}
       </div>
     </Card>
   );

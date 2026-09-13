@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1809 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1813 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,47 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-m04-choices branch (M04) added no unit FILE and 4 cases to
+`apps/web/test/ProjectSetup.test.tsx`, from a floor of 147 / 1809. Integration
+is UNCHANGED and its **e2e rises to 119** (`project-tests.spec.ts`).
+
+**`<details name>` IS AN ACCORDION WITH NO JAVASCRIPT, AND IT IS THE WHOLE
+CHANGE.** M04 asks Add results to stop "presenting documentation as task UI" —
+all three paths showed their explanations, prerequisites, code and caveats at
+once — and to "expand only the chosen workflow". Browsers close the other
+`<details>` sharing a `name`; where that is unsupported they open
+independently, which is exactly the behaviour being replaced, so the
+degradation costs nothing.
+
+**THE `<h2>` STAYS OUTSIDE THE `<summary>`, AND THAT IS NOT A STYLE CHOICE.**
+Putting the card's heading inside the summary row is valid HTML and would have
+been tidier. A `<summary>`'s descendants are PRESENTATIONAL in the
+accessibility tree, so every one of these headings would have vanished from the
+outline — and `project-tests.spec.ts` and `ProjectSetup.test.tsx` both query
+the three by `level: 2`. Same shape as the `aria-hidden` `TableFrame` defect
+this file already records: markup that looks tidier and silently removes
+something only a screen reader uses. The title, the status badge and the
+one-sentence description stay on screen; only the commands and caveats move.
+
+**AND ONE CARD DELIBERATELY HAS NO DISCLOSURE.** "Run a test" is a sentence and
+the button that starts a run — that IS the choice, not documentation about it.
+Collapsing everything is the tidier-looking change and the wrong one: it would
+bury an action rather than shorten a document. `steps` is optional for that
+reason and a case pins the absence.
+
+**ASSERTED ON `open`, NOT ON ABSENCE.** jsdom applies no CSS and a closed
+`<details>` keeps its children in the DOM, so `queryByTestId` finds the curl
+command either way — the same reason the `truncate` and `max-sm:hidden` claims
+in this file need a browser or an attribute. The unit cases read the attribute
+and pin the shared `name`; the EXCLUSION is the browser's own behaviour, which
+no test short of an engine can prove, so `project-tests.spec.ts` proves it
+there. Removing the `name` fails both, which is how it was verified.
+
+**THE 2-UP GRID WENT WITH IT.** `xl:grid-cols-2` left the CI path alone in a
+row of its own at every width that fits two — "the third card below the first
+two", which the finding names. Collapsed, three choices are short enough that
+one column is the right shape: a list of things to choose between.
 
 The review-m02-prose branch (M02, PARTIAL) added no unit FILE and no unit case;
 unit stays 147 / 1809. Its **e2e rises to 118** (`mobile.spec.ts`).
