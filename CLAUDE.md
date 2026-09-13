@@ -97,7 +97,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1821 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1822 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -114,6 +114,45 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-m05-honest-label branch (M05, the INTERIM the finding itself
+specifies) added no unit FILE and 1 case to `apps/web/test/ProjectSetup.test.tsx`,
+from a floor of 147 / 1821. Integration is UNCHANGED and e2e stays 119.
+
+**THE BROWSER CANNOT POST A BUNDLE, AND THAT IS AN API FACT RATHER THAN A
+SCOPE OPINION.** M05 asks for "a real file picker with accepted formats,
+validation, progress, and processing state" — and `POST /v1/runs` is the ONLY
+route that accepts a bundle (`ingest.controller.ts`, `@Controller('/v1/runs')`;
+the other three POSTs are the live protocol). It refuses a session by design:
+the handler reads `tenant.projectId` and answers `PROJECT_REQUIRED` — "Ingest
+requires a project-scoped credential" — because a session is ORG-scoped and
+names no project, while a token is minted against exactly one
+(`auth.middleware.ts` sets `scopes: ['read','ingest','runner']` and no
+`projectId`).
+
+So a picker needs a project-scoped ingest route that does not exist, plus its
+contract, its OpenAPI entry and its own integration tests. **CHECK WHETHER THE
+ENDPOINT EXISTS BEFORE ESTIMATING A FRONTEND FEATURE** — the session already
+carrying `ingest` makes this look like a pure UI job, and the missing piece is
+one line further in.
+
+**SO THE CARD IS NAMED "Import via API", WHICH IS WHAT THE FINDING ASKS FOR
+UNTIL THE PICKER EXISTS.** It was headed "Import results" and then told the
+reader there is no browser upload: the one thing its title offered was the one
+thing it could not do. A label that lies is worse than one that is plain while
+the feature is built.
+
+**THE TESTID IS DERIVED FROM THE TITLE**, so renaming the card renamed
+`entry-import-results` to `entry-import-via-api` and broke an e2e query in a
+file the change otherwise never touches. `EntryCard` builds it as
+`entry-${title.toLowerCase().replace(/\s+/g,'-')}` — convenient, and it means a
+copy change moves a selector. Grep for the derived value, not just the label.
+
+**AND THE GUARD IS THE PAIR, NOT THE WORDS.** A title saying "via API" over a
+file input would be a different lie, so the case asserts BOTH the heading and
+that no `input[type="file"]` exists anywhere on the page. When the picker is
+built, that second assertion is what should fail — which is the right way for
+this case to die.
 
 The review-m11-onetitle branch (M11) added no unit FILE and 4 cases to
 `apps/web/test/NewRunnerRun.test.tsx`, from a floor of 147 / 1817. Integration

@@ -256,7 +256,7 @@ test('the project nav reaches the three configuration pages', async ({ page }) =
   await page.goto('/projects/checkout/setup');
 
   // The entry choices the review asked for, named for what the reader wants.
-  for (const choice of ['Import results', 'Run a test', 'Configure CI']) {
+  for (const choice of ['Import via API', 'Run a test', 'Configure CI']) {
     await expect(page.getByRole('heading', { name: choice, level: 2 })).toBeVisible();
   }
 
@@ -319,7 +319,7 @@ test('opening one workflow on Add results collapses the other', async ({ page })
   await expect(importCmd).toBeHidden();
   await expect(ciCmd).toBeHidden();
 
-  const importCard = page.getByTestId('entry-import-results');
+  const importCard = page.getByTestId('entry-import-via-api');
   await importCard.getByRole('group').locator('summary').click();
   await expect(importCmd).toBeVisible();
 
