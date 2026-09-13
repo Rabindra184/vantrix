@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **146 files / 1783 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1804 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -93,7 +93,8 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The compare-axis-unit branch added no unit FILE and 1 case to
-`apps/web/test/timeAxis.test.ts`, from a floor of 146 / 1782. Integration is
+`apps/web/test/timeAxis.test.ts`, from a floor of 147 / 1804 — REBASED: it was
+cut against 146 / 1782 and the glossary branch landed underneath it. Integration is
 UNCHANGED and **e2e stays 117**. It fixes a defect the N01 review pass found
 and deliberately did not fix, because it is a units bug rather than a
 vocabulary one.
@@ -131,6 +132,64 @@ so the file it appended to lacked the guard that had just landed in it.
 `git pull` before `git checkout -b`, every time — `git ls-remote origin
 refs/heads/main` is the check this file already recommends for merges and it is
 just as useful before a branch.
+
+The review-n01-glossary branch (N01, step 4 of 4 — the finding is closed) added
+ONE unit file, `apps/web/test/RunGlossary.test.tsx` (22), from a floor of
+146 / 1782. Integration is UNCHANGED (both new files are `.tsx`) and **e2e
+stays 117**.
+
+**THE GLOSSARY EXISTS BECAUSE THREE STEPS STANDARDISED WHAT COULD BE AND THIS
+ONE EXPLAINS WHAT COULD NOT.** N01 asks for parity spellings to be retained
+"only when explicitly needed… with a glossary", and step 3 established the
+retention is needed: the statistics table is byte-identical to Gatling's own
+report headers. A reader can only exploit that if somebody tells them it is
+true, which is what a glossary is for.
+
+**A `<details>`, FOR THE REASON N02's DISCLOSURE IS ONE.** A `<summary>`
+contributes an ARIA group and NOT a heading, so the Overview tab's outline —
+`run-tables.spec.ts` pins it as the exact list `['Platform gates', 'Simulation
+assertions', 'Statistics']` — is untouched. The rejected placements are worth
+recording because each is the obvious one: a ROUTE is read by nobody at the
+moment of confusion and would need a rail entry whose vocabulary is reserved; a
+DIALOG buys nothing a disclosure does not and costs the `m-auto`-under-preflight
+trap `ChartActions` already paid for; and `RunShell` would follow the reader
+onto Trends and Compare, which use almost none of these words.
+
+It mounts on a phone deliberately — not behind `DesktopOnly`. That rule exists
+to stop a phone paying for ten ECharts instances to draw none of them; this is
+static text with no query, and it sits below everything `mobile.spec.ts`
+measures. A phone is where a reader has the LEAST room for explanation in place.
+
+**EVERY ENTRY IS A CROSS-REFERENCE, WHICH IS THE SHAPE THAT WENT WRONG TWICE
+DURING THIS REVIEW** — the `Cnt/s` hint named a run-totals label the tiles had
+just deleted, and "Mint one under Access" named a page renamed three branches
+earlier. Prose naming another surface has no compiler and no type. So the
+load-bearing case is not that the glossary renders: it is that every word it
+defines is still a word the product says, checked by reading the source that
+renders it.
+
+**AND THE RED-VERIFY IS WHAT MADE THAT GUARD REAL.** The first version mapped
+an ENTRY to a list of files and searched their concatenation. Restoring the
+defect — renaming `Requests/s` off the tile — left it GREEN, because the word
+still appeared in `StatisticsTable`'s hint, which exists only to point at that
+tile and would have been stale in the same instant. **A guard against stale
+cross-references that is satisfied by a stale cross-reference is worth
+nothing**, and nothing but running it red could have shown that. It is per-word
+and per-file now, and fails with the word and the file named.
+
+**ONE DEFINED WORD IS NOT A LITERAL ANYWHERE.** `95th` is built by
+`percentileColumnLabel` from the payload's own digits, which is what lets a run
+carrying p90 or p99.9 head its own columns — so it is genuinely on screen and
+genuinely absent from the source, and a naive grep calls the glossary a liar
+about a term it is right about. Those name the PRODUCER instead: "something
+still builds this word" fails just as loudly when the derivation is renamed.
+
+**AND COMMENTS ARE STRIPPED BEFORE SCANNING, FOR THE THIRD TIME IN ONE
+REVIEW.** `RunStats.test.tsx`'s bridge regex matched the paragraph documenting
+the defect; `timeAxis.test.ts` failed against the file it had just corrected;
+this one would have too. **A source-scanning assertion reads CODE — prose about
+a rule is not a violation of it**, and the rule is cheap: strip `/* */` and
+`//` first, or anchor to syntax only code can produce.
 
 The review-n01-axes branch (N01, step 3 of 4) added no unit FILE and 1 case to
 `apps/web/test/timeAxis.test.ts`, from a floor of 146 / 1781. Integration and
