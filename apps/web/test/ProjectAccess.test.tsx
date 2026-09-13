@@ -248,4 +248,83 @@ describe('ProjectAccess', () => {
     expect(screen.queryByRole('button', { name: 'Copied' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
   });
+
+  /* ======================================================================== *
+   * VOCABULARY — REVIEW M18, AND THE HALF THAT SURVIVED IT
+   * ======================================================================== */
+
+  describe('ProjectAccess — the words M18 retired stay retired', () => {
+    /**
+     * ═══ M18 RENAMED THE CONTROLS AND MISSED THE PROSE AROUND THEM ═══
+     *
+     * "Mint" and "Scopes" are the jargon the review asked this page to drop, and
+     * the visible CONTROLS were renamed: "Create a token", "Create token",
+     * "Permissions", and a table cell that prints "Completed reports" instead of
+     * `ingest`. Four sentences were not, and they shipped for two more branches:
+     * the section intro ("Scoped API tokens for…"), the create card's
+     * description ("Issue scoped credentials…"), the empty state ("Mint a scoped
+     * project token…") and the table caption ("…never listed after minting").
+     *
+     * Nothing could have caught it. Every case in this file queries a control by
+     * its accessible name, and all four of those strings are PROSE — no test in
+     * any suite reads the sentences a page says about itself, which is exactly
+     * how a page came to name its own primary action two different ways. It was
+     * found by opening the page.
+     *
+     * ═══ THE CLAIM, NOT THE WORDS ═══
+     *
+     * Asserted as an ABSENCE of the retired vocabulary rather than as the
+     * presence of the new sentences. CLAUDE.md records what pinning prose
+     * verbatim costs: the M18 branch asserted "the words are not weakened" over
+     * a run-health caveat that had already become false, and the suite became
+     * the reason it survived correction. These sentences must stay rewritable;
+     * what must not come back is the jargon.
+     *
+     * BOTH LIST STATES, because two of the four sentences live in branches that
+     * are never on screen together — the caption needs a token, the empty state
+     * needs none.
+     */
+    const prose = () => document.body.textContent ?? '';
+
+    it('says neither "mint" nor "scope" with tokens in the list', async () => {
+      renderSetup();
+      await ready();
+      /* The caption is the one that said "after minting", and it only renders
+         beside a real table. `findAllBy`, not `findBy`: `TableFrame` draws the
+         caption TWICE on purpose — a visible `aria-hidden` copy outside the
+         scroll box, and the real `sr-only` `<caption>` inside it, so the
+         sentence wraps at the viewport instead of scrolling sideways with the
+         columns. Either node proves the branch rendered. */
+      await screen.findAllByText(/every api token in this project/i);
+
+      expect(prose()).not.toMatch(/\bmint/i);
+      expect(prose()).not.toMatch(/\bscoped?s?\b/i);
+    });
+
+    it('says neither with an empty list', async () => {
+      fetchProjectTokensMock.mockResolvedValueOnce({ tokens: [] });
+      renderSetup();
+      await ready();
+      await screen.findByText(/no tokens yet/i);
+
+      expect(prose()).not.toMatch(/\bmint/i);
+      expect(prose()).not.toMatch(/\bscoped?s?\b/i);
+    });
+
+    /**
+     * THE PAIRED POSITIVE. An absence assertion passes just as happily against a
+     * page that failed to render at all — the trap `ProjectRail.test.tsx`
+     * already keeps a positive beside every absence for. "Permissions" is the
+     * word M18 chose, and it has to be the one on screen.
+     */
+    it('calls them permissions, in the form and in the table alike', async () => {
+      renderSetup();
+      await ready();
+
+      expect(await screen.findByText('Permissions')).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Permissions' })).toBeInTheDocument();
+      // The cell prints the humanised label, not the enum it is stored as.
+      expect(screen.getByText('Completed reports, Read dashboards')).toBeInTheDocument();
+    });
+  });
 });

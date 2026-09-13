@@ -157,6 +157,18 @@ describe('ProjectSetup — the three ways in', () => {
     expect(link).toHaveAttribute('href', '/projects/alpha/access');
     expect(link.textContent ?? '').not.toMatch(/mint/i);
 
+    /* ═══ AND SO DOES THE SENTENCE AROUND IT ═══
+     *
+     * The link was corrected and the clause carrying it was not: it read
+     * "Needs a token with the Completed reports SCOPE", pointing at a page
+     * whose fieldset, column heading and cells all say "Permissions". Same
+     * drift as the link itself, one clause to its left, and it survived
+     * because the assertion above reads `link.textContent` — which stops at
+     * the anchor. Scoped to the CARD so it reads the whole sentence. */
+    const card = await entry('Import results');
+    expect(card.textContent ?? '').toMatch(/completed reports.{0,20}permission/i);
+    expect(card.textContent ?? '').not.toMatch(/\bscoped?s?\b/i);
+
     expect(screen.queryByRole('button', { name: /create token/i })).toBeNull();
     expect(screen.queryByLabelText(/token name/i)).toBeNull();
   });

@@ -61,7 +61,7 @@ export default function ProjectAccess() {
        that case for `/setup`. */
     <ProjectShell
       current="access"
-      intro="Scoped API tokens for CI, load generators and runner hosts."
+      intro="Credentials for CI, load generators and runner hosts — each carrying only the permissions you give it."
     >
       {({ slug }) => <AccessLoaded key={slug} slug={slug} />}
     </ProjectShell>
@@ -145,7 +145,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
       <Card
         headingLevel={2}
         title="Create a token"
-        description="Issue scoped credentials for CI, agents, and runners. The secret is shown once."
+        description="Name it after whatever will use it, and tick only what that needs. The secret is shown once and never again."
         data-testid="token-mint"
       >
         <form className="flex max-w-2xl flex-col gap-4" onSubmit={submit}>
@@ -344,11 +344,19 @@ function TokenTable({
     return (
       <EmptyState
         title="No tokens yet"
-        body="Mint a scoped project token when CI, telemetry, or runner hosts need access."
+        /* WHAT A TOKEN IS FOR, not a second copy of the intro above — which
+           already names the three consumers, and is on screen at the same time
+           as this. A browser session carries `read`, `ingest` and `runner`
+           itself (`auth.middleware.ts`), so the honest distinction is not
+           "nothing can post without a token": it is that a token is how a
+           MACHINE gets in without one. */
+        body="Create one above. A token is how a machine reaches this project without a browser session."
       />
     );
   }
-  const caption = 'Project API tokens. Plaintext secrets are never listed after minting.';
+  const caption =
+    'Every API token in this project. The secret is shown once when the token is created and ' +
+    'never again — the Prefix column is what identifies it afterwards.';
   return (
     <TableFrame caption={caption} label="Project tokens table">
       <table className={TABLE}>

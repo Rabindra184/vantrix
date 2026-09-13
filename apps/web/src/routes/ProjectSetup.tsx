@@ -83,7 +83,7 @@ function AddResults({ slug }: { readonly slug: string }) {
         description="You already have a finished Gatling report. Post the bundle and PerfPortal parses it."
       >
         <p className="text-[13px] leading-relaxed text-muted">
-          Needs a token with the <span className="text-primary">Completed reports</span> scope.{' '}
+          Needs a token with the <span className="text-primary">Completed reports</span> permission.{' '}
           <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
             Create one under API tokens
           </Link>
