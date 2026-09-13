@@ -146,19 +146,31 @@ name, so the scope prefix can never collide with one. **When an edit to a file
 will not match a string you can see, read the bytes.**
 
 **AND A LOCAL INTEGRATION STREAK THAT IS RECORDED RATHER THAN EXPLAINED.** This
-branch failed `test:integration` four times running, each time ONE different
-test and every one infrastructure-shaped — a 503, a `RangeError: Invalid time
-value`, a pg `Connection terminated due to connection timeout`, a 404 on
-sign-up, a 404 on `/v1/ping`. Never an assertion about a value, and never in a
-file this branch's diff can reach. `main` passed 1681/1681 twice in the same
-window, once at a HIGHER starting load (7.19) than the branch's failures
-(4.66, 3.65), so the load gate does not explain it. Docker inodes were 35%,
-the database 14 MB, Redis 17 MB, all three containers up 22 hours with zero
-restarts, no stray worker or API, and no overlapping suite. Holding the new
-test file aside left the source change alone and it failed again — with a
-FIFTH different test. The change itself is three extra `Map` entries in a pure
-function and cannot make `/v1/ping` 404. Recorded as unexplained; CI is the
-arbiter for this branch, being a clean machine with fresh service containers.
+branch failed `test:integration` FIVE times running on this machine, each time
+ONE different test — six distinct tests across the five runs, every one
+infrastructure-shaped: a 503, a `RangeError: Invalid time value`, a pg
+`Connection terminated due to connection timeout`, a 404 on sign-up, a 404 on
+`/v1/ping`, and a 404 where a 400 was expected. Never an assertion about a
+value, and never in a file this branch's diff can reach.
+
+Everything that could explain it was checked and did not: `main` passed
+1681/1681 **three times** in the same window, once at a HIGHER starting load
+(7.19) than the branch's failures (4.66, 3.65, 5.86, 7.22), so the load gate is
+not it. Docker inodes 35%, database 14 MB, Redis 17 MB, all three containers up
+22 hours with zero restarts, no stray worker or API (`pgrep -f dist/main.js`
+empty, `pg_stat_activity` clean), and no overlapping suite. Holding the new test
+file aside left the source change alone and it failed again with yet another
+test, so it is not the added file perturbing order either. The change itself is
+three extra `Map` entries in a pure function and cannot make `/v1/ping` 404.
+
+**AND CI PASSED THE SAME SUITE FIRST TRY** — `build` green in 14m37s on a clean
+runner with fresh service containers, which is the controlled version of the
+same experiment. So the defect, if there is one, is in this machine's
+accumulated state and not in the change. Recorded because the branch/main
+asymmetry is real (5 fails against 0) and nothing here explains it: the next
+person to see a streak like this should reach for CI as the arbiter early
+rather than spending five local runs on it, and should not assume the
+documented single-test flake covers a run of this length.
 
 The review-0913-majors branch added ONE unit file —
 `apps/web/test/ToolAssertions.test.tsx` (9) — and 14 cases (12 to
