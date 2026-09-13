@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
-  Assertion, LiveDelta, SeriesResponse, ToolAssertion,
+  Assertion, LiveDelta, SeriesResponse, StatRow, ToolAssertion,
 } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
@@ -49,6 +49,7 @@ import {
   useRunTerminal,
   useTimeDomainFromShell,
   useWindowFromShell,
+  useWindowSuffix,
 } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
 import LiveNotice from './LiveNotice';
@@ -547,7 +548,15 @@ export function RunOverviewTab() {
         assertions={runAssertions}
         projectSlug={run.data.run.project.slug}
       />
-      <ToolAssertions assertions={run.data.run.toolAssertions} />
+      {/* `stats.data` is what makes a target linkable, and it is window-scoped
+          — which is the right scoping for a link that carries the window with
+          it: the link exists exactly when the analysis it points at has a row
+          to show. Until the query resolves there is no link, only the name. */}
+      <ToolAssertions
+        assertions={run.data.run.toolAssertions}
+        runId={runId ?? ''}
+        stats={stats.data?.stats ?? null}
+      />
 
       <TableSection title="Statistics" query={stats}>
         {(data) => (
@@ -1259,13 +1268,67 @@ function formatAssertionValue(value: number | null): string {
  */
 function ToolAssertions({
   assertions,
+  runId,
+  stats,
 }: {
   readonly assertions: readonly ToolAssertion[] | null | undefined;
+  readonly runId: string;
+  /** This run's statistics rows as currently scoped, or null until they load. */
+  readonly stats: readonly StatRow[] | null;
 }) {
   // BEFORE the early returns: a hook cannot sit behind one. CLAUDE.md records
   // this exact shape — "Rendered more hooks than during the previous render"
   // — being shipped twice on this page.
   const [expanded, setExpanded] = useState(false);
+  /* ═══ THE TOOL'S SENTENCE, ONE CLICK AWAY (review 09-13 M13) ═══
+   *
+   * It was a sixth column on every row, repeating in prose what Target,
+   * Metric, Bound and Actual now carry in four scannable cells — "Search: 95th
+   * percentile of response time is less than 100.0" beside `Search`, `95th`,
+   * `< 100 ms`. The reason it EXISTS is unchanged and is not cosmetic: G-05's
+   * tolerance is exact WORDING, so somebody holding this report beside
+   * Gatling's own is comparing strings, and it is the only thing that can
+   * describe an assertion shape this build does not recognise. So it is
+   * withheld, not deleted — and withheld for the whole column at once rather
+   * than per row, because the reader who wants it is diffing all of them.
+   */
+  const [wording, setWording] = useState(false);
+  const windowSuffix = useWindowSuffix();
+
+  /* ═══ WHICH NAMES THIS RUN CAN ACTUALLY DRILL INTO ═══
+   *
+   * A Gatling `details(...)` path can name a request or a group and the log
+   * does not say which — `rowFor` in `@perfportal/statistics` resolves it by
+   * trying `request <name>` and then `group <name>` against the run's own
+   * statistics, and this mirrors that exactly so a link cannot disagree with
+   * the evaluation it sits beside. A name in neither gets NO link, which is
+   * the honest answer: that is the `not_applicable` row, and sending a reader
+   * to a page that will tell them the request does not exist is the dead end
+   * this finding is about, moved one click along.
+   *
+   * ═══ THE FAMILY FILTER IS PART OF THE MIRROR, NOT A TIDY-UP ═══
+   *
+   * `response_time` is the only family the evaluator reads. Its `byKey` also
+   * holds `group <name>` entries, and — measured against the reference payload
+   * — nothing ever lands in them: the engine files a group's timings under
+   * `group_cumulated` and `group_duration` and never under `response_time`
+   * (`engine.ts`), so a Gatling assertion naming a GROUP resolves to no row
+   * and reports `not_applicable`. Linking it to `/groups/<name>`, which is a
+   * page with real data on it, would put a working link on a row whose own
+   * status says this run has no data for that name. The group arm below is
+   * kept so this stays a faithful mirror of `rowFor` rather than a second
+   * opinion about it, and it is the evaluator that decides whether it fires.
+   */
+  const recorded = useMemo(() => {
+    const byName = new Map<string, 'requests' | 'groups'>();
+    for (const row of stats ?? []) {
+      if (row.family !== 'response_time') continue;
+      // REQUEST WINS, in the same order `rowFor` tries them.
+      if (row.scope === 'request') byName.set(row.name, 'requests');
+      else if (row.scope === 'group' && !byName.has(row.name)) byName.set(row.name, 'groups');
+    }
+    return byName;
+  }, [stats]);
 
   if (assertions === null || assertions === undefined) return null;
 
@@ -1311,6 +1374,15 @@ function ToolAssertions({
   const collapsible = failed.length > 0 || rest.length > 5;
   const shown = !collapsible || expanded ? [...failed, ...rest] : failed;
 
+  /* A ROW WHOSE STRUCTURE DID NOT DECODE HAS FOUR DASHES AND NOTHING ELSE, so
+     for that row the sentence is not an alternative rendering — it is the only
+     one. The column is therefore forced on whenever a SHOWN row needs it, and
+     the toggle withdrawn, rather than offering a control that would empty the
+     table of its only content. (`assertion` is `.optional()` on the wire: a
+     run ingested before the decoder, or an API pod that predates it.) */
+  const undecoded = shown.some((a) => a.assertion === undefined);
+  const showWording = wording || undecoded;
+
   return (
     // Same anchor as the empty branch above — the band links here whichever
     // branch renders, so the id cannot live on only one of them.
@@ -1330,10 +1402,11 @@ function ToolAssertions({
           <thead className={THEAD}>
             {/* COLUMNS FROM THE DECODED STRUCTURE (review M10), not from
                 parsing the sentence. See `toolAssertion.ts` for why that
-                distinction is the whole design. The tool's own wording stays,
-                in the last column, because G-05's tolerance is exact wording
-                and because it is the only thing that can describe an assertion
-                shape this build does not recognise. */}
+                distinction is the whole design. The tool's own wording is one
+                column further on and behind a toggle (review 09-13 M13) —
+                kept, because G-05's tolerance is exact wording and because it
+                is the only thing that can describe an assertion shape this
+                build does not recognise. */}
             <tr>
               <th scope="col" className={TH}>
                 Status
@@ -1350,9 +1423,11 @@ function ToolAssertions({
               <th scope="col" className={TH}>
                 Actual
               </th>
-              <th scope="col" className={TH}>
-                Assertion
-              </th>
+              {showWording && (
+                <th scope="col" className={TH}>
+                  Assertion
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -1372,11 +1447,16 @@ function ToolAssertions({
                 </td>
                 {/* An em dash wherever the structure is absent — a run ingested
                     before the decoder, or a Path this build does not know. The
-                    sentence in the last column still says what it is, which is
-                    why these cells can be honest about knowing nothing rather
-                    than guessing. */}
+                    sentence still says what it is (and forces its own column
+                    open for exactly those rows), which is why these cells can
+                    be honest about knowing nothing rather than guessing. */}
                 <td className={`${TD} whitespace-nowrap`}>
-                  {toolAssertionParts(assertion).target ?? '—'}
+                  <AssertionTarget
+                    assertion={assertion}
+                    runId={runId}
+                    recorded={recorded}
+                    windowSuffix={windowSuffix}
+                  />
                 </td>
                 <td className={`${TD} whitespace-nowrap`}>
                   {toolAssertionParts(assertion).metric ?? '—'}
@@ -1394,26 +1474,99 @@ function ToolAssertions({
                     percentage — and `not_applicable` still renders a dash,
                     never a zero, because nothing was measured. */}
                 <td className={`${TD_NUM} whitespace-nowrap`}>{formatActual(assertion)}</td>
-                <td className={`${TD} font-mono text-[12px]`}>{assertion.expression}</td>
+                {showWording && (
+                  <td className={`${TD} font-mono text-[12px]`}>{assertion.expression}</td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </TableFrame>
 
-      {collapsible && (
-        <button
-          type="button"
-          data-testid="tool-assertions-toggle"
-          onClick={() => setExpanded((open) => !open)}
-          className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
-        >
-          {expanded
-            ? `Hide the ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`
-            : `Show ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`}
-        </button>
+      {(collapsible || !undecoded) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {collapsible && (
+            <button
+              type="button"
+              data-testid="tool-assertions-toggle"
+              onClick={() => setExpanded((open) => !open)}
+              className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+            >
+              {expanded
+                ? `Hide the ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`
+                : `Show ${rest.length} check${rest.length === 1 ? '' : 's'} that did not fail`}
+            </button>
+          )}
+          {/* No aria state attribute, deliberately: the label names the action
+              it will perform, exactly as the sibling control beside it does,
+              and a `pressed` announcement on top of "Hide …" only says the
+              same thing twice. Withdrawn entirely while `undecoded` forces
+              the column open, because a toggle that cannot change anything is
+              worse than no toggle. */}
+          {!undecoded && (
+            <button
+              type="button"
+              data-testid="tool-assertions-wording"
+              onClick={() => setWording((open) => !open)}
+              className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+            >
+              {wording ? 'Hide the tool’s own wording' : 'Show the tool’s own wording'}
+            </button>
+          )}
+        </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The Target cell — a link into that request's or group's own analysis when
+ * this run recorded one, and plain text when it did not. (review 09-13 M13)
+ *
+ * ═══ WHY THIS IS NOT JUST `<Link to={...}>` ═══
+ *
+ * Three of the four target shapes have nowhere to go. `global` is the run,
+ * which is the page the reader is already on; `forAll` ranges over every
+ * request rather than naming one, and the row's own request name survives only
+ * in the tool's prose, which `toolAssertion.ts` exists specifically not to
+ * parse. Only a `details` path names something, and even then only when this
+ * run has a row for it — a `not_applicable` row names a request that is not
+ * there, and a link is the last thing it should offer.
+ *
+ * The reader's analysis window travels, the same way the statistics table's
+ * own drill-down carries it, so an investigation that started inside a brushed
+ * interval stays inside it.
+ */
+function AssertionTarget({
+  assertion,
+  runId,
+  recorded,
+  windowSuffix,
+}: {
+  readonly assertion: ToolAssertion;
+  readonly runId: string;
+  readonly recorded: ReadonlyMap<string, 'requests' | 'groups'>;
+  readonly windowSuffix: string;
+}) {
+  const label = toolAssertionParts(assertion).target;
+  if (label === null) return <>—</>;
+
+  /* THE IDENTITY IS JOINED WITH NO SPACES and the LABEL with them — `Cart /
+     Search` reads as a path and `Cart/Search` is one. `rowFor` in
+     `@perfportal/statistics` and `buildTree`'s own `SEPARATOR` both use the
+     bare form, so that is what a row is keyed and addressed by. */
+  const parts = assertion.assertion?.path.parts;
+  const name = parts === undefined || parts.length === 0 ? null : parts.join('/');
+  const section = name === null ? undefined : recorded.get(name);
+  if (name === null || section === undefined) return <>{label}</>;
+
+  return (
+    <Link
+      to={`/runs/${encodeURIComponent(runId)}/${section}/${encodeURIComponent(name)}${windowSuffix}`}
+      className="underline"
+    >
+      {label}
+    </Link>
   );
 }
 

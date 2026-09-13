@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import {
   CreateSlaRuleRequestSchema,
@@ -114,6 +114,44 @@ const FIELD_GUIDANCE: Record<string, { label: string; help: string }> = {
 };
 
 /* ======================================================================== *
+ * POINTING AT THE FIELD, NOT JUST NAMING IT (review 09-13 M08)
+ * ======================================================================== */
+
+/**
+ * The DOM id of one control on this form.
+ *
+ * Every field here is an `<input>` or a `<select>` INSIDE its own `<label>`,
+ * which associates the two perfectly and leaves the control with no id at all.
+ * That is enough right up to the moment something has to FIND the control:
+ * `aria-describedby` needs an id on the message, `aria-invalid` needs to be on
+ * the control itself, and moving the caret needs a handle on it. So every
+ * field the form can refuse now carries one, keyed by the same request
+ * property name `FIELD_GUIDANCE` is keyed by — the string a Zod issue path
+ * hands back — so there is exactly one spelling of "which field".
+ *
+ * A field with no rendered control degrades to no focus and no `aria-invalid`,
+ * with the message still announced: `scope`, `family` and `comparator` are
+ * closed `<select>`s whose every option is legal, so nothing can name them
+ * today, and a future refinement that does should not have to be added here
+ * before the error can be reported at all.
+ */
+const fieldId = (field: string): string => `rule-field-${field}`;
+
+/** The one message block, named once so its two references cannot drift. */
+const FORM_ERROR_ID = 'rule-form-error';
+
+/** What a scoped rule is being asked to name, in that scope's own noun. */
+const scopeTargetLabel = (scope: Exclude<SlaRuleScope, 'run'>): string =>
+  scope === 'request' ? 'request' : scope === 'group' ? 'group' : 'scenario';
+
+/** Which control the message is about, or null when it is about the rule. */
+interface FormError {
+  readonly field: string | null;
+  readonly title: string;
+  readonly help?: string;
+}
+
+/* ======================================================================== *
  * THE TARGET, PICKED FROM WHAT A RUN ACTUALLY RECORDED (review M17)
  * ======================================================================== */
 
@@ -149,12 +187,15 @@ function TargetField({
   scope,
   value,
   onChange,
+  invalid,
 }: {
   readonly slug: string;
   readonly testSlug: string | null;
   readonly scope: Exclude<SlaRuleScope, 'run'>;
   readonly value: string;
   readonly onChange: (next: string) => void;
+  /** True while the form's message is about this field — see `fieldId`. */
+  readonly invalid: boolean;
 }) {
   // The newest complete run tells us what this project records. `status`
   // complete only: a pending or failed run has no statistics rows to read.
@@ -181,7 +222,7 @@ function TargetField({
   const [custom, setCustom] = useState(false);
   const typing = custom || (value !== '' && !recorded.includes(value));
 
-  const label = scope === 'request' ? 'request' : scope === 'group' ? 'group' : 'scenario';
+  const label = scopeTargetLabel(scope);
 
   // NO LIST TO OFFER — no complete run yet, or the reads failed. The field
   // degrades to what it was, with a line saying why rather than an empty
@@ -191,6 +232,9 @@ function TargetField({
       <label className="flex flex-col gap-1.5 text-[13px] font-medium">
         Target
         <input
+          id={fieldId('targetName')}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? FORM_ERROR_ID : undefined}
           className={INPUT}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -211,6 +255,9 @@ function TargetField({
       {typing ? (
         <>
           <input
+            id={fieldId('targetName')}
+            aria-invalid={invalid || undefined}
+            aria-describedby={invalid ? FORM_ERROR_ID : undefined}
             className={INPUT}
             value={value}
             onChange={(e) => onChange(e.target.value)}
@@ -233,6 +280,9 @@ function TargetField({
         </>
       ) : (
         <select
+          id={fieldId('targetName')}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? FORM_ERROR_ID : undefined}
           className={INPUT}
           value={value}
           onChange={(e) => {
@@ -347,8 +397,31 @@ export default function ProjectRules({
    * object, which is the data model leaking into the one place somebody is
    * being asked to fix something. The `title` still carries the schema's own
    * reason, which is often specific and worth keeping; `help` is what the
-   * reader should DO, named in the form's own vocabulary. */
-  const [formError, setFormError] = useState<{ title: string; help?: string } | null>(null);
+   * reader should DO, named in the form's own vocabulary.
+   *
+   * `field` was added by review 09-13 M08 — naming the field in a sentence is
+   * not the same as pointing at it, and the caret stayed on the submit button
+   * while the message described a control four rows up. */
+  const [formError, setFormError] = useState<FormError | null>(null);
+
+  /* ═══ THE MESSAGE MOVES THE CARET (review 09-13 M08) ═══
+   *
+   * IN AN EFFECT RATHER THAN IN THE HANDLER, and that is the load-bearing
+   * detail. Focusing inside `onSubmit` runs BEFORE React commits the render
+   * that adds `aria-invalid` and `aria-describedby`, so a screen reader would
+   * announce the field in its old, valid-looking state and never read the
+   * message. After the commit both are on the element the caret lands on.
+   *
+   * `setFormError` is called with a FRESH OBJECT on every refusal, so
+   * submitting the same broken draft twice still re-runs this and pulls the
+   * caret back — an effect keyed on a memoised value would fire once and then
+   * leave the second attempt feeling like nothing happened.
+   */
+  useEffect(() => {
+    if (formError === null || formError.field === null) return;
+    const control = document.getElementById(fieldId(formError.field));
+    if (control !== null) control.focus();
+  }, [formError]);
 
   // Both derived, never stored: a unit that could disagree with the metric box
   // beside it would be worse than no unit at all.
@@ -385,6 +458,11 @@ export default function ProjectRules({
    * the FORM stops asking for it while the draft is incomplete. The missing
    * field is named instead; see `previewBlocker`. */
   const needsTarget = scope !== 'run' && targetName.trim() === '';
+  /* The noun this scope's target is called by, for every sentence that has to
+     ask for one. `'target'` is the run arm and is never rendered — a run rule
+     has no target field, so nothing below reaches for this — but it is a true
+     word rather than a wrong one if that ever stops being the case. */
+  const targetLabel = scope === 'run' ? 'target' : scopeTargetLabel(scope);
   const preview =
     needsTarget || !Number.isFinite(thresholdNumber) || slaMetricUnit(metric.trim()) === null
       ? null
@@ -399,7 +477,7 @@ export default function ProjectRules({
 
   /** What the preview is waiting for, in the order the form asks for it. */
   const previewBlocker = needsTarget
-    ? `Choose a ${scope === 'request' ? 'request' : scope === 'group' ? 'group' : 'scenario'} to preview this rule.`
+    ? `Choose a ${targetLabel} to preview this rule.`
     : slaMetricUnit(metric.trim()) === null
       ? 'Name a metric this run can resolve — a percentile such as p95, or one of the listed measures.'
       : 'Enter a threshold and this will say, in words, what the rule gates.';
@@ -460,18 +538,25 @@ export default function ProjectRules({
      * here, in the raw string, which is why the check has to happen before
      * the conversion rather than inside the contract.
      *
-     * The resulting gate is not inert. `p95 <= 0` breaches on any run that
-     * records a single request, so a blank field silently FAILS every future
-     * run of whatever it judges — the mirror image of the fraction trap the
-     * threshold label already warns about, which silently passes.
+     * The resulting gate is not inert: a blank field authors a bound of zero,
+     * which judges every future run against a number nobody chose.
+     *
+     * WHAT IT DOES *NOT* SAY ANY MORE (review 09-13 M08): this message used to
+     * end "a gate of ≤ 0, which every run breaches". True for `lte` on a
+     * response time, and false the moment either half moves — `p95 ≥ 0` passes
+     * on every run there will ever be, and `count ≤ 0` passes on a run that
+     * recorded nothing. A warning that overstates its case is one the reader
+     * learns to discount. The unit comes from the field's own label instead,
+     * which is a fact this form already computes and can always defend.
      *
      * A zero somebody actually typed stays valid; `ProjectRules.test.tsx`
      * pins that alongside the two refusals, so a fix that simply rejected
      * falsy thresholds would fail there. */
     if (threshold.trim() === '') {
       setFormError({
-        title: 'Threshold: enter a number.',
-        help: 'An empty box is not zero — leaving it blank would author a gate of ≤ 0, which every run breaches.',
+        field: 'threshold',
+        title: `Threshold: enter a number${authorUnit === null ? '' : ` in ${authorUnit}`}.`,
+        help: 'An empty box is not zero — leaving it blank would author a bound of 0, which is not the gate you are choosing.',
       });
       return;
     }
@@ -497,15 +582,38 @@ export default function ProjectRules({
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       if (issue === undefined) {
-        setFormError({ title: 'The rule is not valid.' });
+        setFormError({ field: null, title: 'The rule is not valid.' });
         return;
       }
       /* The FIRST path segment, because every field on this form is a
          top-level key of the request — and `String()` because a Zod path
          segment can be a number for an array index, which none of these are
          but which would otherwise read as `[object Object]` if one ever is. */
-      const field = FIELD_GUIDANCE[String(issue.path[0] ?? '')];
+      const key = String(issue.path[0] ?? '');
+      const field = FIELD_GUIDANCE[key];
+
+      /* ═══ THE SCHEMA DESCRIBES BOTH HALVES; THIS FORM KNOWS WHICH ═══
+       *
+       * `targetMatchesScope` refuses two opposite mistakes with one sentence —
+       * "a run-scoped rule takes no target name; a scenario, group or request
+       * rule needs one" — which is right for an API consumer, who can send
+       * either. An author who has already chosen Request and left the box
+       * empty gets a rule of grammar where they wanted the missing word: half
+       * of it describes a combination this form cannot even produce, since a
+       * run rule renders no target field at all. Named here rather than in the
+       * contract, because the contract does not know the scope is settled.
+       * (review 09-13 M08) */
+      if (key === 'targetName' && scope !== 'run') {
+        setFormError({
+          field: key,
+          title: `Target: name the ${targetLabel} this rule judges.`,
+          help: `Pick one this project has recorded, or type the name a run will report — a ${targetLabel} no run has reported yet is allowed.`,
+        });
+        return;
+      }
+
       setFormError({
+        field: key === '' ? null : key,
         title: `${field?.label ?? 'This rule'}: ${issue.message}`,
         help: field?.help,
       });
@@ -603,6 +711,9 @@ export default function ProjectRules({
             <label className="flex flex-col gap-1.5 text-[13px] font-medium">
               Name (optional)
               <input
+                id={fieldId('name')}
+                aria-invalid={formError?.field === 'name' || undefined}
+                aria-describedby={formError?.field === 'name' ? FORM_ERROR_ID : undefined}
                 className={INPUT}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -635,6 +746,7 @@ export default function ProjectRules({
               scope={scope}
               value={targetName}
               onChange={setTargetName}
+              invalid={formError?.field === 'targetName'}
             />
           )}
 
@@ -660,6 +772,9 @@ export default function ProjectRules({
                   engine answers it. The suggestions cover what is reached for;
                   the schema decides what is legal. */}
               <input
+                id={fieldId('metric')}
+                aria-invalid={formError?.field === 'metric' || undefined}
+                aria-describedby={formError?.field === 'metric' ? FORM_ERROR_ID : undefined}
                 className={INPUT}
                 list="sla-metric-suggestions"
                 value={metric}
@@ -699,9 +814,23 @@ export default function ProjectRules({
                   into `percentToFraction`. */}
               Threshold{authorUnit === null ? '' : ` (${authorUnit})`}
               <input
+                id={fieldId('threshold')}
                 className={INPUT}
                 inputMode="decimal"
-                aria-describedby={thresholdWarning === null ? undefined : 'rule-threshold-warning'}
+                aria-invalid={formError?.field === 'threshold' || undefined}
+                /* BOTH, WHEN BOTH APPLY. This field is the one place two
+                   messages can be live at once — the fraction warning above
+                   100% and a refusal from the submit — and
+                   `aria-describedby` takes a LIST, so replacing one with the
+                   other would silently drop whichever came second. */
+                aria-describedby={
+                  [
+                    thresholdWarning === null ? null : 'rule-threshold-warning',
+                    formError?.field === 'threshold' ? FORM_ERROR_ID : null,
+                  ]
+                    .filter((id) => id !== null)
+                    .join(' ') || undefined
+                }
                 value={threshold}
                 onChange={(e) => setThreshold(e.target.value)}
               />
@@ -727,8 +856,22 @@ export default function ProjectRules({
             </p>
           )}
 
+          {/* ═══ ONE BLOCK, AND THE INVALID FIELD POINTS AT IT ═══
+           *
+           * Kept where it is rather than moved under each control: the fields
+           * sit four to a row on a wide screen, so a sentence inside a
+           * quarter-width cell wraps to four lines and shoves the grid row
+           * around it. Full width, immediately above the button, with the
+           * offending control carrying `aria-describedby` to it and the caret
+           * already on that control. `role="alert"` stays for the case that
+           * has no field to focus — an issue on a control this form does not
+           * render — where the live region is the only announcement there is. */}
           {formError !== null && (
-            <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px]">
+            <div
+              id={FORM_ERROR_ID}
+              role="alert"
+              className="rounded-lg border border-default bg-sunken p-3 text-[13px]"
+            >
               <p className="text-primary">{formError.title}</p>
               {formError.help !== undefined && (
                 <p className="mt-1 leading-snug text-muted">{formError.help}</p>

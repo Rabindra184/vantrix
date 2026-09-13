@@ -903,9 +903,50 @@ describe('ProjectRules — validation names the field, not the schema', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent ?? '').toMatch(/^Target:/);
-    expect(alert.textContent ?? '').toMatch(/set the scope to Whole run/i);
     // The schema path itself never appears.
     expect(alert.textContent ?? '').not.toContain('targetName');
+  });
+
+  /**
+   * ═══ REVIEW 09-13 M08 — THE SCHEMA'S SENTENCE DESCRIBES BOTH MISTAKES ═══
+   *
+   * `targetMatchesScope` refuses two opposite combinations with one message:
+   * "a run-scoped rule takes no target name; a scenario, group or request rule
+   * needs one". Correct for an API consumer, who can send either. Half of it
+   * is unreachable from this FORM — a run rule renders no target field, so an
+   * author cannot produce the first mistake — and being told the rule of
+   * grammar rather than the missing word is the finding.
+   *
+   * The previous case asserted `set the scope to Whole run` was PRESENT; that
+   * clause is what this one requires to be gone, which is why that assertion
+   * moved here as a negative rather than simply being deleted.
+   */
+  it('names the missing request rather than restating both halves of the schema', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').toMatch(/name the request this rule judges/i);
+    // The half about the OTHER mistake, which this form cannot make.
+    expect(alert.textContent ?? '').not.toMatch(/set the scope to Whole run/i);
+    expect(alert.textContent ?? '').not.toMatch(/run-scoped rule takes no target/i);
+  });
+
+  /** And it is the scope's own noun, not "request" hard-coded — a group rule
+   *  asking for a request would send the author to the wrong list. */
+  it('asks for the noun the chosen scope actually names', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'group');
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    expect((await screen.findByRole('alert')).textContent ?? '').toMatch(
+      /name the group this rule judges/i,
+    );
   });
 
   it('names the threshold field, and still refuses an empty box as not-zero', async () => {
@@ -921,5 +962,174 @@ describe('ProjectRules — validation names the field, not the schema', () => {
     expect(alert.textContent ?? '').toMatch(/^Threshold:/);
     expect(alert.textContent ?? '').toMatch(/not zero/i);
     expect(createProjectRule).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE CLAIM THAT WAS TOO STRONG (review 09-13 M08). The message used to end
+   * "a gate of ≤ 0, which every run breaches" — true for `lte` on a response
+   * time and false for the comparator sitting right beside it, since `p95 ≥ 0`
+   * passes on every run there will ever be. The unit is asserted from the
+   * field's own label instead, which is a fact the form computes.
+   */
+  it('does not claim every run breaches a zero threshold, and names the unit instead', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.clear(await screen.findByLabelText(/threshold/i));
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').not.toMatch(/every run breaches/i);
+    // p95 is the default metric, so the field is in milliseconds and says so.
+    expect(alert.textContent ?? '').toMatch(/enter a number in ms/i);
+  });
+
+  /** The unit follows the METRIC, so a rule authored on the one metric whose
+   *  authoring unit differs from its stored one asks for a percentage. */
+  it('asks for the error-rate threshold in the unit the field is labelled with', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.clear(await screen.findByLabelText(/^metric$/i));
+    await user.type(screen.getByLabelText(/^metric$/i), 'error_rate');
+    await user.clear(screen.getByLabelText(/threshold/i));
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    expect((await screen.findByRole('alert')).textContent ?? '').toMatch(
+      /enter a number in %/i,
+    );
+  });
+});
+
+/* ======================================================================== *
+ * REVIEW 09-13 M08 — THE ERROR HAS TO POINT AT A CONTROL
+ * ======================================================================== */
+
+/**
+ * Naming a field in a sentence and pointing at it are different things, and
+ * this form did only the first: the caret stayed on Add rule, nothing carried
+ * `aria-invalid`, and the message was associated with no control at all. A
+ * screen-reader user heard the refusal and then had to go and find the box.
+ *
+ * Every case below asserts the THREE facts together — invalid, described,
+ * focused — because each alone is satisfiable by an implementation that has
+ * not actually connected the message to the control.
+ */
+describe('ProjectRules — the refusal points at the field', () => {
+  /** The message block, and the control that claims to be described by it. */
+  function association(control: HTMLElement) {
+    const describedBy = control.getAttribute('aria-describedby') ?? '';
+    const ids = describedBy.split(/\s+/).filter((id) => id !== '');
+    return ids.map((id) => document.getElementById(id));
+  }
+
+  it('marks the target invalid, describes it by the message, and takes the caret there', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.selectOptions(await screen.findByLabelText(/scope/i), 'request');
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    const alert = await screen.findByRole('alert');
+    const target = await screen.findByRole('combobox', { name: /^target/i });
+
+    expect(target).toHaveAttribute('aria-invalid', 'true');
+    expect(association(target)).toContain(alert);
+    await waitFor(() => expect(target).toHaveFocus());
+  });
+
+  it('marks the threshold invalid and takes the caret there', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const threshold = await screen.findByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(threshold).toHaveAttribute('aria-invalid', 'true');
+    expect(association(threshold)).toContain(alert);
+    await waitFor(() => expect(threshold).toHaveFocus());
+  });
+
+  /**
+   * ONE FIELD AT A TIME. `aria-invalid` on a field the message is not about
+   * tells a reader to fix something that is fine, and it is the failure an
+   * implementation that simply marks everything on submit would produce.
+   */
+  it('leaves every other control valid and undescribed', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.clear(await screen.findByLabelText(/threshold/i));
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+    await screen.findByRole('alert');
+
+    for (const label of [/^metric$/i, /name \(optional\)/i]) {
+      const control = screen.getByLabelText(label);
+      expect(control).not.toHaveAttribute('aria-invalid');
+      expect(association(control)).toEqual([]);
+    }
+  });
+
+  /**
+   * THE SECOND ATTEMPT HAS TO MOVE THE CARET TOO. An effect keyed on a
+   * memoised error would fire once and then sit still while the reader
+   * re-submits the same broken draft — the button would look dead. A fresh
+   * object on every refusal is what keeps it live, so this drives exactly that
+   * sequence: fail, move away, fail again.
+   */
+  it('pulls the caret back when the same draft is submitted again', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    const threshold = await screen.findByLabelText(/threshold/i);
+    await user.clear(threshold);
+    const submit = screen.getByRole('button', { name: 'Add rule' });
+
+    await user.click(submit);
+    await waitFor(() => expect(threshold).toHaveFocus());
+
+    // The reader goes back to the button — which is where the caret used to
+    // be stranded — and asks again.
+    submit.focus();
+    expect(submit).toHaveFocus();
+    await user.click(submit);
+    await waitFor(() => expect(threshold).toHaveFocus());
+  });
+
+  /**
+   * THE THRESHOLD IS THE ONE FIELD TWO MESSAGES CAN DESCRIBE, and each has to
+   * reach it on its own.
+   *
+   * They cannot both be live TODAY, and that is worth stating rather than
+   * assuming: the percentage warning needs a finite number above 100, and a
+   * refusal needs the box empty or unparseable, so the two conditions exclude
+   * each other. `aria-describedby` is composed as a list anyway — the cost is
+   * one line, and the alternative is an attribute that silently drops one of
+   * them the day a third refusal makes the overlap reachable.
+   */
+  it('describes the threshold by whichever message is live', async () => {
+    const user = userEvent.setup();
+    renderRules();
+
+    await user.clear(await screen.findByLabelText(/^metric$/i));
+    await user.type(screen.getByLabelText(/^metric$/i), 'error_rate');
+
+    const threshold = screen.getByLabelText(/threshold/i);
+    await user.clear(threshold);
+    await user.type(threshold, '150');
+
+    // ONE: the warning, with no refusal anywhere.
+    const warning = await screen.findByText(/cannot exceed 100%/i);
+    expect(association(threshold)).toEqual([warning]);
+    expect(threshold).not.toHaveAttribute('aria-invalid');
+
+    // TWO: the refusal, once the box is empty — which is also what takes the
+    // warning away, since there is no longer a number to warn about.
+    await user.clear(threshold);
+    await user.click(screen.getByRole('button', { name: 'Add rule' }));
+    const alert = await screen.findByRole('alert');
+    expect(association(threshold)).toEqual([alert]);
   });
 });
