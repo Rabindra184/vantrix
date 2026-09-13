@@ -241,7 +241,39 @@ export default function RunDecisionBand({
               ))}
             </div>
           )}
-          <p className="max-w-3xl text-[13px] leading-relaxed text-muted">{detail}</p>
+          {/* ═══ WITHHELD ON A PHONE — review M02 ═══
+           *
+           * M02 asks the mobile band to "replace stacked repeated status prose
+           * with short labeled rows". The rows are the `<dl>` directly below,
+           * which C02 built: Execution, Platform gates, Simulation checks, each
+           * naming the system that answered. This paragraph is the PROSE half,
+           * and on this run it reads "This run completed, but no SLA rule
+           * produced a release verdict" while the row beneath says "Platform
+           * gates — not configured". One fact, twice, in the screen a phone
+           * reader has instead of a page.
+           *
+           * Measured at 375x812: 42px of the band's 424, and the band is the
+           * whole first screen — the run's own totals begin at y886 and p95 at
+           * y1198, so not one number was visible.
+           *
+           * A CLASS, NOT `useIsCompact`. The app's one JS breakpoint exists
+           * because a class can only HIDE the charts while the cost is
+           * MOUNTING them; nothing is mounted here that a phone would pay for,
+           * and the rows carry the same facts at every width. `max-sm:hidden`
+           * is the whole decision.
+           *
+           * NOT withheld when it is the one thing that says WHY. `failed`
+           * supplies its own message — the first failing gate's — and that is
+           * never a restatement of the rows: it names a rule. Only the
+           * generated summary is dropped. */}
+          <p
+            data-testid="decision-detail"
+            className={`max-w-3xl text-[13px] leading-relaxed text-muted${
+              failed == null ? ' max-sm:hidden' : ''
+            }`}
+          >
+            {detail}
+          </p>
 
           {/* THREE OUTCOMES, NAMED. Each row says which system answered, so no
               reader has to infer that "0 failed" meant one system's rules and

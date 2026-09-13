@@ -116,11 +116,73 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
      exists to guarantee elsewhere. */
   await expect(page.getByTestId('time-brush')).toHaveCount(0);
 
-  // The numbers moved up by what the brush was costing. Bound set just above
-  // the 1110 this branch measures, from 1485 before it.
+  /* ═══ THE NUMBERS' TOP, AND M02's BAR IS STILL NOT CLEARED ═══
+   *
+   *     1485  as found
+   *     1110  once the brush stopped mounting here (M18)
+   *      928  after C01 shortened the decision band
+   *      876  after M02 withheld the band's prose restatement on a phone
+   *      812  the viewport — the bar M02 actually asks for
+   *
+   * Sixty-four pixels short, and the bound below is the MEASUREMENT rather
+   * than the bar, the same way `run-tables.spec.ts` carried 1100 for three
+   * branches until M01 could honestly clear 900. A threshold set to an unmet
+   * goal is a failing test describing work nobody has agreed to do.
+   *
+   * WHAT IS LEFT IS THE 191px CHIP STRIP, and M02 names it: "keep run name,
+   * environment, outcome, and primary metrics BEFORE secondary metadata".
+   * Version, branch, started, duration and peak users are that metadata.
+   * Deferring them on a phone alone needs either a second consumer of
+   * `useIsCompact` — this app's one JS breakpoint, which CLAUDE.md argues
+   * exists because a class can only hide what a phone has already paid to
+   * mount — or a duplicated chip row, which would put two copies of every
+   * value in the accessibility tree. Neither is a change to make in passing,
+   * so it is recorded rather than rounded up. */
   await expect(page.getByTestId('stat-total-requests')).toBeVisible();
   const totals = await topOf(page, '[data-testid="stat-total-requests"]');
-  expect(totals).toBeLessThan(1250);
+  expect(totals).toBeLessThan(950);
+});
+
+/**
+ * ═══ REVIEW M02 — THE PROSE THAT REPEATED THE ROWS ═══
+ *
+ * The band states three outcomes as labelled rows (Execution, Platform gates,
+ * Simulation checks) and then restates them in a sentence: on a run with no
+ * rules it read "This run completed, but no SLA rule produced a release
+ * verdict" directly above a row saying "Platform gates — not configured". One
+ * fact twice, in 42px of the 424px that WAS the whole first screen on a phone.
+ *
+ * WITHHELD ONLY WHERE IT IS A RESTATEMENT. When a gate has failed the band
+ * shows that gate's own message instead, which names a rule and is never a
+ * summary of the rows — so it survives at every width. That distinction is the
+ * case below, and it is the one worth guarding: a blanket `max-sm:hidden`
+ * would silently drop the one sentence that says WHY a run failed.
+ */
+test('the phone keeps the failing gate’s own message, and drops only the summary', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  const band = page.getByRole('region', { name: 'Release decision' });
+  await expect(band).toBeVisible();
+
+  /* HIDDEN, NOT ABSENT — and the assertion has to know the difference.
+     `max-sm:hidden` is `display: none`, and `toContainText` reads
+     `textContent`, which includes text no one can see. The first version of
+     this case asserted the substring was gone and failed against a product
+     that was already correct: the band measured 424px -> 372px at 375, so the
+     paragraph WAS hidden. Same shape as the `truncate` lesson CLAUDE.md
+     records — `textContent` is identical whether a string is clipped, hidden
+     or shown, so only a visibility check can see this. */
+  await expect(page.getByTestId('decision-detail')).toBeHidden();
+
+  // The rows it restates are still there, which is the half that makes
+  // dropping it honest rather than lossy.
+  await expect(band).toContainText('Platform gates');
+  await expect(band).toContainText('Execution');
 });
 
 /**
