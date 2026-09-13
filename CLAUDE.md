@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **144 files / 1747 tests**, it
+`nvm use` first, and if a run reports fewer than **145 files / 1756 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,74 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The group-assertions branch added ONE unit file —
+`packages/statistics/test/group-assertions.test.ts` (8) — and 1 case to
+`apps/web/test/ToolAssertions.test.tsx`, from a floor of 144 / 1747. Its
+integration floor is **134 files / 1689 tests** (that new file is a `.ts` file
+integration runs too) and e2e stays **114**.
+
+**A GATLING ASSERTION ON A GROUP HAD NEVER BEEN EVALUABLE.**
+`evaluateToolAssertions` filtered to `family === 'response_time'` before
+building `byKey`, and `engine.ts` files a group's timings only under
+`group_cumulated` and `group_duration` — so `rowFor`'s `group` branch was
+unreachable and every group-scoped assertion reported `not_applicable`, on
+every run, while reading as configured protection. The comment above that
+filter asserted the opposite ("a different measure that no Gatling assertion
+can name"), which is true of `group_duration` and false of `group_cumulated`.
+
+**NOTHING IN THE REPO COULD HAVE CAUGHT IT, AND EACH FIXTURE MISSES IT
+DIFFERENTLY.** `assertion-corpus/` covers every Path x Target x Condition the
+DSL offers and declares NO group — its only non-request path is
+`details("A","B")`, which names nothing by design. `reference-report/` has
+three groups and asserts on `details("Search")`, a request. Every hand-built
+event in `tool-assertions.test.ts` sets `groups: []`.
+
+**MEASURED WITH A REAL RUN, AND THE FIRST QUESTION WAS WHETHER THERE WAS A BUG
+AT ALL.** The fixture project regenerates standalone — Java 21 plus
+`target-server.js`, no database, API or worker, so it races no suite. Gatling
+RESOLVES the path (`Cart: max of response time is less than 150.0 : false
+(actual : 193.0)`) rather than reporting "Could not find stats matching
+assertion path List(Cart)"; had it been the latter, `not_applicable` was
+correct and there was no defect. Brackets at 150/200/250/300 put the value at
+193, the group page reports Max 193, and that is this repo's `group_cumulated`
+row to the millisecond — `group_duration` sits ~80ms higher throughout, the
+Cart group's own pause between its two requests. PRD GR-01 and GR-02.
+
+**`forAll()` DOES NOT RANGE OVER GROUPS, AND ONLY A RUN WITH GROUPS COULD SAY
+SO.** 7 requests and 3 groups in, exactly 7 rows out. The corpus answered that
+question from a run with one request and NO groups, which cannot distinguish
+"requests only" from "requests and groups" — so a fix here could have widened
+it silently.
+
+**AND THE SAME PROBE FOUND A SECOND DEFECT.** Gatling renders a request inside
+groups as `Cart / Add To Cart`; the `forAll` branch labelled its row
+`row.name`, which is `Cart/Add To Cart`. The `details` branch already spaced
+it. G-05's tolerance is exact WORDING, and the corpus has nothing to space.
+
+**THE SEPARATOR IN `tool-assertions.ts` WAS A LITERAL NUL BYTE.** All four
+sites — `byKey.get('run\0')`, both `rowFor` lookups, and the map builder —
+consistently, so it worked, and invisible in an editor, a diff and a review. A
+string-replace edit against that file fails to match, and retyping the line as
+a space silently stops every lookup matching while the types stay happy. It is
+written `\0` now: same bytes, and the choice is good — a NUL cannot occur in a
+name, so the scope prefix can never collide with one. **When an edit to a file
+will not match a string you can see, read the bytes.**
+
+**AND A LOCAL INTEGRATION STREAK THAT IS RECORDED RATHER THAN EXPLAINED.** This
+branch failed `test:integration` four times running, each time ONE different
+test and every one infrastructure-shaped — a 503, a `RangeError: Invalid time
+value`, a pg `Connection terminated due to connection timeout`, a 404 on
+sign-up, a 404 on `/v1/ping`. Never an assertion about a value, and never in a
+file this branch's diff can reach. `main` passed 1681/1681 twice in the same
+window, once at a HIGHER starting load (7.19) than the branch's failures
+(4.66, 3.65), so the load gate does not explain it. Docker inodes were 35%,
+the database 14 MB, Redis 17 MB, all three containers up 22 hours with zero
+restarts, no stray worker or API, and no overlapping suite. Holding the new
+test file aside left the source change alone and it failed again — with a
+FIFTH different test. The change itself is three extra `Map` entries in a pure
+function and cannot make `/v1/ping` 404. Recorded as unexplained; CI is the
+arbiter for this branch, being a clean machine with fresh service containers.
 
 The review-0913-majors branch added ONE unit file —
 `apps/web/test/ToolAssertions.test.tsx` (9) — and 14 cases (12 to
