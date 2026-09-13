@@ -11,14 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './components/ui/dropdown-menu';
-import {
-  AlertIcon,
-  ChevronRightIcon,
-  MonitorIcon,
-  MoonIcon,
-  SignOutIcon,
-  SunIcon,
-} from './components/icons';
+import { AlertIcon, MonitorIcon, MoonIcon, SignOutIcon, SunIcon } from './components/icons';
 import { applyTheme, readTheme, type ThemeChoice } from './theme';
 import { signOut } from './api/session';
 
@@ -103,35 +96,29 @@ export default function AccountMenu({ identity }: { readonly identity: string | 
        it; only the trap and the inerting are dropped. */
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
+        {/* ═══ THE AVATAR IS THE WHOLE CONTROL ═══
+         *
+         * It was a pill — avatar, name, chevron — which is the shape that
+         * reads as "identity plus a menu". In a header whose job is to get out
+         * of the way, that is three pieces of chrome for one action, and the
+         * name is already in the panel where it can be read in full. The
+         * initial alone is the affordance; pressing it opens the menu.
+         *
+         * NO VISIBLE LABEL, so WCAG 2.5.3 does not bind — the initial is
+         * `aria-hidden` because it is derived from the name and says nothing
+         * on its own, and the accessible name lives in the `sr-only` node so
+         * the button still announces whose account it opens.
+         *
+         * The open state is a ring rather than a colour change: the tile is
+         * already the brand fill, so darkening it would read as "pressed" on
+         * a control that is actually "open". */}
         <button
           type="button"
           data-testid="account-menu-trigger"
-          className="transition-ui flex max-w-[16rem] items-center gap-2 rounded-full border border-default bg-sunken py-1 pr-2 pl-1 text-[13px] text-primary hover:border-strong data-[state=open]:border-strong"
+          className="transition-ui flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-mark text-[12px] font-semibold text-on-brand hover:opacity-90 data-[state=open]:ring-2 data-[state=open]:ring-accent [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
         >
-          <span
-            aria-hidden="true"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-mark text-[11px] font-semibold text-on-brand"
-          >
-            {initial}
-          </span>
-          {/* ═══ THE NAME IS ONE NODE; THE VISIBLE COPY IS DECORATIVE ═══
-           *
-           * An `sr-only` "Account:" beside an identity that is `sr-only` only
-           * below `sm` yields "Account:qa@example.test", with no space: the
-           * accessible-name algorithm TRIMS each element's contribution before
-           * joining, so whitespace at a tag boundary cannot survive and
-           * `{' '}` does not rescue it either. One node carries the whole name
-           * and the visible copy is `aria-hidden`, so the name is identical at
-           * every width. WCAG 2.5.3 still holds — the visible label is
-           * contained in the accessible name. */}
+          <span aria-hidden="true">{initial}</span>
           <span className="sr-only">Account: {identity ?? 'signed in'}</span>
-          <span aria-hidden="true" className="hidden max-w-[14ch] truncate sm:inline">
-            {identity ?? 'signed in'}
-          </span>
-          <ChevronRightIcon
-            aria-hidden="true"
-            className="h-3.5 w-3.5 shrink-0 rotate-90 text-muted transition-transform"
-          />
         </button>
       </DropdownMenuTrigger>
 
