@@ -2523,6 +2523,27 @@ break `apps/api/test`. Before claiming a sub-project complete:
 pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:integration && pnpm test:e2e
 ```
 
+**AND READ EACH GATE'S OWN EXIT CODE, NEVER A PIPELINE'S.** A shell pipeline
+exits with its LAST command's status, so
+
+```
+pnpm typecheck 2>&1 | tail -1 >/dev/null && echo "TYPECHECK OK"
+```
+
+prints OK over a FAILING `tsc` — `tail` succeeded. That exact line reported a
+green typecheck on a branch CI then failed in 1m53s at its very first step,
+`RunStats.test.tsx(460,19): error TS2532`, and the same shape masks a red
+`lint` or `test:unit` just as quietly. Redirect to a FILE and test `$?`:
+
+```
+pnpm typecheck > /tmp/tc.txt 2>&1; echo "exit=$?"
+```
+
+This is the grep trap recorded further down, one level worse: piping a suite
+through `grep` loses the failure MESSAGE, piping anything through `tail` or
+`head` loses the failure ITSELF. `set -o pipefail` also fixes it, and is not on
+by default in the shell these commands run in.
+
 **THE CONVERSE IS NOT TRUE, AND IT COSTS TIME: `pnpm test:integration`
 RE-RUNS THE UNIT `.ts` FILES.** `vitest.integration.config.ts` includes
 `packages/*/test/**/*.test.ts` and `apps/*/test/**/*.test.ts` with **no
