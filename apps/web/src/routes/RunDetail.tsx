@@ -55,6 +55,7 @@ import DesktopOnly from './DesktopOnly';
 import LiveNotice from './LiveNotice';
 import RunShell from './RunShell';
 import useIsCompact from '../useIsCompact';
+import RunGlossary from './RunGlossary';
 import RunStats from './RunStats';
 import WaitingPanel from './WaitingPanel';
 
@@ -597,6 +598,12 @@ export function RunOverviewTab() {
           </>
         )}
       </TableSection>
+
+      {/* LAST ON THE TAB, after the reader has met every word it defines —
+          and a `<details>` rather than a section, so it contributes no heading
+          and the outline `run-tables.spec.ts` pins stays exactly three. See
+          `RunGlossary` for why it is here and not on a route of its own. */}
+      <RunGlossary />
     </>
   );
 }
