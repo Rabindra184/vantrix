@@ -50,6 +50,29 @@ gh pr edit <N> --base main
 Either way, **verify against the server** (`git ls-remote origin refs/heads/main`)
 rather than trusting a PR body or a merge click.
 
+**AND `git checkout -b` BRANCHES FROM WHERE YOU ARE STANDING, WHICH IS USUALLY
+THE BRANCH YOU JUST PUSHED.** Two findings in a row were taken this way —
+`fix/review-m11-onetitle` was cut from `fix/review-m09-labels` rather than from
+`main`, because the working copy was still on it after the push. Nothing warns
+you: the branch builds, CI passes, and the PR opens against `main` looking
+ordinary, while carrying the previous finding's commits.
+
+It was harmless only because the earlier PR merged FIRST — after that,
+`git log origin/main..HEAD` showed one commit and the three-dot diff showed
+three files. Merged in the other order it would have landed two findings under
+one title, which is precisely the stacked trap above wearing different clothes.
+
+`git checkout main && git pull --ff-only` before every `-b`, and check it
+afterwards rather than assuming:
+
+```
+git log --oneline origin/main..HEAD     # should be YOUR commits and nothing else
+```
+
+Note that `gh pr view <N> --json files` can keep showing the stacked files after
+the base merges — that listing is cached. `git diff --stat origin/main...HEAD`
+is the one to believe.
+
 ## Verification
 
 **Use the Node in `.nvmrc` (22). On Node 20 the unit suite silently skips every
