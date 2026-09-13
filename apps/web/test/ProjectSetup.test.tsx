@@ -99,8 +99,7 @@ function renderPage() {
 /**
  * One entry card, awaited.
  *
- * ASYNC because the whole page sits behind a project lookup — `ProjectConfigPage`
- * renders a loading state until `fetchProjects` resolves, so a synchronous
+ * ASYNC because the cards are behind `fetchRunnerJobs`, so a synchronous
  * `getByTestId` here races the query and fails with "unable to find" for a
  * card that is about to exist. Four cases were written that way first and
  * failed for that reason alone.
@@ -108,10 +107,22 @@ function renderPage() {
 const entry = (name: string): Promise<HTMLElement> =>
   screen.findByTestId(`entry-${name.toLowerCase().replace(/\s+/g, '-')}`);
 
+/**
+ * The page is ready when its own section is the current one in the shell's nav.
+ *
+ * IT USED TO BE A LEVEL-1 HEADING QUERY for "Add results". Review M10 made the
+ * `<h1>` the PROJECT and left the section to `ProjectShell`'s nav, which marks
+ * exactly one link `aria-current="page"`. This is the stronger gate of the
+ * two: it asserts the shell put the marker on the right tab, which a heading
+ * query could not see at all.
+ */
+const ready = (): Promise<HTMLElement> =>
+  screen.findByRole('link', { name: 'Add results', current: 'page' });
+
 describe('ProjectSetup — the three ways in', () => {
   it('offers import, run and CI as named choices rather than one recipe', async () => {
     renderPage();
-    expect(await screen.findByRole('heading', { name: 'Add results', level: 1 })).toBeInTheDocument();
+    expect(await ready()).toBeInTheDocument();
 
     for (const name of ['Import results', 'Run a test', 'Configure CI']) {
       expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
@@ -129,7 +140,7 @@ describe('ProjectSetup — the three ways in', () => {
    */
   it('names the token it needs and links to it, instead of managing tokens', async () => {
     renderPage();
-    await screen.findByRole('heading', { name: 'Add results', level: 1 });
+    await ready();
 
     /* ═══ THE LINK CALLS ITS DESTINATION WHAT THAT PAGE CALLS ITSELF ═══
      *
@@ -186,7 +197,7 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
 
   it('says nothing is known when this project has never queued a job', async () => {
     renderPage();
-    expect(await screen.findByRole('heading', { name: 'Add results', level: 1 })).toBeInTheDocument();
+    expect(await ready()).toBeInTheDocument();
 
     const card = await entry('Run a test');
     /* "Runner availability unknown", not "No runner seen yet" — review 09-13
@@ -214,7 +225,7 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
    */
   it('wears a status badge only where there is a state to report', async () => {
     renderPage();
-    await screen.findByRole('heading', { name: 'Add results', level: 1 });
+    await ready();
 
     for (const name of ['Import results', 'Configure CI']) {
       const card = await entry(name);

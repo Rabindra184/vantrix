@@ -21,7 +21,7 @@ import {
 } from '../api/tokens';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { formatInstant } from './format';
-import ProjectConfigPage from './ProjectConfigPage';
+import ProjectShell from './ProjectShell';
 import { projectSetupPath } from './paths';
 
 /**
@@ -54,17 +54,17 @@ const SCOPE_LABELS: Record<TokenScopeName, string> = {
 
 export default function ProjectAccess() {
   return (
-    <ProjectConfigPage
+    /* The section is named "API tokens", not "Access" (review 09-13 M18), by
+       `ProjectShell`'s own tab table — "Access" promises members and roles;
+       this page issues and revokes API tokens and nothing else. The URL stays
+       `/access`: a label is not a bookmark, and `paths.ts` already argues
+       that case for `/setup`. */
+    <ProjectShell
       current="access"
-      /* "API tokens", not "Access" (review 09-13 M18). "Access" promises
-         members and roles; this page issues and revokes API tokens and
-         nothing else. The URL stays `/access` — a heading is not a bookmark,
-         and `paths.ts` already argues that case for `/setup`. */
-      heading="API tokens"
       intro="Scoped API tokens for CI, load generators and runner hosts."
     >
       {({ slug }) => <AccessLoaded key={slug} slug={slug} />}
-    </ProjectConfigPage>
+    </ProjectShell>
   );
 }
 

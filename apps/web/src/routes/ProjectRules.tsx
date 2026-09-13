@@ -323,15 +323,17 @@ export default function ProjectRules({
 }: {
   readonly slug: string;
   /**
-   * False on the project's own SLA rules PAGE, whose `<h1>` already reads
-   * "SLA rules" — review M15 gave rules a destination of their own rather
-   * than a block at the foot of setup.
+   * False on the project's own SLA rules PAGE, where `ProjectShell`'s nav
+   * already names the section and carries `aria-current="page"` on it —
+   * review M15 gave rules a destination of their own rather than a block at
+   * the foot of setup, and M10 left the naming of that destination to the
+   * nav rather than to a heading.
    *
    * The same rule `RunList.showHeading` follows, for the same reason: a
    * heading's correctness is a property of the DOCUMENT, which no component
-   * can see from inside itself. Two headings with identical words is not a
-   * visual defect — it looks like a section title — but a screen-reader user
-   * navigating by heading meets the page twice.
+   * can see from inside itself. It stays TRUE on a test's page, where this
+   * panel sits beside a run list and a title is the only thing telling the
+   * two apart.
    *
    * The DESCRIPTION is kept either way. It is the sentence that says what a
    * rule does and that a run with none gets no verdict, and it is as true on

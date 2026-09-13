@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **145 files / 1756 tests**, it
+`nvm use` first, and if a run reports fewer than **146 files / 1772 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,74 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The project-shell branch (M10) added ONE unit file —
+`apps/web/test/ProjectShell.test.tsx` (11) — and 1 NET case to
+`ProjectTests.test.tsx` (one removed with the link it pinned, two added), from
+a MEASURED floor of 145 / 1760. Its **e2e rises to 117** from a measured 115
+(`apps/web/e2e/project-shell.spec.ts`, 2). Its integration floor is UNCHANGED:
+every file it touches is a `.tsx` or a `.spec.ts`, and
+`vitest.integration.config.ts` includes neither — so that suite runs exactly
+what it ran on `main`. **NOT RE-MEASURED LOCALLY, AND THAT IS A DELIBERATE
+GAP**: `test:integration` truncates every table, and this machine was holding a
+hand-seeded org somebody was mid-way through testing against. CI's own
+integration job is the arbiter for this branch. Say which of the five gates you
+actually ran; a floor nobody measured is the drift this section exists to
+catch.
+
+**AND BOTH RECORDED FLOORS HAD DRIFTED, IN OPPOSITE FILES.** The headline said
+145 / 1756 and clean `main` measures 145 / **1760**; the last recorded e2e was
+114 and `playwright test --list` on `main` says **115**. Four unit cases and one
+spec merged without moving the numbers here. Both were re-measured by checking
+out `origin/main` and running the tools, which is the only way to get these
+without inferring them.
+
+**FIVE SECTIONS MADE TWO LINKS SHARE A NAME, AND THAT WAS CORRECT.** The new
+strip carries "New on-prem run" beside the heading on every project page, and
+Add results' own "Run a test" card already linked to that form under the same
+label — so `project-shell.spec.ts` failed strict mode on
+`getByRole('link', { name: 'New on-prem run', exact: true })` resolving two
+elements. The instinct is to rename one. **The anti-pattern this file records
+is the OPPOSITE one**: two labels for ONE destination, which M15 shipped
+(`ProjectTests` said "Add results", `ProjectRuns` said "Setup") and a later
+branch had to correct. WCAG asks for identical text where the destination is
+identical; the failures recorded here for "All runs" and "New project" are both
+one name over two DIFFERENT destinations. So the shell's action took a
+`data-testid` and the assertion narrowed to the element it is about, rather
+than the product changing to suit a test. **Before renaming to satisfy a
+strict-mode violation, check whether the two elements go to the same place.**
+
+**A SHELL THAT BLOCKS ON ITS LOOKUP IS A SPINNER OVER CONTENT THAT IS READY.**
+`ProjectConfigPage` returned a `LoadingState` until `GET /v1/projects`
+resolved, which was tolerable on three configuration screens and is not on
+`/projects/:slug`. Every destination in the strip is derivable from the SLUG
+alone — only the display name needs that query — so the shell draws
+immediately and the name arrives later. `ProjectTests` had documented exactly
+that ("the slug is a real name for the project, not a placeholder") and its
+own case went red the moment the shell swallowed the behaviour. Two branches
+of the null check are needed for it: `project === null` means "not there" only
+once the query has SUCCEEDED, or "not found" renders over every cold load.
+
+**AND A SECOND `useDocumentTitle` CALLER IS A RACE THAT LOOKS LIKE A RULE.**
+`RunList` titles the document from `heading`, which is right for the org-wide
+list and for a test's page; under the shell it is a second writer, and effects
+run child-first so the parent's write happening to land last is an accident,
+not a contract. `titlesDocument` is separate from `showHeading` because
+`TestRuns` suppresses the heading and still wants the title from there — one
+flag would have forced whichever page came second to take a title it does not
+want. It passes `null`, which the hook already treats as "not yet known", so
+the opt-out is two lines rather than a branch around a hook.
+
+**THE SECTION NAME AS `<h1>` READS RIGHT ON ONE PAGE AND STOPS BEING TRUE AT
+FIVE.** Add results, SLA rules and API tokens each took their own name as the
+page's `<h1>` with the project demoted to a breadcrumb. With five sections the
+thing the reader is looking at is the PROJECT, so the shell owns the `<h1>` and
+no section repeats its own name as a heading — `RunShell`'s shape one rung up,
+where the Overview tab's outline is `Assertions / Simulation assertions /
+Statistics` and never `Overview`. The practical payoff is that every section's
+existing `<h2>`s kept their level: naming the section at `<h2>` instead would
+have pushed `ProjectSetup`'s three entry cards to `<h3>` and `ProjectAccess`'s
+"Create a token" with them.
 
 The group-assertions branch added ONE unit file —
 `packages/statistics/test/group-assertions.test.ts` (8) — and 1 case to

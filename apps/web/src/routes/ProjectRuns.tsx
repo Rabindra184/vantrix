@@ -1,11 +1,5 @@
-import { useParams } from 'react-router-dom';
-import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { linkButtonClasses } from '../components/Button';
-import { PlayIcon, SetupIcon, TestIcon } from '../components/icons';
-import { fetchProjects, projectsQueryKey } from '../api/projects';
+import ProjectShell from './ProjectShell';
 import RunList from './RunList';
-import { projectNewRunnerRunPath, projectPath, projectSetupPath } from './paths';
 
 /**
  * One project's runs, across all of its tests — `/projects/:slug/runs`.
@@ -18,55 +12,43 @@ import { projectNewRunnerRunPath, projectPath, projectSetupPath } from './paths'
  * worker could read its simulation class — because such a run appears on no
  * test's page by definition.
  *
- * `key={slug}` IS THE POINT, not styling. `RunList` holds its cursor in
- * `useState`. Moving from `/runs` to `/projects/a` swaps one route element
- * for another and remounts — but `/projects/a` to `/projects/b` matches the
- * SAME route, so React reuses the component instance and the cursor
- * survives into a scope where it no longer resolves. `RunRepository.list`
- * answers an unresolvable cursor with an empty page, deliberately, so the
- * reader would get a blank list for no visible reason. A different project
- * is a different component.
+ * ═══ THE HEADING, THE NAV AND THE ACTIONS ARE THE SHELL'S — review M10 ═══
  *
- * The name comes from `GET /v1/projects` rather than from the first run's
- * `project.name`, because a project with no runs has no first run and still
- * has a name. Until it resolves the heading is the slug, which is a real
- * name for the project rather than a placeholder.
+ * This page used to draw its own row of three links: All tests, Add results,
+ * New on-prem run. `ProjectTests` drew a different three (Project runs, Add
+ * results, New on-prem run) for the same relationship, so the way back up the
+ * hierarchy had two different names depending on which end you stood at, and
+ * neither page mentioned that SLA rules or API tokens existed. `ProjectShell`
+ * owns all of it now.
+ *
+ * `key={slug}` IS THE POINT, not styling. `RunList` holds its cursor in
+ * `useState`. Moving from `/runs` to `/projects/a/runs` swaps one route
+ * element for another and remounts — but `/projects/a/runs` to
+ * `/projects/b/runs` matches the SAME route, so React reuses the component
+ * instance and the cursor survives into a scope where it no longer resolves.
+ * `RunRepository.list` answers an unresolvable cursor with an empty page,
+ * deliberately, so the reader would get a blank list for no visible reason. A
+ * different project is a different component.
  */
 export default function ProjectRuns() {
-  const { slug = '' } = useParams<{ slug: string }>();
-  const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
-  const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
-
   return (
-    <RunList
-      key={slug}
-      projectSlug={slug}
-      heading={project?.name ?? slug}
-      action={
-        <div className="flex flex-wrap items-center gap-2">
-          {/* The way back UP the hierarchy, and the first control in the row
-              for that reason: this page is a child of the project's test list
-              now, and without it the only route back is the rail row that
-              brought the reader here. */}
-          <Link to={projectPath(slug)} className={linkButtonClasses}>
-            <TestIcon className="h-3.5 w-3.5" />
-            All tests
-          </Link>
-          {/* "Add results", matching `ProjectTests`. M15 renamed this label
-              there and missed it here, so one project page called the
-              destination Setup and the other called it Add results — the
-              same split that left the rules link above pointing at the wrong
-              page. */}
-          <Link to={projectSetupPath(slug)} className={linkButtonClasses}>
-            <SetupIcon className="h-3.5 w-3.5" />
-            Add results
-          </Link>
-          <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-            <PlayIcon className="h-3.5 w-3.5" />
-            New on-prem run
-          </Link>
-        </div>
-      }
-    />
+    <ProjectShell current="runs">
+      {({ slug, name }) => (
+        <RunList
+          key={`runs:${slug}`}
+          projectSlug={slug}
+          /* STILL REQUIRED with the `<h1>` suppressed: it names the table's
+             scroll region, which is a description of the list rather than a
+             heading for the page. See `RunList`'s own note. */
+          heading={name}
+          showHeading={false}
+          /* The shell has already titled the document `Runs · <project>`, and
+             two components writing `document.title` agree only by the accident
+             of effect ordering — the trap `TestRuns` avoids from the other
+             direction by not calling it at all. */
+          titlesDocument={false}
+        />
+      )}
+    </ProjectShell>
   );
 }

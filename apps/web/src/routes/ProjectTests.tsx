@@ -1,26 +1,16 @@
-import type { ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { TestSummary } from '@perfportal/contracts';
 import Badge from '../components/Badge';
-import { linkButtonClasses } from '../components/Button';
-import { LayersIcon, PlayIcon, SetupIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
 import { ProblemError } from '../api/fetch';
-import { fetchProjects, projectsQueryKey } from '../api/projects';
 import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
+import ProjectShell from './ProjectShell';
 import { STATUS, VERDICT } from './marks';
-import {
-  projectNewRunnerRunPath,
-  projectRunsPath,
-  projectSetupPath,
-  projectTestPath,
-  runPath,
-} from './paths';
-import useDocumentTitle from '../useDocumentTitle';
+import { projectTestPath, runPath } from './paths';
 
 /**
  * A project's TESTS — the page `/projects/:slug` renders, and the rung the
@@ -34,71 +24,38 @@ import useDocumentTitle from '../useDocumentTitle';
  * being a fully-qualified class name in the Simulation column. A reader asking
  * "how is the checkout test doing" had to do the grouping in their head.
  *
- * The run list did not go away — it is one click away at `projectRunsPath`,
- * and it is still the ONLY view that can show a run belonging to no test (one
- * still pending, or one that failed before the worker could read its
- * simulation class). See `paths.ts` for why that page moved to a child segment
- * rather than this one moving off `/projects/:slug`.
+ * The run list did not go away — it is the next tab along, and it is still the
+ * ONLY view that can show a run belonging to no test (one still pending, or
+ * one that failed before the worker could read its simulation class). See
+ * `paths.ts` for why that page moved to a child segment rather than this one
+ * moving off `/projects/:slug`.
  *
- * THE NAME COMES FROM `GET /v1/projects`, not from the first test's own row,
- * for the same reason `ProjectRuns` documents: a project with no tests still
- * has a name. Until that query lands the heading is the slug, which is a real
- * name for the project rather than a placeholder.
+ * ═══ THE HEADING AND THE ACTIONS ARE THE SHELL'S NOW — review M10 ═══
+ *
+ * This page used to draw its own `<h1>` and its own row of three links
+ * (Project runs, Add results, New on-prem run), while `/projects/:slug/runs`
+ * drew a DIFFERENT row of three and the configuration pages drew a tab strip
+ * naming none of them. `ProjectShell` owns all of it, so the project's name,
+ * its five sections and the one launch action are identical on every project
+ * page. The name still comes from `GET /v1/projects` rather than from the
+ * first test's row, for the reason that file states: a project with no tests
+ * still has a name.
  */
 export default function ProjectTests() {
-  const { slug = '' } = useParams<{ slug: string }>();
-  const projects = useQuery({ queryKey: projectsQueryKey, queryFn: fetchProjects });
-  const project = projects.data?.items.find((p) => p.slug === slug) ?? null;
-  const heading = project?.name ?? slug;
-  useDocumentTitle(heading);
+  return <ProjectShell current="tests">{({ slug }) => <Tests slug={slug} />}</ProjectShell>;
+}
 
+function Tests({ slug }: { readonly slug: string }) {
   const tests = useQuery({
     queryKey: projectTestsQueryKey(slug),
     queryFn: () => fetchProjectTests(slug),
   });
 
-  // ONE ACTION ROW, rendered above every branch below. A reader who arrives at
-  // a project whose test list is still loading — or has just failed — still
-  // needs Setup and the run list, and three copies of this JSX inside three
-  // returns is three places for them to drift.
-  const actions = (
-    <div className="flex flex-wrap items-center gap-2">
-      {/* ═══ "Project runs", NOT "All runs" ═══
-          `ProjectRail` renders an "All runs" row — the ORG-wide list — on
-          every authenticated page, so a second link with that name puts two
-          links with one accessible name into this document, pointing at two
-          different lists. It shipped that way and `project-tests.spec.ts`
-          caught it as a strict-mode violation resolving two elements; a
-          screen-reader user would have heard the same name for both. The
-          words also happen to be truer: this list is one project's runs. */}
-      <Link to={projectRunsPath(slug)} className={linkButtonClasses}>
-        <LayersIcon className="h-3.5 w-3.5" />
-        Project runs
-      </Link>
-      {/* "Add results", not "Setup" — review M15. The page it leads to used to
-          be four jobs at once and is now the three explicit ways to get a run
-          in; naming the destination after what the reader wants is half of
-          why the split was worth making. The SLA rules and Access pages are
-          one tab further, on that page's own nav, so this row stays three
-          buttons rather than five. */}
-      <Link to={projectSetupPath(slug)} className={linkButtonClasses}>
-        <SetupIcon className="h-3.5 w-3.5" />
-        Add results
-      </Link>
-      <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-        <PlayIcon className="h-3.5 w-3.5" />
-        New on-prem run
-      </Link>
-    </div>
-  );
-
   if (tests.isPending) {
     return (
-      <Page heading={heading} actions={actions}>
-        <LoadingState label="Loading tests…">
-          <SkeletonTable columns={4} rows={4} />
-        </LoadingState>
-      </Page>
+      <LoadingState label="Loading tests…">
+        <SkeletonTable columns={4} rows={4} />
+      </LoadingState>
     );
   }
 
@@ -106,17 +63,33 @@ export default function ProjectTests() {
     const error = tests.error;
     const problem = error instanceof ProblemError ? error : null;
     return (
-      <Page heading={heading} actions={actions}>
-        <ErrorState
-          title="The tests could not be loaded"
-          detail={problem?.detail ?? error.message}
-          remediation={problem?.remediation}
-        />
-      </Page>
+      <ErrorState
+        title="The tests could not be loaded"
+        detail={problem?.detail ?? error.message}
+        remediation={problem?.remediation}
+      />
     );
   }
 
   const items = tests.data.tests;
+
+  if (items.length === 0) {
+    return (
+      <EmptyState
+        title="No tests yet"
+        /* NO ACTION LINK. It used to offer "New on-prem run", which the shell
+           now renders above this on every project page — and two links with
+           one accessible name in one document is the collision CLAUDE.md
+           records for "All runs" and "New project". Both routes in are on
+           screen already; the sentence names them rather than re-drawing
+           them. */
+        body={
+          'A test appears here the first time PerfPortal finishes parsing a run of it. Start one ' +
+          'from New on-prem run above, or post a results bundle — Add results has the command.'
+        }
+      />
+    );
+  }
 
   const caption = (
     <>
@@ -128,91 +101,44 @@ export default function ProjectTests() {
   );
 
   return (
-    <Page heading={heading} count={items.length} actions={actions}>
-      {items.length === 0 ? (
-        <EmptyState
-          title="No tests yet"
-          body={
-            'A test appears here the first time PerfPortal finishes parsing a run of it. Upload a ' +
-            'run bundle with an API token, or start an on-prem run, and this list fills itself.'
-          }
-          action={
-            <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
-              <PlayIcon className="h-3.5 w-3.5" />
-              New on-prem run
-            </Link>
-          }
-        />
-      ) : (
-        <TableFrame
-          caption={caption}
-          summary="Every test in this project, with its latest run."
-          label="Tests table"
-        >
-          <table className={TABLE}>
-            <caption className="sr-only">{caption}</caption>
-            <thead className={THEAD}>
-              <tr>
-                <th scope="col" className={TH}>
-                  Test
-                </th>
-                <th scope="col" className={TH}>
-                  Simulation class
-                </th>
-                <th scope="col" className={TH}>
-                  Runs
-                </th>
-                <th scope="col" className={TH}>
-                  Latest run
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((test) => (
-                <TestRow key={test.id} projectSlug={slug} test={test} />
-              ))}
-            </tbody>
-          </table>
-        </TableFrame>
-      )}
-    </Page>
-  );
-}
-
-/**
- * The page's `<h1>` and its actions, shared by all four branches above.
- *
- * The count is a plain total, unlike the run list's — `GET /v1/projects/:slug/tests`
- * is not paginated (a project has a handful of tests, and
- * `TestListResponseSchema` carries no cursor), so "4 tests" here really is
- * every test rather than the page-local number the run list is careful to
- * qualify.
- */
-function Page({
-  heading,
-  count,
-  actions,
-  children,
-}: {
-  readonly heading: string;
-  readonly count?: number;
-  readonly actions: ReactNode;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
-          {count !== undefined && count > 0 && (
-            <p className="text-[13px] text-muted">
-              {count} {count === 1 ? 'test' : 'tests'}
-            </p>
-          )}
-        </div>
-        {actions}
-      </div>
-      {children}
+    <div className="flex flex-col gap-3">
+      {/* A plain total, unlike the run list's — `GET /v1/projects/:slug/tests`
+          is not paginated (`TestListResponseSchema` carries no cursor), so "4
+          tests" here really is every test rather than the page-local number
+          the run list is careful to qualify. */}
+      <p className="text-[13px] text-muted">
+        {items.length} {items.length === 1 ? 'test' : 'tests'}
+      </p>
+      <TableFrame
+        caption={caption}
+        summary="Every test in this project, with its latest run."
+        label="Tests table"
+      >
+        <table className={TABLE}>
+          <caption className="sr-only">{caption}</caption>
+          <thead className={THEAD}>
+            <tr>
+              <th scope="col" className={TH}>
+                Test
+              </th>
+              <th scope="col" className={TH}>
+                Simulation class
+              </th>
+              <th scope="col" className={TH}>
+                Runs
+              </th>
+              <th scope="col" className={TH}>
+                Latest run
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((test) => (
+              <TestRow key={test.id} projectSlug={slug} test={test} />
+            ))}
+          </tbody>
+        </table>
+      </TableFrame>
     </div>
   );
 }
