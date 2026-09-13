@@ -457,7 +457,14 @@ describe('RunStats', () => {
     const bridge = /hint:\s*'[^']*the run totals call ([^']+)'/.exec(table);
     expect(bridge, 'StatisticsTable no longer bridges to the run totals').not.toBeNull();
 
-    const named = bridge![1].trim();
+    /* `?.[1] ?? ''`, not `bridge![1]`. The non-null assertion silences the
+       compiler about `bridge` and leaves the INDEX unchecked — under
+       `noUncheckedIndexedAccess` a capture group is `string | undefined`, so
+       `.trim()` on it is TS2532. Widening the guard to cover both is also
+       better at runtime: a bridge sentence that matched but captured nothing
+       fails on the next line with its own message instead of throwing. */
+    const named = (bridge?.[1] ?? '').trim();
+    expect(named, 'the bridge names no label at all').not.toBe('');
     // The word the hint promises must be a label this file actually renders.
     expect(here).toContain(`label="${named}"`);
 
