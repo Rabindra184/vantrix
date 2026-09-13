@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { CheckIcon, CollapseIcon, CopyIcon, DownloadIcon, ExpandIcon, MoreIcon, PlotIcon, TableIcon } from '../components/icons';
 import {
-  CheckIcon,
-  CollapseIcon,
-  CopyIcon,
-  DownloadIcon,
-  ExpandIcon,
-  PlotIcon,
-  TableIcon,
-} from '../components/icons';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
 import { downloadCsv, toCsv } from '../tables/csv';
 import { formatCell } from './DataTable';
 import type { ChartTableRow } from './types';
@@ -193,34 +193,95 @@ export default function ChartActions({
         </p>
       )}
 
-      <IconButton
-        // `aria-controls` is how assistive tech — and the e2e suite — knows
-        // WHICH table this opens on a page holding ten of them.
-        aria-controls={`chart-data-${id}`}
-        aria-expanded={tableShown}
-        label={tableShown ? 'Show the chart' : 'Show the data table'}
-        onClick={onToggleTable}
-      >
-        {tableShown ? <PlotIcon className="h-4 w-4" /> : <TableIcon className="h-4 w-4" />}
-      </IconButton>
+      {/* ═══ THREE CONTROLS BECOME ONE MENU — review M17 ═══
+       *
+       * Every chart carried table, JSON, CSV and full screen, and the Charts
+       * tab draws ten of them: forty controls for a reader looking at one
+       * figure. The finding asks to "keep fullscreen and an accessible
+       * overflow menu" and to group the exports — so full screen stays a
+       * button, because it acts on the thing being looked at, and the other
+       * three move behind one trigger.
+       *
+       * A REAL MENU, for the reason `AccountMenu` is one: a role is a promise
+       * about arrow keys, Home/End, typeahead and focus return, and the old
+       * `ThemeToggle` earned this repo the lesson that half-keeping a role is
+       * worse than not claiming it. `@radix-ui/react-dropdown-menu` keeps it.
+       *
+       * `modal={false}` for the same reason the account menu sets it: the
+       * default traps focus, locks scroll and marks the rest of the document
+       * inert — wrong for a settings menu over a chart somebody is reading.
+       *
+       * THE TRIGGER IS NAMED AFTER ITS CHART. Ten identical "Chart actions"
+       * buttons in one document is the duplicate-accessible-name defect this
+       * repo has already paid for three times; `aria-controls` below solves
+       * the same problem for the table, and the title is what distinguishes
+       * one figure from another. */}
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${title}: data and exports`}
+            className="transition-ui inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-sunken hover:text-primary data-[state=open]:bg-sunken data-[state=open]:text-primary"
+          >
+            <MoreIcon className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
 
-      <IconButton
-        label="Copy the chart data as JSON"
-        disabled={!hasRows}
-        disabledReason="This chart has no data to copy."
-        onClick={() => void copyJson()}
-      >
-        {copied.kind === 'done' ? <CheckIcon className="h-4 w-4" /> : <CopyIcon className="h-4 w-4" />}
-      </IconButton>
+        <DropdownMenuContent align="end" className="w-[15rem]">
+          <DropdownMenuItem
+            // `aria-controls` is how assistive tech — and the e2e suite —
+            // knows WHICH table this opens on a page holding ten of them.
+            aria-controls={`chart-data-${id}`}
+            aria-expanded={tableShown}
+            onSelect={onToggleTable}
+          >
+            {tableShown ? <PlotIcon className="h-3.5 w-3.5 text-muted" /> : <TableIcon className="h-3.5 w-3.5 text-muted" />}
+            {tableShown ? 'Show the chart' : 'Show the data table'}
+          </DropdownMenuItem>
 
-      <IconButton
-        label="Download the chart data as CSV"
-        disabled={!hasRows}
-        disabledReason="This chart has no data to download."
-        onClick={exportCsv}
-      >
-        <DownloadIcon className="h-4 w-4" />
-      </IconButton>
+          <DropdownMenuSeparator />
+
+          {/* ═══ "Export", NOT "Download" ═══
+              The finding says "group export formats under Download", and one
+              of these two is a CLIPBOARD COPY: a section headed Download over
+              an item that downloads nothing would mislabel it, and the copy is
+              deliberate — it carries the clipboard-absent path and the
+              live-region feedback this file argues for above. The grouping is
+              what the finding is about; the heading is one word off it. */}
+          <DropdownMenuLabel>Export</DropdownMenuLabel>
+
+          {/* THE REASON IS TEXT, NOT A TOOLTIP. As buttons these two carried
+              their `disabledReason` in a `title`, which is invisible on touch
+              and unreachable by keyboard — the same objection the run-page
+              glossary records against `<abbr title>` as a sole mechanism. A
+              disabled menu item with no stated reason is worse still, because
+              a menu hides it until opened. */}
+          {!hasRows && (
+            <p className="px-2 pb-1 text-[12px] leading-snug text-muted">
+              This chart plotted nothing, so there is nothing to export.
+            </p>
+          )}
+
+          <DropdownMenuItem
+            disabled={!hasRows}
+            // Selecting closes the menu, which would unmount this item
+            // mid-copy and take its feedback with it — the same reason
+            // `AccountMenu`'s sign-out prevents selection.
+            onSelect={(event) => {
+              event.preventDefault();
+              void copyJson();
+            }}
+          >
+            {copied.kind === 'done' ? <CheckIcon className="h-3.5 w-3.5 text-muted" /> : <CopyIcon className="h-3.5 w-3.5 text-muted" />}
+            Copy the chart data as JSON
+          </DropdownMenuItem>
+
+          <DropdownMenuItem disabled={!hasRows} onSelect={exportCsv}>
+            <DownloadIcon className="h-3.5 w-3.5 text-muted" />
+            Download the chart data as CSV
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <IconButton
         label={expanded ? 'Exit full screen' : 'Show the chart full screen'}

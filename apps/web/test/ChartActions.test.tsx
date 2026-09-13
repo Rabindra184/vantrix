@@ -18,6 +18,24 @@ const ROWS = [
   { label: '1000', values: [24.916201117318437, null as unknown as number] },
 ];
 
+/**
+ * Opens the chart's overflow menu.
+ *
+ * Review M17 moved the table toggle and both exports behind one trigger: every
+ * chart carried four controls and the Charts tab draws ten of them, so a
+ * reader looking at one figure met forty. Full screen stayed a button because
+ * it acts on the thing being looked at; these three did not.
+ *
+ * So a case that means to press one of them opens the menu first, exactly as a
+ * reader does. The menu is PORTALLED and mounted only while open — which is
+ * what keeps the "ten charts, one status region" reasoning in `ChartActions`
+ * honest, and what makes this helper necessary rather than cosmetic.
+ */
+async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /data and exports$/ }));
+  await screen.findByRole('menu');
+}
+
 function renderActions(over: Partial<Parameters<typeof ChartActions>[0]> = {}) {
   const props = {
     id: 'requests-per-second',
@@ -62,9 +80,11 @@ describe('ChartActions — the table toggle', () => {
    * Picking the nth "show data table" button by index would assert nothing
    * about which table it opens, which is why the specs never did.
    */
-  it('points at the table it opens, by the id that table actually has', () => {
+  it('points at the table it opens, by the id that table actually has', async () => {
     renderActions();
-    expect(screen.getByRole('button', { name: 'Show the data table' })).toHaveAttribute(
+    const user = userEvent.setup();
+    await openMenu(user);
+    expect(screen.getByRole('menuitem', { name: 'Show the data table' })).toHaveAttribute(
       'aria-controls',
       'chart-data-requests-per-second',
     );
@@ -80,14 +100,18 @@ describe('ChartActions — the table toggle', () => {
     const user = userEvent.setup();
     const { props } = renderActions();
 
-    const button = screen.getByRole('button', { name: 'Show the data table' });
+    await openMenu(user);
+    const button = screen.getByRole('menuitem', { name: 'Show the data table' });
     expect(button).toHaveAttribute('aria-expanded', 'false');
     await user.click(button);
     expect(props.onToggleTable).toHaveBeenCalledTimes(1);
 
     cleanup();
     renderActions({ tableShown: true });
-    expect(screen.getByRole('button', { name: 'Show the chart' })).toHaveAttribute(
+    // A fresh render is a fresh CLOSED menu: Radix mounts the content only
+    // while open, so the second half of this case has to open it again.
+    await openMenu(user);
+    expect(screen.getByRole('menuitem', { name: 'Show the chart' })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -100,10 +124,12 @@ describe('ChartActions — the table toggle', () => {
    * was open would be the only thing telling a non-sighted reader what state
    * they are in, and it would be lying.
    */
-  it('names the action it will perform, not the state it is in', () => {
+  it('names the action it will perform, not the state it is in', async () => {
     renderActions({ tableShown: true });
     expect(screen.queryByRole('button', { name: 'Show the data table' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Show the chart' })).toBeInTheDocument();
+    const user = userEvent.setup();
+    await openMenu(user);
+    expect(screen.getByRole('menuitem', { name: 'Show the chart' })).toBeInTheDocument();
   });
 });
 
@@ -111,8 +137,9 @@ describe('ChartActions — taking the numbers away', () => {
   it('writes a CSV whose header and rows are the table on screen', async () => {
     const user = userEvent.setup();
     renderActions();
+    await openMenu(user);
 
-    await user.click(screen.getByRole('button', { name: 'Download the chart data as CSV' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Download the chart data as CSV' }));
 
     expect(downloadCsv).toHaveBeenCalledTimes(1);
     const [filename, csv] = downloadCsv.mock.calls[0]!;
@@ -127,9 +154,11 @@ describe('ChartActions — taking the numbers away', () => {
    * already set. The CSV is "this table, as a file"; the clipboard JSON below
    * is the route that keeps every digit.
    */
-  it('rounds a cell in the CSV the same way the cell itself rounds', () => {
+  it('rounds a cell in the CSV the same way the cell itself rounds', async () => {
     renderActions();
-    screen.getByRole('button', { name: 'Download the chart data as CSV' }).click();
+    const user = userEvent.setup();
+    await openMenu(user);
+    screen.getByRole('menuitem', { name: 'Download the chart data as CSV' }).click();
     expect(downloadCsv.mock.calls[0]![1]).toContain('"24.92"');
     expect(downloadCsv.mock.calls[0]![1]).not.toContain('24.916201117318437');
   });
@@ -139,9 +168,11 @@ describe('ChartActions — taking the numbers away', () => {
    * leaves a blank out, so writing `0` for a bucket nothing was measured in
    * silently drags every aggregate the reader computes downward.
    */
-  it('writes an empty cell for a gap, never a zero', () => {
+  it('writes an empty cell for a gap, never a zero', async () => {
     renderActions();
-    screen.getByRole('button', { name: 'Download the chart data as CSV' }).click();
+    const user = userEvent.setup();
+    await openMenu(user);
+    screen.getByRole('menuitem', { name: 'Download the chart data as CSV' }).click();
     const lines = (downloadCsv.mock.calls[0]![1] as string).split('\r\n');
     expect(lines[2]).toBe('"1000","24.92",""');
   });
@@ -150,8 +181,9 @@ describe('ChartActions — taking the numbers away', () => {
     const user = userEvent.setup();
     setClipboard({ writeText: vi.fn(async () => undefined) });
     renderActions();
+    await openMenu(user);
 
-    await user.click(screen.getByRole('button', { name: 'Copy the chart data as JSON' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Copy the chart data as JSON' }));
 
     const payload = JSON.parse(writeText().mock.calls[0]![0] as string);
     expect(payload.chart).toBe('requests-per-second');
@@ -173,7 +205,8 @@ describe('ChartActions — taking the numbers away', () => {
     setClipboard(undefined);
     renderActions();
 
-    await user.click(screen.getByRole('button', { name: 'Copy the chart data as JSON' }));
+    await openMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: 'Copy the chart data as JSON' }));
 
     // Visible, not merely announced — the reader is about to paste.
     const status = await screen.findByRole('status');
@@ -200,7 +233,8 @@ describe('ChartActions — taking the numbers away', () => {
     setClipboard({ writeText: vi.fn(async () => { throw new Error('denied'); }) });
     renderActions();
 
-    await user.click(screen.getByRole('button', { name: 'Copy the chart data as JSON' }));
+    await openMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: 'Copy the chart data as JSON' }));
 
     const status = await screen.findByRole('status');
     expect(status).toHaveTextContent(/blocked by the browser/i);
@@ -224,12 +258,26 @@ describe('ChartActions — taking the numbers away', () => {
    * ten charts two of which are empty that is a real cost. `title` carries
    * the reason, so the control is not merely inert and unexplained.
    */
-  it('cannot export a chart that plotted nothing, and says why', () => {
+  it('cannot export a chart that plotted nothing, and says why', async () => {
     renderActions({ rows: [] });
-    const csv = screen.getByRole('button', { name: 'Download the chart data as CSV' });
-    expect(csv).toBeDisabled();
-    expect(csv).toHaveAttribute('title', 'This chart has no data to download.');
-    expect(screen.getByRole('button', { name: 'Copy the chart data as JSON' })).toBeDisabled();
+    const user = userEvent.setup();
+    await openMenu(user);
+    /* `aria-disabled`, not `disabled`: a Radix menu item is a `div` with
+       `role="menuitem"`, so `toBeDisabled()` asks for an attribute it can
+       never have. The PROMISE is the same — the control refuses — and this is
+       the spelling that carries it to assistive technology. */
+    const csv = screen.getByRole('menuitem', { name: 'Download the chart data as CSV' });
+    expect(csv).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('menuitem', { name: 'Copy the chart data as JSON' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+
+    /* AND IT SAYS WHY, IN TEXT. As buttons these carried the reason in a
+       `title` — invisible on touch, unreachable by keyboard, and now hidden
+       behind a menu as well. A refusal nobody can read is not a refusal
+       anybody can act on. */
+    expect(screen.getByText(/nothing to export/i)).toBeInTheDocument();
   });
 });
 

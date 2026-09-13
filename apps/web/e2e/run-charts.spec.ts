@@ -624,18 +624,29 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     // numbers each is not an accessible page.
     await expect(table).not.toBeVisible();
 
-    // The button that controls THIS table, found the way assistive tech finds
-    // it: `aria-controls`. Picking the nth toggle by index would assert
-    // nothing about which table it opens. It is an icon button in the card's
-    // header now rather than a text button below the chart, and this query is
-    // deliberately unchanged by that — which is the point of finding it by the
-    // relationship rather than by its label.
-    const toggle = page.locator(`button[aria-controls="chart-data-${id}"]`);
+    /* The control that opens THIS table, found the way assistive tech finds
+       it: `aria-controls`. Picking the nth toggle by index would assert
+       nothing about which table it opens, which is why this query has
+       survived the control becoming an icon button in the card header and now
+       a MENU ITEM behind an overflow trigger (review M17). The element type
+       keeps changing; the relationship is the claim.
+
+       The menu is opened by its own trigger, scoped to this chart's figure —
+       the trigger is named after the chart precisely so ten of them in one
+       document stay ten distinguishable controls. */
+    const menu = () =>
+      page.getByTestId(`chart-${id}`).getByRole('button', { name: /data and exports$/ });
+    const toggle = page.locator(`[role="menuitem"][aria-controls="chart-data-${id}"]`);
+
+    await menu().click();
     await expect(toggle).toHaveCount(1);
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     await toggle.click();
     await expect(table).toBeVisible();
+    // Selecting closes the menu, so re-open it to read the flipped state —
+    // which is also what a reader does.
+    await menu().click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
     // ═══ THE TABLE REPLACES THE PLOT ═══
@@ -657,7 +668,8 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
     await expect(canvas).toBeHidden();
 
     // And back, so it is a real toggle rather than one-way — with the plot
-    // returning rather than merely the table going away.
+    // returning rather than merely the table going away. The menu is already
+    // open from the assertion above.
     await toggle.click();
     await expect(table).not.toBeVisible();
     await expect(canvas).toBeVisible();

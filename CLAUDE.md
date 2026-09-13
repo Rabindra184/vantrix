@@ -115,6 +115,60 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m17-chart-menu branch (M17, PART ONE) added no unit FILE and no
+unit case — it rewrote thirteen existing ones in `ChartActions.test.tsx` — so
+unit stays 147 / 1822, and e2e stays 119.
+
+**FORTY CONTROLS FOR ONE FIGURE.** Every chart carried table, JSON, CSV and
+full screen, and the Charts tab draws ten. Full screen stays a button because
+it acts on the thing being looked at; the other three moved behind one trigger,
+which is what the finding asks for ("keep fullscreen and an accessible overflow
+menu").
+
+**A REAL MENU, FOR THE REASON `AccountMenu` IS ONE.** A role is a promise about
+arrow keys, Home/End, typeahead and focus return, and `ThemeToggle` earned this
+repo the lesson that half-keeping one is worse than not claiming it. Radix's
+dropdown keeps it, `modal={false}` for the same reason the account menu sets it,
+and the content is portalled — mounted only while open, which is what keeps the
+"ten charts must not contribute ten live regions" reasoning in that file true.
+
+**THE TRIGGER IS NAMED AFTER ITS CHART** (`${title}: data and exports`). Ten
+identical "Chart actions" buttons in one document is the duplicate-name defect
+this repo has paid for three times; `aria-controls` already solves the same
+problem for the table.
+
+**"Export", NOT "Download", AND THE FINDING SAYS DOWNLOAD.** One of the two
+items is a CLIPBOARD COPY — with a clipboard-absent path and the live-region
+feedback that file argues for at length. A section headed Download over an item
+that downloads nothing would mislabel it. The grouping is what the finding is
+about; the heading is one word off it.
+
+**A DISABLED MENU ITEM MUST SAY WHY IN TEXT.** As buttons these two carried
+their reason in a `title`: invisible on touch, unreachable by keyboard, and now
+hidden behind a menu as well. The reason is a line inside the menu now. The
+same argument the run-page glossary records against `<abbr title>` as a SOLE
+mechanism.
+
+**AND `toBeDisabled()` ASKS FOR AN ATTRIBUTE A MENU ITEM CANNOT HAVE.** Radix
+renders `role="menuitem"` on a `div` with `aria-disabled`, so the old assertion
+failed against a control that refuses correctly. The promise is unchanged; the
+spelling that carries it to assistive technology is not.
+
+**THE e2e SURVIVED BY ASKING FOR THE RELATIONSHIP, NOT THE ELEMENT.**
+`run-charts.spec.ts` finds each table's control by `aria-controls`, with a
+comment saying index-based selection "would assert nothing about which table it
+opens". That query has now outlived the control being a text button, an icon
+button, and a menu item — only the type changed, and the claim never did. **A
+locator written as the relationship is the one that does not rot.**
+
+**WHAT IS NOT DONE: the finding's second half** — "organize charts into
+investigation groups such as Load, Latency, and Errors". The run-page
+reading-order branch already ordered these deliberately (the four time series
+adjacent, in the order the question is asked) and `run-charts.spec.ts` asserts
+`CHART_IDS` as a LIST so a reorder cannot pass silently. Grouping them adds
+headings to a tab whose outline other specs pin, and it is a layout decision
+rather than a correction. Left, and recorded as left.
+
 The review-m05-honest-label branch (M05, the INTERIM the finding itself
 specifies) added no unit FILE and 1 case to `apps/web/test/ProjectSetup.test.tsx`,
 from a floor of 147 / 1821. Integration is UNCHANGED and e2e stays 119.

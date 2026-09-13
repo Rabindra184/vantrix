@@ -3,24 +3,25 @@ import {
   Activity,
   Box,
   ChartSpline,
+  Check,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
-  Gauge,
-  GitCompareArrows,
-  Inbox,
-  Check,
   Clipboard,
   Download,
   Funnel,
+  Gauge,
+  GitCompareArrows,
+  Inbox,
   KeyRound,
   Layers,
   LoaderCircle,
+  LogOut,
   Maximize2,
   Minimize2,
-  LogOut,
   Monitor,
   Moon,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
@@ -34,8 +35,8 @@ import {
   Table2,
   TrendingUp,
   TriangleAlert,
-  Upload,
   type LucideIcon,
+  Upload,
 } from 'lucide-react';
 
 /**
@@ -162,5 +163,11 @@ export const TrendsTabIcon = icon(TrendingUp);
 export const CompareTabIcon = icon(GitCompareArrows);
 
 /* The project rail's desktop collapse control (`ProjectRail.tsx`). */
+/* The chart card's overflow menu (`ChartActions.tsx`, review M17). An ellipsis
+   because the menu holds several unrelated actions and no one of them names
+   the set; the TRIGGER's accessible name carries the chart's title, so ten of
+   these in one document are still ten distinguishable controls. */
+export const MoreIcon = icon(MoreHorizontal);
+
 export const PanelCollapseIcon = icon(PanelLeftClose);
 export const PanelExpandIcon = icon(PanelLeftOpen);
