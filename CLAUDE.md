@@ -74,7 +74,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1805 tests**, it
+`nvm use` first, and if a run reports fewer than **147 files / 1809 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -91,6 +91,70 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The review-m01-window branch (M01) added no unit FILE and 4 cases to
+`apps/web/test/TimeBrush.test.tsx`, from a floor of 147 / 1805. Integration is
+UNCHANGED and **e2e stays 117** — three specs changed inside existing `test(`
+blocks and one geometry bound tightened.
+
+**M01's BAR IS CLEARED, AFTER THREE BRANCHES OF RECORDING THAT IT WAS NOT.**
+The review asks for failure, p95, error rate and throughput inside the first
+1440x900 screen. Measured, in order:
+
+```
+        run totals top   what changed
+  1570                   (as found)
+  1001                   the Overview reordered, the brush cut to a navigator
+   937                   C01 took the decision band from 316px to 246px
+   649                   M01 collapsed the time window, 332px -> 44px
+```
+
+The bound in `run-tables.spec.ts` was 1100 for three branches — deliberately
+the MEASUREMENT rather than the goal, because a threshold set to an unmet bar
+is a failing test describing work nobody agreed to do. It is 900 now, and it
+checks the TILES as well as the section: a totals block starting at 880 with
+its values at 980 would satisfy a bound on the section alone.
+
+**THE 332px WAS MOSTLY NOT THE CHART.** Broken down: a 242px `<figure>` (the
+160px navigator plus its own card, title and axis) and a 52px input row, inside
+a section's padding. Shortening the plot again would have bought little and
+cost the drag affordance the earlier branch already refused to trade away.
+
+**SO IT COLLAPSED, AND THE SAFETY PROPERTY IS WHAT MAKES THAT ALLOWED.** M01's
+literal instruction is "key metrics BEFORE the time navigator", which is not
+available: the control lives in `RunShell` above the `<Outlet/>` because the
+window belongs to the run and every tab reads it, and moving it below the
+outlet buries it under the charts on the tab where dragging matters most. A
+`<details>` gets the same result — but a reader looking at a tenth of a run
+with nothing on screen admitting it is the one failure this control must never
+cause, which is why `CompactWindowNotice` exists one viewport down. **It opens
+itself whenever a window is applied**, and names the window from the outside
+when shut.
+
+**THE EFFECT IS THE HALF THAT IS EASY TO MISS.** `RunShell` does not remount
+between tabs, so a window arriving from a URL, or a reader clearing and
+re-applying one, reaches a component already mounted and already closed.
+Seeding state from the prop covers only the first render. Both are kept and
+they are NOT interchangeable — but only the effect is separately testable, and
+that was measured rather than assumed: deleting either one leaves the
+"arrives already narrowed" case green, because the effect also runs on mount.
+The case says so instead of implying it pins a mechanism it cannot see.
+
+**A CLOSED `<details>` DOES NOT RENDER ITS CHILDREN, WHICH BREAKS `fill()` AND
+A RAW-MOUSE DRAG DIFFERENTLY.** Three specs type into From/To and one drags the
+scrubber with `page.mouse`. The typing ones fail on visibility; the drag one is
+worse — `plot()` reports zero elements, so the strip is not below the fold, it
+does not exist to be measured, and the drag lands on empty page exactly the way
+the scroll note in that test already describes for a different cause.
+`openTimeWindow` in `helpers.ts` opens it only when closed, because a spec that
+arrives at a narrowed URL finds it open already and a blind toggle would SHUT
+the control the product had deliberately opened.
+
+**AND `pnpm typecheck` CAUGHT WHAT THE GREEN SUITE DID NOT, AGAIN.** The new
+transition case builds a `Window` by hand — `renderBrush` hides the shape
+behind an `as never` — and omitted the required `bucketWidthMs`. 15 of 15
+passing, `tsc` exit 2. The gate's first command is still the only thing that
+sees a test constructing a prop wrong.
 
 The compare-axis-unit branch added no unit FILE and 1 case to
 `apps/web/test/timeAxis.test.ts`, from a floor of 147 / 1804 — REBASED: it was

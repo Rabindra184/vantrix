@@ -293,4 +293,100 @@ describe('TimeBrush — an invalid range is refused, never widened', () => {
     });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  /* ====================================================================== *
+   * REVIEW M01 — COLLAPSED, BUT NEVER HIDING AN APPLIED WINDOW
+   * ====================================================================== */
+
+  /**
+   * ═══ WHY THIS CONTROL IS A DISCLOSURE NOW ═══
+   *
+   * Measured at 1440x900 it ran 332px, which put the run's own totals at y937
+   * and their VALUES at y980 — eighty pixels below the fold, on the page a
+   * reader opens to read four numbers. M01 asks for failure, p95, error rate
+   * and throughput inside that first screen. Closed it is 44px and the totals
+   * begin at y649.
+   *
+   * ═══ AND WHY CLOSING IT IS ONLY SAFE BECAUSE OF THE CASES BELOW ═══
+   *
+   * A reader looking at a tenth of a run with nothing on screen admitting it
+   * is the one failure this control must never cause — `CompactWindowNotice`
+   * exists for exactly that reason one viewport down. So the disclosure opens
+   * itself whenever a window is applied, and says which window from the
+   * outside when it is shut.
+   *
+   * The EFFECT is the half that is easy to get wrong: `RunShell` does not
+   * remount between tabs, so a window arriving from a URL — or a reader
+   * clearing and re-applying one — reaches a component that is already
+   * mounted and already closed. Initial state alone would leave that narrowing
+   * behind a shut control.
+   */
+  const details = () =>
+    document.querySelector('[data-testid="time-brush"] details') as HTMLDetailsElement;
+
+  it('starts closed on a run nobody has narrowed', async () => {
+    await renderBrush();
+    expect(details().open).toBe(false);
+    expect(screen.getByTestId('time-window-toggle')).toHaveTextContent(/whole run/i);
+  });
+
+  /**
+   * PINS THE PROPERTY, NOT THE MECHANISM, and that is measured rather than
+   * assumed: `TimeBrush` both seeds its state from `window` and re-opens in an
+   * effect, and removing EITHER leaves this case green, because the effect
+   * runs on mount too. Verified by deleting each in turn.
+   *
+   * They are kept as deliberate redundancy with different jobs — the seed so
+   * the first PAINT is already open on a narrowed URL rather than flickering
+   * shut-then-open, the effect for windows that arrive at a component already
+   * mounted. Only the effect is separately pinned, by the transition case
+   * below; the seed's job is a frame nothing in jsdom can observe.
+   */
+  it('is open when the run arrives already narrowed', async () => {
+    await renderBrush({ window: { fromMs: 10_000, toMs: 30_000 } });
+    expect(details().open).toBe(true);
+  });
+
+  /**
+   * THE TRANSITION, not either endpoint. Mounting each state separately cannot
+   * catch this: the defect lives in a window arriving at a component that is
+   * already mounted and already shut, which is what a tab change or a pasted
+   * URL produces. Same shape as the live-to-terminal cases CLAUDE.md records
+   * for `RunTelemetry` and `RunCompare`.
+   */
+  it('opens itself when a window arrives after it is already closed', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <TimeBrush runId={RUN} runDurationMs={63_161} window={null} onChange={() => undefined} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(setOptionSpy).toHaveBeenCalled());
+    expect(details().open).toBe(false);
+
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <TimeBrush
+          runId={RUN}
+          runDurationMs={63_161}
+          /* `bucketWidthMs` is REQUIRED on `Window` and `renderBrush` hides
+             that behind an `as never`; this case builds the prop by hand, so
+             the compiler sees it. The suite was green while it was missing —
+             vitest does not typecheck, which is why the gate's first command
+             is the only thing that catches a test constructing a prop wrong. */
+          window={{ fromMs: 10_000, toMs: 30_000, bucketWidthMs: 1_000 }}
+          onChange={() => undefined}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(details().open).toBe(true));
+  });
+
+  /** Shut, it still says which stretch the numbers below describe. */
+  it('names the applied window from the outside', async () => {
+    await renderBrush({ window: { fromMs: 10_000, toMs: 30_000 } });
+    expect(screen.getByTestId('time-window-toggle')).toHaveTextContent('10s–30s');
+    expect(screen.getByTestId('time-window-toggle').textContent ?? '').not.toMatch(/whole run/i);
+  });
 });

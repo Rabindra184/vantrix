@@ -55,6 +55,23 @@ export default function TimeBrush({
    *  the selection itself so a stale complaint never outlives its input. */
   const [rangeError, setRangeError] = useState<string | null>(null);
 
+  /* Open when the run is already narrowed, closed when it is not. The EFFECT
+     below is what keeps that true after the first render: the shell does not
+     remount between tabs, so a window arriving from a URL — or from the
+     reader clearing and re-applying one — would otherwise leave an active
+     narrowing behind a closed control. It never closes the control on its
+     own; that is the reader's to do. */
+  const [open, setOpen] = useState(() => window !== null);
+  useEffect(() => {
+    if (window !== null) setOpen(true);
+  }, [window]);
+
+  const shown = applied ?? window;
+  const summary =
+    shown == null
+      ? 'Whole run'
+      : `${Math.round(shown.fromMs / 1000)}s–${Math.round(shown.toMs / 1000)}s`;
+
   // THE WHOLE RUN, deliberately unwindowed — see the docstring.
   const series = useQuery(seriesQuery(runId, 'run', '', 'response_time', null));
 
@@ -138,8 +155,53 @@ export default function TimeBrush({
     <section
       aria-label="Time window"
       data-testid="time-brush"
-      className="flex flex-col gap-3 rounded border border-default bg-surface p-3"
+      className="rounded border border-default bg-surface"
     >
+      {/* ═══ CLOSED BY DEFAULT — review M01 ═══
+       *
+       * The review asks for "a compact outcome strip and key metrics BEFORE
+       * the time navigator", with the aim that failure, p95, error rate and
+       * throughput all land in the first 1440x900 screen. Measured before this
+       * change: the decision band ran 246px and this control 332px, so the run
+       * totals began at y937 and their VALUES at y980 — eighty pixels below
+       * the fold, on the page a reader opens to read four numbers.
+       *
+       * Moving the control after the metrics is not available: it lives in
+       * `RunShell`, above the `<Outlet/>`, because the window belongs to the
+       * whole run and every tab reads it. Putting it below the outlet would
+       * bury it under the charts on the tab where dragging it matters most.
+       *
+       * So it collapses instead. Narrowing time is a second-step action — a
+       * reader lands on a run to see the verdict and the numbers — and the
+       * summary keeps the state visible at one line.
+       *
+       * IT OPENS ITSELF WHENEVER A WINDOW IS APPLIED, which is the property
+       * that makes closing it safe at all. `CompactWindowNotice` exists for
+       * the same reason one viewport down: a reader looking at a tenth of a
+       * run with nothing on screen admitting it is the failure this control
+       * must never cause. A URL arriving with `?from=` opens it even though
+       * the shell never remounts between tabs. */}
+      <details
+        open={open}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+        className="group"
+      >
+        <summary
+          data-testid="time-window-toggle"
+          className="flex cursor-pointer list-none items-center gap-2 p-3 text-[12px] font-medium text-accent hover:underline hover:underline-offset-2"
+        >
+          <span className="group-open:hidden">Time window</span>
+          <span className="hidden group-open:inline">Hide time window</span>
+          {/* THE STATE, NOT A CHEVRON. A disclosure that hides an applied
+              narrowing must say so from the outside; "Whole run" is equally
+              load-bearing, because it is what tells a reader the numbers below
+              are the run's own. */}
+          <span className="font-normal text-muted">
+            {summary}
+          </span>
+        </summary>
+
+        <div className="flex flex-col gap-3 p-3 pt-0">
       {rates !== null && (
         <Chart
           id="time-window"
@@ -279,7 +341,9 @@ export default function TimeBrush({
             snapped to {applied.bucketWidthMs}ms buckets
           </p>
         )}
-      </div>
+        </div>
+        </div>
+      </details>
     </section>
   );
 }

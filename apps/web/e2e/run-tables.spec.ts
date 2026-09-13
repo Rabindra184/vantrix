@@ -787,10 +787,30 @@ test('the run totals come before the assertions, and near the top', async ({ pag
   });
   expect(totalsFirst).toBe(true);
 
-  // GEOMETRY: 1570 before, 1001 after. The margin catches a regression
-  // without pretending the review's own bar has been cleared.
+  /* ═══ GEOMETRY: M01's OWN BAR, AT LAST ═══
+   *
+   * The review asks for failure, p95, error rate and throughput inside the
+   * first 1440x900 screen. The history of this number is the point:
+   *
+   *     1570  before the Overview was reordered
+   *     1001  after the reorder shortened the brush to a navigator
+   *      937  after C01 took the decision band from 316px to 246px
+   *      649  after M01 collapsed the time window (332px -> 44px)
+   *
+   * It was 1100 for three branches — deliberately the MEASUREMENT rather than
+   * the goal, because a threshold set to an unmet bar is a failing test
+   * describing work nobody had agreed to do. The bar is cleared now, so the
+   * bound is the bar: the run's own totals begin inside the viewport, and the
+   * assertion below checks the TILES too, since a section that starts at 880
+   * with its values at 980 would satisfy a bound on the section alone.
+   */
   const top = await totals.evaluate((el) => el.getBoundingClientRect().top);
-  expect(top).toBeLessThan(1100);
+  expect(top).toBeLessThan(900);
+
+  for (const id of ['stat-error-rate', 'stat-throughput', 'stat-p95']) {
+    const y = await page.getByTestId(id).evaluate((el) => el.getBoundingClientRect().bottom);
+    expect(y, `${id} is below the fold at 1440x900`).toBeLessThan(900);
+  }
 });
 
 /**
