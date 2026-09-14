@@ -4,6 +4,7 @@ import AppShell from './AppShell';
 import AuthGate from './AuthGate';
 import Login from './routes/Login';
 import RouteFallback from './components/RouteFallback';
+import RouteErrorBoundary from './components/RouteErrorBoundary';
 import { DEFAULT_ROUTE, NEW_PROJECT_ROUTE, NO_ORG_ROUTE } from './routes/paths';
 
 /**
@@ -51,7 +52,13 @@ const RunErrorsTab = lazy(() =>
 );
 
 export default function App() {
+  /* The boundary sits OUTSIDE `Suspense`, so it catches what `Suspense`
+     cannot: a promise that REJECTS. Suspense handles a chunk that has not
+     arrived yet; a chunk that will never arrive throws, and before this there
+     was nothing above it — measured against the built bundle, `#root` held
+     zero children and the reader got a blank page. */
   return (
+    <RouteErrorBoundary>
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to={DEFAULT_ROUTE} replace />} />
@@ -137,5 +144,6 @@ export default function App() {
         <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
       </Routes>
     </Suspense>
+    </RouteErrorBoundary>
   );
 }

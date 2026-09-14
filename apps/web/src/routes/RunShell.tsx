@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import RouteFallback from '../components/RouteFallback';
+import RouteErrorBoundary from '../components/RouteErrorBoundary';
 import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
@@ -291,6 +292,10 @@ export default function RunShell({
           nearest one is AppShell's, so the first click on Charts would
           replace the run header, the decision band and the tab strip with a
           loading line — losing the reader's place in the run they opened. */}
+      {/* Innermost of the three: a failed TAB chunk keeps the run header,
+          the decision band and the tab strip, so the reader can pick another
+          tab rather than losing the run. */}
+      <RouteErrorBoundary>
       <Suspense fallback={<RouteFallback />}>
         <Outlet
           context={{
@@ -304,6 +309,7 @@ export default function RunShell({
           } satisfies RunWindowContext}
         />
       </Suspense>
+      </RouteErrorBoundary>
     </div>
   );
 }

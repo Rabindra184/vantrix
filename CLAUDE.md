@@ -115,6 +115,58 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The route-error-boundary branch added ONE source file —
+`apps/web/src/components/RouteErrorBoundary.tsx` — and 1 e2e case, so unit
+stays 147 / 1828 and **e2e rises to 134**. Integration unchanged.
+
+**SEVENTEEN `lazy()` ROUTES AND NOTHING CAUGHT WHAT THEY THREW.** MEASURED
+against the built bundle: block one chunk, navigate to its route, and `#root`
+held **ZERO children** — empty body, no header, no rail, the whole tree
+unmounted with `Failed to fetch dynamically imported module` on the console and
+nothing on screen. That is what every reader with the app open gets the moment
+a deploy replaces the assets they loaded.
+
+**THE BOUNDARY SITS OUTSIDE `Suspense`, AND THAT IS THE POINT.** Suspense
+handles a chunk that has NOT ARRIVED; a chunk that will NEVER arrive throws.
+One boundary per existing Suspense site — `RunShell` (a failed tab chunk keeps
+the run header and the tab strip), `AppShell` (a failed page chunk keeps the
+header and rail), `App` (last resort) — so the failure costs as little as
+possible.
+
+**`key={pathname}` IS THE OBVIOUS RESET AND IT IS WRONG HERE.** A changed key
+REMOUNTS the subtree, and these boundaries wrap `<Outlet/>`s inside LAYOUT
+routes — `AppShell` and `RunShell` exist precisely so the shell survives a
+navigation within it. Keyed, every tab click destroyed `RunHeader` and built a
+fresh one. `run-detail.spec.ts`'s "switching tabs does not remount the shell"
+went red on the full suite, AFTER the branch's own four cases were green.
+
+That case is worth reading for HOW it catches this: comparing the heading's
+TEXT would not, because React Query serves the same warm entry either way and a
+freshly mounted `RunHeader` renders an identical string. It tags the live DOM
+node with an attribute React does not manage — **the only thing that can tell a
+remount from a re-render.**
+
+The reset is a STATE CHANGE now, guarded on an error actually being shown, so a
+healthy subtree never notices the boundary exists. **A boundary that never
+resets turns one failed chunk into a dead application; one that resets by
+remounting breaks every layout route it wraps.**
+
+**AND THE WORDING SPLITS ON CAUSE WHILE THE ACTION DOES NOT.** A stale chunk is
+genuinely fixed by reloading (the new `index.html` names the new files); a
+render bug is not. The message keys off the browser's own module-load wording,
+which differs per engine and is matched loosely; the reload button is offered
+either way, because it is the only thing a reader can do from there.
+`componentDidCatch` keeps its `console.error` deliberately — this app ships no
+error reporter, and swallowing the stack would make a caught error harder to
+diagnose than the blank page it replaces.
+
+**A LOCATOR THAT DOES NOT SAY WHICH PAGE IT MEANS IS ANSWERED BY WHICHEVER PAGE
+IS MOUNTED.** The skeleton case read "the first `skeleton-table` on the page"
+and picked up `ProjectTests`' four-column one on the way through. It waits for
+the route first now — the same lesson as the `.nth(3)` status cell, one spec
+over. **There are FIVE `SkeletonTable` call sites** (columns 4, 6, 6, 6 and the
+run list's); only the run list's has been measured against its real table.
+
 The resilience-first-pass branch added ONE e2e file —
 `apps/web/e2e/resilience.spec.ts` (3) — and no unit case, so unit stays
 147 / 1828 and **e2e rises to 133**. Integration unchanged.
