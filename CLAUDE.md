@@ -115,6 +115,50 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-n03-omit-rail-badge branch (N03's third clause — the finding is
+closed) DELETED 5 unit cases from `apps/web/test/ProjectRail.test.tsx`, so unit
+FALLS to 147 / 1821 from 147 / 1826, and **e2e falls to 118** from 120
+(`project-rail.spec.ts` loses two of its three badge cases). Integration is
+unchanged. **A floor going DOWN is as much a measurement as one going up** —
+record it, or the next reader reads a silently-skipped run as a pass.
+
+**THE REVIEW OFFERED TWO REMEDIES AND THE FIRST ONE WAS ALREADY IN THE CODE.**
+N03: "identify what the project's `not evaluated` badge summarizes — or omit
+that ambiguous badge." A previous branch took the identify arm:
+`latestRunSummary` put `Latest run: …` into an `aria-label` and a `title`,
+because the span sits inside the `NavLink` and this file pins every row's exact
+textContent. That reaches a screen reader and a mouse hover, and leaves a
+SIGHTED TOUCH OR KEYBOARD reader meeting a bare `not evaluated` beside a project
+name — which is the reading the finding objects to. **Half the readers is not
+identified.** The badge is omitted now.
+
+**IT COST MORE THAN A SPAN, AND THE WORKAROUND RETIRED WITH IT.**
+`markFor`, `badgeFor`, `latestRunSummary` and `RAIL_INGEST_FAILED` all go.
+That last one existed ONLY because this row has one badge and no column header,
+so it had to tell `STATUS.failed` ("could not be ingested") apart from
+`VERDICT.failed` ("ingested, failed its SLA") where the run list's two columns
+and `RunHeader`'s two named groups do it for free. With no badge there is
+nothing left to disambiguate — **a workaround is allowed to die with the thing
+it worked around**, and its test dies with it rather than being kept alive
+around a deleted feature.
+
+**THIS SUPERSEDES A SPEC SECTION, DELIBERATELY.**
+`docs/superpowers/specs/2026-08-15-perf-portal-project-sidebar-design.md` §4.3
+("The badge reads status first, verdict second") specifies the badge and its
+four branches, and §8 claims unit coverage of all four. The 09-13 review is the
+later document and names this row specifically. Recorded in the component, the
+commit and here, so a reader meeting §4.3 knows it was overruled rather than
+forgotten. **When a review overrules a spec, say which document won and where.**
+
+**AND ONE SURVIVING e2e CASE WAS RE-POINTED RATHER THAN DELETED.** "a status
+badge does not clip the project name beside it" measured `scrollWidth` against
+`clientWidth` on a 14-character name — the only assertion in the suite that can
+see a `truncate` defect at all, since `textContent` is identical clipped or
+not. Its CAUSE is gone; its CLAIM is not, because the rail still truncates and
+the next `shrink-0` sibling pinned to the end of that row reintroduces the same
+defect in the same way. It is "a project name is not clipped in the rail" now.
+**Delete a test when its claim dies, not when its cause does.**
+
 The stale-accountmenu-crossref branch moved NO floor — its diff is comments
 only, in five source files and one test — so unit stays 147 / 1826, integration
 is unchanged and e2e stays 120.

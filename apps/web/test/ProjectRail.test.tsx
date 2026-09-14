@@ -97,47 +97,26 @@ describe('ProjectRail', () => {
     );
   });
 
-  it("reads a complete run's verdict", async () => {
-    renderRail(PROJECTS);
-    // 'passed' belongs only to VERDICT — no STATUS mark uses that word — so
-    // this cannot pass by accidentally rendering a status.
-    expect(await screen.findByRole('link', { name: /Checkout Flow/ })).toHaveTextContent('passed');
-  });
-
-  it("reads a pending run's STATUS and never a verdict", async () => {
-    renderRail(PROJECTS);
-    const search = await screen.findByRole('link', { name: /Search Indexing/ });
-    expect(search).toHaveTextContent('pending');
-    // The obvious wrong implementation reads VERDICT[verdict ?? 'none']
-    // unconditionally, which renders 'no verdict yet' for this run — a claim
-    // about a run nobody has measured.
-    expect(search).not.toHaveTextContent('no verdict yet');
-  });
-
-  it("reads 'no verdict yet' for a complete run with no verdict", async () => {
-    renderRail(PROJECTS);
-    // The fourth §4.3 branch, asserted POSITIVELY: `status === 'complete'`
-    // with `verdict === null` reads VERDICT.none, not STATUS.complete and not
-    // no badge at all. Before this test, `?? 'none'` on ProjectRail.tsx's
-    // `badgeFor` could be changed to `?? 'not_evaluated'` and the whole gate
-    // stayed green — this branch's absence was asserted only negatively (by
-    // the pending-run test above), never positively.
-    const onboarding = await screen.findByRole('link', { name: /Onboarding Wizard/ });
-    expect(onboarding).toHaveTextContent('no verdict yet');
-  });
-
-  it('gives a project with no runs no badge, while a sibling with runs has one', async () => {
-    renderRail(PROJECTS);
-    const billing = await screen.findByRole('link', { name: /Billing Exports/ });
-    // Absence, asserted exactly: the link's whole text is the name, with no
-    // glyph and no label appended.
-    expect(billing.textContent).toBe('Billing Exports');
-    // PAIRED POSITIVE, same test on purpose: without it this passes against a
-    // rail that renders no badges at all.
-    const checkout = screen.getByRole('link', { name: /Checkout Flow/ });
-    expect(checkout.textContent).not.toBe('Checkout Flow');
-  });
-
+  /**
+   * ═══ THE FOUR BADGE CASES ARE GONE WITH THE BADGE (review 09-13 N03) ═══
+   *
+   * Four cases stood here — a complete run's verdict, a pending run's status
+   * and never a verdict, "no verdict yet" asserted positively, and a project
+   * with no runs having no badge beside a sibling that does. They pinned the
+   * four branches of the sidebar spec's §4.3, and they were good tests: the
+   * third was added precisely because `?? 'none'` could be changed to
+   * `?? 'not_evaluated'` with the whole gate staying green.
+   *
+   * N03 offers two remedies for a badge the reader cannot attribute, and this
+   * branch takes the second: omit it. There is no badge left to branch over,
+   * so the cases are deleted rather than weakened — a test kept alive around a
+   * deleted feature is the stale-guard shape this repo already records.
+   *
+   * WHAT STILL HAS TO HOLD is the row's exact textContent, and that is
+   * asserted below and in the collapse describe: with the badge gone a row's
+   * whole text is its project name, which is what "reads identically in both
+   * collapse states" now means.
+   */
   /**
    * THE RAIL MUST NOT OFFER "New project", because `RunList` already does.
    *
@@ -235,40 +214,23 @@ describe('ProjectRail', () => {
     expect(screen.queryByText('No projects yet.')).toBeNull();
   });
 
-  it('renders an ingest failure and an SLA failure differently', async () => {
-    // A separate, small fixture rather than an addition to PROJECTS: this is
-    // about ONE collision (STATUS.failed vs VERDICT.failed, both '✕ failed'
-    // in routes/marks.tsx), not another §4.3 badge branch, and folding it
-    // into the four-branch fixture above would blur the two concerns.
-    const projects: ProjectListResponse['items'] = [
-      {
-        id: '66666666-6666-4666-8666-666666666666',
-        slug: 'data-pipeline',
-        name: 'Data Pipeline',
-        // The bundle never parsed — an INGEST failure.
-        latestRun: { id: 'eeeeeeee-6666-4666-8666-666666666666', status: 'failed', verdict: null },
-      },
-      {
-        id: '77777777-7777-4777-8777-777777777777',
-        slug: 'legacy-export',
-        name: 'Legacy Export',
-        // The run completed and its SLA rule failed — a VERDICT failure.
-        latestRun: { id: 'ffffffff-7777-4777-8777-777777777777', status: 'complete', verdict: 'failed' },
-      },
-    ];
-    renderRail(projects);
-    const ingestFailed = await screen.findByRole('link', { name: /Data Pipeline/ });
-    const slaFailed = screen.getByRole('link', { name: /Legacy Export/ });
-    // The rail-local override: an ingest failure reads distinguishably from
-    // an SLA failure, both in what is on screen and in the accessible name —
-    // there is no column header here to disambiguate them the way RunList's
-    // "Status"/"Verdict" columns and RunHeader's NamedBadge groups do.
-    expect(ingestFailed).toHaveTextContent('ingest failed');
-    expect(slaFailed).toHaveTextContent('failed');
-    expect(slaFailed).not.toHaveTextContent('ingest failed');
-    expect(ingestFailed.textContent).not.toBe(slaFailed.textContent);
-  });
-
+  /**
+   * ═══ AND SO IS THE ONE COLLISION THE RAIL HAD TO SOLVE ALONE ═══
+   *
+   * A case here proved an INGEST failure read differently from an SLA
+   * failure: `STATUS.failed` and `VERDICT.failed` are byte-identical in
+   * `routes/marks.tsx` (both `✕ failed`), and the rail was the one surface
+   * with a single badge and no column header to tell them apart — so
+   * `ProjectRail.tsx` carried `RAIL_INGEST_FAILED` purely to relabel one of
+   * them.
+   *
+   * That distinction existed FOR the badge. With the badge omitted the
+   * override has nothing to override, and the collision is back to being
+   * handled where it always was elsewhere: the run list gives the two marks
+   * separate "Status" and "Verdict" columns, and `RunHeader` gives them
+   * separately-named badge groups. Nothing regressed; a workaround retired
+   * with the thing it worked around.
+   */
   it('keeps the rows and says they may be out of date after a refetch fails', async () => {
     // Own fixture path, not an extra assertion on an existing test: this
     // sequence — a successful load, THEN a failed refetch — is a state none
@@ -353,13 +315,20 @@ describe('ProjectRail collapse', () => {
     // The control flips its own name — a screen reader always hears what the
     // NEXT activation does.
     expect(screen.getByRole('button', { name: 'Expand the projects rail' })).toBeInTheDocument();
-    // Same assertions the expanded state pins above, repeated in the
-    // collapsed state on purpose: absence of a badge is still exact, and a
-    // present badge is still in the row's text.
-    expect(screen.getByRole('link', { name: /Billing Exports/ }).textContent).toBe(
-      'Billing Exports',
-    );
-    expect(screen.getByRole('link', { name: /Checkout Flow/ })).toHaveTextContent('passed');
+    /* ═══ EVERY ROW'S TEXT IS ITS NAME, IN BOTH STATES (review 09-13 N03) ═══
+     *
+     * This used to pin one row's text as its name alone and another's as
+     * carrying its badge word, which is what "identical in both states" meant
+     * while the badge existed. With the badge omitted the claim is simpler and
+     * strictly stronger: EVERY row's whole text is its project name, collapsed
+     * or not, so the CSS-only collapse still cannot change what a row says.
+     *
+     * Checked over all four fixtures rather than two, because the weaker
+     * spelling is what let the badge's own `lg:hidden` go unexamined here for
+     * as long as it did. */
+    for (const { name } of PROJECTS) {
+      expect(screen.getByRole('link', { name: new RegExp(name) }).textContent).toBe(name);
+    }
     expect(screen.getByRole('link', { name: 'All runs' })).toBeInTheDocument();
   });
 

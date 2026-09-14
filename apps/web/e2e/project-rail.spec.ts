@@ -202,39 +202,34 @@ test('a skip link lets a keyboard user bypass the rail', async ({ page, browserN
  * a descendant's `aria-label` and Chromium does — CLAUDE.md records exactly
  * that asymmetry — so only a real engine can see the name this produces.
  */
-test('the rail badge says which run its verdict belongs to', async ({ page }) => {
+/*
+ * ═══ THE BADGE IS GONE, AND SO ARE TWO OF ITS THREE CASES (review 09-13 N03) ═══
+ *
+ * A case here asserted the badge's wrapper named what it summarised
+ * (`aria-label^="Latest run:"`) while the row's visible text stayed unchanged,
+ * and another asserted that the longest label (`no verdict yet`) did not make
+ * its row taller than a `passed` one. Both were about a badge this branch
+ * omits — N03's second remedy — so they are deleted rather than reworded.
+ *
+ * THE THIRD SURVIVES, RE-POINTED, because its claim outlives its cause: see
+ * below.
+ */
+test('a project name is not clipped in the rail', async ({ page }) => {
   const admin = await seedAdmin();
-  await seedProjectWithRuns(admin.orgId, 'search-svc', 'Search Service', 2, null);
+  /* FOURTEEN CHARACTERS, which is not a long name — it is shorter than three
+     of the five projects any real org has. It was clipped anyway: the rail
+     drew a `shrink-0` status badge beside it, and whatever a `shrink-0`
+     sibling takes, the flexible item with `truncate` pays for. Measured at the
+     time: the name needed 94px and got 84.
 
-  await signIn(page, admin);
-  await page.goto('/runs');
-
-  const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
-  const row = rail.getByRole('link', { name: /Search Service/ });
-  await expect(row).toBeVisible();
-
-  // The badge's own wrapper names what it is about. Read from the element
-  // rather than from the row's whole accessible name, so this says something
-  // specific when it fails.
-  const summary = row.locator('[aria-label^="Latest run:"]');
-  await expect(summary).toHaveCount(1);
-  const label = await summary.getAttribute('aria-label');
-  expect(label).toMatch(/^Latest run: .+/);
-
-  /* AND THE ROW'S OWN TEXT IS UNCHANGED, which is the constraint that forced
-     `aria-label` in the first place: the visible row is still the name plus
-     the badge word, with no narration added to it. */
-  expect((await row.textContent())?.includes('Latest run:')).toBe(false);
-});
-
-test('a status badge does not clip the project name beside it', async ({ page }) => {
-  const admin = await seedAdmin();
-  // FOURTEEN CHARACTERS, which is not a long name — it is shorter than three
-  // of the five projects any real org has. Paired with the WIDEST badge the
-  // rail renders (`no verdict yet`), because the bug was never about long
-  // names: it was about a status word taking its width out of the name's
-  // budget. The badge is `shrink-0` and the name is the flexible one, so
-  // whatever the badge takes, the name loses.
+     THE BADGE IS GONE (review 09-13 N03) AND THIS CASE IS NOT. The defect it
+     found was never really about the badge — it is the rule CLAUDE.md records
+     from it, that "a `shrink-0` sibling is a claim on space that something
+     else pays for, and the payer is whatever has `truncate`". The rail still
+     truncates, and the next thing pinned to the end of this row will
+     reintroduce the same defect in the same way. This is what would catch it,
+     and it is the only assertion in the suite that can — see the measurement
+     note below. */
   await seedProjectWithRuns(admin.orgId, 'search-svc', 'Search Service', 2, null);
 
   await signIn(page, admin);
@@ -246,9 +241,9 @@ test('a status badge does not clip the project name beside it', async ({ page })
 
   // MEASURED, not eyeballed: `truncate` is `text-overflow: ellipsis`, which
   // leaves the full string in the DOM — so `textContent` is identical whether
-  // the name is clipped or not, and every existing assertion in this file
-  // passes either way. The only thing that changes is scrollWidth against
-  // clientWidth. Before the badge was made compact this read 94 against 84.
+  // the name is clipped or not, and every other assertion in this file passes
+  // either way. The only thing that changes is scrollWidth against
+  // clientWidth.
   //
   // THE NUMBERS GO IN THE MESSAGE because this assertion is about TEXT METRICS,
   // which differ between the machine that writes the fix and the Linux runner
@@ -259,44 +254,6 @@ test('a status badge does not clip the project name beside it', async ({ page })
   const box = await name.evaluate((el) => ({ needs: el.scrollWidth, gets: el.clientWidth }));
   expect(
     box.needs,
-    `the project name is being clipped by the badge beside it: needs ${box.needs}px, gets ${box.gets}px`,
+    `the project name is being clipped in the rail: needs ${box.needs}px, gets ${box.gets}px`,
   ).toBeLessThanOrEqual(box.gets + 1);
-});
-
-test('a long badge label does not make its rail row taller', async ({ page }) => {
-  const admin = await seedAdmin();
-  // The two names are the SAME LENGTH on purpose. The only variable between
-  // these rows is the badge's label — `passed` (VERDICT.passed, the shortest
-  // the rail renders) against `no verdict yet` (VERDICT.none, the longest) —
-  // so any height difference is the badge's doing and nothing else's.
-  // Long enough to squeeze the badge. A short name leaves room for both and
-  // the bug does not reproduce — verified: at "Alpha Service"/"Bravo Service"
-  // this test passed against the unfixed component. These lengths match the
-  // real names that exposed it ("Onboarding Wizard", "Payments Gateway").
-  await seedProjectWithRuns(admin.orgId, 'alpha-svc', 'Alpha Data Pipeline', 2, 'passed');
-  await seedProjectWithRuns(admin.orgId, 'bravo-svc', 'Bravo Data Pipeline', 2, null);
-
-  await signIn(page, admin);
-  await page.goto('/runs');
-
-  const rail = page.getByRole('navigation', { name: 'Projects', exact: true });
-  const shortLabel = rail
-    .getByRole('link')
-    .filter({ has: page.getByText('Alpha Data Pipeline', { exact: true }) });
-  const longLabel = rail
-    .getByRole('link')
-    .filter({ has: page.getByText('Bravo Data Pipeline', { exact: true }) });
-  await expect(shortLabel).toBeVisible();
-  await expect(longLabel).toBeVisible();
-
-  // Derived, not written down: no pixel threshold, just the requirement that
-  // the two rows agree. Without `shrink-0 whitespace-nowrap` on the badge it
-  // is a shrinkable flex item, "no verdict yet" breaks across two lines, and
-  // this row grows taller than its neighbour — which is what pushed the rail
-  // out of shape with real project names.
-  const short = await shortLabel.boundingBox();
-  const long = await longLabel.boundingBox();
-  expect(short).not.toBeNull();
-  expect(long).not.toBeNull();
-  expect(long!.height).toBe(short!.height);
 });
