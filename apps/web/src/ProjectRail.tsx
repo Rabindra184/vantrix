@@ -1,13 +1,10 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { ProjectListResponse } from '@perfportal/contracts';
-import Badge from './components/Badge';
 import { CubeIcon, LayersIcon, PanelCollapseIcon, PanelExpandIcon } from './components/icons';
 import { fetchProjects, projectsQueryKey } from './api/projects';
 import { cn } from './lib/cn';
 import { DEFAULT_ROUTE, projectPath } from './routes/paths';
-import { STATUS, VERDICT, type Mark } from './routes/marks';
 
 /**
  * Whether the reader last left the rail collapsed. Same storage discipline as
@@ -35,8 +32,6 @@ function storeCollapsed(collapsed: boolean): void {
     // that throws on the click that set it.
   }
 }
-
-type ProjectItem = ProjectListResponse['items'][number];
 
 /**
  * What this organisation contains, on every authenticated page.
@@ -266,57 +261,38 @@ export default function ProjectRail() {
             >
               {project.name}
             </span>
-            {/* The badge is the FIXED element and the name is the flexible
-                one. Without `shrink-0 whitespace-nowrap` the badge is just
-                another shrinkable flex item, so a long label — `no verdict
-                yet` and `ingest failed` are the only two that reach this —
-                breaks across two lines and its row grows 20px taller than
-                its neighbours (measured: 62px against 42px). That is the
-                two-line row the comment above says the rail cannot afford,
-                arriving through the badge instead of through the name.
-
-                Wrapped here rather than fixed in `Badge` itself, for the
-                same reason `RAIL_INGEST_FAILED` is rail-local: `Badge` is
-                shared with the run list and the run header, where it sits
-                in a table cell with room to spare and nothing to fix.
-                (`Badge` has since grown `whitespace-nowrap` of its own for
-                unrelated reasons; this stays because `shrink-0` is the half
-                that actually holds the row's height, and because a shared
-                component is free to drop a class this row depends on.)
-
-                `lg:hidden` when collapsed, not `sr-only` like the name: the
-                name is the link's identity and must survive as its accessible
-                name, while the badge is supplementary state a collapsed rail
-                legitimately does not carry — the expanded rail and the page
-                the row links to both still do. */}
-            {/* ═══ WHAT THE BADGE SUMMARISES (review 09-13 N03) ═══
+            {/* ═══ NO BADGE HERE ANY MORE (review 09-13 N03) ═══
              *
-             * `not evaluated` beside a project name reads as a claim about the
-             * PROJECT. It is the latest run's, and nothing said so — the rail
-             * is also the one place the badge has no column header to lean on,
-             * which is exactly why the review calls it ambiguous here and not
-             * on the run list.
+             * The row carried the latest run's mark, and the review's
+             * complaint was that `not evaluated` beside a PROJECT name reads
+             * as a claim about the project: the rail is the one place that
+             * badge has no column header to lean on. It offers two remedies —
+             * identify what the badge summarises, or omit it — and this takes
+             * the second.
              *
-             * `aria-label` on the wrapper, NOT a visible or `sr-only` word.
-             * This span is inside the `NavLink`, so any text added here joins
-             * the row's textContent — and this file pins every row's exact
-             * textContent, deliberately, because the collapse is CSS-only and
-             * both states must read identically. `aria-label` replaces this
-             * subtree in the link's accessible NAME while leaving textContent
-             * untouched, so the clarification costs the rail no width and
-             * breaks no invariant. `title` carries the same fact to a sighted
-             * reader on hover.
+             * The first was tried and is what the review was objecting to.
+             * `latestRunSummary` put `Latest run: …` in an `aria-label` and a
+             * `title`, because this span sits inside the `NavLink` and this
+             * file pins every row's exact textContent (the collapse is
+             * CSS-only, so both states must read identically) — which left
+             * the clarification reaching a screen reader and a mouse hover,
+             * and a sighted touch or keyboard reader still meeting a bare
+             * `not evaluated`. Half the readers is not identified.
              *
-             * jsdom will not show this: `dom-accessibility-api` does not
-             * consult a descendant's `aria-label` and Chromium does, which
-             * CLAUDE.md already records — so the assertion for it belongs in
-             * `project-rail.spec.ts`, where it is. */}
-            <span
-              className={cn('ml-auto shrink-0 whitespace-nowrap', collapsed && 'lg:hidden')}
-              {...latestRunSummary(project.latestRun)}
-            >
-              {badgeFor(project.latestRun)}
-            </span>
+             * WHAT GOES WITH IT, recorded because it is more than a span:
+             * `markFor`, `badgeFor`, `latestRunSummary` and `RAIL_INGEST_FAILED`
+             * — the last of which existed only because this row has one badge
+             * and no header, and so had to tell `STATUS.failed` ("could not be
+             * ingested") apart from `VERDICT.failed` ("ingested, failed its
+             * SLA") where the run list's two columns do it for free. With no
+             * badge there is nothing left to disambiguate.
+             *
+             * THIS SUPERSEDES A SPEC SECTION, deliberately and not silently:
+             * `docs/superpowers/specs/2026-08-15-perf-portal-project-sidebar-design.md`
+             * §4.3 specifies the badge and its four branches. The 09-13 review
+             * is the later document and names this row specifically. The state
+             * is not lost to the reader — every project page and the run list
+             * still carry it, with a column header to say what it is about. */}
           </NavLink>
         ))}
 
@@ -420,35 +396,6 @@ function rowClasses(collapsed: boolean, isActive: boolean) {
   );
 }
 
-/**
- * A rail-local override of `STATUS.failed`, for this component only.
- *
- * `STATUS.failed` and `VERDICT.failed` (`routes/marks.tsx`) are identical in
- * glyph, label and colour — deliberately: `RunList` and `RunHeader` render
- * status and verdict in separate columns/chips, so the column header (or
- * `NamedBadge`'s accessible name) disambiguates "could not be ingested" from
- * "ingested and failed its SLA" wherever those live. The rail renders ONE
- * badge with no column header, so nothing here disambiguates them — exactly
- * the conflation `marks.tsx`'s own docstring calls the worst class of UI bug,
- * because nothing looks broken. This reintroduces that conflation on the one
- * surface now visible from every page, unless the rail says something
- * different for the two cases.
- *
- * Do not "fix" this by editing `STATUS.failed` in `marks.tsx`: that label is
- * correct for the two-column contexts that use it, and changing it there
- * would relabel the run list and the run header too. This is a rail-local
- * rendering of the SAME underlying fact (`status: 'failed'` — the bundle
- * never parsed), not a change to the shared vocabulary.
- *
- * `pending` and `parsing` need no such override: neither's word or glyph
- * collides with anything `VERDICT` renders, so their shared marks already
- * read unambiguously here.
- */
-const RAIL_INGEST_FAILED: Mark = {
-  glyph: STATUS.failed.glyph,
-  label: 'ingest failed',
-  colour: STATUS.failed.colour,
-};
 
 /**
  * Status first, verdict second — and the contract carries both fields
@@ -465,35 +412,5 @@ const RAIL_INGEST_FAILED: Mark = {
  * itself — see that constant's docstring for why the rail cannot reuse the
  * shared mark here, the way it safely does for `pending`/`parsing`/`complete`.
  */
-/**
- * The `aria-label`/`title` pair naming what the badge is about, or nothing at
- * all when there is no badge to describe.
- *
- * Spread rather than passed as two props so the no-run case adds NEITHER
- * attribute: an empty `title` is a tooltip that flashes blank, and an
- * `aria-label` on a span with no content would give the row a name fragment
- * describing a badge that is not there.
- */
-function latestRunSummary(
-  latestRun: ProjectItem['latestRun'],
-): { 'aria-label': string; title: string } | Record<string, never> {
-  const mark = markFor(latestRun);
-  if (mark === null) return {};
-  return { 'aria-label': `Latest run: ${mark.label}`, title: `Latest run: ${mark.label}` };
-}
 
-/** The mark a latest run resolves to, or null when there is no run to mark. */
-function markFor(latestRun: ProjectItem['latestRun']): Mark | null {
-  if (latestRun === null) return null;
-  if (latestRun.status !== 'complete') {
-    return latestRun.status === 'failed' ? RAIL_INGEST_FAILED : STATUS[latestRun.status];
-  }
-  return VERDICT[latestRun.verdict ?? 'none'];
-}
 
-function badgeFor(latestRun: ProjectItem['latestRun']) {
-  // THROUGH `markFor`, so the badge and the label naming it cannot disagree
-  // about which mark this row is showing.
-  const mark = markFor(latestRun);
-  return mark === null ? null : <Badge mark={mark} size="compact" />;
-}
