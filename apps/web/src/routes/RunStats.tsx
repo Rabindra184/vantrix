@@ -101,7 +101,7 @@ export default function RunStats({
   }
 
   return (
-    <section aria-label="Run totals">
+    <section aria-label="Run totals" className="@container">
       {/* SIX ACROSS ONLY AT `xl`, not at `lg`. The six-column grid was
           breaking at 1024px: `14.40 req/s` is the widest value any tile
           renders, and in a ~150px column it wrapped onto a second line, which
@@ -109,7 +109,20 @@ export default function RunStats({
           visibly out of step. Three across from `sm` to `xl` gives every value
           a line to itself at the widths a laptop actually uses, and the row
           only goes to six when there is room for it. */}
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      {/* AND THE THRESHOLDS ARE CONTAINER-RELATIVE NOW, for the reason the
+          comment above already half-states: what decides whether six columns
+          fit is the width this list HAS and the size of the text in it, and
+          `xl:` knows neither. Tailwind's container thresholds are in rem, so
+          at a 32px root `@5xl` is 2048px and the section never reaches it —
+          the row drops back to three and then two instead of spilling.
+
+          `@container` GOES ON THE `<section>`, NOT ON THIS `<dl>`. A container
+          query cannot query the element that declares the context — put both
+          on one element and the variant simply never matches, silently. Done
+          that way first here, and it cost `run-tables.spec.ts`'s M01 geometry
+          bound: the tiles fell to two columns at every width, which made the
+          block tall enough to push the run totals past 900px. */}
+      <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-3 @5xl:grid-cols-6">
         <StatTile
           label="Requests"
           value={formatCount(run.count)}

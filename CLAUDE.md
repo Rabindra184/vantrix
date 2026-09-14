@@ -115,6 +115,80 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The zoom-reflow branch added no unit FILE, no unit case and no spec — it
+WIDENED one existing e2e case from two pages to four — so unit stays
+151 / 1850, e2e stays 136 and integration is unchanged. It closes what the
+branch below recorded as measured-and-left.
+
+**FOUR CAUSES, ONE SHAPE: A LENGTH THAT DOES NOT SCALE WITH THE READER'S TEXT,
+OR A BREAKPOINT THAT ASKS THE VIEWPORT A QUESTION ONLY THE CONTENT CAN
+ANSWER.** Measured at 1280 with a 32px root, document scrollWidth:
+
+```
+                   before   after
+  SLA rules form     1280    1280
+  Add results        1280    1280
+  run list           1421    1280
+  run page           1574    1280
+```
+
+  - the run list's filter grid held `<select>`s in FIXED **180px** tracks,
+    behind `md:`
+  - `HealthTile` laid value, label and detail in a flex row that could not wrap
+  - the statistics toolbar put a 14rem input, its label and a button in one row
+    behind `sm:`
+  - `StatTile` put a `text-2xl` value beside its unit in an unwrapped row, six
+    across, behind `xl:`
+
+**AND NONE OF IT SHOWS AT 100%, WHICH IS THE WHOLE REASON IT SURVIVED.** A
+fixed track and an unwrapped flex row do not CLIP when their content outgrows
+them — they SPILL, and every ancestor with `overflow: visible` passes it up
+until it reaches the document. So the page gains a horizontal scrollbar and the
+component that caused it looks untouched.
+
+**THE TYPE-SCALE BRANCH DID HALF OF THIS AND THE OTHER HALF WAS NEVER OBVIOUS.**
+That one converted 223 absolute-px type utilities to rem so text would answer
+to the reader's own font size. **The boxes around the text had to follow**, and
+nothing said so: a rem string inside a px track is exactly as broken as a px
+string was, one layer out.
+
+**`@container` ASKS THE ONLY QUESTION THAT SURVIVES A FONT CHANGE.** Tailwind's
+container thresholds are in rem, so `@2xl` is 672px at a 16px root and 1344px
+at 32px — the switch point scales with the text it is gating. A viewport
+breakpoint cannot: `md:` is 768px whatever size the reader has chosen. This is
+`RunDecisionBand`'s lesson (it went three-up at `lg:`, which is also where the
+rail appears, so it took its widest layout at the moment it lost ~270px) with
+the second reason attached.
+
+**AND A CONTAINER QUERY CANNOT QUERY THE ELEMENT THAT DECLARES THE CONTEXT.**
+`@container` and `@5xl:grid-cols-6` were put on the same `<dl>` first. The
+variant then never matches — silently, with no warning and no error — so the
+tiles fell to two columns at EVERY width. What caught it was not the zoom test
+but `run-tables.spec.ts`'s M01 geometry bound: two columns made the block tall
+enough to push the run totals past 900px. **A layout guard written for one
+finding caught a different one three branches later**, which is the argument
+for bounds over snapshots.
+
+**THE FIRST DIAGNOSIS WAS WRONG AND THE PROBE THAT PRODUCED IT IS THE REASON.**
+Listing every element whose `getBoundingClientRect().right` exceeds the
+viewport names `RunTabs` first — and `RunTabs` already carries
+`overflow-x-auto`. **Content inside a working scroller legitimately reports a
+rect past the viewport.** The probe that actually works skips an element when
+any ancestor establishes a horizontal scroll context whose OWN right edge is
+inside the viewport, and reports only the outermost remaining offenders. Even
+then it keeps a false positive — the time brush's ECharts container still
+reports a wide rect while the document measures 1280 — so
+`documentElement.scrollWidth` stays the arbiter and the element list is a lead,
+never a verdict.
+
+**AND `git checkout -- <file>` DESTROYS AN UNCOMMITTED FIX WHEN THE RED-VERIFY
+MUTATES THE FILE YOU ARE FIXING.** Every earlier red-verify in this review
+mutated a SOURCE file while the change under test was in a TEST file, so
+restoring by checkout was safe and became a habit. Here the mutation target was
+the fix itself: two of the four fixes were silently reverted to HEAD, and the
+tell was a stray count in a status line rather than any failure. **Commit the
+fix before mutating it**, or restore from a stash rather than from HEAD.
+
 The a11y-untested-promises branch added FOUR unit files —
 `apps/web/test/States.test.tsx` (5), `AuthGate.test.tsx` (5),
 `SignOutButton.test.tsx` (4) and `Login.test.tsx` (4) — plus 2 cases each to
@@ -168,7 +242,8 @@ is the exact opt-out that breaks focus return, which makes it the cleanest
 mutation available for that class of claim.
 
 **200% TEXT ZOOM: TWO PAGES OF FOUR PUSH THE DOCUMENT SIDEWAYS, MEASURED AND
-DELIBERATELY NOT ASSERTED.** At 1280 with a 32px root:
+DELIBERATELY NOT ASSERTED — AND FIXED BY THE BRANCH ABOVE, which also shows the
+diagnosis below to have been looking at the wrong element.** At 1280 with a 32px root:
 
 ```
   SLA rules form      1280 of 1280   fits

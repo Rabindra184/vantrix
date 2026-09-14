@@ -557,7 +557,7 @@ function RunListControls({
     <form
       aria-label="Run filters"
       onSubmit={submit}
-      className="flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
+      className="@container flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
       {showHeader && (
         <div className="flex items-center gap-2 text-[0.8125rem] font-medium text-primary">
@@ -579,7 +579,27 @@ function RunListControls({
         </p>
       )}
 
-      <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto] md:items-end">
+      {/* ═══ THE TRACKS ARE rem AND THE QUESTION IS THE FORM'S OWN WIDTH ═══
+       *
+       * This was `md:grid-cols-[minmax(220px,1fr)_180px_180px_auto]`, and both
+       * halves of that were wrong once a reader doubles their text.
+       *
+       * A PIXEL TRACK CANNOT HOLD REM TEXT. At a 32px root a `<select>` in the
+       * 180px track needs about 360, and a fixed track does not grow — so the
+       * control spilled out of a parent with `overflow: visible` and widened
+       * the DOCUMENT. Measured at 1280: the run list's page scrollWidth was
+       * 1421. The type-scale branch made every font size relative for exactly
+       * this reason; the boxes around the text had to follow.
+       *
+       * AND `md:` ASKS ABOUT THE VIEWPORT, WHICH SAYS NOTHING ABOUT WHETHER
+       * FOUR COLUMNS FIT. It is the same wrong question `RunDecisionBand`
+       * already records — it went three-up at `lg:`, which is also where the
+       * rail appears, so it took its widest layout at the moment it lost
+       * ~270px. `@container` asks what this form actually HAS, and Tailwind's
+       * container thresholds are in rem, so the switch point scales with the
+       * reader's font: `@2xl` is 672px at a 16px root and 1344px at 32px, and
+       * the form never gets that much — so it stacks instead of spilling. */}
+      <div className="grid gap-3 @2xl:grid-cols-[minmax(13.75rem,1fr)_11.25rem_11.25rem_auto] @2xl:items-end">
         <label className="flex flex-col gap-1.5 text-[0.75rem] font-medium text-muted">
           Search runs
           <input
@@ -780,7 +800,13 @@ function HealthTile({
     /* One line per count, not a card. The number leads and stays coloured —
        it is still the thing being read — but at the weight of a caption
        rather than a dashboard tile, because it describes this PAGE. */
-    <div className="flex items-baseline gap-2" style={{ color: colour }}>
+    /* `flex-wrap` so the three parts stack rather than spilling: at a 32px
+       root "Unjudged / No verdict, or not evaluated" is wider than the tile's
+       share of the row, and an unwrapped flex row pushed it past the viewport
+       and widened the document (measured: the run list at 1338 of 1280). The
+       row-gap is deliberately tighter than the column-gap — wrapped, these are
+       continuations of one line rather than separate rows. */
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5" style={{ color: colour }}>
       <span className="font-mono text-base font-semibold tabular-nums text-primary">{value}</span>
       <span className="text-[0.75rem] text-primary">{label}</span>
       <span className="text-[0.6875rem] text-muted">{detail}</span>

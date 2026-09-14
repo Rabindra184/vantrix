@@ -746,13 +746,18 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
           acts ON this table and belongs to its header, not to the page — and
           stack on a narrow one, where a 200px input beside a heading leaves
           neither enough room. */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      {/* `sm:flex-wrap` so Download CSV drops below the filter rather than
+          past the viewport. `sm:` asks about the VIEWPORT, which says nothing
+          about whether a 14rem input, its label and a button fit — and at a
+          32px root that input alone is 448px. Wrapping is what makes the
+          answer independent of the reader's font size. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
 
         {/* G-14, THE FILTER BOX. A real `<label htmlFor>` rather than a
             placeholder: a placeholder disappears the moment the reader types,
             which is exactly when a screen reader is asked what the field is. */}
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <label htmlFor={filterId} className="shrink-0 text-[0.75rem] text-muted">
             Filter by name
           </label>
