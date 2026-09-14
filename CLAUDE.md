@@ -115,6 +115,53 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The evidence-window-scope branch added no unit FILE and 1 case
+(`RunStats.test.tsx`), from 147 / 1827 to **147 / 1828**, and **e2e rises to
+128** (two cases in `run-charts.spec.ts`). Integration unchanged. It takes the
+`evidence` cluster of the 09-13 acceptance list — the largest, at 14 gaps —
+and the three it fixes are ONE mistake made three times.
+
+**THE WINDOW CHANGED A NUMBER AND NOT THE THING DESCRIBING IT.**
+
+  - **An empty window DELETED the run's totals.** `RunStats` returned `null`
+    whenever the payload carried no run-scope row, and `?from=62000&to=63000`
+    — a real, in-range second of the 62s reference run that happens to hold no
+    requests — made the whole section vanish with nothing saying why.
+  - **The percentile note said "a sketch of the whole run" unconditionally.**
+    Under a window the sketch is rebuilt from the buckets that window selects,
+    so the sentence was false exactly when a reader opens it: when the number
+    surprised them.
+  - **A tile's VALUE was windowed and its SLA TINT was whole-run.** An
+    assertion is evaluated once at finalize against the run, so a p95 tile
+    could show a healthy ten seconds coloured as a breach because a DIFFERENT
+    ten seconds broke the gate.
+
+**THE OLD COMMENT DEFENDING `return null` WAS HALF RIGHT, AND THE HALF THAT WAS
+WRONG IS THE INTERESTING ONE.** It argued that "a statistics table with nothing
+to show already renders its own 'no statistics were recorded' message, and six
+tiles reading 0/0.00%/— above that sentence would assert measurements nobody
+took". MEASURED, the table prints no such message for an empty WINDOW — that
+message is for a run with no statistics, which is a different fact. The second
+half stands and is why the fix is a SENTENCE rather than zeroed tiles:
+`0 requests` is a true claim about the window that reads as a false claim about
+the run. **When a comment justifies an absence by pointing at something else on
+screen, go and look at the screen.**
+
+**THE TINT IS WITHHELD, NOT RECOMPUTED.** Recomputing would invent a verdict
+nobody configured — the same line this repo already draws between a platform
+gate (the organisation's policy) and a simulation's own checks. `baseline` had
+followed exactly this rule one line up since C02 ("a trend against a windowed
+number compares two different things"); the rest of the component had not.
+
+**AND THE UNIT CASE IS PAIRED WITH THE ONE ABOVE IT ON PURPOSE**: that proves
+the tint APPEARS, this proves what silences it. Either alone passes against a
+component that never tints, or against one that always does.
+
+**ONE FALSE ALARM, CLEARED BY MEASURING.** A window past the end of the run
+(`?from=100000&to=200000`) shows whole-run numbers, which looks like a window
+being silently ignored. It is `parseWindow` clamping to the run's duration,
+correctly and by design — a case built on it would have proved nothing.
+
 The acceptance-first-four branch added ONE e2e file —
 `apps/web/e2e/acceptance.spec.ts` (5) — plus 1 case to `run-list.spec.ts`, so
 **e2e rises to 126** from 120. Unit stays 147 / 1827 and integration is
