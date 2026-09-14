@@ -278,6 +278,38 @@ describe('RunStats', () => {
     expect(colourOf('stat-p99')).toBe('');
   });
 
+  /**
+   * ═══ AND NOT UNDER A WINDOW, BECAUSE THE GATE JUDGED THE WHOLE RUN ═══
+   * (the 09-13 review's acceptance list: selected-window versus whole-run)
+   *
+   * An SLA assertion is evaluated once, at finalize, against the run — nothing
+   * re-evaluates it per window and nothing could, since the threshold is a
+   * statement about the run. So with a window applied the VALUE in this tile is
+   * that stretch's and the tint would be the whole run's: a p95 showing a
+   * perfectly healthy ten seconds, coloured as a breach, because a DIFFERENT
+   * ten seconds broke the gate.
+   *
+   * Withheld rather than recomputed — recomputing would invent a verdict
+   * nobody configured, which is the line this product already draws between a
+   * platform gate and a simulation's own checks.
+   *
+   * Paired with the case above on purpose: that one proves the tint appears,
+   * this one proves what silences it. Either alone passes against a component
+   * that never tints, or against one that always does.
+   */
+  it('withholds the tint while a window is applied', () => {
+    render(
+      <RunStats
+        stats={stats}
+        windowed
+        assertions={[
+          assertion({ outcome: 'failed', actualValue: 659, rule: rule({ metric: 'p95' }) }),
+        ]}
+      />,
+    );
+    expect(colourOf('stat-p95')).toBe('');
+  });
+
   it('warns amber while a gate is passing but close, and stays clear when it is not', () => {
     // 950 against an `lte 1000` gate is inside the 10% margin; 500 is not.
     render(

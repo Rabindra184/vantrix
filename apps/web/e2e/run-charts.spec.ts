@@ -7,7 +7,7 @@ import {
 } from './fixtures.js';
 import { apiJson, openTimeWindow, plot, signIn } from './helpers.js';
 import { SURFACE_TOKENS } from '../src/charts/theme.js';
-import { runChartsPath } from '../src/routes/paths.js';
+import { runChartsPath, runPath } from '../src/routes/paths.js';
 
 /**
  * The eight overview charts on the run detail page, in a real browser.
@@ -1303,4 +1303,66 @@ test('the errors table says its totals are whole-run under a window', async ({ p
 
   await page.getByRole('link', { name: /^Errors/ }).click();
   await expect(page.getByTestId('errors-window-note')).toContainText(/whole run/i);
+});
+
+/**
+ * ═══ WHAT A WINDOW CHANGES, AND WHAT IT MUST SAY IT DOES NOT ═══
+ * (the 09-13 review's acceptance list: "selected-window versus whole-run evidence")
+ *
+ * A coverage sweep found this the largest unexercised cluster on the list: the
+ * API contract for windowing is covered thoroughly and the PAGE almost not at
+ * all. Three things on the Overview tab were wrong under a window, and each is
+ * the same mistake — the window changed a number and not the thing describing
+ * it.
+ *
+ * `?from=62000&to=63000` is a REAL, IN-RANGE second of the 62s reference run
+ * that happens to hold no requests. It is not an out-of-range window:
+ * `parseWindow` clamps those to the whole run, correctly, and a case built on
+ * one would prove nothing.
+ */
+test('an empty window says so instead of deleting the run’s totals', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  // The whole run first, so the absence below is about the WINDOW and not
+  // about a page that failed to render.
+  await page.goto(runPath(runId));
+  await expect(page.getByTestId('stat-total-requests')).toBeVisible();
+
+  await page.goto(`${runPath(runId)}?from=62000&to=63000`);
+  await expect(page.getByRole('region', { name: 'Run totals' })).toBeVisible();
+
+  /* THE SECTION SURVIVES AND EXPLAINS ITSELF. It used to return `null`: the
+     six headline numbers vanished with nothing anywhere saying why, and the
+     comment defending that pointed at a "no statistics were recorded" message
+     the statistics table does not print for this state. */
+  const empty = page.getByTestId('stats-empty-window');
+  await expect(empty).toBeVisible();
+  await expect(empty).toContainText(/no requests fall inside the selected window/i);
+  // And it does not read as a claim about the RUN, which is the whole reason
+  // zeroed tiles were the wrong answer.
+  await expect(empty).toContainText(/run’s own figures are unchanged|widen the window/i);
+  await expect(page.getByTestId('stat-total-requests')).toHaveCount(0);
+});
+
+test('the percentile note names the population it is actually describing', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  const note = page.getByTestId('percentile-method');
+
+  await page.goto(runPath(runId));
+  await expect(note).toContainText(/sketch of the whole run/i);
+
+  /* UNDER A WINDOW THAT SENTENCE WAS FALSE. The sketch is rebuilt from the
+     buckets the window selects, so the rank is read from that stretch — and a
+     methodology note naming the wrong population is worse than none, because a
+     reader opens it precisely when the number surprises them. A window with
+     requests in it, so the tiles really are windowed. */
+  await page.goto(`${runPath(runId)}?from=0&to=2000`);
+  await expect(page.getByTestId('stat-total-requests')).toBeVisible();
+  await expect(note).toContainText(/sketch of the selected window/i);
+  await expect(note).not.toContainText(/sketch of the whole run/i);
 });

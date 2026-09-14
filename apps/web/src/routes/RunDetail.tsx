@@ -545,6 +545,13 @@ export function RunOverviewTab() {
             stats={stats.data}
             baseline={window === null ? baselineRun(trends.data, runId) : null}
             assertions={runAssertions}
+            /* Three things inside change with a window: the empty branch says
+               so instead of vanishing, the percentile note names the right
+               population, and the SLA tint is withheld because the gate judged
+               the whole run. `baseline` already followed the same rule one line
+               up — a trend against a windowed number compares two different
+               things — so this is that argument applied to the rest. */
+            windowed={window !== null}
           />
           {compact && <Sparklines series={series} />}
         </>

@@ -47,6 +47,7 @@ export default function RunStats({
   stats,
   baseline,
   assertions,
+  windowed,
 }: {
   readonly stats: StatsResponse;
   readonly baseline?: TrendRun | null;
@@ -56,9 +57,48 @@ export default function RunStats({
    * leaves every tile untinted — see `slaTone`.
    */
   readonly assertions?: readonly Assertion[];
+  /**
+   * Is a time window applied? Three things below change with it, and every one
+   * of them was wrong under a window before this prop existed — see the empty
+   * branch, the percentile note and `slaTone`.
+   */
+  readonly windowed?: boolean;
 }) {
   const run = stats.stats.find((row) => row.scope === 'run');
-  if (run === undefined) return null;
+  if (run === undefined) {
+    /* ═══ AN EMPTY WINDOW IS A MEASUREMENT, NOT AN ABSENCE ═══
+     *
+     * This returned `null`, on the reasoning — written here — that "a
+     * statistics table with nothing to show already renders its own 'no
+     * statistics were recorded' message, and six tiles reading 0/0.00%/—
+     * above that sentence would assert measurements nobody took".
+     *
+     * The first half of that is true of a run with no statistics and FALSE of
+     * a window with none. MEASURED on the reference run at `?from=62000&to=63000`
+     * — a real, in-range second of a 62s run that happens to hold no requests
+     * — the whole "Run totals" section vanished and the statistics table
+     * printed no such message either. A reader who dragged the brush one
+     * second too far got a page with its headline numbers silently removed and
+     * nothing anywhere saying why.
+     *
+     * The second half stays right, which is why this is a sentence and not
+     * zeroed tiles: `0 requests` is a claim about the window (true) that reads
+     * as a claim about the run (false). So the section keeps its landmark and
+     * says what happened.
+     *
+     * The whole-run case is untouched and still renders nothing: there the
+     * table's own message IS on screen, and this component has no scope to
+     * add. */
+    if (windowed !== true) return null;
+    return (
+      <section aria-label="Run totals" data-testid="stats-empty-window">
+        <p className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted">
+          No requests fall inside the selected window, so this run’s totals cannot be computed for
+          it. The run’s own figures are unchanged — widen the window to see them.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section aria-label="Run totals">
@@ -73,7 +113,7 @@ export default function RunStats({
         <StatTile
           label="Requests"
           value={formatCount(run.count)}
-          tone={slaTone(assertions, 'count')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'count')}
           /* "successful / failed", not "OK / KO" — review N01. Those two are
              Gatling's words, and nothing in this repo requires them: the PRD
              binds QUANTITIES (count, ok/ko count, % KO, count/second…) and
@@ -92,7 +132,7 @@ export default function RunStats({
           // `koCount / count`, which would be a second definition of one
           // number sitting a few hundred pixels from the first.
           value={`${(run.errorRate * 100).toFixed(2)}%`}
-          tone={slaTone(assertions, 'error_rate')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'error_rate')}
           hint={`${formatCount(run.koCount)} of ${formatCount(run.count)} requests`}
           delta={deltaFor(run.errorRate, baseline?.errorRate, 'lower')}
           data-testid="stat-error-rate"
@@ -106,7 +146,7 @@ export default function RunStats({
              render "Requests/s 14.40 req/s". */
           label="Requests/s"
           value={formatRate(run.throughputRps)}
-          tone={slaTone(assertions, 'throughput_rps')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'throughput_rps')}
           hint={`${formatCount(run.count)} requests over the run`}
           delta={deltaFor(run.throughputRps, baseline?.throughputRps, 'higher')}
           data-testid="stat-throughput"
@@ -134,7 +174,7 @@ export default function RunStats({
           label="Mean"
           value={formatMs(run.meanMs)}
           unit="ms"
-          tone={slaTone(assertions, 'mean')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'mean')}
           hint={`up to ${formatMs(run.maxMs)} ms`}
           delta={deltaFor(run.meanMs, baseline?.meanMs, 'lower')}
           data-testid="stat-mean-response"
@@ -143,7 +183,7 @@ export default function RunStats({
           label="p95"
           value={percentileValue(run, 'p95')}
           unit={percentileUnit(run, 'p95')}
-          tone={slaTone(assertions, 'p95')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'p95')}
           hint="estimate"
           delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
           data-testid="stat-p95"
@@ -152,7 +192,7 @@ export default function RunStats({
           label="p99"
           value={percentileValue(run, 'p99')}
           unit={percentileUnit(run, 'p99')}
-          tone={slaTone(assertions, 'p99')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'p99')}
           hint="estimate"
           delta={deltaFor(percentileMs(run, 'p99'), percentileMs(baseline, 'p99'), 'lower')}
           data-testid="stat-p99"
@@ -186,7 +226,13 @@ export default function RunStats({
           <span className="hidden group-open:inline">Hide how percentiles are measured</span>
         </summary>
         <p className="pt-2 text-[0.75rem] leading-relaxed text-muted">
-          Percentiles are read from a sketch of the whole run rather than from a bucketed
+          {/* "of the whole run" IS FALSE UNDER A WINDOW, and this paragraph
+              said it unconditionally. The sketch is rebuilt from the buckets
+              the window selects, so under one the rank is read from that
+              stretch — which is the whole point of applying it. A methodology
+              note that names the wrong population is worse than none, because
+              a reader checks it precisely when the number surprises them. */}
+          Percentiles are read from a sketch of {windowed === true ? 'the selected window' : 'the whole run'} rather than from a bucketed
           histogram, which answers any rank — p95, p99, p99.9 — to within 1% of the true
           distribution. The tool&rsquo;s own report estimates from fixed bands and can drift
           further: on this fixture&rsquo;s p99 it reads 9.47% low, reporting a number that occurs
@@ -314,6 +360,22 @@ function deltaTone(change: number, better: 'higher' | 'lower' | 'neutral'): Delt
  */
 const NEAR_MARGIN = 0.1;
 
+/**
+ * ═══ NOT UNDER A WINDOW, BECAUSE THE GATE JUDGED THE WHOLE RUN ═══
+ *
+ * Every caller passes `windowed === true ? undefined : assertions`. An SLA
+ * assertion is evaluated once, against the run, at finalize — nothing
+ * re-evaluates it per window and nothing could, since the rule's threshold is
+ * a statement about the run. So under a window the VALUE in a tile is this
+ * stretch's and the TINT would be the whole run's: a p95 tile showing a
+ * perfectly healthy ten seconds, coloured as a breach, because a different
+ * ten seconds broke the gate.
+ *
+ * Withheld rather than recomputed. Recomputing would invent a verdict nobody
+ * configured — the "a platform gate is the organisation's policy" line this
+ * repo already draws between SLA gates and simulation checks — and a tint
+ * that means something different from the tint beside it is worse than none.
+ */
 function slaTone(
   assertions: readonly Assertion[] | undefined,
   metric: string,
