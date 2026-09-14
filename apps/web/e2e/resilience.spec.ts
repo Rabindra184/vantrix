@@ -41,6 +41,11 @@ test('the skeleton has the columns of the table it stands in for', async ({ page
   await stall(page, '**/v1/runs**', 1_500);
   await page.getByRole('link', { name: 'Runs', exact: true }).click();
 
+  /* WAIT FOR THE ROUTE FIRST. `ProjectTests` draws its own four-column
+     skeleton on the way through, and reading "the first skeleton on the page"
+     picked that one up — a locator that does not say WHICH page it means is
+     answered by whichever page is mounted. */
+  await expect(page).toHaveURL(/\/projects\/alpha\/runs$/);
   const header = page.getByTestId('skeleton-table').locator('> div').first();
   await expect(header).toBeVisible();
   const placeholderColumns = await header.evaluate((el) => el.children.length);
@@ -117,4 +122,60 @@ test('the cold start says what it is doing rather than showing nothing', async (
 
   // And it resolves rather than sticking, once the stall expires.
   await expect(page.getByTestId('run-row').first()).toBeVisible({ timeout: 15_000 });
+});
+
+/**
+ * ═══ A LAZY CHUNK THAT NEVER ARRIVES ═══
+ * (the 09-13 review's acceptance list: "slow loading and retry")
+ *
+ * `App.tsx` declares seventeen `lazy()` routes and nothing caught what they
+ * throw. MEASURED against the built bundle before the boundary existed:
+ * blocking one chunk and navigating to its route left `#root` with ZERO
+ * children, `document.body` empty, and no header and no rail — the whole tree
+ * unmounted, with `Failed to fetch dynamically imported module` on the console
+ * and nothing at all on screen.
+ *
+ * That is what every reader with the app open gets the moment a deploy
+ * replaces the assets they loaded: the next link asks for a file that is no
+ * longer there.
+ *
+ * ONLY A BROWSER CAN TEST THIS. It needs a real built bundle, real chunk
+ * URLs and a real dynamic import — `pnpm test:e2e` serves exactly that, and
+ * jsdom has none of it.
+ */
+test('a chunk that fails to load leaves a page, not a blank screen', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await expect(page.getByTestId('run-row').first()).toBeVisible();
+
+  // One route's chunk, not all of them: the interesting claim is that the rest
+  // of the application survives.
+  await page.route('**/assets/ProjectSetup*.js', (route) => route.abort());
+  await page.goto('/projects/checkout/setup');
+
+  /* THE PANEL, NOT A BLANK PAGE. `ErrorState` wraps its whole panel in
+     `role="alert"`, so this reads the title, the detail and the remediation in
+     one node — which is also what a screen reader is handed. */
+  const panel = page.getByRole('alert');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText(/could not be loaded/i);
+  await expect(panel).toContainText(/updated while the page was open/i);
+
+  /* AND AN ACTION. Reloading is the only thing a reader can do from here, and
+     it is the thing that actually fixes the common cause — the new index.html
+     names the new files. */
+  await expect(page.getByTestId('route-error-reload')).toBeVisible();
+
+  /* THE SHELL SURVIVES, which is the difference between a broken page and a
+     broken app: the boundary inside `AppShell` catches a failed PAGE chunk, so
+     the header and the project rail are still there to navigate away with. */
+  await expect(page.getByRole('navigation', { name: 'Projects', exact: true })).toBeVisible();
+
+  /* AND THE ERROR DOES NOT OUTLIVE THE ROUTE THAT CAUSED IT. A caught error is
+     state; a boundary that never resets turns one failed chunk into a dead
+     application. Navigating to a route whose chunk is fine must work. */
+  await page.getByRole('link', { name: 'All runs' }).click();
+  await expect(page.getByTestId('run-row').first()).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });

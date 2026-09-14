@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getSession, sessionQueryKey } from './api/session';
 import RouteFallback from './components/RouteFallback';
+import RouteErrorBoundary from './components/RouteErrorBoundary';
 import ProjectRail from './ProjectRail';
 import AccountMenu from './AccountMenu';
 import { ActivityIcon } from './components/icons';
@@ -231,9 +232,15 @@ export default function AppShell() {
               while one loads: without it the nearest boundary is App's own,
               ABOVE this shell, so a first visit to any page blanks the whole
               window — chrome included — for the length of one request. */}
+          {/* Inside the shell, so a failed PAGE chunk keeps the header and
+              the rail — the reader can still navigate somewhere that works,
+              which is the difference between a broken page and a broken app.
+              The outer boundary in `App` is the last resort behind it. */}
+          <RouteErrorBoundary>
           <Suspense fallback={<RouteFallback />}>
             <Outlet />
           </Suspense>
+          </RouteErrorBoundary>
         </main>
       </div>
     </div>
