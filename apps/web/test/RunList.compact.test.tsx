@@ -281,13 +281,43 @@ describe('RunList — the tally keeps both caveats', () => {
     expect(section.textContent ?? '').toMatch(/counted more than once/i);
   });
 
-  it('leaves them as plain prose on a wide viewport', async () => {
-    useIsCompactMock.mockReturnValue(false);
-    renderList();
-    await screen.findAllByTestId('run-row');
+  /**
+   * ═══ ONE SHAPE AT EVERY WIDTH NOW (review 09-13 copy table) ═══
+   *
+   * This case asserted the OPPOSITE — `queryByRole('group')` was null on a
+   * wide viewport, pinning the caveat as plain prose there while a phone got
+   * the disclosure. That was M18's deliberate split, and it is the half the
+   * copy table objects to: "Long run-health caveat" -> "`On this page` +
+   * accessible `How counts work` disclosure", written against a 1440x900
+   * viewport where 67 words of methodology sat above the tally.
+   *
+   * Inverted rather than deleted, so the claim it now makes is the one that
+   * replaced it: the SCOPE is visible at both widths and the METHODOLOGY is
+   * behind a disclosure at both.
+   */
+  it('shows the scope visibly and folds the methodology, at both widths', async () => {
+    for (const compact of [false, true]) {
+      cleanup();
+      useIsCompactMock.mockReturnValue(compact);
+      renderList();
+      await screen.findAllByTestId('run-row');
 
-    const section = screen.getByRole('region', { name: 'Run health on this page' });
-    expect(within(section).queryByRole('group')).toBeNull();
-    expect(section.textContent ?? '').toMatch(/not totals for the whole list/i);
+      const section = screen.getByRole('region', { name: 'Run health on this page' });
+      const where = compact ? 'compact' : 'wide';
+
+      // The scope, visible and unfolded — the fact a reader needs without asking.
+      expect(within(section).getByTestId('health-scope').textContent, where).toMatch(
+        /^On this page · \d+ runs?$/,
+      );
+      // The methodology, behind a real control. A `<summary>` contributes an
+      // ARIA group, which is what this queries — and what the old case
+      // asserted was absent here.
+      expect(within(section).queryByRole('group'), where).not.toBeNull();
+      expect(within(section).getByText('How counts work'), where).toBeInTheDocument();
+      // jsdom keeps a closed `<details>`'s children, so this proves the words
+      // are still THERE, not that they are on screen — the geometry is
+      // `mobile.spec.ts`'s.
+      expect(section.textContent ?? '', where).toMatch(/not totals for the whole list/i);
+    }
   });
 });

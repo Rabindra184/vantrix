@@ -277,7 +277,7 @@ export default function RunList({
         />
       ) : (
         <>
-          <RunListHealth items={items} compact={compact} />
+          <RunListHealth items={items} />
           {/* ═══ NINE COLUMNS DO NOT FIT ON A PHONE, AND SCROLLING THEM
               SIDEWAYS IS NOT A FIX (review M18) ═══
 
@@ -608,15 +608,7 @@ function RunListControls({
  * so it was never the right test anyway: on page three of five it is true
  * and on page five it is false, and the counts are page-local in both.
  */
-function RunListHealth({
-  items,
-  compact,
-}: {
-  readonly items: readonly RunListItem[];
-  /** Below 768px the two caveats are one disclosure rather than a paragraph —
-   *  see the note on the `<p>` below. */
-  readonly compact?: boolean;
-}) {
+function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
   const summary = healthSummary(items);
 
   return (
@@ -648,30 +640,45 @@ function RunListHealth({
           a failing check, and a tile reading zero is a claim an engineer
           triages on. Counting those here needs a field the list endpoint does
           not have; saying so does not. */}
-      {/* ═══ THE SAME WORDS, BEHIND A DISCLOSURE ON A PHONE (review M18) ═══
+      {/* ═══ THE SCOPE VISIBLE, THE METHODOLOGY ONE TAP AWAY ═══
+          (review 09-13, "Copy changes to make immediately")
 
-          Both caveats are load-bearing and neither is being deleted: one says
-          the counts are page-local, the other says WHICH systems they count,
-          and the second is why "Needs attention: 0" is not a claim about a
-          simulation's own assertions.
+          The row is "Long run-health caveat" -> "`On this page` + accessible
+          `How counts work` disclosure with the corrected definition", under a
+          preamble that says to "move methodology out of the primary reading
+          path".
 
-          They are also 117px of prose above four tiles, measured at 375px, on
-          a screen where the first run row already began at y=908. A
-          `<details>` keeps every word one tap away and gives back the height
-          to the list the page is actually for. It is NOT collapsed on a
-          desktop, where the paragraph costs two lines and reads as part of
-          the tally. */}
-      {compact === true ? (
-        <details className="group">
-          <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
-            <span className="group-open:hidden">What these count</span>
-            <span className="hidden group-open:inline">Hide the detail</span>
-          </summary>
-          <p className="pt-1.5 text-[12px] leading-relaxed text-muted">{HEALTH_CAVEAT(items.length)}</p>
-        </details>
-      ) : (
-        <p className="text-[12px] leading-relaxed text-muted">{HEALTH_CAVEAT(items.length)}</p>
-      )}
+          M18 built half of this: below 768px the caveat became a `<details>`,
+          because 117px of prose above four tiles on a 375px screen was pushing
+          the first run row to y=908. On a DESKTOP it stayed a paragraph, on
+          the reasoning that two lines there read as part of the tally — and
+          that is the half the copy table is objecting to, on the 1440x900
+          viewport the review was written against. The correctness fix that
+          landed since made it longer, not shorter: 45 rendered words became
+          67.
+
+          ONE SHAPE AT EVERY WIDTH NOW. The SCOPE is the fact a reader needs
+          without asking — these four numbers are about this page, not the
+          list — so it is visible, short, and beside the counts it qualifies.
+          Everything else is methodology and sits behind the disclosure, which
+          is what "accessible" asks for: a native `<summary>` is a real control
+          with real keyboard behaviour, and it contributes an ARIA group rather
+          than a heading, so no page's heading outline moves.
+
+          Nothing is deleted. Both caveats are load-bearing — one says the
+          counts are page-local, the other says WHICH systems they count, and
+          the second is why "Needs attention: 0" is not a claim about a
+          simulation's own assertions. */}
+      <p className="text-[12px] font-medium text-muted" data-testid="health-scope">
+        {HEALTH_SCOPE(items.length)}
+      </p>
+      <details className="group mt-1">
+        <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+          <span className="group-open:hidden">How counts work</span>
+          <span className="hidden group-open:inline">Hide how counts work</span>
+        </summary>
+        <p className="pt-1.5 text-[12px] leading-relaxed text-muted">{HEALTH_CAVEAT()}</p>
+      </details>
       {/* TWO ACROSS FROM THE NARROWEST WIDTH, not one. Measured at 375px:
           stacked one per row these four tiles were 326px, and they sit between
           the heading and the list the page is for — so the first run card
@@ -944,12 +951,15 @@ function isVerdictFilter(value: string | null): value is RunListVerdictFilter {
  * numbers sitting in a row read as a breakdown that sums to the page, and this
  * one does not.
  */
-const HEALTH_CAVEAT = (count: number): string =>
-  `Counted over the ${count} ${count === 1 ? 'run' : 'runs'} on this page. Paging or filtering ` +
-  'changes them; they are not totals for the whole list. A run can be counted more than once — ' +
-  '“Needs attention” asks whether anything failed, and “Unjudged” asks whether a gate reached a ' +
-  'verdict, which are different questions. Failures counted here are execution state, this ' +
-  'platform’s SLA verdict, and the checks a simulation declares for itself.';
+const HEALTH_SCOPE = (count: number): string =>
+  `On this page · ${count} ${count === 1 ? 'run' : 'runs'}`;
+
+const HEALTH_CAVEAT = (): string =>
+  'Paging or filtering changes these; they are not totals for the whole list. A run can be ' +
+  'counted more than once — “Needs attention” asks whether anything failed, and “Unjudged” asks ' +
+  'whether a gate reached a verdict, which are different questions. Failures counted here are ' +
+  'execution state, this platform’s SLA verdict, and the checks a simulation declares for ' +
+  'itself.';
 
 /**
  * The filter form, folded away on a phone — review M18.

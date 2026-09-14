@@ -40,6 +40,22 @@ export interface RunnerReadiness {
   readonly detail: string;
   /** How many jobs a run queued now would wait behind. */
   readonly ahead: number;
+  /**
+   * ═══ THE SETUP ACTION THIS STATE EARNS (review 09-13 copy table) ═══
+   *
+   * The row is "No runner seen yet + inference paragraphs" -> "`Runner
+   * availability unknown` + a useful connection/setup action". M12 already
+   * delivered the headline and killed the "queue one to find out" affordance;
+   * what it left was a state that says what is not known and offers nothing
+   * to do about it.
+   *
+   * TRUE FOR `unknown` ALONE, and that is the scope the row names. `idle` and
+   * `stalled` are states where a runner HAS been seen — the reader's problem
+   * there is a process that stopped claiming, not one that was never
+   * deployed, and sending them to set one up would be the wrong advice
+   * confidently given. Those keep their own sentences.
+   */
+  readonly needsSetup: boolean;
 }
 
 /** The statuses that mean a runner has taken the job and is working on it. */
@@ -64,6 +80,7 @@ export function runnerReadiness(
     return {
       kind: 'unknown',
       ahead: 0,
+      needsSetup: true,
       headline: 'Runner availability unknown',
       /* ═══ DO NOT ASK FOR WORK AS A HEALTH CHECK (review 09-13 M12) ═══
        *
@@ -92,6 +109,7 @@ export function runnerReadiness(
     return {
       kind: 'busy',
       ahead,
+      needsSetup: false,
       headline: 'A runner is working',
       detail:
         `A node claimed a job, so one is connected. It runs a single job at a time, so a run ` +
@@ -109,6 +127,7 @@ export function runnerReadiness(
       return {
         kind: 'stalled',
         ahead: queued.length,
+        needsSetup: false,
         headline: 'Nothing is claiming work',
         detail:
           `A job has been queued for ${durationLabel(waited)} and no runner has claimed it. ` +
@@ -119,6 +138,7 @@ export function runnerReadiness(
     return {
       kind: 'waiting',
       ahead: queued.length,
+      needsSetup: false,
       headline: 'Waiting to be claimed',
       detail:
         `${countLabel(queued.length, 'job')} queued, none claimed yet. A runner polls for work, ` +
@@ -133,6 +153,7 @@ export function runnerReadiness(
   return {
     kind: 'idle',
     ahead: 0,
+    needsSetup: false,
     headline: 'No job in flight',
     detail:
       `A runner last finished a job ${agoLabel(now - Date.parse(last.job.updatedAt))}. ` +

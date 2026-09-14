@@ -115,6 +115,77 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-copy-batch branch (the 09-13 review's "Copy changes to make
+immediately" table, plus C06's remainder) added no unit FILE and 5 cases, from
+147 / 1821 to **147 / 1826**. Integration is UNCHANGED and **e2e stays 118** —
+no spec gained a case. SIX changes in one branch, deliberately: CI's `build`
+job is ~15 minutes and these are one document's worth of copy.
+
+**A SWEEP OF THAT TABLE'S 12 ROWS FOUND 5 OPEN, AND ONE VERDICT OVERTURNED.**
+Every critical, major and minor finding was already addressed, so most rows
+were satisfied as a side effect — but "the old string is gone" is not "the
+proposed replacement is there", and a grep found all of them surviving only in
+past-tense comments. That is the third sweep in a row to find real work behind
+an apparently-closed finding.
+
+**WHAT WAS ACTUALLY WRONG, AND THE PATTERN ACROSS THEM.** Four of the five were
+a correction that stopped one step short of the reader:
+
+  - `ProjectSetup` opened with "Three ways to get a run into this project" — a
+    sentence that COUNTED the cards below it. M04 built the choices; the
+    paragraph outlived its own job.
+  - The telemetry empty state said what had not happened and offered nothing.
+  - The runner's `unknown` state got M12's honest headline and no action.
+  - The run-health caveat became a disclosure BELOW 768px only. On the
+    1440x900 viewport the review was written against it was still 67 words of
+    prose above the tally — and the correctness fix that landed since made it
+    LONGER, 45 words to 67. **A fix applied at one breakpoint is not applied.**
+
+**"Not configured" IS NOT "Not evaluated", AND THE BAND HAD ALREADY SAID SO.**
+The 48px word read `Not evaluated` both for a project with NO RULE and for
+rules that all came back not applicable. `gatesText` three lines up has drawn
+that distinction since C01 — "not configured — no SLA rule judged this run" —
+and the word above it contradicted it. Third time this component has taught
+**grep for the siblings of a comment that argues a distinction**. Keyed on
+`assertions !== undefined && assertions.length === 0`, never on `judged`, which
+is also false for an ABSENT list — a run whose gates have not been reported is
+not a project without rules.
+
+**C06's REMAINDER WAS HELD OPEN BY A TEST THAT PINNED THE DEFECT.** The
+statistics table's `<caption>` — its accessible NAME — was 94 words of
+methodology, met on arrival with no way to skip it, which C06 names explicitly
+("Avoid duplicating the full prose as the accessible name"). A case called
+"keeps the full caption as the table's accessible name" asserted it stayed,
+arguing a short name "would tell a screen-reader user less than a sighted one".
+
+**THAT ARGUMENT WAS TRUE WHEN WRITTEN AND FALSE BY THE TIME IT MATTERED.** It
+held while the caption was the ONLY copy of the prose; C06's own first half
+removed the `aria-hidden` from `TableFrame`'s disclosure, so the methodology is
+exposed to the accessibility tree for everyone. Both readers now get the same
+short name and the same opt-in detail. This is the verbatim-prose trap recorded
+for the M18 caveat, met from the other side: **the pin was right when written
+and became the reason the defect survived.**
+
+**AND THE SHORT NAME KEEPS ITS DISTINCTIVE WORD ON PURPOSE.** Six specs find
+that table by `getByRole('table', { name: /statistics/i })`, and the visible
+`summary` prop does not contain "statistics". A shorter name that dropped it
+would have been a rename smuggled in behind an accessibility fix.
+
+**TWO LINKS, ONE HONEST DESTINATION, AND THE TEMPTING ONE WAS WRONG.** The
+telemetry and runner actions both point at API TOKENS, because that page names
+the permission each needs (`Generator telemetry`, `On-prem runner`) and nothing
+else in the app does. Add results was the obvious link for telemetry and says
+nothing about it; pointing there would be the false affordance M12 is about.
+The runner action fires for `unknown` ALONE — `idle` and `stalled` mean a
+runner HAS been seen, and telling that reader to go deploy one is wrong advice
+confidently given.
+
+**`pnpm typecheck` CAUGHT WHAT A GREEN SUITE DID NOT, AGAIN.** A new
+`RunDecisionBand` fixture used a `name` field the `Assertion` type does not
+have; vitest passed 22/22 and `tsc` rejected it. Fourth time this file records
+it: **vitest does not typecheck, so a test constructing a prop by hand is seen
+by the gate's first command and by nothing else.**
+
 The review-n03-omit-rail-badge branch (N03's third clause — the finding is
 closed) DELETED 5 unit cases from `apps/web/test/ProjectRail.test.tsx`, so unit
 FALLS to 147 / 1821 from 147 / 1826, and **e2e falls to 118** from 120

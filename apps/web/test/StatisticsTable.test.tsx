@@ -976,11 +976,16 @@ describe('StatisticsTable — a displayed percentile is clamped to [min, max]', 
 
   /** And the caption says so — a reader comparing our p99 against another
    *  tool's needs to know it is an estimate, clamped or not. */
-  it('says in the caption that percentiles are estimates within 1%', () => {
+  it('says the percentiles are estimates within 1%, in the disclosure', () => {
     renderTable();
-    const caption = screen.getByRole('table').querySelector('caption');
-    expect(caption?.textContent).toMatch(/estimate/i);
-    expect(caption?.textContent).toMatch(/within 1%/i);
+    /* READ OFF THE PAGE, NOT OFF THE `<caption>` (review C06). The claim is
+       that the product tells a reader how close these numbers are; it used to
+       be checked on the table's accessible NAME, which is where C06 says the
+       prose must not be. The words moved into `TableFrame`'s disclosure and
+       the claim is unchanged. */
+    const page = document.body.textContent ?? '';
+    expect(page).toMatch(/estimate/i);
+    expect(page).toMatch(/within 1%/i);
   });
 });
 
@@ -1529,18 +1534,41 @@ describe('StatisticsTable — CSV export', () => {
  * — it is read once and then met on every visit, above the numbers somebody
  * came for.
  *
- * THE `<caption>` IS UNTOUCHED, and that is the load-bearing half. It is the
- * table's accessible NAME, this file reads its `textContent` for the
- * denominator, and the e2e suite finds these tables by it. Shortening the name
- * to tidy the page would break all of that AND tell a screen-reader user less
- * than a sighted one.
+ * THE `<caption>` IS A SHORT NAME NOW, AND THE ARGUMENT THAT KEPT IT LONG HAS
+ * EXPIRED. This read: "Shortening the name to tidy the page would break all of
+ * that AND tell a screen-reader user less than a sighted one." The second half
+ * was true WHEN THE CAPTION WAS THE ONLY COPY OF THE PROSE. It is not any
+ * more: C06's first half removed the `aria-hidden` from `TableFrame`'s
+ * disclosure, so the full methodology is exposed to the accessibility tree,
+ * one keystroke away, for everyone. A screen-reader user now gets the same
+ * short name and the same opt-in detail a sighted one does.
+ *
+ * C06's second half is explicit — "Avoid duplicating the full prose as the
+ * accessible name" — and a 94-word `<caption>` is met on arrival with no way
+ * to skip it. So the name is "Statistics for every request and group in this
+ * run" and the prose lives only in the disclosure.
+ *
+ * THE DISTINCTIVE WORD SURVIVES ON PURPOSE. Six specs find this table by
+ * `getByRole('table', { name: /statistics/i })`; the visible summary does not
+ * contain "statistics", so a shorter name that dropped it would have been a
+ * rename smuggled in behind an accessibility fix.
+ *
+ * This entry is the "a test that pins prose verbatim protects it from
+ * correction" lesson CLAUDE.md already records, met from the other side: the
+ * pin was right when written and became the reason the defect survived.
  */
 describe('StatisticsTable — the prose is available rather than present', () => {
-  it('keeps the full caption as the table’s accessible name', () => {
+  it('names the table concisely, without reciting the methodology', () => {
     renderTable();
-    const table = screen.getByRole('table');
-    // The long text is still the name, exactly as before.
-    expect(table.querySelector('caption')?.textContent ?? '').toMatch(/percentile/i);
+    const name = screen.getByRole('table').querySelector('caption')?.textContent ?? '';
+    // Concise and useful, which is C06's own acceptance wording.
+    expect(name).toMatch(/^Statistics for every request and group in this run$/);
+    // The two pieces of methodology that used to be in the NAME are not.
+    expect(name).not.toMatch(/percentile|within 1%|never be added/i);
+    // PAIRED: they are still on the page, in the disclosure, so this is a move
+    // rather than a deletion — the whole of C06's "expose optional methodology
+    // as an accessible disclosure".
+    expect(document.body.textContent ?? '').toMatch(/within 1%/i);
   });
 
   it('shows a short line and puts the detail behind a disclosure', () => {
@@ -1680,11 +1708,13 @@ describe('StatisticsTable — a group row is marked as one', () => {
 
   /** And the tag is explained where the table explains itself, rather than
    *  being a convention the reader has to infer from two rows. */
-  it('says in the caption what a tagged row is, and that it does not add', () => {
+  it('says what a tagged row is, and that it does not add, in the disclosure', () => {
     renderTable();
-    const caption = screen.getByRole('table').querySelector('caption')?.textContent ?? '';
-    expect(caption).toMatch(/tagged group/i);
-    expect(caption).toMatch(/never be added/i);
-    expect(caption).toMatch(/untagged row is a single request/i);
+    // Off the page rather than off the `<caption>` — see the percentile case
+    // above and review C06: the name is short now, the prose is disclosed.
+    const page = document.body.textContent ?? '';
+    expect(page).toMatch(/tagged group/i);
+    expect(page).toMatch(/never be added/i);
+    expect(page).toMatch(/untagged row is a single request/i);
   });
 });
