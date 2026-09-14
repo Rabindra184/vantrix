@@ -79,9 +79,11 @@ export default function ProjectRail() {
   // collapses — which is what keeps `project-rail.spec.ts`'s 480px
   // click-the-last-row case meaningful. (The one non-class treatment, the
   // row `title`, is documented at its own site below.)
-  // Initialised from storage the same way `ThemeToggle` reads its choice: in
-  // the `useState` initialiser, never an effect, so the first render already
-  // agrees with the stored preference.
+  // Initialised from storage the same way `AccountMenu` reads its theme
+  // choice (`useState(() => readTheme())`): in the initialiser, never an
+  // effect, so the first render already agrees with the stored preference.
+  // (It said `ThemeToggle` until 7cda62c deleted that component and moved the
+  // control into the account menu.)
   const [collapsed, setCollapsed] = useState(() =>
     typeof document === 'undefined' ? false : readCollapsed(),
   );
@@ -175,9 +177,11 @@ export default function ProjectRail() {
             Projects
           </p>
         )}
-        {/* A hand-rolled 28px icon button in `ThemeToggle`'s segment style,
-            not `Button`: 28px square is the right size beside a 10px
-            overline, and `Button`'s smallest height is 32px. The name flips
+        {/* A hand-rolled 28px icon button, not `Button`: 28px square is the
+            right size beside a 10px overline, and `Button`'s smallest height
+            is 32px. (This named `ThemeToggle`'s segment style for the shape
+            until 7cda62c deleted that component; the button is unchanged and
+            the comparison had nothing left to point at.) The name flips
             with the state so a screen reader always hears what the NEXT
             activation does — there is no visible label to contradict. */}
         <button
@@ -348,8 +352,9 @@ export default function ProjectRail() {
  * A function rather than a constant because `NavLink` supplies `isActive`, and
  * the active row is the only place the accent appears in the rail. The active
  * treatment is THREE signals, not one: a card-raised fill (`bg-surface` — the
- * card colour is one step lighter than the sidebar in both themes, the same
- * "active = raised" language `ThemeToggle`'s segments speak), a heavier
+ * card colour is one step lighter than the sidebar in both themes — a
+ * difference measured at 1.05:1 and therefore not the load-bearing part of
+ * this row's active state), a heavier
  * weight, and an accent edge bar drawn by a `before:` pseudo-element — CSS
  * only, so the row's textContent, which `ProjectRail.test.tsx` pins verbatim,
  * gains nothing. Forced-colours mode drops both backgrounds; the weight and

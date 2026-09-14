@@ -364,7 +364,7 @@ export default function Chart({
   // TWO SOURCES, because `resolveChartMode` reads two: the OS setting, and an
   // explicit `[data-theme]` on `<html>` which overrides it. Watching only
   // `prefers-color-scheme` — which is all this did while no toggle existed —
-  // means clicking Dark in `ThemeToggle` repaints the whole app around eight
+  // means choosing Dark in the account menu repaints the whole app around eight
   // charts still drawn in light-mode ink, gridlines and tooltip fills, on a
   // near-black card. The MutationObserver is the notification this file's
   // previous comment said a toggle would have to bring with it.

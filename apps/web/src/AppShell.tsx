@@ -200,9 +200,17 @@ export default function AppShell() {
          * am I using — was a 12px span that vanished below `sm`.
          *
          * Identity is the control now and the two settings live inside it;
-         * see `AccountMenu` for why it is a disclosure and not a `role="menu"`.
-         * The full address is legible in the panel at every width, which the
-         * old header could not manage at any.
+         * see `AccountMenu` for why it is a real `role="menu"` rather than the
+         * disclosure it was first built as. The full address is legible in the
+         * panel at every width, which the old header could not manage at any.
+         *
+         * THAT SENTENCE READ THE OTHER WAY ROUND UNTIL 7cda62c REBUILT THE
+         * MENU, and it survived the rebuild pointing a reader at reasoning
+         * that file had already reversed. A cross-reference to another
+         * module's DESIGN has no compiler and no type — the same rot this repo
+         * has now paid for with a `Cnt/s` hint naming a deleted tile and "Mint
+         * one under Access" naming a renamed page. When a module changes what
+         * it IS, grep for whoever says what it is.
          */}
         <div className="ml-auto flex items-center gap-2">
           <AccountMenu identity={identity} />
