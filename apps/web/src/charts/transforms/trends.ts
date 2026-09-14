@@ -1,6 +1,6 @@
 import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
+import { compareLabels } from './compare';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
-import { runMinuteLabel } from './runLabel';
 
 /**
  * `TrendsResponse` → the three trend figures.
@@ -28,18 +28,34 @@ function ordered(t: TrendsResponse): readonly TrendRun[] {
 }
 
 /**
- * The x-axis label for a run: `MM-DD HH:mm` in the reader's own zone.
+ * The x-axis labels for a cohort: `MM-DD HH:mm` in the reader's own zone, with
+ * a short id suffix on any that would otherwise be identical.
  *
- * `runMinuteLabel` owns the shape and the zone, and is shared with the compare
- * legend — the two used to hold a copy each of the same ISO slicing, on pages
- * one link apart. See that file.
+ * ═══ THIS WAS A BARE `runMinuteLabel` PER RUN, AND COMPARE ALREADY KNEW WHY
+ *     THAT IS NOT ENOUGH ═══
  *
- * `toolStartedAt` when the worker has parsed the run header, `startedAt`
- * otherwise — the same effective key the endpoint sorts by, so the label
- * cannot disagree with the position.
+ * `compareLabels` exists to disambiguate colliding run labels, and its own
+ * docstring names THIS axis as the other consumer of the shared
+ * `runMinuteLabel`. So the function that solves the problem knew about this
+ * caller, and this caller did not use it: the same shape as every other
+ * one-of-N-call-sites defect in this repo.
+ *
+ * MEASURED, with twenty runs of one test on the Trends tab: ten drawn labels
+ * (ECharts hides alternates rather than overlapping them, so the collision
+ * this was first looked for does NOT happen) and every one of them reading
+ * `08-07 11:00`. A reader could not tell any run from any other.
+ *
+ * THE FIXTURE MAKES IT TOTAL AND PRODUCTION MAKES IT PARTIAL, which is worth
+ * stating rather than rounding up. `toolStartedAt` is when the LOAD TEST ran,
+ * read from the simulation.log header — so re-ingesting one bundle gives every
+ * run the same instant, and that is what the seeded cohort does. A real cohort
+ * collides more narrowly: runs sharing a minute, which is a nightly on a fixed
+ * schedule, a retried pipeline, or parallel shards. The fix is the same, and
+ * it costs the non-colliding case nothing — `compareLabels` suffixes ONLY the
+ * labels that collide.
  */
-function axisLabel(run: TrendRun): string {
-  return runMinuteLabel(run.toolStartedAt ?? run.startedAt);
+function axisLabels(runs: readonly TrendRun[]): string[] {
+  return compareLabels(runs.map((run) => ({ id: run.id, at: run.toolStartedAt ?? run.startedAt })));
 }
 
 /** The full timestamp, for the table. */
@@ -104,9 +120,10 @@ export function toStatusTrend(t: TrendsResponse): ChartData {
   if (t.runs.length === 0) return empty(STATUS_COLUMNS, t);
 
   const runs = ordered(t);
+  const labels = axisLabels(runs);
 
-  const rows: ChartTableRow[] = runs.map((run) => ({
-    label: axisLabel(run),
+  const rows: ChartTableRow[] = runs.map((run, i) => ({
+    label: labels[i]!,
     values: [
       fullTimestamp(run),
       share(run.okCount, run.count) ?? '—',
@@ -120,7 +137,7 @@ export function toStatusTrend(t: TrendsResponse): ChartData {
       { name: 'OK', data: runs.map((r) => share(r.okCount, r.count)) },
       { name: 'KO', data: runs.map((r) => share(r.koCount, r.count)) },
     ],
-    axisLabels: runs.map(axisLabel),
+    axisLabels: labels,
     columns: STATUS_COLUMNS,
     rows,
     limitation: truncation(t),
@@ -179,6 +196,7 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
   if (t.runs.length === 0) return empty(columns, t);
 
   const runs = ordered(t);
+  const labels = axisLabels(runs);
 
   // A run without this key has NO VALUE on this series, which is not zero —
   // zero milliseconds is a measurement, and drawing one puts the fastest
@@ -190,12 +208,12 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
     data: runs.map((run) => at(run, key)),
   }));
 
-  const rows: ChartTableRow[] = runs.map((run) => ({
-    label: axisLabel(run),
+  const rows: ChartTableRow[] = runs.map((run, i) => ({
+    label: labels[i]!,
     values: [fullTimestamp(run), ...keys.map((key) => at(run, key) ?? '—')],
   }));
 
-  return { series, axisLabels: runs.map(axisLabel), columns, rows, limitation: truncation(t) };
+  return { series, axisLabels: labels, columns, rows, limitation: truncation(t) };
 }
 
 /* ── ③ throughput ──────────────────────────────────────────────────────── */
@@ -218,9 +236,10 @@ export function toThroughputTrend(t: TrendsResponse): ChartData {
   if (t.runs.length === 0) return empty(THROUGHPUT_COLUMNS, t);
 
   const runs = ordered(t);
+  const labels = axisLabels(runs);
 
-  const rows: ChartTableRow[] = runs.map((run) => ({
-    label: axisLabel(run),
+  const rows: ChartTableRow[] = runs.map((run, i) => ({
+    label: labels[i]!,
     values: [
       fullTimestamp(run),
       rateShare(run.okCount, run) ?? '—',
@@ -234,7 +253,7 @@ export function toThroughputTrend(t: TrendsResponse): ChartData {
       { name: 'OK', data: runs.map((r) => rateShare(r.okCount, r)) },
       { name: 'KO', data: runs.map((r) => rateShare(r.koCount, r)) },
     ],
-    axisLabels: runs.map(axisLabel),
+    axisLabels: labels,
     columns: THROUGHPUT_COLUMNS,
     rows,
     limitation: truncation(t),

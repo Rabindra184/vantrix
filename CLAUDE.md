@@ -97,7 +97,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **151 files / 1850 tests**, it
+`nvm use` first, and if a run reports fewer than **151 files / 1852 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -114,6 +114,63 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The trends-colliding-labels branch added no unit FILE and 2 cases to
+`apps/web/test/transforms.trends.test.ts`, from a floor of 151 / 1850. Its
+integration floor rises by the same 2 (that file is a `.ts` file integration
+runs too) and **e2e stays 136**.
+
+**THE FINDING WAS NOT THE ONE LOOKED FOR, AND THE ONE FOUND IS WORSE BECAUSE
+IT LOOKS FINE.** The gap was recorded as "Trends legend label collisions".
+Measured in a browser with twenty runs of one test — the endpoint's own default
+`limit` — there is NO collision: ECharts hides alternate x-axis labels rather
+than overprinting them, so ten of twenty were drawn and `overlaps` was zero.
+Every one of those ten read **`08-07 11:00`**. A reader could not tell any run
+from any other, and nothing on screen looked wrong.
+
+**AND THE FIX ALREADY EXISTED, IN A FUNCTION WHOSE DOCSTRING NAMES THIS
+CALLER.** `compareLabels` disambiguates colliding run labels with a short id
+suffix, and says so: "`runMinuteLabel` owns the shape and the zone, and **the
+trends axis draws its ticks with the same function**". So the module that
+solved the problem knew this consumer existed, and this consumer called the
+bare helper per run. Same shape as `ErrorsTable`'s `windowSelected`, passed at
+two call sites of three. **When a helper exists to correct something, grep its
+own docstring for who else it names.**
+
+**THE FIXTURE MAKES IT TOTAL AND PRODUCTION MAKES IT PARTIAL — STATED RATHER
+THAN ROUNDED UP.** `toolStartedAt` is when the LOAD TEST ran, read from the
+simulation.log header, so re-ingesting one bundle gives every run the same
+instant and that is what a seeded cohort does. A real cohort collides more
+narrowly: runs sharing a minute — a nightly on a fixed schedule, a retried
+pipeline, parallel shards. The fix is the same and costs the ordinary case
+nothing, because `compareLabels` suffixes ONLY a label that collides.
+
+**IT BUYS LEGIBILITY WITH TICKS, AND THAT IS A REAL COST.** Measured before and
+after on the same cohort: 10 labels drawn at 63px each, all identical -> 5
+drawn at 113px each, all distinct. Wider labels mean ECharts hides more of
+them. Five ticks that identify a run beat ten that identify nothing, and a
+non-colliding cohort keeps all ten — but the trade is recorded rather than
+hidden.
+
+**AND THE SECOND CASE IS THE ONE THAT KEEPS THE FIRST HONEST.** A cohort whose
+runs are minutes apart must stay clean timestamps. Without it, "disambiguate"
+could have meant putting an id on every tick of every trend in the product,
+and the collision case alone would not have noticed.
+
+**AND A PROCESS ERROR THAT DESTROYED THE WHOLE BRANCH — A NEW SHAPE OF ONE
+THIS FILE ALREADY RECORDS.** The entry above says `git checkout -b` branches
+from where you are standing. This was the version where **`-b` was never run at
+all**: the investigation and both edits were made on the PREVIOUS finding's
+branch, and `gh pr merge --delete-branch` on that PR then deleted the branch,
+moved the working copy to `main`, and took the work with it.
+
+**THE FLOOR COUNT WAS THE ONLY TELL.** The gate that followed reported
+`151 / 1850` — green, and two tests short of the 1852 two new cases require. A
+pass that is two below the floor reads exactly like a pass. It was recoverable
+only because the checkpoint commit was still in the reflog
+(`git checkout <sha> -- <paths>`). **Cut the branch before the first edit, not
+before the first commit** — and the reason the floors in this file are worth
+the trouble is that they are what catches a green run measuring the wrong tree.
 
 The attribute-navigation-stalls branch added no unit FILE, no unit case and no
 spec — it changed one config line and one e2e helper — so unit stays
