@@ -115,6 +115,55 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The run-list-midwidth branch added no unit FILE and no unit case — unit stays
+147 / 1826 — and its **e2e rises to 119**. Integration unchanged.
+
+**THE RUN LIST'S TABLE HAS NEVER FITTED ITS CONTAINER BELOW ~1400px, AND THE
+SCROLL WAS NOT THE DEFECT.** Measured on the org-wide list: the table wants
+**1078px** and the content column gives it 726 at 768, 858 at 900, **694 at
+1024**, 770 at 1100, 950 at 1280, 1110 at 1440.
+
+**1024 IS THE WORST WIDTH, NOT THE BEST, AND THAT IS THE COUNTER-INTUITIVE
+BIT.** `ProjectRail` opens at exactly `lg:` and takes ~270px, so a 1024 screen
+has LESS room for the table than a 900 one. Any measurement of this table has
+to include that breakpoint or it will report the band backwards.
+
+**WHAT WAS WRONG WAS WHICH COLUMNS FELL OFF THE END.** The review allows the
+scroll — "table-local horizontal scroll is acceptable when row identity,
+headers, and controls remain usable" — and `Started` was **239px, 22% of the
+table**, for a timestamp carrying a year and a zone (`INSTANT_FORMAT`). So p95
+and Errors sat at 823 and 889px cumulative and were off every screen narrower
+than 1440. Those two are what triage turns on, which `mobile.spec.ts` already
+says in as many words one breakpoint down.
+
+**THE FIX IS COLUMN ORDER, NOT COLUMN COUNT.** Identity, outcome, the two
+measurements and the suggested action first; WHEN and WHERE — context rather
+than triage — in the scroll tail. Nothing hidden, nothing dropped, no new
+breakpoint. Measured after: p95 ends at **587px** and Errors at **652px** at
+every width from 768 to 1280, inside even the 694px box at 1024. That is better
+than predicted — moving `Started` to the tail stops it forcing the earlier
+columns wide, and they compress into what is left.
+
+**AND THE FIRST RED-VERIFY PASSED AGAINST A DELIBERATELY BROKEN LAYOUT.** It
+ran at the default 1280 viewport ALONE, where Errors ended at 889 in a 950 box
+and was already fine — so the mutation changed nothing the assertion could
+see. **A geometry guard has to run at the width the defect lives at, and the
+default viewport is rarely that width.** It runs at all six now, and against
+the original order it fails at the first: p95 826, Errors 892, visible 726.
+
+**`.nth(3)` ROTTED EXACTLY AS THIS FILE PREDICTS.** `run-list.spec.ts` picked
+the status cell by index under a comment reciting the column order
+("Started/Project/Simulation/Status/Verdict… so index 3"). The reorder made
+that the SIMULATION cell, where `toHaveAccessibleName('complete')` would have
+failed for a reason that is not the rule under test. It derives the index from
+the `Status` header now — the same relationship the assertion is about, which
+is the lesson `run-charts.spec.ts` already records twice.
+
+**AND `allTextContents()` IS AN IMMEDIATE READ WITH NO AUTO-WAITING.** Swapping
+a locator chain for it returned `[]` on a table that had not rendered yet, and
+the failure read as "there is no Status column". Await something on the table
+before any `allTextContents()` / `evaluate()` that measures it.
+
 The review-copy-batch branch (the 09-13 review's "Copy changes to make
 immediately" table, plus C06's remainder) added no unit FILE and 5 cases, from
 147 / 1821 to **147 / 1826**. Integration is UNCHANGED and **e2e stays 118** —

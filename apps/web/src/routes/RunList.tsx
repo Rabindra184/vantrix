@@ -330,9 +330,6 @@ export default function RunList({
                     `RunRow`. */}
                 <thead className={THEAD}>
                   <tr>
-                    <th scope="col" className={TH}>
-                      Started
-                    </th>
                     {projectSlug === null && (
                       <th scope="col" className={TH}>
                         Project
@@ -356,10 +353,46 @@ export default function RunList({
                       Errors
                     </th>
                     <th scope="col" className={TH}>
-                      Environment
+                      Focus
+                    </th>
+                    {/* ═══ CONTEXT AFTER TRIAGE, BECAUSE THIS TABLE SCROLLS ═══
+                        (review 09-13's acceptance list)
+
+                        MEASURED on the org-wide list: the table wants 1078px
+                        and the content column gives it 726 at 768, 858 at 900,
+                        694 at 1024 (the rail appears at `lg:` and takes ~270),
+                        770 at 1100 and 950 at 1280. It fits at 1440 and
+                        NOWHERE BELOW — so this table has always scrolled
+                        sideways on most real screens.
+
+                        The scroll itself is allowed: the review says
+                        "table-local horizontal scroll is acceptable when row
+                        identity, headers, and controls remain usable". What
+                        was not allowed is WHICH columns fell off the end.
+                        Started alone is 239px — 22% of the table for a
+                        timestamp carrying a year and a zone — so p95 and
+                        Errors sat at 823 and 889px cumulative and were off
+                        every screen narrower than 1440. Those two are the
+                        columns triage turns on; `mobile.spec.ts` says so in as
+                        many words for the phone layout.
+
+                        So identity, outcome, the two measurements and the
+                        suggested action come first — 742px, which is on screen
+                        at 768, 900, 1100 and 1280 — and WHEN and WHERE, which
+                        are context rather than triage, are what a reader
+                        scrolls to. Nothing is hidden and no column is dropped.
+
+                        1024 IS THE ONE WIDTH THIS DOES NOT FULLY FIX, and it
+                        is worth knowing why: 694px there is less than 900 gets,
+                        because the project rail opens at exactly that
+                        breakpoint. Collapsing the rail — a control that already
+                        exists — returns ~270px and the whole triage set with
+                        it. */}
+                    <th scope="col" className={TH}>
+                      Started
                     </th>
                     <th scope="col" className={TH}>
-                      Focus
+                      Environment
                     </th>
                   </tr>
                 </thead>
@@ -1240,18 +1273,6 @@ function RunRow({
 
   return (
     <tr data-testid="run-row" data-run-id={run.id} className={ROW}>
-      <td data-testid="run-started" className={`${TD} whitespace-nowrap`}>
-        {/* <time dateTime> carries the machine-readable instant next to the
-            human one. That is the correct markup for a rendered date
-            regardless of testing — and it is also what lets the e2e suite
-            assert the ORDER of what is displayed, since the formatted text is
-            localised and does not sort. The attribute is the API's own ISO
-            string, unmodified. */}
-        <time dateTime={startedAt} className="tabular-nums">
-          {formatInstant(startedAt)}
-        </time>
-        {isIngestTime && <span className="ml-2 text-[12px] text-muted">ingest time</span>}
-      </td>
       {showProject && <td className={TD}>{run.project.name}</td>}
       {/* The testid stays `run-simulation` in both modes, deliberately: the
           e2e suite and `helpers.ts` reach for it as "the cell holding the row's
@@ -1327,9 +1348,6 @@ function RunRow({
           </span>
         )}
       </td>
-      <td className={TD} data-testid="run-environment">
-        {run.environment == null || run.environment === '' ? '—' : run.environment}
-      </td>
       {/* PLAIN COLOURED TEXT, NOT A BADGE, and the distinction is what the
           column means. Status and Verdict beside it are STATES the platform
           recorded — a stamp is right for those, and the pill is what makes
@@ -1344,6 +1362,21 @@ function RunRow({
           without the glyph the badge used to add. */}
       <td className={TD}>
         <FocusHint focus={focusFor(run)} runId={run.id} />
+      </td>
+      <td data-testid="run-started" className={`${TD} whitespace-nowrap`}>
+        {/* <time dateTime> carries the machine-readable instant next to the
+            human one. That is the correct markup for a rendered date
+            regardless of testing — and it is also what lets the e2e suite
+            assert the ORDER of what is displayed, since the formatted text is
+            localised and does not sort. The attribute is the API's own ISO
+            string, unmodified. */}
+        <time dateTime={startedAt} className="tabular-nums">
+          {formatInstant(startedAt)}
+        </time>
+        {isIngestTime && <span className="ml-2 text-[12px] text-muted">ingest time</span>}
+      </td>
+      <td className={TD} data-testid="run-environment">
+        {run.environment == null || run.environment === '' ? '—' : run.environment}
       </td>
     </tr>
   );

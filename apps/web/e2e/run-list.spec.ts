@@ -157,13 +157,30 @@ test('a badge does not leak its glyph into the row’s accessible name', async (
   // aria-hidden the way a real AT tree does, so this assertion is only
   // meaningful in a browser (CLAUDE.md).
   //
-  // Located by column position, not by text containing "complete" — a
-  // regex/substring name match would still find the cell even if the glyph
-  // leaked into its accessible name, since "complete" would still appear
-  // somewhere in "● complete". Started/Project/Simulation/Status/Verdict is
-  // the column order RunList.tsx renders (RunRow), so index 3 is the status
-  // cell.
-  const statusCell = page.getByTestId('run-row').first().getByRole('cell').nth(3);
+  /* Located by COLUMN rather than by text containing "complete" — a
+     regex/substring name match would still find the cell even if the glyph
+     leaked into its accessible name, since "complete" would still appear
+     somewhere in "● complete".
+
+     THE INDEX IS DERIVED FROM THE HEADER, NOT WRITTEN DOWN. This read
+     `.nth(3)` with a comment reciting the column order, and the order changed
+     the moment Started and Environment moved behind the triage columns —
+     silently picking the Simulation cell, where `toHaveAccessibleName` would
+     have failed for a reason that is not this rule. Asking the table which
+     column is "Status" is the same relationship the assertion is about, and it
+     survives any reorder. `run-charts.spec.ts` records the same lesson for its
+     own index-based query: a locator written as the relationship is the one
+     that does not rot. */
+  const row = page.getByTestId('run-row').first();
+  // Awaited before the headers are READ: `allTextContents()` is an immediate
+  // query with none of a locator's auto-waiting, so reading it first returns
+  // `[]` on a table that simply has not rendered yet.
+  await expect(row).toBeVisible();
+  const headers = await page.getByRole('columnheader').allTextContents();
+  const statusIndex = headers.findIndex((h) => h.trim() === 'Status');
+  expect(statusIndex, `the table has a Status column (saw ${JSON.stringify(headers)})`)
+    .toBeGreaterThanOrEqual(0);
+  const statusCell = row.getByRole('cell').nth(statusIndex);
   await expect(statusCell).toBeVisible();
   // Exact match, not a substring: verified this catches the regression by
   // temporarily removing Badge's aria-hidden and re-running this test, which
@@ -235,4 +252,68 @@ test('offers exactly one New project link on the org-wide list', async ({ page }
     'href',
     '/projects/_new',
   );
+});
+
+/**
+ * ═══ THE TRIAGE COLUMNS ARE READABLE WITHOUT SCROLLING ═══
+ * (the 09-13 review's acceptance list)
+ *
+ * "Table-local horizontal scroll is acceptable when row identity, headers, and
+ * controls remain usable." The scroll was never the defect — MEASURED, this
+ * table wants 1078px and the content column gives it 726 at 768, 858 at 900,
+ * 694 at 1024 (the rail opens there and takes ~270), 770 at 1100 and 950 at
+ * 1280. It fits at 1440 and nowhere below.
+ *
+ * The defect was WHICH columns fell off the end. `Started` is 239px — 22% of
+ * the table for a timestamp carrying a year and a zone — so p95 and Errors sat
+ * at 823 and 889px cumulative and were off every screen narrower than 1440.
+ * Those two are what triage turns on; `mobile.spec.ts` says exactly that for
+ * the phone layout, one breakpoint down.
+ *
+ * MEASURED, NOT COUNTED IN COLUMNS, because that is the claim: a reader can
+ * see the two numbers without dragging the table sideways. A column-order
+ * assertion would pass against a layout that pushed them off anyway.
+ */
+test('p95 and Errors are on screen without scrolling the table sideways', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  /* EVERY WIDTH THE REVIEW'S ACCEPTANCE LIST NAMES from 768 up, because the
+     answer differs at each and 1024 is the one that surprises: the project
+     rail opens at exactly that breakpoint and takes ~270px, so the content box
+     is 694 there against 858 at 900. Measured after the reorder, p95 ends at
+     587px and Errors at 652px at every width below 1440 — inside even the
+     narrowest box. Before it, at 768: p95 at 826 and Errors at 892 against 726
+     visible, which is the failure this case was written from. */
+  for (const width of [768, 900, 1024, 1100, 1280, 1440]) {
+  await page.setViewportSize({ width, height: 800 });
+  await page.goto('/runs');
+  await expect(page.getByTestId('run-row').first()).toBeVisible();
+
+  const reach = await page.evaluate(() => {
+    const table = document.querySelector('table');
+    if (table === null) return null;
+    const scroller = table.parentElement;
+    if (scroller === null) return null;
+    const headers = Array.from(table.querySelectorAll('thead th'));
+    const right = (name: string): number | null => {
+      const th = headers.find((h) => h.textContent?.trim() === name);
+      return th === undefined
+        ? null
+        : Math.round(th.getBoundingClientRect().right - scroller.getBoundingClientRect().left);
+    };
+    return { visible: Math.round(scroller.clientWidth), p95: right('p95'), errors: right('Errors') };
+  });
+
+  expect(reach, 'the run list renders a table at this viewport').not.toBeNull();
+  const { visible, p95, errors } = reach!;
+  expect(p95, 'the table has a p95 column').not.toBeNull();
+  expect(errors, 'the table has an Errors column').not.toBeNull();
+
+  /* The right edge of each, against the width a reader can actually see. Both
+     were past it before the reorder — Errors ended at 889px in a 950px box at
+     this viewport, and at 694px of box on a 1024 screen it was not close. */
+  expect(p95!, `p95 ends at ${p95}px of ${visible}px visible`).toBeLessThanOrEqual(visible);
+  expect(errors!, `Errors ends at ${errors}px of ${visible}px visible`).toBeLessThanOrEqual(visible);
+  }
 });
