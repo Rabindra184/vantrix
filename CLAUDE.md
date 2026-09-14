@@ -115,6 +115,54 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-n04-pagination branch (N04, item 1 — the finding is closed) added no
+unit FILE and no unit case, so unit stays 147 / 1826; integration is UNCHANGED
+and **e2e stays 120** — its assertions went inside an existing `test(` block.
+
+**A SHORTER VERSION OF A SENTENCE THE FINDING ASKS YOU TO DELETE IS NOT THE
+CORRECTION.** N04 item 1 reads: remove "You have reached the end of the list",
+use disabled pagination. The first pass cut it to "No more runs." — three words
+instead of eight — and argued in a comment that `disabled` is silent for a
+sighted reader and that `aria-describedby` pointing at an empty node would say
+less than the disabled state alone.
+
+**BOTH HALVES OF THAT WERE WRONG, AND `git log -S` SETTLED THE FIRST.**
+`disabled={nextCursor === null}` dates to **87d36fa, 2026-08-15 — a month
+before the review**. So the reviewer was already looking at a disabled Next
+button WITH the sentence beside it, and "use disabled pagination" cannot have
+meant "disable the button"; it can only have meant "let the disabled state
+carry it". The second half is simpler: dropping the sentence means dropping the
+`aria-describedby` WITH it, not aiming it at an empty node, and a disabled
+button is announced as disabled without being told. **When a finding prescribes
+a mechanism the code already has, it is not asking for the mechanism — it is
+asking you to stop compensating for it.**
+
+**THE CASE THAT NOW GUARDS IT WAS ALREADY STANDING IN THE RIGHT PLACE.**
+`run-list.spec.ts`'s "follows the cursor to the next page" seeds `PAGE_SIZE + 1`
+runs, so its second page IS the last one — it simply never looked at the
+end-of-list state. Both halves are asserted, because either alone passes against
+the wrong product: a bare absence is satisfied by a page whose controls failed
+to render, and a bare `toBeDisabled` is satisfied by the sentence coming back
+beside it. `toHaveCount(0)` rather than a visibility check, because this node is
+not rendered at all — the opposite of M02's band prose, where `textContent`
+found what nobody could see. Red-verified both ways.
+
+**AND THE SWEEP THAT FOUND IT IS THE TRANSFERABLE PART.** Six prescribed
+corrections across N02 and N04 were checked, then each verdict attacked by a
+second reader made to re-read the code. Five were genuinely done; a grep had
+found all five retired phrases surviving only in past-tense comments, **which
+proves the old wording is gone and says nothing about whether the prescribed
+REPLACEMENT is there** — this one is exactly the case where it was not.
+
+**ONE VERDICT WAS OVERTURNED, BY A READER CHARGING ONE FINDING WITH ANOTHER'S
+DEBT.** N02 was reported PARTIAL because `StatisticsTable`'s caption still says
+"estimates, accurate to within 1%" — a real second restatement, and the table's
+accessible name, so a screen-reader user meets it unavoidably. It is **C06's**
+open remainder, recorded as knowingly deferred in `TableFrame.tsx` with its
+reason (changing it changes what `getByRole('table', { name })` matches in six
+specs), and it predates the review. **Before charging a finding with a defect,
+check whether a different finding already owns it.**
+
 The review-m02-metadata branch (M02, the REMAINDER — the finding is closed)
 added no unit FILE and 4 cases to `apps/web/test/RunHeader.test.tsx`, from a
 floor of 147 / 1822. Integration is UNCHANGED (every file it touches is a

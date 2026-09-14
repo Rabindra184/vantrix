@@ -408,31 +408,38 @@ export default function RunList({
             // belonging to a page the user is no longer looking at.
             disabled={nextCursor === null}
             loading={runs.isPlaceholderData}
-            aria-describedby={nextCursor === null ? 'no-more-runs' : undefined}
             onClick={() => setCursor(nextCursor)}
           >
             Next
             <ChevronRightIcon className="h-3.5 w-3.5" />
           </Button>
-          {/* Disabled rather than hidden: a control that vanishes at the end
-              of the list leaves the reader wondering whether it was ever
-              there. `disabled` alone is silent for a sighted user, so the
-              reason is still spelled out — and tied to the button by
-              aria-describedby so a screen reader hears it with the control,
-              not adrift after it.
-
-              THREE WORDS, NOT EIGHT (review 09-13 N04). The review asks for
-              "disabled pagination" instead of the sentence, and the button
-              has been disabled all along — what it is really objecting to is
-              narrating a convention every reader already knows. The label
-              cannot go to nothing, because `aria-describedby` pointing at an
-              empty node tells a screen-reader user less than the disabled
-              state alone; it goes to the fact, with no sentence around it. */}
-          {nextCursor === null && (
-            <p id="no-more-runs" className="text-[13px] text-muted">
-              No more runs.
-            </p>
-          )}
+          {/* ═══ DISABLED, AND NOTHING ELSE (review 09-13 N04) ═══
+           *
+           * Disabled rather than hidden, which is the half that was never in
+           * doubt: a control that vanishes at the end of a list leaves the
+           * reader wondering whether it was ever there.
+           *
+           * WHAT TOOK TWO ATTEMPTS IS THE SENTENCE BESIDE IT. This read "You
+           * have reached the end of the list", and the first pass at N04 cut
+           * it to "No more runs." — three words instead of eight — arguing
+           * that `disabled` is silent for a sighted reader and that
+           * `aria-describedby` pointing at an empty node would say less than
+           * the disabled state alone.
+           *
+           * Both halves of that were wrong. `disabled={nextCursor === null}`
+           * dates to 87d36fa, a MONTH BEFORE the review — so the reviewer was
+           * already looking at a disabled button with a sentence beside it,
+           * and "use disabled pagination" can only have meant "let the
+           * disabled state carry it". And dropping the sentence means
+           * dropping the `aria-describedby` with it, not aiming it at an
+           * empty node: a disabled button is announced as disabled, by every
+           * screen reader, without being told.
+           *
+           * **A SHORTER VERSION OF A SENTENCE THE FINDING ASKS YOU TO DELETE
+           * IS NOT THE CORRECTION.** The count above the table already says
+           * how many runs there are, and it stops saying ", more available"
+           * at the end — so the fact is on screen twice over before this
+           * paragraph says it a third time. */}
         </nav>
       )}
     </div>

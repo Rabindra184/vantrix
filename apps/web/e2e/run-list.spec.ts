@@ -120,6 +120,31 @@ test('follows the cursor to the next page', async ({ page }) => {
   // run-row to be visible — the stale one already is. A bare assertion here
   // would pass or fail on timing rather than on behaviour.
   await expect.poll(() => firstRowId(page)).not.toBe(first);
+
+  /* ═══ AND THE END OF THE LIST SAYS SO WITH THE CONTROL (review 09-13 N04) ═══
+   *
+   * `PAGE_SIZE + 1` runs means the second page IS the last one, so this case
+   * already stands where the end-of-list state renders — it simply never
+   * looked at it. The finding asks for "disabled pagination" in place of a
+   * sentence, and the sentence ("You have reached the end of the list", later
+   * shortened to "No more runs.") is what this branch removed.
+   *
+   * BOTH HALVES, because either alone passes against the wrong product: a
+   * bare absence assertion is satisfied by a page whose controls failed to
+   * render at all, and a bare disabled assertion is satisfied by the sentence
+   * coming back beside it. */
+  const next = page.getByRole('button', { name: 'Next' });
+  await expect(next).toBeVisible();
+  await expect(next).toBeDisabled();
+
+  /* No end-of-list prose, in any of its spellings. `toHaveCount(0)` rather
+     than a visibility check is right here because the node is not rendered at
+     all — unlike M02's hidden band prose, where `textContent` would have
+     found what nobody could see. */
+  await expect(page.locator('#no-more-runs')).toHaveCount(0);
+  await expect(
+    page.getByText(/no more runs|reached the end of the list/i),
+  ).toHaveCount(0);
 });
 
 test('a badge does not leak its glyph into the row’s accessible name', async ({ page }) => {
