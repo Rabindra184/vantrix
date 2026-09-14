@@ -1229,7 +1229,14 @@ function RunCard({
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.75rem] text-muted">
         {showProject && (
           <>
-            <span className="text-primary">{run.project.name}</span>
+            {/* `break-all`, for the reason the simulation link above it has it:
+                a project name is free text up to 120 characters and may
+                contain no space at all, and this card is the WHOLE layout
+                below 768px. MEASURED at 320px with a 120-character unbroken
+                name: the document's scrollWidth reached 815px against a 320px
+                viewport — every page acquiring a horizontal scrollbar because
+                one project was named badly. */}
+            <span className="break-all text-primary">{run.project.name}</span>
             <span aria-hidden="true">·</span>
           </>
         )}
@@ -1278,7 +1285,28 @@ function RunRow({
           e2e suite and `helpers.ts` reach for it as "the cell holding the row's
           link to its run", which is what it has always been and still is. What
           changes is the value shown, not the cell's job. */}
-      <td data-testid="run-simulation" className={TD}>
+      {/* ═══ `break-all`, BECAUSE A CLASS NAME CANNOT WRAP ═══
+          (the 09-13 review's acceptance list: long names)
+
+          UAX#14 gives no break opportunity after a full stop followed by a
+          letter, so `com.acme.checkout.simulations.CheckoutPeakLoadSimulation`
+          is one unbreakable 56-character word — the widest string this product
+          renders. In a plain cell it took its width out of the columns beside
+          it: MEASURED at 768px, it pushed the Errors column's right edge to
+          885px of 726px visible, undoing the reorder that put the triage
+          columns on screen in the first place. That reorder was measured
+          against the reference bundle's `example.ParitySimulation`, 24
+          characters, which is why nothing caught it.
+
+          `min-w-0` is the other half and is not optional: a table cell's
+          min-content width is its longest unbreakable run, so without it the
+          cell refuses to shrink no matter what the text inside is allowed to
+          do.
+
+          The mobile CARD for this same value has carried `break-all` since it
+          was written (`RunCard` above) — the asymmetry was visible in one
+          file, which is the shape CLAUDE.md keeps recording. */}
+      <td data-testid="run-simulation" className={`${TD} min-w-0 break-all`}>
         {/* The simulation is what a reader is looking for, so it is the
             link. Falls back to the short id for a run the worker has not
             parsed (or never will), which is what this column showed before

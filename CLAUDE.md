@@ -115,6 +115,63 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The acceptance-first-four branch added ONE e2e file —
+`apps/web/e2e/acceptance.spec.ts` (5) — plus 1 case to `run-list.spec.ts`, so
+**e2e rises to 126** from 120. Unit stays 147 / 1827 and integration is
+unchanged. It takes the first four items of the 09-13 review's
+production-readiness list, and **four of them found a real defect.**
+
+**A COVERAGE SWEEP OF THAT LIST FOUND 45 GAPS IN 91 ITEMS, AND VERIFICATION
+OVERTURNED A ROW IN EVERY ONE OF ITS SIX GROUPS.** The pattern in the wrong
+rows is worth more than the count: readers reasoned from a SOURCE file and
+never grepped the suite named after it. "Not one `ErrorState` call site passes
+an `action`" — two do, one of them four lines below a line the reader quoted.
+"No spec has ever reached a control by Tab" — `project-rail.spec.ts` is a
+complete keyboard journey, and the same row named that file two lines earlier.
+**A gap report is a claim about the suite, so it has to be made by reading the
+suite.**
+
+**THE LONG-NAME DEFECTS WERE ALL ONE SHAPE: A BREAK RULE ON ONE OF TWO
+SURFACES THAT DRAW THE SAME VALUE.**
+
+  - The desktop run list's simulation cell had no `break-all`; the MOBILE CARD
+    for the same value has had it since it was written. A 56-character class
+    pushed the Errors column's right edge to **885px of 726px visible** at 768
+    — silently undoing the column reorder shipped the day before.
+  - `RunCard`'s project name had no break rule at all: a 120-character unbroken
+    name took the document's scrollWidth to **815px against a 320px viewport**.
+  - `ProjectShell`'s `<h1>` had `min-w-0` and no break rule, so
+    `/projects/:slug` scrolled sideways at 320 — on all five sections.
+
+**UAX#14 GIVES NO BREAK AFTER A FULL STOP FOLLOWED BY A LETTER**, so
+`com.acme.checkout.simulations.CheckoutPeakLoadSimulation` is ONE unbreakable
+56-character word — the widest string this product renders. Every geometry case
+in the suite had been measured against the reference bundle's
+`example.ParitySimulation`, 24 characters, which is why a guard written
+yesterday passed while the product it guards would fail for every real project.
+**A fixture's shortest plausible value is the one a geometry assertion is
+weakest against.** `renameSimulation` exists now so a case can ask for a real
+one.
+
+**AND `truncate` CONSTRAINS NOTHING.** It is `overflow:hidden` +
+`text-overflow:ellipsis` + `white-space:nowrap` — three rules about what to do
+once a box is too small, and none about making it so. Below `lg` the rail's row
+is `shrink-0` inside a horizontal scroller, so the box simply grew: measured at
+320px, one chip was **913px wide with a 869px "truncate" span**. It scrolled
+rather than breaking the page, so no assertion could see it and no reader would
+report it — they would just drag past that project for ever. `min-w-0` plus a
+`max-w` is what lets the rule act.
+
+**TWO OF THE FOUR PASSED CLEAN, WHICH IS ALSO A RESULT.** 320px and 414px
+scroll nowhere on the run list, a run page or the tests table; and a session
+that expires MID-READ already refuses to show stale data — `apiFetch`
+deliberately does not redirect on a 401 (its own docstring argues the decision
+belongs to a component), and the component does the right thing.
+
+**THE SEEDED ORG ALREADY HAS A PROJECT.** The twenty-project case first failed
+on `toHaveCount(21)` against 22: `seedAdmin` creates `checkout` before any loop
+adds to it. Count what the fixture makes, not what your loop makes.
+
 The type-scale-rem branch added no unit FILE and 1 case
 (`apps/web/test/tokens.test.ts`), from 147 / 1826 to **147 / 1827**, and its
 **e2e rises to 120**. Integration unchanged. 232 sites across 49 files, one

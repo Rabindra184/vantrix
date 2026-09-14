@@ -199,7 +199,14 @@ export default function ProjectShell({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="min-w-0 text-xl font-semibold tracking-tight">{name}</h1>
+        {/* `break-all`, the same rule `RunHeader`'s `<h1>` uses for a
+            fully-qualified class. A project name is free text up to 120
+            characters (`ProjectSchema`) and may contain no space at all, and
+            `min-w-0` alone only lets the box shrink — it does not give the
+            TEXT permission to break, so an unbreakable name overflowed it.
+            MEASURED at 320px: /projects/:slug scrolled sideways with a
+            120-character name, and this heading is on all five sections. */}
+        <h1 className="min-w-0 text-xl font-semibold tracking-tight break-all">{name}</h1>
         {/* ═══ A TESTID, BECAUSE THE NAME IS LEGITIMATELY NOT UNIQUE ═══
             The Add results page's "Run a test" card links to this same form
             under this same name, which is CORRECT — WCAG asks for identical

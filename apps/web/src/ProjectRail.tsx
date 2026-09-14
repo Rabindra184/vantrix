@@ -255,8 +255,22 @@ export default function ProjectRail() {
                 specifically — a screen reader already gets the whole name,
                 since truncation is CSS-only and the accessible name is the
                 untouched `project.name`. */}
+            {/* `min-w-0` AND A CAP, OR `truncate` DOES NOTHING HERE.
+                `truncate` is `overflow:hidden` + `text-overflow:ellipsis` +
+                `white-space:nowrap`, and none of that constrains a box — it
+                only says what to do once the box is too small. Below `lg` the
+                row is `shrink-0` inside a horizontal scroller, so the box grows
+                to whatever the text asks for: MEASURED at 320px with a
+                120-character name, one chip was 913px wide and its `truncate`
+                span 869px. It scrolled rather than breaking the page, so no
+                assertion caught it — it was simply a project the reader had to
+                drag past.
+
+                `max-w-[14rem]` only below `lg`, where the rail is that strip;
+                the column above it derives its width from the rail itself and
+                has always truncated correctly. */}
             <span
-              className={cn('truncate', collapsed && 'lg:sr-only')}
+              className={cn('min-w-0 max-w-[14rem] truncate lg:max-w-none', collapsed && 'lg:sr-only')}
               title={collapsed ? undefined : project.name}
             >
               {project.name}
