@@ -267,3 +267,53 @@ describe('toThroughputTrend', () => {
     }
   });
 });
+
+/**
+ * ═══ TWO RUNS OF ONE MINUTE MUST NOT SHARE ONE LABEL ═══
+ *
+ * `compareLabels` was written to disambiguate colliding run labels, and its
+ * own docstring names THIS axis as the other consumer of the shared
+ * `runMinuteLabel` — while this transform called the bare helper per run and
+ * disambiguated nothing. The function that solves the problem knew about the
+ * caller; the caller did not use it.
+ *
+ * MEASURED IN A BROWSER before the fix, with twenty runs of one test: ten
+ * drawn x-axis labels, every one of them reading `08-07 11:00`. ECharts hides
+ * alternates rather than overlapping them, so the collision first looked for
+ * does not happen — what happens instead is worse, because it looks fine.
+ *
+ * The suffix is the RUN ID, and only on a colliding label, so the ordinary
+ * cohort is untouched. That second half is asserted too: a cohort whose runs
+ * are minutes apart must stay clean timestamps, or this "fix" would put an id
+ * on every tick of every trend in the product.
+ */
+describe('trends — runs that share a minute', () => {
+  const SAME = '2026-03-04T09:15:20.000Z';
+
+  it('separates two runs of the same minute by id, on the axis and in the table', () => {
+    const t = response([
+      run({ id: 'aaaaaaaa-1111-4111-8111-111111111111', startedAt: SAME }),
+      run({ id: 'bbbbbbbb-2222-4222-8222-222222222222', startedAt: SAME }),
+    ]);
+
+    for (const data of [toStatusTrend(t), toPercentileTrend(t), toThroughputTrend(t)]) {
+      expect(new Set(data.axisLabels).size, data.axisLabels.join(' | ')).toBe(2);
+      // The table reads the same labels, so a reader moving between the plot
+      // and the rows beneath it is looking at one vocabulary.
+      expect(new Set(data.rows.map((r) => r.label)).size).toBe(2);
+      for (const label of data.axisLabels) expect(label).toMatch(/^\d\d-\d\d \d\d:\d\d · [0-9a-f]+$/);
+    }
+  });
+
+  it('leaves a cohort with no collision as plain timestamps', () => {
+    const t = response([
+      run({ id: 'aaaaaaaa-1111-4111-8111-111111111111', startedAt: '2026-03-04T09:15:20.000Z' }),
+      run({ id: 'bbbbbbbb-2222-4222-8222-222222222222', startedAt: '2026-03-04T09:47:20.000Z' }),
+    ]);
+
+    for (const data of [toStatusTrend(t), toPercentileTrend(t), toThroughputTrend(t)]) {
+      expect(new Set(data.axisLabels).size).toBe(2);
+      for (const label of data.axisLabels) expect(label).toMatch(/^\d\d-\d\d \d\d:\d\d$/);
+    }
+  });
+});
