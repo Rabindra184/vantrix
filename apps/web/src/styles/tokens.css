@@ -5,7 +5,8 @@
  * Three blocks declare these tokens. Light values live under the top-level
  * root rule. Dark values apply automatically via prefers-color-scheme,
  * scoped so an explicit light override still wins over a dark OS setting. The
- * theme toggle (`components/ThemeToggle.tsx`) re-asserts the dark values
+ * theme control (the three radios in `AccountMenu.tsx`, applied by
+ * `theme.ts`) re-asserts the dark values
  * through `[data-theme="dark"]`, which must win over prefers-color-scheme —
  * hence it is declared after the media query. There is no light data-theme
  * block: the media query's own scoping already lets an explicit light theme

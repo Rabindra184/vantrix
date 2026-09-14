@@ -372,9 +372,9 @@ describe('ProjectRail collapse', () => {
     cleanup();
     renderRail(PROJECTS);
 
-    // Read in the `useState` initialiser, the way ThemeToggle reads its
-    // stored choice — never an effect, so the first render already agrees
-    // with what the reader last chose.
+    // Read in the `useState` initialiser, the way `AccountMenu` reads its
+    // stored theme choice — never an effect, so the first render already
+    // agrees with what the reader last chose.
     expect(
       await screen.findByRole('button', { name: 'Expand the projects rail' }),
     ).toBeInTheDocument();

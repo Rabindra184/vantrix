@@ -115,6 +115,40 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The stale-accountmenu-crossref branch moved NO floor — its diff is comments
+only, in five source files and one test — so unit stays 147 / 1826, integration
+is unchanged and e2e stays 120.
+
+**A MODULE CHANGED WHAT IT *IS*, AND SIX COMMENTS WENT ON DESCRIBING WHAT IT
+WAS.** `7cda62c` rebuilt the account menu on Radix and DELETED `ThemeToggle`.
+What survived it:
+
+  - `AppShell.tsx` still said "see `AccountMenu` for why it is a disclosure and
+    not a `role="menu"`" — pointing a reader at reasoning `AccountMenu`'s own
+    docstring had already reversed in the same commit ("right about the
+    promise and wrong about the conclusion: the answer is to KEEP the
+    promise"). Following the pointer told you the opposite of the truth.
+  - five pointers at a file that no longer exists: `ProjectRail` twice for the
+    storage-read pattern and a segment style, once for an "active = raised"
+    comparison, `Chart.tsx` for "clicking Dark in `ThemeToggle`", `tokens.css`
+    for a PATH (`components/ThemeToggle.tsx`) the component never even had, and
+    `ProjectRail.test.tsx` for the same initialiser idiom.
+
+**THE DISTINCTION THAT DECIDES EACH ONE IS TENSE, NOT THE NAME.** A comment
+saying `ThemeToggle` ONCE shipped `role="radio"` with no arrow handling is a
+record of a lesson and is still true — those stay, in `ChartActions`,
+`dropdown-menu.tsx` and `AccountMenu.test.tsx`. A comment saying "the same way
+`ThemeToggle` reads its choice" is a POINTER, and it points at nothing. **Grep
+finds both; only reading decides.**
+
+**AND THIS IS THE THIRD SHAPE OF THE SAME ROT THIS REVIEW HAS PAID FOR** — the
+`Cnt/s` hint naming a run-totals label the tiles had just deleted, "Mint one
+under Access" naming a page renamed three branches earlier, and now a
+cross-reference to another module's DESIGN. The first two named a LABEL and a
+PAGE; this one named a decision. **When a module changes what it is, grep for
+whoever says what it is** — and note that a rename-driven grep would not have
+found this one, because nothing was renamed.
+
 The review-n04-pagination branch (N04, item 1 — the finding is closed) added no
 unit FILE and no unit case, so unit stays 147 / 1826; integration is UNCHANGED
 and **e2e stays 120** — its assertions went inside an existing `test(` block.
