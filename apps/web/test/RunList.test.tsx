@@ -183,9 +183,15 @@ describe('RunList columns', () => {
     // disclosing that — so an org with 90 failed runs read "Needs attention:
     // 2" off its first page. The denominator is derived from the rows on
     // screen rather than written down, so a fixture change moves both sides.
+    //
+    // The scope is its own visible line now rather than the opening sentence
+    // of a paragraph (review 09-13's copy table); the CLAIM is unchanged and
+    // is what this asserts — the reader is told, without opening anything,
+    // that these four numbers cover this page and how many runs that is.
     const rows = screen.getAllByTestId('run-row');
-    expect(within(health).getByText(new RegExp(`Counted over the ${rows.length} runs on this page`, 'i')))
-      .toBeInTheDocument();
+    expect(within(health).getByTestId('health-scope')).toHaveTextContent(
+      new RegExp(`on this page · ${rows.length} runs`, 'i'),
+    );
 
     expect(screen.getByRole('columnheader', { name: 'Focus' })).toBeInTheDocument();
     expect(screen.getByText('investigate')).toBeInTheDocument();

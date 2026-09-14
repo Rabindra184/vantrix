@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { TelemetryResponse } from '@perfportal/contracts';
@@ -10,6 +10,7 @@ import { formatDuration } from './format';
 import { Payload, Undrawn, type Slot } from './payload';
 import { useRunTerminal, useTimeDomainFromShell, useWindowFromShell } from './useRunWindow';
 import DesktopOnly from './DesktopOnly';
+import { projectAccessPath } from './paths';
 import useIsCompact from '../useIsCompact';
 
 /**
@@ -89,7 +90,12 @@ export default function RunTelemetry() {
   // from a fetch at all — `available` would always read `false` for a
   // non-terminal run, and caching that under `staleTime: Infinity` is
   // exactly the bug this gate exists to prevent.
-  const { terminal } = useRunTerminal(runId);
+  const { detail, terminal } = useRunTerminal(runId);
+  /* The slug for the setup link below. No new fetch and no new cache read —
+     `useRunTerminal` already runs this query for `terminal` and returns the
+     result; this reads a field off it. `undefined` until the run resolves, and
+     the link is withheld rather than pointed at an empty slug. */
+  const projectSlug = detail.data?.state === 'ready' ? detail.data.run.project.slug : undefined;
   const window = useWindowFromShell();
   // The same time domain the run's other tabs draw on (§22.5) — these six
   // charts share `run-time` with the shell's own brush.
@@ -196,12 +202,43 @@ export default function RunTelemetry() {
              * Gradle plugin's location instead of quoting a coordinate. What
              * the reader needs is WHAT to run and WHICH scope it needs, both
              * of which are facts about this instance. */
+            /* ═══ AN EMPTY STATE WITH A WAY FORWARD (review 09-13 copy table) ═══
+             *
+             * The row is "Two no-telemetry sentences" -> "`No generator
+             * telemetry recorded.` + setup link". The sentences were already
+             * one honest paragraph; what was missing is the second half — this
+             * told a reader what did not happen and left them there.
+             *
+             * THE LINK GOES TO API TOKENS, AND THAT IS THE ONLY HONEST
+             * DESTINATION IN THE APP. Enabling telemetry is two things: run
+             * the agent, and give it a token carrying the Generator telemetry
+             * permission. The agent is a binary in this repository, which no
+             * route can own — but the token is minted HERE, and
+             * `ProjectAccess` is the one page that names that permission
+             * (`SCOPE_LABELS.telemetry`). Add results was the tempting link
+             * and says nothing about telemetry at all; pointing there would be
+             * the false affordance M12 was about.
+             *
+             * WITHHELD, not disabled, when the slug is unknown — a run read
+             * from a pod that has not resolved yet has no project to link to,
+             * and a dead link is worse than no link. */
             <EmptyState
               title="No generator telemetry recorded"
               body={
                 'Telemetry arrives only when the load-generator agent runs alongside the test, ' +
-                'posting with a token that carries the Generator telemetry scope. Nothing ' +
+                'posting with a token that carries the Generator telemetry permission. Nothing ' +
                 'reported for this run — the agent ships in this repository under agent/.'
+              }
+              action={
+                projectSlug === undefined ? undefined : (
+                  <Link
+                    to={projectAccessPath(projectSlug)}
+                    data-testid="telemetry-setup"
+                    className="transition-ui text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+                  >
+                    Create a token with Generator telemetry
+                  </Link>
+                )
               }
             />
           );

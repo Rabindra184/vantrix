@@ -368,10 +368,70 @@ describe('RunDecisionBand — three outcomes, not one word', () => {
    */
   it('does not let a failed simulation check redefine the release verdict', () => {
     renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
-    // The BAND'S OWN VERDICT WORD, not any text on the page: "Failed" is also
-    // a legitimate counter label beside it, and asserting on the page text
-    // would fail for a reason that is not this rule.
-    expect(screen.getByTestId('decision-word')).toHaveTextContent(/^not evaluated$/i);
+    /* The BAND'S OWN VERDICT WORD, not any text on the page: "Failed" is also
+       a legitimate counter label beside it, and asserting on the page text
+       would fail for a reason that is not this rule.
+
+       The word is "Not configured" rather than "Not evaluated" since the copy
+       table split the two (below) — the CLAIM here is unchanged and is what
+       this case is about: whatever the word is, a failed simulation check may
+       not make it "Failed". Pinned as a negative for exactly that reason. */
+    expect(screen.getByTestId('decision-word')).not.toHaveTextContent(/failed/i);
+    expect(screen.getByTestId('decision-word')).toHaveTextContent(/^not configured$/i);
+  });
+});
+
+/**
+ * ═══ "Not configured" IS NOT "Not evaluated" (review 09-13 copy table) ═══
+ *
+ * The row is "Repeated Not evaluated block" -> "`SLA: Not configured`". The
+ * 48px word said `Not evaluated` for two different facts: a project with NO
+ * RULE, and rules that all came back not applicable. The first is a setup
+ * state a reader can act on; the second is a real evaluation with nothing to
+ * say. `gatesText` has drawn that distinction since C01 and the word above it
+ * contradicted it.
+ *
+ * Three states, because the third is the one a careless fix breaks: an ABSENT
+ * assertion list is a run whose gates have not been reported yet, and calling
+ * that "Not configured" is a claim about a project nobody has heard from.
+ */
+describe('RunDecisionBand — what the verdict word says when nothing failed', () => {
+  const word = () => screen.getByTestId('decision-word');
+
+  it('says Not configured when no rule judged the run', () => {
+    renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: [] });
+    expect(word()).toHaveTextContent(/^not configured$/i);
+  });
+
+  it('still says Not evaluated when rules ran and none applied', () => {
+    renderBand({
+      verdict: 'not_evaluated',
+      assertions: [
+        {
+          ruleId: '55555555-5555-4555-8555-555555555555',
+          outcome: 'not_applicable',
+          actualValue: null,
+          message: 'The run recorded no requests for this target.',
+          rule: {
+            scope: 'request',
+            targetName: 'Search',
+            family: 'response_time',
+            metric: 'p95',
+            comparator: 'lte',
+            threshold: 800,
+          },
+        },
+      ],
+      toolAssertions: [],
+    });
+    expect(word()).toHaveTextContent(/^not evaluated$/i);
+  });
+
+  it('says neither when the gates have not been reported yet', () => {
+    // `undefined`, not `[]` — an API pod that predates the field, or a run
+    // read before its assertions resolved. Neither word is true of it.
+    renderBand({ verdict: undefined, assertions: undefined, toolAssertions: undefined });
+    expect(word()).not.toHaveTextContent(/not configured/i);
   });
 });
 

@@ -105,7 +105,26 @@ export default function RunDecisionBand({
         : `${counts.passed} passed · ${counts.failed} failed`;
   const failed = firstFailedAssertion(assertions ?? []);
   const decision: Decision = verdict === undefined ? 'unevaluated' : (verdict ?? 'none');
-  const word = decisionWord(decision, counts);
+  /* ═══ "Not configured" IS NOT "Not evaluated" (review 09-13 copy table) ═══
+   *
+   * The row is "Repeated Not evaluated block" -> "`SLA: Not configured`". The
+   * 48px word read `Not evaluated` for two different facts: nothing judged
+   * this run because the project has NO RULE, and rules existed and every one
+   * came back not applicable. The first is a setup state the reader can act
+   * on; the second is a real evaluation with nothing to say.
+   *
+   * `gatesText` two lines up has drawn that distinction since C01 — "not
+   * configured — no SLA rule judged this run" — and the word above it
+   * contradicted it. This is the same "grep for the siblings of a comment that
+   * argues a distinction" lesson CLAUDE.md already records for this component,
+   * met a third time.
+   *
+   * KEYED ON THE ARRAY, NOT ON `judged`. `judged` is false for BOTH an empty
+   * list and an absent one, and an absent one is a run whose assertions have
+   * not been reported yet — "Not configured" would be a claim about a project
+   * we have not heard from. */
+  const unconfigured = assertions !== undefined && assertions.length === 0;
+  const word = decisionWord(decision, counts, unconfigured);
   const detail = failed?.message ?? decisionDetail(decision, counts);
   const runId = identity.id;
   const exportRun = () =>
@@ -397,10 +416,16 @@ function DecisionCount({ label, value, mark }: { readonly label: string; readonl
  * mapping here is the old `decisionTitle` minus the words the overline now
  * owns. Same branches, same order, same honesty rules.
  */
-function decisionWord(decision: Decision, counts: AssertionCounts): string {
+function decisionWord(
+  decision: Decision,
+  counts: AssertionCounts,
+  /** The run was judged by NOTHING — an empty assertion list, not an absent
+      one. See the call site for why the two cannot share a word. */
+  unconfigured: boolean,
+): string {
   if (decision === 'failed') return 'Failed';
   if (decision === 'passed') return 'Passed';
-  if (decision === 'not_evaluated') return 'Not evaluated';
+  if (decision === 'not_evaluated') return unconfigured ? 'Not configured' : 'Not evaluated';
   if (counts.failed > 0) return 'Needs attention';
   return 'Pending';
 }

@@ -827,7 +827,28 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               `sr-only`, with the SAME text drawn visibly by `TableFrame` above
               the scroll box — a `<caption>` is as wide as its table, and this
               table is far wider than a phone. See `TableFrame`'s docstring. */}
-          <caption className="sr-only">{CAPTION_TEXT}</caption>
+          {/* ═══ A CONCISE NAME, NOT THE WHOLE METHODOLOGY (review C06) ═══
+           *
+           * This was `{CAPTION_TEXT}` — 94 words, and a `<caption>` IS the
+           * table's accessible name, so a screen-reader user met the entire
+           * methodology on arrival with no way to skip it. C06 asks for "a
+           * short caption" with "optional methodology as an accessible
+           * disclosure", and says in as many words: "Avoid duplicating the
+           * full prose as the accessible name."
+           *
+           * `TableFrame` already exposes that disclosure (the `aria-hidden`
+           * half of C06 was fixed when it shipped), so every one of those 94
+           * words is still one keystroke away and none is lost.
+           *
+           * IT KEEPS THE WORD "Statistics" DELIBERATELY. Six specs across the
+           * unit and e2e suites find this table by
+           * `getByRole('table', { name: /statistics/i })`, and the visible
+           * `summary` prop — "Every request and group in this run…" — does not
+           * contain it. Naming the table after what it IS satisfies the review
+           * and keeps those queries pointed at the same element; a short name
+           * that dropped the distinctive word would have been a rename
+           * smuggled in behind an accessibility fix. */}
+          <caption className="sr-only">{CAPTION_NAME}</caption>
 
           <thead className={THEAD}>
             {/* Gatling's own two-row header: the column GROUPS carry the unit,
@@ -962,6 +983,8 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
  * a constant is what guarantees they cannot drift. It carries no markup, so
  * there is nothing JSX would buy.
  */
+const CAPTION_NAME = 'Statistics for every request and group in this run';
+
 const CAPTION_TEXT =
   'Statistics for every request and group in this run, with the run’s own totals in the first ' +
   'row. A row tagged GROUP is an aggregate — the cumulated response time of the requests inside ' +

@@ -138,6 +138,28 @@ describe('ProjectSetup — the three ways in', () => {
    * arrangement, so the presence of the link matters; so does the absence of
    * a mint form, because re-adding one would quietly rebuild the old page.
    */
+  /**
+   * ═══ THE CHOICES ARE THE INTRO (review 09-13 copy table) ═══
+   *
+   * This page opened with "Three ways to get a run into this project. Pick the
+   * one that matches what you already have." — a sentence that counted the
+   * cards below it and told the reader to pick one. The copy table replaces
+   * that whole pattern with "`Add results` with short workflow choices", and
+   * M04 had already built the choices; the paragraph outlived its own job.
+   *
+   * PAIRED, because "the sentence is gone" passes just as happily against a
+   * page that failed to render at all.
+   */
+  it('opens with the choices rather than a sentence counting them', async () => {
+    renderPage();
+    expect(await ready()).toBeInTheDocument();
+
+    for (const name of ['Import via API', 'Run a test', 'Configure CI']) {
+      expect(await entry(name)).toBeInTheDocument();
+    }
+    expect(document.body.textContent ?? '').not.toMatch(/three ways to get a run/i);
+  });
+
   it('names the token it needs and links to it, instead of managing tokens', async () => {
     renderPage();
     await ready();
@@ -221,6 +243,21 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
     expect(card.textContent ?? '').not.toMatch(/\bavailable now\b|\bonline\b/i);
     // And it does not ask for work as a diagnostic.
     expect(card.textContent ?? '').not.toMatch(/queue one to find out/i);
+
+    /* ═══ AND IT OFFERS SOMETHING TO DO (review 09-13 copy table) ═══
+     *
+     * The row asks for "`Runner availability unknown` + a useful
+     * connection/setup action". M12 delivered the headline and removed the
+     * bad affordance, leaving a state that explains what is unknown and hands
+     * the reader nothing. The token is the half this app owns — deploying the
+     * process is `infra/README.md`'s — so the action names the deployment and
+     * links to the page that mints the credential it needs. */
+    const setup = within(card).getByTestId('runner-setup');
+    expect(setup).toHaveTextContent(/on-prem runner/i);
+    expect(within(setup).getByRole('link', { name: /create one under api tokens/i })).toHaveAttribute(
+      'href',
+      '/projects/alpha/access',
+    );
   });
 
   /**
@@ -251,7 +288,15 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
   it('reports a claimed job as a runner that is there', async () => {
     fetchRunnerJobsMock.mockResolvedValueOnce({ items: [job('running', 5_000)] });
     renderPage();
-    expect(await within(await entry('Run a test')).findByText(/a runner is working/i)).toBeInTheDocument();
+    const card = await entry('Run a test');
+    expect(await within(card).findByText(/a runner is working/i)).toBeInTheDocument();
+
+    /* AND NO SETUP ACTION HERE, which is the half that keeps the one above
+       honest. A runner has been seen, so telling this reader to go deploy one
+       is wrong advice confidently given — the shape M12 was about. The
+       unknown-state case asserts the link is present; without this one it
+       would pass just as happily against a card that shows it always. */
+    expect(within(card).queryByTestId('runner-setup')).toBeNull();
   });
 
   /**

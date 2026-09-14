@@ -46,12 +46,25 @@ import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
  */
 export default function ProjectSetup() {
   return (
-    <ProjectShell
-      current="setup"
-      intro="Three ways to get a run into this project. Pick the one that matches what you already have."
-    >
-      {({ slug }) => <AddResults key={slug} slug={slug} />}
-    </ProjectShell>
+    /* ═══ NO `intro` (review 09-13, "Copy changes to make immediately") ═══
+     *
+     * This read "Three ways to get a run into this project. Pick the one that
+     * matches what you already have." The review's copy table replaces that
+     * whole pattern with "`Add results` with short workflow choices", and M04
+     * already built the choices: three collapsed cards, each a title, a status
+     * and one sentence, under a nav whose current section is called Add
+     * results.
+     *
+     * So the sentence was narrating what the reader could already see — it
+     * counted the cards below it and told them to pick one. The section name
+     * says what this page is and the cards say what the choices are; a
+     * paragraph between them is the over-explanation the same review's N04
+     * objects to elsewhere.
+     *
+     * `intro` stays on `ProjectShell` — it is optional and `ProjectRulesPage`
+     * already passes none, so a section with no intro is the existing shape
+     * rather than a new state. */
+    <ProjectShell current="setup">{({ slug }) => <AddResults key={slug} slug={slug} />}</ProjectShell>
   );
 }
 
@@ -157,6 +170,39 @@ function AddResults({ slug }: { readonly slug: string }) {
           The runner streams the log as it is written, so the run’s page is live while the test is
           still going. It executes one job at a time.
         </p>
+        {/* ═══ AND A WAY TO GET ONE, WHEN THERE HAS NEVER BEEN ONE ═══
+            (review 09-13, "Copy changes to make immediately")
+
+            The row is "No runner seen yet + inference paragraphs" ->
+            "`Runner availability unknown` + a useful connection/setup action".
+            M12 delivered the headline and removed the affordance that asked
+            the reader to QUEUE A LOAD TEST as a connectivity check; what it
+            left behind was a state that says what is not known and offers
+            nothing to do about it.
+
+            THE TOKEN IS THE HALF THIS APP OWNS. Deploying a runner is a
+            process you start beside the API and worker — `infra/README.md`
+            has the variables — and no route can own that. What it needs FROM
+            here is a credential carrying the On-prem runner permission, which
+            is minted on the API tokens page and nowhere else. So the action
+            names the deployment and links to the part a reader can actually
+            do in the product, rather than linking somewhere plausible and
+            leaving them to discover the rest.
+
+            `needsSetup` is true for the `unknown` state ALONE. `idle` and
+            `stalled` mean a runner HAS been seen and has stopped claiming —
+            telling that reader to go set one up is the wrong advice
+            confidently given, which is the shape M12 was about. */}
+        {runnerReadiness(jobs.data?.items ?? []).needsSetup && (
+          <p className="text-[13px] leading-relaxed text-muted" data-testid="runner-setup">
+            To connect one, deploy the runner process beside this instance and give it a token
+            carrying the <span className="text-primary">On-prem runner</span> permission.{' '}
+            <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
+              Create one under API tokens
+            </Link>
+            .
+          </p>
+        )}
         <div>
           <Link to={projectNewRunnerRunPath(slug)} className={linkButtonClasses}>
             <PlayIcon className="h-3.5 w-3.5" />

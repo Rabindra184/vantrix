@@ -164,6 +164,35 @@ describe('RunTelemetry', () => {
     expect(screen.queryAllByRole('figure')).toHaveLength(0);
   });
 
+  /**
+   * ═══ AN EMPTY STATE WITH A WAY FORWARD (review 09-13 copy table) ═══
+   *
+   * The row is "Two no-telemetry sentences" -> "`No generator telemetry
+   * recorded.` + setup link". The sentences were already one honest paragraph;
+   * the missing half is the action — this told a reader what did not happen
+   * and left them there.
+   *
+   * THE LINK GOES TO API TOKENS, and that is the only honest destination the
+   * app has: enabling telemetry needs the agent (a binary in this repository,
+   * which no route owns) AND a token carrying the Generator telemetry
+   * permission, which is minted on that page and named nowhere else. Add
+   * results says nothing about telemetry at all, so linking there would be the
+   * false affordance M12 was about.
+   */
+  it('offers the one setup step this app owns', async () => {
+    renderRunTelemetry({
+      runId: RUN,
+      available: false,
+      bucketWidthMs: 1000,
+      window: null,
+      hosts: [],
+    });
+
+    const link = await screen.findByTestId('telemetry-setup');
+    expect(link).toHaveAttribute('href', expect.stringContaining('/access'));
+    expect(link).toHaveTextContent(/generator telemetry/i);
+  });
+
   it('says telemetry arrives when the run finishes, not that the agent was silent', async () => {
     // `available: false` is already what the endpoint answers for a run with
     // a null `toolStartedAt` — every non-terminal run. The existing copy
