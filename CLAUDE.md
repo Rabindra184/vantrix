@@ -115,6 +115,60 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The compare-cap-race branch added no unit FILE, no unit case and no spec — it
+rewrote ONE existing e2e case — so unit stays 147 / 1828, e2e stays 134 and
+integration is unchanged.
+
+**`count()`, `getAttribute()` AND `isDisabled()` ARE IMMEDIATE READS WITH NO
+AUTO-WAITING.** Only `expect()` and an action's own actionability check retry.
+`run-compare.spec.ts`'s cap case used all three to decide its next move:
+
+```
+for (let i = 0; (await pressed().count()) < 5 && i < 6; i += 1) {
+  const chip = chips.nth(i);
+  if ((await chip.getAttribute('aria-pressed')) === 'true') continue;
+  if (await chip.isDisabled()) continue;
+  await chip.click();
+}
+```
+
+Every one of those can answer from a DOM React has not committed yet — and the
+state being raced is the one this test exists to reach. At the cap EVERY
+unselected chip takes `disabled` (`RunCompare`: `atCap = !on && selected.length
+>= MAX_COMPARE`), so a stale-low count sends the loop to click a chip that is
+already refusing, and `click()` then waits out the test's entire 60s deadline.
+**The report therefore names a timeout and no assertion**, which is the same
+shape this file already teaches you to read as infrastructure — and this time
+it was a real defect in the test. Three times in one day: `main`'s
+cross-browser run, #139's build, #140's build, all chromium.
+
+**A LOAD-DEPENDENT FLAKE CAN BE MADE DETERMINISTIC, AND THAT IS WORTH THE TEN
+MINUTES.** Throttling the renderer through CDP —
+`newCDPSession(page)` then `Emulation.setCPUThrottlingRate` at 12x — widens the
+uncommitted window until the race is certain. The original loop then failed on
+the FIRST attempt with CI's exact signature (`element is not enabled`, at
+`chip.click()`); the rewrite passed 3 of 3 under the identical throttle, at
+5.5-6.5s. **Reach for that before concluding a timeout with no failing
+assertion is the machine** — it turns "I reasoned about the race" into "I
+watched it".
+
+**AND ASSERTING THE STARTING STATE FOUND A FALSE COMMENT THAT HAD OUTLIVED THE
+TEST.** That loop ran until the count reached five from WHATEVER it found, so
+it was indifferent to where it started; the comment above it said "the run the
+page was opened from is always in and always disabled, so four more reach
+five". The rewrite asserts the starting count and failed 9 of 9: it is **TWO**,
+not one. `parseCompareSelection` prepends the current run to
+`defaultSelection`, which answers with its NEAREST NEIGHBOUR — deliberately, so
+Compare never opens having answered nothing (that function's own docstring
+argues it at length). Only the run you came from is `disabled`; the neighbour
+is selected and can be dropped. **A test indifferent to its own starting state
+cannot notice when that state stops matching the sentence above it**, and this
+one had been wrong since it was written.
+
+Both selectors are attribute selectors on the chip ITSELF
+(`[aria-pressed="false"]:not([disabled])`), never `filter()`, for the reason
+the compare-cap entry already records: `filter` matches DESCENDANTS.
+
 The webkit-chart-table-budget branch added no unit FILE, no unit case and no
 spec — it rewrote ONE existing e2e case — so unit stays 147 / 1828, e2e stays
 134 and integration is unchanged. It takes a failure that had been red on
@@ -175,9 +229,35 @@ figure is named after, beside an `onToggleTable` that flips a boolean and takes
 no id at all. A chart whose menu item
 names the right table therefore CANNOT toggle a different one. So the
 relationship stays per chart (nine menus opened, nine `aria-controls` read,
-nothing toggled) and the round trip runs once. Measured after, on a machine at
-94% swap: **chromium 2.2s, firefox 3.2s, webkit 4.0s** — WebKit back to 1.8x
-Chromium, which is the pack.
+nothing toggled) and the round trip runs once. Measured after, locally, on a
+machine at 94% swap: chromium 2.2s, firefox 3.2s, webkit 4.0s.
+
+**AND CI THEN CORRECTED TWO THINGS ABOUT THAT, WHICH IS WHY THE DISPATCH IS
+WORTH ITS FIFTEEN MINUTES.** The dispatched cross-browser run (397 passed)
+measured **webkit 18.9s against chromium 2.0s**, and the last green `main` run
+before the fix measured **35.9s against 3.5s**. So:
+
+  - **WEBKIT ON THE LINUX RUNNER IS NOT WEBKIT ON THIS MAC.** Chromium and
+    Firefox agreed within about 10% across the two machines; WebKit did not, at
+    4.0s here against 18.9s there. A local WebKit timing is not evidence about
+    CI, and the first draft of this entry read "back to 1.8x Chromium, which is
+    the pack" on the strength of one.
+  - **THE RATIO DID NOT MOVE — 10.4x before the menu, 10.3x on the last green
+    `main`, 9.5x now.** What halved is the absolute time, because the test does
+    about half the interactions. So the re-layout was A cost and not THE cause:
+    WebKit is roughly ten times Chromium at BOTH things this test does many
+    times over, an ECharts re-layout AND a Radix portal open. Backed out of the
+    three runs, on WebKit: ~0.76s per re-layout, ~1.4s per menu open.
+
+The honest statement is the plain one: **this is the most interaction-dense
+case in the file, WebKit charges about 10x per interaction, and the only lever
+is doing fewer of them.** 35.9s to 18.9s against a 60s budget, ratio untouched.
+
+**AND IT WAS NEVER DETERMINISTIC, WHICH THE FIRST DRAFT ALSO IMPLIED.** There
+is no race — nothing in the product or the test logic is nondeterministic — but
+35.9s of a 60s budget is a MARGINAL one, and which side of the line a run lands
+on is a property of the runner that day. That is the whole reason eight merges
+were red and five were green with the identical defect present.
 
 **AND THE RED-VERIFY THAT MATTERS IS THE ONE ON A NON-FIRST CHART.** Breaking
 `aria-controls` for `distribution` alone — `CHART_IDS[7]`, not the chart the
