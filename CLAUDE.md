@@ -115,6 +115,94 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The attribute-navigation-stalls branch added no unit FILE, no unit case and no
+spec — it changed one config line and one e2e helper — so unit stays
+151 / 1850, e2e stays 136 and integration is unchanged. It does NOT fix the
+cross-browser flake; it makes the flake name itself.
+
+**8 OF 8 RETRIED TESTS ACROSS SIX `e2e-cross-browser` RUNS FAILED INSIDE
+`signIn`** — seven in `page.goto('/login')`, one in the `waitForURL` after it.
+Not one failed an assertion. The test NAME was simply whoever was running, so
+six runs produced eight occurrences under eight DIFFERENT spec names, spread
+across `auth`, `run-charts`, `run-detail`, `run-tables` and `run-telemetry`.
+
+**THAT MISATTRIBUTION IS THE DEFECT THIS BRANCH FIXES.** CI reports
+"[firefox] run-telemetry.spec.ts flaky" and the next reader opens a telemetry
+chart that was never involved. It cost exactly that here — the whole
+investigation was spent getting past the name before anyone read the logs, and
+the thing was called "the Firefox flake" for a day on the strength of it.
+**When one shared helper can fail, the report blames its callers**, and a
+suite with eighteen callers of one `signIn` will name eighteen innocent specs.
+
+**AND THE SIGNATURE IS WORTH RECOGNISING, BECAUSE IT IS NOT THE ONE THIS FILE
+ALREADY RECORDS.** The integration flake documented above is "one test fails,
+in a file the branch cannot reach, passing alone". This is different and has
+its own tell:
+
+```
+  15:38:51  ✓ 232  run-detail.spec.ts:640              (1.1s)
+  15:39:51  ✘ 233  run-detail.spec.ts:693 @1024x900    (1.0m)   <- stall
+  15:39:56  ✓ 234  run-detail.spec.ts:693 @1024x900 retry (2.9s)
+  15:39:58  ✓ 235  run-detail.spec.ts:693 @1280x800    (1.5s)
+```
+
+An isolated 1.0m against neighbours at 1-3s, and a retry four seconds later
+that takes two. **The server was never unhealthy** — which is what rules out
+the everything-is-broken shapes this file documents elsewhere.
+
+**`navigationTimeout` IS 0 UNLESS YOU SET IT.** So a navigation that never
+completes is bounded only by `timeout`, and burns the whole sixty seconds
+before reporting. It is 20s now — measured against 180 navigations of this
+app's own `/login` in Firefox and WebKit (median 58-68ms, p95 74-85ms, worst
+374ms), so nothing legitimate is within fifty times of it.
+
+**THE CAUSE IS NOT KNOWN, AND THE ENTRY SAYS SO RATHER THAN IMPLYING A FIX
+FOUND IT.** Two experiments failed to reproduce it:
+
+  - 180 navigations of the real `/login` in Firefox and WebKit, each after a
+    deliberate idle gap of the shape a test's seeding creates: **0 failures**,
+    worst 374ms.
+  - 75 navigations against a bare `http.Server` left at Node's DEFAULT 5s
+    `keepAliveTimeout`, idling 5.2s between each to provoke the classic
+    HTTP/1.1 keep-alive race: **0 failures**, worst 51ms. That was the leading
+    hypothesis — the API never sets `keepAliveTimeout` — and the probe killed
+    it.
+
+**AND THE FIRST READING OF THE DATA WAS WRONG IN A WAY WORTH RECORDING.** It
+looked like "only after ~140 tests", which suggested accumulation in the
+long-lived server. It is not: Chromium runs tests 1-136 and has never flaked,
+and the first Firefox occurrence is **four tests into that engine's block**.
+Chromium always runs FIRST, so "engine" and "elapsed time" are confounded by
+the project order — and the test index is what separates them. **Check whether
+the thing you are calling a trend is just the running order.**
+
+**RETRYING A FAILED NAVIGATION IMMEDIATELY DOES NOT WORK, AND THE RED-VERIFY
+IS THE ONLY REASON THAT IS KNOWN.** A navigation that has just failed is still
+unwinding, and the second `goto` is rejected outright with `Navigation to
+.../login is interrupted by another navigation to chrome-error://chromewebdata/`
+— so the helper reported two stalls where there was one, and the case meant to
+prove the retry works instead proved it did not. Half a second of settle fixes
+it.
+
+**AND A RED-VERIFY THAT NEVER REACHED THE CODE REPORTED A PASS, TWICE OVER.**
+The mutation was driven through `auth.spec.ts`'s "signing in lands on the run
+list" — which is the test OF signing in, and drives the form itself rather
+than calling the `signIn` helper. So both mutations executed nothing and both
+runs went green. **Pick the exercising test by grepping for the call, not by
+its name**: the spec whose subject is X is the likeliest one not to use the
+helper for X.
+
+**AND `git checkout -- <file>` DESTROYED AN UNCOMMITTED FIX AGAIN — THE SAME
+DAY THE LESSON WAS WRITTEN DOWN, IN THE ENTRY TWO ABOVE THIS ONE.** The
+zoom-reflow branch recorded "commit the fix before mutating it, or restore
+from a stash rather than from HEAD". This branch then red-verified an
+uncommitted `reachLogin`, restored by checkout, and ran the mutation against a
+helper that no longer contained the fix. The tell was the same both times: a
+count in a status line, not a failure. **Writing a lesson down is not the same
+as having it** — the cheap mechanical guard is to commit a checkpoint before
+the first mutation, every time, and this file now records it twice for a
+reason.
+
 The zoom-reflow branch added no unit FILE, no unit case and no spec — it
 WIDENED one existing e2e case from two pages to four — so unit stays
 151 / 1850, e2e stays 136 and integration is unchanged. It closes what the
