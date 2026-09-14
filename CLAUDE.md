@@ -115,6 +115,35 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The drilldown-window-scope branch added ONE source file —
+`apps/web/src/routes/WholeRunNotice.tsx` — no unit case (unit stays
+147 / 1828) and 1 e2e case, so **e2e rises to 130**. Integration unchanged.
+
+**ONE CALL SITE OUT OF THREE NEVER PASSED THE PROP, AND THAT WAS THE WHOLE
+DEFECT.** `ErrorsTable` has had a `windowSelected` prop and an
+`errors-window-note` saying "these totals cover the whole run" since C-class.
+`RunDetail` passes it TWICE; `RequestDetail` never did. So the identical table,
+under the identical window, explained itself on the run page and said nothing
+on the drill-down. **When a component grows a prop that corrects a lie, grep
+every call site — the one that was not updated is where the lie survives.**
+
+**AND THE PAGES THEMSELVES CARRIED A WINDOW THEY CANNOT HONOUR.** Both
+drill-downs keep `from`/`to` deliberately — a reader arrives from a windowed
+table and sending them back un-narrowed would discard the selection they were
+investigating with — but their endpoints take no `from`/`to`, and each page's
+own comment says so. So the window was visible in the address bar, visible on
+the page they came from, and silently did not apply. `WholeRunNotice` is shared
+by both and rendered ONLY under a window: a permanent "these are whole-run
+figures" on a page whose figures are always whole-run is the over-explanation
+review N04 spent four rows removing.
+
+**A SHARED COMPONENT GUARANTEES THE WORDING, NOT THE WIRING.** The case covers
+the GROUP page as well as the request one for exactly that reason, and the
+third red-verify proves it was worth doing: deleting the notice from
+`GroupDetail` alone fails, and nothing else would have caught it. Three
+independent mutations, three distinct failures — the page notice, the
+`windowSelected` prop, and the group page's own mount.
+
 The compare-cap-and-cohort branch added no unit FILE and no unit case — unit
 stays 147 / 1828 — and its **e2e rises to 129**. Integration unchanged. It
 takes the `multiple comparisons` half of the acceptance list's evidence

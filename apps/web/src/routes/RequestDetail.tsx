@@ -21,6 +21,7 @@ import { EmptyState } from '../components/States';
 import { ChevronLeftIcon } from '../components/icons';
 import ErrorsTable from '../tables/ErrorsTable';
 import ScopedStatistics from '../tables/ScopedStatistics';
+import WholeRunNotice from './WholeRunNotice';
 import { Payload, TableSection, type Slot } from './payload';
 import useDocumentTitle from '../useDocumentTitle';
 
@@ -185,6 +186,9 @@ export default function RequestDetail() {
           eight figures to reach one request's p99 is the reading order
           nobody wants. Here, the entire numeric payload IS a single row —
           there is nothing left for the charts to precede. */}
+      {/* Only under a window — see `WholeRunNotice`. */}
+      {windowSuffix !== '' && <WholeRunNotice what="this request’s figures" />}
+
       <TableSection title="Statistics" query={stats}>
         {(data) => {
           const row = requestRow(data, name);
@@ -210,7 +214,15 @@ export default function RequestDetail() {
       </TableSection>
 
       <TableSection title="Errors" query={errors}>
-        {(data) => <ErrorsTable errors={data} scopeLabel={name} />}
+        {/* `windowSelected`, WHICH THIS CALL SITE ALONE WAS MISSING. The same
+            component on the run page passes it (`RunDetail`, twice) and says
+            "these totals cover the whole run" when a window is applied;
+            here it said nothing, so the identical table under the identical
+            window reported whole-run totals in silence on one page and
+            explained itself on the other. */}
+        {(data) => (
+          <ErrorsTable errors={data} scopeLabel={name} windowSelected={windowSuffix !== ''} />
+        )}
       </TableSection>
 
       <Payload query={stats} slots={[INDICATORS]}>
