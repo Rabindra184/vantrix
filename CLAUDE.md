@@ -115,6 +115,39 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The compare-cap-and-cohort branch added no unit FILE and no unit case — unit
+stays 147 / 1828 — and its **e2e rises to 129**. Integration unchanged. It
+takes the `multiple comparisons` half of the acceptance list's evidence
+cluster.
+
+**THE CAP REFUSED IN SILENCE.** `MAX_COMPARE` is 5, and at it every unselected
+chip took `disabled` and `opacity-50` with NOTHING anywhere explaining why —
+the picker's only `title` belongs to the run the page was opened from. A reader
+with six eligible runs and five picked met three greyed buttons and no reason,
+and the only way to learn the rule was to guess that deselecting one would free
+another.
+
+**THE SAME LESSON `ChartActions` EARNED THIS SESSION, ONE COMPONENT OVER.** A
+`title` is invisible on touch and unreachable by keyboard, so it cannot be the
+SOLE carrier of a refusal. The reason is visible text now and the disabled
+chips point at it with `aria-describedby` — rendered only AT the cap, so the
+attribute never points at nothing, which is the rule that file already follows
+for its own export refusal.
+
+**AND THE EXERCISE FOUND NOTHING ELSE BROKEN, WHICH IS ALSO A RESULT.** Every
+existing case in `run-compare.spec.ts` went through `cohortOfTwo`, and the cap
+was proven only against a synthetic array in `compareSelection.test.ts` — so
+three, four and five overlaid runs had never existed in a browser. They work:
+five distinct series, six columns in the data table, the comparability panel and
+the summary tiles all render. **Pinned now rather than assumed**, which is the
+difference between "we think it scales" and "it does".
+
+**`filter({ hasNot })` MATCHES DESCENDANTS, AND `aria-pressed` IS ON THE CHIP
+ITSELF.** Reaching for it to find an UNSELECTED chip quietly matched every chip
+including the five selected ones, and the case failed on `toBeDisabled` against
+a chip that was legitimately enabled. An attribute selector
+(`[aria-pressed="false"]`) is the tool; `filter` is for containment.
+
 The evidence-window-scope branch added no unit FILE and 1 case
 (`RunStats.test.tsx`), from 147 / 1827 to **147 / 1828**, and **e2e rises to
 128** (two cases in `run-charts.spec.ts`). Integration unchanged. It takes the

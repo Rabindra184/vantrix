@@ -306,10 +306,24 @@ export default function RunCompare() {
                           disabled={atCap || run.id === runId}
                           data-testid={`compare-run-${run.id}`}
                           onClick={() => toggle(run.id)}
-                          // The run the page was opened from cannot be
-                          // deselected: it is the reason this comparison
-                          // exists, and a set that excluded it would compare a
-                          // run against peers it is not among.
+                          /* ═══ A DISABLED CONTROL MUST SAY WHY, AND `title`
+                               IS NOT SAYING IT ═══
+                             (the 09-13 review's acceptance list: multiple comparisons)
+
+                             At the cap every unselected chip went to
+                             `disabled` and 50% opacity with NOTHING anywhere
+                             explaining it — the `title` below is set only for
+                             the run you came from. A reader with six eligible
+                             runs and five picked met three greyed buttons and
+                             no reason, and the only way to learn the rule was
+                             to guess that deselecting one would free another.
+
+                             `aria-describedby` rather than a second `title`,
+                             for the reason `ChartActions` records: a `title`
+                             is invisible on touch and unreachable by keyboard,
+                             so it cannot be the SOLE carrier of a refusal. The
+                             sentence it points at is visible text below. */
+                          aria-describedby={atCap ? 'compare-cap' : undefined}
                           title={run.id === runId ? 'The run you came from is always included' : undefined}
                           className={`transition-ui inline-flex h-8 touch-manipulation items-center rounded-lg border px-2.5 text-[0.8125rem] font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
                             on
@@ -322,6 +336,18 @@ export default function RunCompare() {
                       );
                     })}
                   </div>
+                  {/* Rendered only AT the cap, so it is never an empty
+                      paragraph and `aria-describedby` never points at nothing
+                      — the same rule `ChartActions`' export refusal follows.
+                      The count is spelled out rather than left implicit,
+                      because "at most five" is the fact a reader needs and the
+                      chips cannot carry it. */}
+                  {selected.length >= MAX_COMPARE && (
+                    <p id="compare-cap" data-testid="compare-cap" className="text-[0.75rem] text-muted">
+                      {MAX_COMPARE} runs is the most this overlay can draw at once. Deselect one to
+                      choose another.
+                    </p>
+                  )}
                 </fieldset>
 
                 {/* BEFORE the numbers, deliberately. Cohort membership says

@@ -192,3 +192,69 @@ test('a cohort of one offers no comparison and explains why', async ({ page }) =
   await expect(page.getByText('Nothing to compare yet')).toBeVisible();
   await expect(overlay(page)).toHaveCount(0);
 });
+
+/**
+ * ═══ MORE THAN TWO RUNS, WHICH NOBODY HAD EVER DRAWN ═══
+ * (the 09-13 review's acceptance list: "multiple comparisons")
+ *
+ * `MAX_COMPARE` is 5 and every case above this one goes through
+ * `cohortOfTwo` — so the cap was proven only against a synthetic array in a
+ * unit test, and three, four or five overlaid runs had never existed in a
+ * browser. The overlay, the comparability panel, the summary tiles and the
+ * legend had all only ever been seen with two.
+ *
+ * SIX RUNS SEEDED, ONE MORE THAN THE CAP, because the interesting states are
+ * AT the boundary and just past it: five selected and drawing, and a sixth
+ * chip that refuses.
+ */
+test('overlays five runs and says why it will not take a sixth', async ({ page }) => {
+  const admin = await seedAdmin();
+  let runId = '';
+  for (let i = 0; i < 6; i += 1) runId = await seedRunWithData(admin.orgId);
+
+  await signIn(page, admin);
+  await page.goto(runComparePath(runId));
+
+  const chips = page.locator('[data-testid^="compare-run-"]');
+  await expect(chips).toHaveCount(6);
+
+  /* SELECT UP TO THE CAP. The run the page was opened from is always in and
+     always disabled, so four more reach five. */
+  const pressed = () => page.locator('[data-testid^="compare-run-"][aria-pressed="true"]');
+  for (let i = 0; (await pressed().count()) < 5 && i < 6; i += 1) {
+    const chip = chips.nth(i);
+    if ((await chip.getAttribute('aria-pressed')) === 'true') continue;
+    if (await chip.isDisabled()) continue;
+    await chip.click();
+  }
+  await expect(pressed()).toHaveCount(5);
+
+  await drawn(page);
+
+  /* FIVE DISTINCT SERIES. `toHaveCount` alone would pass against an overlay
+     that drew one line five times; distinctness is what says a reader can tell
+     them apart, and `compareLabels` disambiguates colliding timestamps
+     precisely so they can. */
+  const names = await expectSeriesNames(page, 5);
+  expect(new Set(names).size).toBe(5);
+  await expect(runsInTable(page)).toHaveCount(6); // 5 runs + the elapsed column
+
+  /* ═══ AND THE SIXTH REFUSES WITH A REASON ═══
+   *
+   * Every unselected chip went to `disabled` and 50% opacity with nothing
+   * anywhere explaining it — the only `title` in the picker belongs to the run
+   * you came from. A reader met greyed buttons and had to guess the rule. */
+  const cap = page.getByTestId('compare-cap');
+  await expect(cap).toBeVisible();
+  await expect(cap).toContainText(/most this overlay can draw|deselect one/i);
+
+  // The refusal reaches assistive technology through the CONTROL, not just the
+  // page: a sentence a screen-reader user has to go looking for is not a reason
+  // the disabled button gave them.
+  // `aria-pressed` is on the chip ITSELF, so this is an attribute selector and
+  // not a `filter({ hasNot })` — that matches DESCENDANTS and quietly kept
+  // every chip, including the five selected ones.
+  const refused = page.locator('[data-testid^="compare-run-"][aria-pressed="false"]').first();
+  await expect(refused).toBeDisabled();
+  await expect(refused).toHaveAttribute('aria-describedby', 'compare-cap');
+});
