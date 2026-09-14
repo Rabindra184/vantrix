@@ -348,4 +348,48 @@ describe('ProjectRail collapse', () => {
       await screen.findByRole('button', { name: 'Expand the projects rail' }),
     ).toBeInTheDocument();
   });
+
+  /**
+   * ═══ THE LIVE REGION IS MOUNTED BEFORE IT HAS ANYTHING TO SAY ═══
+   *
+   * A screen reader announces a live region's CHANGES, and a region that
+   * arrives already holding its message has not changed — it was inserted. So
+   * the wrapper is rendered unconditionally, with the message conditional
+   * INSIDE it, and the rail's own comment says exactly that.
+   *
+   * Nothing checked it, and the refactor that breaks it is the tidier-looking
+   * one: hoisting the `message != null` guard onto the wrapper deletes an
+   * always-empty div, changes nothing on screen, passes every other case in
+   * this file, and silences every projects-failed announcement there will ever
+   * be. Same shape as the `aria-hidden` `TableFrame` defect this repo already
+   * paid for — markup that reads tidier and removes something only a screen
+   * reader uses.
+   *
+   * Asserted in the state where the region has NOTHING to announce, because
+   * that is the only state that can tell the two spellings apart: with a
+   * message present they are identical.
+   */
+  it('registers the live region before there is a message to put in it', async () => {
+    const { container } = renderRail(PROJECTS);
+    await screen.findByRole('link', { name: 'Checkout Flow' });
+
+    const region = container.querySelector('[aria-live="polite"]');
+    expect(region).not.toBeNull();
+    expect(region).toHaveTextContent('');
+  });
+
+  /**
+   * And the same region is the one that later carries the failure — not a
+   * second element that happens to look like it. Without this, the case above
+   * is satisfied by an empty decorative region beside a message announced from
+   * somewhere else entirely.
+   */
+  it('puts the failure inside that same region', async () => {
+    const { container } = renderRail([], { fail: true });
+    const message = await screen.findByText('Projects could not be loaded.');
+
+    const region = container.querySelector('[aria-live="polite"]');
+    expect(region).not.toBeNull();
+    expect(region).toContainElement(message);
+  });
 });

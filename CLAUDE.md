@@ -97,7 +97,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **147 files / 1822 tests**, it
+`nvm use` first, and if a run reports fewer than **151 files / 1850 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -114,6 +114,107 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The a11y-untested-promises branch added FOUR unit files —
+`apps/web/test/States.test.tsx` (5), `AuthGate.test.tsx` (5),
+`SignOutButton.test.tsx` (4) and `Login.test.tsx` (4) — plus 2 cases each to
+`ChartActions.test.tsx` and `ProjectRail.test.tsx`, from a floor of 147 / 1828.
+Integration is UNCHANGED (every new file is a `.tsx`, which that config never
+runs) and its **e2e rises to 136** (`acceptance.spec.ts`).
+
+**FOUR COMPONENTS ON EVERY PAGE HAD NO TEST FILE AT ALL**, which is the
+`TableFrame` precedent exactly — a component six tables shared acquired an
+`aria-hidden` over an interactive `<summary>` and kept it through two reviews,
+because nothing was reading it. `States` is imported by SEVENTEEN modules,
+`AuthGate` renders on the way into every authenticated route, `Login` is the
+one page a signed-out visitor sees and `SignOutButton` is in the header of all
+of them. **Grep for components with no test file before looking for untested
+BEHAVIOUR** — the second search is harder and the first one found more.
+
+**AND EVERY CLAIM WORTH PINNING IN THEM TURNED OUT TO BE AN ACCESSIBILITY
+CLAIM, WHICH IS NOT A COINCIDENCE.** What these components decide is how a page
+INTERRUPTS somebody — alert against status, what a live region wraps, when a
+label is announced — and that is invisible to every assertion about the words
+on screen. Some examples, each argued at length in its own docstring and
+checked by nothing:
+
+  - **`ErrorState` is an alert and `EmptyState` is not.** "This project has no
+    runs" is the ANSWER, not a failure, and announcing it as an interruption is
+    wrong. Asserted as an exclusive pair: a file that made every state an alert
+    satisfies "the error is an alert" perfectly.
+  - **An assertive live region must never wrap a heading or a landmark.**
+    `AuthGate`'s outage page states this as a general rule. An explicit role
+    OVERRIDES an element's implicit one, so `<main role="alert">` is a page
+    with no main landmark at all, on the page where a reader has the least
+    other structure to navigate by. Red-verified: that one mutation fails three
+    cases.
+  - **`ProjectRail`'s live region is mounted before it has anything to say.** A
+    screen reader announces a region's CHANGES; one that arrives already
+    holding its message has not changed, it was inserted. The refactor that
+    breaks this is the tidier-looking one — hoist `message != null` onto the
+    wrapper, delete an always-empty div, change nothing on screen, and silence
+    every projects-failed announcement for ever. The guard is asserted in the
+    state with NOTHING to announce, because that is the only state that can
+    tell the two spellings apart.
+
+**M17 CLAIMED A KEYBOARD PROMISE AND ONLY THE OLDER MENU WAS EVER CHECKED.**
+That branch chose `role="menu"` on the argument that `AccountMenu` is a real
+one and `ThemeToggle` earned this repo the lesson that half-keeping a role is
+worse than not claiming it. `AccountMenu.test.tsx` checks arrow keys and focus
+return; `ChartActions.test.tsx` checked neither, on the menu that was ADDED to
+satisfy the finding. Both are pinned now, in jsdom and in a browser, and both
+were red-verified — Radix's own `onCloseAutoFocus={(e) => e.preventDefault()}`
+is the exact opt-out that breaks focus return, which makes it the cleanest
+mutation available for that class of claim.
+
+**200% TEXT ZOOM: TWO PAGES OF FOUR PUSH THE DOCUMENT SIDEWAYS, MEASURED AND
+DELIBERATELY NOT ASSERTED.** At 1280 with a 32px root:
+
+```
+  SLA rules form      1280 of 1280   fits
+  Add results         1280 of 1280   fits
+  run list            1421 of 1280   OVERFLOWS
+  run page            1574 of 1280   OVERFLOWS
+```
+
+The two that pass are pinned; the two that fail are recorded. A threshold set
+to the goal rather than the measurement is a failing test describing work
+nobody has agreed to do — the discipline M01's geometry bound already set.
+
+**AND THE OBVIOUS DIAGNOSIS OF THAT OVERFLOW IS WRONG, WHICH IS WORTH THE
+WARNING.** Listing every element whose `getBoundingClientRect().right` exceeds
+the viewport names `RunTabs`' links first — and `RunTabs` already carries
+`overflow-x-auto`. **Content inside a working scroller legitimately reports a
+rect past the viewport**, so "which element sticks out" and "which element
+widens the document" are different questions and the first one's answer
+misleads. Left undiagnosed rather than guessed at.
+
+**TWO MOCK TRAPS, BOTH OF WHICH REPORTED THE WRONG THING.** A partial
+`vi.mock` of `api/session` left `AuthError` undefined, so `Login`'s
+`err instanceof AuthError` threw INSIDE its own catch block, the error state
+was never set, and two cases failed with "unable to find role=alert" —
+pointing at markup that was fine. `importOriginal` is the fix, the same
+spelling `ChartActions.test.tsx` already uses to keep `toCsv` real. And
+`AuthError` takes `(code, message)`: passing the message first left the alert
+rendering an empty string, which reads as a broken component rather than a
+broken fixture. **A partial module mock is the malformed-fixture trap one layer
+up — it removes an export the component needs, silently.**
+
+**AND `exact: true` IS NOT A `getByRole` OPTION, WHICH ONLY `tsc` SAW.**
+`getByRole(role, { name })` is already EXACT in Testing Library and a
+case-insensitive SUBSTRING in Playwright — this file records that distinction
+two sections down, and the way it bites is copying the e2e spelling into a
+jsdom test, where `exact` is not a `ByRoleOptions` member at all. The suite
+passed 4 of 4; `tsc` answered TS2769. **Fifth time this file records that the
+gate's FIRST command is the only thing that sees a test built wrong**, and the
+first time it was a query option rather than a constructed prop.
+
+**AND A `findBy` THAT NAMES SOMETHING BOTH STATES RENDER RESOLVES ON THE WRONG
+ONE.** `AuthGate`'s outage cases awaited `findByRole('main')` — and
+`Bootstrapping` renders a `<main>` too, so the wait returned on the page BEFORE
+the one under test and the alert had not been drawn. Await the element unique
+to the state you mean. Third time this session: the skeleton locator that
+picked up another route's table, and the `.nth(3)` status cell before it.
 
 The compare-cap-race branch added no unit FILE, no unit case and no spec — it
 rewrote ONE existing e2e case — so unit stays 147 / 1828, e2e stays 134 and
