@@ -115,7 +115,7 @@ export default function AccountMenu({ identity }: { readonly identity: string | 
         <button
           type="button"
           data-testid="account-menu-trigger"
-          className="transition-ui flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-mark text-[12px] font-semibold text-on-brand hover:opacity-90 data-[state=open]:ring-2 data-[state=open]:ring-accent [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
+          className="transition-ui flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-mark text-[0.75rem] font-semibold text-on-brand hover:opacity-90 data-[state=open]:ring-2 data-[state=open]:ring-accent [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
         >
           <span aria-hidden="true">{initial}</span>
           <span className="sr-only">Account: {identity ?? 'signed in'}</span>
@@ -128,7 +128,7 @@ export default function AccountMenu({ identity }: { readonly identity: string | 
             `Session` (api/session.ts) carries a user and no organisation, and
             the review is explicit that multi-tenant UI must not be invented. */}
         <DropdownMenuLabel>Signed in as</DropdownMenuLabel>
-        <p data-testid="signed-in-as" className="px-2 pb-1 text-[13px] break-all text-primary">
+        <p data-testid="signed-in-as" className="px-2 pb-1 text-[0.8125rem] break-all text-primary">
           {identity ?? 'an account this page could not read'}
         </p>
 
@@ -178,7 +178,7 @@ export default function AccountMenu({ identity }: { readonly identity: string | 
         {failed && (
           <p
             role="alert"
-            className="flex items-start gap-1.5 px-2 pt-1 text-[12px]"
+            className="flex items-start gap-1.5 px-2 pt-1 text-[0.75rem]"
             /* INLINE, not a `text-status-failed` utility: the status colours
                live on `:root` rather than in `@theme inline`, so Tailwind
                generates no utility for them and the class would emit nothing

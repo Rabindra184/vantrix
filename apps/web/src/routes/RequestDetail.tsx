@@ -128,7 +128,7 @@ export default function RequestDetail() {
             as the breadcrumb it actually is, matching `RunHeader`'s. */}
         <Link
           to={`/runs/${encodeURIComponent(runId)}${windowSuffix}`}
-          className="transition-ui inline-flex w-fit items-center gap-1 text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+          className="transition-ui inline-flex w-fit items-center gap-1 text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
         >
           <ChevronLeftIcon className="h-3.5 w-3.5" />
           Back to this run
@@ -153,7 +153,7 @@ export default function RequestDetail() {
          * exists — an em dash for a missing environment would be noise, since
          * the whole strip is context rather than a measurement. */}
         {run !== null && (
-          <p data-testid="detail-run-context" className="text-[12px] text-muted">
+          <p data-testid="detail-run-context" className="text-[0.75rem] text-muted">
             <Link
               to={projectPath(run.project.slug)}
               className="transition-ui text-accent hover:underline hover:underline-offset-2"

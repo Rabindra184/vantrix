@@ -50,10 +50,10 @@ export default function WaitingPanel({ status }: { readonly status: RunProcessin
 
       {/* `role="status"` on the sentence that changes, so a screen reader hears
           the transition rather than only the first paint. */}
-      <p role="status" className="text-[13px] text-muted">
+      <p role="status" className="text-[0.8125rem] text-muted">
         This run is still processing.
       </p>
-      <p className="text-[13px]">
+      <p className="text-[0.8125rem]">
         <Marked mark={STATUS[status]} />
       </p>
     </div>

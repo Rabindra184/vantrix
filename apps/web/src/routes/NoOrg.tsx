@@ -55,11 +55,11 @@ export default function NoOrg() {
         >
           You are not a member of any organisation
         </h1>
-        <p className="text-[13px] leading-relaxed">
+        <p className="text-[0.8125rem] leading-relaxed">
           Your sign-in worked — this is not a password problem. This account simply has not been
           added to an organisation yet, and every run in PerfPortal belongs to one.
         </p>
-        <p className="text-[13px] leading-relaxed text-muted">
+        <p className="text-[0.8125rem] leading-relaxed text-muted">
           Ask an administrator to add this account to an organisation, then sign in again.
         </p>
         <div className="mt-1">

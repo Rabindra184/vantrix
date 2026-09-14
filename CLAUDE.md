@@ -115,6 +115,59 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The type-scale-rem branch added no unit FILE and 1 case
+(`apps/web/test/tokens.test.ts`), from 147 / 1826 to **147 / 1827**, and its
+**e2e rises to 120**. Integration unchanged. 232 sites across 49 files, one
+mechanical rule.
+
+**THE APP'S TYPE IGNORED THE READER'S FONT SIZE, AND ONLY THE HEADINGS DID
+NOT.** Measured against the built app by doubling the root font size:
+
+```
+                      root 16   root 32 BEFORE   root 32 AFTER
+  h1 (text-xl)          20px         40px            40px
+  table header          12px         12px            24px
+  run row cell          13px         13px            26px
+  rail link             13px         13px            26px
+  muted prose           12px         12px            24px
+```
+
+Headings use Tailwind's rem-based `text-xl`; everything else used
+`text-[13px]`, which a root font size cannot reach. **223 absolute-px type
+utilities against 42 relative ones** — so a reader who asks for larger text got
+bigger titles over unchanged 12px data, which is the part they came for.
+
+**A UNITS CHANGE, NOT A DESIGN ONE, AND THAT IS WHY IT IS ONE RULE.**
+`text-[13px]` -> `text-[0.8125rem]`, which IS 13px at a 16px root: nothing
+moves for a reader who changes nothing. No named tokens were invented — naming
+a type scale is a design decision and this is not one — and nothing else was
+px-typographic (no `leading-[…px]`, no `tracking-[…px]`, no `[font-size:…]`).
+**Tailwind's spacing scale was already rem**, so the boxes around the text
+were never the problem; only the text was.
+
+**THE SOURCE GUARD WAS WORTHLESS UNTIL RED-VERIFIED, AND THE HOLE IS ONE THIS
+FILE HAS NOT RECORDED BEFORE.** The new rule scans for `text-[Npx]` and it
+borrowed `tokens.test.ts`'s existing `tsxFiles` collector — which takes `.tsx`
+ONLY. Putting a px size back in `components/tableStyles.ts` left it GREEN: that
+file is a `.ts`, and it holds `TH`, `TD` and `ROW`, i.e. every table cell in
+the app. **A source-scanning guard is only as wide as its file collector, and
+the highest-leverage style file in this repo is not a component.** It collects
+`.ts` as well now, and fails naming the file and the string.
+
+**TWO GUARDS, BECAUSE NEITHER IS SUFFICIENT.** The unit rule catches a
+regression where it would be WRITTEN; the e2e case (`run-list.spec.ts`) doubles
+the root and asserts the heading, the header and a data cell all double, which
+catches a stylesheet overriding the utility and is the only layer that can —
+**jsdom computes no font size at all**. The e2e half asserts DOUBLED rather
+than merely larger: "bigger than before" passes against a scale that moved by a
+point, which is not what a reader who doubled their font asked for. It went red
+first try with `header: 12px -> 12px`.
+
+**NOT A CLEAN WCAG 1.4.4 FAILURE, AND THE ENTRY SHOULD SAY SO.** Browser PAGE
+zoom scales px text like everything else, so the criterion was arguably met
+before. What was ignored is a reader's own default font size — and 12px is
+small to start from.
+
 The run-list-midwidth branch added no unit FILE and no unit case — unit stays
 147 / 1826 — and its **e2e rises to 119**. Integration unchanged.
 

@@ -34,7 +34,7 @@ import { projectPath, projectTestPath } from './paths';
  * 768 is where the divided row it belongs to starts.
  */
 const BOX =
-  'rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[12px] text-muted shadow-panel';
+  'rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[0.75rem] text-muted shadow-panel';
 const STRIP = `flex flex-wrap items-start gap-y-3 divide-x divide-default ${BOX}`;
 const COMPACT_STRIP = `flex flex-col gap-3 ${BOX}`;
 
@@ -284,7 +284,7 @@ export default function RunHeader({
       {identity.project != null && (
         <nav
           aria-label="Breadcrumb"
-          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-muted"
+          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.8125rem] text-muted"
         >
           <Link
             to={projectPath(identity.project.slug)}
@@ -319,7 +319,7 @@ export default function RunHeader({
             </>
           )}
           <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
-          <code aria-current="page" className="text-[12px]">
+          <code aria-current="page" className="text-[0.75rem]">
             {identity.id.slice(0, 8)}
           </code>
         </nav>
@@ -344,7 +344,7 @@ export default function RunHeader({
             {identity.simulation ?? `Run ${identity.id.slice(0, 8)}`}
           </h1>
           {identity.description != null && identity.description !== '' && (
-            <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+            <p className="max-w-2xl text-[0.8125rem] leading-relaxed text-muted">
               {identity.description}
             </p>
           )}
@@ -452,7 +452,7 @@ export default function RunHeader({
                 `RunGlossary` settled on: say something that stays true. */}
             <summary
               data-testid="run-metadata-toggle"
-              className="w-fit cursor-pointer list-none font-sans text-[12px] font-medium text-accent hover:underline hover:underline-offset-2"
+              className="w-fit cursor-pointer list-none font-sans text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2"
             >
               <span className="group-open:hidden">Run details</span>
               <span className="hidden group-open:inline">Hide run details</span>
@@ -517,7 +517,7 @@ function Chip({
           the gate strip's "Release gate": nothing queries a `<p>` by
           accessible name, so `uppercase` is safe HERE in a way it is not on
           a column heading. */}
-      <p className="text-[12px] font-medium text-muted">{name}</p>
+      <p className="text-[0.75rem] font-medium text-muted">{name}</p>
       {/* THE GROUP, THE NAME AND THE TESTID ALL STAY ON THE VALUE NODE, and
           the visible label above sits OUTSIDE it. That is what keeps the
           three text-content pins in the module docstring true while the cell
@@ -530,7 +530,7 @@ function Chip({
         role="group"
         aria-label={label}
         data-testid={testId}
-        className="mt-1 block truncate whitespace-nowrap text-[12px] text-primary"
+        className="mt-1 block truncate whitespace-nowrap text-[0.75rem] text-primary"
       >
         {children}
       </span>

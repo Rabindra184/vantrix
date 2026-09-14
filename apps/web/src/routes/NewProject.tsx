@@ -50,7 +50,7 @@ export default function NewProject() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div className="flex min-w-0 flex-col gap-1">
-        <Link to={DEFAULT_ROUTE} className="inline-flex items-center gap-1 text-[13px] font-medium text-muted hover:text-primary">
+        <Link to={DEFAULT_ROUTE} className="inline-flex items-center gap-1 text-[0.8125rem] font-medium text-muted hover:text-primary">
           <ChevronLeftIcon className="h-3.5 w-3.5" />
           Runs
         </Link>
@@ -91,7 +91,7 @@ export default function NewProject() {
           </div>
 
           {(formError !== null || mutation.isError) && (
-            <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary">
+            <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
               {formError ?? problem?.detail ?? mutationError?.message}
               {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
             </div>
@@ -123,7 +123,7 @@ function Field({
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={id} className="text-[13px] font-medium text-primary">
+      <label htmlFor={id} className="text-[0.8125rem] font-medium text-primary">
         {label}
       </label>
       {children}

@@ -234,7 +234,7 @@ export default function RunTelemetry() {
                   <Link
                     to={projectAccessPath(projectSlug)}
                     data-testid="telemetry-setup"
-                    className="transition-ui text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+                    className="transition-ui text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
                   >
                     Create a token with Generator telemetry
                   </Link>
@@ -271,7 +271,7 @@ export default function RunTelemetry() {
                 that does nothing. */}
             {hosts.length > 1 && (
               <div className="flex items-center gap-2">
-                <label htmlFor="load-generator-host" className="shrink-0 text-[12px] text-muted">
+                <label htmlFor="load-generator-host" className="shrink-0 text-[0.75rem] text-muted">
                   Load generator
                 </label>
                 <select
@@ -296,7 +296,7 @@ export default function RunTelemetry() {
               // would.
               <p
                 role="status"
-                className="rounded-lg border border-default bg-sunken px-3 py-2 text-[13px] text-muted"
+                className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted"
               >
                 {skewMessage(host)}
               </p>

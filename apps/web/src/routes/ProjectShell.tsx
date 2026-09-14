@@ -249,7 +249,7 @@ export default function ProjectShell({
               key={section}
               to={path(slug)}
               aria-current={active ? 'page' : undefined}
-              className={`transition-ui shrink-0 border-b-2 px-3 py-2 text-[13px] font-medium ${
+              className={`transition-ui shrink-0 border-b-2 px-3 py-2 text-[0.8125rem] font-medium ${
                 active
                   ? 'border-accent text-primary'
                   : 'border-transparent text-muted hover:text-primary'
@@ -261,7 +261,7 @@ export default function ProjectShell({
         })}
       </nav>
 
-      {intro !== undefined && <p className="-mt-3 text-[13px] text-muted">{intro}</p>}
+      {intro !== undefined && <p className="-mt-3 text-[0.8125rem] text-muted">{intro}</p>}
 
       {children({ slug, name })}
     </div>

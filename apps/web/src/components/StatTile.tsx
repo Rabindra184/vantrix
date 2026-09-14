@@ -66,7 +66,7 @@ export default function StatTile({
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-default bg-surface p-4 shadow-panel">
-      <dt className="text-[12px] font-medium text-muted">{label}</dt>
+      <dt className="text-[0.75rem] font-medium text-muted">{label}</dt>
       {/* 24px — `text-2xl leading-8`, the size the redesign's own screens set
           this number at — and it is the unit SPLIT that pays for it. The old
           20px was measured against `14.40 req/s`, eleven monospace characters,
@@ -93,13 +93,13 @@ export default function StatTile({
         {unit !== undefined && (
           <>
             {' '}
-            <span className="text-[12px] font-medium tracking-normal text-muted">{unit}</span>
+            <span className="text-[0.75rem] font-medium tracking-normal text-muted">{unit}</span>
           </>
         )}
       </dd>
       {delta !== undefined && (
         <p
-          className="mt-2 text-[11px] font-medium leading-none"
+          className="mt-2 text-[0.6875rem] font-medium leading-none"
           style={{ color: deltaColour(delta.tone) }}
         >
           {delta.label}
@@ -108,7 +108,7 @@ export default function StatTile({
       {/* `mt-auto` pins the hint to the bottom, so six tiles of differing hint
           lengths in one grid row keep their VALUES on a common baseline
           instead of each floating below its own label. */}
-      {hint !== undefined && <p className="mt-auto pt-2 text-[11px] leading-snug text-muted">{hint}</p>}
+      {hint !== undefined && <p className="mt-auto pt-2 text-[0.6875rem] leading-snug text-muted">{hint}</p>}
     </div>
   );
 }

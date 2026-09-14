@@ -96,7 +96,7 @@ export function EmptyState({
       </span>
       <Title as={titleAs}>{title}</Title>
       {body !== undefined && (
-        <p className="max-w-sm text-[13px] leading-relaxed text-muted">{body}</p>
+        <p className="max-w-sm text-[0.8125rem] leading-relaxed text-muted">{body}</p>
       )}
       {action}
     </div>
@@ -111,7 +111,7 @@ type TitleElement = 'p' | 'h1' | 'h2';
  * a visual decision, which is exactly what it must not be.
  */
 function Title({ as: Element, children }: { readonly as: TitleElement; readonly children: string }) {
-  return <Element className="text-[15px] font-semibold tracking-tight text-primary">{children}</Element>;
+  return <Element className="text-[0.9375rem] font-semibold tracking-tight text-primary">{children}</Element>;
 }
 
 /**
@@ -163,10 +163,10 @@ export function ErrorState({
       <AlertMark />
       <Title as={titleAs}>{title}</Title>
       {detail !== undefined && (
-        <p className="max-w-md text-[13px] leading-relaxed text-primary">{detail}</p>
+        <p className="max-w-md text-[0.8125rem] leading-relaxed text-primary">{detail}</p>
       )}
       {remediation !== undefined && (
-        <p data-testid={remediationTestId} className="max-w-md text-[13px] leading-relaxed text-muted">
+        <p data-testid={remediationTestId} className="max-w-md text-[0.8125rem] leading-relaxed text-muted">
           {remediation}
         </p>
       )}

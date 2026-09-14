@@ -317,3 +317,60 @@ test('p95 and Errors are on screen without scrolling the table sideways', async 
   expect(errors!, `Errors ends at ${errors}px of ${visible}px visible`).toBeLessThanOrEqual(visible);
   }
 });
+
+/**
+ * ═══ THE TYPE SCALE FOLLOWS THE READER'S FONT SIZE ═══
+ *
+ * MEASURED before this was true: doubling the root font size took this page's
+ * `<h1>` from 20px to 40px and left the table header at 12px, the row text at
+ * 13px and the rail at 13px. Headings used Tailwind's rem-based `text-xl`;
+ * everything else used `text-[13px]`, which a root font size cannot reach. So
+ * a reader who asks for larger text got bigger titles over unchanged 12px
+ * data — the numbers they came for.
+ *
+ * ONLY A BROWSER CAN ANSWER THIS. jsdom computes no font size at all, so the
+ * unit suite guards the SOURCE (`tokens.test.ts` — no absolute-px type
+ * utility) and this guards the BEHAVIOUR. Neither is sufficient alone: a
+ * source scan cannot see a stylesheet that overrides the utility, and this
+ * cannot say where a regression was written.
+ *
+ * The root is restored before the assertions run on nothing, because Playwright
+ * reuses the page across a file and a leaked 32px root would be somebody
+ * else's mystery failure.
+ */
+test('the run list scales with the reader’s font size, not just its headings', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto('/runs');
+  await expect(page.getByTestId('run-row').first()).toBeVisible();
+
+  const sizes = () =>
+    page.evaluate(() => {
+      const px = (sel: string): number => {
+        const el = document.querySelector(sel);
+        return el === null ? 0 : parseFloat(getComputedStyle(el).fontSize);
+      };
+      return { heading: px('h1'), header: px('table thead th'), cell: px('[data-testid="run-row"] td') };
+    });
+
+  const at16 = await sizes();
+  try {
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = '32px';
+    });
+    const at32 = await sizes();
+
+    for (const key of ['heading', 'header', 'cell'] as const) {
+      expect(at16[key], `${key} has a size to scale`).toBeGreaterThan(0);
+      /* DOUBLED, not merely larger. "Bigger than before" passes against a
+         scale that moved by a point, which is not what a reader who doubled
+         their font asked for. */
+      expect(at32[key], `${key}: ${at16[key]}px -> ${at32[key]}px`).toBeCloseTo(at16[key] * 2, 0);
+    }
+  } finally {
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = '';
+    });
+  }
+});

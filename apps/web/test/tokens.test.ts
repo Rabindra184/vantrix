@@ -14,6 +14,22 @@ function tsxFiles(dir: string): string[] {
 }
 
 /**
+ * `.ts` AS WELL AS `.tsx`, AND THE DIFFERENCE COST A GUARD ITS WHOLE POINT.
+ * `tsxFiles` above collects components; class strings also live in plain `.ts`
+ * modules — `components/tableStyles.ts` holds `TH`, `TD` and `ROW`, which is
+ * every table cell in the app. A rule written over `tsxFiles` alone passed
+ * while a reintroduced `text-[12px]` sat in the file that styles the most
+ * elements of any. Red-verified exactly that way.
+ */
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) return sourceFiles(path);
+    return path.endsWith('.tsx') || path.endsWith('.ts') ? [path] : [];
+  });
+}
+
+/**
  * `bg-[var(--color-surface)]` was how every component reached a token before
  * Tailwind v4's `@theme` gave them real names. The arbitrary-value form still
  * WORKS, which is exactly why it needs a gate: it is invisible in review, and
@@ -68,6 +84,41 @@ describe('components reach tokens by name, not by arbitrary value', () => {
         const hits = readFileSync(path, 'utf8').match(/\[(?:[a-z]+:)?var\(--[a-z-]+\)\]/g) ?? [];
         return hits.map((hit) => `${path.slice(SRC.length + 1)}: ${hit}`);
       });
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * ═══ TYPE IN `rem`, SO THE READER'S OWN FONT SIZE REACHES IT ═══
+   *
+   * MEASURED against the built app before this rule existed: doubling the root
+   * font size took the run list's `<h1>` from 20px to 40px and left the table
+   * header at 12px, the row text at 13px and the rail at 13px — because
+   * headings use Tailwind's rem-based `text-xl` and everything else used
+   * `text-[13px]`. A reader who sets a larger default font got bigger titles
+   * over unchanged 12px data.
+   *
+   * 230 sites carried that, against 42 relative ones. They are `rem` now, at
+   * the same values (0.8125rem IS 13px at a 16px root), so nothing moved for a
+   * reader who changes nothing — and everything moves together for one who
+   * does. Tailwind's spacing scale was already rem, so the boxes around the
+   * text were never the problem.
+   *
+   * A SOURCE SCAN RATHER THAN A RENDER, deliberately: jsdom computes no font
+   * size at all, and the browser half — that a data cell really does scale —
+   * is asserted in `run-list.spec.ts`, where a real engine can answer it. This
+   * catches the regression at the place it would be written.
+   *
+   * COMMENTS ARE STRIPPED FIRST. This file has three recorded incidents of a
+   * source-scanning guard matching the prose that documents the rule; the
+   * comment right above quotes `text-[13px]` and would fail this.
+   */
+  it('sizes type in rem, never in absolute px', () => {
+    const strip = (src: string): string =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const offenders = sourceFiles(SRC).flatMap((path) => {
+      const hits = strip(readFileSync(path, 'utf8')).match(/text-\[\d+px\]/g) ?? [];
+      return hits.map((hit) => `${path.slice(SRC.length + 1)}: ${hit}`);
+    });
     expect(offenders).toEqual([]);
   });
 });

@@ -283,7 +283,7 @@ function TargetField({
   // select that looks like the project has no requests.
   if (runs.isError || stats.isError || (!runs.isPending && latestRunId === null)) {
     return (
-      <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+      <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
         Target
         <input
           id={fieldId('targetName')}
@@ -294,7 +294,7 @@ function TargetField({
           onChange={(e) => onChange(e.target.value)}
           placeholder="GET /catalog"
         />
-        <span className="text-[11px] font-normal text-muted">
+        <span className="text-[0.6875rem] font-normal text-muted">
           {runs.isError || stats.isError
             ? `The recorded ${label} names could not be loaded, so type the name this run reports.`
             : `No completed run here yet, so there are no recorded ${label} names to choose from. Type the name a run will report.`}
@@ -304,7 +304,7 @@ function TargetField({
   }
 
   return (
-    <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+    <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
       Target
       {typing ? (
         <>
@@ -321,7 +321,7 @@ function TargetField({
           {recorded.length > 0 && (
             <button
               type="button"
-              className="w-fit text-[11px] font-normal text-accent hover:underline hover:underline-offset-2"
+              className="w-fit text-[0.6875rem] font-normal text-accent hover:underline hover:underline-offset-2"
               onClick={() => {
                 setCustom(false);
                 onChange('');
@@ -357,7 +357,7 @@ function TargetField({
           <option value={CUSTOM_TARGET}>Something else…</option>
         </select>
       )}
-      <span className="text-[11px] font-normal text-muted">
+      <span className="text-[0.6875rem] font-normal text-muted">
         {stats.isPending && latestRunId !== null
           ? `Reading the ${label} names from the newest completed run…`
           : `Matched against the name a run records. A target no run has reported yet is allowed — its rule reads “not checked” until one does.`}
@@ -713,7 +713,7 @@ export default function ProjectRules({
               and two selects sharing that word is how somebody gates the
               wrong thing while reading their own configuration as correct. */}
           {scopedToTest ? (
-            <p className="rounded-lg border border-default bg-sunken p-3 text-[12px] leading-relaxed text-muted">
+            <p className="rounded-lg border border-default bg-sunken p-3 text-[0.75rem] leading-relaxed text-muted">
               A rule added here applies to <span className="text-primary">{testLabel}</span> only.
               To gate every test in this project, add it on the project’s setup page instead.
               {/* THIS PARAGRAPH USED TO CARRY A CAVEAT, and it is worth knowing
@@ -727,7 +727,7 @@ export default function ProjectRules({
                   about a gap that no longer exists. */}
             </p>
           ) : (
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Applies to
               <select
                 className={INPUT}
@@ -763,7 +763,7 @@ export default function ProjectRules({
                   and says the thing that is only true here: which runs a
                   test-scoped rule judges. The lifecycle is stated once, beside
                   the button that creates one. */}
-              <span className="text-[11px] font-normal text-muted">
+              <span className="text-[0.6875rem] font-normal text-muted">
                 A rule for one test judges only that test’s runs. A live run is matched to its
                 test as soon as the log header names the simulation, so the rules written for that
                 test apply from that moment on.
@@ -772,7 +772,7 @@ export default function ProjectRules({
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Name (optional)
               <input
                 id={fieldId('name')}
@@ -784,7 +784,7 @@ export default function ProjectRules({
                 placeholder="Checkout p95 gate"
               />
             </label>
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Scope
               <select
                 className={INPUT}
@@ -822,7 +822,7 @@ export default function ProjectRules({
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Measurement
               {/* ONLY WHAT CAN RESOLVE AT THIS SCOPE — see `FAMILIES_FOR_SCOPE`.
                   Offering a group measurement on a whole-run gate authored a
@@ -840,12 +840,12 @@ export default function ProjectRules({
               </select>
               {/* The one thing neither group name says out loud. */}
               {FAMILY_EXAMPLE[family] !== undefined && (
-                <span className="font-normal text-[12px] leading-snug text-muted">
+                <span className="font-normal text-[0.75rem] leading-snug text-muted">
                   {FAMILY_EXAMPLE[family]}
                 </span>
               )}
             </label>
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Statistic
               {/* A datalist, not a select: the evaluator accepts ANY percentile
                   in (0, 100), so a closed list would refuse p99.95 while the
@@ -866,7 +866,7 @@ export default function ProjectRules({
                 ))}
               </datalist>
             </label>
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Must be
               <select
                 className={INPUT}
@@ -880,7 +880,7 @@ export default function ProjectRules({
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               {/* THE UNIT IS PART OF THE LABEL, not a placeholder. `error_rate`
                   is a fraction while every other screen renders it as a
                   percentage, so an author who types 1 for "one percent" builds
@@ -923,7 +923,7 @@ export default function ProjectRules({
             <p
               id="rule-threshold-warning"
               role="status"
-              className="text-[13px] leading-snug"
+              className="text-[0.8125rem] leading-snug"
               /* INLINE, not a `text-status-pending` utility: the status colours
                  are declared on `:root` rather than inside `@theme inline`, so
                  Tailwind generates no utility for them and the class would emit
@@ -950,7 +950,7 @@ export default function ProjectRules({
             <div
               id={FORM_ERROR_ID}
               role="alert"
-              className="rounded-lg border border-default bg-sunken p-3 text-[13px]"
+              className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem]"
             >
               <p className="text-primary">{formError.title}</p>
               {formError.help !== undefined && (
@@ -962,7 +962,7 @@ export default function ProjectRules({
           {createMutation.isError && (
             <div
               role="alert"
-              className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
+              className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary"
             >
               {createProblem?.detail ?? createMutation.error.message}
               {createProblem?.remediation !== undefined && (
@@ -988,7 +988,7 @@ export default function ProjectRules({
            * above it and disagree with the row it is about to create. */}
           <div
             data-testid="rule-preview"
-            className="rounded-lg border border-default bg-sunken p-3 text-[13px]"
+            className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem]"
           >
             {preview === null ? (
               /* NAMES WHAT IS MISSING rather than listing everything. "Fill in
@@ -1006,7 +1006,7 @@ export default function ProjectRules({
                 keeps the set it was claimed with — `FoldState.rules` is loaded
                 once per run on purpose, so that a rule edited mid-run cannot
                 make a breach appear with no change in the data. */}
-            <p className="mt-2 text-[12px] leading-snug text-muted">
+            <p className="mt-2 text-[0.75rem] leading-snug text-muted">
               A new rule judges runs finished after it is added. Runs already complete keep their
               verdicts, and a run streaming right now keeps the rules it started under.
             </p>
@@ -1101,7 +1101,7 @@ function RulesPanel({
      * The consequence is the part worth keeping — a project with no rules gets
      * no verdict — so it stays, as one line. */
     return (
-      <p className="rounded-lg border border-default bg-sunken px-3 py-2 text-[13px] text-muted">
+      <p className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted">
         No rules yet. Until this project has one, its runs complete with no release verdict.
       </p>
     );
@@ -1124,7 +1124,7 @@ function RulesPanel({
       {failedDelete !== undefined && deleteError !== null && (
         <div
           role="alert"
-          className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
+          className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary"
         >
           That rule may still be active — deleting it did not complete.
           {problem?.detail !== undefined && <p className="mt-1">{problem.detail}</p>}
@@ -1210,7 +1210,7 @@ function RulesTable({
 }) {
   if (items.length === 0) {
     return emptyNote === undefined ? null : (
-      <p className="rounded-lg border border-default bg-sunken p-3 text-[13px] leading-relaxed text-muted">
+      <p className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] leading-relaxed text-muted">
         {emptyNote}
       </p>
     );
@@ -1253,12 +1253,12 @@ function RulesTable({
                 {/* The SAME describer the run page and the evaluator's own
                     message use, so a rule reads identically everywhere it
                     appears. */}
-                <td className={`${TD} font-mono text-[12px]`}>{describe(rule)}</td>
+                <td className={`${TD} font-mono text-[0.75rem]`}>{describe(rule)}</td>
                 <td className={TD}>{rule.enabled ? 'Enabled' : 'Disabled'}</td>
                 <td className={TD}>
                   {confirming === rule.id ? (
                     <div className="flex flex-col gap-2">
-                      <p className="text-[12px] text-muted">
+                      <p className="text-[0.75rem] text-muted">
                         Permanent. Runs already judged keep their verdicts.
                       </p>
                       <div className="flex flex-wrap gap-2">

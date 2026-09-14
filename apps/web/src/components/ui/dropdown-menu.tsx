@@ -78,7 +78,7 @@ const DropdownMenuItem = forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      'relative flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-[13px] outline-none select-none',
+      'relative flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-[0.8125rem] outline-none select-none',
       // `highlighted` is Radix's own word for "the arrow keys are on this one",
       // which is a different state from :hover and is what a keyboard user
       // actually needs painted.
@@ -98,7 +98,7 @@ const DropdownMenuRadioItem = forwardRef<
   <DropdownMenuPrimitive.RadioItem
     ref={ref}
     className={cn(
-      'relative flex cursor-default items-center gap-2 rounded-md py-1.5 pr-2 pl-7 text-[13px] outline-none select-none',
+      'relative flex cursor-default items-center gap-2 rounded-md py-1.5 pr-2 pl-7 text-[0.8125rem] outline-none select-none',
       'data-[highlighted]:bg-sunken data-[highlighted]:text-primary',
       className,
     )}
@@ -122,7 +122,7 @@ const DropdownMenuLabel = forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Label
     ref={ref}
-    className={cn('px-2 py-1 text-[11px] tracking-wide text-faint uppercase', className)}
+    className={cn('px-2 py-1 text-[0.6875rem] tracking-wide text-faint uppercase', className)}
     {...props}
   />
 ));

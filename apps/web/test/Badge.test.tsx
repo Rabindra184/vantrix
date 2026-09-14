@@ -108,6 +108,10 @@ describe('Badge', () => {
     const className = screen.getByText('passed').className;
     expect(className).not.toContain('font-mono');
     expect(className).not.toContain('uppercase');
-    expect(className).toContain('text-[12px]');
+    /* The unit moved px -> rem so a reader's own font size reaches this
+       (see CLAUDE.md); 0.75rem is the same 12px at the default root. The
+       CLAIM is unchanged: a status word is set at the small size, not the
+       instrument-label treatment the two assertions above rule out. */
+    expect(className).toContain('text-[0.75rem]');
   });
 });

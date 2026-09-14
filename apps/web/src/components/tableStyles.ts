@@ -64,7 +64,7 @@
  */
 export const SCROLLER = '-mx-1 overflow-x-auto px-1 pb-1';
 
-export const TABLE = 'w-full border-collapse text-left text-[13px]';
+export const TABLE = 'w-full border-collapse text-left text-[0.8125rem]';
 export const THEAD = 'bg-sunken';
 /**
  * A column heading.
@@ -92,7 +92,7 @@ export const THEAD = 'bg-sunken';
    them made them terser-looking without making them clearer. The data cells
    keep their mono and their tabular figures: that is what mono is for. */
 export const TH =
-  'bg-sunken px-3 py-2 text-[12px] font-semibold text-muted whitespace-nowrap';
+  'bg-sunken px-3 py-2 text-[0.75rem] font-semibold text-muted whitespace-nowrap';
 /**
  * A NUMERIC column heading — `TH` plus the right alignment its cells already
  * have.
@@ -112,7 +112,7 @@ export const TH =
  * wherever the cells below are `TD_NUM`.
  */
 export const TH_NUM =
-  'bg-sunken px-3 py-2 text-right font-mono text-[11px] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
+  'bg-sunken px-3 py-2 text-right font-mono text-[0.6875rem] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
 
 /**
  * A heading that SPANS a group of numeric columns (`colSpan` > 1).
@@ -123,7 +123,7 @@ export const TH_NUM =
  * was — parks it over the FIRST, with the same wrong reading.
  */
 export const TH_GROUP =
-  'bg-sunken px-3 py-2 text-center font-mono text-[11px] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
+  'bg-sunken px-3 py-2 text-center font-mono text-[0.6875rem] font-medium tracking-[0.06em] text-muted uppercase whitespace-nowrap';
 
 export const ROW = 'transition-ui border-b border-divider last:border-0 hover:bg-sunken';
 
@@ -172,7 +172,7 @@ export const TH_ROW = 'px-3 py-2 align-middle font-normal';
  * table in some engines and above in others unless told — and these captions
  * are explanatory sentences the reader needs before the data, not after it.
  */
-export const CAPTION = 'caption-top pb-3 text-left text-[13px] leading-relaxed text-muted';
+export const CAPTION = 'caption-top pb-3 text-left text-[0.8125rem] leading-relaxed text-muted';
 
 /**
  * A text input.

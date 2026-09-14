@@ -79,8 +79,8 @@ export default function DesktopOnly({
       className="flex flex-col items-start gap-3 rounded-xl border border-default bg-surface p-5"
     >
       <div className="flex flex-col gap-1.5">
-        <h3 className="text-[15px] font-semibold tracking-tight text-primary">{what}</h3>
-        <p className="text-[13px] leading-relaxed text-muted">
+        <h3 className="text-[0.9375rem] font-semibold tracking-tight text-primary">{what}</h3>
+        <p className="text-[0.8125rem] leading-relaxed text-muted">
           Not drawn at this width — it would be too small to read here, and building it is work a
           narrow screen does not need to do. The summary above carries the verdict and the headline
           numbers.

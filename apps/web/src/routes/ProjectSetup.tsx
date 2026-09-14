@@ -139,11 +139,11 @@ function AddResults({ slug }: { readonly slug: string }) {
               sentence ends that hunt. It also stops the endpoint reading as a
               workaround — it is the supported route, and the browser form would
               be a convenience on top of it. */}
-          <p className="text-[12px] leading-snug text-muted">
+          <p className="text-[0.75rem] leading-snug text-muted">
             There is no browser upload form yet. This endpoint is the supported route, and the
             CI recipe below posts to the same one.
           </p>
-          <p className="text-[12px] leading-snug text-muted">
+          <p className="text-[0.75rem] leading-snug text-muted">
             The bundle is a <code className="font-mono">.tgz</code> containing the run directory
             Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
             a 202 with the run’s id; the worker parses it in the background.
@@ -151,7 +151,7 @@ function AddResults({ slug }: { readonly slug: string }) {
           </>
         }
       >
-        <p className="text-[13px] leading-relaxed text-muted">
+        <p className="text-[0.8125rem] leading-relaxed text-muted">
           Needs a token with the <span className="text-primary">Completed reports</span> permission.{' '}
           <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
             Create one under API tokens
@@ -166,7 +166,7 @@ function AddResults({ slug }: { readonly slug: string }) {
         description="No bundle yet. Upload a Gatling jar or bundle and let an on-prem runner execute it."
         status={runnerStatus(jobs.isPending, jobs.isError, jobs.data?.items ?? [])}
       >
-        <p className="text-[13px] leading-relaxed text-muted">
+        <p className="text-[0.8125rem] leading-relaxed text-muted">
           The runner streams the log as it is written, so the run’s page is live while the test is
           still going. It executes one job at a time.
         </p>
@@ -194,7 +194,7 @@ function AddResults({ slug }: { readonly slug: string }) {
             telling that reader to go set one up is the wrong advice
             confidently given, which is the shape M12 was about. */}
         {runnerReadiness(jobs.data?.items ?? []).needsSetup && (
-          <p className="text-[13px] leading-relaxed text-muted" data-testid="runner-setup">
+          <p className="text-[0.8125rem] leading-relaxed text-muted" data-testid="runner-setup">
             To connect one, deploy the runner process beside this instance and give it a token
             carrying the <span className="text-primary">On-prem runner</span> permission.{' '}
             <Link to={projectAccessPath(slug)} className="text-accent underline underline-offset-2">
@@ -228,7 +228,7 @@ function AddResults({ slug }: { readonly slug: string }) {
     -F 'metadata={"tool":"gatling","branch":"'"$CI_BRANCH"'","commitSha":"'"$CI_COMMIT"'"}' \\
     ${instanceOrigin}/v1/runs`}
           </pre>
-          <p className="text-[12px] leading-snug text-muted">
+          <p className="text-[0.75rem] leading-snug text-muted">
             <span className="text-primary">branch</span> and{' '}
             <span className="text-primary">commitSha</span> are what let the Compare page tell a
             regression from a different build, so they are worth wiring up even though both are
@@ -239,7 +239,7 @@ function AddResults({ slug }: { readonly slug: string }) {
               would be a string this page cannot verify — which is exactly how
               the plugin's own e2e script came to name a version that had not
               existed for two releases. */}
-          <p className="text-[12px] leading-snug text-muted">
+          <p className="text-[0.75rem] leading-snug text-muted">
             For a LIVE view while the build runs rather than a report afterwards, there is a Gradle
             plugin (<code className="font-mono">dev.vantrix.gatling</code>) that streams the log as
             Gatling writes it. It ships with this repository under{' '}
@@ -249,7 +249,7 @@ function AddResults({ slug }: { readonly slug: string }) {
           </>
         }
       >
-        <p className="text-[13px] leading-relaxed text-muted">
+        <p className="text-[0.8125rem] leading-relaxed text-muted">
           Add one step after your existing Gatling task. The token belongs in the pipeline’s secret
           store, never in the repository.
         </p>
@@ -349,13 +349,13 @@ function EntryCard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-muted">{icon}</span>
-            <h2 className="text-[15px] font-semibold tracking-tight text-primary">{title}</h2>
+            <h2 className="text-[0.9375rem] font-semibold tracking-tight text-primary">{title}</h2>
           </div>
           {/* The dot is `aria-hidden` and the WORDS carry the state, so the
               status is not a colour a reader has to have learnt. */}
           {status !== undefined && (
             <span
-              className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase"
+              className="inline-flex items-center gap-1.5 font-mono text-[0.6875rem] font-medium tracking-[0.06em] uppercase"
               style={{ color: STATUS_COLOR[status.kind] }}
               data-testid="entry-status"
             >
@@ -364,9 +364,9 @@ function EntryCard({
             </span>
           )}
         </div>
-        <p className="text-[13px] leading-relaxed text-muted">{description}</p>
+        <p className="text-[0.8125rem] leading-relaxed text-muted">{description}</p>
         {status?.note !== undefined && (
-          <p className="rounded-lg border border-default bg-sunken p-3 text-[12px] leading-snug text-muted">
+          <p className="rounded-lg border border-default bg-sunken p-3 text-[0.75rem] leading-snug text-muted">
             {status.note}
           </p>
         )}
@@ -397,7 +397,7 @@ function EntryCard({
          * tidier and quietly removes something only a screen reader uses. */}
         {steps !== undefined && (
           <details name="add-results" className="group">
-            <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+            <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
               <span className="group-open:hidden">Show me how</span>
               <span className="hidden group-open:inline">Hide the steps</span>
             </summary>

@@ -545,7 +545,7 @@ function RunListControls({
       className="flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
     >
       {showHeader && (
-        <div className="flex items-center gap-2 text-[13px] font-medium text-primary">
+        <div className="flex items-center gap-2 text-[0.8125rem] font-medium text-primary">
           <FilterIcon className="h-3.5 w-3.5" />
           Filter runs
         </div>
@@ -558,14 +558,14 @@ function RunListControls({
         // on this screen, and a second `status` in the same document while
         // the list loads is two things a screen reader has to arbitrate
         // between for no gain.
-        <p data-testid="run-filter-ignored" className="text-[12px] leading-relaxed text-muted">
+        <p data-testid="run-filter-ignored" className="text-[0.75rem] leading-relaxed text-muted">
           Ignored {ignored.join(' and ')} in the address bar — not {ignored.length > 1 ? 'values' : 'a value'} this
           list can filter by. Everything else on this page is unfiltered.
         </p>
       )}
 
       <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto] md:items-end">
-        <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+        <label className="flex flex-col gap-1.5 text-[0.75rem] font-medium text-muted">
           Search runs
           <input
             className={INPUT}
@@ -575,7 +575,7 @@ function RunListControls({
           />
         </label>
 
-        <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+        <label className="flex flex-col gap-1.5 text-[0.75rem] font-medium text-muted">
           Status
           <select
             className={INPUT}
@@ -591,7 +591,7 @@ function RunListControls({
           </select>
         </label>
 
-        <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+        <label className="flex flex-col gap-1.5 text-[0.75rem] font-medium text-muted">
           Verdict
           <select
             className={INPUT}
@@ -702,15 +702,15 @@ function RunListHealth({ items }: { readonly items: readonly RunListItem[] }) {
           counts are page-local, the other says WHICH systems they count, and
           the second is why "Needs attention: 0" is not a claim about a
           simulation's own assertions. */}
-      <p className="text-[12px] font-medium text-muted" data-testid="health-scope">
+      <p className="text-[0.75rem] font-medium text-muted" data-testid="health-scope">
         {HEALTH_SCOPE(items.length)}
       </p>
       <details className="group mt-1">
-        <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
           <span className="group-open:hidden">How counts work</span>
           <span className="hidden group-open:inline">Hide how counts work</span>
         </summary>
-        <p className="pt-1.5 text-[12px] leading-relaxed text-muted">{HEALTH_CAVEAT()}</p>
+        <p className="pt-1.5 text-[0.75rem] leading-relaxed text-muted">{HEALTH_CAVEAT()}</p>
       </details>
       {/* TWO ACROSS FROM THE NARROWEST WIDTH, not one. Measured at 375px:
           stacked one per row these four tiles were 326px, and they sit between
@@ -767,8 +767,8 @@ function HealthTile({
        rather than a dashboard tile, because it describes this PAGE. */
     <div className="flex items-baseline gap-2" style={{ color: colour }}>
       <span className="font-mono text-base font-semibold tabular-nums text-primary">{value}</span>
-      <span className="text-[12px] text-primary">{label}</span>
-      <span className="text-[11px] text-muted">{detail}</span>
+      <span className="text-[0.75rem] text-primary">{label}</span>
+      <span className="text-[0.6875rem] text-muted">{detail}</span>
     </div>
   );
 }
@@ -819,7 +819,7 @@ function PageHeading({
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
         {count !== undefined && count > 0 && (
-          <p className="text-[13px] text-muted">
+          <p className="text-[0.8125rem] text-muted">
             {count} {count === 1 ? 'run' : 'runs'}
             {hasMore && ', more available'}
           </p>
@@ -1046,7 +1046,7 @@ function CompactFilters({
 
   return (
     <details open={active} data-testid="compact-filters" className="group">
-      <summary className="flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg border border-default bg-surface px-3 py-2 text-[13px] font-medium text-primary">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg border border-default bg-surface px-3 py-2 text-[0.8125rem] font-medium text-primary">
         <FilterIcon className="h-3.5 w-3.5 text-muted" />
         Filter runs
         {on.length > 0 && <span className="font-normal text-muted">{on.join(' · ')}</span>}
@@ -1117,13 +1117,13 @@ function RunCards({
        * opposite a11y contract — which is why the labels are shared and the
        * markup is not. */}
       <div>
-        <p className="text-[13px] leading-relaxed text-muted">{summary}</p>
+        <p className="text-[0.8125rem] leading-relaxed text-muted">{summary}</p>
         <details className="group">
-          <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+          <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
             <span className="group-open:hidden">{CAPTION_MORE}</span>
             <span className="hidden group-open:inline">{CAPTION_LESS}</span>
           </summary>
-          <p className="pt-2 text-[13px] leading-relaxed text-muted">{caption}</p>
+          <p className="pt-2 text-[0.8125rem] leading-relaxed text-muted">{caption}</p>
         </details>
       </div>
       <ul className="flex flex-col gap-2">
@@ -1186,7 +1186,7 @@ function RunCard({
           them; they are the whole reason a reader looks at this list without
           opening a run. `—` rather than `0` for anything unavailable, exactly
           as in `RunRow`: a zero in a latency column is a measurement. */}
-      <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px]">
+      <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[0.8125rem]">
         <div className="flex items-baseline gap-1.5">
           <dt className="text-muted">p95</dt>
           <dd data-testid="run-p95" className="tabular-nums text-primary">
@@ -1226,7 +1226,7 @@ function RunCard({
       {/* PROVENANCE LAST: which project, which environment, and when. The
           reader who needs these is confirming a row they have already picked
           out by the numbers above. */}
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.75rem] text-muted">
         {showProject && (
           <>
             <span className="text-primary">{run.project.name}</span>
@@ -1305,7 +1305,7 @@ function RunRow({
               accessible name above carries the WHOLE id, because a column of
               eight-character prefixes names nothing on its own. */}
           {identifyByRunId || run.simulation === null || run.simulation === undefined ? (
-            <code className="text-[12px]">{run.id.slice(0, 8)}</code>
+            <code className="text-[0.75rem]">{run.id.slice(0, 8)}</code>
           ) : (
             run.simulation
           )}
@@ -1373,7 +1373,7 @@ function RunRow({
         <time dateTime={startedAt} className="tabular-nums">
           {formatInstant(startedAt)}
         </time>
-        {isIngestTime && <span className="ml-2 text-[12px] text-muted">ingest time</span>}
+        {isIngestTime && <span className="ml-2 text-[0.75rem] text-muted">ingest time</span>}
       </td>
       <td className={TD} data-testid="run-environment">
         {run.environment == null || run.environment === '' ? '—' : run.environment}

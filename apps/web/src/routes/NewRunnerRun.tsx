@@ -233,7 +233,7 @@ function NewRunnerRunProject({
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <Link to={projectPath(slug)} className="inline-flex items-center gap-1 text-[13px] font-medium text-muted hover:text-primary">
+          <Link to={projectPath(slug)} className="inline-flex items-center gap-1 text-[0.8125rem] font-medium text-muted hover:text-primary">
             <ChevronLeftIcon className="h-3.5 w-3.5" />
             {projectName}
           </Link>
@@ -285,7 +285,7 @@ function NewRunnerRunProject({
                   <UploadIcon className="h-4 w-4" />
                   Artifact file
                 </span>
-                <span className="text-[13px] text-muted">{artifactHint}</span>
+                <span className="text-[0.8125rem] text-muted">{artifactHint}</span>
                 <input
                   className="sr-only"
                   type="file"
@@ -349,7 +349,7 @@ function NewRunnerRunProject({
                   says how many of its fields are filled so a value set here
                   cannot be forgotten behind a collapsed summary. */}
               <details className="rounded-xl border border-default bg-sunken p-3" data-testid="advanced">
-                <summary className="cursor-pointer list-none text-[13px] font-medium text-accent hover:underline hover:underline-offset-2">
+                <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2">
                   Advanced{advancedCount > 0 ? ` (${advancedCount} set)` : ''}
                 </summary>
                 <div className="flex flex-col gap-4 pt-3">
@@ -399,7 +399,7 @@ function NewRunnerRunProject({
               <ReviewSummary form={form} artifact={artifact} properties={parsedProperties} />
 
               {(formError !== null || mutation.isError) && (
-                <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary">
+                <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
                   {formError ?? problem?.detail ?? mutationError?.message}
                   {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
                 </div>
@@ -428,7 +428,7 @@ function NewRunnerRunProject({
  * A group's legend. Not a heading — see the comment on the first `<fieldset>`.
  */
 const LEGEND =
-  'font-mono text-[11px] font-medium tracking-[0.08em] text-muted uppercase';
+  'font-mono text-[0.6875rem] font-medium tracking-[0.08em] text-muted uppercase';
 
 /* ======================================================================== *
  * WHICH TEST — CHOSEN, NOT SPELLED (review M16)
@@ -624,7 +624,7 @@ function ReviewSummary({
 
   return (
     <div className="rounded-xl border border-default bg-sunken p-4" data-testid="review-summary">
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-[13px] sm:grid-cols-2">
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-[0.8125rem] sm:grid-cols-2">
         {rows.map((row) => (
           <div key={row.label} className="flex min-w-0 items-baseline justify-between gap-3">
             <dt className="text-muted">{row.label}</dt>
@@ -642,27 +642,27 @@ function ReviewSummary({
       </dl>
 
       <div className="mt-3 border-t border-divider pt-3">
-        <p className="text-[12px] font-medium text-primary">System properties</p>
+        <p className="text-[0.75rem] font-medium text-primary">System properties</p>
         {properties.kind === 'error' ? (
           // NOT a `role="alert"`: this text changes on every keystroke in the
           // textarea above, and an assertive live region that re-announces per
           // character is worse than silence. The submit's own alert is the one
           // that speaks, once, when it matters.
-          <p className="mt-1 text-[12px] leading-snug" style={{ color: 'var(--color-status-failed)' }}>
+          <p className="mt-1 text-[0.75rem] leading-snug" style={{ color: 'var(--color-status-failed)' }}>
             {properties.message}
           </p>
         ) : Object.keys(properties.value).length === 0 ? (
-          <p className="mt-1 text-[12px] text-muted">None. The simulation runs on its own defaults.</p>
+          <p className="mt-1 text-[0.75rem] text-muted">None. The simulation runs on its own defaults.</p>
         ) : (
           <>
             <ul className="mt-1 flex flex-col gap-0.5">
               {Object.entries(properties.value).map(([key, value]) => (
-                <li key={key} className="font-mono text-[12px] text-primary">
+                <li key={key} className="font-mono text-[0.75rem] text-primary">
                   -D{key}={value}
                 </li>
               ))}
             </ul>
-            <p className="mt-1.5 text-[12px] leading-snug text-muted">
+            <p className="mt-1.5 text-[0.75rem] leading-snug text-muted">
               Passed to the JVM as written. Whether a simulation reads any of these is up to its own
               code — PerfPortal does not interpret them.
             </p>
@@ -707,7 +707,7 @@ function RunnerStatusCard({
   if (query.isPending) {
     return (
       <Card headingLevel={2} title="Runner">
-        <p className="text-[13px] text-muted">Checking for recent jobs…</p>
+        <p className="text-[0.8125rem] text-muted">Checking for recent jobs…</p>
       </Card>
     );
   }
@@ -717,10 +717,10 @@ function RunnerStatusCard({
        card must not make the second when it means the first. */
     return (
       <Card headingLevel={2} title="Runner" data-testid="runner-status">
-        <p className="text-[13px] font-medium" style={{ color: READINESS_COLOR.unknown }}>
+        <p className="text-[0.8125rem] font-medium" style={{ color: READINESS_COLOR.unknown }}>
           Status unavailable
         </p>
-        <p className="text-[13px] leading-relaxed text-muted">
+        <p className="text-[0.8125rem] leading-relaxed text-muted">
           The job list could not be loaded, so nothing is known about the runner either way. You can
           still queue a run.
         </p>
@@ -733,14 +733,14 @@ function RunnerStatusCard({
   return (
     <Card headingLevel={2} title="Runner" data-testid="runner-status">
       <p
-        className="flex items-center gap-1.5 font-mono text-[12px] font-medium tracking-[0.06em] uppercase"
+        className="flex items-center gap-1.5 font-mono text-[0.75rem] font-medium tracking-[0.06em] uppercase"
         style={{ color: READINESS_COLOR[readiness.kind] }}
       >
         <span aria-hidden="true">●</span>
         {readiness.headline}
       </p>
-      <p className="text-[13px] leading-relaxed text-muted">{readiness.detail}</p>
-      <p className="text-[12px] leading-snug text-muted">
+      <p className="text-[0.8125rem] leading-relaxed text-muted">{readiness.detail}</p>
+      <p className="text-[0.75rem] leading-snug text-muted">
         This instance is not told when a runner connects; everything above is inferred from the jobs
         this project has queued.
       </p>
@@ -776,7 +776,7 @@ function Field({
        * a describedby is announced after a pause — too late to stop someone
        * filling in a field they could have skipped. `hint` below is the part
        * that is genuinely a description. */}
-      <label htmlFor={id} className="text-[13px] font-medium text-primary">
+      <label htmlFor={id} className="text-[0.8125rem] font-medium text-primary">
         {label}
         {optional && <span className="ml-1 font-normal text-muted">(optional)</span>}
       </label>
@@ -786,7 +786,7 @@ function Field({
           itself belongs on the CONTROL, which lives in `children` and only the
           caller can reach. */}
       {hint !== undefined && (
-        <p id={`${id}-hint`} className="text-[13px] leading-snug text-muted">
+        <p id={`${id}-hint`} className="text-[0.8125rem] leading-snug text-muted">
           {hint}
         </p>
       )}
@@ -797,7 +797,7 @@ function Field({
 function QueuedJob({ response }: { readonly response: RunnerStartResponse }) {
   return (
     <Card headingLevel={2} title="Run queued">
-      <dl className="grid grid-cols-1 gap-3 text-[13px] sm:grid-cols-3">
+      <dl className="grid grid-cols-1 gap-3 text-[0.8125rem] sm:grid-cols-3">
         <div>
           <dt className="text-muted">Job</dt>
           <dd className="font-mono text-primary">{response.job.id.slice(0, 8)}</dd>
@@ -981,7 +981,7 @@ function RunnerLogsPanel({
       )}
       {query.isSuccess && (
         <div className="flex flex-col gap-2">
-          {query.data.truncated && <p className="text-[13px] text-muted">Showing the latest 256 KB.</p>}
+          {query.data.truncated && <p className="text-[0.8125rem] text-muted">Showing the latest 256 KB.</p>}
           <pre className="max-h-96 overflow-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary">
             {query.data.text || 'No logs yet.'}
           </pre>

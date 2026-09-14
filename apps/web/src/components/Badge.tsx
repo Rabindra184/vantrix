@@ -74,7 +74,7 @@ export default function Badge({
        * mark data already carries its own casing, so nothing here transforms
        * the text and the accessible name is untouched either way. Mono is kept
        * for the things mono is FOR — run ids, commit shas, numeric columns. */
-      className={`tint inline-flex items-center whitespace-nowrap rounded-md border text-[12px] font-medium ${
+      className={`tint inline-flex items-center whitespace-nowrap rounded-md border text-[0.75rem] font-medium ${
         size === 'compact' ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 px-2 py-0.5'
       }`}
       style={{ color: mark.colour }}

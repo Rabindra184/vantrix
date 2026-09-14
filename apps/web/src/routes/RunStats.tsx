@@ -181,11 +181,11 @@ export default function RunStats({
        * 'Statistics']; a `<summary>` contributes a group, not a heading, so
        * this cannot break that outline the way an <h2> would. */}
       <details className="group mt-3" data-testid="percentile-method">
-        <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
           <span className="group-open:hidden">How percentiles are measured</span>
           <span className="hidden group-open:inline">Hide how percentiles are measured</span>
         </summary>
-        <p className="pt-2 text-[12px] leading-relaxed text-muted">
+        <p className="pt-2 text-[0.75rem] leading-relaxed text-muted">
           Percentiles are read from a sketch of the whole run rather than from a bucketed
           histogram, which answers any rank — p95, p99, p99.9 — to within 1% of the true
           distribution. The tool&rsquo;s own report estimates from fixed bands and can drift

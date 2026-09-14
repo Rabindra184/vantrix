@@ -188,7 +188,7 @@ export default function AppShell() {
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-mark text-on-brand shadow-panel">
             <ActivityIcon className="h-4 w-4" />
           </span>
-          <span className="text-[15px] font-semibold tracking-tight text-primary">PerfPortal</span>
+          <span className="text-[0.9375rem] font-semibold tracking-tight text-primary">PerfPortal</span>
         </Link>
 
         {/* ═══ ONE CONTROL, NOT THREE (review 09-13 N03) ═══

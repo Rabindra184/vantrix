@@ -98,7 +98,7 @@ export default function LiveStatusStrip({
   return (
     <div className="flex flex-col gap-3">
       {streaming && connected && (
-        <p role="status" className="text-[13px] text-muted">
+        <p role="status" className="text-[0.8125rem] text-muted">
           Live — updating as the run streams.
         </p>
       )}
@@ -117,13 +117,13 @@ export default function LiveStatusStrip({
           connection this page never opened, or has not yet opened, is
           nothing at all. */}
       {streaming && !connected && streamed && (
-        <p role="status" className="text-[13px] text-muted">
+        <p role="status" className="text-[0.8125rem] text-muted">
           Reconnecting — showing the last update received.
         </p>
       )}
 
       {frozen && (
-        <p role="status" className="text-[13px] text-muted">
+        <p role="status" className="text-[0.8125rem] text-muted">
           Streaming has stopped. The numbers below are its last update.
         </p>
       )}
@@ -134,7 +134,7 @@ export default function LiveStatusStrip({
         <div
           role="status"
           data-testid="live-status-capped"
-          className="flex flex-col items-start gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[13px] text-muted"
+          className="flex flex-col items-start gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[0.8125rem] text-muted"
         >
           <p className="leading-relaxed">
             PerfPortal stopped checking automatically after two minutes. The numbers above are the
@@ -153,7 +153,7 @@ export default function LiveStatusStrip({
           promises to keep checking on its own, or says it stopped, never
           both. */}
       {!streaming && !frozen && !capReached && (
-        <p role="status" className="text-[13px] text-muted">
+        <p role="status" className="text-[0.8125rem] text-muted">
           This page checks again every few seconds; there is nothing to do.
         </p>
       )}

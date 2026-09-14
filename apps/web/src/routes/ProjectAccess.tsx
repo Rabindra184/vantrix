@@ -150,7 +150,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
       >
         <form className="flex max-w-2xl flex-col gap-4" onSubmit={submit}>
           <label className="flex min-w-0 flex-col gap-1.5">
-            <span className="text-[13px] font-medium text-primary">Token name</span>
+            <span className="text-[0.8125rem] font-medium text-primary">Token name</span>
             <input
               className={INPUT}
               value={tokenName}
@@ -162,11 +162,11 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
           <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {/* "Permissions", not "Scopes" — the word a reader brings with them
                   rather than the one the schema uses. */}
-            <legend className="mb-1 text-[13px] font-medium text-primary">Permissions</legend>
+            <legend className="mb-1 text-[0.8125rem] font-medium text-primary">Permissions</legend>
             {TOKEN_SCOPES.map((scope) => (
               <label
                 key={scope}
-                className="flex items-center gap-2 rounded-lg border border-default bg-surface px-3 py-2 text-[13px] text-primary"
+                className="flex items-center gap-2 rounded-lg border border-default bg-surface px-3 py-2 text-[0.8125rem] text-primary"
               >
                 <input
                   type="checkbox"
@@ -188,7 +188,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
           {mintMutation.isError && (
             <div
               role="alert"
-              className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
+              className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary"
             >
               {problem?.detail ?? mintMutation.error.message}
               {problem?.remediation && <p className="mt-1 text-muted">{problem.remediation}</p>}
@@ -207,8 +207,8 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
           <div className="rounded-lg border border-default bg-sunken p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[13px] font-semibold text-primary">Token shown once</p>
-                <p className="text-[12px] text-muted">Copy it before leaving this page.</p>
+                <p className="text-[0.8125rem] font-semibold text-primary">Token shown once</p>
+                <p className="text-[0.75rem] text-muted">Copy it before leaving this page.</p>
               </div>
               <Button size="sm" onClick={copyToken}>
                 {copied ? <CheckIcon className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />}
@@ -224,7 +224,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
                 token is on screen and selectable whatever the clipboard
                 does. */}
             {copyFailed && (
-              <p role="alert" className="mt-2 text-[12px] leading-snug text-muted">
+              <p role="alert" className="mt-2 text-[0.75rem] leading-snug text-muted">
                 The token could not be copied automatically — a browser only allows that on a secure
                 (https) page. Select it above and copy it by hand before you leave.
               </p>
@@ -242,7 +242,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
              * who came here to get started is pointed at the thing they came
              * to do, and the reader who came only to rotate a credential can
              * ignore it. */}
-            <p className="mt-3 text-[12px] leading-snug text-muted">
+            <p className="mt-3 text-[0.75rem] leading-snug text-muted">
               Next:{' '}
               <Link to={projectSetupPath(slug)} className="text-accent underline underline-offset-2">
                 use it to add results
@@ -275,7 +275,7 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
         {revokeMutation.isError && (
           <div
             role="alert"
-            className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary"
+            className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary"
           >
             <p className="font-medium">
               {revokeMutation.variables === undefined
@@ -413,7 +413,7 @@ function TokenTable({
                         CLAUDE.md records as visible only in a browser.
                         Sibling text carries the warning without touching any
                         button's name. */}
-                    <p className="text-[12px] leading-snug text-muted">
+                    <p className="text-[0.75rem] leading-snug text-muted">
                       Permanent. Anything still using it starts failing.
                     </p>
                     <div className="flex items-center gap-1.5">

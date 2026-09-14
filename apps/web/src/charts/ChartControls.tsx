@@ -70,7 +70,7 @@ export function ControlGroup({
 }) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1.5 text-[11px] font-medium tracking-wide text-muted">{label}</legend>
+      <legend className="mb-1.5 text-[0.6875rem] font-medium tracking-wide text-muted">{label}</legend>
       <div className="flex flex-wrap items-center gap-1">{children}</div>
     </fieldset>
   );
@@ -85,7 +85,7 @@ export function ControlGroup({
  * because that token is deliberately not published through `@theme`.
  */
 const CHIP_BASE =
-  'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[13px] leading-none transition-colors';
+  'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[0.8125rem] leading-none transition-colors';
 
 /**
  * One chip in a many-of-N group.
@@ -170,7 +170,7 @@ export function Segmented({
           aria-pressed={value === option}
           data-testid={testId(option)}
           onClick={() => onChange(option)}
-          className={`px-2.5 py-1 text-[13px] leading-none transition-colors ${
+          className={`px-2.5 py-1 text-[0.8125rem] leading-none transition-colors ${
             i > 0 ? 'border-l border-default' : ''
           } ${
             value === option

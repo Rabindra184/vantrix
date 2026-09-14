@@ -132,11 +132,11 @@ export default function TableFrame({
               it exists for. Closed by default — the whole point is that the
               prose is available rather than present. */}
           <details className="group -mt-1 pb-3">
-            <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+            <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
               <span className="group-open:hidden">{CAPTION_MORE}</span>
               <span className="hidden group-open:inline">{CAPTION_LESS}</span>
             </summary>
-            <p className="pt-2 text-[13px] leading-relaxed text-muted">{caption}</p>
+            <p className="pt-2 text-[0.8125rem] leading-relaxed text-muted">{caption}</p>
           </details>
         </div>
       )}

@@ -909,7 +909,7 @@ export default function Chart({
             why that prop is optional (see `Card`'s docstring): a card that
             always drew a heading would give every figure two, and the figure's
             accessible name would become whichever won. */}
-        <h3 className="min-w-0 text-[15px] font-semibold tracking-tight text-primary">{title}</h3>
+        <h3 className="min-w-0 text-[0.9375rem] font-semibold tracking-tight text-primary">{title}</h3>
 
         <ChartActions
           id={id}
@@ -954,7 +954,7 @@ export default function Chart({
         // payload arrives while they are looking at it.
         <p
           role="status"
-          className="flex h-72 items-center justify-center rounded-lg bg-sunken px-6 text-center text-[13px] text-muted"
+          className="flex h-72 items-center justify-center rounded-lg bg-sunken px-6 text-center text-[0.8125rem] text-muted"
         >
           {data.empty}
         </p>
@@ -980,7 +980,7 @@ export default function Chart({
           skimming eight charts has to be able to tell them from the figure's
           own description at a glance. */}
       {(data.limitation !== undefined || assignment.limitation !== undefined) && (
-        <div className="flex flex-col gap-1 border-t border-divider pt-3 text-[12px] leading-relaxed text-muted">
+        <div className="flex flex-col gap-1 border-t border-divider pt-3 text-[0.75rem] leading-relaxed text-muted">
           {data.limitation !== undefined && <p>{data.limitation}</p>}
           {assignment.limitation !== undefined && <p>{assignment.limitation}</p>}
         </div>
@@ -1032,7 +1032,7 @@ export default function Chart({
         {expanded && (
           <div className="flex h-full w-full flex-col gap-3 p-5">
             <div className="flex items-start justify-between gap-3">
-              <p className="min-w-0 text-[15px] font-semibold tracking-tight text-primary">
+              <p className="min-w-0 text-[0.9375rem] font-semibold tracking-tight text-primary">
                 {title}
               </p>
               {/* A real labelled control, not only Escape. Escape is the
