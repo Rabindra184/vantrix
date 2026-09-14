@@ -115,6 +115,84 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The webkit-chart-table-budget branch added no unit FILE, no unit case and no
+spec — it rewrote ONE existing e2e case — so unit stays 147 / 1828, e2e stays
+134 and integration is unchanged. It takes a failure that had been red on
+`main` for eight consecutive merges.
+
+**`e2e-cross-browser` RUNS ON `main` AND ON DEMAND, SO A PULL REQUEST'S GREEN
+IS STRUCTURALLY BLIND TO IT.** `ci.yml` gates that job on
+`github.event_name == 'push' || workflow_dispatch`, and `push` is restricted to
+`main` — deliberately, to stop every PR paying 15 minutes for three engines.
+The consequence is the part nobody had written down: the signal read before
+each merge is `pnpm test:e2e`, which is **Chromium alone**, so a WebKit defect
+lands and then fails on the merge commit, where nothing is watching. It went
+red at #126 and was merged over seven more times — #127, #128, #129, #133,
+#135, #136, #138 — each PR green, each merge run red on the same single case.
+
+**THE GREEN MERGES IN BETWEEN ARE NOT EVIDENCE EITHER.** #130, #131, #132, #134
+and #137 passed with the same defect present; three engines at `--workers=1`
+simply finished that case inside its budget those days. **A job that only runs
+after the merge needs somebody to read it after the merge** — or a
+`workflow_dispatch` before it:
+
+```
+gh workflow run ci.yml --ref <branch>      # the cross-browser run, on demand
+```
+
+**THE CASE WAS ALREADY THE WORST IN ITS FILE ON WEBKIT, AND NOBODY HAD
+LOOKED.** Measured on the last green run, WebKit against Chromium for the same
+test, all 23 cases of `run-charts.spec.ts`:
+
+```
+  10.4x   every chart's data table is reachable by its own toggle
+   5.5x   deselecting every band explains itself
+   5.0x   the selected window survives moving between run tabs
+   ...
+   1.8x   brushing recomputes the statistics
+```
+
+Everything else sits near 2x. This one was **15.6s against Chromium's 1.5s**,
+and it is the only case in the file that hides and shows a chart canvas
+repeatedly — nine charts, two toggles each. `Chart` swaps the plot for the
+table with `hidden` rather than unmounting (its own comment says why, and the
+reasoning is good), so **every toggle is a full ECharts re-layout**: the 0x0
+box a `display: none` canvas reports is answered by the instance's own
+ResizeObserver, twice per chart.
+
+**SO IT WAS ALREADY AT THE EDGE AND THREE THINGS PUSHED IT OVER.** M17's
+overflow menu added a portalled open per toggle, CI's runners got **~1.65x
+slower** across the board (measured as the median slowdown of the 22 sibling
+cases in the same file, chromium 1.59x / firefox 1.75x), and the case stopped
+finishing inside the 60s test budget at all. It is a BUDGET OVERRUN rather than
+a broken product: the menu works, and the failure lands on a different chart
+each run, because what expires is the test's deadline and not any one click.
+
+**THE FIX IS TO STOP ASSERTING A SHARED MECHANISM NINE TIMES, AND THE LICENCE
+FOR THAT IS IN THE SOURCE.** `Chart` holds the only `<ChartActions>` call site
+in the app, and builds that item's `aria-controls` from the same `id` the
+figure is named after, beside an `onToggleTable` that flips a boolean and takes
+no id at all. A chart whose menu item
+names the right table therefore CANNOT toggle a different one. So the
+relationship stays per chart (nine menus opened, nine `aria-controls` read,
+nothing toggled) and the round trip runs once. Measured after, on a machine at
+94% swap: **chromium 2.2s, firefox 3.2s, webkit 4.0s** — WebKit back to 1.8x
+Chromium, which is the pack.
+
+**AND THE RED-VERIFY THAT MATTERS IS THE ONE ON A NON-FIRST CHART.** Breaking
+`aria-controls` for `distribution` alone — `CHART_IDS[7]`, not the chart the
+round trip uses — fails the loop naming that chart, which is what proves the
+shortened loop has no blind spot. Two more pin the round trip and report
+differently: a no-op `onToggleTable` fails `toBeVisible()` on the table, and
+`<div hidden={tableShown}>` opened to `<div>` fails `toBeHidden()` on the
+canvas.
+
+**A COUNT IN A COMMENT HAD DRIFTED WHILE THE LIST GREW.** `CHART_IDS` holds
+NINE ids; the comment above the loop said "all eight have drawn" and the next
+line said "eight always-announced tables". Corrected in this case only — the
+other spellings of "eight" in this file are test NAMES, and renaming those is
+a wider change than this branch.
+
 The route-error-boundary branch added ONE source file —
 `apps/web/src/components/RouteErrorBoundary.tsx` — and 1 e2e case, so unit
 stays 147 / 1828 and **e2e rises to 134**. Integration unchanged.

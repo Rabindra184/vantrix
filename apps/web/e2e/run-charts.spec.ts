@@ -610,7 +610,7 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
   await signIn(page, admin);
   await page.goto(runChartsPath(runId));
 
-  // WAIT FOR ALL FOUR PAYLOADS FIRST, which "all eight have drawn" proves.
+  // WAIT FOR ALL FOUR PAYLOADS FIRST, which "all nine have drawn" proves.
   // A chart swaps from `RunDetail`'s loading figure to its real component when
   // its query resolves, and React remounts the subtree across that swap — so a
   // table opened before then is a table on an element about to be replaced, and
@@ -618,62 +618,102 @@ test("every chart's data table is reachable by its own toggle", async ({ page })
   // the page, not a test artefact; what it is not is what this test is about.
   await expect(plot(figures(page))).toHaveCount(CHART_IDS.length);
 
+  const menuFor = (id: string) =>
+    page.getByTestId(`chart-${id}`).getByRole('button', { name: /data and exports$/ });
+  const tableItemFor = (id: string) =>
+    page.locator(`[role="menuitem"][aria-controls="chart-data-${id}"]`);
+
+  /* ═══ PER CHART: THE RELATIONSHIP ═══
+   *
+   * What is genuinely per-chart is that THIS figure's menu carries the control
+   * for THIS figure's table, found the way assistive tech finds it:
+   * `aria-controls`. Picking the nth toggle by index would assert nothing
+   * about which table it opens, which is why this query has survived the
+   * control becoming an icon button in the card header and then a MENU ITEM
+   * behind an overflow trigger (review M17). The element type keeps changing;
+   * the relationship is the claim.
+   *
+   * Each menu is opened by its own trigger, scoped to this chart's figure —
+   * the trigger is named after the chart precisely so nine of them in one
+   * document stay nine distinguishable controls. Radix portals the content, so
+   * an item exists only while its own menu is open: there is no way to read
+   * nine relationships without opening nine menus.
+   */
   for (const id of CHART_IDS) {
     const table = page.getByTestId(`chart-data-${id}`);
-    // Collapsed to begin with — eight always-announced tables of a hundred
+    // Collapsed to begin with — nine always-announced tables of a hundred
     // numbers each is not an accessible page.
     await expect(table).not.toBeVisible();
 
-    /* The control that opens THIS table, found the way assistive tech finds
-       it: `aria-controls`. Picking the nth toggle by index would assert
-       nothing about which table it opens, which is why this query has
-       survived the control becoming an icon button in the card header and now
-       a MENU ITEM behind an overflow trigger (review M17). The element type
-       keeps changing; the relationship is the claim.
-
-       The menu is opened by its own trigger, scoped to this chart's figure —
-       the trigger is named after the chart precisely so ten of them in one
-       document stay ten distinguishable controls. */
-    const menu = () =>
-      page.getByTestId(`chart-${id}`).getByRole('button', { name: /data and exports$/ });
-    const toggle = page.locator(`[role="menuitem"][aria-controls="chart-data-${id}"]`);
-
-    await menu().click();
+    await menuFor(id).click();
+    const toggle = tableItemFor(id);
     await expect(toggle).toHaveCount(1);
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
-    await toggle.click();
-    await expect(table).toBeVisible();
-    // Selecting closes the menu, so re-open it to read the flipped state —
-    // which is also what a reader does.
-    await menu().click();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-
-    // ═══ THE TABLE REPLACES THE PLOT ═══
-    //
-    // The whole reason the control moved into the header. Only a browser can
-    // see this: `hidden` is applied to a wrapper and jsdom applies no
-    // stylesheet, so `toBeVisible()` there would answer for reasons unrelated
-    // to the component.
-    //
-    // ASSERTED ON THE CANVAS, NOT ON THE `<svg>` INSIDE IT, and that is not a
-    // detail. The canvas is React's — it exists for as long as the component
-    // does. The svg is ECharts', which disposes and redraws it on resize, and
-    // hiding a container IS a resize (0×0 and back). A locator that resolves
-    // to 0 or 2 elements mid-redraw makes `toBeVisible()` throw a strict-mode
-    // violation immediately rather than retry, which is a flake with no
-    // failing assertion in it. `plot()` stays right for "did it draw"; this
-    // question is "is it on screen", and the stable element answers it.
-    const canvas = page.getByTestId(`chart-${id}`).locator('[data-chart-canvas]');
-    await expect(canvas).toBeHidden();
-
-    // And back, so it is a real toggle rather than one-way — with the plot
-    // returning rather than merely the table going away. The menu is already
-    // open from the assertion above.
-    await toggle.click();
-    await expect(table).not.toBeVisible();
-    await expect(canvas).toBeVisible();
+    // Escape rather than selecting: this loop must not TOGGLE anything. Every
+    // open or close of a table drives a full ECharts re-layout — `Chart` hides
+    // the canvas with `hidden`, and the instance's own ResizeObserver answers
+    // the 0×0 box it then reports — which is the expensive half, and is dealt
+    // with once below rather than nine times here.
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveCount(0);
   }
+
+  /* ═══ ONCE: THE ROUND TRIP ═══
+   *
+   * NOT repeated per chart, and the reason is in the source rather than in a
+   * budget. `Chart` holds the only `<ChartActions>` call site in the app and
+   * gives it `aria-controls={`chart-data-${id}`}` beside
+   * `onToggleTable={() => setTableShown((was) => !was)}` — the same `id` the
+   * loop above just checked against, and a setter that takes no id at all. A
+   * chart whose menu item names the right table therefore cannot toggle a
+   * different one, and what is left to prove is that toggling works: one
+   * expression, shared by all nine.
+   *
+   * WHAT REPEATING IT COST, MEASURED ON CI. Before the overflow menu this test
+   * ran 1.5s in Chromium and 15.6s in WebKit — 10.4x, against about 2x for
+   * every other case in this file, because it was the only one driving that
+   * re-layout eighteen times. The menu then added a portalled open per toggle
+   * and the runners got ~1.65x slower, and it stopped finishing inside the 60s
+   * budget at all: red on `main` for eight consecutive merges, on
+   * `e2e-cross-browser` — the one job a pull request never runs.
+   */
+  const id = CHART_IDS[0];
+  const table = page.getByTestId(`chart-data-${id}`);
+  const toggle = tableItemFor(id);
+
+  await menuFor(id).click();
+  await toggle.click();
+  await expect(table).toBeVisible();
+  // Selecting closes the menu, so re-open it to read the flipped state —
+  // which is also what a reader does.
+  await menuFor(id).click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+  // ═══ THE TABLE REPLACES THE PLOT ═══
+  //
+  // The whole reason the control moved into the header. Only a browser can
+  // see this: `hidden` is applied to a wrapper and jsdom applies no
+  // stylesheet, so `toBeVisible()` there would answer for reasons unrelated
+  // to the component.
+  //
+  // ASSERTED ON THE CANVAS, NOT ON THE `<svg>` INSIDE IT, and that is not a
+  // detail. The canvas is React's — it exists for as long as the component
+  // does. The svg is ECharts', which disposes and redraws it on resize, and
+  // hiding a container IS a resize (0×0 and back). A locator that resolves
+  // to 0 or 2 elements mid-redraw makes `toBeVisible()` throw a strict-mode
+  // violation immediately rather than retry, which is a flake with no
+  // failing assertion in it. `plot()` stays right for "did it draw"; this
+  // question is "is it on screen", and the stable element answers it.
+  const canvas = page.getByTestId(`chart-${id}`).locator('[data-chart-canvas]');
+  await expect(canvas).toBeHidden();
+
+  // And back, so it is a real toggle rather than one-way — with the plot
+  // returning rather than merely the table going away. The menu is already
+  // open from the assertion above.
+  await toggle.click();
+  await expect(table).not.toBeVisible();
+  await expect(canvas).toBeVisible();
 });
 
 test('a chart can fill the screen, and Escape brings it back', async ({ page }) => {
