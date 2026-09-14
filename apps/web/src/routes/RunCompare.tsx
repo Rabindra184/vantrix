@@ -220,7 +220,7 @@ export default function RunCompare() {
                 runs than were requested is how a reader concludes two runs are
                 identical when one of them was never fetched. */}
             {selected.length < countRequested(params.get('runs'), runId ?? '') && (
-              <p className="text-[13px] text-muted">
+              <p className="text-[0.8125rem] text-muted">
                 Some runs named in this link were left out: a run can only be compared with
                 others of the same simulation, and at most {MAX_COMPARE} at a time.
               </p>
@@ -239,7 +239,7 @@ export default function RunCompare() {
                 wording carry this; colour was never allowed to be the only
                 signal anyway. */}
             {failed.length > 0 && (
-              <p role="alert" className="text-[13px] font-medium text-primary">
+              <p role="alert" className="text-[0.8125rem] font-medium text-primary">
                 {failed.length === 1 ? 'One run could not be loaded' : `${failed.length} runs could not be loaded`}
                 {' '}({failed.map(labelFor).join(', ')}), so {failed.length === 1 ? 'it is' : 'they are'}{' '}
                 missing from the chart and the table below. Reload to try again.
@@ -291,7 +291,7 @@ export default function RunCompare() {
             ) : (
               <>
                 <fieldset className="flex flex-col gap-2">
-                  <legend className="text-[13px] font-medium text-primary">
+                  <legend className="text-[0.8125rem] font-medium text-primary">
                     Runs to compare
                   </legend>
                   <div className="flex flex-wrap gap-2">
@@ -311,7 +311,7 @@ export default function RunCompare() {
                           // exists, and a set that excluded it would compare a
                           // run against peers it is not among.
                           title={run.id === runId ? 'The run you came from is always included' : undefined}
-                          className={`transition-ui inline-flex h-8 touch-manipulation items-center rounded-lg border px-2.5 text-[13px] font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
+                          className={`transition-ui inline-flex h-8 touch-manipulation items-center rounded-lg border px-2.5 text-[0.8125rem] font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
                             on
                               ? 'border-accent bg-accent/10 text-accent shadow-panel'
                               : 'border-default bg-surface text-muted shadow-panel hover:bg-sunken hover:text-primary'
@@ -435,11 +435,11 @@ function CompareSummaryTile({
 }) {
   return (
     <div className="rounded-lg border border-default bg-surface px-3 py-3 shadow-panel">
-      <p className="text-[12px] font-medium text-muted">{label}</p>
+      <p className="text-[0.75rem] font-medium text-muted">{label}</p>
       <p className="mt-1 font-mono text-xl font-semibold leading-none tabular-nums" style={{ color: colour }}>
         {value}
       </p>
-      <p className="mt-2 text-[11px] leading-snug text-muted">{detail}</p>
+      <p className="mt-2 text-[0.6875rem] leading-snug text-muted">{detail}</p>
     </div>
   );
 }
@@ -466,12 +466,12 @@ function Comparability({ findings }: { readonly findings: readonly Comparability
       data-testid="comparability"
       className="flex flex-col gap-2 rounded-xl border border-default bg-surface p-4"
     >
-      <p role="status" className="text-[13px] leading-relaxed text-primary">
+      <p role="status" className="text-[0.8125rem] leading-relaxed text-primary">
         {check
           ? 'These runs differ in ways that change what a comparison means. Read the deltas below against this.'
           : 'These runs match on every dimension recorded here.'}
       </p>
-      <dl className="grid gap-x-4 gap-y-1 text-[12px] sm:grid-cols-2">
+      <dl className="grid gap-x-4 gap-y-1 text-[0.75rem] sm:grid-cols-2">
         {findings.map((finding) => (
           <div
             key={finding.label}

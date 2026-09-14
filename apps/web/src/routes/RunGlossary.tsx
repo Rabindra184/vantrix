@@ -59,11 +59,11 @@
 export default function RunGlossary() {
   return (
     <details className="group mt-3" data-testid="run-glossary">
-      <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+      <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
         <span className="group-open:hidden">Which word means what</span>
         <span className="hidden group-open:inline">Hide which word means what</span>
       </summary>
-      <dl className="mt-2 flex max-w-3xl flex-col gap-2 text-[12px] leading-relaxed text-muted">
+      <dl className="mt-2 flex max-w-3xl flex-col gap-2 text-[0.75rem] leading-relaxed text-muted">
         {ENTRIES.map(({ term, meaning }) => (
           <div key={term}>
             <dt className="font-medium text-primary">{term}</dt>

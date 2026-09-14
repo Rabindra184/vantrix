@@ -168,7 +168,7 @@ export default function ProjectRail() {
         )}
       >
         {!collapsed && (
-          <p className="text-[12px] font-medium text-muted">
+          <p className="text-[0.75rem] font-medium text-muted">
             Projects
           </p>
         )}
@@ -312,7 +312,7 @@ export default function ProjectRail() {
             // silences a live region, and a projects-failed announcement is
             // exactly the kind of transition the wrapper above exists to
             // announce whatever state the rail is drawn in.
-            <p className={cn('px-3 py-2 text-[12px] leading-snug text-muted', collapsed && 'lg:sr-only')}>
+            <p className={cn('px-3 py-2 text-[0.75rem] leading-snug text-muted', collapsed && 'lg:sr-only')}>
               {message}
             </p>
           )}
@@ -350,7 +350,7 @@ function rowClasses(collapsed: boolean, isActive: boolean) {
     // project nav — the reference for this pass — gives its rows 45px. 40px is
     // the middle: it stops the badge crowding the name's cap-height without
     // halving how many projects fit before the rail scrolls.
-    'transition-ui flex h-10 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px]',
+    'transition-ui flex h-10 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[0.8125rem]',
     // `whitespace-nowrap` on the row, not just the badge: below `lg` this is a
     // horizontal strip and "All runs" breaking after "All" is what it looks
     // like without it.

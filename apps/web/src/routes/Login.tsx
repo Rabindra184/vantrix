@@ -143,7 +143,7 @@ export default function Login() {
             {/* Still an `<h2>`, not a styled `<p>`: the form below is a
                 section of this page and this names it, which is what a
                 screen-reader user navigating by heading needs. */}
-            <h2 className="text-[13px] text-muted">Sign in to your organisation</h2>
+            <h2 className="text-[0.8125rem] text-muted">Sign in to your organisation</h2>
           </div>
         </header>
 
@@ -155,7 +155,7 @@ export default function Login() {
             {/* A real <label htmlFor>, not a placeholder or aria-label: the
                 Playwright suite selects by label (helpers.ts), so losing the
                 association fails a test rather than quietly failing an audit. */}
-            <label htmlFor="email" className="text-[13px] font-medium">
+            <label htmlFor="email" className="text-[0.8125rem] font-medium">
               Email
             </label>
             <input
@@ -171,7 +171,7 @@ export default function Login() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="password" className="text-[13px] font-medium">
+            <label htmlFor="password" className="text-[0.8125rem] font-medium">
               Password
             </label>
             <input
@@ -193,7 +193,7 @@ export default function Login() {
             // thrown out of the field they were about to correct.
             <p
               role="alert"
-              className="tint flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px] text-[color:var(--color-status-failed)]"
+              className="tint flex items-start gap-2 rounded-lg border px-3 py-2 text-[0.8125rem] text-[color:var(--color-status-failed)]"
             >
               <AlertIcon className="mt-px h-4 w-4 shrink-0" />
               {error}

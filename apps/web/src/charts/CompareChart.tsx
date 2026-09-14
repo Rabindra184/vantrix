@@ -36,7 +36,7 @@ export default function CompareChart({
         {/* A real `<label htmlFor>` rather than a placeholder: this is the one
             control that decides what the whole figure means, and a screen
             reader meets it with no chart context. */}
-        <label htmlFor="compare-metric" className="shrink-0 text-[12px] text-muted">
+        <label htmlFor="compare-metric" className="shrink-0 text-[0.75rem] text-muted">
           Metric
         </label>
         <select

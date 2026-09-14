@@ -106,7 +106,7 @@ function Tests({ slug }: { readonly slug: string }) {
           is not paginated (`TestListResponseSchema` carries no cursor), so "4
           tests" here really is every test rather than the page-local number
           the run list is careful to qualify. */}
-      <p className="text-[13px] text-muted">
+      <p className="text-[0.8125rem] text-muted">
         {items.length} {items.length === 1 ? 'test' : 'tests'}
       </p>
       <TableFrame
@@ -167,7 +167,7 @@ function TestRow({
           {test.name}
         </Link>
         {test.description !== null && test.description !== '' && (
-          <p className="mt-1 max-w-md text-[12px] leading-snug text-muted">{test.description}</p>
+          <p className="mt-1 max-w-md text-[0.75rem] leading-snug text-muted">{test.description}</p>
         )}
       </td>
       {/* The class, not the name, and both are shown because they diverge the
@@ -182,7 +182,7 @@ function TestRow({
           exists — the two diverge the moment anybody renames a test, and the
           class is what a reader matches against their own simulation source —
           but when they are identical it says SO rather than repeating it. */}
-      <td className={`${TD} font-mono text-[12px] break-all text-muted`}>
+      <td className={`${TD} font-mono text-[0.75rem] break-all text-muted`}>
         {test.name === test.simulationClass ? (
           /* ═══ AN EM DASH, WITH THE CONVENTION IN THE CAPTION (review N04) ═══
            *
@@ -213,7 +213,7 @@ function TestRow({
           // go, so `runCount: 0` with a named test is a real row rather than a
           // half-loaded one. Says so rather than rendering an empty cell,
           // which reads as a value that failed to arrive.
-          <span className="text-[13px] text-muted">No runs</span>
+          <span className="text-[0.8125rem] text-muted">No runs</span>
         ) : (
           <Link
             to={runPath(test.latestRun.id)}

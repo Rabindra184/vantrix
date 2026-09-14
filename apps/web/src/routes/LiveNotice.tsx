@@ -62,7 +62,7 @@ export default function LiveNotice(
       <div
         role="status"
         data-testid="live-notice-partial"
-        className="flex items-center gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[13px] text-muted"
+        className="flex items-center gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[0.8125rem] text-muted"
       >
         <p className="leading-relaxed">
           This view joined the run in progress and the server could not supply everything before
@@ -78,7 +78,7 @@ export default function LiveNotice(
       <div
         role="status"
         data-testid="live-notice-finalizing"
-        className="flex items-center gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[13px] text-muted"
+        className="flex items-center gap-2 rounded-xl border border-default bg-surface px-4 py-3 text-[0.8125rem] text-muted"
       >
         <p>
           This run has finished streaming. Finalizing the results — this page will refresh with
@@ -99,8 +99,8 @@ export default function LiveNotice(
           findable by heading navigation wraps it in its own `<h2>`/`<h3>`,
           the same way a chart's own withheld state is just a labelled
           `<figure>` and not a heading either. */}
-      <p className="text-[13px] font-semibold text-primary">{props.subject}</p>
-      <p className="text-[13px] leading-relaxed text-muted">
+      <p className="text-[0.8125rem] font-semibold text-primary">{props.subject}</p>
+      <p className="text-[0.8125rem] leading-relaxed text-muted">
         Available when the run finishes — this run is still streaming, and this view needs data no
         live delta carries.
       </p>

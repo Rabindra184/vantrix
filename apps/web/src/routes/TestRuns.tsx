@@ -175,7 +175,7 @@ export default function TestRuns() {
               {row.name}
             </h1>
             {row.description !== null && row.description !== '' && (
-              <p className="max-w-2xl text-[13px] leading-relaxed text-muted">{row.description}</p>
+              <p className="max-w-2xl text-[0.8125rem] leading-relaxed text-muted">{row.description}</p>
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -268,10 +268,10 @@ export default function TestRuns() {
             data-testid="test-delete-confirm"
             className="flex flex-col gap-3 rounded-lg border border-default bg-sunken p-4"
           >
-            <p className="text-[13px] leading-relaxed text-primary">
+            <p className="text-[0.8125rem] leading-relaxed text-primary">
               Delete <span className="font-medium">{row.name}</span>? This cannot be undone.
             </p>
-            <ul className="flex list-disc flex-col gap-1 pl-5 text-[12px] leading-relaxed text-muted">
+            <ul className="flex list-disc flex-col gap-1 pl-5 text-[0.75rem] leading-relaxed text-muted">
               <li>
                 {row.runCount === 0
                   ? 'It has no runs.'
@@ -294,7 +294,7 @@ export default function TestRuns() {
             {removal.isError && (
               <div
                 role="alert"
-                className="rounded-lg border border-default bg-surface p-3 text-[13px] text-primary"
+                className="rounded-lg border border-default bg-surface p-3 text-[0.8125rem] text-primary"
               >
                 {/* NEVER claims the test survived — this side cannot know. The
                     same wording discipline `TokenTable`'s failed revoke uses. */}
@@ -325,7 +325,7 @@ export default function TestRuns() {
             reason: these are VALUES, they wear the mono face, and a divider
             between each is what says they are two facts rather than one
             sentence that lost its punctuation. */}
-        <div className="grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[12px] text-muted shadow-panel sm:flex sm:flex-wrap sm:items-start sm:gap-x-0 sm:gap-y-3 sm:divide-x sm:divide-default">
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-default bg-surface px-4 py-3 font-mono text-[0.75rem] text-muted shadow-panel sm:flex sm:flex-wrap sm:items-start sm:gap-x-0 sm:gap-y-3 sm:divide-x sm:divide-default">
           <Chip name="Simulation class" label={`Simulation class: ${row.simulationClass}`}>
             {row.simulationClass}
           </Chip>
@@ -437,7 +437,7 @@ function Breadcrumb({
   readonly testName: string;
 }) {
   return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[13px] text-muted">
+    <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[0.8125rem] text-muted">
       <Link
         to={projectPath(projectSlug)}
         className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
@@ -514,7 +514,7 @@ function RenameForm({
     <Card as="div" data-testid="test-rename">
       <form id="test-rename" aria-label="Rename this test" onSubmit={submit} className="flex flex-col gap-3">
         <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(260px,2fr)] md:items-start">
-          <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+          <label className="flex flex-col gap-1.5 text-[0.75rem] font-medium text-muted">
             Name
             <input
               className={INPUT}
@@ -523,7 +523,7 @@ function RenameForm({
               onChange={(event) => setName(event.currentTarget.value)}
             />
           </label>
-          <label className="flex flex-col gap-1.5 text-[12px] font-medium text-muted">
+          <label className="flex flex-col gap-1.5 text-[0.75rem] font-medium text-muted">
             Description
             <input
               className={INPUT}
@@ -535,7 +535,7 @@ function RenameForm({
           </label>
         </div>
 
-        <p className="text-[12px] leading-relaxed text-muted">
+        <p className="text-[0.75rem] leading-relaxed text-muted">
           The simulation class stays <code className="font-mono">{test.simulationClass}</code> — it
           is the key a parsed run is matched on, so changing it would split this test’s history
           rather than rename it. Emptying the description clears it.
@@ -549,7 +549,7 @@ function RenameForm({
             chart FILL and the fill palette is a different set of values. The
             exemption list in that gate is meant to shrink, not grow. */}
         {save.isError && (
-          <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[13px] text-primary">
+          <div role="alert" className="rounded-lg border border-default bg-sunken p-3 text-[0.8125rem] text-primary">
             {problem?.detail ?? save.error.message}
             {problem?.remediation !== undefined && (
               <p className="mt-1 text-muted">{problem.remediation}</p>
@@ -590,11 +590,11 @@ function Chip({
 }) {
   return (
     <div className="min-w-0 sm:px-4 sm:first:pl-0 sm:last:pr-0">
-      <p className="text-[12px] font-medium text-muted">{name}</p>
+      <p className="text-[0.75rem] font-medium text-muted">{name}</p>
       <span
         role="group"
         aria-label={label}
-        className="mt-1 block break-all text-[12px] text-primary"
+        className="mt-1 block break-all text-[0.75rem] text-primary"
       >
         {children}
       </span>

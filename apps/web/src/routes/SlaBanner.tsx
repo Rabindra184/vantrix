@@ -111,7 +111,7 @@ export default function SlaBanner({
     <div
       role="status"
       data-testid="sla-banner"
-      className="tint flex flex-col gap-2 rounded-xl border px-4 py-3 text-[13px]"
+      className="tint flex flex-col gap-2 rounded-xl border px-4 py-3 text-[0.8125rem]"
       style={{ color: ASSERTION_OUTCOME.failed.colour }}
     >
       {sla.rulesUnavailable ? (

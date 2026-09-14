@@ -82,7 +82,7 @@ export const buttonVariants = cva(
         ghost: 'text-muted hover:bg-sunken hover:text-primary',
       },
       size: {
-        sm: 'h-8 gap-1.5 px-2.5 text-[13px]',
+        sm: 'h-8 gap-1.5 px-2.5 text-[0.8125rem]',
         // 36px, not 44 — see the coarse-pointer rule above for why the
         // desktop height stays dense.
         md: 'h-9 gap-2 px-3 text-sm',

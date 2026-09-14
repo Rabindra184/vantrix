@@ -333,7 +333,7 @@ function CompactWindowNotice({
   return (
     <div
       data-testid="compact-window-notice"
-      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-default bg-sunken px-3 py-2 text-[13px]"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem]"
     >
       <p className="text-muted">
         Showing{' '}

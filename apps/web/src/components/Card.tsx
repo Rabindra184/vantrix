@@ -87,10 +87,10 @@ export default function Card({
       {title !== undefined && (
         <div className={`flex items-start justify-between gap-3 ${padding === 'none' ? 'p-5 pb-3' : ''}`}>
           <div className="flex min-w-0 flex-col gap-1">
-            <Heading className="text-[15px] font-semibold tracking-tight text-primary">
+            <Heading className="text-[0.9375rem] font-semibold tracking-tight text-primary">
               {title}
             </Heading>
-            {description !== undefined && <p className="text-[13px] text-muted">{description}</p>}
+            {description !== undefined && <p className="text-[0.8125rem] text-muted">{description}</p>}
           </div>
           {actions !== undefined && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
         </div>
@@ -99,7 +99,7 @@ export default function Card({
           under — the titled case is handled above so the two stay grouped as
           one block against the actions. */}
       {title === undefined && description !== undefined && (
-        <p className="text-[13px] text-muted">{description}</p>
+        <p className="text-[0.8125rem] text-muted">{description}</p>
       )}
       {children}
     </Element>

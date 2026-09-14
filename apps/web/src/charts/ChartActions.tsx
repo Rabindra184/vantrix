@@ -187,7 +187,7 @@ export default function ChartActions({
       {copied.kind !== 'idle' && (
         <p
           role="status"
-          className={copied.kind === 'failed' ? 'mr-1 text-[11px] text-muted' : 'sr-only'}
+          className={copied.kind === 'failed' ? 'mr-1 text-[0.6875rem] text-muted' : 'sr-only'}
         >
           {copied.kind === 'failed' ? copied.message : 'Chart data copied to the clipboard.'}
         </p>
@@ -257,7 +257,7 @@ export default function ChartActions({
               disabled menu item with no stated reason is worse still, because
               a menu hides it until opened. */}
           {!hasRows && (
-            <p className="px-2 pb-1 text-[12px] leading-snug text-muted">
+            <p className="px-2 pb-1 text-[0.75rem] leading-snug text-muted">
               This chart plotted nothing, so there is nothing to export.
             </p>
           )}

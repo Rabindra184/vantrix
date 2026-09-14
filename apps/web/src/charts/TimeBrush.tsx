@@ -188,7 +188,7 @@ export default function TimeBrush({
       >
         <summary
           data-testid="time-window-toggle"
-          className="flex cursor-pointer list-none items-center gap-2 p-3 text-[12px] font-medium text-accent hover:underline hover:underline-offset-2"
+          className="flex cursor-pointer list-none items-center gap-2 p-3 text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2"
         >
           <span className="group-open:hidden">Time window</span>
           <span className="hidden group-open:inline">Hide time window</span>
@@ -256,7 +256,7 @@ export default function TimeBrush({
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor={fromId} className="text-[12px] text-muted">
+          <label htmlFor={fromId} className="text-[0.75rem] text-muted">
             From (s)
           </label>
           <input
@@ -273,7 +273,7 @@ export default function TimeBrush({
         </div>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor={toId} className="text-[12px] text-muted">
+          <label htmlFor={toId} className="text-[0.75rem] text-muted">
             To (s)
           </label>
           <input
@@ -320,7 +320,7 @@ export default function TimeBrush({
             id={errorId}
             role="alert"
             data-testid="window-error"
-            className="w-full text-[12px]"
+            className="w-full text-[0.75rem]"
             /* `var()`, not a `text-status-failed` utility: the status tokens
                are declared on `:root` rather than inside `@theme inline`, so
                Tailwind generates NO class for them and that spelling emits
@@ -336,7 +336,7 @@ export default function TimeBrush({
             reader is told the figures now describe a different stretch — the
             numbers change without anything else moving on screen. */}
         {applied != null && (
-          <p role="status" data-testid="window-applied" className="text-[12px] text-muted">
+          <p role="status" data-testid="window-applied" className="text-[0.75rem] text-muted">
             Showing {Math.round(applied.fromMs / 1000)}s–{Math.round(applied.toMs / 1000)}s,
             snapped to {applied.bucketWidthMs}ms buckets
           </p>

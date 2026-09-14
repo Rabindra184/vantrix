@@ -106,7 +106,7 @@ export default function RunTrends() {
                 Above the charts rather than below, because it changes how the
                 three figures underneath should be read. */}
             {data.runs.length === 1 && (
-              <p className="text-[13px] text-muted">
+              <p className="text-[0.8125rem] text-muted">
                 This is the only completed run of{' '}
                 {data.test?.name ?? data.simulation ?? 'this run'} so far, so there is nothing
                 to compare it against yet.
@@ -128,7 +128,7 @@ export default function RunTrends() {
                 replaced by one naming the actual state, and the remedy — this
                 is a run waiting to be identified, not a run mis-filed. */}
             {data.test === null && (
-              <p className="text-[13px] text-muted">
+              <p className="text-[0.8125rem] text-muted">
                 This run is not part of a test yet, so it has nothing to trend against. A run
                 joins a test when its simulation name is read from the log — a run that failed
                 to parse never gets one.
@@ -145,7 +145,7 @@ export default function RunTrends() {
                 still belongs here because Trends is where the cohort is
                 explained before the reader starts choosing runs. */}
             {data.runs.length > 1 && (
-              <p className="flex flex-wrap items-center gap-2 text-[13px]">
+              <p className="flex flex-wrap items-center gap-2 text-[0.8125rem]">
                 <Link to={runComparePath(data.runId)} className={linkButtonClasses}>
                   <CompareTabIcon className="h-3.5 w-3.5" />
                   Compare these runs

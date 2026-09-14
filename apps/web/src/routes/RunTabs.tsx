@@ -162,7 +162,7 @@ function Tab({
       end={end}
       className={({ isActive }) =>
         cn(
-          'transition-ui -mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px]',
+          'transition-ui -mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-[0.8125rem]',
           isActive
             ? 'border-accent font-semibold text-accent'
             : 'border-transparent font-medium text-muted hover:border-default hover:text-primary',

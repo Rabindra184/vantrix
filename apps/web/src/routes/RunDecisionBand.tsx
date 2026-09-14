@@ -200,7 +200,7 @@ export default function RunDecisionBand({
           {/* An overline, not a heading — same rule as `ProjectRail`'s
               "Projects" label, and `uppercase` is safe here for the same
               reason: nothing queries a `<p>` by accessible name. */}
-          <p className="text-[12px] font-medium text-muted">
+          <p className="text-[0.75rem] font-medium text-muted">
             Release gate
           </p>
         </div>
@@ -229,7 +229,7 @@ export default function RunDecisionBand({
            * three-zeros overclaim this file already fixed one row down. */}
           {decision === 'none' && <Badge mark={DECISION.none} />}
           {judged && (
-            <p className="text-[12px] font-medium text-muted">
+            <p className="text-[0.75rem] font-medium text-muted">
               {counts.passed} passed · {counts.failed} failed · {counts.not_applicable} not applicable
             </p>
           )}
@@ -287,7 +287,7 @@ export default function RunDecisionBand({
            * generated summary is dropped. */}
           <p
             data-testid="decision-detail"
-            className={`max-w-3xl text-[13px] leading-relaxed text-muted${
+            className={`max-w-3xl text-[0.8125rem] leading-relaxed text-muted${
               failed == null ? ' max-sm:hidden' : ''
             }`}
           >
@@ -297,7 +297,7 @@ export default function RunDecisionBand({
           {/* THREE OUTCOMES, NAMED. Each row says which system answered, so no
               reader has to infer that "0 failed" meant one system's rules and
               not the test's own checks. */}
-          <dl data-testid="run-outcomes" className="flex flex-col gap-1 text-[12px]">
+          <dl data-testid="run-outcomes" className="flex flex-col gap-1 text-[0.75rem]">
             <Outcome testId="outcome-execution" label="Execution" value={executionText(status)} />
             <Outcome
               testId="outcome-gates"
@@ -403,7 +403,7 @@ function DecisionCount({ label, value, mark }: { readonly label: string; readonl
       className="flex items-baseline gap-1.5 rounded-lg border border-default bg-surface px-2.5 py-1.5"
       style={{ color: mark.colour }}
     >
-      <p className="text-[12px] font-medium text-muted">{label}</p>
+      <p className="text-[0.75rem] font-medium text-muted">{label}</p>
       <p className="font-mono text-base font-semibold leading-none tabular-nums text-primary">{value}</p>
     </div>
   );

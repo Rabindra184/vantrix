@@ -1098,7 +1098,7 @@ function Assertions({
          * What it must NOT lose is the remedy and the caveat: where to
          * configure rules, and that doing so does not change this run. Both
          * survive, in one line. */}
-        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-default bg-sunken px-3 py-2 text-[13px] text-muted">
+        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted">
           <span>No SLA rules judged this run — adding one affects future runs, not this one.</span>
           {projectSlug !== undefined && (
             <Link
@@ -1155,7 +1155,7 @@ function Assertions({
                   <td data-testid="assertion-outcome" className={`${TD} whitespace-nowrap`}>
                     <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
                   </td>
-                  <td className={`${TD} font-mono text-[12px]`}>{describeAssertionRule(assertion.rule)}</td>
+                  <td className={`${TD} font-mono text-[0.75rem]`}>{describeAssertionRule(assertion.rule)}</td>
                   {/* Null for a not_applicable assertion — there was nothing to
                       measure (AssertionSchema). A dash, never `0`: zero is a
                       measurement, and this is the absence of one. */}
@@ -1181,10 +1181,10 @@ function AssertionEvidencePanel({ assertions }: { assertions: readonly Assertion
     >
       <div className="flex min-w-0 flex-col gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+          <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted">
             SLA evidence
           </p>
-          <p className="mt-1 text-[13px] leading-relaxed text-muted">
+          <p className="mt-1 text-[0.8125rem] leading-relaxed text-muted">
             {firstFailed?.message ?? 'Every evaluated rule is within its configured threshold.'}
           </p>
         </div>
@@ -1218,7 +1218,7 @@ function AssertionCount({
 }) {
   return (
     <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: mark.colour }}>
-      <dt className="text-[12px] font-medium text-muted">{label}</dt>
+      <dt className="text-[0.75rem] font-medium text-muted">{label}</dt>
       <dd className="mt-1 font-mono text-lg font-semibold leading-none tabular-nums text-primary">
         {value}
       </dd>
@@ -1234,12 +1234,12 @@ function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
     <article className="rounded-lg border border-default bg-sunken px-3 py-2">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-mono text-[12px] leading-relaxed text-primary">{describeAssertionRule(assertion.rule)}</p>
-          <p className="mt-0.5 text-[12px] leading-relaxed text-muted">
+          <p className="font-mono text-[0.75rem] leading-relaxed text-primary">{describeAssertionRule(assertion.rule)}</p>
+          <p className="mt-0.5 text-[0.75rem] leading-relaxed text-muted">
             Actual {formatAssertionValue(assertion.actualValue)}
           </p>
         </div>
-        <span className="shrink-0 text-[12px] font-medium" style={{ color: mark.colour }}>
+        <span className="shrink-0 text-[0.75rem] font-medium" style={{ color: mark.colour }}>
           <Marked mark={mark} />
         </span>
       </div>
@@ -1524,7 +1524,7 @@ function ToolAssertions({
                     never a zero, because nothing was measured. */}
                 <td className={`${TD_NUM} whitespace-nowrap`}>{formatActual(assertion)}</td>
                 {showWording && (
-                  <td className={`${TD} font-mono text-[12px]`}>{assertion.expression}</td>
+                  <td className={`${TD} font-mono text-[0.75rem]`}>{assertion.expression}</td>
                 )}
               </tr>
             ))}
@@ -1539,7 +1539,7 @@ function ToolAssertions({
               type="button"
               data-testid="tool-assertions-toggle"
               onClick={() => setExpanded((open) => !open)}
-              className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+              className="transition-ui w-fit text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
             >
               {/* `Other checks (N)` (review 09-13 N04). "Show 2 checks that
                   did not fail" spends eight words on a control whose own
@@ -1561,7 +1561,7 @@ function ToolAssertions({
               type="button"
               data-testid="tool-assertions-wording"
               onClick={() => setWording((open) => !open)}
-              className="transition-ui w-fit text-[13px] font-medium text-accent hover:underline hover:underline-offset-2"
+              className="transition-ui w-fit text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
             >
               {wording ? 'Hide the tool’s own wording' : 'Show the tool’s own wording'}
             </button>

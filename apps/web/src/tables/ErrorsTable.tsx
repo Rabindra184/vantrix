@@ -121,7 +121,7 @@ export default function ErrorsTable({
      "none in that interval" rather than "none in the whole run". */
   const windowNote =
     windowSelected === true ? (
-      <p data-testid="errors-window-note" className="text-[12px] text-muted">
+      <p data-testid="errors-window-note" className="text-[0.75rem] text-muted">
         These totals cover the whole run. The selected time window narrows the chart above, not
         this table.
       </p>
@@ -225,7 +225,7 @@ export default function ErrorsTable({
           failed REQUESTS (24) — so a reader reconciling them assumes one is
           wrong. This table already holds both: the row count and the `total`
           it divides its shares by. It simply never said which was which. */}
-      <p data-testid="errors-tally" className="text-[13px] text-primary">
+      <p data-testid="errors-tally" className="text-[0.8125rem] text-primary">
         {rows.length} {rows.length === 1 ? 'error type' : 'error types'} ·{' '}
         {total} {total === 1 ? 'failed request' : 'failed requests'}
       </p>

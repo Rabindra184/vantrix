@@ -753,7 +753,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
             placeholder: a placeholder disappears the moment the reader types,
             which is exactly when a screen reader is asked what the field is. */}
         <div className="flex items-center gap-2">
-          <label htmlFor={filterId} className="shrink-0 text-[12px] text-muted">
+          <label htmlFor={filterId} className="shrink-0 text-[0.75rem] text-muted">
             Filter by name
           </label>
           <input
@@ -791,13 +791,13 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
        * reader deciding which measures they want is comparing them against
        * each other, which a collapsed control does not let them do. */}
       <details data-testid="column-picker" className="group">
-        <summary className="w-fit cursor-pointer list-none text-[12px] font-medium text-accent hover:underline hover:underline-offset-2">
+        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
           <span className="group-open:hidden">Choose columns</span>
           <span className="hidden group-open:inline">Hide column choices</span>
         </summary>
         <div className="flex flex-wrap gap-x-4 gap-y-2 pt-2">
           {everyColumn.map((c) => (
-            <label key={c.column} className="flex items-center gap-1.5 text-[12px] text-primary">
+            <label key={c.column} className="flex items-center gap-1.5 text-[0.75rem] text-primary">
               <input
                 type="checkbox"
                 checked={visible.has(c.column)}
@@ -1277,7 +1277,7 @@ function Row({
             // that `<th>` for why the name is pinned.
             <span
               data-testid="stat-row-type"
-              className="rounded-sm border border-default px-1 font-mono text-[10px] font-medium tracking-[0.06em] text-muted uppercase"
+              className="rounded-sm border border-default px-1 font-mono text-[0.625rem] font-medium tracking-[0.06em] text-muted uppercase"
             >
               group
             </span>

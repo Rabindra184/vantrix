@@ -115,7 +115,7 @@ function Bootstrapping() {
       <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-mark text-on-brand shadow-raised">
         <ActivityIcon className="h-6 w-6" />
       </span>
-      <p role="status" className="text-[13px] text-muted">
+      <p role="status" className="text-[0.8125rem] text-muted">
         Checking your session…
       </p>
     </main>
@@ -142,9 +142,9 @@ function Unavailable({ detail, remediation }: { detail: string; remediation?: st
             server — never the heading, never the <main>. See this component's
             docstring. */}
         <div role="alert" className="flex flex-col gap-2">
-          <p className="text-[13px] leading-relaxed">{detail}</p>
+          <p className="text-[0.8125rem] leading-relaxed">{detail}</p>
           {remediation !== undefined && (
-            <p className="text-[13px] leading-relaxed text-muted">{remediation}</p>
+            <p className="text-[0.8125rem] leading-relaxed text-muted">{remediation}</p>
           )}
         </div>
       </div>

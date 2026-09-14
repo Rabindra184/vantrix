@@ -65,7 +65,7 @@ export default function SignOutButton() {
         // to do about it.
         <p
           role="alert"
-          className="tint flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] text-[color:var(--color-status-failed)]"
+          className="tint flex items-center gap-1.5 rounded-md border px-2 py-1 text-[0.75rem] text-[color:var(--color-status-failed)]"
         >
           <AlertIcon className="h-3.5 w-3.5 shrink-0" />
           Sign out did not complete — you may still be signed in. Try again.
