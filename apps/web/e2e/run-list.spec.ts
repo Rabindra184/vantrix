@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { seedAdmin, seedAdminForEmptyOrg, seedRunsAt, seedRunWithData } from './fixtures.js';
+import { seedAdmin, seedAdminForEmptyOrg, seedRunsAt, seedRunWithData, renameSimulation } from './fixtures.js';
 import { firstRowId, signIn } from './helpers.js';
 
 /**
@@ -372,5 +372,70 @@ test('the run list scales with the reader’s font size, not just its headings',
     await page.evaluate(() => {
       document.documentElement.style.fontSize = '';
     });
+  }
+});
+
+/**
+ * ═══ A REAL SIMULATION CLASS IS THE WIDEST UNBREAKABLE STRING HERE ═══
+ * (the 09-13 review's acceptance list: "many projects/tests and long names")
+ *
+ * Every geometry case in this file was measured against the reference
+ * bundle's `example.ParitySimulation` — 24 characters. A real one is a
+ * fully-qualified class: `com.acme.checkout.simulations.CheckoutPeakLoadSimulation`
+ * is 56, and it has NO break opportunity, because UAX#14 gives none after a
+ * full stop followed by a letter. So it cannot wrap, and whatever width it
+ * demands comes out of the columns beside it.
+ *
+ * THAT IS A DIRECT THREAT TO THE CASE ABOVE, which asserts p95 and Errors are
+ * reachable without scrolling and was measured with the short name — p95
+ * ending at 587px against only 694px of box at 1024. Nobody had re-measured
+ * it with a name a real project would produce.
+ *
+ * The mobile CARD for the same value already carries `break-all`
+ * (`RunList.tsx`'s `RunCard`); the desktop cell did not, and the asymmetry was
+ * visible in one file.
+ */
+test('a real simulation class does not push the triage columns off screen', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await renameSimulation(runId, 'com.acme.checkout.simulations.CheckoutPeakLoadSimulation');
+
+  await signIn(page, admin);
+
+  for (const width of [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/runs');
+    await expect(page.getByTestId('run-row').first()).toBeVisible();
+
+    const reach = await page.evaluate(() => {
+      const table = document.querySelector('table');
+      if (table === null) return null;
+      const scroller = table.parentElement!;
+      const ths = Array.from(table.querySelectorAll('thead th'));
+      const rightOf = (name: string): number | null => {
+        const th = ths.find((h) => h.textContent?.trim() === name);
+        return th === undefined
+          ? null
+          : Math.round(th.getBoundingClientRect().right - scroller.getBoundingClientRect().left);
+      };
+      return {
+        visible: Math.round(scroller.clientWidth),
+        errors: rightOf('Errors'),
+        docOverflows: document.documentElement.scrollWidth > window.innerWidth,
+      };
+    });
+
+    expect(reach, `a table renders at ${width}`).not.toBeNull();
+    const { visible, errors, docOverflows } = reach!;
+    expect(errors, `an Errors column exists at ${width}`).not.toBeNull();
+    expect(
+      errors!,
+      `at ${width}px a 56-character class pushed Errors to ${errors}px of ${visible}px visible`,
+    ).toBeLessThanOrEqual(visible);
+
+    /* AND THE PAGE ITSELF STILL DOES NOT SCROLL SIDEWAYS. The table is allowed
+       to (the review says so); the document is not, and an unbreakable string
+       is exactly what breaks that distinction. */
+    expect(docOverflows, `the document scrolls sideways at ${width}`).toBe(false);
   }
 });

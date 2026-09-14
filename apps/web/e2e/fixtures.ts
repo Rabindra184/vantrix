@@ -293,6 +293,27 @@ export async function seedRunWithData(orgId: string): Promise<string> {
 }
 
 /**
+ * Rename a seeded run's simulation, for the cases that are about the LENGTH of
+ * that string rather than its value.
+ *
+ * `seedRunWithData` ingests the reference bundle, whose header names
+ * `example.ParitySimulation` — 24 characters. A real one is a fully-qualified
+ * class like `com.acme.checkout.simulations.CheckoutPeakLoadSimulation`, and
+ * the difference is not cosmetic: a class name has NO break opportunity, since
+ * UAX#14 gives none after a full stop followed by a letter. So it is the
+ * widest unbreakable string this product renders, and the run list draws it in
+ * a table that already scrolls.
+ *
+ * WRITTEN DIRECTLY, because the alternative is a second reference bundle whose
+ * only difference is one header field — the statistics, the errors and the
+ * assertions all have to stay exactly what the real ingest produced, because
+ * the geometry cases measure the columns beside this one.
+ */
+export async function renameSimulation(runId: string, simulation: string): Promise<void> {
+  await prisma.run.update({ where: { id: runId }, data: { simulation } });
+}
+
+/**
  * One telemetry sample, `n` steps into its host's own climb — every cumulative
  * counter and the memory gauge scaled by a distinct multiplier (mirrors
  * packages/persistence/test/telemetry.integration.test.ts's own `sampleAt`, so
