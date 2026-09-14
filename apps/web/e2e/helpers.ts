@@ -25,6 +25,72 @@ export function plot(scope: Locator): Locator {
 }
 
 /**
+ * ═══ GETTING TO /login, AND WHY IT HAS ITS OWN RETRY ═══
+ *
+ * EVERY cross-browser flake this suite has produced landed here. Measured
+ * across six `e2e-cross-browser` runs, 8 of 8 retried tests failed inside
+ * `signIn` — seven in this navigation, one in the `waitForURL` below — and
+ * not one failed an assertion. The test NAME was simply whoever was running:
+ * eight occurrences, eight different specs, across `auth`, `run-charts`,
+ * `run-detail`, `run-tables` and `run-telemetry`.
+ *
+ * THE MISATTRIBUTION IS THE DEFECT THIS FIXES. A stall here is reported as
+ * "[firefox] run-telemetry.spec.ts flaky", which sends the next reader into a
+ * telemetry chart that was never involved — it cost exactly that here, before
+ * anyone read the logs. Retrying the navigation in the ONE place it happens
+ * means a single stall costs seconds and names itself, instead of a minute
+ * charged to an innocent spec.
+ *
+ * WHAT IS RETRIED IS NOT UNDER TEST. This is arriving at the login page:
+ * setup that eighteen specs share and none of them is about. The form's own
+ * behaviour is asserted below and in `Login.test.tsx`, and neither is touched.
+ *
+ * AND THE CAUSE IS NOT KNOWN — stated plainly rather than implied by a fix.
+ * Two experiments failed to reproduce it: 180 navigations of this app's own
+ * `/login` in Firefox and WebKit after deliberate idle gaps (0 failures,
+ * worst 374ms), and 75 navigations against a bare server at Node's default
+ * 5s `keepAliveTimeout`, probing the classic HTTP/1.1 keep-alive race (0
+ * failures, worst 51ms). It has never been seen on Chromium in any of the six
+ * runs, though Chromium always runs first, so "it only happens late in a long
+ * run" is ruled out too — the first Firefox occurrence was four tests into
+ * that engine's block. Recorded as a CI-environment stall in browser
+ * navigation; this helper makes it cheap and legible rather than claiming to
+ * have cured it.
+ */
+async function reachLogin(page: Page): Promise<void> {
+  try {
+    await page.goto('/login');
+    return;
+  } catch (err) {
+    // Deliberately on stdout: a silent retry would hide how often this
+    // happens, and that count is the only evidence anyone has about whether
+    // the underlying stall is getting better or worse.
+    console.warn(
+      `signIn: navigating to /login stalled (${String(err).split('\n')[0]}); retrying once. ` +
+        `Known CI-environment stall — see reachLogin's docstring.`,
+    );
+  }
+  /* SETTLE BEFORE RETRYING, and this is not padding — the red-verify found it.
+     A navigation that has just failed is still unwinding, and an immediate
+     second `goto` is rejected outright: "Navigation to .../login is
+     interrupted by another navigation to chrome-error://chromewebdata/". So
+     the retry failed for a reason that had nothing to do with the stall it
+     exists to survive, and the helper reported two stalls where there was
+     one. Half a second is enough for the browser to finish giving up. */
+  await page.waitForTimeout(500);
+  try {
+    await page.goto('/login');
+  } catch (err) {
+    throw new Error(
+      'signIn: navigating to /login stalled TWICE. This is the setup step every ' +
+        'spec shares, not the behaviour under test — read it as an environment ' +
+        'failure rather than a defect in whichever spec reported it.',
+      { cause: err },
+    );
+  }
+}
+
+/**
  * Drives the real login form through the browser. The account itself is
  * created ahead of time by one of fixtures.ts's seed*() functions, via
  * Better Auth's server API — never through this page.
@@ -39,7 +105,7 @@ export function plot(scope: Locator): Locator {
  * racing the redirect.
  */
 export async function signIn(page: Page, who: { email: string; password: string }): Promise<void> {
-  await page.goto('/login');
+  await reachLogin(page);
   await page.getByLabel('Email').fill(who.email);
   await page.getByLabel('Password').fill(who.password);
   await page.getByRole('button', { name: 'Sign in' }).click();

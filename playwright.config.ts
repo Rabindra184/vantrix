@@ -47,6 +47,22 @@ export default defineConfig({
   use: {
     baseURL: ORIGIN,
     trace: 'on-first-retry',
+
+    /* ═══ A STALLED NAVIGATION MUST NOT EAT THE WHOLE TEST BUDGET ═══
+     *
+     * Unset, `navigationTimeout` is 0 — so a navigation that never completes
+     * is bounded only by `timeout` above, and consumes all sixty seconds
+     * before reporting. That is how every cross-browser flake this suite has
+     * produced has looked: a 1.0m test, in `signIn`, whose retry four seconds
+     * later takes two.
+     *
+     * MEASURED, so this bound is not a guess. 180 navigations of this app's
+     * own `/login` in Firefox and WebKit, each after a deliberate idle gap:
+     * median 58-68ms, p95 74-85ms, worst 374ms. Twenty seconds is fifty times
+     * the worst ever observed, so nothing legitimate can reach it — while a
+     * stall now fails in twenty seconds and says which navigation stalled,
+     * instead of surfacing as an unexplained minute somewhere else. */
+    navigationTimeout: 20_000,
   },
   /**
    * ═══ CHROMIUM BY DEFAULT, THREE ENGINES ON DEMAND ═══
