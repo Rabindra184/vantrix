@@ -191,43 +191,48 @@ test('a session that expires mid-read says so rather than showing stale data', a
 });
 
 /**
- * ═══ 200% TEXT ZOOM, WHICH THE ACCEPTANCE LIST NAMES AND ONE PAGE COVERED ═══
+ * ═══ 200% TEXT ZOOM, WHICH THE ACCEPTANCE LIST NAMES ═══
  *
  * `run-list.spec.ts` doubles the root font size and checks the run list's type
- * SCALES. This is the other question that list asks — whether the LAYOUT
- * survives it — and it is asked here because the answer differs per page.
+ * SCALES. This is the other half of that question — whether the LAYOUT
+ * survives it — and the answer was no on two pages of four.
  *
  * MEASURED AT 1280 WITH A 32px ROOT, which is 200% of the 16px default:
  *
  * ```
- *   SLA rules form      1280 of 1280   fits
- *   Add results         1280 of 1280   fits
- *   run list            1421 of 1280   OVERFLOWS
- *   run page            1574 of 1280   OVERFLOWS
+ *                    before   after
+ *   SLA rules form     1280    1280
+ *   Add results        1280    1280
+ *   run list           1421    1280
+ *   run page           1574    1280
  * ```
  *
- * SO THIS PINS THE TWO THAT PASS AND DELIBERATELY DOES NOT ASSERT THE TWO THAT
- * DO NOT. A test set to the goal rather than the measurement is a failing test
- * describing work nobody has agreed to do — the discipline `run-tables.spec.ts`
- * already used for M01's geometry bound, which carried 1100 for three branches
- * before it could honestly clear 900.
+ * The DOCUMENT scrolling sideways is the defect, not a table doing it: the
+ * review allows table-local scroll, and what a reader met instead was having
+ * to scroll horizontally to reach the rail and the header. WCAG 1.4.10 asks
+ * for reflow without two-dimensional scrolling at this size.
  *
- * WHAT IS LEFT, AND WHAT IS NOT YET KNOWN ABOUT IT. The document scrolling
- * sideways is a real defect at both: a reader who doubled their text has to
- * scroll horizontally to reach the rail and the header, not merely a table,
- * and the review allows table-local scroll only. It is NOT diagnosed. The
- * obvious suspects are innocent — `RunTabs` already carries `overflow-x-auto`,
- * and an element inside a working scroller legitimately reports a rect past
- * the viewport, so "which element sticks out" is not the same question as
- * "which element widens the document" and the first one's answer misleads.
- * Left as a measurement rather than a guess.
+ * FOUR CAUSES, ONE SHAPE — a length that does not scale with the reader's
+ * text, or a breakpoint that asks the viewport a question only the content can
+ * answer:
+ *
+ *   - the run list's filter grid held `<select>`s in FIXED 180px tracks
+ *   - `HealthTile` laid its three parts in a flex row that could not wrap
+ *   - the statistics toolbar put a 14rem input, its label and a button in a
+ *     row gated on `sm:`
+ *   - `StatTile` put a `text-2xl` value and its unit in an unwrapped row, six
+ *     across, gated on `xl:`
+ *
+ * A fixed track and an unwrapped flex row do not CLIP when their content grows
+ * — they spill, and a parent with `overflow: visible` passes it up until it
+ * reaches the document. That is why none of this shows at 100%.
  */
-test('a form still fits the window at 200% text', async ({ page }) => {
+test('every page still fits the window at 200% text', async ({ page }) => {
   const admin = await seedAdmin();
-  await seedRunWithData(admin.orgId);
+  const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
 
-  for (const url of ['/projects/checkout/rules', '/projects/checkout/setup']) {
+  for (const url of ['/projects/checkout/rules', '/projects/checkout/setup', '/runs', runPath(runId)]) {
     await page.goto(url);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 
@@ -235,14 +240,16 @@ test('a form still fits the window at 200% text', async ({ page }) => {
       await page.evaluate(() => {
         document.documentElement.style.fontSize = '32px';
       });
-      // The root is restored in `finally` because Playwright reuses the page
-      // across a file, and a leaked 32px root is somebody else's mystery.
+      // Polled rather than read once: the run page settles several charts, and
+      // a single read can land mid-layout.
       await expect
-        .poll(async () => (await documentOverflows(page)) === true, {
+        .poll(() => documentOverflows(page), {
           message: `${url} pushes the document sideways at a 32px root`,
         })
         .toBe(false);
     } finally {
+      // Restored in `finally` because Playwright reuses the page across a
+      // file, and a leaked 32px root is somebody else's mystery failure.
       await page.evaluate(() => {
         document.documentElement.style.fontSize = '';
       });

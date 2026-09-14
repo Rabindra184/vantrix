@@ -81,7 +81,11 @@ export default function StatTile({
           like everything else rather than by an inline neutral. */}
       <dd
         data-testid={testId}
-        className="mt-2 flex items-baseline gap-1.5 font-mono text-2xl font-semibold leading-8 tracking-tight tabular-nums text-primary"
+        /* `flex-wrap` so the unit drops under the number rather than out of
+           the tile. At a 32px root `text-2xl` is 48px and the pair is wider
+           than a sixth of the row, and an unwrapped flex row does not clip —
+           it spills, and widens the document. */
+        className="mt-2 flex flex-wrap items-baseline gap-x-1.5 font-mono text-2xl font-semibold leading-8 tracking-tight tabular-nums text-primary"
         style={{ color: toneColour(tone) }}
       >
         {value}
