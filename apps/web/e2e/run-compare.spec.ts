@@ -218,14 +218,49 @@ test('overlays five runs and says why it will not take a sixth', async ({ page }
   const chips = page.locator('[data-testid^="compare-run-"]');
   await expect(chips).toHaveCount(6);
 
-  /* SELECT UP TO THE CAP. The run the page was opened from is always in and
-     always disabled, so four more reach five. */
+  /* ═══ SELECT UP TO THE CAP ═══
+   *
+   * IT OPENS WITH TWO, NOT ONE, AND THE COMMENT HERE SAID ONE FOR AS LONG AS
+   * THIS TEST HAS EXISTED. `parseCompareSelection` prepends the run you came
+   * from to `defaultSelection`, which answers with its NEAREST NEIGHBOUR —
+   * deliberately, so Compare never opens having answered nothing and asking
+   * the reader to go find a second run. So two are selected on arrival and
+   * THREE more reach five. Only the run you came from is `disabled`; the
+   * neighbour is pressed and can be deselected.
+   *
+   * Nothing caught that, because the loop this replaces ran until the count
+   * reached five from WHATEVER it found. A test indifferent to its own
+   * starting state cannot notice when that state stops matching the sentence
+   * above it.
+   *
+   * EVERY STEP WAITS, AND THAT IS THE WHOLE FIX. `count()`, `getAttribute()`
+   * and `isDisabled()` are IMMEDIATE reads with no auto-waiting — only
+   * `expect()` and an action's own actionability check retry. The loop this
+   * replaces read all three and then clicked, so it chose its next move from a
+   * DOM React had not necessarily committed yet. And the state it was racing
+   * is precisely the one this test exists to reach: at the cap, EVERY
+   * unselected chip takes `disabled` (`RunCompare`: `atCap = !on &&
+   * selected.length >= MAX_COMPARE`). So a stale-low count sent it to click a
+   * chip that was already refusing, and `click()` then waited out the test's
+   * entire 60s deadline rather than failing on anything — which is why the
+   * report named a timeout and no assertion. Seen twice in one day on CI,
+   * both chromium.
+   *
+   * Asserting the count after each click is what leaves the next iteration a
+   * settled page to read. Both selectors are attribute selectors on the chip
+   * ITSELF rather than `filter()`, for the reason recorded below: `filter`
+   * matches DESCENDANTS.
+   */
   const pressed = () => page.locator('[data-testid^="compare-run-"][aria-pressed="true"]');
-  for (let i = 0; (await pressed().count()) < 5 && i < 6; i += 1) {
-    const chip = chips.nth(i);
-    if ((await chip.getAttribute('aria-pressed')) === 'true') continue;
-    if (await chip.isDisabled()) continue;
-    await chip.click();
+  const selectable = () =>
+    page.locator('[data-testid^="compare-run-"][aria-pressed="false"]:not([disabled])');
+
+  // Stated rather than tolerated — and stating it is what found the two above.
+  const OPENS_WITH = 2;
+  await expect(pressed()).toHaveCount(OPENS_WITH);
+  for (let n = OPENS_WITH; n < 5; n += 1) {
+    await selectable().first().click();
+    await expect(pressed()).toHaveCount(n + 1);
   }
   await expect(pressed()).toHaveCount(5);
 
