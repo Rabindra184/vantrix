@@ -189,3 +189,114 @@ test('a session that expires mid-read says so rather than showing stale data', a
   // And no run data is presented as current underneath whatever it says.
   await expect(page.getByTestId('run-row')).toHaveCount(0);
 });
+
+/**
+ * ═══ 200% TEXT ZOOM, WHICH THE ACCEPTANCE LIST NAMES AND ONE PAGE COVERED ═══
+ *
+ * `run-list.spec.ts` doubles the root font size and checks the run list's type
+ * SCALES. This is the other question that list asks — whether the LAYOUT
+ * survives it — and it is asked here because the answer differs per page.
+ *
+ * MEASURED AT 1280 WITH A 32px ROOT, which is 200% of the 16px default:
+ *
+ * ```
+ *   SLA rules form      1280 of 1280   fits
+ *   Add results         1280 of 1280   fits
+ *   run list            1421 of 1280   OVERFLOWS
+ *   run page            1574 of 1280   OVERFLOWS
+ * ```
+ *
+ * SO THIS PINS THE TWO THAT PASS AND DELIBERATELY DOES NOT ASSERT THE TWO THAT
+ * DO NOT. A test set to the goal rather than the measurement is a failing test
+ * describing work nobody has agreed to do — the discipline `run-tables.spec.ts`
+ * already used for M01's geometry bound, which carried 1100 for three branches
+ * before it could honestly clear 900.
+ *
+ * WHAT IS LEFT, AND WHAT IS NOT YET KNOWN ABOUT IT. The document scrolling
+ * sideways is a real defect at both: a reader who doubled their text has to
+ * scroll horizontally to reach the rail and the header, not merely a table,
+ * and the review allows table-local scroll only. It is NOT diagnosed. The
+ * obvious suspects are innocent — `RunTabs` already carries `overflow-x-auto`,
+ * and an element inside a working scroller legitimately reports a rect past
+ * the viewport, so "which element sticks out" is not the same question as
+ * "which element widens the document" and the first one's answer misleads.
+ * Left as a measurement rather than a guess.
+ */
+test('a form still fits the window at 200% text', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  for (const url of ['/projects/checkout/rules', '/projects/checkout/setup']) {
+    await page.goto(url);
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+
+    try {
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = '32px';
+      });
+      // The root is restored in `finally` because Playwright reuses the page
+      // across a file, and a leaked 32px root is somebody else's mystery.
+      await expect
+        .poll(async () => (await documentOverflows(page)) === true, {
+          message: `${url} pushes the document sideways at a 32px root`,
+        })
+        .toBe(false);
+    } finally {
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = '';
+      });
+    }
+  }
+});
+
+/**
+ * ═══ A KEYBOARD-ONLY PASS THROUGH THE CHART MENU ═══
+ *
+ * The acceptance list names "keyboard-only navigation", and before this the
+ * whole suite held ONE keyboard journey — the skip link — plus two Escape
+ * presses. M17 moved three controls behind `role="menu"`, and a role is a
+ * promise about arrow keys and focus return.
+ *
+ * `ChartActions.test.tsx` now checks that promise in jsdom, which is where
+ * Radix's own handlers run against a DOM that has no layout. This is the half
+ * jsdom cannot answer: a real engine, real focus, and the table actually
+ * appearing at the end of it.
+ *
+ * DRIVEN FROM `focus()` RATHER THAN FROM Tab, deliberately. Whether Tab reaches
+ * a given control is a macOS keyboard-navigation preference and the three
+ * engines ship different defaults — this repo already pays for that in
+ * `project-rail.spec.ts`, whose skip-link case is Chromium-only for exactly
+ * that reason. The claim here is not "this is the nth tab stop"; it is "once a
+ * keyboard reaches this control, the keyboard can finish the job", and that is
+ * engine-independent.
+ */
+test('a keyboard alone can open a chart’s data table and get back out', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(`${runPath(runId)}/charts`);
+
+  const figure = page.getByTestId('chart-requests-per-second');
+  const trigger = figure.getByRole('button', { name: /data and exports$/ });
+  await expect(trigger).toBeVisible();
+  const table = page.getByTestId('chart-data-requests-per-second');
+  await expect(table).not.toBeVisible();
+
+  await trigger.focus();
+  await expect(trigger).toBeFocused();
+
+  // Enter opens it, and the menu takes focus with it — a menu that opens and
+  // leaves the caret behind is one a keyboard user cannot reach into.
+  await page.keyboard.press('Enter');
+  const item = page.locator('[role="menuitem"][aria-controls="chart-data-requests-per-second"]');
+  await expect(item).toHaveCount(1);
+  await expect(item).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(table).toBeVisible();
+
+  // And the caret comes back to where the reader started, rather than to the
+  // top of a document holding nine figures.
+  await expect(trigger).toBeFocused();
+});

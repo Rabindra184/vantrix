@@ -315,3 +315,55 @@ describe('ChartActions — full screen', () => {
     expect(screen.getByRole('button', { name: 'Show the chart full screen' })).toBeDisabled();
   });
 });
+
+/**
+ * ═══ THE PROMISE A ROLE MAKES ═══
+ *
+ * M17 moved three controls behind `role="menu"`, and that choice was argued
+ * here on exactly one ground: `AccountMenu` is a real menu, and `ThemeToggle`
+ * earned this repo the lesson that half-keeping a role is worse than not
+ * claiming it — a screen reader announces "menu", its user presses an arrow
+ * key because that is what the word means, and nothing happens.
+ *
+ * `AccountMenu.test.tsx` checks that promise for the OLDER menu. Nothing
+ * checked it for this one, which is the menu that was added to satisfy the
+ * finding. Radix honours it today; the point of a test is that Radix is a
+ * dependency and a hand-rolled `<div role="menu">` is one refactor away.
+ *
+ * ASSERTED ON FOCUS MOVING, NOT ON A KEY BEING HANDLED — the same shape
+ * `ThemeToggle`'s roving-tabindex cases had to take, because a menu that
+ * swallows the key and leaves the caret where it was is precisely the defect.
+ */
+describe('ChartActions — the promise a role makes', () => {
+  it('moves between items with the arrow keys', async () => {
+    const user = userEvent.setup();
+    renderActions();
+    await openMenu(user);
+    await screen.findAllByRole('menuitem');
+
+    await user.keyboard('{ArrowDown}');
+    const first = document.activeElement;
+    expect(first).not.toBeNull();
+    expect(first).toHaveAttribute('role', 'menuitem');
+
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).not.toBe(first);
+    expect(document.activeElement).toHaveAttribute('role', 'menuitem');
+  });
+
+  /**
+   * FOCUS RETURN IS THE HALF THAT STRANDS SOMEBODY. A menu that closes without
+   * putting the caret back drops a keyboard user at the top of the document,
+   * and on the Charts tab that is nine figures above where they were reading.
+   */
+  it('closes on Escape and returns focus to the trigger', async () => {
+    const user = userEvent.setup();
+    renderActions();
+    const trigger = screen.getByRole('button', { name: /data and exports$/ });
+    await openMenu(user);
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+});
