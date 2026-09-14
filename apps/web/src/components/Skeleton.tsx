@@ -41,7 +41,17 @@ export function SkeletonTable({
   readonly rows?: number;
 }) {
   return (
-    <div aria-hidden="true" className="flex flex-col gap-px overflow-hidden rounded-xl border border-default">
+    /* A testid, because `aria-hidden` is the only other handle and the first
+       `aria-hidden` element in a document is usually an icon. The skeleton is
+       furniture a reader never queries by role, so a testid is the honest way
+       to reach it — and the guard that needs it asserts this placeholder has
+       the COLUMNS of the table it stands in for, which nothing could check
+       while it had no stable handle. */
+    <div
+      aria-hidden="true"
+      data-testid="skeleton-table"
+      className="flex flex-col gap-px overflow-hidden rounded-xl border border-default"
+    >
       <div className="flex gap-4 bg-sunken px-4 py-2.5">
         {Array.from({ length: columns }, (_, i) => (
           <Skeleton key={i} className="h-3 flex-1" />

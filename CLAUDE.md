@@ -115,6 +115,54 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The resilience-first-pass branch added ONE e2e file —
+`apps/web/e2e/resilience.spec.ts` (3) — and no unit case, so unit stays
+147 / 1828 and **e2e rises to 133**. Integration unchanged.
+
+**THE SUITE HAD NEVER SEEN A SLOW OR FAILING RESPONSE.** No `page.route`,
+`abort` or `fulfill` existed in 19 spec files until the acceptance pass added
+one for an expired session — so every response these specs had ever met was a
+real, fast, local answer, and no skeleton, bootstrap screen or error panel had
+ever been drawn in a browser. `helpers.ts` has `stall(page, glob, ms)` and
+`failWith(page, glob, problem)` now. **Both take a GLOB so a case can slow ONE
+endpoint**: a page whose every request hangs tells you less than one whose
+table is waiting while its header has arrived.
+
+**A SKELETON DECLARED SIX COLUMNS FOR A TABLE OF NINE, AND FINDING WHERE IT WAS
+EVEN VISIBLE TOOK THREE MEASUREMENTS.**
+
+  - A COLD load of `/runs` never draws it: `AuthGate` waits on the session AND
+    on the first runs page, so stalling `/v1/runs` leaves the screen reading
+    "Checking your session…" and the list never reaches its pending state.
+  - An IN-APP navigation to `/runs` never draws it either — that query is
+    already cached from the bootstrap, so there is no pending state to show.
+  - A PROJECT-SCOPED list does: its query key carries the slug, nothing has
+    fetched it, and the bootstrap only awaits the org-wide page.
+
+So the placeholder was wrong by three on a page where it is unreachable, and
+the one place it does appear needs a different count again (8 — no Project
+column). **A loading state on a path that is always cached is dead code that
+still ships**, and it had survived two column changes for exactly that reason.
+Derived from the same `projectSlug === null` the header uses now, so the two
+cannot drift.
+
+**AND `aria-hidden` IS NOT A HANDLE.** The skeleton's only selector was
+`[aria-hidden="true"]`, and the first such element in this document is an icon.
+It carries a `data-testid` now — furniture a reader never queries by role is
+exactly what a testid is for.
+
+**TWO THINGS FOUND AND DELIBERATELY NOT CHANGED**, because both are product
+decisions rather than corrections, and this file records them so the next
+reader does not have to rediscover them:
+
+  - `main.tsx` sets **`retry: false` for every query**, with a comment
+    reasoning only about 401/403 ("a deliberate verdict the server will
+    repeat") — true of those two and NOT of a 502, a timeout or a dropped
+    connection, which are the failures a retry exists for.
+  - **There is no error boundary anywhere in `apps/web/src`** against
+    SEVENTEEN `lazy()` routes. A chunk that fails to load has nothing to catch
+    it.
+
 The drilldown-window-scope branch added ONE source file —
 `apps/web/src/routes/WholeRunNotice.tsx` — no unit case (unit stays
 147 / 1828) and 1 e2e case, so **e2e rises to 130**. Integration unchanged.

@@ -204,7 +204,22 @@ export default function RunList({
         <PageHeading show={showHeading} heading={heading} action={headingAction} />
         {controls}
         <LoadingState label="Loading runs…">
-          <SkeletonTable columns={6} rows={6} />
+          {/* ═══ THE SKELETON HAS TO HAVE THE TABLE'S COLUMNS ═══
+              (the 09-13 review's acceptance list: slow loading)
+
+              This said `columns={6}` while the table it stands in for renders
+              NINE on the org-wide list — Project, Simulation, Status, Verdict,
+              p95, Errors, Focus, Started, Environment — and eight on a
+              project's, where the constant Project column is dropped. A
+              placeholder whose shape is not the arriving content's is a
+              layout jump dressed as a loading state: the whole point of
+              drawing one is that nothing moves when the data lands.
+
+              DERIVED FROM THE SAME CONDITION THE HEADER USES
+              (`projectSlug === null`), so the two cannot drift — a literal
+              here is what let it be wrong by three for as long as it was,
+              through two column changes that never thought to look at it. */}
+          <SkeletonTable columns={projectSlug === null ? 9 : 8} rows={6} />
         </LoadingState>
       </div>
     );

@@ -135,3 +135,48 @@ export async function openTimeWindow(page: Page): Promise<void> {
   if (!open) await page.getByTestId('time-window-toggle').click();
   await expect(page.getByTestId('window-from')).toBeVisible();
 }
+
+/**
+ * ═══ SLOW AND FAILING RESPONSES, WHICH THIS SUITE COULD NOT SEE ═══
+ * (the 09-13 review's acceptance list: "slow loading and retry")
+ *
+ * Every response in these specs is a real, fast, local API answer. Until the
+ * acceptance pass added one `page.route` for an expired session there was no
+ * interception anywhere in the suite — so no loading state, no skeleton, no
+ * error panel and no in-flight control had ever been drawn in a browser. They
+ * are all reachable in under a second locally, which is precisely why nobody
+ * had seen them.
+ *
+ * `stall` holds a request open; `failWith` answers it. Both take a glob so a
+ * case can slow ONE endpoint and leave the rest of the page working, which is
+ * the realistic shape — a page whose every request hangs tells you less than
+ * one whose table is waiting while its header has arrived.
+ */
+export async function stall(page: Page, glob: string, ms = 2_000): Promise<void> {
+  await page.route(glob, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    await route.continue();
+  });
+}
+
+/**
+ * Answer a matching request with a problem document, the way the API would.
+ *
+ * `application/problem+json` and a `remediation`, because that is what
+ * `apiFetch` parses and what `ErrorState` renders — a bare 500 with an HTML
+ * body exercises the SYNTHESISED branch instead, which is a different claim
+ * and deserves its own call rather than being the accidental default.
+ */
+export async function failWith(
+  page: Page,
+  glob: string,
+  problem: { status: number; title: string; detail: string; remediation?: string; code?: string },
+): Promise<void> {
+  await page.route(glob, (route) =>
+    route.fulfill({
+      status: problem.status,
+      contentType: 'application/problem+json',
+      body: JSON.stringify({ type: 'about:blank', ...problem }),
+    }),
+  );
+}
