@@ -13,6 +13,7 @@ import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import ScopedStatistics from '../tables/ScopedStatistics';
+import WholeRunNotice from './WholeRunNotice';
 import { Payload, TableSection, Undrawn, type Slot } from './payload';
 import useDocumentTitle from '../useDocumentTitle';
 
@@ -206,6 +207,9 @@ export default function GroupDetail() {
         )}
         <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">{name}</h1>
       </header>
+
+      {/* Only under a window — see `WholeRunNotice`. */}
+      {windowSuffix !== '' && <WholeRunNotice what="this group’s figures" />}
 
       {FAMILIES.map(({ family, title }) => (
         <TableSection key={family} title={title} query={stats}>

@@ -885,3 +885,54 @@ test('a failing simulation check leads to the request it is about', async ({ pag
    * above and land on a page that says it found no such request. */
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(name.replace(/ \/ /g, '/'));
 });
+
+/**
+ * ═══ A DRILL-DOWN CARRIES THE WINDOW AND CANNOT HONOUR IT ═══
+ * (the 09-13 review's acceptance list: "selected-window versus whole-run evidence")
+ *
+ * The request and group pages keep `from`/`to` deliberately — a reader arrives
+ * from a windowed table, and sending them back to an un-narrowed run would
+ * discard the selection they were investigating with. But their endpoints take
+ * no `from`/`to`: the figures are the run's, whatever the address bar says.
+ *
+ * So the window was visible in the URL, visible on the page they came from,
+ * and silently did not apply. `ErrorsTable` already corrects this for its own
+ * totals — and the drill-down was the ONE call site that never passed
+ * `windowSelected`, so the identical table under the identical window
+ * explained itself on the run page and said nothing here.
+ */
+test('a windowed drill-down says its figures are the whole run’s', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+
+  // WITHOUT a window first: there is nothing to disclaim, and a permanent
+  // notice on a page whose figures are always whole-run is the
+  // over-explanation review N04 spent four rows removing.
+  await page.goto(`${runPath(runId)}/requests/${encodeURIComponent('Search')}`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(page.getByTestId('whole-run-notice')).toHaveCount(0);
+
+  await page.goto(`${runPath(runId)}/requests/${encodeURIComponent('Search')}?from=0&to=10000`);
+  const notice = page.getByTestId('whole-run-notice');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText(/does not narrow/i);
+  await expect(notice).toContainText(/whole run/i);
+
+  /* AND THE ERRORS TABLE SAYS IT FOR ITS OWN TOTALS, which is the half that
+     was missing from this call site alone. Both, because the page-level notice
+     is about the page's figures and this one is about a number the reader is
+     looking straight at. */
+  await expect(page.getByTestId('errors-window-note')).toContainText(/whole run/i);
+
+  /* AND THE GROUP DRILL-DOWN, which is the same shape and a DIFFERENT wiring.
+     Both pages render the shared `WholeRunNotice`, so what this catches is the
+     half a shared component cannot guarantee: that the page actually mounts it
+     under a window. Asserted without a window too, for the same reason as
+     above — the notice must not become permanent furniture. */
+  await page.goto(`${runPath(runId)}/groups/Cart`);
+  await expect(page.getByTestId('whole-run-notice')).toHaveCount(0);
+
+  await page.goto(`${runPath(runId)}/groups/Cart?from=0&to=10000`);
+  await expect(page.getByTestId('whole-run-notice')).toContainText(/does not narrow/i);
+});
