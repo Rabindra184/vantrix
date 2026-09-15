@@ -45,52 +45,166 @@ export function plot(scope: Locator): Locator {
  * setup that eighteen specs share and none of them is about. The form's own
  * behaviour is asserted below and in `Login.test.tsx`, and neither is touched.
  *
- * AND THE CAUSE IS NOT KNOWN — stated plainly rather than implied by a fix.
- * Two experiments failed to reproduce it: 180 navigations of this app's own
- * `/login` in Firefox and WebKit after deliberate idle gaps (0 failures,
- * worst 374ms), and 75 navigations against a bare server at Node's default
- * 5s `keepAliveTimeout`, probing the classic HTTP/1.1 keep-alive race (0
- * failures, worst 51ms). It has never been seen on Chromium in any of the six
- * runs, though Chromium always runs first, so "it only happens late in a long
- * run" is ruled out too — the first Firefox occurrence was four tests into
- * that engine's block. Recorded as a CI-environment stall in browser
- * navigation; this helper makes it cheap and legible rather than claiming to
- * have cured it.
+ * WHAT IT IS, MEASURED: THE PAGE FINISHES LOADING AND `load` NEVER FIRES.
+ * Both stalls in the run that first carried `trackRequests`' counters said the
+ * same thing, and it is the one answer nothing before could express:
+ *
+ *   EVERY REQUEST COMPLETED AND `load` NEVER ARRIVED.
+ *   requests issued 5, settled 5, still outstanding 0;
+ *   browser answered 9/9 probes, last 1982ms ago.
+ *
+ * Five requests issued, five settled, none outstanding — and the browser
+ * answered a liveness probe every two seconds throughout. So nothing hung,
+ * nothing was dropped, and the browser was never wedged. `page.goto` resolves
+ * on `load`, so it sat for the full twenty seconds on a page that was, by
+ * every network measure available, already finished.
+ *
+ * AND THE `waitForURL` BELOW FAILS THE SAME WAY, which says these were never
+ * two bugs. A WebKit run of `run-charts.spec.ts` failed there with
+ * `page.waitForURL: Timeout 20000ms exceeded` under Playwright's own log line
+ * `waiting for navigation until "load"` — same wait, same twenty seconds, same
+ * instant recovery on retry. The record used to separate "seven in this
+ * navigation, one in the waitForURL below" as though the second were a
+ * curiosity; one phenomenon, two call sites.
+ *
+ * THAT IS AN INFERENCE ON THAT SIDE AND A MEASUREMENT ON THIS ONE — the
+ * counters wrap this `goto` and nothing wraps the `waitForURL`, so the
+ * settled-and-no-load shape is proven for the first and argued for the second.
+ * Wrapping the second is the next thing worth doing.
+ *
+ * WHAT IS STILL NOT KNOWN IS WHY `load` DOES NOT FIRE. Two experiments failed
+ * to reproduce it: 180 navigations of this app's own `/login` in Firefox and
+ * WebKit after deliberate idle gaps (0 failures, worst 374ms), and 75 against
+ * a bare server at Node's default 5s `keepAliveTimeout`, probing the classic
+ * HTTP/1.1 keep-alive race (0 failures, worst 51ms). Chromium has never
+ * produced it — 137 tests in each of two runs, zero — and neither has WebKit
+ * in THIS call, though WebKit produced the `waitForURL` variety above.
  */
 /**
- * What the browser was still waiting for, at the moment a navigation gave up.
+ * What the browser was doing, at the moment a navigation gave up.
  *
- * ═══ THE EVIDENCE THIS STALL HAS NEVER HAD ═══
+ * ═══ WHAT THE FIRST VERSION OF THIS MEASURED, AND WHY IT WAS HALF AN ANSWER ═══
  *
  * `page.goto` resolves on `load`, which waits for the document AND every
  * subresource it references — for `/login` that is one JS bundle, one
- * stylesheet, and the faces that stylesheet pulls. A timeout therefore has at
- * least three quite different causes, and the Playwright error names none of
- * them:
+ * stylesheet, and the faces that stylesheet pulls. So a timeout has several
+ * quite different causes and the Playwright error names none of them. The
+ * first version reported the requests still OUTSTANDING, which separates:
  *
  *   the DOCUMENT still in flight  → the connection never answered
  *   a SUBRESOURCE still in flight → that one file hung, and `load` waited
- *   NOTHING in flight             → the browser never issued the request, or
- *                                   finished them all and did not fire `load`
+ *   NOTHING in flight             → ...one of two things, indistinguishable
  *
- * Each points somewhere else entirely, and until this existed there was no way
- * to tell them apart: `trace: 'on-first-retry'` writes a trace into
- * `test-results/`, and the `e2e-cross-browser` job uploads no artifacts, so
- * every trace this stall ever produced was discarded when the job ended.
+ * MEASURED, IT IS ALWAYS THAT THIRD ONE. Six stalls in one `e2e-cross-browser`
+ * run, every one of them `(nothing)` — which rules out both hung-request
+ * causes and lands on exactly the branch that outstanding-request tracking
+ * cannot split. `inFlight() === []` is equally true of a request that was
+ * NEVER ISSUED and of one that was issued, completed, and did not produce a
+ * `load`. A count of requests STARTED is what tells those apart, and the
+ * first version kept no such count: its map is keyed by URL and deletes on
+ * completion, so a request that came and went leaves no trace in it.
+ *
+ * ═══ AND A COUNT ALONE STILL LEAVES TWO CAUSES IN ONE CELL ═══
+ *
+ * `issued === 0` means no request reached the network — but that is true both
+ * when Firefox accepted the navigation and never acted on it, and when the
+ * driver's connection to the browser was wedged, since a wedged transport
+ * delivers no `request` events either. The two point at completely different
+ * things (the navigation, or the harness), so the probe below asks the
+ * BROWSER, on a path that has nothing to do with the stuck page.
+ *
+ * `context.cookies()` is that path, chosen because it is the cheapest call
+ * here that provably round-trips: a cookie written by `document.cookie`
+ * INSIDE the page comes back from it, which a driver-side cache could not
+ * know about (measured, 15ms). So it answers iff the browser and the
+ * transport are alive, and it touches no execution context — `evaluate()`
+ * would, and a navigation destroys those. It is read-only, and at one probe
+ * every two seconds against a navigation that healthily takes ~60ms, the
+ * usual case fires ZERO probes and pays nothing.
+ *
+ * The four cells are then disjoint and each names a different suspect:
+ *
+ *   browser stopped answering     → the harness or the browser process
+ *   a request still in flight     → the network or the server
+ *   issued > 0, none outstanding  → everything arrived, `load` did not fire
+ *   issued === 0, browser alive   → the navigation never left Firefox
  */
-function trackRequests(page: Page): { inFlight: () => string[]; stop: () => void } {
-  const started = new Map<string, number>();
-  const begin = (r: { url: () => string }): void => void started.set(r.url(), Date.now());
-  const end = (r: { url: () => string }): void => void started.delete(r.url());
+const STALL_PROBE_EVERY_MS = 2_000;
+
+function trackRequests(page: Page): { report: () => string; stop: () => void } {
+  const outstanding = new Map<string, number>();
+  let issued = 0;
+  let settled = 0;
+
+  const begin = (r: { url: () => string }): void => {
+    issued += 1;
+    outstanding.set(r.url(), Date.now());
+  };
+  const end = (r: { url: () => string }): void => {
+    settled += 1;
+    outstanding.delete(r.url());
+  };
 
   page.on('request', begin);
   page.on('requestfinished', end);
   page.on('requestfailed', end);
 
+  let probes = 0;
+  let answered = 0;
+  let lastAnswer = Date.now();
+  const probe = setInterval(() => {
+    probes += 1;
+    void page
+      .context()
+      .cookies()
+      .then(
+        () => {
+          answered += 1;
+          lastAnswer = Date.now();
+        },
+        () => {
+          /* A refused probe is a datum, not a failure — and it must not become
+             an unhandled rejection, which is why this handler exists at all.
+             It stays uncounted, and `answered` falling behind `probes` is what
+             the report reads. */
+        },
+      );
+  }, STALL_PROBE_EVERY_MS);
+
   return {
-    inFlight: () =>
-      [...started.entries()].map(([url, at]) => `${url} (${String(Date.now() - at)}ms)`),
+    report: () => {
+      const stuck = [...outstanding.entries()].map(
+        ([url, at]) => `${url} (${String(Date.now() - at)}ms)`,
+      );
+      const since = Date.now() - lastAnswer;
+      /* Two probe intervals of grace: one in flight when the stall was
+         declared is normal and is not evidence of anything. `null` is "never
+         probed", and it is REACHABLE — the caller catches every navigation
+         failure, not only timeouts, and a fast one returns long before the
+         first probe fires (measured at 16ms, red-verifying the 204 below). A
+         liveness verdict from zero samples would be a guess, so it is spelled
+         as one rather than defaulting to alive. */
+      const alive = probes === 0 ? null : since < STALL_PROBE_EVERY_MS * 2;
+
+      const verdict =
+        alive === false
+          ? 'THE BROWSER STOPPED ANSWERING — suspect the harness, not the page'
+          : stuck.length > 0
+            ? `A REQUEST WAS STILL IN FLIGHT: ${stuck.join(', ')}`
+            : issued > 0
+              ? 'EVERY REQUEST COMPLETED AND `load` NEVER ARRIVED'
+              : alive === null
+                ? 'NO REQUEST WAS ISSUED, and the browser was never probed'
+                : 'NO REQUEST WAS ISSUED, and the browser kept answering';
+
+      return (
+        `${verdict}. requests issued ${String(issued)}, settled ${String(settled)}, ` +
+        `still outstanding ${String(outstanding.size)}; browser answered ` +
+        `${String(answered)}/${String(probes)} probes, last ${String(since)}ms ago.`
+      );
+    },
     stop: () => {
+      clearInterval(probe);
       page.off('request', begin);
       page.off('requestfinished', end);
       page.off('requestfailed', end);
@@ -104,15 +218,14 @@ async function reachLogin(page: Page): Promise<void> {
     await page.goto('/login');
     return;
   } catch (err) {
-    const stuck = tracker.inFlight();
+    const evidence = tracker.report();
     // Deliberately on stdout: a silent retry would hide how often this
     // happens, and that count is the only evidence anyone has about whether
     // the underlying stall is getting better or worse. The in-flight list is
     // the half that can actually name a cause — see `trackRequests`.
     console.warn(
       `signIn: navigating to /login stalled (${String(err).split('\n')[0]}); retrying once. ` +
-        `Known CI-environment stall — see reachLogin's docstring. ` +
-        `Still in flight at the stall: ${stuck.length === 0 ? '(nothing)' : stuck.join(', ')}`,
+        `Known CI-environment stall — see reachLogin's docstring. ${evidence}`,
     );
   } finally {
     tracker.stop();
