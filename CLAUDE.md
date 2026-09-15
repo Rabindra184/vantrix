@@ -115,6 +115,131 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The stall-started-counter branch added no unit FILE, no unit case and no spec
+— it changed one e2e helper — so unit stays 151 / 1855, e2e stays 137 and
+integration is unchanged. It is the SECOND diagnostic on the same stall,
+because the first one's answer landed on the one branch it could not split.
+
+**SIX STALLS IN ONE RUN, EVERY ONE OF THEM `(nothing)`.** The cross-browser run
+dispatched on the branch below reported 408 passed / 3 skipped / 0 failed and
+tripped the stall six times. All six printed `Still in flight at the stall:
+(nothing)` — which RULES OUT both hung-request causes that probe was built to
+separate.
+
+```
+             tests   stalls
+  chromium     137      0
+  firefox      137      6
+  webkit       137      0
+```
+
+**AND THAT CORRECTS THE ENTRY BELOW.** It says the stall is "Firefox and WebKit
+only ... though Chromium always runs first, so engine and elapsed time are
+confounded by project order". WebKit ran a full 137 tests LAST — the latest
+elapsed position in the run — and stalled zero times. So elapsed position is
+not the driver, and the WebKit half of that claim now has a clean
+counter-observation. Firefox alone, 6 of 137.
+
+**`inFlight() === []` IS TWO CAUSES, AND THE MAP CANNOT TELL THEM APART.** It is
+keyed by URL and deletes on completion, so a request that was issued and
+FINISHED leaves no trace in it — byte-identical to one that was never issued at
+all. A count of requests STARTED is what splits those, and the first version
+kept none.
+
+**AND A COUNT ALONE STILL LEAVES TWO CAUSES IN ONE CELL.** `issued === 0` is
+true both when Firefox accepted the navigation and never acted on it, and when
+the driver's connection to the browser was wedged — a wedged transport delivers
+no `request` events either. Those accuse the product and the harness
+respectively, so the branch also asks the BROWSER, on a path that has nothing
+to do with the stuck page.
+
+**`context.cookies()` IS THAT PATH, AND THE ROUND TRIP WAS MEASURED RATHER THAN
+ASSUMED.** A cookie written by `document.cookie` INSIDE the page comes back
+from it — which a driver-side cache could not know about — so it genuinely
+queries the browser, at 15ms. It touches no execution context, which
+`evaluate()` would, and a navigation destroys those. At one probe every two
+seconds against a navigation that healthily takes ~60ms, the ordinary case
+fires ZERO probes and pays nothing.
+
+**THE FOUR CELLS ARE DISJOINT AND EACH ACCUSES SOMETHING DIFFERENT:**
+
+```
+  browser stopped answering     → the harness or the browser process
+  a request still in flight     → the network or the server
+  issued > 0, none outstanding  → everything arrived, `load` did not fire
+  issued === 0, browser alive   → the navigation never left Firefox
+```
+
+**TWO CELLS RED-VERIFIED, TWO NOT MANUFACTURABLE — STATED RATHER THAN IMPLIED.**
+A never-answering stylesheet gives `A REQUEST WAS STILL IN FLIGHT … issued 3,
+settled 2, still outstanding 1; browser answered 9/9 probes`. A **204** on the
+top-level navigation gives `EVERY REQUEST COMPLETED AND load NEVER ARRIVED …
+issued 1, settled 1, still outstanding 0` — a 204 means "stay where you are",
+so the request settles and no navigation ever commits. The other two cannot be
+staged: a wedged transport would have to be manufactured, and `issued === 0`
+against a live browser IS the hypothesis under investigation. **If it could be
+produced on demand the cause would already be known.**
+
+What that `9/9` does prove is the machinery BOTH unreachable cells depend on:
+the probe fires every two seconds through a real 20-second stall, round-trips,
+and is counted.
+
+**AND THE ANSWER CAME BACK ON THE FIRST RUN THAT CARRIED IT.** Two stalls, both
+identical, and it is the one sentence nothing before could express:
+
+```
+  EVERY REQUEST COMPLETED AND `load` NEVER ARRIVED.
+  requests issued 5, settled 5, still outstanding 0;
+  browser answered 9/9 probes, last 1982ms ago.
+```
+
+Five issued, five settled, none outstanding, and the browser answering a probe
+every two seconds throughout. **Nothing hung, nothing was dropped, and the
+browser was never wedged.** `page.goto` resolves on `load`, so it sat out the
+full twenty seconds on a page that was, by every network measure available,
+already finished. The remaining question is much narrower than the one this
+started with: not "what is stuck" but "why does `load` not fire on a document
+whose every request has completed".
+
+**AND THE `waitForURL` FAILURE IS THE SAME THING, WHICH MEANS THESE WERE NEVER
+TWO BUGS.** The same run's one flaky test — `[webkit] run-charts.spec.ts:905`
+— failed at `signIn`'s NEXT line with `page.waitForURL: Timeout 20000ms
+exceeded` under Playwright's own `waiting for navigation until "load"`. Same
+wait, same twenty seconds, same instant recovery (21.7s failing, 5.1s on
+retry). The entry below separates "seven in this navigation, one in the
+`waitForURL` below" as if the second were a curiosity. One phenomenon, two call
+sites — **and the counters wrap only the `goto`, so that is MEASURED on one
+side and INFERRED on the other.** Wrapping the second is the next thing to do.
+
+**WHICH ALSO MEANS "FIREFOX ALONE", WRITTEN FOUR PARAGRAPHS UP, IS TOO STRONG.**
+What is Firefox-only is this `goto` — 8 occurrences across two runs, zero on
+Chromium or WebKit in 137 tests each. The waitForURL variety landed on WebKit.
+If they are one phenomenon the engine split is about which CALL absorbs it, not
+about which engine has the defect.
+
+**AND THE ARTIFACT UPLOAD BELOW DOES EARN ITS KEEP — THE OPPOSITE OF WHAT THIS
+ENTRY FIRST CLAIMED.** It was written up as contributing nothing and being
+structurally unable to, on the evidence of a run where it reported `No files
+were found with the provided path: test-results/`. That was true of a run in
+which NOTHING retried. The moment something did, it uploaded 471,774 bytes and
+a real trace. **A step that finds nothing when there is nothing to find has not
+been shown to be useless**, and one clean run is not evidence about it.
+
+**BUT `trace: 'on-first-retry'` CAPTURES THE WRONG ATTEMPT.** The archive holds
+exactly one `trace.zip` and it is under `…-webkit-retry1/` — the attempt that
+PASSED. The attempt that failed left only an `error-context.md`. That option
+traces a test that is RUNNING AS a retry, which for a flake whose retry
+succeeds is precisely the run with nothing in it. `retain-on-failure` is what
+keeps the failing attempt's trace. So the evidence path has been half-built
+twice now: first an upload with no traces to carry, and now a trace of the
+wrong attempt.
+
+**AND `playwright.config.ts` IS AT THE REPO ROOT, SO A FILTERED EXEC LOADS NO
+CONFIG.** `pnpm --filter @perfportal/web exec playwright test` answers
+`Project(s) "chromium" not found. Available projects: ""` — not a missing
+`PERFPORTAL_E2E_BROWSERS` (the trap recorded further down) but no config file
+at all. Run it from the root, the way `test:e2e` does.
+
 The diagnose-navigation-stall branch added no unit FILE, no unit case and no
 spec — it changed one e2e helper and one CI step — so unit stays 151 / 1855,
 e2e stays 137 and integration is unchanged. **It does not fix the stall. It
