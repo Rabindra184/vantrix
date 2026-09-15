@@ -115,6 +115,59 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The diagnose-navigation-stall branch added no unit FILE, no unit case and no
+spec — it changed one e2e helper and one CI step — so unit stays 151 / 1855,
+e2e stays 137 and integration is unchanged. **It does not fix the stall. It
+gives the stall the evidence it has never had.**
+
+**CI HAS BEEN PRODUCING A FULL TRACE OF EVERY ONE OF THESE AND DELETING IT.**
+`playwright.config.ts` sets `trace: 'on-first-retry'`, so each retried test
+writes a network waterfall, console log and DOM snapshots into
+`test-results/`. The `e2e-cross-browser` job uploaded NO artifacts — the only
+one in those runs is `perfportal-agent`, the Go binary — so the runner threw
+every trace away with the job.
+
+That is the whole reason this went undiagnosed: it reproduces on no developer
+machine here (180 real-app navigations with idle gaps, 0 failures; 75 against a
+bare server at Node's default `keepAliveTimeout`, 0 failures), and the one
+place it DOES reproduce was discarding the evidence every time. **Before
+concluding a CI-only failure is unreproducible, check whether CI is keeping
+what it already collects.**
+
+**AND `if: failure()` WOULD HAVE BEEN THE WRONG CONDITION.** A retried test
+does not fail the job — that is the entire point of the mitigation merged
+before this — so the upload is `if: always()`. An artifact step gated on
+failure would keep traces for exactly the runs that no longer happen.
+
+**`page.goto` RESOLVES ON `load`, AND THAT CONFLATES THREE CAUSES.** `load`
+waits for the document AND every subresource it references — for `/login`, one
+JS bundle, one stylesheet, and the faces that stylesheet pulls. So a timeout
+can mean:
+
+```
+  the DOCUMENT still in flight   → the connection never answered
+  a SUBRESOURCE still in flight  → that one file hung, and `load` waited
+  NOTHING in flight              → never issued, or all finished and no `load`
+```
+
+Playwright's error names none of them. `trackRequests` in `helpers.ts` now
+reports what was outstanding at the moment the navigation gave up, so the next
+stall says which of the three it is. Red-verified by stalling the stylesheet
+past `navigationTimeout`, which printed exactly:
+
+```
+  Still in flight at the stall: http://localhost:3000/assets/index-Dm1AiGCk.css (19844ms)
+```
+
+**WHAT IS STILL NOT KNOWN.** The cause. It is Firefox and WebKit only, never
+Chromium in any run sampled, and Chromium always runs FIRST so engine and
+elapsed time are confounded by project order — though the first Firefox
+occurrence four tests into its own block rules out "late in a long run". It hit
+4 of 6 sampled runs. The mitigation merged earlier absorbs it (405 passed, 0
+flaky, two stalls absorbed), so the cost is now seconds rather than a minute
+charged to an innocent spec — but nothing here explains it, and this entry
+should not be read as though it did.
+
 The skeleton-column-counts branch added no unit FILE and 1 case to
 `apps/web/test/payload.test.tsx`, from a floor of 151 / 1854. Integration and
 **e2e are UNCHANGED** (e2e stays 137). It closes the last item the

@@ -57,18 +57,65 @@ export function plot(scope: Locator): Locator {
  * navigation; this helper makes it cheap and legible rather than claiming to
  * have cured it.
  */
+/**
+ * What the browser was still waiting for, at the moment a navigation gave up.
+ *
+ * ═══ THE EVIDENCE THIS STALL HAS NEVER HAD ═══
+ *
+ * `page.goto` resolves on `load`, which waits for the document AND every
+ * subresource it references — for `/login` that is one JS bundle, one
+ * stylesheet, and the faces that stylesheet pulls. A timeout therefore has at
+ * least three quite different causes, and the Playwright error names none of
+ * them:
+ *
+ *   the DOCUMENT still in flight  → the connection never answered
+ *   a SUBRESOURCE still in flight → that one file hung, and `load` waited
+ *   NOTHING in flight             → the browser never issued the request, or
+ *                                   finished them all and did not fire `load`
+ *
+ * Each points somewhere else entirely, and until this existed there was no way
+ * to tell them apart: `trace: 'on-first-retry'` writes a trace into
+ * `test-results/`, and the `e2e-cross-browser` job uploads no artifacts, so
+ * every trace this stall ever produced was discarded when the job ended.
+ */
+function trackRequests(page: Page): { inFlight: () => string[]; stop: () => void } {
+  const started = new Map<string, number>();
+  const begin = (r: { url: () => string }): void => void started.set(r.url(), Date.now());
+  const end = (r: { url: () => string }): void => void started.delete(r.url());
+
+  page.on('request', begin);
+  page.on('requestfinished', end);
+  page.on('requestfailed', end);
+
+  return {
+    inFlight: () =>
+      [...started.entries()].map(([url, at]) => `${url} (${String(Date.now() - at)}ms)`),
+    stop: () => {
+      page.off('request', begin);
+      page.off('requestfinished', end);
+      page.off('requestfailed', end);
+    },
+  };
+}
+
 async function reachLogin(page: Page): Promise<void> {
+  const tracker = trackRequests(page);
   try {
     await page.goto('/login');
     return;
   } catch (err) {
+    const stuck = tracker.inFlight();
     // Deliberately on stdout: a silent retry would hide how often this
     // happens, and that count is the only evidence anyone has about whether
-    // the underlying stall is getting better or worse.
+    // the underlying stall is getting better or worse. The in-flight list is
+    // the half that can actually name a cause — see `trackRequests`.
     console.warn(
       `signIn: navigating to /login stalled (${String(err).split('\n')[0]}); retrying once. ` +
-        `Known CI-environment stall — see reachLogin's docstring.`,
+        `Known CI-environment stall — see reachLogin's docstring. ` +
+        `Still in flight at the stall: ${stuck.length === 0 ? '(nothing)' : stuck.join(', ')}`,
     );
+  } finally {
+    tracker.stop();
   }
   /* SETTLE BEFORE RETRYING, and this is not padding — the red-verify found it.
      A navigation that has just failed is still unwinding, and an immediate
