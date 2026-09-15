@@ -262,6 +262,22 @@ const TRAILING_TIME_COLUMNS: readonly Column[] = [
  * who has Total and KO already has it — which is not true of Min or Std Dev,
  * and is why those are optional rather than gone.
  */
+/**
+ * ═══ AN ESTIMATE, AND THE ONLY HONEST KIND AVAILABLE ═══
+ *
+ * The placeholder `TableSection` draws while these statistics load cannot be
+ * exact, and that is a property of the table rather than a shortcut. The
+ * response-time columns are built by `columnsFor` from the PAYLOAD's own
+ * percentile keys — which is what lets a run carrying p90 or p99.9 head its
+ * own columns — so the real count does not exist until the request this is
+ * waiting for has come back. The reader's own column picker moves it again.
+ *
+ * So this is the default view's width: the eight default statistics plus the
+ * name column. Wrong for a reader who has customised, and far closer than the
+ * shared `6` it replaces, which was wrong for everyone.
+ */
+export const STATISTICS_SKELETON_COLUMNS = 9;
+
 export const DEFAULT_STATISTIC_COLUMNS: ReadonlySet<string> = new Set([
   'count',
   'koCount',

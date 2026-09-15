@@ -122,7 +122,12 @@ export default function TestRuns() {
       <div className="flex flex-col gap-4">
         <Breadcrumb projectSlug={slug} projectName={project?.name ?? slug} testName={testSlug} />
         <LoadingState label="Loading this test…">
-          <SkeletonTable columns={6} rows={6} />
+          {/* EIGHT, BECAUSE THIS PAGE'S TABLE IS `RunList` PROJECT-SCOPED.
+              Once the test resolves, the run list below renders with a
+              `projectSlug`, and its own skeleton derives that as
+              `projectSlug === null ? 9 : 8` — this one said six, so the page
+              jumped by two columns the moment the data landed. */}
+          <SkeletonTable columns={8} rows={6} />
         </LoadingState>
       </div>
     );

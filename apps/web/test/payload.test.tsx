@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ERRORS_TABLE_COLUMNS } from '../src/tables/ErrorsTable';
 import { Payload, TableSection, type Slot } from '../src/routes/payload';
 
 // ═══ WITHOUT THIS THE FILE LEAKS DOM BETWEEN CASES ═══
@@ -57,8 +58,42 @@ describe('Payload', () => {
 
 describe('TableSection', () => {
   it('keeps its heading when the fetch failed', () => {
-    render(<TableSection title="Errors" query={failed}>{() => <p>rows</p>}</TableSection>);
+    render(
+      <TableSection title="Errors" query={failed} columns={ERRORS_TABLE_COLUMNS}>
+        {() => <p>rows</p>}
+      </TableSection>,
+    );
     expect(screen.getByRole('heading', { name: 'Errors' })).toBeInTheDocument();
     expect(screen.queryByText('rows')).not.toBeInTheDocument();
+  });
+
+  /**
+   * ═══ THE PLACEHOLDER HAS THE SHAPE OF THE TABLE IT STANDS IN FOR ═══
+   *
+   * `TableSection` drew a hard-coded SIX-column skeleton for every section it
+   * wraps — the run's statistics, three separate errors tables, and the
+   * request and group drill-downs. The errors table has THREE columns and says
+   * so in its own docstring, so that placeholder was double the width of what
+   * replaced it, on three of the six.
+   *
+   * `columns` is required and has no default, deliberately: a default is what
+   * let one number be wrong for five callers at once without anything failing.
+   * Making it required turned `tsc` into the thing that found every call site,
+   * including this file's own.
+   *
+   * Asserted against the CONSTANT the table exports rather than the literal 3,
+   * so a fourth column moves the table and this placeholder together — which
+   * is the drift the whole exercise is about.
+   */
+  it('draws as many columns as the table it is waiting for', () => {
+    render(
+      <TableSection title="Errors" query={pending} columns={ERRORS_TABLE_COLUMNS}>
+        {() => <p>rows</p>}
+      </TableSection>,
+    );
+
+    const header = screen.getByTestId('skeleton-table').firstElementChild;
+    expect(header).not.toBeNull();
+    expect(header!.children).toHaveLength(ERRORS_TABLE_COLUMNS);
   });
 });

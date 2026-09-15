@@ -11,6 +11,17 @@ import { ROW, TABLE, TD_NUM, TH, THEAD, TH_ROW } from '../components/tableStyles
 import { OTHER_LABEL } from '../charts/transforms/errorSeries';
 
 /**
+ * Three: the message, its count, and its share of everything that failed.
+ *
+ * EXPORTED SO A LOADING PLACEHOLDER CANNOT DISAGREE WITH IT. `TableSection`
+ * draws a `SkeletonTable` for this table, and drew SIX columns for it — double
+ * — because one hard-coded number was shared by every section that component
+ * wraps. The number now comes from the table itself, so a fourth column here
+ * moves the placeholder with it. (D-8 below is why there is no fourth.)
+ */
+export const ERRORS_TABLE_COLUMNS = 3;
+
+/**
  * §13.2 ⑥ the errors table — Appendix A G-17.
  *
  * Three columns, as Gatling's own errors table names them: the distinct error
