@@ -491,3 +491,66 @@ describe('RunTelemetry', () => {
     expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/telemetry'))).toBe(true);
   });
 });
+
+/**
+ * ═══ THE THIRD "NOTHING TO SHOW", WHICH NOTHING HAD EVER RENDERED ═══
+ *
+ * `RunTelemetry` distinguishes three states and its docstring argues all
+ * three: `available: false` (the agent never reported, or the run has not
+ * finished) gets the `EmptyState` and NO figure; `available: true` with an
+ * empty `hosts` is a NARROWER WINDOW over an otherwise-recorded run and gets
+ * six `Undrawn` charts explaining themselves; a host with points gets the real
+ * charts.
+ *
+ * Every existing fixture in this file pairs `hosts: []` with
+ * `available: false`, so the middle branch — the one review M16 asks for by
+ * name ("Keep selected-window emptiness distinct from telemetry never
+ * recorded") — had never been rendered by any test, unit or browser. The e2e
+ * brush case deliberately stays out of it too: it asserts the narrowed row
+ * count is `> 0`.
+ *
+ * IT IS REACHABLE, AND THAT WAS MEASURED RATHER THAN ASSUMED. Against the real
+ * API with a seeded telemetry run, `?from=1000&to=2000` answers
+ * `available: true, hosts: 0` — samples are 3s apart, so any window between
+ * two of them is empty while the run as a whole is not.
+ *
+ * THE DISTINCTION IS THE WHOLE POINT. Six blank charts would read as "measured
+ * and found idle", which is the one claim `available` exists to rule out; the
+ * `EmptyState` would say the agent never reported, which is false for a run
+ * that recorded plenty outside this window. So both wrong answers are asserted
+ * against, beside the right one.
+ */
+describe('RunTelemetry — a window with no samples in it', () => {
+  const WINDOWED: TelemetryResponse = {
+    runId: RUN,
+    available: true,
+    bucketWidthMs: 1000,
+    window: { fromMs: 1000, toMs: 2000, bucketWidthMs: 1000 },
+    hosts: [],
+  };
+
+  it('explains the empty window per chart, rather than drawing six idle ones', async () => {
+    renderRunTelemetry(WINDOWED);
+
+    // AWAITED ON THE MESSAGE, NOT ON THE FIGURES. `Payload`'s own loading
+    // branch renders `Undrawn` too (this file says so further up), so six
+    // figures exist from first paint reading "Loading…" — and
+    // `findAllByRole('figure')` resolves on those, before the query settles.
+    // Same shape as awaiting `main` on a page whose two states both render one.
+    const notes = await screen.findAllByText(
+      /no telemetry samples fall within the selected time window/i,
+    );
+    expect(notes).toHaveLength(6);
+    expect(screen.getAllByRole('figure')).toHaveLength(6);
+  });
+
+  it('does not say the agent never reported, and offers no setup step', async () => {
+    renderRunTelemetry(WINDOWED);
+    await screen.findAllByText(/no telemetry samples fall within the selected time window/i);
+
+    // The never-recorded state, which this is NOT: its sentence and its
+    // recovery link both belong to a run that has nothing at all.
+    expect(screen.queryByText(/no generator telemetry recorded/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('telemetry-setup')).not.toBeInTheDocument();
+  });
+});

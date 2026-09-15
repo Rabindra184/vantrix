@@ -97,7 +97,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **151 files / 1852 tests**, it
+`nvm use` first, and if a run reports fewer than **151 files / 1854 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -114,6 +114,61 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The telemetry-window-empty branch added no unit FILE and 2 cases to
+`apps/web/test/RunTelemetry.test.tsx`, from a floor of 151 / 1852, plus 1 e2e
+case — so **e2e rises to 137**. Integration is UNCHANGED (a `.tsx` and a
+`.spec.ts`, and `vitest.integration.config.ts` includes neither).
+
+**M16's THIRD CLAUSE WAS ALREADY IMPLEMENTED, AND THE GAP WAS THAT NOTHING HAD
+EVER RENDERED IT.** The finding asks to "keep selected-window emptiness
+distinct from telemetry never recorded", and `RunTelemetry` already
+distinguishes THREE states with a docstring arguing all three: `available:
+false` gets the `EmptyState` and no figure; `available: true` with an empty
+`hosts` is a narrower window and gets six `Undrawn` charts explaining
+themselves; a host with points gets the real charts.
+
+Every `hosts: []` fixture in that file pairs with `available: false`, so the
+MIDDLE state had never been rendered by any test — and the e2e brush case
+stays out of it deliberately, asserting the narrowed row count is `> 0`. **A
+branch whose whole purpose is to prevent a false claim, reachable, correct,
+and unwitnessed.**
+
+**REACHABLE WAS MEASURED, NOT ASSUMED.** Against the real endpoint with a
+seeded telemetry run, samples are 3s apart:
+
+```
+  whole run     available true   hosts 2   points 22
+  ?from=0&to=4000    true        hosts 2   points 2
+  ?from=1000&to=2000 true        hosts 0   points 0   <- the middle state
+  ?from=500&to=900   true        hosts 0   points 0
+```
+
+`MetricsController.telemetry` computes `available` from the unfiltered series
+and filters `hosts` afterwards, exactly as `RunTelemetry`'s docstring claims —
+so the two really can disagree, and the claim was checked rather than trusted.
+
+**THE e2e HALF IS THE ONE THAT PROVES THE SEAM.** A unit fixture supplies BOTH
+`available: true` and `hosts: []`, so it can only prove the component renders
+what it is handed. Whether the API ever produces that pair is a different
+question, and the one the three-state design rests on — the "a test that writes
+both sides of a join proves neither" lesson this file already records for M13's
+Target link.
+
+**AND BOTH WRONG ANSWERS ARE ASSERTED AGAINST, NOT JUST THE RIGHT ONE.** Six
+drawn-but-empty charts would read as "measured and found idle", which is the
+one claim `available` exists to rule out; the `EmptyState` would say the agent
+never reported, which is false for a run that recorded plenty outside this
+window. Red-verified by collapsing the branch (`if (hosts.length === 0)` to
+`if (false)`), which fails both unit cases and the e2e.
+
+**AND `findAllByRole('figure')` RESOLVED ON THE LOADING CHARTS.** `Payload`'s
+own loading branch renders `Undrawn` too — this file says so eighty lines
+further up — so six figures exist from first paint reading "Loading…", and the
+query had not settled when the assertion ran. Await the SETTLED text, not the
+container. Fourth time this session: `findByRole('main')` on a page whose two
+states both render one, the skeleton locator that picked up another route's
+table, and `.nth(3)` before them.
 
 The trends-colliding-labels branch added no unit FILE and 2 cases to
 `apps/web/test/transforms.trends.test.ts`, from a floor of 151 / 1850. Its
@@ -176,6 +231,20 @@ The attribute-navigation-stalls branch added no unit FILE, no unit case and no
 spec — it changed one config line and one e2e helper — so unit stays
 151 / 1850, e2e stays 136 and integration is unchanged. It does NOT fix the
 cross-browser flake; it makes the flake name itself.
+
+**AND IT WAS EXERCISED ON `main` THE SAME DAY, WHICH IS THE EVIDENCE A CLEAN
+RUN COULD NOT GIVE.** The first cross-browser run after it merged reported
+**405 passed, 3 skipped, 0 failed, 0 flaky** — while absorbing TWO stalls:
+
+```
+  signIn: navigating to /login stalled (TimeoutError: page.goto: Timeout 20000ms exceeded.); retrying once.
+  signIn: navigating to /login stalled (TimeoutError: page.goto: Timeout 20000ms exceeded.); retrying once.
+```
+
+Under the old behaviour those two would have surfaced as "2 flaky" naming
+`run-charts.spec.ts` and `run-detail.spec.ts` — neither of which is involved —
+and cost a minute each. The stall is therefore REAL and RECURRING, and only
+the attribution was ever wrong. The cause is still unknown.
 
 **8 OF 8 RETRIED TESTS ACROSS SIX `e2e-cross-browser` RUNS FAILED INSIDE
 `signIn`** — seven in `page.goto('/login')`, one in the `waitForURL` after it.
