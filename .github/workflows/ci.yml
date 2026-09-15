@@ -545,6 +545,32 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm test:e2e:cross
 
+      # ═══ THE TRACES THIS JOB HAS ALWAYS PRODUCED AND ALWAYS THROWN AWAY ═══
+      #
+      # `playwright.config.ts` sets `trace: 'on-first-retry'`, so every flaky
+      # test here already writes a full trace — network waterfall, console, DOM
+      # snapshots — into `test-results/`. Nothing uploaded it, so the runner
+      # deleted it with the job.
+      #
+      # That is why the navigation stall recorded in CLAUDE.md went a whole day
+      # undiagnosed: it reproduced on no developer machine, and the one place
+      # it DID reproduce was discarding the evidence every time. Two
+      # reproduction attempts and a keep-alive probe were spent guessing at
+      # what one of these traces would have said outright.
+      #
+      # `if: failure()` is deliberately NOT the condition. A retried test is
+      # the interesting case and it does not fail the job, which is exactly
+      # the state this needs to catch.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-cross-browser-traces
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # The Gatling Gradle plugin (clients/gatling-gradle) is a Kotlin/Gradle
   # module outside the pnpm workspace (pnpm-workspace.yaml globs only
   # packages/* and apps/*), so it gets its own job rather than a step bolted
