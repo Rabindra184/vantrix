@@ -35,6 +35,8 @@ import RequestCountChart from '../charts/RequestCountChart';
 import { RequestRateChart, ResponseRateChart } from '../charts/RatesChart';
 import { ConcurrentUsersChart, UserStartRateChart } from '../charts/UsersChart';
 import ErrorsTable from '../tables/ErrorsTable';
+import { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
+import { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
 import { downloadCsv } from '../tables/csv';
 import { assertionsCsv } from './assertionExport';
@@ -178,7 +180,7 @@ export default function RunDetail() {
               <Skeleton key={i} className="h-[92px]" />
             ))}
           </div>
-          <SkeletonTable columns={6} rows={5} />
+          <SkeletonTable columns={STATISTICS_SKELETON_COLUMNS} rows={5} />
         </div>
       </LoadingState>
     );
@@ -572,7 +574,7 @@ export function RunOverviewTab() {
         stats={stats.data?.stats ?? null}
       />
 
-      <TableSection title="Statistics" query={stats}>
+      <TableSection title="Statistics" query={stats} columns={STATISTICS_SKELETON_COLUMNS}>
         {(data) => (
           <>
             {/*
@@ -716,7 +718,7 @@ export function RunErrorsTab() {
             through the SAME `errorsQuery` cache key `applyDelta` writes) and
             the chart, which needs a time series, does not. */}
         <LiveNotice kind="withheld" subject="Errors per second" />
-        <TableSection title="Errors" query={errors}>
+        <TableSection title="Errors" query={errors} columns={ERRORS_TABLE_COLUMNS}>
           {(data) => <ErrorsTable errors={data} windowSelected={window !== null} />}
         </TableSection>
       </div>
@@ -739,7 +741,7 @@ export function RunErrorsTab() {
         {(data) => <ErrorsChart data={data} domainMs={domainMs} />}
       </Payload>
 
-      <TableSection title="Errors" query={errors}>
+      <TableSection title="Errors" query={errors} columns={ERRORS_TABLE_COLUMNS}>
         {(data) => <ErrorsTable errors={data} windowSelected={window !== null} />}
       </TableSection>
     </div>

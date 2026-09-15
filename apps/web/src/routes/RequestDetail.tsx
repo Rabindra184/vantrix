@@ -20,6 +20,8 @@ import { linkButtonClasses } from '../components/Button';
 import { EmptyState } from '../components/States';
 import { ChevronLeftIcon } from '../components/icons';
 import ErrorsTable from '../tables/ErrorsTable';
+import { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
+import { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
 import ScopedStatistics from '../tables/ScopedStatistics';
 import WholeRunNotice from './WholeRunNotice';
 import { Payload, TableSection, type Slot } from './payload';
@@ -189,7 +191,7 @@ export default function RequestDetail() {
       {/* Only under a window — see `WholeRunNotice`. */}
       {windowSuffix !== '' && <WholeRunNotice what="this request’s figures" />}
 
-      <TableSection title="Statistics" query={stats}>
+      <TableSection title="Statistics" query={stats} columns={STATISTICS_SKELETON_COLUMNS}>
         {(data) => {
           const row = requestRow(data, name);
           // A name that is not in the run is a link from a stale tab or a
@@ -213,7 +215,7 @@ export default function RequestDetail() {
         }}
       </TableSection>
 
-      <TableSection title="Errors" query={errors}>
+      <TableSection title="Errors" query={errors} columns={ERRORS_TABLE_COLUMNS}>
         {/* `windowSelected`, WHICH THIS CALL SITE ALONE WAS MISSING. The same
             component on the run page passes it (`RunDetail`, twice) and says
             "these totals cover the whole run" when a window is applied;

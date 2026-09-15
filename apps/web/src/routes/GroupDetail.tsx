@@ -13,6 +13,7 @@ import DistributionChart from '../charts/DistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
 import PercentilesChart from '../charts/PercentilesChart';
 import ScopedStatistics from '../tables/ScopedStatistics';
+import { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
 import WholeRunNotice from './WholeRunNotice';
 import { Payload, TableSection, Undrawn, type Slot } from './payload';
 import useDocumentTitle from '../useDocumentTitle';
@@ -212,7 +213,7 @@ export default function GroupDetail() {
       {windowSuffix !== '' && <WholeRunNotice what="this group’s figures" />}
 
       {FAMILIES.map(({ family, title }) => (
-        <TableSection key={family} title={title} query={stats}>
+        <TableSection key={family} title={title} query={stats} columns={STATISTICS_SKELETON_COLUMNS}>
           {(data) => {
             const row = groupRow(data, name, family);
             return row === undefined ? (

@@ -97,7 +97,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **151 files / 1854 tests**, it
+`nvm use` first, and if a run reports fewer than **151 files / 1855 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -114,6 +114,66 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The skeleton-column-counts branch added no unit FILE and 1 case to
+`apps/web/test/payload.test.tsx`, from a floor of 151 / 1854. Integration and
+**e2e are UNCHANGED** (e2e stays 137). It closes the last item the
+resilience-first-pass entry left open: "FIVE `SkeletonTable` call sites; only
+the run list's has been measured against its real table."
+
+**MEASURED, ALL FIVE:**
+
+```
+  call site        declares   the table it stands in for
+  RunList            9 : 8    9 / 8      correct (derived, already fixed)
+  ProjectTests         4      4 <th>     CORRECT
+  TestRuns             6      8          wrong by two
+  RunDetail (page)     6      9          wrong by three
+  TableSection         6      3 OR 9     wrong, and not by a number
+```
+
+**`TableSection` IS THE FINDING, AND IT IS STRUCTURAL.** One hard-coded `6`
+inside that component was shared by SIX sections — the run's statistics, three
+separate errors tables, and the request and group drill-downs. `ErrorsTable`
+has THREE columns and says so in its own docstring, so the placeholder was
+DOUBLE the width of what replaced it on three of the six. **A number that has
+to be right for six different tables is not a number, it is a caller's
+question.**
+
+**`columns` IS REQUIRED AND HAS NO DEFAULT, AND THAT PAID OFF IMMEDIATELY.**
+This file already records the rule — a parameter whose wrong value is silent
+must not have a default — and here `tsc` became the thing that found every call
+site, including one in `payload.test.tsx` that nobody would have thought to
+grep for. A default would have let the next section inherit a number wrong for
+it, silently, which is precisely how the shared `6` survived.
+
+**AND ONE OF THEM IS GENUINELY UNKNOWABLE, WHICH IS RECORDED RATHER THAN
+FAKED.** `ScopedStatistics` builds its response-time columns with `columnsFor`
+from the PAYLOAD's own percentile keys — the mechanism that lets a run carrying
+p90 or p99.9 head its own columns — so the real count does not exist until the
+request the skeleton is waiting for comes back, and the reader's own column
+picker moves it again afterwards. `STATISTICS_SKELETON_COLUMNS` is the default
+view's width (the eight default statistics plus the name column), named as an
+ESTIMATE with its reasoning attached. Wrong for a customised reader; far closer
+than a `6` that was wrong for everyone. **Where an exact answer cannot exist,
+say so at the constant rather than picking a number that looks exact.**
+
+**ONE ROW WAS OVERTURNED: `ProjectTests`' four is CORRECT.** Four `<th>`, four
+declared. The gap list said four call sites were unmeasured, and measuring them
+is what distinguishes the three that were wrong from the one that was already
+right — which is the whole reason the sweep says "unmeasured" rather than
+"wrong".
+
+**AND THE FIRST INSTRUMENT WAS THE WRONG ONE, WHICH COST TEN MINUTES.** A
+browser probe was written to count both the skeleton and the real table. It
+queried `thead th` on the SKELETON — which is built from `div`s, as
+`resilience.spec.ts`'s existing guard already knew (`locator('> div')`) — and
+its table locator was unscoped, so it answered `real=9` for a four-column table
+by matching the org-wide run list on the same page. **A column count is DOM
+STRUCTURE, not geometry**, so jsdom answers it exactly and in seconds; a
+browser is for what jsdom cannot see, and this was not that. The run list's own
+guard is in e2e for a different reason — it also has to prove WHICH page draws
+the skeleton.
 
 The telemetry-window-empty branch added no unit FILE and 2 cases to
 `apps/web/test/RunTelemetry.test.tsx`, from a floor of 151 / 1852, plus 1 e2e

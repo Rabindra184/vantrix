@@ -126,10 +126,29 @@ export function Undrawn({ slot, reason }: { slot: Slot; reason: string }) {
 export function TableSection<T>({
   title,
   query,
+  columns,
   children,
 }: {
   title: string;
   query: UseQueryResult<T>;
+  /**
+   * How many columns the table this stands in for will have.
+   *
+   * ═══ REQUIRED, AND DELIBERATELY WITHOUT A DEFAULT ═══
+   *
+   * This was a hard-coded `6` inside this component, shared by six callers
+   * whose tables are 3, 9 and "however many percentiles the payload turns out
+   * to carry". A placeholder whose shape is not the content's is a layout jump
+   * dressed as a loading state, which is the one thing drawing one is for —
+   * and a default here would let the next caller inherit a number that is
+   * wrong for it, silently, the way the run list's six-for-nine survived two
+   * column changes.
+   *
+   * A caller that cannot know exactly says so in a comment and passes its best
+   * estimate: for a table whose columns come from the payload's own percentile
+   * keys, the count does not exist until the data this is waiting for arrives.
+   */
+  columns: number;
   children: (data: T) => ReactNode;
 }) {
   if (query.data !== undefined) return <>{children(query.data)}</>;
@@ -139,7 +158,7 @@ export function TableSection<T>({
       <SectionHeading>{title}</SectionHeading>
       {query.isPending ? (
         <LoadingState label="Loading…">
-          <SkeletonTable columns={6} rows={5} />
+          <SkeletonTable columns={columns} rows={5} />
         </LoadingState>
       ) : (
         // `role="alert"`, not a muted paragraph: this is the run's numbers
