@@ -180,3 +180,53 @@ test.describe('Load generators', () => {
     await expect(figures(page)).toHaveCount(0);
   });
 });
+
+/**
+ * ═══ A WINDOW THAT SELECTS NOTHING IS NOT A RUN THAT RECORDED NOTHING ═══
+ * (review 09-13 M16: "Keep selected-window emptiness distinct from telemetry
+ * never recorded")
+ *
+ * The unit suite can render this state from a fixture, and that proves the
+ * COMPONENT. It cannot prove the SEAM — that the API really produces
+ * `available: true` with an empty `hosts`, which is what the component's whole
+ * three-state docstring rests on. A fixture that supplies both sides of a join
+ * proves neither, which this repo has paid for before (M13's Target link).
+ *
+ * MEASURED against the real endpoint with a seeded telemetry run: samples are
+ * 3s apart, so `?from=1000&to=2000` lands between two of them and answers
+ * `available: true, hosts: 0` while the whole run answers `hosts: 2, points:
+ * 22`. `MetricsController.telemetry` computes `available` from the unfiltered
+ * series and filters `hosts` afterwards, precisely so this distinction
+ * survives.
+ *
+ * The sibling case above narrows to `?from=0&to=4000` and asserts the row
+ * count stays `> 0` — deliberately staying OUT of this state, which is why
+ * nothing had ever reached it.
+ */
+test('a window with no samples says so, rather than that nothing was recorded', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithTelemetry(admin.orgId);
+  await signIn(page, admin);
+
+  // The whole run first, so the run is known to HAVE telemetry — without this
+  // the assertions below pass just as well against a run that recorded none,
+  // which is the very state they exist to tell this one apart from.
+  await page.goto(runTelemetryPath(runId));
+  await expect(figures(page).first().locator('tbody tr').first()).toBeAttached();
+
+  await page.goto(`${runTelemetryPath(runId)}?from=1000&to=2000`);
+
+  const note = page.getByText(/no telemetry samples fall within the selected time window/i);
+  await expect(note.first()).toBeVisible();
+  // One per figure: the reader is told about the chart they are looking at,
+  // not once at the top of a page of six blank ones.
+  await expect(note).toHaveCount(6);
+
+  // AND NOT THE OTHER TWO WRONG ANSWERS. The never-recorded state would claim
+  // the agent reported nothing at all; a drawn-but-empty chart would claim the
+  // generator was measured and found idle.
+  await expect(page.getByText(/no generator telemetry recorded/i)).toHaveCount(0);
+  await expect(page.locator('[data-testid^="chart-telemetry-"] [data-chart-canvas]')).toHaveCount(0);
+});
