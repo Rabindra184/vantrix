@@ -115,6 +115,73 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The stall-evidence-both branch added no unit FILE, no unit case and no spec —
+it changed one e2e helper and one config line — so unit stays 151 / 1855, e2e
+stays 137 and integration is unchanged. It finishes the two things the entry
+below left open, and both were red-verified side by side.
+
+**THE `waitForURL` NOW REPORTS THE SAME FOUR CELLS AS THE `goto`.** That entry
+argued "one phenomenon, two call sites" from a matching signature — a WebKit
+timeout under Playwright's own `waiting for navigation until "load"`, 21.7s
+failing against 5.1s on retry — while the counters wrapped only the first call.
+It was an inference, and this makes it a measurement. Red-verified at the new
+site, both cells reporting distinctly:
+
+```
+  the POST answers 401     EVERY REQUEST COMPLETED AND `load` NEVER ARRIVED.
+                           issued 1, settled 1, outstanding 0; 10/10 probes
+  the POST never answers   A REQUEST WAS STILL IN FLIGHT: …/auth/sign-in/email
+                           (20004ms). issued 1, settled 0, outstanding 1
+```
+
+**THE TRACKER STARTS BEFORE THE CLICK, AND THAT IS NOT A STYLE CHOICE.** The
+click is what issues the sign-in POST and whatever navigation follows, so
+attaching after it races the exact requests the report is about — `click()`
+resolves when the click is dispatched, not when its request completes. The
+click sits inside the `try` only so the `finally` always reaches `stop()`; the
+inner block re-throws a click failure untouched, so "after clicking Sign in" is
+never printed over a failure where no click landed.
+
+**AND `report()` IS READ BEFORE THE BODY TEXT.** Reading `body.innerText()` is a
+round trip that can itself take seconds, and every one of those ages the
+probe's "last answered" figure and lets more probes fire — a snapshot taken
+after it describes the wrong moment.
+
+**`trace: 'on-first-retry'` TRACED THE ATTEMPT THAT RECOVERED.** It records a
+test RUNNING AS a retry, so for a flake whose retry passes it captures
+precisely the run with nothing wrong in it. Proven by toggling the two settings
+over one deliberately-failing test:
+
+```
+  on-first-retry           trace.zip under …-chromium-retry1   (the retry)
+  retain-on-first-failure  trace.zip under …-chromium          (the failure)
+```
+
+Two cross-browser runs' worth of evidence for the navigation stall was
+collected and discarded that way — an upload that worked, carrying a recording
+of the wrong attempt.
+
+**AND IT IS NOT FREE. MEASURED RATHER THAN WAVED AT**, interleaved A/B/A/B
+against the Chromium suite on one machine so drift cancels:
+
+```
+  on-first-retry           55.2s, 52.3s   mean 53.8s
+  retain-on-first-failure  66.0s, 72.0s   mean 69.0s
+```
+
+**~28%**, because every test is now recorded and most are then discarded. On
+`e2e-cross-browser` (411 tests at `--workers=1`, 13.9-15.4 min) that is roughly
+four minutes a run. There is no cheap version of this: capturing a first
+failure means recording before you know it will fail. The trade is taken
+deliberately, and the number is here so the next reader can re-take it rather
+than rediscover the cost.
+
+**THE STILL-OPEN QUESTION IS WHY `load` DOES NOT FIRE**, and there is a free
+diagnostic left on the table that a trace is currently being paid for:
+`page.on('domcontentloaded')` would say whether the document PARSED, which
+splits "the response never finished being consumed" from "it parsed and `load`
+alone went missing". Recorded as not done rather than done quietly.
+
 The stall-started-counter branch added no unit FILE, no unit case and no spec
 — it changed one e2e helper — so unit stays 151 / 1855, e2e stays 137 and
 integration is unchanged. It is the SECOND diagnostic on the same stall,
