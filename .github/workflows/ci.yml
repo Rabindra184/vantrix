@@ -300,6 +300,44 @@ jobs:
       - name: Build the production image
         run: docker build -f infra/Dockerfile -t perfportal:ci .
 
+      # ═══ THE RUNNER MUST BE ABLE TO WRITE ITS OWN DIRECTORIES ═══
+      #
+      # `runner` is `user: root` with `cap_drop: ['ALL']` and only
+      # SETUID/SETGID added, so CAP_DAC_OVERRIDE is gone and root gets a plain
+      # EACCES against a directory it does not own. Owned by `perfportal`,
+      # every job died on `mkdir '/var/lib/perfportal/runner-work/<jobId>'` —
+      # AFTER being claimed and a live run opened, so the platform recorded a
+      # run that could never produce a byte.
+      #
+      # Nothing else sees this. The image builds, the container starts, the
+      # runner authenticates and polls happily; it only fails once a job
+      # exists. Docker seeds a named volume from the image path's ownership,
+      # so the assertion belongs on the image.
+      - name: The runner can write the directories it owns
+        run: |
+          docker run --rm --entrypoint sh perfportal:ci -c '
+            set -e
+            for d in /var/lib/perfportal/runner-work /var/log/perfportal/runner; do
+              owner=$(stat -c %U "$d")
+              echo "$d owned by $owner"
+              [ "$owner" = "root" ] || { echo "EXPECTED root — the runner runs as root without CAP_DAC_OVERRIDE"; exit 1; }
+            done
+            # The API writes this one and runs as perfportal.
+            a=/var/lib/perfportal/runner-artifacts
+            owner=$(stat -c %U "$a")
+            echo "$a owned by $owner"
+            [ "$owner" = "perfportal" ] || { echo "EXPECTED perfportal — the API writes it"; exit 1; }
+          '
+
+          # And prove it behaviourally, under the runner's real capability set:
+          # root WITHOUT DAC_OVERRIDE, which is what the compose file gives it.
+          docker run --rm --user root --cap-drop ALL --cap-add SETUID --cap-add SETGID \
+            --entrypoint sh perfportal:ci -c '
+              mkdir -p /var/lib/perfportal/runner-work/ci-probe \
+              && touch /var/log/perfportal/runner/ci-probe.log \
+              && echo "root without DAC_OVERRIDE can write both — as the runner must"
+            '
+
       # The two things the image is built to carry, checked by running them.
       # A `RUN ls` inside the Dockerfile proves the file exists; this proves
       # the runtime starts, which is the property the runner depends on.

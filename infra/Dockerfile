@@ -136,8 +136,34 @@ RUN corepack enable \
   && useradd --system --uid 20001 --gid gatling --no-create-home gatling \
   && groupadd --system perfportal \
   && useradd --system --gid perfportal --create-home perfportal \
+  # ═══ WHO OWNS THESE DECIDES WHETHER THE RUNNER CAN RUN AT ALL ═══
+  #
+  # `runner-artifacts` is written by the API, which runs as `perfportal`
+  # (no `user:` override in the compose file) and read-only by the runner.
+  #
+  # THE OTHER TWO ARE THE RUNNER'S OWN, AND IT IS NOT `perfportal`.
+  # `infra/docker-compose.yml` gives that service `user: root` — it has to,
+  # because it spawns simulations under uid 20001 and a non-root process
+  # cannot reliably carry CAP_SETUID under `no-new-privileges` — and then
+  # `cap_drop: ['ALL']` with only SETUID/SETGID added. **CAP_DAC_OVERRIDE is
+  # among the dropped**, which is the capability that normally lets root
+  # ignore file permissions. So root here is emphatically NOT all-powerful:
+  # against a `drwxr-xr-x perfportal perfportal` directory it gets a plain
+  # EACCES, exactly as any other non-owner would.
+  #
+  # Owned by `perfportal`, every job therefore died the moment it was
+  # claimed, with `EACCES: permission denied, mkdir
+  # '/var/lib/perfportal/runner-work/<jobId>'` — after the job was claimed
+  # and a live run opened, so the platform recorded a run that could never
+  # produce a byte. Docker seeds a named volume from the image path's
+  # ownership, so this line is where that was decided.
+  #
+  # The `gatling` child still gets its access the way it always did:
+  # `makeChildWritable()` chmods the work tree, and chmod is available to the
+  # OWNER without DAC_OVERRIDE — which root now is.
   && install -d -o perfportal -g perfportal \
     /var/lib/perfportal/runner-artifacts \
+  && install -d -o root -g root \
     /var/lib/perfportal/runner-work \
     /var/log/perfportal/runner \
   # Non-recursive: /app is still empty, and the COPYs below carry their own

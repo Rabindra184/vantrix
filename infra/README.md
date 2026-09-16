@@ -285,6 +285,21 @@ expect `runner` to be the one service in `Exited (1)`, put both ids into
 
 It then logs `on-prem runner started for org … project …` and polls for work.
 
+**Upgrading an existing deployment: recreate the two runner volumes.** Docker
+seeds a named volume's ownership from the image ONCE, when the volume is
+created, so a stack that predates this fix keeps `perfportal`-owned
+`runner-work` and `runner-logs` however many times the image is rebuilt — and
+every job goes on failing with `EACCES: permission denied, mkdir
+'/var/lib/perfportal/runner-work/<jobId>'`. Both hold nothing but per-job
+scratch and log tails, so removing them loses no data:
+
+    docker compose -f infra/docker-compose.yml --profile onprem stop runner
+    docker volume rm <project>_runner-work <project>_runner-logs
+    docker compose -f infra/docker-compose.yml --profile onprem up -d runner
+
+`runner-artifacts` is NOT in that list and must not be: it holds the uploaded
+jars, it is written by the API as `perfportal`, and the runner only reads it.
+
 ### TLS
 
 Add `--profile tls` and Caddy fronts the API with an automatic Let's Encrypt
