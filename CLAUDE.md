@@ -115,6 +115,71 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The runner-cannot-write-its-volumes branch added no unit FILE, no unit case and
+no spec — its diff is one `install -d` line, one CI step and a README note — so
+unit stays 151 / 1855, e2e stays 137 and integration is unchanged. It is the
+FIRST product defect this deployment review found, and it took executing a real
+Gatling job to find it.
+
+**THE ON-PREM RUNNER COULD NEVER EXECUTE A SINGLE JOB.** It starts,
+authenticates, polls, CLAIMS the job and OPENS a live run — then dies on
+
+```
+EACCES: permission denied, mkdir '/var/lib/perfportal/runner-work/<jobId>'
+```
+
+so the platform records a run that can never produce a byte.
+
+**TWO DEFENSIBLE HALVES THAT CONTRADICT EACH OTHER.** `infra/Dockerfile` created
+those directories `-o perfportal` and set `USER perfportal`. `docker-compose.yml`
+overrides that service with `user: root` — it has to, because it spawns
+simulations under uid 20001 and a non-root process cannot reliably carry
+CAP_SETUID under `no-new-privileges` — and then `cap_drop: ['ALL']` with only
+SETUID/SETGID added. **CAP_DAC_OVERRIDE is among the dropped**, and that is the
+capability that lets root ignore file permissions. So root here is emphatically
+not all-powerful: against `drwxr-xr-x perfportal perfportal` it gets the same
+EACCES as anyone else.
+
+**NOTHING IN ANY GATE COULD SEE IT.** The image builds, the container starts,
+the runner authenticates and polls happily — the failure needs a job to exist.
+The `compose` job built and ran the image and proved java and the Gatling
+runtime are present, which is exactly the check that passes here. This is the
+"every gate green and the feature never worked" shape this file already records
+for `declaredTestSlug`, and it was found the same way: by running the real
+thing end to end.
+
+**WHO OWNS WHAT IS DECIDED BY WHO WRITES IT.** `runner-artifacts` is written by
+the API, which runs as `perfportal`, and mounted `:ro` by the runner — it stays
+`perfportal`. `runner-work` and `runner-logs` are the runner's own and are
+`root` now. The `gatling` child still gets in the way it always did:
+`makeChildWritable()` chmods the tree, and chmod is available to the OWNER
+without DAC_OVERRIDE.
+
+**AND DOCKER SEEDS A VOLUME'S OWNERSHIP ONCE, AT CREATION.** So an existing
+deployment keeps the broken ownership through any number of image rebuilds and
+goes on failing every job. Both volumes hold only per-job scratch, so the
+upgrade note says to remove them — and says explicitly NOT to remove
+`runner-artifacts`, which holds the uploaded jars.
+
+**PROVEN BOTH WAYS BEFORE AND AFTER.** Reproduced deterministically (`mkdir` as
+root inside the container → Permission denied), then the live volume was
+chowned to root and the IDENTICAL job ran to completion: 62,691ms of real load,
+895 requests / 872 ok / 23 ko, mean 228.4ms, p95 645.6ms, 14 rows across
+run/request/group, and all three declared Gatling assertions decoded —
+including the one the fixture makes fail on purpose (`Search: 95th percentile
+… less than 100.0`, actual 1939.5ms).
+
+**THE GUARD RUNS THE IMAGE UNDER THE RUNNER'S REAL CAPABILITY SET.** Asserting
+ownership alone would pass against a future image that is root-owned for some
+other reason; the second half does `--cap-drop ALL --cap-add SETUID --cap-add
+SETGID` and writes both directories, which is the property that actually
+matters.
+
+**AND `docker cp` INTO THAT CONTAINER SILENTLY DOES NOTHING.** `/tmp` is a
+`tmpfs` mount, and `docker cp` writes the container's layered filesystem, not
+the mount — it reports success and the file is not there. Pipe through the
+container's own shell (`docker exec -i … sh -c 'cat > /path'`) instead.
+
 The onprem-deploy-gaps branch added no unit FILE, no unit case and no spec —
 its diff is two READMEs and one new `infra/.env.example` — so unit stays
 151 / 1855, e2e stays 137 and integration is unchanged. It comes out of
