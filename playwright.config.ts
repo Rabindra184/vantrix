@@ -46,7 +46,31 @@ export default defineConfig({
   timeout: 60_000,
   use: {
     baseURL: ORIGIN,
-    trace: 'on-first-retry',
+    /* ═══ TRACE THE ATTEMPT THAT FAILED, NOT THE ONE THAT RECOVERED ═══
+     *
+     * This was `on-first-retry`, which traces a test RUNNING AS a retry — so
+     * for a flake whose retry succeeds it records precisely the attempt with
+     * nothing wrong in it. Measured: the one flaky test in the run that
+     * diagnosed the navigation stall left exactly one `trace.zip`, under
+     * `…-webkit-retry1/`, the attempt that PASSED; the failing attempt left an
+     * `error-context.md` and no trace. Two cross-browser runs' worth of
+     * evidence for that stall was collected and thrown away this way.
+     *
+     * `retain-on-first-failure` records every test and keeps the recording
+     * only where the FIRST attempt failed, which is the one worth having.
+     *
+     * IT IS NOT FREE, AND THE NUMBER IS MEASURED RATHER THAN WAVED AT.
+     * Interleaved A/B/A/B against the Chromium suite on one machine:
+     *
+     *   on-first-retry           55.2s, 52.3s   mean 53.8s
+     *   retain-on-first-failure  66.0s, 72.0s   mean 69.0s
+     *
+     * ~28%, because every test is now recorded and most are then discarded.
+     * On `e2e-cross-browser` (411 tests at --workers=1, 13.9-15.4 min) that is
+     * roughly four minutes a run. The trade is deliberate: a flake nobody can
+     * see costs more than four minutes, and this suite spent two full runs
+     * proving it. */
+    trace: 'retain-on-first-failure',
 
     /* ═══ A STALLED NAVIGATION MUST NOT EAT THE WHOLE TEST BUDGET ═══
      *

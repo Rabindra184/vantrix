@@ -268,24 +268,52 @@ export async function signIn(page: Page, who: { email: string; password: string 
   await reachLogin(page);
   await page.getByLabel('Email').fill(who.email);
   await page.getByLabel('Password').fill(who.password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  /* ═══ THE SECOND PLACE THE STALL LANDS, NOW INSTRUMENTED LIKE THE FIRST ═══
+   *
+   * `reachLogin`'s counters proved its `goto` stall is "every request settled,
+   * `load` never fired". This wait fails the same way — a WebKit run of
+   * `run-charts.spec.ts` timed out here under Playwright's own
+   * `waiting for navigation until "load"`, 21.7s failing against 5.1s on
+   * retry — but that was an INFERENCE from a matching signature, because
+   * nothing counted requests on this side. Now both report the same four
+   * cells, so "one phenomenon, two call sites" is measurable rather than
+   * argued.
+   *
+   * The tracker starts before the CLICK, which is what issues the sign-in POST
+   * and whatever navigation follows: attaching after it would race the very
+   * requests the report is about. The click sits inside this `try` only so the
+   * `finally` always reaches `stop()`; a click that fails is re-thrown by the
+   * inner block untouched, so "after clicking Sign in" is never printed over a
+   * failure where no click landed. */
+  const tracker = trackRequests(page);
   try {
-    await page.waitForURL((url) => !url.pathname.startsWith('/login'));
-  } catch (err) {
-    // A plain timeout here reports nothing but "60s elapsed" — indistinguishable
-    // from a slow network, a wrong password, or a login page that renders its
-    // error in place rather than redirecting. Capture what's actually on
-    // screen so the failure names its own likely cause instead of costing the
-    // next implementer an hour of re-deriving it.
-    const bodyText = await page
-      .locator('body')
-      .innerText()
-      .catch(() => '(could not read page body)');
-    throw new Error(
-      `signIn: still on /login for ${who.email} after clicking "Sign in" — the app never ` +
-        `navigated away. Visible page text at the time of failure:\n${bodyText}`,
-      { cause: err },
-    );
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    try {
+      await page.waitForURL((url) => !url.pathname.startsWith('/login'));
+    } catch (err) {
+      // A plain timeout here reports nothing but "60s elapsed" — indistinguishable
+      // from a slow network, a wrong password, or a login page that renders its
+      // error in place rather than redirecting. Capture what's actually on
+      // screen so the failure names its own likely cause instead of costing the
+      // next implementer an hour of re-deriving it.
+      //
+      // `report()` is read FIRST: reading the body is a round trip that can
+      // itself take seconds, and every one of those would age the probe's
+      // "last answered" figure and let more probes fire, so a snapshot taken
+      // after it would describe the wrong moment.
+      const evidence = tracker.report();
+      const bodyText = await page
+        .locator('body')
+        .innerText()
+        .catch(() => '(could not read page body)');
+      throw new Error(
+        `signIn: still on /login for ${who.email} after clicking "Sign in" — the app never ` +
+          `navigated away. ${evidence}\nVisible page text at the time of failure:\n${bodyText}`,
+        { cause: err },
+      );
+    }
+  } finally {
+    tracker.stop();
   }
 }
 
