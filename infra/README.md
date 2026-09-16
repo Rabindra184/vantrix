@@ -229,6 +229,62 @@ For a containerized single-node deployment, use the `onprem` compose profile:
     export PERFPORTAL_RUNNER_ARTIFACT_RETENTION_DAYS='30'
     docker compose -f infra/docker-compose.yml --profile onprem up --build
 
+**Or put those in `infra/.env` instead.** Compose reads it automatically for
+`-f infra/docker-compose.yml` — the project directory is the one holding the
+compose file, which is `infra/`, not the repo root. `infra/.env.example` lists
+every variable this file reads, with the same reasoning attached:
+
+    cp infra/.env.example infra/.env
+    $EDITOR infra/.env
+    docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+
+### Then create the first org, project and login — nothing else will
+
+**A fresh `onprem` stack has no org, no project, no API token and no account
+that can sign in.** The migrations create the schema and nothing else: there is
+no admin API and no seed data, so the login page rejects every address until
+this step has run. The section above ("Getting a credential") documents
+`pnpm bootstrap`, and that is a HOST command needing `pnpm install` and
+`pnpm build` on the machine — which a deployer who has only ever run
+`docker compose` does not have.
+
+Run it inside the image instead. `docker compose run --rm` on the `migrate`
+service is the vehicle: same image, same database credentials, and it does not
+need the API to be up.
+
+    docker compose -f infra/docker-compose.yml --profile onprem \
+      run --rm migrate pnpm bootstrap my-org my-project \
+      --admin-email you@example.test
+
+It prints an API token and a password, each ONCE, and neither is recoverable
+afterwards — the token is stored as an Argon2id hash and the password as
+Better Auth's own hash. Copy both before the terminal scrolls.
+
+Re-running is safe for the org and the project, which are reused by slug. It
+is NOT safe to re-run with the same `--admin-email`: Better Auth refuses a
+second sign-up for an address already in use, and the command fails loudly
+rather than minting a second password.
+
+**The runner needs the two ids this step just printed.** Its first lines are
+
+    Org:       my-org      (004fdb64-…)
+    Project:   my-project  (de7d92bc-…)
+
+and those are `PERFPORTAL_RUNNER_ORG_ID` and `PERFPORTAL_RUNNER_PROJECT_ID`.
+They are UUIDs that did not exist until now, which is why both default to
+empty — and why, until they are set, the runner exits at startup with
+
+    Error: Missing required environment variable RUNNER_ORG_ID
+
+That is deliberate rather than a failure to configure: a runner that cannot
+say whose jobs it is allowed to claim must not claim any. So on a first `up`
+expect `runner` to be the one service in `Exited (1)`, put both ids into
+`infra/.env`, and start it:
+
+    docker compose -f infra/docker-compose.yml --profile onprem up -d runner
+
+It then logs `on-prem runner started for org … project …` and polls for work.
+
 ### TLS
 
 Add `--profile tls` and Caddy fronts the API with an automatic Let's Encrypt

@@ -216,7 +216,24 @@ perf.example.com {
 ```
 
 `infra/docker-compose.yml` ships that as an opt-in `tls` profile — see
-`infra/README.md`. The proxy is also the right place to compress **dynamic**
+`infra/README.md`.
+
+**And a fourth thing, which is not optional either: a fresh deployment has
+nobody who can sign in.** The migrations create the schema and stop there —
+there is no admin API and no seed data, so until an org, a project and an
+account exist the login page refuses every address. That is one command, run
+inside the image so it needs nothing installed on the host:
+
+```
+cp infra/.env.example infra/.env            # every variable, with its reasoning
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+docker compose -f infra/docker-compose.yml --profile onprem \
+  run --rm migrate pnpm bootstrap my-org my-project --admin-email you@example.test
+```
+
+It prints an API token and a password once each, neither recoverable
+afterwards. `infra/README.md` has the rest, including reading back the two
+UUIDs the on-prem runner needs before it will claim anything. The proxy is also the right place to compress **dynamic**
 responses: the API precompresses its static assets at build time (below) but
 sends JSON uncompressed, and a run's `/series` payload is not small.
 

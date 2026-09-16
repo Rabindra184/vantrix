@@ -274,6 +274,27 @@ jobs:
           fi
           echo "the broken override is rejected, as it must be"
 
+      # `.env.example` is the whole configuration surface a deployer sees, and
+      # it rots the way every unrun file in this directory rots: a variable is
+      # added to the compose file, the example is not updated, and the next
+      # deployer is back to deriving settings from prose. `config --quiet`
+      # cannot see it — a missing variable interpolates to empty and parses
+      # perfectly.
+      - name: infra/.env.example documents every variable compose reads
+        run: |
+          node infra/test/env-example-covers-compose.mjs
+
+          # And it has to be able to FAIL. The fixture is the real example
+          # with one variable dropped — the exact drift, in the shape that
+          # still parses everywhere else.
+          if node infra/test/env-example-covers-compose.mjs \
+               infra/docker-compose.yml \
+               infra/test/env-example-missing-one.example > /dev/null 2>&1; then
+            echo "env-example-covers-compose.mjs PASSED against the deliberately broken example"
+            exit 1
+          fi
+          echo "the incomplete example is rejected, as it must be"
+
       # The whole image, not a cached prefix. Both breaks above were in RUN
       # steps that a layer cache would have skipped.
       - name: Build the production image

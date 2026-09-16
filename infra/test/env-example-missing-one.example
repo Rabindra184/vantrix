@@ -1,0 +1,60 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  PerfPortal — on-prem deployment settings
+#
+#  cp infra/.env.example infra/.env   and edit. Compose reads infra/.env
+#  automatically for `-f infra/docker-compose.yml`, because the project
+#  directory is the one holding the compose file.
+#
+#  Everything here is read by infra/docker-compose.yml. Nothing else is.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ─── Required by the base services (postgres / redis / minio) ───────────────
+# These three are `${VAR:?}` in the compose file, so a missing one fails
+# before a single container starts, with the variable named.
+
+PERFPORTAL_DB_PASSWORD=change-me-a-real-password
+PERFPORTAL_S3_ACCESS_KEY=change-me-access
+PERFPORTAL_S3_SECRET_KEY=change-me-secret-at-least-8-chars
+
+# ─── Required by the `onprem` profile ──────────────────────────────────────
+
+# Signs every session cookie. Generate with:   openssl rand -base64 32
+# Anything under 32 characters is refused at startup, by design: Better Auth
+# will not run on its built-in default under NODE_ENV=production, and
+# apps/api/src/config.ts turns that into an immediate exit naming this
+# variable rather than a container that starts and then fails every sign-in.
+
+# The origin a BROWSER will actually use — scheme, host and port. This becomes
+# BETTER_AUTH_URL, which is what the trusted-origin (CSRF) check is derived
+# from, so a mismatch refuses your own sign-in as an invalid origin. It is the
+# single most common on-prem misconfiguration.
+#
+#   behind TLS:      https://perf.example.com
+#   plain localhost: http://localhost:3000
+#
+# NOTE ON TLS: the session cookie is minted `Secure` for every host EXCEPT
+# localhost, 127.0.0.1 and [::1]. So a deployment reached by hostname over
+# plain HTTP stores no cookie at all — sign-in appears to succeed and every
+# later request 401s. Terminate TLS in front of the api service (the `tls`
+# profile below ships a Caddy that does it), or reach it only on localhost.
+PERFPORTAL_PUBLIC_URL=http://localhost:3000
+
+# ─── Optional: the `tls` profile ───────────────────────────────────────────
+# Caddy terminates TLS and reverse-proxies to api:3000. Set this to the same
+# host as PERFPORTAL_PUBLIC_URL above, without the scheme.
+#   docker compose -f infra/docker-compose.yml --profile onprem --profile tls up -d
+PERFPORTAL_DOMAIN=localhost
+
+# ─── Optional: the on-prem Gatling runner ──────────────────────────────────
+# The runner claims queued jobs for ONE project. Both ids are UUIDs, and you
+# only have them after the bootstrap step (see infra/README.md) has created an
+# org and a project — so leave these empty on the first `up`, then fill them
+# in and `docker compose ... up -d runner` again.
+#
+# Left empty the runner exits at startup naming RUNNER_ORG_ID, which is
+# deliberate: a runner that cannot say whose jobs it runs must not run any.
+PERFPORTAL_RUNNER_ORG_ID=
+PERFPORTAL_RUNNER_PROJECT_ID=
+
+# How long the runner keeps an uploaded artifact and its Gatling output.
+PERFPORTAL_RUNNER_ARTIFACT_RETENTION_DAYS=30

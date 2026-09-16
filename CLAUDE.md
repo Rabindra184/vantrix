@@ -115,6 +115,81 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The onprem-deploy-gaps branch added no unit FILE, no unit case and no spec —
+its diff is two READMEs and one new `infra/.env.example` — so unit stays
+151 / 1855, e2e stays 137 and integration is unchanged. It comes out of
+deploying the `onprem` profile from scratch as a newcomer would, and then
+exercising the running platform.
+
+**A FRESH ONPREM DEPLOYMENT HAD NOBODY WHO COULD SIGN IN, AND NOTHING SAID
+SO.** `docker compose --profile onprem up --build` brings up a correct,
+healthy platform with **no org, no project, no API token and no account**. The
+migrations create the schema and stop; there is no admin API and no seed data,
+so the login page refuses every address. Every bootstrap instruction in
+`infra/README.md` is a HOST `pnpm` command requiring `pnpm install` and
+`pnpm build` on the machine — which a deployer who has only ever run
+`docker compose` does not have — and the root README's "Deploying it" section
+never mentioned creating a first user at all.
+
+The capability was always there: `infra/Dockerfile` runs `pnpm build`, so the
+image already contains `dist/scripts/bootstrap.js`. Only the instruction was
+missing. `docker compose run --rm migrate pnpm bootstrap …` is the vehicle —
+that service carries the same image and the same `&app_env` anchor, and does
+not need the API up. **Verified by running it against a real containerised
+stack**: org, project, token and admin created, exit 0.
+
+**AND THERE WAS NO `.env.example`**, so eight `PERFPORTAL_*` variables had to
+be derived from prose across two files. Compose reads `infra/.env`
+automatically for `-f infra/docker-compose.yml` — the project directory is the
+one holding the compose file, NOT the repo root — which was **measured** with
+every variable unset rather than assumed, because that distinction is exactly
+the kind that is wrong half the time.
+
+**THE RUNNER EXITING 1 ON A FIRST BOOT IS CORRECT, AND READS AS A FAILURE.**
+`PERFPORTAL_RUNNER_ORG_ID` and `PERFPORTAL_RUNNER_PROJECT_ID` are UUIDs that do
+not exist until bootstrap has run, so on the first `up` the runner is the one
+service in `Exited (1)`, with `Missing required environment variable
+RUNNER_ORG_ID`. Both docs now say to expect it. The ids are in bootstrap's own
+output — an earlier draft of this entry sent the reader to `psql` for them,
+which is two commands and a join for something already on screen.
+
+**WHAT THE DEPLOYMENT AND THE PLATFORM WERE MEASURED AGAINST.** 25/25
+deployment checks on the containerised stack (all seven services, the
+public/protected split, all eight security headers, CSP carrying a script hash
+and no `unsafe-inline`), 18/18 UI routes with ten plots drawn and zero console
+errors, and the reference bundle's own numbers reproduced through the real
+ingest path: **count 895, ko 24, mean 227.9ms, p95 658.6ms, error rate 2.68%**.
+The LIVE streaming path produced the identical five numbers — two decoders, no
+drift, which is the failure that entry further down calls the worst this
+product can produce.
+
+**AND EVERY FAILURE THE SWEEP REPORTED WAS THE HARNESS, NOT THE PRODUCT.**
+`/statistics` for `/stats`; a rules POST missing the required `targetName`; a
+telemetry batch carrying `runId`, which that endpoint rejects by design because
+org and project come from the token; and a `422` on a healthy `close` that is
+`statusFor`'s documented "complete, verdict failed" — the run had breached the
+p95 gate authored two steps earlier. Four wrong claims, each killed by reading
+the OpenAPI document or the source. **A gap report is a claim about the
+system, so it has to be made by reading the system.**
+
+**AND THE EXAMPLE GOT A GUARD, BECAUSE THIS DIRECTORY'S RULE IS THAT NOTHING
+GOES IN WITHOUT ONE.** `.env.example` is the whole configuration surface a
+deployer sees and is exactly the kind of file that rots: add a variable to the
+compose file, forget the example, and the next deployer is back to deriving
+settings from prose — the defect it was added to fix, returning silently.
+Nothing else can see it, because a MISSING variable interpolates to empty and
+`config --quiet` parses perfectly. `infra/test/env-example-covers-compose.mjs`
+runs in the `compose` job against a fixture that is the real example with one
+variable removed, so the guard is proven able to fail rather than assumed to
+be. **The first version of its regex used `[A-Z_]` and truncated
+`PERFPORTAL_S3_ACCESS_KEY` to `PERFPORTAL_S`** — reporting a variable that does
+not exist while missing the two that do.
+
+**`docker compose -f a -f b` APPENDS LIST VALUES.** An override file remapping
+published ports ADDED them: postgres tried to bind 5433 and 55433, and failed
+on the one already taken. `ports: !override [...]` replaces instead. Worth
+knowing before concluding an override "did not apply".
+
 The stall-evidence-both branch added no unit FILE, no unit case and no spec —
 it changed one e2e helper and one config line — so unit stays 151 / 1855, e2e
 stays 137 and integration is unchanged. It finishes the two things the entry
