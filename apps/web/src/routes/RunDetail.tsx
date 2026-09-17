@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
@@ -849,6 +849,60 @@ const RESPONSES_PER_SECOND: Slot = {
  * standalone page stacked all three withheld notices together only because
  * it had no tabs to distribute them across.
  */
+/**
+ * One investigation group on the Charts tab (review 09-13 M17).
+ *
+ * A `<section>` with a REAL heading, not a styled `<div>` and a bold line: the
+ * point of grouping is that a screen-reader user can jump between the four
+ * questions the same way a sighted reader's eye does, and only a heading in the
+ * outline does that. `aria-labelledby` rather than `aria-label` so the name and
+ * the visible text cannot drift apart.
+ *
+ * `SectionHeading`, so `<h2>` — and these REPLACE the `sr-only` <h2>Charts</h2>
+ * this tab used to carry. That heading existed for one reason, stated in
+ * `run-charts.spec.ts`: `aria-label` alone never let a screen-reader user
+ * navigating by heading reach this section. Four named groups do that job
+ * better than one invisible word, so keeping both would leave a heading whose
+ * only purpose had been taken over, and the section keeps `aria-label` for its
+ * own name.
+ *
+ * `<h3>` WAS TRIED FIRST AND THE PAGE SAID NO. `Chart` renders each figure's
+ * title as an `<h3>` at 15px — so a group heading at that level is a SIBLING of
+ * the charts it contains, and at that size does not read as their parent
+ * either. The failure named all nine titles, which is how the collision was
+ * found. `SectionHeading`'s 16px `<h2>` is the rung above, which is what these
+ * are.
+ *
+ * THE GRID LIVES INSIDE, one per group. Two columns above 1536px was measured
+ * on the ungrouped page and the reasoning is unchanged: a chart holds a 288px
+ * plot plus a legend under a header row, and two of those in a 1280px window
+ * leaves each ~600px — narrow enough that a 60-bucket time axis starts dropping
+ * every other tick label. Above 1536px there is room for both, and halving the
+ * scroll depth is worth real time to a reader comparing two figures.
+ *
+ * Per group rather than one grid for the whole tab because a group is the unit
+ * a reader compares within; a figure pairing across a heading boundary would be
+ * the layout contradicting the structure.
+ */
+function ChartGroup({
+  id,
+  heading,
+  children,
+}: {
+  readonly id: string;
+  readonly heading: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section aria-labelledby={id}>
+      <div className="mb-3">
+        <SectionHeading id={id}>{heading}</SectionHeading>
+      </div>
+      <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
 export function RunChartsTab() {
   const { runId } = useParams<{ runId: string }>();
   const live = useLiveFromShell();
@@ -964,70 +1018,103 @@ export function RunChartsTab() {
     // that a 60-bucket time axis starts dropping every other tick label.
     // Above 1536px there is room for both, and halving the scroll depth of an
     // eight-figure page is worth real time to a reader comparing two of them.
-    <section aria-labelledby="charts-heading" className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
-      <h2 id="charts-heading" className="sr-only">
-        Charts
-      </h2>
-      {/* ═══ A DIAGNOSTIC SEQUENCE, NOT A REPORT INVENTORY ═══
+    <section aria-label="Charts" className="flex flex-col gap-8">
+      {/* ═══ FOUR QUESTIONS, NOT NINE FIGURES (review 09-13 M17, second half) ═══
        *
-       * This opened with two AGGREGATES — a response-time range bar and a
-       * large OK/KO donut — and put latency-over-time seventh. So a reader
-       * correlating offered load against throughput, latency and failures
-       * scrolled past unrelated whole-run summaries to reach the series, then
-       * scrolled back. The charts were ordered by which query produced them,
-       * which is an implementation fact.
+       * M17's first half moved each chart's exports behind one menu. Its second
+       * half is this: "organize charts into investigation groups such as Load,
+       * Latency, and Errors, with clear scope and outcome labels." Nine figures
+       * in one undifferentiated grid is a page a reader scrolls rather than
+       * reads — the headings are how they find the answer they came for.
        *
-       * The order now follows the question: WHAT WAS APPLIED (users), WHAT
-       * GOT THROUGH (requests/s, responses/s), WHAT IT COST (percentiles over
-       * time) — the four that share a crosshair and a time domain, adjacent so
-       * a single horizontal read crosses all of them. The whole-run
-       * distributions come after, because they answer a different question and
-       * answering it does not need the reader's place in time.
+       * THE GROUPS WERE ALREADY IN THE ORDER, WHICH IS WHY THIS IS CHEAP. The
+       * comment this replaces described the sequence as WHAT WAS APPLIED, WHAT
+       * GOT THROUGH, WHAT IT COST. Those are the first three headings; the
+       * reading order it established is unchanged, and the headings only name
+       * what was already true.
        *
-       * The PAIRS are unchanged: distribution and percentile-distribution stay
-       * adjacent for the reason `run-charts.spec.ts` argues at length, and
-       * concurrent-users stays its own chart rather than an overlay. */}
-      <Payload query={users} slots={[CONCURRENT_USERS, USER_START_RATE]}>
-        {(data) => (
-          <>
-            {/* Its OWN chart, sharing the crosshair — never an overlay on
-                requests/s. See RUN_TIME above. */}
-            <ConcurrentUsersChart users={data} group={RUN_TIME} domainMs={domainMs} />
-            <UserStartRateChart users={data} group={RUN_TIME} domainMs={domainMs} />
-          </>
-        )}
-      </Payload>
+       * AND THE NAMES ARE THE CHARTS' OWN. All four response-time figures
+       * literally begin "Response time" — percentiles over time, ranges,
+       * distribution, percentiles distribution — so the heading is a fact about
+       * them rather than a category imposed on them.
+       *
+       * ONE FIGURE MOVED: `request-counts` was seventh, between `indicators`
+       * and `distribution`, which left the response-time run non-contiguous.
+       * It is last now. `CHART_IDS` in `run-charts.spec.ts` asserts the whole
+       * list precisely so a reorder cannot pass silently — it is updated with
+       * this change, which is that guard working rather than being worked
+       * around.
+       *
+       * THE TWO PROPERTIES THE PREVIOUS ORDER DEFENDED BOTH SURVIVE, and they
+       * are the reason `request-counts` moved rather than `percentiles`:
+       *   - the five charts sharing `RUN_TIME`'s crosshair and domain stay
+       *     adjacent (positions 1-5), so one horizontal read still crosses all
+       *     of them;
+       *   - `distribution` and `percentile-distribution` stay adjacent, for the
+       *     reason `run-charts.spec.ts` argues at length.
+       *
+       * OUTCOMES HOLDS ONE FIGURE AND STILL EARNS A HEADING. It is the only
+       * whole-run success/failure answer on this tab, and a reader looking for
+       * "how many failed" should not have to know it is drawn as a donut at the
+       * bottom. `indicators` is NOT here despite carrying a `failed` band: its
+       * title is "Response time ranges" and three of its four bands are
+       * latency, so filing it under Outcomes would put a heading at odds with
+       * the chart under it. */}
+      <ChartGroup id="charts-offered-load" heading="Offered load">
+        <Payload query={users} slots={[CONCURRENT_USERS, USER_START_RATE]}>
+          {(data) => (
+            <>
+              {/* Its OWN chart, sharing the crosshair — never an overlay on
+                  requests/s. See RUN_TIME above. */}
+              <ConcurrentUsersChart users={data} group={RUN_TIME} domainMs={domainMs} />
+              <UserStartRateChart users={data} group={RUN_TIME} domainMs={domainMs} />
+            </>
+          )}
+        </Payload>
+      </ChartGroup>
 
-      {/* Throughput before latency, and both before any aggregate: "how much
-          got through" is the question a reader asks of a load number, and
-          "what did it cost" is the question they ask of the throughput. */}
-      <Payload query={series} slots={[REQUESTS_PER_SECOND, RESPONSES_PER_SECOND, PERCENTILES]}>
-        {(data) => (
-          <>
-            <RequestRateChart series={data} domainMs={domainMs} />
-            <ResponseRateChart series={data} domainMs={domainMs} />
-            <PercentilesChart series={data} domainMs={domainMs} />
-          </>
-        )}
-      </Payload>
+      {/* Throughput before latency: "how much got through" is the question a
+          reader asks of a load number, and "what did it cost" is the question
+          they ask of the throughput. */}
+      <ChartGroup id="charts-throughput" heading="Throughput">
+        <Payload query={series} slots={[REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>
+          {(data) => (
+            <>
+              <RequestRateChart series={data} domainMs={domainMs} />
+              <ResponseRateChart series={data} domainMs={domainMs} />
+            </>
+          )}
+        </Payload>
+      </ChartGroup>
 
-      <Payload query={stats} slots={[INDICATORS, REQUEST_COUNTS]}>
-        {(data) => (
-          <>
-            <IndicatorsChart stats={data} />
-            <RequestCountChart stats={data} />
-          </>
-        )}
-      </Payload>
+      {/* THREE PAYLOADS, THREE QUERIES, ONE GROUP. A group is a question, and
+          the answers come from different endpoints — `Payload` is a pure render
+          prop over a query result and fetches nothing, so naming the same query
+          in two groups costs one extra render and no extra request. The
+          alternative, grouping by endpoint, is the "ordered by which query
+          produced them" mistake this tab already had once. */}
+      <ChartGroup id="charts-response-time" heading="Response time">
+        <Payload query={series} slots={[PERCENTILES]}>
+          {(data) => <PercentilesChart series={data} domainMs={domainMs} />}
+        </Payload>
+        <Payload query={stats} slots={[INDICATORS]}>
+          {(data) => <IndicatorsChart stats={data} />}
+        </Payload>
+        <Payload query={distribution} slots={[DISTRIBUTION, PERCENTILE_DISTRIBUTION]}>
+          {(data) => (
+            <>
+              <DistributionChart distribution={data} />
+              <PercentileDistributionChart distribution={data} />
+            </>
+          )}
+        </Payload>
+      </ChartGroup>
 
-      <Payload query={distribution} slots={[DISTRIBUTION, PERCENTILE_DISTRIBUTION]}>
-        {(data) => (
-          <>
-            <DistributionChart distribution={data} />
-            <PercentileDistributionChart distribution={data} />
-          </>
-        )}
-      </Payload>
+      <ChartGroup id="charts-outcomes" heading="Outcomes">
+        <Payload query={stats} slots={[REQUEST_COUNTS]}>
+          {(data) => <RequestCountChart stats={data} />}
+        </Payload>
+      </ChartGroup>
     </section>
   );
 }
