@@ -936,3 +936,61 @@ test('a windowed drill-down says its figures are the whole run’s', async ({ pa
   await page.goto(`${runPath(runId)}/groups/Cart?from=0&to=10000`);
   await expect(page.getByTestId('whole-run-notice')).toContainText(/does not narrow/i);
 });
+
+/**
+ * The Errors tab's request filter (review 09-13 M15).
+ *
+ * WHAT ONLY A BROWSER CAN PROVE HERE IS THE SEAM. `errorRequestFilter.test.ts`
+ * pins which names the derivation offers, from a payload it writes itself — so
+ * it proves the rule and nothing about whether the API ever produces those
+ * rows. That join is the whole finding: the mapping was always stored
+ * (`run_error.scope` / `.name`) and `?scope=request&name=` always worked, and
+ * only the tab never asked. A test that supplies both sides would prove the
+ * consumer and never the seam.
+ *
+ * So this drives the real control against a real run and checks the table
+ * CHANGED — a filter that rewrites the URL and returns the same rows is the
+ * failure worth catching, and asserting "the select has options" would miss
+ * it entirely.
+ */
+test('the errors table can be narrowed to the request that failed', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runErrorsPath(runId));
+
+  const filter = page.getByTestId('errors-request-filter');
+  await expect(filter).toBeVisible();
+
+  // Only the requests that actually failed — the reference run makes seven and
+  // two of them fail, so this is also the derivation's own claim proven against
+  // data nobody hand-wrote.
+  expect(await filter.locator('option').allTextContents()).toEqual([
+    'All requests',
+    'Cart/Add To Cart',
+    'Place Order',
+  ]);
+
+  const unfiltered = await errorsTable(page).getByRole('row').allTextContents();
+  expect(unfiltered.length).toBeGreaterThan(2); // header + both messages
+
+  await filter.selectOption('Cart/Add To Cart');
+
+  // The URL carries the question, so the view is shareable — the lesson
+  // `RunCompare` records for its metric.
+  await expect(page).toHaveURL(/[?&]request=Cart%2FAdd\+To\+Cart/);
+
+  // And the rows really narrowed. `Place Order`'s failure is a 503 and
+  // `Cart/Add To Cart`'s a 500, so the filtered table must hold one and not the
+  // other — checked by CONTENT rather than by row count, which a re-render
+  // could satisfy without filtering anything.
+  const filtered = errorsTable(page).getByRole('row');
+  await expect(filtered).toHaveCount(2); // header + the one message
+  await expect(filtered.nth(1)).toContainText('found 500');
+  await expect(errorsTable(page)).not.toContainText('found 503');
+
+  // Back out again — a filter a reader cannot escape is worse than none.
+  await filter.selectOption('');
+  await expect(page).not.toHaveURL(/[?&]request=/);
+  await expect(errorsTable(page)).toContainText('found 503');
+});

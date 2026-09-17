@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type {
   Assertion, LiveDelta, SeriesResponse, StatRow, ToolAssertion,
 } from '@perfportal/contracts';
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
+import { failingRequestNames } from './errorRequestFilter';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import StatTile from '../components/StatTile';
@@ -691,11 +692,108 @@ function Sparklines({ series }: { readonly series: UseQueryResult<SeriesResponse
  * run-scope TOTALS with no time series, so it gets a stated `LiveNotice`
  * where its figure would be.
  */
+/**
+ * "Which request do I investigate?" as a control (review 09-13 M15).
+ *
+ * A `<select>` and not a row of buttons: the option count is however many
+ * requests failed, which on a large simulation is not a number a toolbar can
+ * hold. A native select is also the one control that is keyboard- and
+ * touch-reachable without this file writing any of that itself.
+ *
+ * LABELLED, NOT PLACEHOLDER'D. The label is a real `<label>` tied by `id`, so
+ * the control keeps its accessible name once a value is chosen — a `<select>`
+ * whose only name is its first option loses it the moment the reader picks
+ * something else, which is the same defect this repo records for form fields
+ * whose placeholder was doing the labelling.
+ *
+ * RENDERS NOTHING WHEN NOTHING FAILED PER REQUEST. A filter over an empty set
+ * of choices is a control that cannot do anything, and its presence implies
+ * the reader has missed something. The run-scope table says what happened in
+ * that case.
+ */
+function ErrorRequestFilter({
+  names,
+  value,
+  onChange,
+}: {
+  readonly names: readonly string[];
+  readonly value: string | null;
+  readonly onChange: (next: string | null) => void;
+}) {
+  const id = useId();
+  if (names.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <label htmlFor={id} className="text-[0.8125rem] text-muted">
+        Investigate
+      </label>
+      <select
+        id={id}
+        data-testid="errors-request-filter"
+        className="min-w-0 max-w-full rounded-md border border-default bg-surface px-2 py-1 text-[0.8125rem] text-primary"
+        value={value ?? ''}
+        onChange={(event) => onChange(event.target.value === '' ? null : event.target.value)}
+      >
+        {/* The unfiltered view is an OPTION, not the absence of one — a filter
+            a reader cannot get back out of is worse than no filter. */}
+        <option value="">All requests</option>
+        {names.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export function RunErrorsTab() {
   const { runId } = useParams<{ runId: string }>();
   const live = useLiveFromShell();
   const { detail: run, terminal } = useRunTerminal(runId);
-  const errors = useQuery({ ...errorsQuery(runId ?? ''), enabled: terminal });
+
+  /* ═══ WHICH REQUEST TO INVESTIGATE (review 09-13 M15) ═══
+   *
+   * The finding: "the current raw messages and counts explain what failed but
+   * not which request to investigate", with a drill-down "when mappings are
+   * available". They are, and always were — `run_error` carries `scope` and
+   * `name`, the engine writes a row per (scope, name), and
+   * `GET /v1/runs/:id/errors` has taken `?scope=&name=` all along. Measured on
+   * a real run: the same failure is stored twice, once at run scope and once
+   * as `request | Cart/Add To Cart`. This tab simply never asked for the
+   * second. `RequestDetail` already did, which is why `ErrorsTable` has a
+   * `scopeLabel` prop waiting for exactly this caller.
+   *
+   * IN THE URL, NOT COMPONENT STATE, for the reason `RunCompare` records for
+   * its metric: a link to "the errors for Place Order" that opens showing
+   * every request's errors has dropped the question and kept only the page.
+   * `replace: true` likewise — narrowing a filter refines the view rather than
+   * being a place to go Back to. */
+  const [params, setParams] = useSearchParams();
+  const requestFilter = params.get('request');
+  const setRequestFilter = (next: string | null) => {
+    const updated = new URLSearchParams(params);
+    if (next === null) updated.delete('request');
+    else updated.set('request', next);
+    setParams(updated, { replace: true });
+  };
+
+  const errors = useQuery({
+    ...errorsQuery(
+      runId ?? '',
+      requestFilter === null ? 'run' : 'request',
+      requestFilter ?? '',
+    ),
+    enabled: terminal,
+  });
+  /* The names to offer, WHOLE RUN and not the selected window — `null`, not
+     `window`. `/v1/runs/:id/errors` takes no `from`/`to` (that handler's own
+     comment says so, and `ErrorsTable` carries a notice about it), so the rows
+     this filter narrows are always whole-run. A windowed option list would
+     offer requests chosen on one basis and then filter rows chosen on
+     another, and a request could vanish from the list while its errors were
+     still in the table. */
+  const stats = useQuery({ ...statsQuery(runId ?? '', null), enabled: terminal });
   const window = useWindowFromShell();
   // One time axis across the page (§22.5) — see `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
@@ -741,8 +839,25 @@ export function RunErrorsTab() {
         {(data) => <ErrorsChart data={data} domainMs={domainMs} />}
       </Payload>
 
+      {/* The control sits ABOVE the table it narrows, and below the chart that
+          answers "when". The reader's path through this tab is when → which →
+          what, and the filter is the "which". */}
+      <ErrorRequestFilter
+        names={stats.data === undefined ? [] : failingRequestNames(stats.data)}
+        value={requestFilter}
+        onChange={setRequestFilter}
+      />
       <TableSection title="Errors" query={errors} columns={ERRORS_TABLE_COLUMNS}>
-        {(data) => <ErrorsTable errors={data} windowSelected={window !== null} />}
+        {(data) => (
+          <ErrorsTable
+            errors={data}
+            /* So the empty branch cannot say "no errors were recorded for this
+               run" over a filtered view — the precise wrong sentence this prop
+               was added for, met from a second caller. */
+            scopeLabel={requestFilter ?? undefined}
+            windowSelected={window !== null}
+          />
+        )}
       </TableSection>
     </div>
   );

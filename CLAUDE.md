@@ -115,6 +115,64 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m15-error-request-filter branch (M15's remainder — the finding is
+closed) added ONE unit file — `apps/web/test/errorRequestFilter.test.ts` (5) —
+from a floor of 151 / 1855 to **152 / 1860**, and its **e2e rises to 139**. Its
+integration floor moves with it (that file is a `.ts` integration runs too).
+
+**"WHEN MAPPINGS ARE AVAILABLE" — THEY ALWAYS WERE, AND THE WHOLE STACK ALREADY
+CARRIED THEM.** M15's remainder was left on that conditional. Measured, every
+layer but the caller already supported it:
+
+```
+  run_error           scope + name columns, unique on (runId, scope, name, …)
+  the engine          writes a row per (scope, name)
+  GET …/errors        takes ?scope= & ?name=, defaulting to run
+  errorsQuery(id,…)   already has the (scope, name) signature and cache key
+  RunErrorsTab        asked for run scope, always
+```
+
+Confirmed against real rows rather than inferred: the same failure is stored
+twice, once as `run | (empty)` and once as `request | Cart/Add To Cart`. **This
+is the run list's lesson exactly — "the list was already fetching what it
+needed and throwing it away" — one tab over**, and it is why a finding parked
+on a data dependency was worth re-checking rather than trusting the note.
+
+**ONLY THE REQUESTS THAT FAILED ARE OFFERED, AND THAT IS THE DESIGN DECISION.**
+The obvious list is every request the run made; on the reference run that is
+seven, five of which have no errors. Choosing one of those spends the reader's
+decision to land them on an empty table. Filtered to `koCount > 0` the list is
+two — and the LIST ITSELF answers "which request do I investigate" before
+anything is selected, which is more than a filter usually manages.
+
+**IN THE URL, FOR THE REASON `RunCompare` RECORDS.** A link to "the errors for
+Place Order" that opens showing every request's errors has dropped the question
+and kept only the page. `replace: true`, because narrowing refines a view
+rather than being somewhere to go Back to.
+
+**AND THE OPTION LIST IS WHOLE-RUN WHILE A WINDOW IS SELECTED, DELIBERATELY.**
+`statsQuery(runId, null)`, not `window`: `/v1/runs/:id/errors` takes no
+`from`/`to` — that handler's own comment says so and `ErrorsTable` carries a
+notice about it — so the rows this filter narrows are always whole-run. A
+windowed option list would pick requests on one basis and filter rows on
+another, and a request could vanish from the list while its errors were still
+in the table.
+
+**`scopeLabel` WAS ALREADY WAITING FOR A SECOND CALLER.** The drilldown-window
+branch added it so `RequestDetail` could not say "no errors were recorded for
+this run" over a request-scoped empty result. A filtered Errors tab is exactly
+that shape again, and the prop needed nothing new.
+
+**RED-VERIFIED AT BOTH LAYERS, AND THEY CATCH DIFFERENT THINGS.** Pinning the
+query to run scope while the control still rewrites the URL fails the e2e on
+ROW COUNT — a filter that changes the address bar and returns the same rows is
+the failure worth catching, and "the select has options" would miss it.
+Dropping the `koCount` guard fails 2 of the 5 unit cases AND the e2e's option
+list. **The unit file proves the rule from a payload it writes itself, so it
+proves nothing about the seam** — that is what the browser case is for, which
+is the "a test that supplies both sides of a join proves neither" lesson this
+file already records for M13.
+
 The review-m17-chart-groups branch (M17, PART TWO — the finding is closed)
 added no unit FILE and no unit case — unit stays 151 / 1855 — and its **e2e
 rises to 138**. Integration is unchanged. It takes the half the M17 entry below
