@@ -115,6 +115,76 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m17-chart-groups branch (M17, PART TWO — the finding is closed)
+added no unit FILE and no unit case — unit stays 151 / 1855 — and its **e2e
+rises to 138**. Integration is unchanged. It takes the half the M17 entry below
+recorded as deliberately left.
+
+**THE GROUPS WERE ALREADY IN THE ORDER, WHICH IS WHY THIS WAS CHEAP.** The
+run-page reading-order branch established the sequence as WHAT WAS APPLIED,
+WHAT GOT THROUGH, WHAT IT COST, and wrote that in a comment. Those are the
+first three headings. The reading order is unchanged and the headings only name
+what was already true — which is why "it is a layout decision rather than a
+correction" turned out to overstate the cost.
+
+**AND THE NAMES ARE THE CHARTS' OWN.** All four response-time figures literally
+begin "Response time" — percentiles over time, ranges, distribution,
+percentiles distribution. A grouping whose labels are lifted from the titles
+under them is a fact about the page, not a taxonomy imposed on it.
+
+**ONE FIGURE MOVED, AND THE GUARD IS WHAT MADE THAT SAFE.** `request-counts`
+sat seventh, between `indicators` and `distribution`, which split the
+response-time run in two. It is last now, under `Outcomes`. `CHART_IDS` is
+asserted as a whole list precisely so a reorder cannot pass silently — updating
+it deliberately IS that guard working rather than being worked around.
+
+**THE TWO PROPERTIES THE OLD ORDER DEFENDED BOTH SURVIVE**, and they are why
+`request-counts` moved rather than `percentiles`: the five charts sharing
+`RUN_TIME`'s crosshair stay adjacent at 1-5, and the distribution pair stays
+adjacent at 7-8.
+
+**`<h3>` WAS TRIED FIRST AND THE PAGE SAID NO.** `Chart` renders every figure's
+title as an `<h3>` at 15px, so a group heading at that level is a SIBLING of the
+charts it contains — and at that size does not read as their parent either. The
+failing assertion listed all nine chart titles beside the four group names,
+which is how the collision was found. **A heading level is a containment claim,
+and the only way to check it is to ask the rendered page.**
+
+**SO THE GROUPS ARE `SectionHeading`'s `<h2>`, AND THEY REPLACE THE `sr-only`
+<h2>Charts</h2>.** That heading existed for one stated reason —
+`run-charts.spec.ts` records that `aria-label` alone never let a screen-reader
+user navigating by heading reach the section. Four named, visible groups do
+that job better than one invisible word, so keeping both would have left a
+heading whose only purpose had been taken over. The section keeps `aria-label`
+for its own name. **Only ONE assertion depended on it**, checked before
+changing it; the tab names in `RunTabs.test.tsx` are tabs, not headings.
+
+**THE TEST ASSERTS CONTAINMENT, NOT PRESENCE, AND THE RED-VERIFY IS WHY THAT
+DISTINCTION IS IN IT.** Four headings above one undifferentiated grid is the
+BEFORE state wearing labels, and a `toEqual` over heading text passes against
+it. Two mutations, both red: flattening to one group fails on the heading list,
+and SWAPPING two charts between groups — all four headings intact, all four
+groups populated — fails on containment, naming the figure that went missing
+from `Offered load`.
+
+**AND AN EMPTY GROUP CANNOT BE BUILT, WHICH THE RED-VERIFY DISCOVERED BY
+ACCIDENT.** The first attempt at that second mutation emptied `Outcomes`, and
+`tsc` refused: `ChartGroup`'s `children` is required. A heading with nothing
+under it is unrepresentable, so the swap is the only shape that mutation can
+take.
+
+**`[data-testid^="chart-"]` MATCHES THE DATA TABLES TOO.** Each chart renders a
+`chart-data-<id>` table under the same prefix, so the loose selector returned
+every figure followed by its own table. `figures()` in that file has guarded
+the identical thing for years; the group-scoped query needed the same
+`figure[...]` narrowing.
+
+**AND THREE TESTS FAILED AT FIVE WORKERS AND PASSED AT TWO**, on a machine at
+load 35 — the contention signature this file already documents. The tell was
+`chart-data-concurrent-users` resolving to ZERO while the same test passed
+alone in 3.8s. Re-run constrained before believing an e2e failure that looks
+like missing data.
+
 The runner-cannot-write-its-volumes branch added no unit FILE, no unit case and
 no spec — its diff is one `install -d` line, one CI step and a README note — so
 unit stays 151 / 1855, e2e stays 137 and integration is unchanged. It is the

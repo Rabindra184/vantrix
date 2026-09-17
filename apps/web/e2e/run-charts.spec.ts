@@ -64,15 +64,26 @@ import { runChartsPath, runPath } from '../src/routes/paths.js';
  * that kept every figure present would silently undo it.
  */
 const CHART_IDS = [
-  'concurrent-users',
-  'user-start-rate',
-  'requests-per-second',
-  'responses-per-second',
-  'percentiles',
-  'indicators',
-  'request-counts',
-  'distribution',
-  'percentile-distribution',
+  // ═══ THE ORDER IS THE FOUR GROUPS (review 09-13 M17, second half) ═══
+  //
+  // `RunChartsTab` draws these under four headings, and this list is the
+  // document order they produce. The list is asserted whole, so a regrouping
+  // that silently reordered figures fails here with both sequences printed.
+  //
+  // `request-counts` moved LAST in that change: it sat seventh, between
+  // `indicators` and `distribution`, which split the response-time run in two.
+  // The two properties the previous order defended both survive — the five
+  // charts sharing RUN_TIME's crosshair stay adjacent at 1-5, and the
+  // distribution pair stays adjacent at 7-8.
+  'concurrent-users', // ┐ Offered load
+  'user-start-rate', // ┘
+  'requests-per-second', // ┐ Throughput
+  'responses-per-second', // ┘
+  'percentiles', // ┐ Response time
+  'indicators', // │
+  'distribution', // │
+  'percentile-distribution', // ┘
+  'request-counts', // Outcomes
 ] as const;
 
 /** Every chart figure on the page, in document order. */
@@ -227,11 +238,88 @@ test('a completed run shows the eight overview charts, in §13.2 order, on their
   // the case it exists to catch. Kept (the tab split is worth guarding) and
   // re-pointed, with the positive `toContain('Charts')` above it as the
   // paired check that the page rendered at all.
+  //
+  // AND THE POSITIVE MOVED WHEN THE HEADING IT NAMED DID (review 09-13 M17).
+  // This read `toContain('Charts')`, for the reachability reason above. That
+  // `sr-only` <h2>Charts</h2> is gone: the tab's four group headings are real,
+  // visible <h2>s now, and they reach the section far better than one invisible
+  // word did. So the paired positive is the group list — which is a STRONGER
+  // check than the one it replaces, because it fails if the grouping collapses
+  // as well as if the page does not render.
   const headings = await page.getByRole('heading').allTextContents();
   expect(headings[0]).toMatch(/ParitySimulation/);
-  expect(headings).toContain('Charts');
+  expect(headings).toContain('Offered load');
   expect(headings).not.toContain('Platform gates');
   expect(headings).not.toContain('Overview');
+});
+
+/**
+ * The four investigation groups (review 09-13 M17, second half).
+ *
+ * WHAT THIS ASSERTS IS CONTAINMENT, NOT PRESENCE, and the difference is the
+ * whole test. Four headings exist on a page that renders them above one
+ * undifferentiated grid too — that is precisely the before state wearing
+ * labels, and a `toEqual` over heading text would pass against it. So each
+ * group is asked which figures are INSIDE it.
+ *
+ * The heading names are checked as an ordered list as well, because a group
+ * whose charts are right and whose name drifted is a heading that lies about
+ * the figures under it — which is the defect M17 is about, one level up.
+ *
+ * Deliberately NOT a snapshot of the whole tree: that would fail on any chart
+ * added to any group, which is a change this assertion has no opinion about.
+ * It pins where each of the nine lives, and nothing else.
+ */
+test('every chart sits under the question it answers', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+  await expect(figures(page).first()).toBeVisible();
+
+  // The groups, in document order. `level: 2` is asserted rather than assumed:
+  // `Chart` renders every figure's title as an `<h3>`, so a group heading at
+  // that level would be a SIBLING of the charts it contains — which is what a
+  // first attempt here did, and the failure listed all nine chart titles beside
+  // the four group names. The level IS the containment claim.
+  expect(await page.getByRole('heading', { level: 2 }).allTextContents()).toEqual([
+    'Offered load',
+    'Throughput',
+    'Response time',
+    'Outcomes',
+  ]);
+
+  const GROUPS = [
+    { heading: 'Offered load', ids: ['concurrent-users', 'user-start-rate'] },
+    { heading: 'Throughput', ids: ['requests-per-second', 'responses-per-second'] },
+    {
+      heading: 'Response time',
+      ids: ['percentiles', 'indicators', 'distribution', 'percentile-distribution'],
+    },
+    { heading: 'Outcomes', ids: ['request-counts'] },
+  ] as const;
+
+  for (const group of GROUPS) {
+    // The SECTION named by that heading, not the heading's siblings: a
+    // `locator('..')` walk would depend on how deeply the markup nests.
+    const section = page.getByRole('region', { name: group.heading, exact: true });
+    await expect(section).toHaveCount(1);
+    // `figure[...]`, not `[data-testid^="chart-"]`: each chart also renders a
+    // `chart-data-<id>` TABLE under the same prefix, so the loose selector
+    // returned every figure followed by its own table. Same shape `figures()`
+    // above already guards against, met one level in.
+    const inside = await section
+      .locator('figure[data-testid^="chart-"]')
+      .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid')));
+    expect(inside).toEqual(group.ids.map((id) => `chart-${id}`));
+  }
+
+  // And every figure is accounted for — a tenth chart dropped outside all four
+  // groups would satisfy every assertion above while being exactly the
+  // ungrouped page this finding exists to remove.
+  const grouped = GROUPS.flatMap((g) => g.ids);
+  expect(grouped).toHaveLength(CHART_IDS.length);
+  expect([...grouped].sort()).toEqual([...CHART_IDS].sort());
 });
 
 test('every chart actually draws — the real ECharts renders SVG marks for all eight', async ({
