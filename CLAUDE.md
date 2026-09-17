@@ -115,6 +115,111 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The residue-orphan-users branch added no unit FILE, no unit case and no spec —
+its diff is one SQL script and its two fixtures — so unit stays 153 / 1884,
+integration 137 / 1733 and e2e 140. It is guarded by CI's `test-residue` job,
+which no `pnpm` gate runs.
+
+**A CLEANUP SCRIPT LEFT ONE ROW BEHIND EVERY TIME, FOR EVER.** `residue_user`
+found users by walking `org_member` from the residue orgs — which cannot see a
+user that never had a membership at all, and `seedUserWithoutOrg`
+(`apps/web/e2e/fixtures.ts`) creates exactly that on purpose for the
+403-after-login case. Such a user has no org, no project and no rows anywhere
+else, so nothing else in the file reaches it either: one leaked login per
+`pnpm test:e2e` run, invisible, permanent.
+
+**FOUND BY READING THE RESULT OF A SWEEP RATHER THAN BY TRUSTING IT.** A full
+clean took the database to 0 orgs and 0 runs — and one row in `user`,
+`orphan-f8110219@example.test`. A cleanup that reports success and leaves
+something is the shape nobody checks, because the number that matters (the
+database is 9 MB now) is right.
+
+**THE SECOND ARM MATCHES THE EMAIL SHAPE, AND THE SHAPE IS THE CONTRACT.**
+Every fixture user in that file comes from ONE helper — `unique(prefix)` =
+`${prefix}-${randomUUID().slice(0, 8)}` — at the RFC 2606 reserved
+`example.test` domain, so `^[a-z][a-z-]*-[0-9a-f]{8}@example\.test$` cannot
+collide with a human address. Matching the SHAPE rather than today's three
+prefixes is deliberate: the org patterns above it are hand-written slugs that
+each need adding by hand, and this file admits "nothing can detect a new SLUG
+shape for you" — for users, one helper's output means a fourth fixture is
+covered the day it is written.
+
+**AND THE `NOT EXISTS (org_member)` GUARD IS WHAT MAKES A PATTERN MATCH SAFE.**
+A user matching either arm is still spared if it holds any surviving
+membership, so a fixture-named account somebody added to a real org is never
+removed. Pattern to FIND, membership to DECIDE.
+
+**THE FIXTURES SEEDED NO USERS AT ALL, SO BOTH ARMS WERE UNGUARDED** — the new
+one and the one that had been there all along. Five users now, each making one
+outcome falsifiable, and the two keepers are the ones that matter: a real
+person who has signed up and not yet joined an org (which a rule keyed on
+membership alone would delete), and a fixture-SHAPED user who belongs to the
+keeper org (which a rule keyed on the email alone would delete).
+
+**A GUARD WHOSE CASES SATISFY TWO RULES AT ONCE CANNOT TELL YOU WHICH RULE IS
+WORKING.** Deleting the OLD arm entirely left the fixture GREEN, because every
+seeded fixture user matched the new email shape as well as its membership. The
+membership walk is not redundant in production — the API fixtures sign up fixed
+strings like `minter@example.test`, which no shape matches — so the fixture
+grew a residue member with a plain address, and that mutation now fails naming
+it. **When two rules both cover every case in your fixture, the fixture is
+testing their union and nothing else.**
+
+**FOUR MUTATIONS, FOUR DISTINCT FAILURES**, which is the property worth having:
+
+```
+  the new arm removed        the org-less fixture user survived
+  the old arm removed        a residue member with a non-fixture email survived
+  NOT EXISTS dropped         a fixture-shaped user in a REAL org was deleted
+  arm widened to "no org"    a real user with no org was deleted
+```
+
+**AND CI CAUGHT WHAT EVERY LOCAL RUN COULD NOT, BECAUSE MY RESET WAS KINDER
+THAN THE JOB'S.** The `test-residue` job failed on the one step this branch
+should have been safest for: its red-verify, `residue-assert.sql passed against
+residue-broken.sql — it has stopped testing anything`.
+
+**`TRUNCATE org CASCADE` DOES NOT REACH `"user"`.** CASCADE follows tables that
+REFERENCE the truncated one; `user` is referenced BY `org_member` and
+references nothing, so every login survives a reset of the orgs. The job seeds
+a SECOND time for its red-verify, so the keeper users were already there and
+the new `INSERT INTO "user"` hit `duplicate key value violates unique
+constraint "user_pkey"`.
+
+**AND THE SEED IS ONE TRANSACTION, SO A DUPLICATE USER ROLLED BACK THE ORGS
+TOO.** Not "the users were skipped": nothing was seeded at all, the broken
+script then had nothing to orphan, and the assertion that exists to catch a
+vacuous assertion passed against an empty database. **A fixture that rolls back
+silently is indistinguishable from a product that cleaned up perfectly** — both
+leave zero rows, which is what every "residue is gone" assertion checks for.
+
+The seed clears the six user ids it owns before inserting them. **A fixture
+that a caller may run twice has to own its rows rather than assume the reset
+around it reaches them** — and which tables a truncate reaches is a fact about
+FK direction, not about what feels related.
+
+**MY LOCAL RESET DELETED USERS AND THE JOB'S DOES NOT, WHICH IS THE WHOLE
+REASON THIS SURVIVED FOUR MUTATIONS AND A BASELINE.** Every local run was green,
+including all four red-verifies, because the helper I wrote to reset between
+them was more thorough than the thing it stood in for. **A guard rehearsed with
+your own harness is not rehearsed** — replay the CI step's exact commands, in
+its order, including the parts that look like housekeeping.
+
+**AND `git checkout -- <file>` DESTROYED THE UNCOMMITTED FIX. THIRD TIME IN
+THIS FILE.** The zoom-reflow entry records it, the attribute-navigation-stalls
+entry records it AGAIN with "writing a lesson down is not the same as having
+it" — and it happened here anyway, restoring the script from an INDEX that
+never held the fix, between mutation one and mutation two.
+
+**THE TELL WAS A RED-VERIFY FAILING ON THE WRONG ASSERTION.** Mutation two
+reported "the org-less fixture user survived" when it should have reported the
+keeper being deleted — because the file it ran against was not the file under
+test. A red-verify that fails is not automatically a red-verify that worked:
+**read WHICH assertion failed, not merely that one did.** Committing the
+checkpoint first — which this file already prescribes, twice — is the whole
+fix, and it is now cheap enough that there is no excuse: one `git commit -q`
+before the first mutation.
+
 M12 IS CLOSED AND NEEDED NO CODE, WHICH IS ITSELF THE RECORD. No branch, no
 floor movement: unit stays 153 / 1884, integration 137 / 1733, e2e 140. This
 paragraph exists because "nothing to do" and "nobody checked" look identical in
