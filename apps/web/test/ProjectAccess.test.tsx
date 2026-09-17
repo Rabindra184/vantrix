@@ -327,4 +327,161 @@ describe('ProjectAccess', () => {
       expect(screen.getByText('Completed reports, Read dashboards')).toBeInTheDocument();
     });
   });
+
+  /* ====================================================================== *
+   * REVIEW M18 — A TOKEN'S LIFETIME, AUTHORED AND THEN VISIBLE
+   * ====================================================================== */
+
+  /**
+   * ═══ THE COLUMN AND THE STATUS ANSWER DIFFERENT QUESTIONS ═══
+   *
+   * "Expires" is a FACT about the credential — when it runs out, or never.
+   * "Status" is whether it works right now, and a token can fail for two
+   * independent reasons. Asserting only one of them would let the other drift:
+   * a table printing a past date beside "Active" is precisely the state M18
+   * exists to make impossible, and it reads fine column by column.
+   *
+   * Indexes are DERIVED from the header rather than written down, for the
+   * reason this repo already paid for once: a column reorder made a `.nth(3)`
+   * status assertion read the simulation cell instead, and failed for a reason
+   * that was not the rule under test. Two columns here also print the word
+   * "Never" (Last used and Expires), so an unindexed text query cannot tell
+   * them apart at all.
+   */
+  const columnIndex = (label: string): number => {
+    const headers = within(tokenList()).getAllByRole('columnheader');
+    const index = headers.findIndex((h) => h.textContent?.trim() === label);
+    expect(index, `no "${label}" column`).toBeGreaterThanOrEqual(0);
+    return index;
+  };
+  const cellOf = (tokenName: string, column: string): HTMLElement => {
+    const row = within(tokenList()).getByRole('row', { name: new RegExp(tokenName) });
+    return within(row).getAllByRole('cell')[columnIndex(column)]!;
+  };
+
+  const tokenRow = (over: Record<string, unknown>) => ({
+    prefix: 'pp_existing',
+    name: 'Existing CI',
+    scopes: ['ingest', 'read'],
+    createdAt: '2026-08-20T00:00:00.000Z',
+    lastUsedAt: null,
+    revokedAt: null,
+    ...over,
+  });
+
+  it('offers an expiry choice that starts at never, and sends no expiry for it', async () => {
+    renderSetup();
+    await ready();
+
+    // The default is the one the FINDING asks for: no server policy, and no
+    // lifetime imposed on a caller who did not choose one.
+    expect(screen.getByTestId('token-expiry')).toHaveValue('');
+
+    fireEvent.change(screen.getByLabelText(/token name/i), { target: { value: 'Nightly CI' } });
+    fireEvent.click(screen.getByRole('button', { name: /create token/i }));
+
+    await waitFor(() => expect(mintProjectTokenMock).toHaveBeenCalled());
+    // Not `expiresAt: null` — the field is optional and its absence is what the
+    // schema reads as "never". A null would be a value the contract refuses.
+    expect(mintProjectTokenMock.mock.calls[0]![1].expiresAt).toBeUndefined();
+  });
+
+  it('sends the chosen lifetime as an instant that far ahead', async () => {
+    renderSetup();
+    await ready();
+
+    fireEvent.change(screen.getByLabelText(/token name/i), { target: { value: 'Quarterly' } });
+    fireEvent.change(screen.getByTestId('token-expiry'), { target: { value: '90' } });
+    fireEvent.click(screen.getByRole('button', { name: /create token/i }));
+
+    await waitFor(() => expect(mintProjectTokenMock).toHaveBeenCalled());
+    const sent = mintProjectTokenMock.mock.calls[0]![1].expiresAt;
+    expect(sent).toBeDefined();
+    // COMPUTED, not written down: a hard-coded instant would break on the next
+    // day this suite runs. The window is wide because the assertion is about
+    // the ARITHMETIC — 90 days, not 90 hours or 90 minutes — and narrow enough
+    // that an off-by-one unit fails it.
+    const drift = Math.abs(Date.parse(sent!) - (Date.now() + 90 * 86_400_000));
+    expect(drift).toBeLessThan(60_000);
+  });
+
+  it('prints Never for a token that does not expire, and the date for one that does', async () => {
+    fetchProjectTokensMock.mockResolvedValueOnce({
+      tokens: [
+        tokenRow({ prefix: 'pp_forever', name: 'Forever CI', expiresAt: null }),
+        tokenRow({ prefix: 'pp_dated', name: 'Dated CI', expiresAt: '2027-01-15T09:30:00.000Z' }),
+      ],
+    });
+    renderSetup();
+    await ready();
+    await screen.findByText('Dated CI');
+
+    expect(cellOf('Forever CI', 'Expires')).toHaveTextContent('Never');
+    expect(cellOf('Forever CI', 'Status')).toHaveTextContent('Active');
+    // The year is enough: `formatInstant` renders in the reader's own zone, so
+    // pinning the rendered string would pin this suite's timezone rather than
+    // the component.
+    expect(cellOf('Dated CI', 'Expires')).toHaveTextContent('2027');
+    expect(cellOf('Dated CI', 'Status')).toHaveTextContent('Active');
+  });
+
+  it('calls a token whose expiry has passed expired, not active', async () => {
+    fetchProjectTokensMock.mockResolvedValueOnce({
+      tokens: [tokenRow({ name: 'Lapsed CI', expiresAt: '2020-01-01T00:00:00.000Z' })],
+    });
+    renderSetup();
+    await ready();
+    await screen.findByText('Lapsed CI');
+
+    expect(cellOf('Lapsed CI', 'Status')).toHaveTextContent('Expired');
+    // The date stays visible beside the verdict: "Expired" with no date says a
+    // credential stopped working and not when, which is half the answer.
+    expect(cellOf('Lapsed CI', 'Expires')).toHaveTextContent('2020');
+  });
+
+  it('calls a token that is both revoked and expired revoked', async () => {
+    // Revocation is a decision somebody made; expiry is time passing. Only the
+    // first is actionable — "Expired" here would be true and would send the
+    // reader to mint a replacement of a credential that was deliberately
+    // killed. The ORDER inside `tokenStatus` is the whole function, so this is
+    // the case that pins it: a row satisfying both conditions at once.
+    fetchProjectTokensMock.mockResolvedValueOnce({
+      tokens: [
+        tokenRow({
+          name: 'Killed CI',
+          expiresAt: '2020-01-01T00:00:00.000Z',
+          revokedAt: '2026-08-21T00:00:00.000Z',
+        }),
+      ],
+    });
+    renderSetup();
+    await ready();
+    await screen.findByText('Killed CI');
+
+    expect(cellOf('Killed CI', 'Status')).toHaveTextContent('Revoked');
+    expect(cellOf('Killed CI', 'Status')).not.toHaveTextContent('Expired');
+  });
+
+  it('reads a missing expiry as never, the way an API that predates the field reports it', async () => {
+    // `undefined` is not a token without an expiry — it is a pod that has not
+    // been deployed yet, mid-rolling-deploy. It must read exactly as the page
+    // read before this column existed, which is the whole reason the contract
+    // field is `.optional()` as well as `.nullable()`.
+    //
+    // AND THE COST OF GETTING IT WRONG IS NOT A WRONG LABEL. Measured by
+    // narrowing the cell's guard to `=== null`: `formatInstant(undefined)`
+    // throws `RangeError: Invalid time value`, which takes the whole token
+    // table down — 11 of this file's 15 cases fail, not one. So the guard is
+    // load-bearing for the PAGE, not just for this column.
+    fetchProjectTokensMock.mockResolvedValueOnce({
+      tokens: [tokenRow({ name: 'Old Pod CI' })],
+    });
+    renderSetup();
+    await ready();
+    await screen.findByText('Old Pod CI');
+
+    expect(cellOf('Old Pod CI', 'Expires')).toHaveTextContent('Never');
+    expect(cellOf('Old Pod CI', 'Status')).toHaveTextContent('Active');
+  });
+
 });

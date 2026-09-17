@@ -1,0 +1,21 @@
+-- An optional expiry for an API token (review 09-13 M18).
+--
+-- OPTIONAL, AND NULL MEANS WHAT IT ALWAYS MEANT. Every token minted before
+-- this migration keeps working forever, and one minted after it without an
+-- expiry behaves identically. The alternative -- a default TTL -- would be
+-- this migration inventing a security policy for every existing deployment
+-- and silently breaking credentials nobody was told about.
+--
+-- timestamptz, NOT a bare timestamp. `api_token`'s other instants are bare
+-- `timestamp` and get away with it because they are read only through Prisma,
+-- which decodes them as UTC; node-postgres decodes the same column in the
+-- NODE PROCESS's local zone. The moment anything reads this column through the
+-- raw pool -- which is how the trends query already reads `run` -- a bare
+-- column would be hours out on any non-UTC host, and expiry is precisely the
+-- kind of value that must not be. See CLAUDE.md's timestamptz entry.
+ALTER TABLE "api_token" ADD COLUMN "expires_at" TIMESTAMPTZ(3);
+
+-- Verification reads by prefix and then checks this, so no index is added:
+-- the lookup is already one row by unique key, and an index on a column that
+-- is NULL for most rows and never used as a predicate would cost writes and
+-- buy nothing.

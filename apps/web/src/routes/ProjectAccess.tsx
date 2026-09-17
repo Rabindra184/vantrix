@@ -6,6 +6,7 @@ import {
   type MintedToken,
   type TokenListResponse,
   type TokenScopeName,
+  type TokenSummary,
 } from '@perfportal/contracts';
 import Button from '../components/Button';
 import Card from '../components/Card';
@@ -76,13 +77,36 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
   });
   const [tokenName, setTokenName] = useState('CI ingest');
   const [scopes, setScopes] = useState<Set<TokenScopeName>>(() => new Set(DEFAULT_SCOPES));
+  /* ═══ EXPIRY IS A CHOICE WITH NO DEFAULT (review 09-13 M18) ═══
+   *
+   * `null` is "never", and it is the initial value. The finding asks for token
+   * expiry to be ASSESSED as a product requirement, not for a policy to be
+   * invented here — a default TTL would impose one on every project on the
+   * next deploy, including CI that has run untouched for a year.
+   *
+   * DURATIONS, NOT A DATE PICKER. "90 days" is the unit a token is actually
+   * issued in, and it sidesteps the question a date control cannot avoid:
+   * midnight in WHOSE zone. The absolute instant is computed once, at submit,
+   * from the reader's own clock. */
+  const [expiresInDays, setExpiresInDays] = useState<number | null>(null);
   const [minted, setMinted] = useState<MintedToken | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const selectedScopes = useMemo(() => TOKEN_SCOPES.filter((scope) => scopes.has(scope)), [scopes]);
 
   const mintMutation = useMutation({
-    mutationFn: () => mintProjectToken(slug, { name: tokenName.trim(), scopes: selectedScopes }),
+    mutationFn: () =>
+      mintProjectToken(slug, {
+        name: tokenName.trim(),
+        scopes: selectedScopes,
+        /* Computed at SUBMIT, not at render: a form left open over a long
+           lunch would otherwise mint a token counted from when the page
+           loaded. Omitted entirely for "never", because the field is optional
+           and `undefined` is what the schema reads as "no expiry". */
+        ...(expiresInDays === null
+          ? {}
+          : { expiresAt: new Date(Date.now() + expiresInDays * 86_400_000).toISOString() }),
+      }),
     onSuccess: (token) => {
       setMinted(token);
       setCopied(false);
@@ -184,6 +208,30 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
               </label>
             ))}
           </fieldset>
+
+          <label className="flex max-w-xs min-w-0 flex-col gap-1.5">
+            <span className="text-[0.8125rem] font-medium text-primary">Expires</span>
+            <select
+              data-testid="token-expiry"
+              className={INPUT}
+              value={expiresInDays === null ? '' : String(expiresInDays)}
+              onChange={(event) =>
+                setExpiresInDays(event.target.value === '' ? null : Number(event.target.value))
+              }
+            >
+              {/* "Never" first and selected: it is what this page did before
+                  this control existed, so a reader who ignores the field gets
+                  exactly the behaviour they had. */}
+              <option value="">Never</option>
+              <option value="30">In 30 days</option>
+              <option value="90">In 90 days</option>
+              <option value="365">In a year</option>
+            </select>
+            <span className="text-[0.75rem] text-muted">
+              An expired token stops authenticating; it is not deleted, and the list still says it
+              existed.
+            </span>
+          </label>
 
           {mintMutation.isError && (
             <div
@@ -356,7 +404,9 @@ function TokenTable({
   }
   const caption =
     'Every API token in this project. The secret is shown once when the token is created and ' +
-    'never again — the Prefix column is what identifies it afterwards.';
+    'never again — the Prefix column is what identifies it afterwards. To rotate one, create ' +
+    'its replacement first and revoke the old token once the new one is in use: nothing here ' +
+    'edits a token in place, because the secret cannot be re-read to hand over.';
   return (
     <TableFrame caption={caption} label="Project tokens table">
       <table className={TABLE}>
@@ -368,6 +418,7 @@ function TokenTable({
             <th scope="col" className={TH}>Permissions</th>
             <th scope="col" className={TH}>Created</th>
             <th scope="col" className={TH}>Last used</th>
+            <th scope="col" className={TH}>Expires</th>
             <th scope="col" className={TH}>Status</th>
             <th scope="col" className={TH}>Actions</th>
           </tr>
@@ -392,7 +443,13 @@ function TokenTable({
               <td className={TD}>
                 {token.lastUsedAt === null ? 'Never' : formatInstant(token.lastUsedAt)}
               </td>
-              <td className={TD}>{token.revokedAt === null ? 'Active' : 'Revoked'}</td>
+              <td className={TD}>
+                {token.expiresAt === null || token.expiresAt === undefined
+                  ? 'Never'
+                  : formatInstant(token.expiresAt)}
+              </td>
+              {/* THREE STATES, NOT TWO (review 09-13 M18). See `tokenStatus`. */}
+              <td className={TD}>{tokenStatus(token)}</td>
               <td className={TD}>
                 {confirming === token.prefix ? (
                   // ARMED. The accessible name changes from "Revoke" to
@@ -453,4 +510,22 @@ function TokenTable({
       </table>
     </TableFrame>
   );
+}
+
+/**
+ * Active / Expired / Revoked (review 09-13 M18).
+ *
+ * REVOKED WINS OVER EXPIRED, and the order is the whole function. A token can
+ * be both — revoked last month, expiry passed since — and only one of the two
+ * explains why it stopped working. "Revoked" says somebody killed it, which is
+ * actionable; "Expired" would say it ran out, which is true and misleading.
+ *
+ * `undefined` is an API pod that predates the field, not a token without an
+ * expiry, and it reads as Active because that is exactly what such a pod
+ * reported before this column existed.
+ */
+function tokenStatus(token: TokenSummary): 'Active' | 'Expired' | 'Revoked' {
+  if (token.revokedAt !== null) return 'Revoked';
+  if (token.expiresAt != null && Date.parse(token.expiresAt) <= Date.now()) return 'Expired';
+  return 'Active';
 }

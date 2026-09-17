@@ -148,6 +148,34 @@ describe('OpenAPI document', () => {
     }
   });
 
+  /**
+   * ═══ A `.refine()` CAN ERASE THE FIELDS IT GUARDS, SILENTLY ═══
+   *
+   * `MintTokenRequestSchema` gained `expiresAt` and a refinement refusing an
+   * instant in the past (review 09-13 M18). That refinement wraps the object,
+   * and `components.schemas` is DERIVED from these zod schemas — so a
+   * conversion that does not see through the wrapper emits a schema with no
+   * properties at all, or drops the new one, while every runtime test stays
+   * green because the SERVER still validates correctly.
+   *
+   * What would break is only the document: callers reading it would not know
+   * the field exists, and nothing else here asks. `expiresAt` is asserted
+   * beside `name` and `scopes` for that reason — the two that were always
+   * there prove the conversion produced a real object rather than an empty
+   * one, and the new one proves the refinement did not cost it.
+   */
+  it('keeps the mint request\'s own fields on the derived schema, refinement and all', async () => {
+    const doc = await fetchDoc();
+    const schema = (doc.components as { schemas?: Record<string, { properties?: Record<string, unknown>; required?: string[] }> })
+      ?.schemas?.['MintTokenRequest'];
+
+    expect(Object.keys(schema?.properties ?? {}).sort()).toEqual(['expiresAt', 'name', 'scopes']);
+    // Optional, and the document has to say so: a required expiry would be a
+    // lifetime policy imposed on every caller, which M18 deliberately refuses.
+    expect(schema?.required ?? []).not.toContain('expiresAt');
+    expect(schema?.required ?? []).toEqual(expect.arrayContaining(['name', 'scopes']));
+  });
+
   it('lists "remediation" as required on the problem-details schema', async () => {
     const doc = await fetchDoc();
     const problemDetails = doc.components?.schemas?.['ProblemDetails'];

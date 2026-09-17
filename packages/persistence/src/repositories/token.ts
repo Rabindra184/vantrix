@@ -9,6 +9,9 @@ export interface TokenRecord {
   scopes: string[];
   revokedAt: Date | null;
   lastUsedAt: Date | null;
+  /** `null` is "never expires" (review 09-13 M18). Verification rejects a
+   *  token whose expiry has passed, beside the revoked check. */
+  expiresAt: Date | null;
 }
 
 /**
@@ -26,11 +29,13 @@ export interface TokenSummaryRow {
   createdAt: Date;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
+  /** `null` is "never expires" (review 09-13 M18). */
+  expiresAt: Date | null;
 }
 
 const SUMMARY_SELECT = {
   prefix: true, name: true, scopes: true,
-  createdAt: true, lastUsedAt: true, revokedAt: true,
+  createdAt: true, lastUsedAt: true, revokedAt: true, expiresAt: true,
 } as const;
 
 export class TokenRepository {
@@ -49,6 +54,7 @@ export class TokenRepository {
       scopes: row.scopes,
       revokedAt: row.revokedAt,
       lastUsedAt: row.lastUsedAt,
+      expiresAt: row.expiresAt,
     };
   }
 
@@ -60,6 +66,8 @@ export class TokenRepository {
   async create(input: {
     orgId: string; projectId: string; name: string;
     prefix: string; tokenHash: string; scopes: string[];
+    /** Optional; `null`/absent is "never expires" (review 09-13 M18). */
+    expiresAt?: Date | null;
   }): Promise<TokenSummaryRow> {
     return this.prisma.apiToken.create({ data: input, select: SUMMARY_SELECT });
   }

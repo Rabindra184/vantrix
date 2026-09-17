@@ -201,6 +201,12 @@ model ApiToken {
   createdAt  DateTime  @default(now()) @map("created_at")
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
+  /// Optional. NULL is "never expires", which is what every token minted
+  /// before migration 20260917120000 has and what one minted without an
+  /// expiry still gets — a default TTL would invent a policy for deployments
+  /// nobody asked. timestamptz because expiry must not drift by a zone; see
+  /// the migration.
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(3)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
