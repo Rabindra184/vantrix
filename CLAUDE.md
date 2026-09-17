@@ -115,6 +115,46 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+M12 IS CLOSED AND NEEDED NO CODE, WHICH IS ITSELF THE RECORD. No branch, no
+floor movement: unit stays 153 / 1884, integration 137 / 1733, e2e 140. This
+paragraph exists because "nothing to do" and "nobody checked" look identical in
+a review ledger a month later.
+
+**THE FINDING OFFERS TWO ARMS AND THE PRODUCT ALREADY TOOK THE SECOND.** M12:
+"Add heartbeat-backed availability with last-seen time, OR accurately show
+`Runner availability unknown` with a connection-check/setup action. Do not
+imply job history proves current connectivity." Read against the code rather
+than against memory, all three clauses hold:
+
+```
+  headline      'Runner availability unknown'            runnerReadiness.ts
+  no oracle     "Queue one to find out whether a node
+                 is connected" is gone                   (killed by M12 itself)
+  an action     deploy the runner beside this instance,
+                with a token carrying On-prem runner     ProjectSetup.tsx
+  honest        "until one claims a job, this page
+                cannot tell whether any are connected"   runnerReadiness.ts
+```
+
+**THE HEARTBEAT ARM IS DECLINED WITH A REASON, NOT DEFERRED WITH A SHRUG.**
+There is no runner-health endpoint and `runner_job` has no heartbeat column,
+because the on-prem runner POLLS — nothing in the API is told when one connects
+or leaves. Building that arm is a backend feature and a product decision; the
+finding explicitly allows the other arm, and the other arm is what an operator
+can act on today.
+
+**AND THE SCOPE OF THE ACTION IS THE PART WORTH RE-READING.** `needsSetup` is
+true for `unknown` ALONE. `idle` and `stalled` mean a runner HAS been seen, so
+telling that reader to go deploy one is wrong advice confidently given — the
+same class of error the finding objects to, one state over.
+
+**THE GENERAL RULE: A FINDING CLOSED BY EVIDENCE STILL GETS AN ENTRY.** Three
+sweeps in this review found real work behind an apparently-closed finding, and
+the cost each time was a reader trusting a verdict nobody had re-derived. The
+cheap defence is to write down WHICH arm was taken, WHERE the code says so, and
+WHY the other was refused — so the next reader re-checks a claim instead of
+re-doing an investigation.
+
 The review-m18-token-lifecycle branch (M18 — the finding is closed) added no
 unit FILE and 11 cases — 5 to `packages/contracts/test/tokens.test.ts` and 6 to
 `apps/web/test/ProjectAccess.test.tsx` — and its **e2e is UNCHANGED** (it
