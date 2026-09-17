@@ -9,6 +9,7 @@ import { fetchRunnerJobs, runnerJobsQueryKey } from '../api/runner';
 import ProjectShell from './ProjectShell';
 import { projectAccessPath, projectNewRunnerRunPath } from './paths';
 import { runnerReadiness, type RunnerReadinessKind } from './runnerReadiness';
+import BundleUpload from './BundleUpload';
 
 /**
  * HOW A RUN GETS INTO THIS PROJECT — review M15.
@@ -95,30 +96,43 @@ function AddResults({ slug }: { readonly slug: string }) {
      short enough that a column is the right shape: a list of choices. */
   return (
     <div className="flex flex-col gap-4">
-        {/* ═══ "Import via API", NOT "Import results" — review M05 ═══
+        {/* ═══ THE CARD THAT COULD NOT KEEP ITS PROMISE, AND NOW DOES (M05) ═══
          *
          * The finding is a capability mismatch: the card promised an import and
          * then told the reader there is no browser upload, so the one thing its
-         * title offered was the one thing it could not do. The review asks for a
-         * real file picker "for a polished manual workflow" and, until that
-         * exists, for the path to be labelled honestly.
+         * title offered was the one thing it could not do. "Import via API" was
+         * the INTERIM the finding itself specifies — label the path honestly
+         * until the picker exists.
          *
-         * IT CANNOT BE BUILT FROM HERE, WHICH IS WHY THE LABEL IS THE ANSWER
-         * TODAY. `POST /v1/runs` is the only route that accepts a bundle, and
-         * it REFUSES a browser session by design: `ingest.controller.ts` reads
-         * `tenant.projectId` and answers `PROJECT_REQUIRED` — "Ingest requires
-         * a project-scoped credential" — because a session is org-scoped and
-         * names no project, while a token is minted against exactly one. A
-         * picker therefore needs a project-scoped ingest route that does not
-         * exist, plus its contract, its OpenAPI entry and its own tests. That
-         * is a feature; a label that lies is worse than one that is plain while
-         * it is being built. */}
+         * THIS COMMENT USED TO ARGUE THE PICKER COULD NOT BE BUILT FROM HERE,
+         * and it was right at the time: `POST /v1/runs` is the only route that
+         * accepted a bundle and it REFUSES a browser session by design —
+         * `ingest.controller.ts` reads `tenant.projectId` and answers
+         * `PROJECT_REQUIRED`, because a session is org-scoped and names no
+         * project while a token is minted against exactly one.
+         *
+         * So the picker was blocked on a route, not on a component. That route
+         * exists now: `POST /v1/projects/:slug/runs` resolves the project from
+         * the URL within the session's own org, which is the resolution
+         * `TokensController` has always used for a session-only project route.
+         * The title is the plain one again because the card can now do what it
+         * says. */}
       <EntryCard
-        title="Import via API"
+        title="Import results"
         icon={<UploadIcon className="h-4 w-4" />}
-        description="You already have a finished Gatling report. Post the bundle to the API and PerfPortal parses it."
+        description="You already have a finished Gatling report. Choose the bundle and PerfPortal parses it."
         steps={
           <>
+          <BundleUpload slug={slug} />
+
+          {/* The curl stays, one rung down. CI has no file picker, and
+              "Configure CI" below points back at this command — but the reader
+              holding a bundle no longer has to read a shell snippet to use it.
+              A DISCLOSURE rather than the only way in. */}
+          <details className="mt-1">
+            <summary className="cursor-pointer text-[0.8125rem] text-muted">
+              Or post it from a terminal
+            </summary>
           <pre
             data-testid="upload-command"
             className="overflow-x-auto rounded-lg border border-default bg-sunken p-3 font-mono text-xs leading-relaxed text-primary"
@@ -129,25 +143,21 @@ function AddResults({ slug }: { readonly slug: string }) {
     ${instanceOrigin}/v1/runs`}
           </pre>
 
-          {/* ═══ SAYING WHAT IS NOT BUILT, RATHER THAN LETTING IT BE INFERRED
-              ═══
-
-              The review allows that "a completed-report import can be a later
-              feature" and asks for a clear guide and status meanwhile. A page
-              offering "Import results" with only a shell command invited the
-              reader to hunt for the file picker they assume is somewhere; one
-              sentence ends that hunt. It also stops the endpoint reading as a
-              workaround — it is the supported route, and the browser form would
-              be a convenience on top of it. */}
+          {/* This read "There is no browser upload form yet." It was true, it
+              was the honest thing to say while that was the case, and it is now
+              exactly the kind of stale claim this repo keeps paying for — so it
+              goes with the thing it described. What survives is the fact a CI
+              author still needs. */}
           <p className="text-[0.75rem] leading-snug text-muted">
-            There is no browser upload form yet. This endpoint is the supported route, and the
-            CI recipe below posts to the same one.
+            The picker above and this command reach the same ingest pipeline; use whichever suits
+            the machine you are on.
           </p>
           <p className="text-[0.75rem] leading-snug text-muted">
             The bundle is a <code className="font-mono">.tgz</code> containing the run directory
             Gatling wrote, <code className="font-mono">simulation.log</code> included. The response is
             a 202 with the run’s id; the worker parses it in the background.
           </p>
+          </details>
           </>
         }
       >

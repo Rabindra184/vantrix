@@ -115,6 +115,132 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m05-browser-upload branch (M05 — the finding is CLOSED) added ONE
+unit file — `apps/web/test/uploadBundle.test.ts` (13) — from a floor of
+152 / 1860 to **153 / 1873**, and its **e2e rises to 140**. Its integration
+floor is **137 files / 1721 tests**: that unit file is a `.ts` integration runs
+too, plus a new `apps/api/test/project-ingest.integration.test.ts` (8) and one
+case in `openapi.integration.test.ts`. `ProjectSetup.test.tsx` moved NEITHER
+number — one case was inverted and one rewritten, 16 either side.
+
+**THE INTERIM'S OWN TEST SAID HOW IT SHOULD DIE, AND IT DIED THAT WAY.** The
+M05 interim (entry further down this file) named the card "Import via API" and
+pinned the pair: that heading, AND `document.querySelector('input[type="file"]')`
+being null anywhere on the page. Its docstring said "when the picker is built,
+that second assertion is what should fail — which is the right way for this case
+to die." It failed exactly there, on the first full unit run of this branch.
+
+**THAT IS THE OPPOSITE OF THE TRAP THIS FILE RECORDS TWICE** — the M18 caveat
+and C06's caption, both pins that were right when written and became the reason
+a defect survived. The difference is not care, it is that this one named its
+SUCCESSOR: a pin that says what should break it is a pin the next reader can
+retire on purpose. Both halves invert rather than being deleted, and the pair
+survives for the reason the interim gave — a file input under "via API" is a
+card describing the wrong thing, and a title promising an import over a page
+with no picker is the defect the interim existed to prevent.
+
+**ONE PATH, TWO OPPOSITE SECURITY OVERRIDES, AND THAT IS THE DESIGN.**
+`/v1/projects/{slug}/runs` now carries a bearer-only GET and a cookieAuth-only
+POST. A session names no project, so it can never reach `POST /v1/runs` (400
+PROJECT_REQUIRED); a project-scoped token names exactly one and needs nothing
+here. Each credential has precisely one way to ingest. The OpenAPI case asserts
+the PAIR, because either half alone passes against the collapse that matters:
+add `bearerAuth` to the POST and this becomes a second, redundant ingest path
+for tokens while the GET assertion stays green.
+
+**AND THE INTEGRATION CASE THAT JUSTIFIES THE ROUTE ASSERTS THE BLOCKER, NOT
+THE FEATURE.** "exists because POST /v1/runs refuses a session" posts a real
+bundle with a real session and requires 400 PROJECT_REQUIRED. If that ever
+starts working, this route is duplicate surface and somebody is told — which a
+comment saying the same thing would not do.
+
+**202 IS A DIFFERENT SHAPE FROM 200, AND `waitMs: 0` MAKES IT THE ONLY ONE THE
+BROWSER EVER SEES.** `respondWithRun` answers 202 with a PROCESSING run and
+200/422 with a complete one; `run.ts` has branched on exactly that for its whole
+life and says so in a comment. `uploadBundle` parsed every 2xx with
+`RunResponseSchema` and reported "the server accepted the upload but returned a
+run this page could not read" over a perfectly good 202 — on the status this
+endpoint almost always returns, because the picker asks for `waitMs: 0`
+deliberately rather than holding the request open for 25 seconds. **A "2xx path"
+is not one shape; count them before writing one parse.**
+
+**NOTHING IN THE e2e HARNESS PARSES A RUN THE BROWSER POSTS, AND THE FIRST
+FAILURE READ AS A PRODUCT DEFECT.** No worker PROCESS runs anywhere in that
+stack — compose brings up Postgres, Redis and MinIO, and `playwright.config.ts`'s
+webServer starts the API alone — so every seed in `fixtures.ts` drives
+`PipelineService` in-process, and `ingestAndProcess`'s own comment says why. A
+run the BROWSER posts has no such caller: it sits at `pending` for ever while
+the page goes on truthfully reporting that it is being parsed, and the report is
+`bundle-done` never appearing. `parseUploadedRun` stands in exactly where the
+seeds already stand in. The page is NOT told — it discovers the run finished
+through its own polling, which is the transition the case exists to prove.
+
+**A RED-VERIFY WHOSE ANCHOR ALSO MATCHES THE DOCSTRING MUTATES NOTHING AND
+REPORTS A PASS.** Removing `@UseGuards(SessionOnlyGuard)` from the new
+controller matched TWICE — the class docstring quotes the decorator to explain
+why it is there — so the first attempt changed nothing and the suite came back
+8/8 green. Third shape of "a red-verify that never reached the code reported a
+pass" in this file; the other two were a mutation driven through a test that
+does not call the helper, and a `git checkout` that restored the fix before the
+run. What caught it was asserting the REPLACEMENT COUNT before writing, not the
+result — the green suite was indistinguishable from a real pass.
+
+**AND TWO MUTATIONS THAT FAIL THE SAME ASSERTION PROVE ONE THING, NOT TWO.**
+Breaking the 202 parse and deleting the processing state both failed on
+`bundle-processing` being visible, because it is asserted first — so the second
+mutation demonstrated nothing the first had not. The one that pulls its weight
+keeps processing and ALSO claims done at 202, which fails
+`expect(bundle-done).toHaveCount(0)` with `Received: 1`. **A mutation that lands
+on an assertion an earlier mutation already failed has not exercised the
+assertion you were aiming at.**
+
+**AND A NESTED `<details>` MADE A PASSING WEBKIT ASSERTION IMPOSSIBLE, WHICH
+ONLY THE DISPATCHED CROSS-BROWSER RUN COULD SEE.** `gh workflow run ci.yml --ref
+<branch>` before merging is recorded in this file as worth its fifteen minutes,
+and this is the branch that proves it: the PR's own build was green and the
+dispatch failed, deterministically, on both attempts, in a test this branch
+changed — `project-tests.spec.ts`'s accordion case, WebKit only.
+
+The card's curl moved behind its own `<details>`, so `upload-command` acquired
+TWO disclosure ancestors: the nested one still open, the card's own closed by
+the accordion. Measured after the click, identical DOM in all three engines:
+
+```
+  ancestors, innermost first   {name: null, open: true}, {name: add-results, open: false}
+  element.checkVisibility()    false      false      false      <- the ENGINE's own answer
+  playwright isVisible()       false      false      TRUE       <- chromium, firefox, WEBKIT
+```
+
+**WEBKIT ITSELF AGREES THE READER CANNOT SEE IT.** What disagrees is
+playwright-core's `browserNameForWorkarounds === 'webkit'` branch, which
+substitutes "has a closed `<details>` ancestor" for `checkVisibility()` and
+reads only the NEAREST one — so an open nested disclosure masks the closed
+ancestor above it. This file already records that substitution from the other
+side (a `<details>` forced open by CSS reports hidden); this is the same branch
+met through nesting, and it means `toBeHidden()` cannot be made to pass on
+WebKit for an element behind two disclosures, however correct the page is.
+
+The case asserts `toHaveJSProperty('open', false)` on the card AND polls the
+element's own `checkVisibility()`. Both, because they are different claims: the
+property is what the ACCORDION did, and `checkVisibility()` is what the reader
+gets in the engine's own words rather than through the harness. The attribute
+alone would pass against a stylesheet that kept a closed card's content on
+screen. Red-verified by deleting the shared `name`, which fails both halves on
+chromium and webkit alike — where the old spelling could not even pass on
+WebKit when the product was right.
+
+**AND THE STATUS PALETTE IS STILL NOT A UTILITY, WHICH ONLY THE TOKEN GUARD
+SAW.** `BundleUpload` reached for `text-[var(--color-status-failed)]` and
+`bg-[var(--color-accent)]`; `tokens.test.ts` fails any `[var(--…)]` utility
+outside four named exemptions, and its own docstring argues the list should
+SHRINK. The accent has a real published utility (`bg-accent`); the status
+colours deliberately have none, and the sanctioned spelling is an inline
+`style={{ color: 'var(--color-status-failed)' }}` with the reason attached —
+`TimeBrush`'s window error reaches the same token the same way. Neither would
+have been visible on screen: `bg-accent` and the arbitrary form paint
+identically, and a `text-status-failed` utility would have emitted nothing at
+all.
+
 The review-m15-error-request-filter branch (M15's remainder — the finding is
 closed) added ONE unit file — `apps/web/test/errorRequestFilter.test.ts` (5) —
 from a floor of 151 / 1855 to **152 / 1860**, and its **e2e rises to 139**. Its

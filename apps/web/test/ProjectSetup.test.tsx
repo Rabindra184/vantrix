@@ -124,7 +124,7 @@ describe('ProjectSetup — the three ways in', () => {
     renderPage();
     expect(await ready()).toBeInTheDocument();
 
-    for (const name of ['Import via API', 'Run a test', 'Configure CI']) {
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
       expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
     }
   });
@@ -154,7 +154,7 @@ describe('ProjectSetup — the three ways in', () => {
     renderPage();
     expect(await ready()).toBeInTheDocument();
 
-    for (const name of ['Import via API', 'Run a test', 'Configure CI']) {
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
       expect(await entry(name)).toBeInTheDocument();
     }
     expect(document.body.textContent ?? '').not.toMatch(/three ways to get a run/i);
@@ -173,7 +173,7 @@ describe('ProjectSetup — the three ways in', () => {
      * not there, and it is exactly the vocabulary drift review 09-13 N01 is
      * about. Asserted by DESTINATION plus the two words that must agree, so a
      * future rename of that page fails here rather than drifting again. */
-    const link = within(await entry('Import via API')).getByRole('link', {
+    const link = within(await entry('Import results')).getByRole('link', {
       name: /create one under api tokens/i,
     });
     expect(link).toHaveAttribute('href', '/projects/alpha/access');
@@ -187,7 +187,7 @@ describe('ProjectSetup — the three ways in', () => {
      * drift as the link itself, one clause to its left, and it survived
      * because the assertion above reads `link.textContent` — which stops at
      * the anchor. Scoped to the CARD so it reads the whole sentence. */
-    const card = await entry('Import via API');
+    const card = await entry('Import results');
     expect(card.textContent ?? '').toMatch(/completed reports.{0,20}permission/i);
     expect(card.textContent ?? '').not.toMatch(/\bscoped?s?\b/i);
 
@@ -276,7 +276,7 @@ describe('ProjectSetup — the runner’s status is only as strong as the eviden
     renderPage();
     await ready();
 
-    for (const name of ['Import via API', 'Configure CI']) {
+    for (const name of ['Import results', 'Configure CI']) {
       const card = await entry(name);
       expect(within(card).queryByTestId('entry-status')).toBeNull();
       expect(card.textContent ?? '').not.toMatch(/available now/i);
@@ -361,7 +361,7 @@ describe('ProjectSetup — the workflows are choices before they are documents',
     await ready();
 
     for (const [name, command] of [
-      ['Import via API', 'upload-command'],
+      ['Import results', 'upload-command'],
       ['Configure CI', 'ci-command'],
     ] as const) {
       const card = await entry(name);
@@ -382,14 +382,37 @@ describe('ProjectSetup — the workflows are choices before they are documents',
    * independently, which is the behaviour this replaced and not a defect, so
    * the NAME is what this pins; `project-tests.spec.ts` proves the exclusion
    * itself in a real engine.
+   *
+   * ═══ AND A NESTED DISCLOSURE MUST NOT JOIN THE ACCORDION ═══
+   *
+   * This asserted the name of EVERY `<details>` in the document, which was the
+   * same thing while every one of them was a card. M05's file picker took the
+   * primary slot inside Import results and moved the curl recipe behind its own
+   * summary, so there is now a disclosure INSIDE one of the three.
+   *
+   * It must stay nameless, and the failure if it does not is worth stating:
+   * opening the terminal recipe would close the card that contains it, taking
+   * the recipe off screen in the same gesture that asked for it. So the shape
+   * is pinned rather than the count — every CARD-level disclosure shares the
+   * name, every nested one has none — which is a rule the next disclosure
+   * added to this page also has to satisfy.
    */
-  it('groups the disclosures so a browser can close the others', async () => {
+  it('groups the card disclosures so a browser can close the others', async () => {
     renderPage();
     await ready();
 
-    const names = [...document.querySelectorAll('details')].map((d) => d.getAttribute('name'));
-    expect(names.length).toBeGreaterThan(1);
-    expect(new Set(names)).toEqual(new Set(['add-results']));
+    const all = [...document.querySelectorAll('details')];
+    const nested = all.filter((d) => d.parentElement?.closest('details') != null);
+    const cards = all.filter((d) => d.parentElement?.closest('details') == null);
+
+    expect(cards.length).toBeGreaterThan(1);
+    expect(new Set(cards.map((d) => d.getAttribute('name')))).toEqual(new Set(['add-results']));
+
+    // Asserted as present, not merely as nameless: `every` over an empty list
+    // is true, so without this the rule would pass on a page that lost the
+    // terminal recipe altogether.
+    expect(nested.length).toBeGreaterThan(0);
+    expect(nested.map((d) => d.getAttribute('name'))).toEqual(nested.map(() => null));
   });
 
   /**
@@ -417,7 +440,7 @@ describe('ProjectSetup — the workflows are choices before they are documents',
     renderPage();
     await ready();
 
-    for (const name of ['Import via API', 'Run a test', 'Configure CI']) {
+    for (const name of ['Import results', 'Run a test', 'Configure CI']) {
       expect(screen.getByRole('heading', { name, level: 2 })).toBeInTheDocument();
     }
     expect(within(await entry('Run a test')).getByTestId('entry-status')).toBeInTheDocument();
@@ -428,35 +451,34 @@ describe('ProjectSetup — the workflows are choices before they are documents',
    * ====================================================================== */
 
   /**
-   * ═══ A CAPABILITY MISMATCH, NAMED HONESTLY UNTIL IT IS CLOSED ═══
+   * ═══ THE INTERIM IS OVER, AND THIS CASE IS ITS SUCCESSOR ═══
    *
-   * The card was headed "Import results" and then told the reader there is no
-   * browser upload — the one thing its title offered was the one thing it
-   * could not do. The review asks for a real file picker and, until that
-   * exists, for the path to say what it actually is.
+   * This used to read "names the import path for the interaction it actually
+   * offers", and asserted the heading was "Import via API" with NO file input
+   * anywhere on the page. That was correct: `POST /v1/runs` refused a session,
+   * so a picker had no route to post to, and a card headed "Import results"
+   * over a page that could not import results was the lie M05 names.
    *
-   * IT CANNOT BE BUILT FROM THE BROWSER TODAY, and that is a fact about the
-   * API rather than an opinion about scope: `POST /v1/runs` is the only route
-   * accepting a bundle, and `ingest.controller.ts` answers `PROJECT_REQUIRED`
-   * — "Ingest requires a project-scoped credential" — to any session, because
-   * a session is org-scoped and names no project while a token is minted
-   * against exactly one. A picker needs a project-scoped ingest route that
-   * does not exist.
+   * Its own docstring said how it should die — "when the picker is built, that
+   * second assertion is what should fail" — and that is exactly what happened.
+   * `POST /v1/projects/:slug/runs` exists now (`project-ingest.controller.ts`),
+   * so both halves INVERT rather than being deleted: the honest label was
+   * honest about an absence, and the absence is gone.
    *
-   * ASSERTED AS THE PAIR, because either half alone is satisfiable by the
-   * wrong page: a title saying "via API" over a file input would be a
-   * different lie, and a page with no upload under a title promising one is
-   * the defect this closes.
+   * STILL ASSERTED AS THE PAIR, for the reason the interim gave. A file input
+   * under a title saying "via API" would be a card describing the wrong thing,
+   * and a title promising an import over a page with no picker is the defect
+   * the interim existed to prevent. Either half alone passes against one of
+   * those two pages.
    */
-  it('names the import path for the interaction it actually offers', async () => {
+  it('offers the import the card is named for', async () => {
     renderPage();
     await ready();
 
-    expect(screen.getByRole('heading', { name: 'Import via API', level: 2 })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: /^import results$/i })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Import results', level: 2 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /import via api/i })).toBeNull();
 
-    // And there is still no file input anywhere on the page, which is what
-    // makes the renamed label true rather than merely different.
-    expect(document.querySelector('input[type="file"]')).toBeNull();
+    // The picker itself — the assertion the interim case was written to fail on.
+    expect(document.querySelector('input[type="file"]')).not.toBeNull();
   });
 });

@@ -1094,6 +1094,63 @@ const paths: Record<string, PathItemObject> = {
         ...authFailureResponses,
       },
     },
+    post: {
+      operationId: 'ingestProjectRun',
+      summary: 'Ingest a bundle from a browser, naming the project in the URL',
+      tags: ['runs'],
+      // cookieAuth-only — and the GET directly above is the OPPOSITE override
+      // on the SAME path, which is the point of both. A session names no
+      // project, so it cannot reach POST /v1/runs; a project-scoped token names
+      // exactly one and needs nothing here. Each credential has precisely one
+      // way in, and the document says which rather than advertising a scheme
+      // the handler always refuses.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes ' +
+        '(SessionOnlyGuard, the same refusal the token and SLA-rule operations carry). This is ' +
+        'the session-reachable ingest route: POST /v1/runs reads the project off a ' +
+        'project-scoped credential, which a session does not have (that operation answers 400 ' +
+        'PROJECT_REQUIRED), so the project is named here in the URL instead.\n\n' +
+        'Identical in every other respect — the same multipart body, the same "metadata" ' +
+        'validation, the same wait, and the same shared run-state status codes as ' +
+        'GET /v1/runs/{id}. The browser file picker sends "waitMs": 0 and polls the run ' +
+        'afterwards, so 202 is the usual answer here rather than the exception.\n\n' +
+        '404s if "slug" names no project in the caller\'s organisation — including a project ' +
+        'that exists in a different organisation, which is never distinguished from one that ' +
+        'does not exist at all.',
+      parameters: [parameters['ProjectSlug']!],
+      requestBody: {
+        required: true,
+        description:
+          'multipart/form-data with exactly two parts, "metadata" BEFORE "bundle" — the same ' +
+          'body POST /v1/runs takes, for the same reason: the server starts streaming "bundle" ' +
+          'to storage as soon as it arrives, so "metadata" must already have been read.',
+        content: {
+          'multipart/form-data': {
+            schema: {
+              type: 'object',
+              required: ['metadata', 'bundle'],
+              properties: {
+                metadata: schemaRef('IngestMetadata'),
+                bundle: {
+                  type: 'string',
+                  format: 'binary',
+                  description:
+                    'The gzipped tar of the Gatling results directory (a simulation.log plus ' +
+                    'its assertions file). Rejected with 413 if its decompressed contents ' +
+                    'exceed the project\'s size cap.',
+                },
+              },
+            },
+            encoding: {
+              metadata: { contentType: 'application/json' },
+              bundle: { contentType: 'application/gzip' },
+            },
+          },
+        },
+      },
+      responses: { ...runStateResponses(), '404': ref('NotFound'), ...authFailureResponses },
+    },
   },
 
   '/v1/projects/{slug}/tokens': {

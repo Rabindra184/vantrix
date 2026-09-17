@@ -4,6 +4,7 @@ import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
 import { RunsModule } from '../runs/runs.module.js';
 import { IngestController } from './ingest.controller.js';
+import { ProjectIngestController } from './project-ingest.controller.js';
 import { IngestService } from './ingest.service.js';
 import { LiveController } from './live.controller.js';
 import { LiveNotifier } from './live-notifier.js';
@@ -16,7 +17,7 @@ import { IngestQueue } from './queue.js';
   // module needs RunsModule's exports — sibling modules don't see each
   // other's providers without an explicit import.
   imports: [RunsModule],
-  controllers: [IngestController, LiveController],
+  controllers: [IngestController, LiveController, ProjectIngestController],
   providers: [
     IngestService,
     LiveService,
