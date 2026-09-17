@@ -64,6 +64,9 @@ export class TokensController {
       prefix: minted.prefix,
       tokenHash,
       scopes: parsed.data.scopes,
+      /* Absent means never expires; the schema refuses a past instant, so a
+         value here is always a future one (review 09-13 M18). */
+      expiresAt: parsed.data.expiresAt === undefined ? null : new Date(parsed.data.expiresAt),
     });
 
     // ═══ THE TENANT COMES FROM THE TOKEN ═══ — see TelemetryController for
@@ -77,6 +80,7 @@ export class TokensController {
       name: row.name,
       scopes: row.scopes,
       createdAt: row.createdAt.toISOString(),
+          expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
     });
   }
 
@@ -139,6 +143,7 @@ export class TokensController {
       createdAt: row.createdAt.toISOString(),
       lastUsedAt: row.lastUsedAt ? row.lastUsedAt.toISOString() : null,
       revokedAt: row.revokedAt ? row.revokedAt.toISOString() : null,
+      expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
     });
   }
 }

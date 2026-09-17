@@ -33,8 +33,28 @@ export const MintTokenRequestSchema = z
     name: z.string().trim().min(1).max(120),
     /** Non-empty. A token with no scopes authenticates and can do nothing. */
     scopes: z.array(z.enum(TOKEN_SCOPES)).min(1),
+    /**
+     * Optional expiry (review 09-13 M18). Absent is "never expires", which is
+     * what every token minted before this field existed has.
+     *
+     * NO DEFAULT, DELIBERATELY. A default TTL here would impose a security
+     * policy on every caller of this API — including CI that has been running
+     * for a year — and the finding asks for expiry to be ASSESSED as a product
+     * requirement, not for one to be invented. The author chooses, or does
+     * not.
+     *
+     * Refused in the past, because a token that is already expired at mint is
+     * a credential that never works: a typo, never an intention, and the kind
+     * a caller would otherwise debug against the server rather than the
+     * request.
+     */
+    expiresAt: z.string().datetime().optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => body.expiresAt === undefined || Date.parse(body.expiresAt) > Date.now(), {
+    path: ['expiresAt'],
+    message: 'expiresAt must be in the future; a token that expires at mint can never be used',
+  });
 export type MintTokenRequest = z.infer<typeof MintTokenRequestSchema>;
 
 /**
@@ -58,6 +78,9 @@ export const MintedTokenSchema = z.object({
   name: z.string(),
   scopes: z.array(z.string()),
   createdAt: z.string().datetime(),
+  /** `null` is "never expires". Optional for the rolling-deploy reason on
+   *  `TokenSummarySchema` below. */
+  expiresAt: z.string().datetime().nullable().optional(),
 });
 export type MintedToken = z.infer<typeof MintedTokenSchema>;
 
@@ -84,6 +107,16 @@ export const TokenSummarySchema = z.object({
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime().nullable(),
   revokedAt: z.string().datetime().nullable(),
+  /**
+   * `null` is "never expires" (review 09-13 M18).
+   *
+   * `.nullable().optional()` and the OPTIONAL half is the load-bearing one —
+   * the same reasoning `live-delta.ts` and the trends contract already carry.
+   * The browser drops any body that fails this schema, so during a rolling
+   * deploy a response from a pod that predates this field would blank the
+   * whole token list rather than degrade it.
+   */
+  expiresAt: z.string().datetime().nullable().optional(),
 });
 export type TokenSummary = z.infer<typeof TokenSummarySchema>;
 

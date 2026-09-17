@@ -54,6 +54,24 @@ export async function authenticateRequest(req: Request, tokens: TokenRepository)
   const record = await tokens.findByPrefix(parts.prefix);
   if (!record) throw new UnauthorizedException('Unknown API token.');
   if (record.revokedAt) throw new UnauthorizedException('This API token has been revoked.');
+  /* ═══ EXPIRY IS CHECKED BEFORE THE HASH, BESIDE REVOCATION (review 09-13 M18) ═══
+   *
+   * Same position and same reason as the revoked check above it: a credential
+   * that must not be accepted should not have its secret verified at all, and
+   * the cheap rejection keeps an expired token from costing an Argon2
+   * verification per request.
+   *
+   * A DISTINCT SENTENCE, because "expired" and "revoked" are different facts
+   * with different fixes — one is rotated, the other was deliberately killed —
+   * and a caller told the wrong one debugs the wrong thing. Both are 401: the
+   * credential is not usable, which is what 401 means, and neither reveals
+   * anything about a token the caller did not already hold.
+   *
+   * `null` means never expires, so this is a no-op for every token minted
+   * before the column existed. */
+  if (record.expiresAt && record.expiresAt.getTime() <= Date.now()) {
+    throw new UnauthorizedException('This API token has expired.');
+  }
   if (!(await verifyToken(record.tokenHash, parts.secret))) {
     throw new UnauthorizedException('Invalid API token.');
   }

@@ -213,3 +213,82 @@ describe('DELETE /v1/projects/:slug/tokens/:prefix', () => {
     expect((await deleteWithBearer(`/v1/projects/checkout/tokens/pp_x`, ctx.readToken)).status).toBe(403);
   });
 });
+
+describe('token expiry (review 09-13 M18)', () => {
+  /**
+   * Mint through the real endpoint, then AGE the row.
+   *
+   * The schema refuses a past `expiresAt` at mint — deliberately, since a
+   * credential that is dead on arrival is a typo — so an already-expired token
+   * cannot be produced through the API at all. Writing the column directly is
+   * the only way to reach the state, and it beats sleeping past a short expiry:
+   * this is deterministic, and a test that waits is a test that is flaky on a
+   * loaded machine.
+   */
+  async function mintThenExpire(expiresAt: Date | null): Promise<string> {
+    const res = await postAsSession('/v1/projects/checkout/tokens', {
+      name: 'expiring',
+      scopes: ['read'],
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    expect(res.status).toBe(201);
+    await ctx.prisma.apiToken.update({
+      where: { prefix: res.body.prefix as string },
+      data: { expiresAt },
+    });
+    return res.body.token as string;
+  }
+
+  it('mints with an expiry and reports it back', async () => {
+    const at = new Date(Date.now() + 86_400_000).toISOString();
+    const res = await postAsSession('/v1/projects/checkout/tokens', {
+      name: 'ci', scopes: ['read'], expiresAt: at,
+    });
+    expect(res.status).toBe(201);
+    expect(Date.parse(res.body.expiresAt as string)).toBe(Date.parse(at));
+  });
+
+  it('refuses an expiry in the past rather than minting a dead credential', async () => {
+    const res = await postAsSession('/v1/projects/checkout/tokens', {
+      name: 'ci', scopes: ['read'], expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('stops authenticating once its expiry has passed', async () => {
+    // THE WHOLE POINT OF THE COLUMN. Asserted through a real request against a
+    // real row, because the guard is the only place this is enforced and a
+    // unit test over the schema proves nothing about it.
+    const token = await mintThenExpire(new Date(Date.now() - 1000));
+    const res = await getWithBearer('/v1/runs', token);
+    expect(res.status).toBe(401);
+    expect(String(res.body.detail)).toMatch(/expired/i);
+  });
+
+  it('works right up until then', async () => {
+    // The paired positive: without it, a guard that rejected EVERY token with
+    // an expiry would satisfy the case above perfectly.
+    const token = await mintThenExpire(new Date(Date.now() + 3_600_000));
+    expect((await getWithBearer('/v1/runs', token)).status).toBe(200);
+  });
+
+  it('leaves a token with no expiry alone', async () => {
+    // Every token minted before this column existed has NULL here, and the
+    // feature must be invisible to them.
+    const token = await mintThenExpire(null);
+    expect((await getWithBearer('/v1/runs', token)).status).toBe(200);
+  });
+
+  it('says REVOKED, not expired, when a token is both', async () => {
+    // Same precedence the tokens table renders, and for the same reason: one
+    // of the two facts explains why it stopped working, and "expired" would
+    // send the reader to mint a replacement without learning somebody had
+    // deliberately killed this one.
+    const token = await mintThenExpire(new Date(Date.now() - 1000));
+    const prefix = token.split('_').slice(0, 2).join('_');
+    await ctx.prisma.apiToken.update({ where: { prefix }, data: { revokedAt: new Date() } });
+    const res = await getWithBearer('/v1/runs', token);
+    expect(res.status).toBe(401);
+    expect(String(res.body.detail)).toMatch(/revoked/i);
+  });
+});

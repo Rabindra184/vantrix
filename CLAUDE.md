@@ -115,6 +115,84 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-m18-token-lifecycle branch (M18 — the finding is closed) added no
+unit FILE and 11 cases — 5 to `packages/contracts/test/tokens.test.ts` and 6 to
+`apps/web/test/ProjectAccess.test.tsx` — from a floor of 152 / 1860 to
+**152 / 1871**. Its **e2e is UNCHANGED** (no spec touched). Its integration
+floor is **135 files / 1711 tests** — 12 more than `main`, because that
+contracts file is a `.ts` integration runs too, plus 6 cases in
+`tokens.integration.test.ts` and 1 in `openapi.integration.test.ts`.
+
+**AN API TOKEN COULD ONLY EVER BE KILLED, NEVER SCHEDULED TO DIE.** `api_token`
+had `revoked_at` and nothing else, so the only lifecycle a credential had was
+somebody remembering it. `expires_at` is nullable and checked in
+`authenticateRequest` BESIDE the revoked check and BEFORE the hash — a
+credential that must not be accepted should not have its secret verified, and
+the cheap rejection keeps an expired token from costing an Argon2 verification
+per request.
+
+**TWO REASONS A CREDENTIAL STOPS WORKING, AND THE READER IS TOLD WHICH.** Both
+answer 401, because the credential is not usable and that is what 401 means —
+but the SENTENCES differ ("has been revoked" against "has expired") and so does
+the status column, because the fixes differ: one is rotated, the other was
+deliberately killed. `tokenStatus` puts Revoked ahead of Expired for that
+reason, and the case that pins it is a row satisfying BOTH at once: revoked
+last month, expiry passed since. "Expired" there is true and misleading.
+
+**NO DEFAULT TTL, DELIBERATELY.** The finding asks for expiry to be ASSESSED as
+a product requirement, not for one to be invented. A default lifetime on
+`MintTokenRequestSchema` would expire credentials CI has been using for a year,
+at the moment this deploys. The author chooses Never / 30 / 90 / 365, and Never
+is the default the form opens on. A past instant IS refused — a token that
+expires at mint can never be used, which is a typo rather than an intention.
+
+**THE INTEGRATION SUITE READS WORKSPACE PACKAGES FROM `dist`, AND SWITCHING
+BRANCHES DOES NOT REBUILD IT.** The new OpenAPI guard went red on its first run
+reporting that `MintTokenRequest` carried only `name` and `scopes` — exactly
+what a `.refine()` swallowing its own object looks like. It was not: a
+Playwright run on ANOTHER branch had rebuilt `packages/contracts/dist` from
+THAT branch's source, and `git checkout` does not rebuild. `@perfportal/contracts`
+resolves to `dist/src/index.js`, so the field simply did not exist in the code
+the API under test was importing.
+
+```
+  ls -la packages/contracts/dist/src/tokens.js   # 20:27 — built on the other branch
+  ls -la packages/contracts/src/tokens.ts        # 21:25 — this branch's source
+```
+
+`pnpm build` and the same run was 22/22. **A red integration result that
+crosses a package boundary is a build claim before it is a code claim** — and
+the tell is that the failure describes the OLD code perfectly, which is what
+makes it so convincing.
+
+**AND THE GUARD IS WORTH KEEPING EVEN THOUGH ITS FIRST RED WAS THE WRONG
+CAUSE.** `components.schemas` is DERIVED from these zod schemas, so a
+conversion that does not see through a refinement emits an object with no
+properties while every runtime test stays green — the server still validates
+correctly, and only the DOCUMENT lies. The case asserts `expiresAt` beside
+`name` and `scopes`: the two that were always there prove the conversion
+produced a real object, and the new one proves the refinement did not cost it.
+
+**A CONDITIONAL SPREAD IS STILL A HOLE IN TYPE CHECKING, AND THIS ONE WAS
+MEASURED BOTH WAYS.** The mint payload built its optional field as
+`...(expiresInDays === null ? {} : { expiresAt })` — the spelling this file
+already records for `live-sink.ts`, where a mistyped key inside a spread
+compiled and silently never reached the repository. Written as a named
+`expiresAt: … ? undefined : …` instead (legal here: `exactOptionalPropertyTypes`
+is off, and `JSON.stringify` drops an undefined value, so nothing is sent), the
+same typo is `TS2561: Object literal may only specify known properties`.
+Verified by making it and watching `tsc` reject it.
+
+**AND THE `undefined` BRANCH ON THE EXPIRES CELL IS NOT COSMETIC — IT IS WHAT
+KEEPS A ROLLING DEPLOY FROM BLANKING THE PAGE.** `.nullable().optional()` on
+the contract stops the browser dropping a body from a pod that predates the
+field; the CELL then has to handle the `undefined` that arrives. Narrowed to
+`=== null`, `formatInstant(undefined)` throws `RangeError: Invalid time value`
+and takes the whole token table down — **11 of that file's 15 cases fail, not
+one**. The mutation that was expected to mislabel a column crashed the page
+instead, which is a stronger reason for the branch than the one it was written
+with.
+
 The review-m15-error-request-filter branch (M15's remainder — the finding is
 closed) added ONE unit file — `apps/web/test/errorRequestFilter.test.ts` (5) —
 from a floor of 151 / 1855 to **152 / 1860**, and its **e2e rises to 139**. Its

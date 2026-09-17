@@ -1120,7 +1120,14 @@ const paths: Record<string, PathItemObject> = {
         required: true,
         description:
           'A non-empty "name" for the credential (what an operator sees on a revocation list ' +
-          'later) and at least one scope from ["ingest", "read", "telemetry", "stream", "runner"].',
+          'later) and at least one scope from ["ingest", "read", "telemetry", "stream", "runner"].\n\n' +
+          '"expiresAt" is OPTIONAL and has no default: omit it and the token never expires, which ' +
+          'is what every token minted before this field existed has. No server policy imposes a ' +
+          'lifetime — a default TTL here would expire credentials CI has been using for a year. ' +
+          'An instant in the past is refused with 400, because a token that expires at mint can ' +
+          'never be used and is a typo rather than an intention. Once it passes, authentication ' +
+          'fails with 401 "This API token has expired." — a different sentence from revocation, ' +
+          'because the fix is different: one is rotated, the other was deliberately killed.',
         content: json(schemaRef('MintTokenRequest')),
       },
       responses: {
@@ -1151,7 +1158,9 @@ const paths: Record<string, PathItemObject> = {
         'TokenSummary: "token" and the stored hash never appear here — the plaintext existed ' +
         'once, in the 201 response the mint returned, and cannot be recovered. "lastUsedAt" is ' +
         'what makes the list actionable: it is how an operator finds the credential nothing has ' +
-        'used since March.',
+        'used since March. "expiresAt" is null for a token that never expires: a token can be ' +
+        'unusable for two independent reasons, revoked or expired, and the list carries both so ' +
+        'an operator can tell which.',
       parameters: [parameters['TokenProjectSlug']!],
       responses: {
         '200': {
