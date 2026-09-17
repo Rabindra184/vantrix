@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { seedAdmin, seedRunWithData, seedTestWithRuns } from './fixtures.js';
+import {
+  parseUploadedRun,
+  referenceBundle,
+  seedAdmin,
+  seedRunWithData,
+  seedTestWithRuns,
+} from './fixtures.js';
 import { plot, signIn } from './helpers.js';
 
 /**
@@ -256,7 +262,10 @@ test('the project nav reaches the three configuration pages', async ({ page }) =
   await page.goto('/projects/checkout/setup');
 
   // The entry choices the review asked for, named for what the reader wants.
-  for (const choice of ['Import via API', 'Run a test', 'Configure CI']) {
+  // "Import results", not "Import via API" — review 09-13 M05. That label was
+  // the INTERIM the finding itself specifies, kept only while the browser
+  // genuinely could not deliver a bundle. It can now.
+  for (const choice of ['Import results', 'Run a test', 'Configure CI']) {
     await expect(page.getByRole('heading', { name: choice, level: 2 })).toBeVisible();
   }
 
@@ -319,8 +328,18 @@ test('opening one workflow on Add results collapses the other', async ({ page })
   await expect(importCmd).toBeHidden();
   await expect(ciCmd).toBeHidden();
 
-  const importCard = page.getByTestId('entry-import-via-api');
-  await importCard.getByRole('group').locator('summary').click();
+  // `entry-import-results` — `EntryCard` DERIVES its testid from the title
+  // (`entry-${title.toLowerCase().replace(/\s+/g, '-')}`), so the M05 rename
+  // moved this selector. Exactly the trap CLAUDE.md records for this component:
+  // grep for the derived value, not just the label.
+  const importCard = page.getByTestId('entry-import-results');
+  // `.first()`, because this card now holds TWO disclosures: the card's own,
+  // and the "Or post it from a terminal" one the curl moved into when the
+  // picker took the primary slot. The outer one is the card's.
+  await importCard.getByRole('group').first().locator('summary').first().click();
+  // The command is now one level further in — opening the card reveals the
+  // picker, and the terminal recipe sits behind its own summary.
+  await importCard.getByText('Or post it from a terminal').click();
   await expect(importCmd).toBeVisible();
 
   // And the chosen one is the only one — the browser closed the first when the
@@ -328,5 +347,104 @@ test('opening one workflow on Add results collapses the other', async ({ page })
   const ciCard = page.getByTestId('entry-configure-ci');
   await ciCard.getByRole('group').locator('summary').click();
   await expect(ciCmd).toBeVisible();
-  await expect(importCmd).toBeHidden();
+
+  /* ═══ NOT `toBeHidden()`, AND THE REASON IS THE HARNESS RATHER THAN THE PAGE ═══
+   *
+   * It WAS `toBeHidden()`, and it passed on all three engines until M05 put the
+   * terminal recipe behind its own `<details>` inside this card. `upload-command`
+   * now has two disclosure ancestors — the nested one still OPEN, the card's own
+   * CLOSED by the accordion — and Playwright's WebKit path reads only the
+   * nearest, so the closed ancestor is masked.
+   *
+   * MEASURED, after the click, with the identical DOM in all three:
+   *
+   *   ancestors (innermost first)   {name: null, open: true}, {name: add-results, open: false}
+   *   element.checkVisibility()     false     false     false        <- the ENGINE's own answer
+   *   playwright isVisible()        false     false     TRUE         <- chromium, firefox, WEBKIT
+   *
+   * So WebKit itself agrees the reader cannot see this; only the harness's
+   * substitute for `checkVisibility()` disagrees — the same
+   * `browserNameForWorkarounds === 'webkit'` branch CLAUDE.md already records
+   * for a forced-open `<details>`, met from the other side.
+   *
+   * Both halves are asserted because they are different claims. The `open`
+   * property is what the ACCORDION did; `checkVisibility()` is what the reader
+   * gets, in the engine's own words rather than through the harness. Asserting
+   * only the attribute would pass against a stylesheet that kept a closed
+   * card's content on screen. */
+  await expect(importCard.getByRole('group').first()).toHaveJSProperty('open', false);
+  await expect
+    .poll(() => importCmd.evaluate((el) => el.checkVisibility()))
+    .toBe(false);
+});
+
+/**
+ * Uploading a bundle from the browser (review 09-13 M05).
+ *
+ * WHAT ONLY THIS CAN PROVE. `uploadBundle.test.ts` pins the validation rules
+ * against files it invents, which says nothing about whether the server accepts
+ * what this control sends. The finding was never a component: `POST /v1/runs`
+ * refuses a session, so until `POST /v1/projects/:slug/runs` existed there was
+ * no route for a picker to post to. This drives the real control against the
+ * real route and reads the run back.
+ *
+ * ALL FOUR OF THE FINDING'S REQUIREMENTS ARE SEPARATE ASSERTIONS, because three
+ * of them are satisfiable by an upload button that does none of the work:
+ * accepted formats (declared on the control), validation (refused locally,
+ * before any request), progress, and the PROCESSING state — which is the one
+ * usually missed, since 202 means stored and not yet parsed.
+ */
+test('a bundle can be uploaded from the browser and becomes a run', async ({ page }) => {
+  const admin = await seedAdmin();
+  await signIn(page, admin);
+  await page.goto('/projects/checkout/setup');
+
+  const card = page.getByTestId('entry-import-results');
+  await card.getByRole('group').first().locator('summary').first().click();
+
+  const input = page.getByTestId('bundle-file');
+  // The formats are declared ON the control, so the OS picker greys out the
+  // rest — the constraint is where the choice is made, not in prose below it.
+  await expect(input).toHaveAttribute('accept', '.tgz,.tar.gz');
+
+  // VALIDATION, locally: a wrong format is refused without a request, which is
+  // what stops a reader spending minutes uploading a file that cannot work.
+  await input.setInputFiles({ name: 'results.zip', mimeType: 'application/zip', buffer: Buffer.from('not a tarball') });
+  await expect(page.getByTestId('bundle-invalid')).toContainText('not a .tgz');
+  await expect(page.getByRole('button', { name: 'Upload bundle' })).toBeDisabled();
+
+  // An empty file is a DIFFERENT mistake and says so — usually a failed `tar`
+  // that still produced a file, and "not a gzipped tar" would send the reader
+  // to check the wrong thing.
+  await input.setInputFiles({ name: 'empty.tgz', mimeType: 'application/gzip', buffer: Buffer.alloc(0) });
+  await expect(page.getByTestId('bundle-invalid')).toContainText('is empty');
+
+  // And the real thing, end to end.
+  await input.setInputFiles({
+    name: 'results.tgz',
+    mimeType: 'application/gzip',
+    buffer: await referenceBundle(),
+  });
+  await expect(page.getByTestId('bundle-invalid')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Upload bundle' }).click();
+
+  // PROCESSING, not "uploaded": 202 means the bytes are stored and nothing has
+  // parsed them. A control that stopped at success here would hand the reader a
+  // message and no run, which is the requirement of the four most often missed.
+  await expect(page.getByTestId('bundle-processing')).toBeVisible();
+  await expect(page.getByTestId('bundle-done')).toHaveCount(0);
+
+  // The worker, standing in — see `parseUploadedRun`. Nothing in this harness
+  // parses a run the browser posted, so without this the page would go on
+  // truthfully reporting 'parsing' until the test timed out. The page is NOT
+  // told: it discovers the run finished through its own polling, which is the
+  // transition this case exists to prove.
+  await parseUploadedRun(admin.orgId);
+
+  await expect(page.getByTestId('bundle-done')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('link', { name: 'Open the run' }).click();
+
+  // The run is real, and it is THIS bundle: the reference run's own numbers.
+  await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}/);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('ParitySimulation');
 });
