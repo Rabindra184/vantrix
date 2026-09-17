@@ -195,6 +195,71 @@ const FIXTURE_LOG = fileURLToPath(
   new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
 );
 let bundlePromise: Promise<Buffer> | null = null;
+/**
+ * The reference bundle's bytes, for a test that needs the FILE rather than an
+ * ingested run (review 09-13 M05's browser upload drives a real file input).
+ * Same cached buffer `seedRunWithData` posts, so the two cannot diverge.
+ */
+export function referenceBundle(): Promise<Buffer> {
+  return loadBundle();
+}
+
+/**
+ * Parse the run a BROWSER upload just created, and answer its id.
+ *
+ * ═══ NOTHING ELSE IN THIS HARNESS WILL EVER PARSE IT ═══
+ *
+ * `ingestAndProcess` above says why: no worker PROCESS runs anywhere in the e2e
+ * stack — compose brings up Postgres, Redis and MinIO, and
+ * `playwright.config.ts`'s webServer starts the API alone — so every seed here
+ * drives `PipelineService` in-process. A run the BROWSER posts has no such
+ * caller, and would sit at 'pending' for ever while the page's own polling
+ * correctly reported that it was still being parsed.
+ *
+ * So this is not a shortcut around the product: it is the worker, standing in
+ * exactly where the seeds already stand in. What the test gets out of it is the
+ * transition — processing, then done — which is the half of M05 that an upload
+ * control most often omits, and which cannot be observed if the run never
+ * finishes.
+ *
+ * The id is discovered rather than passed because only the PAGE knows it: the
+ * 202 body never reaches the test. `seedAdmin` gives every test its own org, and
+ * this one seeds no other run, so the newest 'pending' run in that org is this
+ * upload's and nothing else.
+ */
+export async function parseUploadedRun(orgId: string): Promise<string> {
+  const deadline = Date.now() + 30_000;
+  let runId: string | null = null;
+  while (runId === null) {
+    const row = await prisma.run.findFirst({
+      where: { orgId, status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+    });
+    runId = row?.id ?? null;
+    if (runId === null) {
+      if (Date.now() > deadline) {
+        throw new Error(
+          `parseUploadedRun: no 'pending' run appeared in org ${orgId} within 30s. ` +
+            'The browser upload did not reach POST /v1/projects/:slug/runs.',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  const pipeline = new PipelineService(workerConfig, prisma, pool, blobs);
+  await pipeline.process(runId);
+
+  const finished = await prisma.run.findUnique({ where: { id: runId } });
+  if (finished?.status !== 'complete') {
+    throw new Error(
+      `parseUploadedRun: run ${runId} did not reach 'complete' after the pipeline ran ` +
+        `(status: ${finished?.status ?? 'MISSING ROW'}).`,
+    );
+  }
+  return runId;
+}
+
 function loadBundle(): Promise<Buffer> {
   bundlePromise ??= (async () => {
     const dir = mkdtempSync(join(tmpdir(), 'e2e-bundle-'));

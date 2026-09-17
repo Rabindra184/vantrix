@@ -246,6 +246,29 @@ describe('OpenAPI document', () => {
     }
   });
 
+  // ═══ ONE PATH, TWO OPPOSITE OVERRIDES, AND THAT IS THE DESIGN ═══
+  //
+  // `/v1/projects/{slug}/runs` carries a bearer-only GET (asserted above) and a
+  // cookieAuth-only POST (review 09-13 M05's browser upload). Each credential
+  // has exactly one way to ingest: a session cannot reach POST /v1/runs because
+  // it names no project, and a project-scoped token does not need this one.
+  //
+  // Asserted as a PAIR, because either half alone passes against the collapse
+  // that matters: give the POST `bearerAuth` as well and this route becomes a
+  // second, redundant ingest path for tokens while the GET assertion above
+  // stays green; drop the GET's override and the document advertises a session
+  // scheme for a route that answers 400 PROJECT_REQUIRED to every session.
+  it('keeps POST /v1/projects/{slug}/runs cookieAuth-only, opposite the GET on the same path', async () => {
+    const doc = await fetchDoc();
+    const path = doc.paths?.['/v1/projects/{slug}/runs'] as
+      | Record<string, { security?: Record<string, unknown>[] } | undefined>
+      | undefined;
+
+    expect(path?.['post'], 'POST /v1/projects/{slug}/runs must be declared').toBeTruthy();
+    expect(path?.['post']?.security).toEqual([{ cookieAuth: [] }]);
+    expect(path?.['get']?.security).toEqual([{ bearerAuth: [] }]);
+  });
+
   // The mirror image of the bearer-only test above: the three token
   // operations override to cookieAuth-only (SessionOnlyGuard refuses every
   // bearer credential). Without this, dropping `security: [{ cookieAuth: [] }]`
