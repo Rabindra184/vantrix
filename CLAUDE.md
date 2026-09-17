@@ -117,11 +117,30 @@ see the eighth lesson below.
 
 The review-m18-token-lifecycle branch (M18 — the finding is closed) added no
 unit FILE and 11 cases — 5 to `packages/contracts/test/tokens.test.ts` and 6 to
-`apps/web/test/ProjectAccess.test.tsx` — from a floor of 152 / 1860 to
-**152 / 1871**. Its **e2e is UNCHANGED** (no spec touched). Its integration
-floor is **135 files / 1711 tests** — 12 more than `main`, because that
-contracts file is a `.ts` integration runs too, plus 6 cases in
-`tokens.integration.test.ts` and 1 in `openapi.integration.test.ts`.
+`apps/web/test/ProjectAccess.test.tsx` — and its **e2e is UNCHANGED** (it
+touches no spec).
+
+**ITS FLOORS WERE MEASURED TWICE, AND BOTH NUMBERS ARE HERE ON PURPOSE.** Cut
+from `main` at 152 / 1860, it measured **152 / 1871** unit and 135 / 1711
+integration on its own. M05 then merged FIRST, and `main` moved to 153 / 1873
+and 137 / 1721 underneath it — so after merging `main` back in, this branch
+measures:
+
+```
+  unit         153 / 1884      (153 / 1873 + this branch's 11)
+  integration  137 / 1733      (137 / 1721 + 12: the contracts file is a
+                               `.ts` integration runs too, plus 6 cases in
+                               `tokens.integration.test.ts` and 1 in
+                               `openapi.integration.test.ts`)
+  e2e          140             unchanged
+```
+
+**A FLOOR IS A PROPERTY OF A TREE, NOT OF A BRANCH**, and two branches cut from
+one `main` cannot both record "from a floor of X" and stay true — whichever
+merges second is describing a tree that no longer exists. The arithmetic is
+what survives: this branch adds 11 unit cases and 12 integration cases to
+WHATEVER it sits on. Re-measure after merging `main` in, and say which order
+the two landed.
 
 **AN API TOKEN COULD ONLY EVER BE KILLED, NEVER SCHEDULED TO DIE.** `api_token`
 had `revoked_at` and nothing else, so the only lifecycle a credential had was
