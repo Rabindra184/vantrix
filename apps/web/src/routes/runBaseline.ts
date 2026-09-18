@@ -34,6 +34,20 @@ import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
  * or the tiles and the list disagree about an ordering only one of them made
  * up.
  */
+/**
+ * The run being read, as its own row in the cohort.
+ *
+ * The other half of a delta. `baselineRun` finds this internally to decide
+ * what "before" means and then throws it away, because its answer is the
+ * PREVIOUS run — but naming the baseline honestly means saying what it is
+ * being compared WITH, and the provenance that decides whether the comparison
+ * means anything (`environment`, `branch`, `commitSha`) lives on the cohort
+ * row rather than on the statistics.
+ */
+export function cohortRun(trends: TrendsResponse | undefined, id: string): TrendRun | null {
+  return trends?.runs.find((run) => run.id === id) ?? null;
+}
+
 export function baselineRun(trends: TrendsResponse | undefined, current: string): TrendRun | null {
   if (trends === undefined) return null;
   const here = trends.runs.find((run) => run.id === current);

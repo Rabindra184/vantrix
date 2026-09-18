@@ -43,7 +43,7 @@ import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTabl
 import { downloadCsv } from '../tables/csv';
 import { assertionsCsv } from './assertionExport';
 import { countAssertions, describeAssertionRuleForReader, firstFailedAssertion } from './assertions';
-import { baselineRun } from './runBaseline';
+import { baselineRun, cohortRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { DEFAULT_ROUTE, projectRulesPath } from './paths';
@@ -548,6 +548,11 @@ export function RunOverviewTab() {
           <RunStats
             stats={stats.data}
             baseline={window === null ? baselineRun(trends.data, runId) : null}
+            /* This run's own cohort row, so the note under the tiles can say
+               whether the baseline it names was run under comparable
+               conditions. Withheld under a window for the same reason
+               `baseline` is: there are no deltas to qualify. */
+            current={window === null ? cohortRun(trends.data, runId) : null}
             assertions={runAssertions}
             /* Three things inside change with a window: the empty branch says
                so instead of vanishing, the percentile note names the right

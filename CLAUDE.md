@@ -115,6 +115,79 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review4-name-the-baseline branch added no unit FILE and 3 cases — 2 to
+`apps/web/test/RunStats.test.tsx` and 1 to `RunOverviewTab.baseline.test.tsx` —
+from **153 / 1908 to 153 / 1911**. Integration is UNCHANGED at 137 / 1744 (both
+are `.tsx`) and **e2e stays 142**. `review.md`'s finding 4, the last open
+Priority 1.
+
+**SIX TILES SAID "vs previous" AND NOTHING SAID WHICH RUN THAT WAS.**
+`baselineRun` picks it with real care — strictly the run before this one in the
+cohort's own total order, ties broken the way the run list breaks them — and
+the reader was told none of it. So a -12% could be against last night's
+identical nightly or against a different branch, in a different environment, at
+half the offered load, and the two render identically. The finding puts it
+exactly right: this "does not establish that the selected baseline is wrong. It
+establishes that the overview's shorthand hides information needed to judge
+relevance."
+
+**THE MACHINERY WAS ALREADY BUILT, ONE PAGE OVER.** `comparability` has
+answered this on Compare since the review-criticals branch, over the same
+`TrendRun` fields, with `LOAD_TOLERANCE` and an explicit "unknown is not
+compatible" rule. Nothing new was needed but a second caller. **Fourth time
+this file records that shape** — `ErrorsTable`'s `windowSelected` passed at two
+call sites of three, `compareLabels` named by its own docstring and called bare
+by the trends axis, `formatSlaValue` reached by the authoring form and not the
+evidence table.
+
+**AND THE API WAS ALREADY SENDING THE FIELDS**, checked rather than assumed:
+`packages/persistence/src/metrics/read.ts` maps `environment`, `branch` and
+`commit_sha` onto every cohort row. Had it not, the note would have read
+"not recorded" for ever and looked like a product that never records
+provenance — so this was worth the thirty seconds before writing a test that
+supplies both sides of the join.
+
+**IT SAYS NOTHING WHEN THE TWO RUNS MATCH.** The IDENTIFICATION is
+unconditional — a reader must always be able to see what "previous" means — and
+the CONDITIONS earn a line only when there is something to act on. A permanent
+"these runs are comparable" is the undifferentiated chrome `review.md` 20
+objects to. That makes absence meaningful, which is only honest because the
+summary, when it appears, distinguishes a real difference from missing evidence:
+"Different environment and branch" is a fact about two runs, "build not
+recorded" is a fact about what CI captured, and only the second tells the reader
+to go fix their pipeline.
+
+**THE FINDING'S "OFFER AN EXPLICIT BASELINE SELECTION" IS ANSWERED BY THE
+COMPARE TAB, NOT BY A SECOND PICKER** — recorded as an arm taken rather than a
+clause skipped. Compare already selects any two to five cohort runs and names
+current and baseline; building a second selector onto the overview would put two
+pickers for one question on one run.
+
+**`<Link>` OUTSIDE A ROUTER BREAKS EVERY TEST THAT MOUNTS THE COMPONENT, AND
+THE ERROR NAMES REACT-ROUTER RATHER THAN THE HARNESS.** `Cannot destructure
+property 'basename' of React.useContext(...) as it is null` — which points at
+`LinkWithRef`, not at the missing provider. **TWO PRE-EXISTING CASES WENT RED**,
+which is what made it obvious rather than mysterious: a failure confined to the
+new cases would have read as a mistake in them. All 19 mounts in
+`RunStats.test.tsx` route through one `renderStats` helper now, so the next
+baseline case cannot rediscover it. A plain `<a href>` would have "fixed" the
+tests and shipped a full page load in a single-page app.
+
+**AND THE PROSE WAS READ ONCE BEFORE IT SHIPPED, WHICH IS WHY IT CHANGED.** The
+first wording — "Changes above read “vs previous”, which is the run of … — the
+one immediately before this one in this test" — buried the definition inside a
+relative clause and said "this one" twice. It is `“vs previous” is <link> — the
+one immediately before this in this test`, which defines the phrase the tiles
+use rather than describing it. Rendering the note and reading its `textContent`
+whole costs one run; this file records three separate defects found only by
+looking at the words on screen.
+
+**RED-VERIFIED WITH TWO MUTATIONS THAT LAND ON DIFFERENT CASES**, which is the
+rule the M05 entry earns: pointing the link at THIS run instead of its baseline
+fails the seam case alone, and rendering the conditions unconditionally fails
+the silence case alone. The first is the one worth having — a note naming the
+wrong member of the cohort renders identically and reads as evidence.
+
 The rules-form-survives-first-save branch added no unit FILE and 1 case to
 `apps/web/test/ProjectRules.test.tsx`, from **153 / 1907 to 153 / 1908**.
 Integration is UNCHANGED at 137 / 1744 (a `.tsx`), and **e2e stays 142** — no
