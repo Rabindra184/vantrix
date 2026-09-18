@@ -116,10 +116,10 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The review13-rule-form-groups branch added no unit FILE and 2 cases to
-`apps/web/test/ProjectRules.test.tsx`, from **153 / 1921 to 153 / 1923**.
+`apps/web/test/ProjectRules.test.tsx`, from **153 / 1922 to 153 / 1924**.
 Integration is UNCHANGED and **e2e stays 144**. `review.md`'s finding 13.
-(review8 is open and also cut from 1921 — whichever lands second re-measures;
-the arithmetic here is 2 unit cases and no spec.)
+(Cut from 1921 alongside review8, which landed first — RE-MEASURED after
+merging `main` rather than inferred, the fourth time in this run of branches.)
 
 **THREE OF THE FINDING'S FOUR CLAUSES WERE ALREADY DONE, AND CHECKING SAID SO.**
 M09 renamed Family/Metric/Threshold to Measurement/Statistic/Limit; the target
