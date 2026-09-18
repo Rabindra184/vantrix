@@ -174,6 +174,82 @@ rebuilt without touching a single assertion.
 grows", and the cohort is bounded by the trends endpoint's own default limit of
 twenty — so a filter would be built for a list that cannot currently reach a
 size needing one. Recorded as an arm not taken rather than a clause missed.
+The review6-test-identity branch added no unit FILE and 1 NET unit case — one
+case in `apps/web/test/RunHeader.test.tsx` was replaced by two — from
+**153 / 1911 to 153 / 1912**, and its **e2e rises to 143**. Integration is
+UNCHANGED. `review.md`'s finding 6.
+
+**THE HEADING NAMED THE CLASS, AND THIS REVERSES A COMMENT THAT ARGUED FOR IT.**
+`RunHeader` said "the simulation is the run's identity to the person who ran it,
+so it is the heading". That is true of whoever WROTE the simulation and false of
+whoever is reading a run of it: `declaredTestSlug` exists precisely so
+`checkout-smoke` and `checkout-soak` can share one class, and with the class as
+the heading those two run pages are identical above the fold. The finding names
+it exactly — "repeating the class as the main identity makes different user
+tasks look the same".
+
+**AND THE CHANGE ONLY DELIVERS BECAUSE A DECLARED TEST IS NAMED DIFFERENTLY,
+WHICH WAS READ OUT OF THE SQL RATHER THAN ASSUMED.** `test-resolver.ts` has two
+arms and they name a test differently:
+
+```
+  declared    VALUES (…, $3, $3, $4, …)   slug, name FROM THE SLUG, class beside it
+  auto        SELECT …, c.slug, $4, $4    slug from the class, name AND class = the class
+```
+
+So a declared test carries the name its author chose and an auto-created one is
+named after its class. **Had both been named after the class this whole finding
+would have been a no-op on every page in the product** — the heading would have
+rendered the same string before and after — and nothing in the unit layer could
+have told me, because a unit fixture hands the component whatever name it likes.
+
+**SO THE CLASS CHIP KEEPS QUIET WHEN THE HEADING IS ALREADY SAYING IT.** On the
+majority of runs — every auto-created test — the heading IS the class, and a
+chip repeating it would print the same string twice on almost every run page.
+`headingSubject` is computed once and read by both, because two copies of that
+expression drift into either printing the class twice or dropping it entirely,
+and both failures are silent.
+
+**THE WIREFRAME'S `Checkout smoke — run c2a7c145` IS DELIBERATELY NOT COPIED,
+AND THE REASON IS A MEASUREMENT.** Putting the id in the heading too wraps to a
+second line at 375px and pushed the run's own totals to **830px against
+`mobile.spec.ts`'s 812 bound** — the one number in that file that is the GOAL
+rather than the measurement, which M02 took three branches to reach with ten
+pixels to spare. The id is one line up, in the breadcrumb's current-page rung,
+where it has always been. Recorded as a deviation with its number rather than
+rounded up to compliance.
+
+**`git checkout -- <file>` DESTROYED THE FIX AGAIN. FOURTH TIME IN THIS FILE**,
+and the first where the CHECKPOINT ITSELF was the trap: the checkpoint commit
+was taken before the shape was settled, so `git checkout --` between two
+red-verify mutations restored HEAD — the pre-settle version — and both mutations
+then ran against source that was not under test.
+
+**THE TELL WAS A MUTATION FAILING MORE CASES THAN IT SHOULD.** Mutation B was
+aimed at one case and failed three, two of them breadcrumb cases it cannot
+reach. That is the shape to distrust: this file already says to read WHICH
+assertion failed, and the corollary is that a mutation failing cases it has no
+business touching means you are not running the code you think you are. Dumping
+the rendered breadcrumb showed `Run` where the settled source renders the short
+id, which named the cause in one line. Re-applied, **committed immediately**,
+and re-verified: each mutation then failed exactly one case, and different ones.
+
+**A CHECKPOINT IS ONLY A CHECKPOINT IF IT HOLDS THE FINISHED SHAPE.** Commit
+again after any material change, before the next mutation — an out-of-date
+checkpoint is worse than none, because `git checkout --` reports success while
+silently rewinding the work.
+
+**AND THE e2e IS WHAT PROVES THE SEAM THE UNIT CASES CANNOT.** They hand
+`RunHeader` a `test: { name: 'Checkout smoke' }` of their own making.
+`seedTestWithRuns` writes a real test whose name differs from its class, and the
+browser case reads the heading off the real payload — the "a test that supplies
+both sides of a join proves neither" rule, one page over.
+
+**`/v1/projects/:slug/runs` REFUSES A SESSION, AND ITS OWN REMEDIATION NAMED THE
+FIX.** That GET is bearer-only by design — the pair of overrides on that path
+gives each credential exactly one way in — so the first draft of the e2e got
+`400 PROJECT_REQUIRED` carrying "Use GET /v1/runs with a session". Worth knowing
+before reaching for the project-scoped list from a browser context.
 
 The review4-name-the-baseline branch added no unit FILE and 3 cases — 2 to
 `apps/web/test/RunStats.test.tsx` and 1 to `RunOverviewTab.baseline.test.tsx` —

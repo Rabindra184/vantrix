@@ -87,6 +87,12 @@ test('the header states the run’s identity and its own peak', async ({ page })
   await signIn(page, admin);
   await page.goto(runPath(runId));
 
+  // ═══ THE TEST, THEN THE RUN (review.md 6) ═══
+  //
+  // Still the bare class, and that is the finding working rather than failing:
+  // this run declares no test, so `test-resolver.ts` creates one NAMED after
+  // the simulation class. The heading leads with the TEST now; where nobody
+  // declared one, the best name for the test is the class.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('example.ParitySimulation');
 
   // Computed from the payload the page itself fetched, never written down —
