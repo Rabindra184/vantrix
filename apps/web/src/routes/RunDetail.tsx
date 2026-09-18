@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { formatSlaValue } from '@perfportal/contracts';
 import type {
   Assertion, LiveDelta, SeriesResponse, StatRow, ToolAssertion,
 } from '@perfportal/contracts';
@@ -26,7 +27,6 @@ import {
   usersQuery,
 } from '../api/metrics';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
-import { formatCell } from '../charts/DataTable';
 import { formatActual, toolAssertionParts } from './toolAssertion';
 import DistributionChart from '../charts/DistributionChart';
 import ErrorsChart from '../charts/ErrorsChart';
@@ -1380,7 +1380,14 @@ function Assertions({
                   {/* Null for a not_applicable assertion — there was nothing to
                       measure (AssertionSchema). A dash, never `0`: zero is a
                       measurement, and this is the absence of one. */}
-                  <td className={TD_NUM}>{assertion.actualValue ?? '—'}</td>
+                  {/* THROUGH THE SAME FORMATTER AS THE RULE COLUMN BESIDE IT.
+                      This printed `assertion.actualValue` directly, so an
+                      error-rate row showed `0.0223463687150838` next to a limit
+                      reading `1%` — floating-point serialisation in a column
+                      whose whole job is to be compared with the one before it. */}
+                  <td className={TD_NUM}>
+                    {formatAssertionValue(assertion.rule.metric, assertion.actualValue)}
+                  </td>
                   <td className={`${TD} text-muted`}>{assertion.message}</td>
                 </tr>
               ))}
@@ -1457,7 +1464,7 @@ function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
         <div className="min-w-0">
           <p className="font-mono text-[0.75rem] leading-relaxed text-primary">{describeAssertionRule(assertion.rule)}</p>
           <p className="mt-0.5 text-[0.75rem] leading-relaxed text-muted">
-            Actual {formatAssertionValue(assertion.actualValue)}
+            Actual {formatAssertionValue(assertion.rule.metric, assertion.actualValue)}
           </p>
         </div>
         <span className="shrink-0 text-[0.75rem] font-medium" style={{ color: mark.colour }}>
@@ -1489,8 +1496,22 @@ function assertionBarColour(outcome: Assertion['outcome']): string {
   return ASSERTION_OUTCOME[outcome].colour;
 }
 
-function formatAssertionValue(value: number | null): string {
-  return value === null ? '—' : formatCell(value);
+/**
+ * An assertion's ACTUAL, in the same unit as the limit beside it.
+ *
+ * ═══ THE METRIC IS AN ARGUMENT BECAUSE THE UNIT IS A PROPERTY OF IT ═══
+ *
+ * This took only the number, so it could not know that `error_rate` is stored
+ * as a fraction and shown everywhere else as a percentage. A failed rule read
+ * `Actual 0.02` under `≤ 1%` — the value that BREACHED the gate rendered as
+ * something that looks well inside it, and the one conversion nobody should
+ * have to do in their head is the one that decides whether a release is safe.
+ *
+ * `formatSlaValue` is the same function the limit goes through, which is the
+ * point: a separate formatter for actuals is two places for one decision.
+ */
+function formatAssertionValue(metric: string, value: number | null): string {
+  return value === null ? '—' : formatSlaValue(metric, value);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { formatSlaThreshold } from '@perfportal/contracts';
+import { formatSlaValue } from '@perfportal/contracts';
 import type { Assertion } from '@perfportal/contracts';
 
 /** One count per outcome, keyed by the outcome itself. */
@@ -27,10 +27,10 @@ export function describeAssertionRule(rule: Assertion['rule']): string {
      compares — and every other surface in this product renders that same
      number as a percentage. A rule reading "≤ 0.01" beside tiles reading
      "2.68%" made the author the one person who had to convert, which is the
-     trap `slaThresholdWarning` exists to catch. `formatSlaThreshold` is the
+     trap `slaThresholdWarning` exists to catch. `formatSlaValue` is the
      single place that decision lives, so the table, the run page's evidence
      panel and the CSV export cannot drift apart. */
-  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${formatSlaThreshold(rule.metric, rule.threshold)}`;
+  return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${formatSlaValue(rule.metric, rule.threshold)}`;
 }
 
 /**
