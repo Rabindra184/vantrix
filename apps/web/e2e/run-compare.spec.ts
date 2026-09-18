@@ -307,3 +307,34 @@ test('overlays five runs and says why it will not take a sixth', async ({ page }
   await expect(refused).toBeDisabled();
   await expect(refused).toHaveAttribute('aria-describedby', 'compare-cap');
 });
+
+/**
+ * ═══ CURRENT AND BASELINE, NAMED, ON A REAL COHORT (review.md 17) ═══
+ *
+ * WHAT ONLY THIS LAYER CAN PROVE. `RunCompare.test.tsx` hands the picker a
+ * cohort of its own making, so it shows the chips render what they are given.
+ * Whether the page ARRIVES at a two-run selection — `parseCompareSelection`
+ * prepending the current run and answering with its nearest neighbour, against
+ * a cohort the trends endpoint really built — is a different question, and it
+ * is the one that decides whether a reader ever sees either word.
+ *
+ * Both roles are asserted because either alone passes against the wrong page: a
+ * picker that marked every chip Current satisfies the first, and one that
+ * marked every chip Baseline satisfies the second.
+ */
+test('the picker names which run is current and which is the baseline', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+
+  await page.goto(runComparePath(runId));
+  await drawn(page);
+
+  await expect(page.getByTestId(`compare-role-${runId}`)).toHaveText('Current');
+
+  // Exactly one Baseline, and it is NOT the run the page was opened from —
+  // which is the whole claim. `compareSummary` divides by that run, so a
+  // picker naming a different one would be labelling the wrong evidence.
+  const baseline = page.locator('[data-testid^="compare-role-"]', { hasText: 'Baseline' });
+  await expect(baseline).toHaveCount(1);
+  await expect(page.getByTestId(`compare-role-${runId}`)).not.toHaveText('Baseline');
+});

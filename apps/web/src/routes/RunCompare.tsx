@@ -14,6 +14,8 @@ import { formatCell } from '../charts/DataTable';
 import { EmptyState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
 import type { CompareStats } from '../tables/buildCompareMatrix';
+import type { TrendRun } from '@perfportal/contracts';
+import { VERDICT } from './marks';
 import { Payload, type Slot } from './payload';
 import DesktopOnly from './DesktopOnly';
 import { linkButtonClasses } from '../components/Button';
@@ -49,6 +51,24 @@ import {
  * The COHORT comes from `trendsQuery`, which is the one thing here that can go
  * stale: ingesting a new run of the same simulation adds a candidate.
  */
+
+/**
+ * `production · main · a1b2c3d4` — the conditions a reader is choosing between.
+ *
+ * ONLY WHAT THE RUN RECORDED. An absent environment is omitted rather than
+ * rendered as a dash or as "unknown": this is a chip in a row of chips, and the
+ * comparability panel below already states missing evidence in the one place
+ * where it changes what a comparison MEANS. Saying it twice would spend the
+ * chip's one spare line on a non-fact.
+ *
+ * Eight characters of the sha, matching the run header's own short-versus-full
+ * treatment of a commit.
+ */
+function conditionsOf(run: TrendRun): string {
+  return [run.environment, run.branch, run.commitSha?.slice(0, 8)]
+    .filter((part): part is string => part != null && part !== '')
+    .join(' · ');
+}
 
 const OVERLAY: Slot = { id: 'compare-overlay', title: 'Comparison' };
 
@@ -147,6 +167,20 @@ export default function RunCompare() {
   }, [cohort.data]);
 
   const labelFor = (id: string): string => labels.get(id) ?? id.slice(0, 8);
+
+  /**
+   * Which selected run the deltas are measured against.
+   *
+   * `compareSummary` defines it as the first OTHER selected run and the summary
+   * tiles read it that way, so the picker has to answer the same question with
+   * the same expression: a chip labelled Baseline that is not the run the tiles
+   * divided by would be worse than no label, because it reads as evidence.
+   *
+   * review.md 17 asks for Current and Baseline to be "explicitly identified".
+   * Current is the run the page was opened from — already `disabled`, which is
+   * a state and not a name.
+   */
+  const baselineId = selected.find((id) => id !== runId) ?? null;
 
   const overlayRuns: CompareRun[] = selected.flatMap((id, i) => {
     const data = seriesResults[i]?.data;
@@ -298,6 +332,10 @@ export default function RunCompare() {
                     {data.runs.map((run) => {
                       const on = selected.includes(run.id);
                       const atCap = !on && selected.length >= MAX_COMPARE;
+                      const role =
+                        run.id === runId ? 'Current' : run.id === baselineId ? 'Baseline' : null;
+                      const mark = VERDICT[run.verdict ?? 'none'];
+                      const conditions = conditionsOf(run);
                       return (
                         <button
                           key={run.id}
@@ -325,13 +363,51 @@ export default function RunCompare() {
                              sentence it points at is visible text below. */
                           aria-describedby={atCap ? 'compare-cap' : undefined}
                           title={run.id === runId ? 'The run you came from is always included' : undefined}
-                          className={`transition-ui inline-flex h-8 touch-manipulation items-center rounded-lg border px-2.5 text-[0.8125rem] font-medium whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
+                          /* ═══ WHAT A READER IS CHOOSING BETWEEN (review.md 17) ═══
+                             The chip was a bare timestamp — `09-13 11:31` —
+                             which "distinguishes records mechanically but does
+                             not tell an engineer which build or environment
+                             they are choosing". The time stays the primary
+                             line, because it is what `labelFor` also names the
+                             series and the matrix columns by, and a chip that
+                             did not share that string would leave the reader
+                             matching a picker against a legend by eye. */
+                          className={`transition-ui flex min-w-0 touch-manipulation flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-[0.8125rem] font-medium disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
                             on
                               ? 'border-accent bg-accent/10 text-accent shadow-panel'
                               : 'border-default bg-surface text-muted shadow-panel hover:bg-sunken hover:text-primary'
                           }`}
+                          /* The whole chip named in one string rather than left
+                             to the reading order of four nodes, so a screen
+                             reader hears "13 Sept 11:31, failed, Baseline,
+                             production · main" instead of a glyph. */
+                          aria-label={[labelFor(run.id), mark.label, role, conditions]
+                            .filter((part) => part != null && part !== '')
+                            .join(' · ')}
                         >
-                          {labelFor(run.id)}
+                          <span className="flex items-center gap-1.5 whitespace-nowrap">
+                            {/* The outcome, in the product's own glyph and
+                                colour — `marks.tsx` is the one place that
+                                decides what a verdict looks like, and a picker
+                                inventing its own would be a second answer. */}
+                            <span aria-hidden="true" style={{ color: mark.colour }}>
+                              {mark.glyph}
+                            </span>
+                            {labelFor(run.id)}
+                            {role !== null && (
+                              <span
+                                data-testid={`compare-role-${run.id}`}
+                                className="rounded border border-default px-1 text-[0.625rem] font-medium tracking-wide uppercase"
+                              >
+                                {role}
+                              </span>
+                            )}
+                          </span>
+                          {conditions !== '' && (
+                            <span className="max-w-[16rem] truncate text-[0.6875rem] font-normal">
+                              {conditions}
+                            </span>
+                          )}
                         </button>
                       );
                     })}
