@@ -53,7 +53,10 @@ function processing(status: RunProcessing['status']) {
   return { state: 'processing' as const, run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` } };
 }
 
-function renderCompare(body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse }) {
+function renderCompare(
+  body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse },
+  trends: unknown = EMPTY_TRENDS,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
 
@@ -71,7 +74,7 @@ function renderCompare(body: ReturnType<typeof processing> | { state: 'ready'; r
   const fetchSpy = vi.fn<(input: RequestInfo) => Promise<Response>>(async (input) => {
     const url = String(input);
     if (url.includes('/trends')) {
-      return new Response(JSON.stringify(EMPTY_TRENDS), { status: 200 });
+      return new Response(JSON.stringify(trends), { status: 200 });
     }
     // Reads `current` AFTER a microtask, not at call time — see the comment
     // above on why the read has to be deferred for a same-tick `rerenderAs`
@@ -188,5 +191,79 @@ describe('RunCompare — the empty state offers a way on', () => {
   it('still says what is missing, rather than replacing the explanation', async () => {
     renderCompare({ state: 'ready', run: COMPLETE_RUN });
     expect(await screen.findByText(/only completed run/i)).toBeInTheDocument();
+  });
+});
+
+
+/**
+ * ═══ WHAT A READER IS CHOOSING BETWEEN (review.md 17) ═══
+ *
+ * The picker labelled every candidate with a bare timestamp — `09-13 11:31` —
+ * which "distinguishes records mechanically but does not tell an engineer which
+ * build or environment they are choosing".
+ *
+ * The time STAYS the primary line: `labelFor` also names the overlay's series
+ * and the matrix's columns, so a chip that dropped it would leave the reader
+ * matching a picker against a legend by eye. What is added is everything else
+ * they need to recognise it.
+ */
+describe('RunCompare — the picker says which run each candidate is', () => {
+  const cohortRun = (over: Record<string, unknown>) => ({
+    id: RUN_ID,
+    startedAt: '2026-08-15T12:00:00.000Z',
+    toolStartedAt: '2026-08-15T12:00:00.000Z',
+    durationMs: 63_161,
+    verdict: 'passed',
+    count: 895,
+    okCount: 871,
+    koCount: 24,
+    errorRate: 0.0268,
+    minMs: 12,
+    maxMs: 2503,
+    meanMs: 228,
+    throughputRps: 14.4,
+    percentiles: { p95: 646 },
+    ...over,
+  });
+
+  const OTHER = '00000000-0000-4000-8000-0000000000ff';
+  const populated = (runs: unknown[]) => ({ ...EMPTY_TRENDS, cohortSize: runs.length, runs });
+
+  it('names the conditions a run carries, and says nothing for one that carries none', async () => {
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      populated([
+        cohortRun({ environment: 'production', branch: 'main', commitSha: 'a1b2c3d4e5f6' }),
+        cohortRun({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+      ]),
+    );
+
+    const chip = await screen.findByTestId(`compare-run-${RUN_ID}`);
+    // Eight characters of the sha, matching the run header's own short form.
+    expect(chip).toHaveTextContent('production · main · a1b2c3d4');
+    // AND THE OMISSION IS THE OTHER HALF. A run that recorded nothing gets no
+    // dash and no "unknown" — the comparability panel below already states
+    // missing evidence in the one place it changes what a comparison means, and
+    // a chip repeating it would spend its one spare line on a non-fact.
+    expect(screen.getByTestId(`compare-run-${OTHER}`)).not.toHaveTextContent('·');
+  });
+
+  /**
+   * `compareSummary` defines the baseline as the first OTHER selected run and
+   * the summary tiles divide by it, so the picker has to answer that question
+   * with the same expression. A chip labelled Baseline that is not the run the
+   * tiles used would be worse than no label, because it reads as evidence.
+   */
+  it('marks which run is current and which one the deltas are measured against', async () => {
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      populated([
+        cohortRun({}),
+        cohortRun({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+      ]),
+    );
+
+    expect(await screen.findByTestId(`compare-role-${RUN_ID}`)).toHaveTextContent('Current');
+    expect(screen.getByTestId(`compare-role-${OTHER}`)).toHaveTextContent('Baseline');
   });
 });

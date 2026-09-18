@@ -115,6 +115,75 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review17-recognisable-runs branch added no unit FILE and 2 cases to
+`apps/web/test/RunCompare.test.tsx`, and its e2e gains one spec. Integration is
+UNCHANGED. `review.md`'s finding 17.
+
+**IT WAS CUT FROM THE SAME `main` AS review6-test-identity, SO ITS FIRST FLOOR
+WAS WRONG BEFORE IT MERGED.** Both branches measured 153 / 1911 and e2e 142,
+and both were right about the tree they were cut from; review6 landed first, so
+this one was describing a tree that no longer existed. RE-MEASURED after
+merging `main` in rather than inferred:
+
+```
+  cut from      153 / 1911   e2e 142
+  review6 lands 153 / 1912   e2e 143
+  this branch   153 / 1914   e2e 144     <- measured on the merged tree
+```
+
+The arithmetic is what survived the reconciliation — 2 unit cases and 1 spec
+onto whatever it sits on — which is the M18/M05 pair's lesson met a second
+time. **A FLOOR IS A PROPERTY OF A TREE, NOT OF A BRANCH**, and two branches
+cut from one `main` cannot both be right once either merges.
+
+**THE PICKER LABELLED EVERY CANDIDATE WITH A BARE TIMESTAMP.** `09-13 11:31`,
+and `08-07 11:00 · e0b6ec` where two runs collided in one minute — which
+"distinguishes records mechanically but does not tell an engineer which build
+or environment they are choosing". A chip now carries the outcome glyph, the
+time, its role, and the conditions the run recorded.
+
+**THE TIME STAYS THE PRIMARY LINE, AND THAT IS NOT DECORATION.** `labelFor` is
+also what names the overlay's SERIES and the matrix's COLUMNS — `compareLabels`
+is documented as owning that shape because a series name is a string equality
+key — so a chip that dropped it would leave the reader matching a picker
+against a legend by eye.
+
+**BASELINE IS THE SUMMARY'S OWN EXPRESSION, NOT A SECOND ANSWER.**
+`compareSummary` defines it as the first OTHER selected run and the tiles divide
+by it, so the picker computes `selected.find((id) => id !== runId)`. A chip
+labelled Baseline that is not the run the tiles used would be worse than no
+label, because it reads as evidence — the same reason the run overview's
+baseline note links the run the deltas were actually computed against.
+
+**AND A RUN THAT RECORDED NOTHING GETS NO LINE, rather than a dash or
+"unknown".** The comparability panel below already states missing evidence in
+the one place where it changes what a comparison MEANS; a chip repeating it
+would spend its one spare line on a non-fact. Asserted as a pair — the
+omission and the presence — because either alone passes against a picker that
+always prints conditions or never does.
+
+**THE VERDICT GLYPH COMES FROM `marks.tsx`.** That module is the one place
+deciding what a verdict looks like, and a picker inventing its own dot would be
+a second answer to a question already settled — including the `none`-is-not-
+`not_evaluated` distinction that file argues at length.
+
+**THE WHOLE CHIP IS NAMED IN ONE `aria-label`.** Four nodes — a glyph, a time,
+a role badge, a conditions line — otherwise reach a screen reader as whatever
+order they happen to sit in, led by a decorative character. The glyph is
+`aria-hidden` and the label spells the outcome as a word.
+
+**AND THE CONTENT WAS FREE TO CHANGE BECAUSE EVERY SPEC SELECTS THESE BY
+ATTRIBUTE.** `run-compare.spec.ts` reaches them as
+`[data-testid^="compare-run-"][aria-pressed="false"]:not([disabled])` — not one
+query by accessible name — which is the compare-cap branch's own lesson paying
+off two findings later: it moved to attribute selectors because `filter()`
+matches DESCENDANTS, and the by-product is a picker whose markup can be
+rebuilt without touching a single assertion.
+
+**FILTERING IS DELIBERATELY LEFT.** The finding asks for it "when history
+grows", and the cohort is bounded by the trends endpoint's own default limit of
+twenty — so a filter would be built for a list that cannot currently reach a
+size needing one. Recorded as an arm not taken rather than a clause missed.
 The review6-test-identity branch added no unit FILE and 1 NET unit case — one
 case in `apps/web/test/RunHeader.test.tsx` was replaced by two — from
 **153 / 1911 to 153 / 1912**, and its **e2e rises to 143**. Integration is
