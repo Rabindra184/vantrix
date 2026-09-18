@@ -34,6 +34,32 @@ describe('Card', () => {
     expect(screen.queryByRole('heading')).toBeNull();
   });
 
+  /**
+   * ═══ THE SIZE FOLLOWS THE LEVEL, NOT THE COMPONENT (review.md 20) ═══
+   *
+   * `SectionHeading`'s docstring states the ladder as 20/24 → 16 → 15px:
+   * page `<h1>`, section `<h2>`, card `<h3>`. This component drew every title
+   * at 15px whatever level the caller asked for — so the eight call sites that
+   * pass `headingLevel={2}` rendered a SECTION heading at the CARD rung, and
+   * one heading level appeared at two sizes depending on which component drew
+   * it.
+   *
+   * ASSERTED AS A PAIR, because either alone passes against a component that
+   * ignores the level entirely — one sizing everything 16px satisfies the
+   * first, one sizing everything 15px satisfies the second. What is being
+   * pinned is that the two DIFFER, and which way round.
+   */
+  it('draws a section-level title at the section rung and a card-level one at the card rung', () => {
+    const { unmount } = render(<Card headingLevel={2} title="Add results"><p>body</p></Card>);
+    expect(screen.getByRole('heading', { level: 2, name: 'Add results' })).toHaveClass('text-base');
+    unmount();
+
+    render(<Card title="Response time"><p>body</p></Card>);
+    const card = screen.getByRole('heading', { level: 3, name: 'Response time' });
+    expect(card).toHaveClass('text-[0.9375rem]');
+    expect(card).not.toHaveClass('text-base');
+  });
+
   it('renders the description under the title when both are given', () => {
     render(<Card title="Requests" description="per second">{null}</Card>);
     expect(screen.getByRole('heading', { name: 'Requests' })).toBeInTheDocument();
