@@ -116,9 +116,12 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The review22-one-word-per-thing branch added no unit FILE and no unit case —
-unit stays **153 / 1922** — and its **e2e rises to 145**. Integration is
-UNCHANGED. `review.md`'s finding 22. (review13 is open and moves the unit floor
-to 1924; this one adds a spec, so the two do not collide.)
+unit stays **153 / 1924** — and its **e2e rises to 145**. Integration is
+UNCHANGED. `review.md`'s finding 22.
+
+**RE-MEASURED AFTER review13 LANDED**, which took the unit floor 1922 to 1924
+underneath this branch. The two did not collide — this one adds a SPEC and no
+unit case — so only the number it quotes moved, not the arithmetic.
 
 **ONE SCREEN CALLED ONE THING TWO NAMES, EIGHT HUNDRED PIXELS APART.**
 `RunDecisionBand`'s row read `Simulation checks` and its link `See the failed
