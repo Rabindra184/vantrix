@@ -13,6 +13,7 @@ import {
   slaMetricUnit,
   slaThresholdWarning,
   SLA_METRIC_UNITS,
+  describeSlaMeasurement,
   formatSlaValue,
   fractionToPercent,
   percentToFraction,
@@ -527,3 +528,69 @@ describe('describeSlaRule', () => {
     ).toBe('Every group: mean response time must be at most 200 ms.');
   });
 });
+
+describe('describeSlaMeasurement', () => {
+  /**
+   * THE REVIEW'S OWN THREE EXAMPLES, VERBATIM. Finding 3 gives them as the
+   * specification, so they are the test rather than a paraphrase of it.
+   */
+  it('renders the second review’s three worked examples', () => {
+    expect(
+      describeSlaMeasurement({ scope: 'run', targetName: null, family: 'response_time', metric: 'error_rate' }),
+    ).toBe('Whole-run error rate');
+    expect(
+      describeSlaMeasurement({ scope: 'request', targetName: 'Search', family: 'response_time', metric: 'p95' }),
+    ).toBe('Search p95 response time');
+    expect(
+      describeSlaMeasurement({ scope: 'group', targetName: 'Cart', family: 'group_cumulated', metric: 'p95' }),
+    ).toBe('Cart p95 cumulative response time');
+  });
+
+  /**
+   * THE RULE UNDERNEATH THOSE EXAMPLES, asserted as a pair so neither half can
+   * be satisfied by a function that always or never qualifies. A family names
+   * the quantity a TIME statistic is taken over; an error rate, a throughput
+   * and a count are quantities in themselves, and `(response_time)` beside one
+   * of those states something false.
+   */
+  it('qualifies a time statistic with its family and leaves other metrics alone', () => {
+    const run = { scope: 'run', targetName: null } as const;
+    expect(describeSlaMeasurement({ ...run, family: 'response_time', metric: 'mean' })).toBe(
+      'Whole-run mean response time',
+    );
+    expect(describeSlaMeasurement({ ...run, family: 'response_time', metric: 'throughput_rps' })).toBe(
+      'Whole-run throughput',
+    );
+    expect(describeSlaMeasurement({ ...run, family: 'response_time', metric: 'count' })).toBe(
+      'Whole-run request count',
+    );
+  });
+
+  /** The group pair `engine.ts` files separately, and the reason the family
+   *  could not simply be dropped: these two differ only by it. */
+  it('keeps cumulative and duration apart for a group', () => {
+    const cart = { scope: 'group', targetName: 'Cart', metric: 'p95' } as const;
+    expect(describeSlaMeasurement({ ...cart, family: 'group_cumulated' })).toBe(
+      'Cart p95 cumulative response time',
+    );
+    expect(describeSlaMeasurement({ ...cart, family: 'group_duration' })).toBe('Cart p95 duration');
+  });
+
+  /** A scope-mismatched rule still reads: a request rule with no target is
+   *  authorable through the API (only the FORM prevents it), and it must not
+   *  render as `undefined p95 response time`. */
+  it('falls back to the whole run when a target is missing', () => {
+    expect(
+      describeSlaMeasurement({ scope: 'request', targetName: '  ', family: 'response_time', metric: 'p95' }),
+    ).toBe('Whole-run p95 response time');
+  });
+
+  /** An unknown family contributes nothing rather than its own identifier —
+   *  printing a word nobody can act on is what this function removes. */
+  it('says nothing about a family it does not recognise', () => {
+    expect(
+      describeSlaMeasurement({ scope: 'run', targetName: null, family: 'future_family', metric: 'p95' }),
+    ).toBe('Whole-run p95');
+  });
+});
+

@@ -376,17 +376,21 @@ describe('ProjectRules — the table', () => {
   it('describes a rule the way the run page and the evaluator do', async () => {
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });
     renderRules();
-    // `describeAssertionRule`'s own typeset comparator, so a rule reads
+    // `describeAssertionRuleForReader`'s typeset comparator, so a rule reads
     // identically here and on the run it judged.
     //
     // WITH ITS UNIT SINCE M17. A bare "≤ 800" left the reader to know that a
     // percentile is milliseconds while `error_rate` is a fraction — and the
     // fraction is the one that produced a permanently-passing gate.
-    // `formatSlaThreshold` is the single place that decision lives, so this
-    // string and the run page's evidence panel cannot drift.
-    expect(
-      await screen.findByText('p95 of the run (response_time) ≤ 800 ms'),
-    ).toBeInTheDocument();
+    // `formatSlaValue` is the single place that decision lives, so this string
+    // and the run page's evidence panel cannot drift.
+    //
+    // AND THE MEASUREMENT IS IN WORDS SINCE the second review's finding 3.
+    // This asserted `p95 of the run (response_time) ≤ 800 ms` — the stored
+    // schema read aloud, with a parenthesis that says nothing to the reader of
+    // a percentile rule and something FALSE beside an error rate. The precise
+    // form still exists and still writes the CSV.
+    expect(await screen.findByText('Whole-run p95 response time ≤ 800 ms')).toBeInTheDocument();
   });
 
   /** The metric that motivated the whole change: stored as a fraction,
@@ -397,7 +401,10 @@ describe('ProjectRules — the table', () => {
     });
     renderRules();
     expect(
-      await screen.findByText('error_rate of the run (response_time) ≤ 1%'),
+      // `(response_time)` is gone rather than merely reworded: an error rate is
+      // not a response-time statistic, which is the half of finding 3 that is
+      // a correctness point rather than a readability one.
+      await screen.findByText('Whole-run error rate ≤ 1%'),
     ).toBeInTheDocument();
   });
 
