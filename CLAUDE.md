@@ -116,15 +116,25 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The review17-recognisable-runs branch added no unit FILE and 2 cases to
-`apps/web/test/RunCompare.test.tsx`, from **153 / 1911 to 153 / 1913**, and its
-**e2e rises to 143**. Integration is UNCHANGED. `review.md`'s finding 17.
+`apps/web/test/RunCompare.test.tsx`, and its e2e gains one spec. Integration is
+UNCHANGED. `review.md`'s finding 17.
 
-**IT WAS CUT FROM THE SAME `main` AS review6-test-identity, SO ONLY ONE OF THEM
-CAN BE RIGHT ABOUT ITS FLOOR.** Both say "from 153 / 1911" and both raise e2e
-from 142; whichever merges second is describing a tree that no longer exists.
-The arithmetic is what survives — this branch adds 2 unit cases and 1 spec to
-whatever it sits on. Re-measure after merging `main` in, exactly as the
-M18/M05 pair had to.
+**IT WAS CUT FROM THE SAME `main` AS review6-test-identity, SO ITS FIRST FLOOR
+WAS WRONG BEFORE IT MERGED.** Both branches measured 153 / 1911 and e2e 142,
+and both were right about the tree they were cut from; review6 landed first, so
+this one was describing a tree that no longer existed. RE-MEASURED after
+merging `main` in rather than inferred:
+
+```
+  cut from      153 / 1911   e2e 142
+  review6 lands 153 / 1912   e2e 143
+  this branch   153 / 1914   e2e 144     <- measured on the merged tree
+```
+
+The arithmetic is what survived the reconciliation — 2 unit cases and 1 spec
+onto whatever it sits on — which is the M18/M05 pair's lesson met a second
+time. **A FLOOR IS A PROPERTY OF A TREE, NOT OF A BRANCH**, and two branches
+cut from one `main` cannot both be right once either merges.
 
 **THE PICKER LABELLED EVERY CANDIDATE WITH A BARE TIMESTAMP.** `09-13 11:31`,
 and `08-07 11:00 · e0b6ec` where two runs collided in one minute — which
