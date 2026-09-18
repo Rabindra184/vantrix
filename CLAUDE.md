@@ -115,6 +115,63 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review15-scannable-rules branch added no unit FILE and 2 cases to
+`apps/web/test/ProjectRules.test.tsx`, from **153 / 1912 to 153 / 1914**.
+Integration is UNCHANGED and **e2e stays 143** — no spec changed.
+`review.md`'s finding 15. (Cut from `main` AFTER review6 landed and BEFORE
+review17 did, so if review17 merges first, re-measure: the arithmetic is 2 unit
+cases and no spec.)
+
+**THE RULE WAS ONE MONOSPACE SENTENCE IN ONE CELL**, so comparing six rules
+meant reading six sentences and diffing them by eye — "the threshold itself is
+written as a long technical sentence". It is two columns now, `Measurement` and
+`Limit`, which is the split the review's own wireframe draws.
+
+**AND THE SEAM WAS ALREADY IN THE CONTRACT.** `describeSlaMeasurement` is WHAT
+is measured and `formatSlaValue` is the bound; the sentence `describeSlaRule`
+builds for the authoring preview is those two joined. Neither is new — the run
+page's gates table has rendered the first since `review.md` 3 — so this is one
+more caller of a decision already made once, not a second opinion about how a
+rule reads. **The preview keeps the sentence deliberately**: it is read once,
+where a table row is scanned against five others.
+
+**THE FREQUENT CONTROL STAYS AND THE DESTRUCTIVE ONE MOVED.** Every row ended
+with Disable AND Delete, which is what made the surface "emphasize management
+actions" rather than list rules. Enable/Disable is the ordinary maintenance a
+reader comes for; Delete is rare and cannot be undone, and it is behind a row
+menu now — **the trigger moved, the confirmation did not**. Selecting it opens
+the same two-step block in the same cell, which is what the finding's "existing
+confirmation behavior" asks for.
+
+**THE MENU TRIGGER IS NAMED AFTER ITS ROW.** Six rules means six triggers in
+one table, and six controls sharing the name "More" is the duplicate-name
+defect this repo has paid for three times. An unnamed rule falls back to its
+MEASUREMENT, which is what its first column shows anyway.
+
+**EIGHT EXISTING CASES WENT RED, AND EVERY ONE OF THEM WAS RIGHT TO.** Three
+looked for `Whole-run p95 response time ≤ 800 ms` as one string and three
+clicked a `Delete` button — both the old shape, asserted verbatim. They were
+re-pointed at the CLAIM rather than deleted: the describers still agree with
+the run page, and the confirmation still arms before deleting.
+
+**AND THE NEW CASE ASSERTS THE CELLS, NOT THE STRINGS.** A single cell still
+holding the whole sentence satisfies any assertion that merely finds both
+substrings — that IS the before-state — so it asserts the two live in
+DIFFERENT `<td>`s and that the measurement cell carries no comparator.
+Red-verified by joining them back into one cell.
+
+**`describe` BECAME TWO FUNCTIONS AND `lint` FOUND THE LEFTOVERS.** Replacing
+the cell left `describe`, `describeAssertionRuleForReader` and the `Assertion`
+type unused — three errors `tsc` is happy to ignore and `eslint` is not. A
+widening helper usually dies with the one call site it was written for.
+
+**AND THE INDENTATION TRAP BIT TWICE MORE IN ONE SESSION.** Two anchored edits
+failed because the literal was copied off a `sed 's/^/  /'` display, which adds
+two spaces to every line. This file already records the fix, and it is worth
+restating as a habit rather than a lesson: **print the target lines with
+`repr()` and build the anchor from that**, never from anything that has been
+through a display filter.
+
 The review6-test-identity branch added no unit FILE and 1 NET unit case — one
 case in `apps/web/test/RunHeader.test.tsx` was replaced by two — from
 **153 / 1911 to 153 / 1912**, and its **e2e rises to 143**. Integration is
