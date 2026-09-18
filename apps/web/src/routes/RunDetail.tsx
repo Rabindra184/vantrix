@@ -42,7 +42,7 @@ import { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
 import { downloadCsv } from '../tables/csv';
 import { assertionsCsv } from './assertionExport';
-import { countAssertions, describeAssertionRuleForReader, firstFailedAssertion } from './assertions';
+import { describeAssertionRuleForReader } from './assertions';
 import { baselineRun, cohortRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
@@ -1269,6 +1269,7 @@ function Assertions({
    *  whose project is not yet known still renders the section. */
   readonly projectSlug?: string;
 }) {
+  const [gatesExpanded, setGatesExpanded] = useState(false);
   if (assertions.length === 0) {
     return (
       <section className="flex flex-col gap-3">
@@ -1338,6 +1339,25 @@ function Assertions({
     );
   }
 
+  /* ═══ PASSED GATES COLLAPSE, THE WAY THE SIBLING TABLE ALREADY DID ═══
+     (review.md 9: "collapse passed checks by default")
+
+     `ToolAssertions` has split its rows into failed-and-the-rest since it was
+     written; this table rendered every gate, always. So a project with twelve
+     rules put twelve rows on the Overview whatever they said, which is the
+     "length without equivalent additional information" the finding names —
+     and the asymmetry meant the two evidence tables on ONE tab disagreed about
+     whether a passing check is worth a row.
+
+     THE RULE IS COPIED DELIBERATELY, not invented: same threshold, same
+     wording, same control. Two tables answering "should this collapse?"
+     differently is the defect; a second answer here would have been a third. */
+  const failedGates = assertions.filter((a) => a.outcome === 'failed');
+  const otherGates = assertions.filter((a) => a.outcome !== 'failed');
+  const gatesCollapsible = failedGates.length > 0 || otherGates.length > 5;
+  const shownGates =
+    !gatesCollapsible || gatesExpanded ? [...failedGates, ...otherGates] : failedGates;
+
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1353,7 +1373,21 @@ function Assertions({
         </Button>
       </div>
       {windowSelected && <FinalizedVerdictNotice what="Platform gates" />}
-      <AssertionEvidencePanel assertions={assertions} />
+      {/* ═══ THE EVIDENCE PANEL IS GONE (review.md 9) ═══
+          "SLA outcomes appear in the decision band, an evidence summary,
+          individual assertion cards, and a full table… this creates length
+          without equivalent additional information."
+
+          MEASURED BEFORE DELETING, because a summary carrying one unique fact
+          would be worth keeping. It carried none:
+
+            counts         the band states them as a sentence AND as three tiles
+            first failure  the band links to it; the table's failed row IS it
+            the rule       the table's own Rule column, through the same describer
+
+          C01 removed those same three counts from the band's OWN duplicate
+          spellings and left this panel standing — which is how one screen comes
+          to state one fact three times. */}
       <TableFrame caption={ASSERTIONS_CAPTION} label="Platform gates table">
           <table className={TABLE}>
             {/* `sr-only`, with the same node drawn visibly outside the scroll
@@ -1376,7 +1410,7 @@ function Assertions({
               </tr>
             </thead>
             <tbody>
-              {assertions.map((assertion) => (
+              {shownGates.map((assertion) => (
                 <tr key={assertion.ruleId} data-testid="assertion-row" className={ROW}>
                   <td data-testid="assertion-outcome" className={`${TD} whitespace-nowrap`}>
                     <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
@@ -1399,122 +1433,23 @@ function Assertions({
             </tbody>
           </table>
       </TableFrame>
+        {gatesCollapsible && (
+          <button
+            type="button"
+            data-testid="platform-gates-toggle"
+            onClick={() => setGatesExpanded((open) => !open)}
+            className="transition-ui w-fit text-[0.8125rem] font-medium text-accent hover:underline hover:underline-offset-2"
+          >
+            {/* `Other gates (N)`, the sibling's own wording one word over — it
+                spells the count and lets the control's state say show-or-hide,
+                rather than defining the rest by what they are NOT. */}
+            {gatesExpanded ? `Hide other gates (${otherGates.length})` : `Other gates (${otherGates.length})`}
+          </button>
+        )}
     </section>
   );
 }
 
-function AssertionEvidencePanel({ assertions }: { assertions: readonly Assertion[] }) {
-  const counts = countAssertions(assertions);
-  const firstFailed = firstFailedAssertion(assertions);
-
-  return (
-    <div
-      data-testid="assertion-evidence-panel"
-      className="grid gap-4 rounded-xl border border-default bg-surface p-4 shadow-panel lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)]"
-    >
-      <div className="flex min-w-0 flex-col gap-3">
-        <div>
-          <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted">
-            SLA evidence
-          </p>
-          <p className="mt-1 text-[0.8125rem] leading-relaxed text-muted">
-            {firstFailed?.message ?? 'Every evaluated rule is within its configured threshold.'}
-          </p>
-        </div>
-        <dl className="grid grid-cols-3 gap-2">
-          <AssertionCount label="Passed" value={counts.passed} mark={ASSERTION_OUTCOME.passed} />
-          <AssertionCount label="Failed" value={counts.failed} mark={ASSERTION_OUTCOME.failed} />
-          <AssertionCount
-            label="N/A"
-            value={counts.not_applicable}
-            mark={ASSERTION_OUTCOME.not_applicable}
-          />
-        </dl>
-      </div>
-      <div className="flex min-w-0 flex-col gap-2">
-        {assertions.map((assertion) => (
-          <AssertionEvidenceRow key={assertion.ruleId} assertion={assertion} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AssertionCount({
-  label,
-  value,
-  mark,
-}: {
-  readonly label: string;
-  readonly value: number;
-  readonly mark: (typeof ASSERTION_OUTCOME)[Assertion['outcome']];
-}) {
-  return (
-    <div className="rounded-lg border border-default bg-sunken px-3 py-2" style={{ color: mark.colour }}>
-      <dt className="text-[0.75rem] font-medium text-muted">{label}</dt>
-      <dd className="mt-1 font-mono text-lg font-semibold leading-none tabular-nums text-primary">
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
-  const mark = ASSERTION_OUTCOME[assertion.outcome];
-  const width = assertionProgress(assertion);
-
-  return (
-    <article className="rounded-lg border border-default bg-sunken px-3 py-2">
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[0.75rem] leading-relaxed text-primary">{describeAssertionRuleForReader(assertion.rule)}</p>
-          <p className="mt-0.5 text-[0.75rem] leading-relaxed text-muted">
-            Actual {formatAssertionValue(assertion.rule.metric, assertion.actualValue)}
-          </p>
-        </div>
-        <span className="shrink-0 text-[0.75rem] font-medium" style={{ color: mark.colour }}>
-          <Marked mark={mark} />
-        </span>
-      </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" aria-hidden="true">
-        <div
-          className="h-full rounded-full"
-          style={{ width: `${width}%`, backgroundColor: assertionBarColour(assertion.outcome) }}
-        />
-      </div>
-    </article>
-  );
-}
-
-function assertionProgress(assertion: Assertion): number {
-  const actual = assertion.actualValue;
-  const { comparator, threshold } = assertion.rule;
-  if (actual === null || actual === undefined || !Number.isFinite(actual) || threshold <= 0) {
-    return assertion.outcome === 'passed' ? 100 : 0;
-  }
-
-  const ratio = comparator === 'lte' ? threshold / Math.max(actual, threshold) : actual / threshold;
-  return Math.max(4, Math.min(100, ratio * 100));
-}
-
-function assertionBarColour(outcome: Assertion['outcome']): string {
-  return ASSERTION_OUTCOME[outcome].colour;
-}
-
-/**
- * An assertion's ACTUAL, in the same unit as the limit beside it.
- *
- * ═══ THE METRIC IS AN ARGUMENT BECAUSE THE UNIT IS A PROPERTY OF IT ═══
- *
- * This took only the number, so it could not know that `error_rate` is stored
- * as a fraction and shown everywhere else as a percentage. A failed rule read
- * `Actual 0.02` under `≤ 1%` — the value that BREACHED the gate rendered as
- * something that looks well inside it, and the one conversion nobody should
- * have to do in their head is the one that decides whether a release is safe.
- *
- * `formatSlaValue` is the same function the limit goes through, which is the
- * point: a separate formatter for actuals is two places for one decision.
- */
 function formatAssertionValue(metric: string, value: number | null): string {
   return value === null ? '—' : formatSlaValue(metric, value);
 }
