@@ -1,5 +1,10 @@
+import { Fragment } from 'react';
+import { Link } from 'react-router-dom';
 import type { Assertion, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
+import { comparability, type ComparabilityFinding } from './comparability';
+import { formatInstant } from './format';
+import { runPath } from './paths';
 import {
   clampPercentile,
   formatCount,
@@ -46,11 +51,19 @@ type DeltaTone = 'better' | 'worse' | 'neutral';
 export default function RunStats({
   stats,
   baseline,
+  current,
   assertions,
   windowed,
 }: {
   readonly stats: StatsResponse;
   readonly baseline?: TrendRun | null;
+  /**
+   * This run as its own cohort row, so the note under the tiles can say what
+   * the deltas are measured against and whether that run was comparable.
+   * Absent leaves the baseline NAMED and its conditions unstated — the
+   * identification is the half that must not depend on a second lookup.
+   */
+  readonly current?: TrendRun | null;
   /**
    * The run's SLA results, used ONLY to tint a tile whose metric a rule
    * actually targets. `undefined` for a run nobody has evaluated, which
@@ -212,6 +225,8 @@ export default function RunStats({
         />
       </dl>
 
+      {baseline != null && <BaselineNote previous={baseline} here={current ?? null} />}
+
       {/* ═══ THE METHODOLOGY ONCE, NOT ONCE PER TILE (review 09-13 N02) ═══
        *
        * Both percentile tiles carried "an estimate, accurate to within 1%" —
@@ -312,6 +327,114 @@ function percentileMs(
   const raw = row.percentiles[key];
   if (raw === undefined || !Number.isFinite(raw)) return undefined;
   return clampPercentile(raw, row);
+}
+
+/**
+ * ═══ A DELTA IS ONLY AS GOOD AS THE RUN IT IS MEASURED AGAINST ═══
+ *
+ * Six tiles said "vs previous" and nothing on the page said WHICH run that is.
+ * `baselineRun` picks it carefully — strictly the run before this one in the
+ * cohort's own total order — and the reader was told none of that, so a -12%
+ * could be against last night's identical nightly or against a different
+ * branch, in a different environment, at half the offered load. review.md 4:
+ * the shorthand "hides information needed to judge relevance".
+ *
+ * THE MACHINERY WAS ALREADY BUILT, ONE PAGE OVER. `comparability` exists to
+ * answer exactly this question and has been answering it on Compare since the
+ * review-criticals branch, over these same `TrendRun` fields. This is the
+ * one-call-site-short shape this repo keeps meeting — `ErrorsTable`'s
+ * `windowSelected` passed at two sites of three, `compareLabels` named by its
+ * own docstring and called bare by the trends axis.
+ *
+ * IT SAYS NOTHING WHEN EVERYTHING MATCHES, deliberately. The IDENTIFICATION is
+ * unconditional, because a reader must always be able to see what "previous"
+ * means; the CONDITIONS earn a line only when there is something to act on, and
+ * a permanent "these runs are comparable" is the undifferentiated chrome
+ * review.md 20 objects to. So absence means "nothing differed and nothing was
+ * missing" — which is only honest because the summary, when it does appear,
+ * names both cases rather than collapsing them.
+ *
+ * UNKNOWN IS NOT COMPATIBLE, which `comparability` already encodes: a run that
+ * recorded no branch cannot be said to match one that did, so it reads "not
+ * recorded" rather than being quietly counted as agreement.
+ *
+ * NO HEADING, for the reason the percentile disclosure below gives: a
+ * `<summary>` contributes an ARIA group and not a heading, so the Overview
+ * outline `run-tables.spec.ts` pins as exactly ['Platform gates', 'Simulation
+ * assertions', 'Statistics'] is untouched.
+ */
+function BaselineNote({
+  previous,
+  here,
+}: {
+  readonly previous: TrendRun;
+  readonly here: TrendRun | null;
+}) {
+  // `here` absent still names and links the baseline. Identification is the
+  // half that must never depend on a second lookup succeeding.
+  const notable = (here === null ? [] : comparability([here, previous])).filter(
+    (finding) => finding.kind !== 'same',
+  );
+
+  return (
+    <div className="mt-3 flex flex-col gap-1.5 text-[0.75rem] text-muted" data-testid="baseline-note">
+      <p>
+        {'“vs previous” is '}
+        <Link
+          className="font-medium text-accent hover:underline hover:underline-offset-2"
+          to={runPath(previous.id)}
+        >
+          {`the run of ${formatInstant(previous.toolStartedAt ?? previous.startedAt)}`}
+        </Link>
+        {' — the one immediately before this in this test.'}
+      </p>
+      {notable.length > 0 && (
+        <details className="group" data-testid="baseline-differences">
+          <summary className="w-fit cursor-pointer list-none font-medium text-accent hover:underline hover:underline-offset-2">
+            {summariseConditions(notable)}
+          </summary>
+          <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            {notable.map((finding) => (
+              <Fragment key={finding.label}>
+                <dt>{finding.label}</dt>
+                <dd className="text-primary">
+                  {`this run ${finding.values[0] ?? 'unknown'}, previous ${finding.values[1] ?? 'unknown'}`}
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The one line a reader sees without opening anything, so it has to carry WHICH
+ * dimensions are involved rather than merely that something is.
+ *
+ * A real difference and missing evidence are stated separately: "different
+ * branch" is a fact about two runs, "build not recorded" is a fact about what
+ * was captured, and a reader can act on the first while only the second tells
+ * them to go fix their CI metadata.
+ */
+function summariseConditions(notable: readonly ComparabilityFinding[]): string {
+  const named = (kind: ComparabilityFinding['kind']): string[] =>
+    notable.filter((finding) => finding.kind === kind).map((finding) => finding.label.toLowerCase());
+
+  const parts: string[] = [];
+  const differs = named('differs');
+  const unknown = named('unknown');
+  if (differs.length > 0) parts.push(`Different ${joinWords(differs)}`);
+  if (unknown.length > 0) parts.push(`${joinWords(unknown)} not recorded`);
+  const sentence = parts.join('; ');
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** `a`, `a and b`, `a, b and c` — an Oxford-comma-free list for prose. */
+function joinWords(words: readonly string[]): string {
+  if (words.length < 2) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`;
 }
 
 function deltaFor(

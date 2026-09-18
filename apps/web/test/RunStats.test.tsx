@@ -1,9 +1,11 @@
+import type { ReactElement } from 'react';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Assertion, StatsResponse } from '@perfportal/contracts';
+import type { Assertion, StatsResponse, TrendRun } from '@perfportal/contracts';
 import { SLA_METRIC_SCALARS, isResolvableSlaMetric, slaMetricUnit } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import RunStats from '../src/routes/RunStats';
@@ -29,9 +31,46 @@ function fromRepo(rel: string): string {
   throw new Error(`could not find ${rel} from ${process.cwd()}`);
 }
 
+/**
+ * EVERY MOUNT GOES THROUGH A ROUTER, including the cases that pass no baseline.
+ *
+ * The note under the tiles links to the run the deltas were measured against,
+ * and a `<Link>` outside a router throws `Cannot destructure property
+ * 'basename' of React.useContext(...)` — a message naming react-router's
+ * internals rather than the missing provider, which is a poor thing to hand
+ * whoever adds the next baseline case. One helper means they cannot meet it.
+ */
+function renderStats(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
+
+/**
+ * A cohort row carrying THIS run's own numbers, so a delta is never what a
+ * conditions case is really asserting. Only the provenance varies.
+ */
+function trendRun(over: Partial<TrendRun> = {}): TrendRun {
+  return {
+    id: '11111111-1111-4111-8111-111111111111',
+    startedAt: '2026-08-07T05:30:02.171Z',
+    toolStartedAt: '2026-08-07T05:30:02.171Z',
+    durationMs: 60_000,
+    verdict: 'passed',
+    count: runRow.count,
+    okCount: runRow.okCount,
+    koCount: runRow.koCount,
+    errorRate: runRow.errorRate,
+    minMs: runRow.minMs,
+    maxMs: runRow.maxMs,
+    meanMs: runRow.meanMs,
+    throughputRps: runRow.throughputRps,
+    percentiles: runRow.percentiles,
+    ...over,
+  };
+}
+
 describe('RunStats', () => {
   it('shows the run row’s own totals', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     // Plain digits — `String(runRow.count)`, not `.toLocaleString()`. The
     // fixture's run has 895 requests, where the two happen to produce the
     // same string; the test below (four digits or more) is what actually
@@ -64,7 +103,7 @@ describe('RunStats', () => {
         row.scope === 'run' ? { ...row, count: bigCount, okCount: bigOk, koCount: bigKo } : row,
       ),
     };
-    render(<RunStats stats={bigRun} />);
+    renderStats(<RunStats stats={bigRun} />);
 
     const tile = screen.getByTestId('stat-total-requests');
     expect(tile).toHaveTextContent(String(bigCount));
@@ -99,13 +138,13 @@ describe('RunStats', () => {
    * from the first, free to disagree the day the server's rounding changes.
    */
   it('reads error rate from the same field the table does', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     const expected = (runRow.errorRate * 100).toFixed(2);
     expect(screen.getByTestId('stat-error-rate')).toHaveTextContent(expected);
   });
 
   it('shows comparison deltas when a previous cohort run is provided', () => {
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         baseline={{
@@ -149,12 +188,65 @@ describe('RunStats', () => {
    * this run's clamped one. Both expectations are computed from the fixture,
    * not written down.
    */
+  /**
+   * ═══ THE CONDITIONS THE DELTA WAS MEASURED UNDER (review.md 4) ═══
+   *
+   * "vs previous" hid everything a reader needs to judge relevance: a -12%
+   * against the same nightly and a -12% against a different branch in a
+   * different environment at half the load render identically. `comparability`
+   * has answered exactly this on Compare since the review-criticals branch;
+   * this is that answer at the first place a reader meets a delta.
+   *
+   * ASSERTED ON THE SUMMARY, which is the line visible without opening
+   * anything — a disclosure whose closed state says only "details" would put
+   * the finding one click away from the reader who does not know to look.
+   */
+  it('names what differed between this run and the baseline it compares against', () => {
+    renderStats(
+      <RunStats
+        stats={stats}
+        current={trendRun({ environment: 'staging', branch: 'feature/cart-rewrite', commitSha: 'abcdef1234' })}
+        baseline={trendRun({ environment: 'production', branch: 'main', commitSha: 'beefcafe99' })}
+      />,
+    );
+
+    const note = screen.getByTestId('baseline-differences');
+    expect(note).toHaveTextContent('Different environment, branch and build');
+    // The values are a click away, and they say which run is which — a list of
+    // bare values would leave the reader to guess the order.
+    expect(note).toHaveTextContent('this run staging, previous production');
+  });
+
+  /**
+   * AND IT IS SILENT WHEN THE TWO RUNS AGREE, which is what makes the case
+   * above mean anything: a note that always warned would be ignored inside a
+   * week, and a permanent "these runs are comparable" is the undifferentiated
+   * chrome review.md 20 objects to.
+   *
+   * The identification is asserted in the same breath BECAUSE it is
+   * unconditional — without it this would pass just as happily against a
+   * component that rendered nothing at all.
+   */
+  it('says nothing about conditions when the baseline matches on every one', () => {
+    const shared = { environment: 'staging', branch: 'main', commitSha: 'abcdef1234' };
+    renderStats(
+      <RunStats
+        stats={stats}
+        current={trendRun(shared)}
+        baseline={trendRun({ ...shared, id: '22222222-2222-4222-8222-222222222222' })}
+      />,
+    );
+
+    expect(screen.queryByTestId('baseline-differences')).toBeNull();
+    expect(screen.getByTestId('baseline-note')).toHaveTextContent('vs previous');
+  });
+
   it('computes percentile deltas from the clamped values the tiles show', () => {
     const clamped = Math.min(Math.max(runRow.percentiles.p95!, runRow.minMs), runRow.maxMs);
     // Raw double the target, but a max that clamps it back down to it — so a
     // delta read off the raw map and one read off the clamp differ, loudly.
     const baselineClamped = clamped * 2;
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         baseline={{
@@ -240,7 +332,7 @@ describe('RunStats', () => {
    * estimates and drift further.
    */
   it('marks each percentile as an estimate without repeating the methodology', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
 
     for (const id of ['stat-p95', 'stat-p99']) {
       const tile = screen.getByTestId(id);
@@ -258,13 +350,13 @@ describe('RunStats', () => {
    *  outline verbatim, and a disclosure that contributed one would break it on
    *  every tab — the shell-must-not-add-an-h2 rule, one component over. */
   it('adds the disclosure without contributing a heading', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     expect(screen.getByTestId('percentile-method').tagName).toBe('DETAILS');
     expect(screen.queryAllByRole('heading')).toHaveLength(0);
   });
 
   it('tints a metric whose SLA rule failed, and leaves an ungated one alone', () => {
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         assertions={[
@@ -298,7 +390,7 @@ describe('RunStats', () => {
    * that never tints, or against one that always does.
    */
   it('withholds the tint while a window is applied', () => {
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         windowed
@@ -312,7 +404,7 @@ describe('RunStats', () => {
 
   it('warns amber while a gate is passing but close, and stays clear when it is not', () => {
     // 950 against an `lte 1000` gate is inside the 10% margin; 500 is not.
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         assertions={[
@@ -330,7 +422,7 @@ describe('RunStats', () => {
   });
 
   it('judges error rate and throughput, which need no new rule family', () => {
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         assertions={[
@@ -356,7 +448,7 @@ describe('RunStats', () => {
    * (nothing emits `latency` yet).
    */
   it('ignores a rule on a different family that shares the metric name', () => {
-    render(
+    renderStats(
       <RunStats
         stats={stats}
         assertions={[
@@ -372,7 +464,7 @@ describe('RunStats', () => {
   });
 
   it('renders nothing when the payload has no run-scope row', () => {
-    const { container } = render(<RunStats stats={{ ...stats, stats: [] }} />);
+    const { container } = renderStats(<RunStats stats={{ ...stats, stats: [] }} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -394,7 +486,7 @@ describe('RunStats', () => {
    * on the tile is the word they type into the rule that judges it.
    */
   it('names each response-time tile after the metric a gate is authored against', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     const labels = [...document.querySelectorAll('section[aria-label="Run totals"] dt')].map(
       (dt) => (dt.textContent ?? '').trim(),
     );
@@ -416,7 +508,7 @@ describe('RunStats', () => {
    * `Requests/s` now, and the unit is gone because the label carries it.
    */
   it('gives throughput one name, not a label and a unit that disagree', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     const section = document.querySelector('section[aria-label="Run totals"]')!;
     const labels = [...section.querySelectorAll('dt')].map((dt) => (dt.textContent ?? '').trim());
 
@@ -442,7 +534,7 @@ describe('RunStats', () => {
    * tile is not that surface, so it speaks the product's own language.
    */
   it('states successes and failures in the product’s words, not the tool’s', () => {
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     const section = document.querySelector('section[aria-label="Run totals"]')!;
     const text = section.textContent ?? '';
 
@@ -501,7 +593,7 @@ describe('RunStats', () => {
     expect(here).toContain(`label="${named}"`);
 
     // And it must be on screen, not merely in the source.
-    render(<RunStats stats={stats} />);
+    renderStats(<RunStats stats={stats} />);
     const labels = [
       ...document.querySelectorAll('section[aria-label="Run totals"] dt'),
     ].map((dt) => (dt.textContent ?? '').trim());

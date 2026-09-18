@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunResponse, StatsResponse, TrendsResponse } from '@perfportal/contracts';
@@ -153,6 +153,32 @@ describe('RunOverviewTab — the baseline the stat tiles compare against', () =>
     // the only honest delta is +100.0%.
     const tile = await screen.findByTestId('stat-mean-response');
     await waitFor(() => expect(tile.parentElement).toHaveTextContent('+100.0% vs previous'));
+  });
+
+  /**
+   * ═══ THE SEAM: THE NOTE MUST NAME THE RUN THE DELTAS WERE COMPUTED FROM ═══
+   *
+   * `RunStats` is handed `baseline` and `current` by two separate calls in
+   * `RunDetail`, so a unit fixture that supplies both proves only that the note
+   * renders what it is given. What it cannot prove is that the run the note
+   * NAMES is the run the tiles were computed AGAINST — and a note pointing at
+   * the wrong member of the cohort would be worse than no note, because it
+   * reads as evidence.
+   *
+   * The href is the assertion for exactly that reason: a link built from this
+   * run rather than its baseline renders identically and says something false.
+   */
+  it('names the run the deltas are measured against, and links to it', async () => {
+    renderOverview(null);
+
+    // The delta first, so the link below is being checked against a comparison
+    // that demonstrably happened.
+    const tile = await screen.findByTestId('stat-mean-response');
+    await waitFor(() => expect(tile.parentElement).toHaveTextContent('+100.0% vs previous'));
+
+    const link = within(screen.getByTestId('baseline-note')).getByRole('link');
+    expect(link).toHaveAttribute('href', `/runs/${TRENDS.runs[1]!.id}`);
+    expect(link).not.toHaveAttribute('href', `/runs/${RUN_ID}`);
   });
 
   it('withholds every delta under a time brush, rather than comparing a window to a whole run', async () => {
