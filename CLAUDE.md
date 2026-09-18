@@ -116,11 +116,16 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The review15-scannable-rules branch added no unit FILE and 2 cases to
-`apps/web/test/ProjectRules.test.tsx`, from **153 / 1912 to 153 / 1914**.
-Integration is UNCHANGED and **e2e stays 143** — no spec changed.
-`review.md`'s finding 15. (Cut from `main` AFTER review6 landed and BEFORE
-review17 did, so if review17 merges first, re-measure: the arithmetic is 2 unit
-cases and no spec.)
+`apps/web/test/ProjectRules.test.tsx`, from **153 / 1914 to 153 / 1916**.
+Integration is UNCHANGED and **e2e stays 144** — no spec changed.
+`review.md`'s finding 15.
+
+**ITS FIRST FLOOR WAS 153 / 1912 to 1914, AND review17 LANDED UNDERNEATH IT.**
+That is the second reconciliation in a row, so the habit is worth stating
+plainly rather than rediscovering: when several branches are cut from one
+`main`, the floor each records is true only of the tree it was cut from.
+RE-MEASURED after merging `main` in — never inferred — and the arithmetic (2
+unit cases, no spec) is the part that survives.
 
 **THE RULE WAS ONE MONOSPACE SENTENCE IN ONE CELL**, so comparing six rules
 meant reading six sentences and diffing them by eye — "the threshold itself is
