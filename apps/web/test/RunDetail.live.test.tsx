@@ -251,7 +251,15 @@ describe('RunDetail — one shell, for every state', () => {
     expect(screen.getByText(/still processing/i)).toBeInTheDocument();
   });
 
-  it('summarizes SLA evidence above the assertion table without replacing the table', () => {
+  /**
+   * A completed run carrying three platform gates, ONE of them failed.
+   *
+   * Shared by the two cases below because they assert different halves of one
+   * render — that the evidence is stated once, and that the passing gates
+   * collapse. Seeding it twice would let the two drift into disagreeing about
+   * what "three gates" means.
+   */
+  function seedThreeGates() {
     vi.stubGlobal(
       'fetch',
       () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
@@ -308,14 +316,64 @@ describe('RunDetail — one shell, for every state', () => {
         ],
       },
     });
+  }
 
-    const panel = screen.getByTestId('assertion-evidence-panel');
-    expect(within(panel).getByText('SLA evidence')).toBeInTheDocument();
-    expect(within(panel).getByText('p99 breached its threshold.')).toBeInTheDocument();
-    expect(within(panel).getByText('Passed')).toBeInTheDocument();
-    expect(within(panel).getByText('Failed')).toBeInTheDocument();
-    expect(within(panel).getByText('N/A')).toBeInTheDocument();
-    expect(screen.getAllByTestId('assertion-outcome')).toHaveLength(3);
+  /**
+   * ═══ ONE EVIDENCE SURFACE, NOT THREE (review.md 9) ═══
+   *
+   * This asserted an `assertion-evidence-panel` above the table, carrying the
+   * failure's message and three count tiles. Every one of those facts is
+   * stated elsewhere on the same screen — the decision band spells the counts
+   * as a sentence AND as tiles and links to the first failure, and the table
+   * below carries the message in its own column — so the panel was length
+   * without information, and it is gone.
+   *
+   * The CLAIM survives and is what is asserted now: the evidence is on the
+   * page, as rows, exactly once. The panel's absence sits beside the rows'
+   * presence, because an absence alone passes against a tab that rendered
+   * nothing at all.
+   */
+  it('states the SLA evidence once, as table rows, with no summary repeating it', () => {
+    seedThreeGates();
+
+    // The failed gate's message, IN ITS ROW — scoped, because the decision
+    // band states it too and that is deliberate: the band is the conclusion
+    // and the table is the evidence for it. What the panel added was a THIRD
+    // copy between them, summarising the table directly above the table.
+    expect(
+      // `getAllBy…[0]`, not `getBy…`: the singular form throws on a table
+      // holding more than one row, which quietly made this case depend on
+      // the COLLAPSE — a claim it does not make and the case below does.
+      // Pinning the table open then failed both, which is how the coupling
+      // surfaced. The failed gates sort first, so this is the failure's row.
+      within(screen.getAllByTestId('assertion-row')[0]!).getByText('p99 breached its threshold.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('assertion-evidence-panel')).toBeNull();
+
+  });
+
+  /**
+   * ═══ AND THE PASSING GATES COLLAPSE (review.md 9) ═══
+   *
+   * "Collapse passed checks by default." `ToolAssertions` has split its rows
+   * into failed-and-the-rest since it was written; this table rendered every
+   * gate, always — so two evidence tables on ONE tab disagreed about whether a
+   * passing check is worth a row.
+   *
+   * ITS OWN CASE, not folded into the one above. Both claims were asserted
+   * together at first, and both mutations — restoring the panel, and pinning
+   * the table open — then failed the same case, which proves one thing twice.
+   */
+  it('opens the gates table on the failures and files the passing ones behind a control', () => {
+    vi.stubGlobal(
+      'fetch',
+      () => Promise.resolve(new Response(JSON.stringify({ runId: RUN_ID, errors: [] }), { status: 200 })),
+    );
+    seedThreeGates();
+
+    // Three seeded, one failed: one row, and the other two named by the control.
+    expect(screen.getAllByTestId('assertion-outcome')).toHaveLength(1);
+    expect(screen.getByTestId('platform-gates-toggle')).toHaveTextContent('Other gates (2)');
   });
 });
 
