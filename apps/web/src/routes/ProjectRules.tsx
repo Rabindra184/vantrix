@@ -866,19 +866,23 @@ export default function ProjectRules({
             </>
           )}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
-              Name (optional)
-              <input
-                id={fieldId('name')}
-                aria-invalid={formError?.field === 'name' || undefined}
-                aria-describedby={formError?.field === 'name' ? FORM_ERROR_ID : undefined}
-                className={INPUT}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Checkout p95 gate"
-              />
-            </label>
+          {/* ═══ MEASURE: WHAT THIS RULE LOOKS AT (review.md 13) ═══
+              The finding asks for the form in four steps — Applies to, Measure,
+              Limit, then one preview with the optional name and Save — and the
+              fields were in none of them: `Name` sat second, between the test
+              scoping and the measurement, so the reader met an optional field
+              before either decision that makes a rule.
+
+              A `<fieldset>`/`<legend>`, which is what tells a screen reader
+              these controls come in parts — the device `NewRunnerRun` already
+              uses. NOT NUMBERED: M11 removed the ordinals there because "1 ·"
+              promises a flow that gates step 2 behind step 1, and this form
+              submits in one go exactly as that one does. */}
+          <fieldset className="flex flex-col gap-3">
+            <legend className="mb-1.5 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-muted">
+              Measure
+            </legend>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Scope
               <select
@@ -900,23 +904,33 @@ export default function ProjectRules({
                 ))}
               </select>
             </label>
-          </div>
+            </div>
 
           {/* Rendered only for the scopes that match BY name. A run rule reads
               the run's own aggregate row and has nothing to target, so the
               field would be a box that must stay empty. */}
-          {scope !== 'run' && (
-            <TargetField
-              slug={slug}
-              testSlug={testSlug}
-              scope={scope}
-              value={targetName}
-              onChange={setTargetName}
-              invalid={formError?.field === 'targetName'}
-            />
-          )}
+            {scope !== 'run' && (
+              <TargetField
+                slug={slug}
+                testSlug={testSlug}
+                scope={scope}
+                value={targetName}
+                onChange={setTargetName}
+                invalid={formError?.field === 'targetName'}
+              />
+            )}
+          </fieldset>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {/* ═══ LIMIT: THE BOUND IT SETS ═══
+              measurement, statistic, comparator, value with unit — the
+              finding's own list, in its own order, already the order these
+              four were in. What was missing was anything saying they are one
+              decision rather than four adjacent selects. */}
+          <fieldset className="flex flex-col gap-3">
+            <legend className="mb-1.5 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-muted">
+              Limit
+            </legend>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Measurement
               {/* ONLY WHAT CAN RESOLVE AT THIS SCOPE — see `FAMILIES_FOR_SCOPE`.
@@ -1010,7 +1024,8 @@ export default function ProjectRules({
                 onChange={(e) => setThreshold(e.target.value)}
               />
             </label>
-          </div>
+            </div>
+          </fieldset>
           {/* Rendered only when there IS a warning, so this is never an empty
               live region a screen reader has to step through — the same rule
               `ChartActions`' copy feedback follows. */}
@@ -1134,6 +1149,28 @@ export default function ProjectRules({
               </div>
             </details>
           </div>
+
+          {/* ═══ THE OPTIONAL NAME, BESIDE THE PREVIEW AND SAVE ═══
+              review.md 13 puts it in the last step — "one readable preview,
+              optional name, Save" — and it sat SECOND, between the test
+              scoping and the measurement, so a reader met an optional field
+              before either decision that makes a rule.
+
+              It reads better here for a reason beyond the order: the preview
+              directly above states the rule in a sentence, which is exactly
+              the moment an author knows what they would call it. */}
+            <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
+              Name (optional)
+              <input
+                id={fieldId('name')}
+                aria-invalid={formError?.field === 'name' || undefined}
+                aria-describedby={formError?.field === 'name' ? FORM_ERROR_ID : undefined}
+                className={INPUT}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Checkout p95 gate"
+              />
+            </label>
 
           <div>
             <Button type="submit" variant="primary" loading={createMutation.isPending}>

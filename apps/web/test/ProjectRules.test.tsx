@@ -466,6 +466,50 @@ describe('ProjectRules — the table', () => {
     expect(await screen.findByRole('menuitem', { name: 'Delete this rule' })).toBeInTheDocument();
   });
 
+  /**
+   * ═══ THE FORM ASKS IN THE ORDER THE READER DECIDES (review.md 13) ═══
+   *
+   * The finding sets out four steps — Applies to, Measure, Limit, then one
+   * readable preview with the optional name and Save — and the fields were in
+   * none of them: `Name` sat SECOND, between the test scoping and the
+   * measurement, so an author met an optional field before either decision
+   * that actually makes a rule.
+   *
+   * `<fieldset>`/`<legend>` is what carries the grouping to a screen reader —
+   * an implicit `group` role named by its legend — which is the device
+   * `NewRunnerRun` already uses. NOT NUMBERED: M11 stripped the ordinals there
+   * because "1 ·" promises a flow that gates step 2 behind step 1, and this
+   * form submits in one go exactly as that one does.
+   *
+   * The name's POSITION is asserted rather than its presence, because the
+   * field never went anywhere — moving it is the whole change, and a test for
+   * its existence would have passed before and after.
+   */
+  it('groups the form into the named steps the finding sets out', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+
+    expect(await screen.findByRole('group', { name: 'Measure' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Limit' })).toBeInTheDocument();
+  });
+
+  /**
+   * ITS OWN CASE, not folded into the one above. Both claims were asserted
+   * together at first, and both mutations — stripping a legend, and moving the
+   * name back to the top — then failed that one case, which proves one thing
+   * twice. The same correction #172 needed, one file over.
+   */
+  it('leaves the optional name until the preview has stated the rule', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+
+    // After the preview — which is the moment an author knows what they would
+    // call this rule, because the sentence stating it is on screen.
+    const preview = await screen.findByTestId('rule-preview');
+    const named = screen.getByLabelText(/name \(optional\)/i);
+    expect(preview.compareDocumentPosition(named) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('falls back to a dash for a rule nobody named', async () => {
     fetchProjectRules.mockResolvedValue({ rules: [rule({ name: null })] });
     renderRules();
