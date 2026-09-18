@@ -220,6 +220,41 @@ describe('RunList columns', () => {
     expect(visible).not.toBe(ROWS[1]!.id);
   });
 
+  /**
+   * ═══ THE FILTERS ARE A TOOLBAR, NOT A PANEL (review.md 8) ═══
+   *
+   * "The filter area has a card, 'Filter runs', 'Search runs', multiple labels,
+   * and an Apply action before the rows begin… give routine filters less visual
+   * weight than the data."
+   *
+   * The COMPACT viewport had already dropped both the frame and the repeated
+   * title — `CompactFilters` folds the whole thing behind its own summary — and
+   * the desktop kept them. That is M02's lesson exactly: A FIX APPLIED AT ONE
+   * BREAKPOINT IS NOT APPLIED.
+   *
+   * ASSERTED ON THE SURFACE TREATMENT, because that is what "visual weight" is
+   * in this app: `border-default` + `shadow-panel` + a surface fill is how
+   * `Card`, the statistics table and the decision band all say "this is a thing
+   * to read". A filter wearing it competes with the run it exists to help find.
+   *
+   * The behaviour assertions sit beside it deliberately — the finding warns "do
+   * not change search behavior merely for appearance", so the controls being
+   * present and named is half of what this case claims.
+   */
+  it('frames the filters as a toolbar rather than as a panel of their own', async () => {
+    renderList(ROWS);
+    const form = await screen.findByRole('form', { name: 'Run filters' });
+
+    expect(form.className).not.toMatch(/border-default|shadow-panel|bg-surface/);
+    // And the title the compact summary already carries is not repeated here.
+    expect(within(form).queryByText('Filter runs')).toBeNull();
+
+    // Unchanged: every control still present, still labelled, Apply still there.
+    expect(within(form).getByLabelText('Search runs')).toBeInTheDocument();
+    expect(within(form).getByLabelText('Status')).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: 'Apply' })).toBeInTheDocument();
+  });
+
   it('sends search, status, and verdict filters to the API', async () => {
     const { fetchSpy } = renderList(ROWS);
     await screen.findByRole('form', { name: 'Run filters' });

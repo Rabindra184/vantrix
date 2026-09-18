@@ -155,17 +155,12 @@ export default function RunList({
   const compact = useIsCompact();
   const controls = compact ? (
     <CompactFilters active={filtersActive || ignored.length > 0} filters={filters}>
-      {/* `showHeader={false}`: the disclosure's own summary already reads
-          "Filter runs", and two identical labels eight pixels apart is the
-          same duplicate-heading problem `ProjectRules.showTitle` solves one
-          page over. */}
       <RunListControls
         filters={filters}
         ignored={ignored}
         active={filtersActive || ignored.length > 0}
         onApply={applyFilters}
         onClear={clearFilters}
-        showHeader={false}
       />
     </CompactFilters>
   ) : (
@@ -516,7 +511,6 @@ function RunListControls({
   active,
   onApply,
   onClear,
-  showHeader = true,
 }: {
   readonly filters: RunListFilters;
   /**
@@ -532,7 +526,6 @@ function RunListControls({
   readonly onApply: (filters: RunListFilters) => void;
   readonly onClear: () => void;
   /** False inside `CompactFilters`, whose own summary carries these words. */
-  readonly showHeader?: boolean;
 }) {
   const [q, setQ] = useState(filters.q ?? '');
   const [status, setStatus] = useState(filters.status ?? '');
@@ -557,14 +550,33 @@ function RunListControls({
     <form
       aria-label="Run filters"
       onSubmit={submit}
-      className="@container flex flex-col gap-3 rounded-xl border border-default bg-surface p-4 shadow-panel"
+      /* ═══ A TOOLBAR, NOT A PANEL (review.md 8) ═══
+         "The filter area has a card, 'Filter runs', 'Search runs', multiple
+         labels, and an Apply action before the rows begin… give routine filters
+         less visual weight than the data."
+
+         The border, the surface fill and the shadow are how this app says "this
+         is a thing to read" — the treatment `Card`, the statistics table and the
+         decision band all carry. Spending it on the controls ABOVE the data gave
+         a routine filter the same weight as the run it exists to help you find.
+         The layout is unchanged; only the frame goes.
+
+         BEHAVIOUR IS UNTOUCHED, which the finding asks for in as many words: "do
+         not change search behavior merely for appearance". Apply still submits,
+         and Clear still appears only when something is filtering. */
+      className="@container flex flex-col gap-3"
     >
-      {showHeader && (
-        <div className="flex items-center gap-2 text-[0.8125rem] font-medium text-primary">
-          <FilterIcon className="h-3.5 w-3.5" />
-          Filter runs
-        </div>
-      )}
+      {/* NO "Filter runs" ROW. The compact viewport already dropped it —
+          `CompactFilters`' own `<summary>` says it, and two identical labels
+          eight pixels apart was the duplicate-heading problem
+          `ProjectRules.showTitle` solves one page over. The DESKTOP kept it,
+          which is review.md 8's "over-framed" in one line, and M02's lesson
+          that A FIX APPLIED AT ONE BREAKPOINT IS NOT APPLIED.
+
+          Nothing is lost to assistive technology: the `<form>`'s own
+          `aria-label="Run filters"` names the region — which is how
+          `RunList.test.tsx` has always found it — and every control inside
+          carries its own visible label. */}
 
       {ignored.length > 0 && (
         // NO `role="status"`, deliberately. This is not an announcement — it
