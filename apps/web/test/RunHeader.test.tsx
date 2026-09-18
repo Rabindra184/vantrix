@@ -56,9 +56,53 @@ function renderHeader(run: RunResponse, peakUsers: number | null = null, compact
 const FULL_IDENTITY = { ...RUN };
 
 describe('RunHeader', () => {
-  it('names the run by its fully-qualified simulation', () => {
+  /**
+   * ═══ THE TEST LEADS, NOT THE CLASS (review.md 6) ═══
+   *
+   * One class is run as many tests — `declaredTestSlug` exists so that
+   * `checkout-smoke` and `checkout-soak` can share `example.ParitySimulation`
+   * — and with the class as the heading those two run pages are identical
+   * above the fold. "Repeating the class as the main identity makes different
+   * user tasks look the same."
+   *
+   * The negative is the half that carries the finding: a heading that merely
+   * CONTAINS the test name is satisfied by one that appends it to the class,
+   * which is the before-state wearing a new label.
+   */
+  it('leads with the test the run belongs to, and files the class beside it', () => {
+    renderHeader({
+      ...RUN,
+      test: { id: TEST_ID, slug: 'checkout-smoke', name: 'Checkout smoke' },
+    });
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveTextContent('Checkout smoke');
+    expect(heading).not.toHaveTextContent('ParitySimulation');
+    // WHICH run is then carried by the breadcrumb's current-page rung, one line
+    // up — two runs of one test are distinguishable by nothing else on this
+    // page once the heading names the test. That is the argument the class used
+    // to carry, surviving the reversal one level down; `headingFor` records why
+    // the id is not ALSO in the heading as review.md's wireframe draws it.
+    expect(screen.getByText('a66548b7')).toHaveAttribute('aria-current', 'page');
+    // Demoted, not deleted: the engineer who needs to know what executed still
+    // has it, as the technical metadata the finding calls it.
+    expect(screen.getByTestId('run-simulation')).toHaveTextContent('example.ParitySimulation');
+  });
+
+  /**
+   * AND THE AUTO-CREATED CASE LOSES NOTHING, which is why the pair matters.
+   * `test-resolver.ts` inserts `name` and `simulation_class` from ONE value, so
+   * a run nobody declared a test for is still headed by its class.
+   *
+   * The chip is then ABSENT rather than repeating it. Asserted here and nowhere
+   * else: on the majority of runs the heading is the class, so a chip that did
+   * not know to keep quiet would print it twice on almost every run page in the
+   * product — and the case above, which has a declared test, cannot see that.
+   */
+  it('falls back to the class when no test claims the run, and then says it once', () => {
     renderHeader(RUN, 42);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('example.ParitySimulation');
+    expect(screen.queryByTestId('run-simulation')).toBeNull();
   });
 
   it('falls back to the short id when the tool reported no simulation', () => {
