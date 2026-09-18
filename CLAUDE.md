@@ -115,6 +115,45 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The rules-form-survives-first-save branch added no unit FILE and 1 case to
+`apps/web/test/ProjectRules.test.tsx`, from **153 / 1907 to 153 / 1908**.
+Integration is UNCHANGED at 137 / 1744 (a `.tsx`), and **e2e stays 142** — no
+source file changed at all. It pins one behaviour the branch below shipped
+correct and unwitnessed.
+
+**THE TWO CASES THAT BRANCH ADDED ARE SATISFIED BY THE DEFECT THEY DESCRIBE.**
+"opens the form when there are no rules" and "keeps it closed when rules exist"
+both pass perfectly against a plain `open={settled && empty}` — which is a
+CONTROLLER, not a default, and shuts the form the instant a reader's first rule
+lands and the list stops being empty. The entry below argues that defect at
+length and then tested neither half of it.
+
+**AND THE MECHANISM IS NOT THE ONE THAT ENTRY IMPLIES.** It says the reader's
+choice wins "once they have touched it" — true, and not what saves this case,
+because the reader who fills in a form that was already open has touched
+nothing. What saves it is that **React's own write of the `open` attribute
+fires a `toggle` event**, so `formOpen` latches `true` the moment the settled
+empty query opens the form — long before the list becomes non-empty — and the
+`??` fallback never applies again. Measured, over a real save: `open` is
+`false` while the query is in flight, and `true` after the first rule appears.
+
+**THE MUTATION IS INVISIBLE TO ALL SIXTY OTHER CASES**, which is the whole
+argument for the case existing. Deleting the `onToggle` fails this one and
+nothing else in the file.
+
+**AND THE WAIT FOR THE SAVED RULE IS WHAT STOPS IT BEING VACUOUS.** A form still
+open because nothing ever refetched proves nothing, so the non-empty list has to
+be a fact on screen before `open` is read. The red-verify confirms the assertion
+that fails is the one AFTER that wait — line-checked rather than inferred, since
+this file records twice that a red-verify failing on the wrong assertion reads
+exactly like one that worked.
+
+**THE CASE NAMES WHICH DISCLOSURE IT MEANS.** `button.closest('details')` is the
+file's idiom, and there are TWO disclosures on this form — the lifecycle policy
+sits in its own, beside Save. It happens to be a sibling rather than an
+ancestor, so `closest` resolves the right one; asserting the summary reads
+`New rule` is what keeps that true rather than assumed.
+
 The rules-page-trio branch added no unit FILE and 5 cases to
 `apps/web/test/ProjectRules.test.tsx`, from a floor of 153 / 1902 to
 **153 / 1907**. Integration is UNCHANGED at **137 files / 1744 tests** — that

@@ -1329,5 +1329,53 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
     // the policy is stated once rather than split across the form.
     expect(disclosure!).toHaveTextContent(/log header names the simulation/);
   });
+
+  /**
+   * ═══ AND IT SURVIVES THE SAVE, WHICH IS THE DEFECT THE `??` EXISTS FOR ═══
+   *
+   * The two cases above are satisfied EXACTLY AS WELL by a plain
+   * `open={settled && empty}` — and that spelling is a controller rather than a
+   * default, so it shuts the form the instant a reader's first rule lands and
+   * the list stops being empty. Which is the moment they are most likely to be
+   * authoring a second.
+   *
+   * What prevents it is not the reader touching the control: React's own write
+   * of the `open` attribute fires a `toggle`, so `formOpen` has already latched
+   * `true` by the time the list becomes non-empty, and the `??` fallback never
+   * applies again. Load-bearing, and invisible — deleting the `onToggle` leaves
+   * every other case in this file green.
+   *
+   * WAITING FOR THE SAVED RULE TO APPEAR IS WHAT STOPS THIS BEING VACUOUS. A
+   * form still open because nothing ever refetched proves nothing at all, so
+   * the non-empty list has to be a fact on screen before `open` is read.
+   */
+  it('keeps the creation form open after the reader saves their first rule', async () => {
+    const user = userEvent.setup();
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+
+    const button = await screen.findByRole('button', { name: /add rule/i });
+    const disclosure = button.closest('details')!;
+    // Names WHICH disclosure this case is about: the lifecycle policy sits in a
+    // second `<details>` beside Save, and a `closest` that ever resolved that
+    // one instead would assert something else entirely while still passing.
+    expect(disclosure.querySelector('summary')).toHaveTextContent('New rule');
+
+    // The latch needs the form to have actually been opened, so the
+    // settled-empty state must arrive BEFORE the save rather than racing it.
+    await waitFor(() => {
+      expect(disclosure.open).toBe(true);
+    });
+
+    await user.type(await screen.findByLabelText(/name \(optional\)/i), 'Checkout p95 gate');
+    // What the refetch triggered by a successful create will see.
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    await user.click(button);
+
+    await waitFor(() => expect(createProjectRule).toHaveBeenCalledTimes(1));
+    await screen.findByText('Whole-run p95 response time ≤ 800 ms');
+
+    expect(screen.getByRole('button', { name: /add rule/i }).closest('details')!.open).toBe(true);
+  });
 });
 
