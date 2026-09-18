@@ -7,8 +7,9 @@ import {
   SLA_RULE_FAMILIES,
   SLA_RULE_SCOPES,
   slaMetricUnit,
+  describeSlaMeasurement,
   describeSlaRule,
-  type Assertion,
+  formatSlaValue,
   type CreateSlaRuleRequest,
   type SlaRule,
   type SlaRuleListResponse,
@@ -31,7 +32,13 @@ import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
 import { fetchRuns, runsQueryKey } from '../api/runs';
 import { statsQuery } from '../api/metrics';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
-import { describeAssertionRuleForReader } from './assertions';
+import { MoreIcon } from '../components/icons';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
 
 /**
  * Authoring the gates a project's runs are judged against.
@@ -1329,7 +1336,16 @@ function RulesTable({
             <tr>
               <th className={TH}>Name</th>
               {showAppliesTo && <th className={TH}>Applies to</th>}
-              <th className={TH}>Rule</th>
+              {/* ═══ COLUMNS, NOT A SENTENCE (review.md 15) ═══
+                  The threshold was "written as a long technical sentence" in one
+                  monospace cell, so comparing six rules meant reading six sentences
+                  and diffing them by eye. Split on the seam the contract already
+                  draws — `describeSlaMeasurement` is WHAT is measured, the comparator
+                  plus `formatSlaValue` is the bound — which is also the split the
+                  review's own wireframe draws. Neither helper is new: the run page's
+                  gates table has rendered the first since review.md 3. */}
+              <th className={TH}>Measurement</th>
+              <th className={TH}>Limit</th>
               <th className={TH}>Status</th>
               <th className={TH}>Actions</th>
             </tr>
@@ -1358,7 +1374,15 @@ function RulesTable({
                 {/* The SAME describer the run page and the evaluator's own
                     message use, so a rule reads identically everywhere it
                     appears. */}
-                <td className={`${TD} font-mono text-[0.75rem]`}>{describe(rule)}</td>
+                {/* THE SAME DESCRIBERS THE RUN PAGE USES, so a rule reads identically
+                    wherever it appears — split across two cells here rather than
+                    composed into the one sentence `describeSlaRule` builds for the
+                    authoring preview, where a sentence is the right shape because it is
+                    read once rather than scanned against five others. */}
+                <td className={TD}>{measurementOf(rule)}</td>
+                <td className={`${TD} font-mono whitespace-nowrap`}>
+                  {limitOf(rule)}
+                </td>
                 <td className={TD}>{rule.enabled ? 'Enabled' : 'Disabled'}</td>
                 <td className={TD}>
                   {confirming === rule.id ? (
@@ -1393,9 +1417,40 @@ function RulesTable({
                       >
                         {rule.enabled ? 'Disable' : 'Enable'}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => onConfirming(rule.id)}>
-                        Delete
-                      </Button>
+                      {/* ═══ THE FREQUENT CONTROL STAYS, THE DESTRUCTIVE ONE MOVES ═══
+                          (review.md 15) "Keep a clear enabled control and move less
+                          frequent destructive actions into a row menu." Enabling and
+                          disabling is the ordinary maintenance a reader comes here to do;
+                          deleting is the one they do rarely and cannot undo, and giving
+                          the two equal weight in every row is what made this surface read
+                          as a list of management actions rather than a list of rules. */}
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          {/* NAMED AFTER ITS ROW. Six rules means six triggers in one
+                              table, and six controls sharing the name "More" is the
+                              duplicate-name defect this repo has paid for three times —
+                              `ChartActions` names its trigger after its chart for the
+                              same reason. An unnamed rule falls back to its measurement,
+                              which is what the first column shows for it anyway. */}
+                          <button
+                            type="button"
+                            data-testid={`rule-menu-${rule.id}`}
+                            aria-label={`${rule.name ?? measurementOf(rule)}: more actions`}
+                            className="transition-ui inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-sunken hover:text-primary data-[state=open]:bg-sunken data-[state=open]:text-primary"
+                          >
+                            <MoreIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-[13rem]">
+                          {/* THE CONFIRMATION IS UNTOUCHED — this moves the trigger, not
+                              the safeguard. Selecting this opens the same two-step block
+                              in the same cell, which is what the finding's "existing
+                              confirmation behavior" asks for. */}
+                          <DropdownMenuItem onSelect={() => onConfirming(rule.id)}>
+                            Delete this rule
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )}
                 </td>
@@ -1408,29 +1463,35 @@ function RulesTable({
 }
 
 /**
- * A stored rule in the shape `describeAssertionRuleForReader` reads.
+ * WHAT this rule measures, as its own cell.
  *
  * THE WIDENING IS THE REASON THIS EXISTS. `SlaRuleSchema` types `scope`,
  * `family` and `comparator` as plain strings on purpose — a response schema
- * echoes whatever is stored, so one row written before an enum narrowed
- * renders as itself instead of 500ing the list (see `TokenSummarySchema`).
- * `describeAssertionRuleForReader` takes the evaluator's narrower
- * `Assertion['rule']`.
- * Reconciling them in one named function keeps the assertion to a single
- * place with the argument attached, rather than an inline cast in the middle
- * of a table cell.
+ * echoes whatever is stored, so a row written before an enum narrowed renders
+ * as itself instead of 500ing the list (see `TokenSummarySchema`), while
+ * `describeSlaMeasurement` takes the narrow union the authoring side uses.
+ * Reconciling them in one named function keeps the cast in a single place with
+ * its argument attached, rather than inline in the middle of a table cell.
  *
- * The comparator is the only field the describer branches on, and anything
- * that is not `lte` already renders as `≥` there, so narrowing it here says
- * exactly what that function would conclude anyway.
+ * `Parameters<typeof …>[0]` rather than a hand-written literal, so the cast
+ * cannot drift from the signature it is asserting against.
  */
-function describe(rule: SlaRule): string {
-  return describeAssertionRuleForReader({
+function measurementOf(rule: SlaRule): string {
+  return describeSlaMeasurement({
     scope: rule.scope,
     targetName: rule.targetName,
     family: rule.family,
     metric: rule.metric,
-    comparator: rule.comparator === 'lte' ? 'lte' : 'gte',
-    threshold: rule.threshold,
-  } as Assertion['rule']);
+  } as Parameters<typeof describeSlaMeasurement>[0]);
+}
+
+/**
+ * The bound, as its own cell.
+ *
+ * The comparator is a bare string on `SlaRule` and the schema admits exactly
+ * two, so anything that is not `lte` is `gte` — the identical narrowing the
+ * describer above performs, and the reason neither needs a wider type.
+ */
+function limitOf(rule: SlaRule): string {
+  return `${rule.comparator === 'lte' ? '≤' : '≥'} ${formatSlaValue(rule.metric, rule.threshold)}`;
 }

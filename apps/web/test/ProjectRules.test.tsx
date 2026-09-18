@@ -390,7 +390,13 @@ describe('ProjectRules — the table', () => {
     // schema read aloud, with a parenthesis that says nothing to the reader of
     // a percentile rule and something FALSE beside an error rate. The precise
     // form still exists and still writes the CSV.
-    expect(await screen.findByText('Whole-run p95 response time ≤ 800 ms')).toBeInTheDocument();
+    // AND IT IS TWO CELLS SINCE finding 15, not one sentence: the table is
+    // scanned against other rules rather than read once, so WHAT is measured
+    // and the BOUND are separate columns. The claim is unchanged — both still
+    // come from the contract's own describers, so this row and the run page's
+    // evidence panel cannot drift.
+    expect(await screen.findByText('Whole-run p95 response time')).toBeInTheDocument();
+    expect(screen.getByText('≤ 800 ms')).toBeInTheDocument();
   });
 
   /** The metric that motivated the whole change: stored as a fraction,
@@ -400,12 +406,64 @@ describe('ProjectRules — the table', () => {
       rules: [rule({ metric: 'error_rate', threshold: 0.01 })],
     });
     renderRules();
-    expect(
-      // `(response_time)` is gone rather than merely reworded: an error rate is
-      // not a response-time statistic, which is the half of finding 3 that is
-      // a correctness point rather than a readability one.
-      await screen.findByText('Whole-run error rate ≤ 1%'),
-    ).toBeInTheDocument();
+    // `(response_time)` is gone rather than merely reworded: an error rate is
+    // not a response-time statistic, which is the half of finding 3 that is a
+    // correctness point rather than a readability one.
+    expect(await screen.findByText('Whole-run error rate')).toBeInTheDocument();
+    // The percentage, in its own column since finding 15.
+    expect(screen.getByText('≤ 1%')).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ COLUMNS ARE SCANNED, SENTENCES ARE READ (review.md 15) ═══
+   *
+   * The bound was "written as a long technical sentence" in one monospace
+   * cell, so comparing six rules meant reading six sentences and diffing them
+   * by eye.
+   *
+   * ASSERTED ON THE CELLS, not on both strings being present — a single cell
+   * still containing `Whole-run p95 response time ≤ 800 ms` satisfies any
+   * assertion that merely finds both substrings, which is the before-state
+   * exactly.
+   */
+  it('splits what a rule measures from the bound it sets, into separate columns', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules();
+
+    const measurement = (await screen.findByText('Whole-run p95 response time')).closest('td');
+    const limit = screen.getByText('≤ 800 ms').closest('td');
+    expect(measurement).not.toBeNull();
+    expect(measurement).not.toBe(limit);
+    expect(measurement).not.toHaveTextContent('≤');
+    // Named columns, so this is navigable structure rather than two adjacent
+    // strings that happen to sit apart.
+    expect(screen.getByRole('columnheader', { name: 'Measurement' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Limit' })).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ THE FREQUENT CONTROL STAYS, THE DESTRUCTIVE ONE MOVES ═══
+   *
+   * "Every populated rule row ends with Disable and Delete. The primary
+   * surface emphasizes management actions." Enabling is the ordinary
+   * maintenance a reader comes here to do; deleting is rare and cannot be
+   * undone, and giving them equal weight in every row is what made this read
+   * as a list of management actions rather than a list of rules.
+   *
+   * Both halves, because either alone passes against the wrong table: a row
+   * with no visible controls at all satisfies the absence, and one that kept
+   * both buttons satisfies the presence.
+   */
+  it('keeps the enable control in the row and files delete behind a menu', async () => {
+    const user = userEvent.setup();
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules();
+
+    expect(await screen.findByRole('button', { name: 'Disable' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^delete/i })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /more actions/ }));
+    expect(await screen.findByRole('menuitem', { name: 'Delete this rule' })).toBeInTheDocument();
   });
 
   it('falls back to a dash for a rule nobody named', async () => {
@@ -445,7 +503,11 @@ describe('ProjectRules — the table', () => {
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });
     renderRules();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    // THROUGH THE ROW MENU since finding 15 — "move less frequent destructive
+    // actions into a row menu". The CONFIRMATION below is unchanged, which is
+    // the point: this moved the trigger, not the safeguard.
+    await user.click(await screen.findByRole('button', { name: /more actions/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete this rule' }));
     expect(deleteProjectRule).not.toHaveBeenCalled();
     expect(screen.getByText(/permanent/i)).toBeInTheDocument();
 
@@ -458,7 +520,11 @@ describe('ProjectRules — the table', () => {
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });
     renderRules();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    // THROUGH THE ROW MENU since finding 15 — "move less frequent destructive
+    // actions into a row menu". The CONFIRMATION below is unchanged, which is
+    // the point: this moved the trigger, not the safeguard.
+    await user.click(await screen.findByRole('button', { name: /more actions/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete this rule' }));
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(screen.queryByRole('button', { name: 'Confirm delete' })).toBeNull();
@@ -475,7 +541,11 @@ describe('ProjectRules — the table', () => {
     deleteProjectRule.mockRejectedValue(new Error('network'));
     renderRules();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    // THROUGH THE ROW MENU since finding 15 — "move less frequent destructive
+    // actions into a row menu". The CONFIRMATION below is unchanged, which is
+    // the point: this moved the trigger, not the safeguard.
+    await user.click(await screen.findByRole('button', { name: /more actions/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete this rule' }));
     await user.click(screen.getByRole('button', { name: 'Confirm delete' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/may still be active/i);
@@ -1248,7 +1318,7 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });
     renderRules();
 
-    const listed = await screen.findByText('Whole-run p95 response time ≤ 800 ms');
+    const listed = await screen.findByText('Whole-run p95 response time');
     const form = screen.getByRole('button', { name: /add rule/i });
     // Node.DOCUMENT_POSITION_FOLLOWING: the form comes after the list.
     expect(listed.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -1258,7 +1328,7 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
   it('keeps the creation form closed when rules already exist', async () => {
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });
     renderRules();
-    await screen.findByText('Whole-run p95 response time ≤ 800 ms');
+    await screen.findByText('Whole-run p95 response time');
 
     const form = screen.getByRole('button', { name: /add rule/i }).closest('details');
     expect(form).not.toBeNull();
@@ -1373,7 +1443,7 @@ describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21
     await user.click(button);
 
     await waitFor(() => expect(createProjectRule).toHaveBeenCalledTimes(1));
-    await screen.findByText('Whole-run p95 response time ≤ 800 ms');
+    await screen.findByText('Whole-run p95 response time');
 
     expect(screen.getByRole('button', { name: /add rule/i }).closest('details')!.open).toBe(true);
   });
