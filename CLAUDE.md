@@ -115,6 +115,56 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review13-rule-form-groups branch added no unit FILE and 2 cases to
+`apps/web/test/ProjectRules.test.tsx`, from **153 / 1921 to 153 / 1923**.
+Integration is UNCHANGED and **e2e stays 144**. `review.md`'s finding 13.
+(review8 is open and also cut from 1921 — whichever lands second re-measures;
+the arithmetic here is 2 unit cases and no spec.)
+
+**THREE OF THE FINDING'S FOUR CLAUSES WERE ALREADY DONE, AND CHECKING SAID SO.**
+M09 renamed Family/Metric/Threshold to Measurement/Statistic/Limit; the target
+field already renders only for a scope that needs one ("show Target only when
+required"); and "placeholders are not labels" was never violated — every field
+has a real `<label>` and the placeholders are EXAMPLES beside them, with the
+unit deliberately IN the label because `error_rate` earned that the hard way.
+
+**WHAT WAS OPEN WAS THE ORDER, AND IT IS THE ONE THING NOBODY HAD LOOKED AT.**
+`Name (optional)` sat SECOND — between the test scoping and the measurement,
+sharing a two-column grid with Scope — so an author met an OPTIONAL field
+before either decision that actually makes a rule. The finding puts it last:
+"one readable preview, optional name, Save".
+
+**AND IT READS BETTER THERE FOR A REASON BEYOND THE ORDER**: the preview
+directly above states the rule as a sentence, which is exactly the moment an
+author knows what they would call it.
+
+**`<fieldset>`/`<legend>`, NOT NUMBERED.** The grouping has to reach a screen
+reader or it is a visual convention only — a fieldset carries an implicit
+`group` role named by its legend, the device `NewRunnerRun` already uses. M11
+stripped the ORDINALS from that form because "1 ·" promises a flow that gates
+step 2 behind step 1, and this form submits in one go exactly as that one does,
+so the legends read `Measure` and `Limit` and nothing else.
+
+**PRESETS ARE DECLINED WITH EVIDENCE, NOT SKIPPED.** The finding asks for
+"common presets such as response-time p95 and error rate". The form ALREADY
+OPENS on `run` / `response_time` / `p95` — the first of those two, reached by
+typing nothing — so a preset row would duplicate the default state and save one
+`<select>` change on the second. That is chrome of exactly the kind review.md
+20 objects to, bought for one interaction. Recorded as an arm not taken.
+
+**AND SIXTY-THREE EXISTING CASES SURVIVED THE REGROUPING UNTOUCHED**, which is
+the payoff for a file that queries by LABEL rather than by position: moving a
+field between parents changes nothing `getByLabelText` can see. The two new
+cases assert what those cannot — that the groups exist and are NAMED, and that
+the name field now FOLLOWS the preview.
+
+**TWO MUTATIONS FAILED ONE BUNDLED CASE AGAIN — SECOND BRANCH RUNNING.** As in
+review9, the grouping and the ordering were asserted together, so stripping a
+legend and moving the name back both failed the same case and the second proved
+nothing. Split per claim, each lands on its own. **The habit is to write one
+case per claim from the start**, rather than discovering the bundling from a
+red-verify — it has now cost two branches an extra cycle.
+
 The review9-one-evidence-surface branch added no unit FILE and 1 case to
 `apps/web/test/RunDetail.live.test.tsx` — one existing case was re-pointed and
 SPLIT in two — from **153 / 1920 to 153 / 1921**. Integration is UNCHANGED and
