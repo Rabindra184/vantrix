@@ -359,7 +359,11 @@ function EntryCard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-muted">{icon}</span>
-            <h2 className="text-[0.9375rem] font-semibold tracking-tight text-primary">{title}</h2>
+            {/* `text-base`, the `<h2>` rung. These three cards are SECTIONS of
+                the page — `project-tests.spec.ts` and `ProjectSetup.test.tsx`
+                both query them by `level: 2` — and this drew them at the card
+                rung's 15px. review.md 20, "consistent heading sizes". */}
+            <h2 className="text-base font-semibold tracking-tight text-primary">{title}</h2>
           </div>
           {/* The dot is `aria-hidden` and the WORDS carry the state, so the
               status is not a colour a reader has to have learnt. */}

@@ -115,6 +115,63 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review20-heading-ladder branch added no unit FILE and 1 case to
+`apps/web/test/Card.test.tsx`, from **153 / 1916 to 153 / 1917**. Integration is
+UNCHANGED and **e2e stays 144**. `review.md`'s finding 20 — and the entry is
+mostly about what it did NOT change. (Cut while review19 was open; re-measure
+if that lands first.)
+
+**FINDING 20 IS A DESIGN ASSESSMENT, AND THIS FILE ALREADY RECORDS LEAVING THAT
+CLASS ALONE** — the other review's m01/m02 were left as "a direction to be
+chosen, not a defect to be corrected". So the finding was MEASURED first, and
+exactly one of its clauses turned out to be the code failing a rule it had
+already written down for itself.
+
+**`<h2>` RENDERED AT THREE SIZES:**
+
+```
+  16px  SectionHeading                          the section rung
+  15px  Card at headingLevel={2} — 8 call sites  the CARD rung, drawn for a section
+  15px  ProjectSetup's own entry-card <h2>
+  13px  Login's "Sign in to your organisation"   a subtitle, argued in place
+```
+
+`SectionHeading`'s docstring states the ladder as **20/24 → 16 → 15px** in as
+many words. So this is not a taste question: `Card` sized its title by
+COMPONENT while its level was the CALLER's to choose, and the eight sites
+asking for an `<h2>` got a section heading at the card rung.
+
+**A SIZE CHOSEN PER COMPONENT IS A LADDER ONLY WHILE NO COMPONENT IS REUSED AT
+TWO DEPTHS.** `Card` grew `headingLevel` precisely so a card following an `<h1>`
+directly would not skip a rung in the outline — and that same flexibility is
+what broke the visual ladder, silently, because nothing renders a size
+assertion. The size follows the level now.
+
+**AND LOGIN'S 13px `<h2>` STAYS**, deliberately: it is a subtitle under the
+brand, its own comment argues why it is a heading at all, and promoting it to
+16px would make the sign-in page read as two competing titles.
+
+**WHAT WAS MEASURED AND LEFT, WITH THE NUMBERS**, so the next reader
+re-measures rather than re-investigates:
+
+  - **"one primary action per task"** — `variant="primary"` counts per route:
+    RunList 3, ProjectAccess 2, ProjectRules 2, TestRuns 2, the rest 1. The
+    three in RunList are the filter's Apply plus TWO MUTUALLY EXCLUSIVE
+    empty-state actions (First page, Clear filters), so no screen ever shows
+    three. Counting per FILE answers a different question from the one the
+    finding asks; per screen, nothing is clearly violated.
+  - **"fewer nested panels"** — 11 `<Card>` call sites against **15 hand-rolled
+    `rounded-xl border border-default bg-surface` surfaces**. That IS a real
+    consistency gap, and converting them is a per-site judgement (several are
+    SECTIONS rather than cards on purpose, including the comparability panel),
+    which is a different change from making one heading obey its own ladder.
+
+**THE GENERAL SHAPE IS WORTH KEEPING.** A finding labelled "design assessment"
+is not automatically nothing — it is a claim to be measured. Measuring this one
+separated a defect the code's own docstring condemns from three clauses that
+need a product decision, and the numbers above are what make the difference
+checkable rather than arguable.
+
 The review15-scannable-rules branch added no unit FILE and 2 cases to
 `apps/web/test/ProjectRules.test.tsx`, from **153 / 1914 to 153 / 1916**.
 Integration is UNCHANGED and **e2e stays 144** — no spec changed.

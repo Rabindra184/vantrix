@@ -77,6 +77,22 @@ export default function Card({
      would rewrite those outlines as a side effect. */
   const Heading = `h${headingLevel}` as 'h2' | 'h3' | 'h4';
 
+  /* ═══ THE SIZE FOLLOWS THE LEVEL (review.md 20) ═══
+     "Consistent heading sizes."
+
+     This rendered every title at 15px whatever level the caller asked for, so
+     a card given `headingLevel={2}` drew a SECTION heading at the CARD rung —
+     15px — while `SectionHeading`'s own `<h2>` is 16px. Eight call sites ask
+     for an `<h2>` (the runner form's six, project access, and the setup entry
+     cards), so on those pages one heading LEVEL was drawn at two sizes
+     depending on which component happened to draw it.
+
+     `SectionHeading`'s docstring states the ladder as 20/24 → 16 → 15px. This
+     keeps it true whoever renders the heading, which is the only way a ladder
+     survives: a size chosen per COMPONENT is a ladder only while no component
+     is reused at two depths. */
+  const headingSize = headingLevel === 2 ? 'text-base' : 'text-[0.9375rem]';
+
   return (
     <Element
       className={`flex flex-col rounded-xl border border-default bg-surface shadow-panel ${
@@ -87,7 +103,7 @@ export default function Card({
       {title !== undefined && (
         <div className={`flex items-start justify-between gap-3 ${padding === 'none' ? 'p-5 pb-3' : ''}`}>
           <div className="flex min-w-0 flex-col gap-1">
-            <Heading className="text-[0.9375rem] font-semibold tracking-tight text-primary">
+            <Heading className={`${headingSize} font-semibold tracking-tight text-primary`}>
               {title}
             </Heading>
             {description !== undefined && <p className="text-[0.8125rem] text-muted">{description}</p>}
