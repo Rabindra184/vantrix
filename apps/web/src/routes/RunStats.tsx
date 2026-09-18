@@ -2,7 +2,7 @@ import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import type { Assertion, StatRow, StatsResponse, TrendRun } from '@perfportal/contracts';
 import StatTile from '../components/StatTile';
-import { comparability, type ComparabilityFinding } from './comparability';
+import { comparability, summariseConditions } from './comparability';
 import { formatInstant } from './format';
 import { runPath } from './paths';
 import {
@@ -407,34 +407,6 @@ function BaselineNote({
       )}
     </div>
   );
-}
-
-/**
- * The one line a reader sees without opening anything, so it has to carry WHICH
- * dimensions are involved rather than merely that something is.
- *
- * A real difference and missing evidence are stated separately: "different
- * branch" is a fact about two runs, "build not recorded" is a fact about what
- * was captured, and a reader can act on the first while only the second tells
- * them to go fix their CI metadata.
- */
-function summariseConditions(notable: readonly ComparabilityFinding[]): string {
-  const named = (kind: ComparabilityFinding['kind']): string[] =>
-    notable.filter((finding) => finding.kind === kind).map((finding) => finding.label.toLowerCase());
-
-  const parts: string[] = [];
-  const differs = named('differs');
-  const unknown = named('unknown');
-  if (differs.length > 0) parts.push(`Different ${joinWords(differs)}`);
-  if (unknown.length > 0) parts.push(`${joinWords(unknown)} not recorded`);
-  const sentence = parts.join('; ');
-  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
-}
-
-/** `a`, `a and b`, `a, b and c` — an Oxford-comma-free list for prose. */
-function joinWords(words: readonly string[]): string {
-  if (words.length < 2) return words.join('');
-  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`;
 }
 
 function deltaFor(
