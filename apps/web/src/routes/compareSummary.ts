@@ -1,5 +1,5 @@
 import type { StatsResponse } from '@perfportal/contracts';
-import type { CompareMetric } from '../charts/transforms/compare';
+import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
 import { metricValue, type CompareStats } from '../tables/buildCompareMatrix';
 
 export interface CompareSummaryModel {
@@ -78,7 +78,7 @@ export function buildCompareSummary(
     baselineValue,
     deltaPercent,
     deltaUnavailable,
-    deltaGood: deltaPercent === null ? null : isDeltaGood(deltaPercent, metric),
+    deltaGood: deltaPercent === null ? null : isChangeGood(deltaPercent, metric),
     bestLabel: best?.label ?? null,
     bestValue: best?.value ?? null,
   };
@@ -89,7 +89,4 @@ function betterScore(a: number, b: number, metric: CompareMetric): number {
   return a - b;
 }
 
-function isDeltaGood(deltaPercent: number, metric: CompareMetric): boolean {
-  if (metric === 'throughput') return deltaPercent >= 0;
-  return deltaPercent <= 0;
-}
+

@@ -23,7 +23,7 @@ describe('toCompareMatrix', () => {
     // A request present in only ONE run still gets a row — a newly added
     // request is exactly what a reader comparing runs is looking for.
     const dropped = ALL_REQUESTS[0]!;
-    const m = toCompareMatrix([asRun('a', without([dropped])), asRun('b')], 'p95');
+    const m = toCompareMatrix([asRun('a', without([dropped])), asRun('b')], 'p95', 'a');
 
     expect(new Set(m.requests)).toEqual(new Set(ALL_REQUESTS));
   });
@@ -32,7 +32,7 @@ describe('toCompareMatrix', () => {
     // It did not take zero milliseconds; it did not run. Zero would put it at
     // the top of a sort by speed.
     const dropped = ALL_REQUESTS[0]!;
-    const m = toCompareMatrix([asRun('a', without([dropped])), asRun('b')], 'p95');
+    const m = toCompareMatrix([asRun('a', without([dropped])), asRun('b')], 'p95', 'a');
 
     const row = m.requests.indexOf(dropped);
     expect(m.cells[row]![0]).toBeNull();
@@ -40,7 +40,7 @@ describe('toCompareMatrix', () => {
   });
 
   it('reads the request-scope rows, not the run total', () => {
-    const m = toCompareMatrix([asRun('a')], 'p95');
+    const m = toCompareMatrix([asRun('a')], 'p95', 'a');
     const first = REFERENCE.stats.find(
       (s) => s.scope === 'request' && s.name === m.requests[0],
     )!;
@@ -53,7 +53,7 @@ describe('toCompareMatrix', () => {
     const groups = REFERENCE.stats.filter((s) => s.scope === 'group').map((s) => s.name);
     expect(groups.length).toBeGreaterThan(0);
 
-    const m = toCompareMatrix([asRun('a')], 'p95');
+    const m = toCompareMatrix([asRun('a')], 'p95', 'a');
     for (const group of groups) expect(m.requests).not.toContain(group);
   });
 
@@ -69,13 +69,13 @@ describe('toCompareMatrix', () => {
       ),
     });
 
-    const m = toCompareMatrix([asRun('a', stripped), asRun('b')], 'p99');
+    const m = toCompareMatrix([asRun('a', stripped), asRun('b')], 'p99', 'a');
     expect(m.cells[0]![0]).toBeNull();
     expect(m.cells[0]![1]).not.toBeNull();
   });
 
   it('reads max from maxMs rather than from the percentile map', () => {
-    const m = toCompareMatrix([asRun('a')], 'max');
+    const m = toCompareMatrix([asRun('a')], 'max', 'a');
     const first = REFERENCE.stats.find(
       (s) => s.scope === 'request' && s.name === m.requests[0],
     )!;
@@ -86,29 +86,132 @@ describe('toCompareMatrix', () => {
     // The selector says "Errors" in both places, so it must mean one thing.
     // A count here and a rate there is exactly the divergence this codebase
     // keeps a single formatter to prevent.
-    const m = toCompareMatrix([asRun('a')], 'errors');
+    const m = toCompareMatrix([asRun('a')], 'errors', 'a');
     const withKo = REFERENCE.stats.find((s) => s.scope === 'request' && s.koCount > 0)!;
     const row = m.requests.indexOf(withKo.name);
     expect(m.cells[row]![0]).toBeCloseTo(withKo.throughputRps * withKo.errorRate, 9);
   });
 
   it('keeps one column per selected run, in selection order', () => {
-    const m = toCompareMatrix([asRun('first'), asRun('second'), asRun('third')], 'p95');
+    const m = toCompareMatrix([asRun('first'), asRun('second'), asRun('third')], 'p95', 'first');
     expect(m.labels).toEqual(['first', 'second', 'third']);
     for (const row of m.cells) expect(row).toHaveLength(3);
   });
 
   it('sorts rows stably so two runs of the same payload agree', () => {
-    const a = toCompareMatrix([asRun('a')], 'p95');
-    const b = toCompareMatrix([asRun('b'), asRun('c')], 'p95');
+    const a = toCompareMatrix([asRun('a')], 'p95', 'a');
+    const b = toCompareMatrix([asRun('b'), asRun('c')], 'p95', 'b');
     // The shared names appear in the same relative order in both.
     const shared = a.requests.filter((n) => b.requests.includes(n));
     expect(shared).toEqual(b.requests.filter((n) => a.requests.includes(n)));
   });
 
   it('is empty, not throwing, for no runs at all', () => {
-    const m = toCompareMatrix([], 'p95');
+    const m = toCompareMatrix([], 'p95', '');
     expect(m.requests).toEqual([]);
     expect(m.cells).toEqual([]);
   });
 });
+
+describe('toCompareMatrix — the change column (review.md finding 18)', () => {
+  /** Scale one request's p95 by a factor, so a known change exists. */
+  const scaled = (name: string, factor: number) => (s: StatsResponse): StatsResponse => ({
+    ...s,
+    stats: s.stats.map((row) =>
+      row.scope === 'request' && row.name === name
+        ? { ...row, percentiles: { ...row.percentiles, p95: (row.percentiles.p95 ?? 0) * factor } }
+        : row,
+    ),
+  });
+
+  const NAME = ALL_REQUESTS[0]!;
+
+  /**
+   * THE TABLE USED TO LEAVE THIS ARITHMETIC TO THE READER. One number per run
+   * per row and nothing else, so the rows that moved looked exactly like the
+   * rows that did not.
+   */
+  it('reports the subject’s change against its baseline, absolute and percentage', () => {
+    const m = toCompareMatrix([asRun('now', scaled(NAME, 2)), asRun('before')], 'p95', 'now');
+    expect(m.change?.subjectLabel).toBe('now');
+    expect(m.change?.referenceLabel).toBe('before');
+
+    const row = m.change!.rows[m.requests.indexOf(NAME)]!;
+    const [subject, reference] = [m.cells[m.requests.indexOf(NAME)]![0]!, m.cells[m.requests.indexOf(NAME)]![1]!];
+    // Derived from the payload, never written down — the rule this repo's
+    // fixtures already follow, so a re-capture cannot make this a false red.
+    expect(row.absolute).toBeCloseTo(subject - reference, 6);
+    expect(row.percent).toBeCloseTo(((subject - reference) / reference) * 100, 6);
+    // p95 doubling is worse, and the direction comes from the shared rule.
+    expect(row.good).toBe(false);
+  });
+
+  /** The same movement on THROUGHPUT is an improvement. Without this, `good`
+   *  could be hard-coded to "down is better" and still pass above. */
+  it('reads the direction from the metric, not from the sign alone', () => {
+    const up = (s: StatsResponse): StatsResponse => ({
+      ...s,
+      stats: s.stats.map((row) =>
+        row.scope === 'request' && row.name === NAME
+          ? { ...row, throughputRps: row.throughputRps * 2 }
+          : row,
+      ),
+    });
+    const m = toCompareMatrix([asRun('now', up), asRun('before')], 'throughput', 'now');
+    expect(m.change!.rows[m.requests.indexOf(NAME)]!.good).toBe(true);
+  });
+
+  /**
+   * A ZERO BASELINE HAS NO PERCENTAGE AND STILL HAS A CHANGE — the case
+   * `compareSummary`'s `deltaUnavailable` exists for, and the one an engineer
+   * most needs to see when it is errors.
+   */
+  it('keeps the absolute change when the baseline is zero', () => {
+    const zeroErrors = (s: StatsResponse): StatsResponse => ({
+      ...s,
+      stats: s.stats.map((row) =>
+        row.scope === 'request' && row.name === NAME ? { ...row, errorRate: 0 } : row,
+      ),
+    });
+    const someErrors = (s: StatsResponse): StatsResponse => ({
+      ...s,
+      stats: s.stats.map((row) =>
+        row.scope === 'request' && row.name === NAME ? { ...row, errorRate: 0.5 } : row,
+      ),
+    });
+    const m = toCompareMatrix([asRun('now', someErrors), asRun('before', zeroErrors)], 'errors', 'now');
+    const row = m.change!.rows[m.requests.indexOf(NAME)]!;
+    expect(row.percent).toBeNull();
+    expect(row.absolute).toBeGreaterThan(0);
+    expect(row.good).toBe(false);
+  });
+
+  /** A request only one run made has no change — never a zero, which is the
+   *  same lie the value cells already refuse to tell. */
+  it('has no change for a request only one run made', () => {
+    const dropped = ALL_REQUESTS[1]!;
+    const m = toCompareMatrix([asRun('now'), asRun('before', without([dropped]))], 'p95', 'now');
+    expect(m.change!.rows[m.requests.indexOf(dropped)]).toBeNull();
+  });
+
+  /**
+   * THE SUBJECT IS NAMED, NEVER INFERRED FROM COLUMN ORDER. `RunCompare` drops
+   * a run whose statistics failed to load before calling this, so `runs[0]` is
+   * a different run on exactly the day one request errors — and every change in
+   * the table would silently change meaning.
+   */
+  it('measures from the run it is told about, not from the first column', () => {
+    const runs = [asRun('other'), asRun('now', scaled(NAME, 2))];
+    const m = toCompareMatrix(runs, 'p95', 'now');
+    expect(m.change?.subjectLabel).toBe('now');
+    expect(m.change?.referenceLabel).toBe('other');
+    expect(m.change!.rows[m.requests.indexOf(NAME)]!.absolute).toBeGreaterThan(0);
+  });
+
+  /** Nothing to compare against: one run, or a subject that is not selected. */
+  it('offers no change when there is no pair', () => {
+    expect(toCompareMatrix([asRun('only')], 'p95', 'only').change).toBeNull();
+    expect(toCompareMatrix([asRun('a'), asRun('b')], 'p95', 'missing').change).toBeNull();
+  });
+});
+

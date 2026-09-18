@@ -134,16 +134,30 @@ test('the per-request matrix has a column per run and a row per request', async 
   const table = page.getByRole('table', { name: /request/i });
   await expect(table).toHaveCount(1);
 
-  // One label column plus one per selected run. Retrying, for the same reason
-  // the overlay's helper does: the table renders as each /stats resolves.
-  await expect(table.locator('thead th')).toHaveCount(3);
-  expect((await table.locator('thead th').allTextContents())[0]).toBe('Request');
+  // One label column, one per selected run, and the Change column that spares
+  // the reader the arithmetic (review.md finding 18). Retrying, for the same
+  // reason the overlay's helper does: the table renders as each /stats resolves.
+  await expect(table.locator('thead th')).toHaveCount(4);
+  const headers = await table.locator('thead th').allTextContents();
+  expect(headers[0]).toBe('Request');
+  // LAST, after the values it is derived from — asserted by position, because
+  // a change column between two run columns would read as belonging to one of
+  // them, and a bare `toContain` could not tell the two layouts apart.
+  expect(headers.at(-1)).toBe('Change');
 
   // Every request the reference bundle produces gets a row, and each row has a
-  // cell per run.
+  // cell per run plus its change.
   const rows = table.locator('tbody tr');
   expect(await rows.count()).toBeGreaterThan(1);
-  await expect(rows.first().locator('td')).toHaveCount(2);
+  await expect(rows.first().locator('td')).toHaveCount(3);
+
+  /* AND THE CHANGE IS REAL, not an empty column. `cohortOfTwo` ingests the same
+     bundle twice, so most requests move by nothing at all — a comparison of a
+     run with its twin is precisely where a fabricated delta would hide. What
+     must be true is that the cell states a change rather than a dash: the two
+     runs both HAVE these requests, so "no measurement" is the one answer that
+     would be wrong. */
+  await expect(rows.first().getByTestId('compare-change')).toHaveCount(1);
 });
 
 test('a run outside the cohort is dropped, and the page says so', async ({ page }) => {

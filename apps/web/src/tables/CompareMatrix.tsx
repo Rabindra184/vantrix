@@ -5,7 +5,7 @@ import TableFrame from '../components/TableFrame';
 import { CAPTION, ROW, TABLE, TD, TD_NUM, TH, THEAD, TH_NUM, TH_ROW } from '../components/tableStyles';
 import { formatCell } from '../charts/DataTable';
 import type { CompareMetric } from '../charts/transforms/compare';
-import { toCompareMatrix, type CompareStats } from './buildCompareMatrix';
+import { toCompareMatrix, type CompareChangeRow, type CompareStats } from './buildCompareMatrix';
 
 /**
  * Requests down, runs across.
@@ -17,18 +17,32 @@ export default function CompareMatrix({
   runs,
   metric,
   metricLabel,
+  currentRunId,
 }: {
   readonly runs: readonly CompareStats[];
   readonly metric: CompareMetric;
   readonly metricLabel: string;
+  /** The run being read — the subject of the Change column. See
+   *  `toCompareMatrix`, which refuses to infer it from column order. */
+  readonly currentRunId: string;
 }) {
   const headingId = useId();
-  const matrix = useMemo(() => toCompareMatrix(runs, metric), [runs, metric]);
+  const matrix = useMemo(
+    () => toCompareMatrix(runs, metric, currentRunId),
+    [runs, metric, currentRunId],
+  );
 
   const caption = (
     <>
       {metricLabel} for every request, in each selected run. A dash means the
       request did not run in that one — not that it took no time.
+      {matrix.change !== null && (
+        <>
+          {' '}
+          Change is {matrix.change.subjectLabel} against {matrix.change.referenceLabel}, the same
+          pair the summary above compares.
+        </>
+      )}
     </>
   );
 
@@ -77,6 +91,14 @@ export default function CompareMatrix({
                   {label}
                 </th>
               ))}
+              {/* LAST, after the values it is derived from: a reader scans the
+                  numbers and then the conclusion, and a change column between
+                  two run columns would read as belonging to one of them. */}
+              {matrix.change !== null && (
+                <th scope="col" className={TH_NUM}>
+                  Change
+                </th>
+              )}
             </tr>
           </thead>
 
@@ -95,11 +117,64 @@ export default function CompareMatrix({
                     {value === null ? '—' : formatCell(value)}
                   </td>
                 ))}
+                {matrix.change !== null && (
+                  <td className={TD_NUM}>
+                    <ChangeCell row={matrix.change.rows[row] ?? null} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </TableFrame>
     </section>
+  );
+}
+
+/**
+ * One request's change, in the metric's own unit and as a percentage.
+ *
+ * ═══ BOTH NUMBERS, BECAUSE EACH ONE ALONE MISLEADS ═══
+ *
+ * A percentage alone cannot tell a reader whether 40% is four milliseconds or
+ * four seconds, and on a fast request it turns noise into a headline. An
+ * absolute alone hides that +60 ms doubled a 60 ms request while barely moving
+ * a 3 s one. The review's own example is the pair at its starkest: 146.95
+ * against 2515.46 is both +2368.51 ms and +1612%.
+ *
+ * ═══ A ZERO BASELINE STILL HAS A CHANGE ═══
+ *
+ * `percent` is null when the reference is zero, and the absolute is shown on
+ * its own rather than the row being dropped or dashed. Errors rising from 0 to
+ * 2/s is the regression an engineer most needs to see, and it is exactly the
+ * row a percentage cannot describe — the same reasoning `compareSummary`'s
+ * `deltaUnavailable` carries for the tiles above.
+ *
+ * ═══ THE TONE IS A TOKEN, NOT A UTILITY ═══
+ *
+ * `text-status-*` emits no CSS: the status colours are declared on `:root`
+ * rather than inside `@theme inline`, which CLAUDE.md records as silent. The
+ * sign is also spelled out, so the judgement never rests on colour alone.
+ */
+function ChangeCell({ row }: { readonly row: CompareChangeRow | null }) {
+  // A dash for "no change to state" — one of the two runs never made this
+  // request — which is the same absence the value cells refuse to call zero.
+  if (row === null) return <>—</>;
+
+  const sign = row.absolute > 0 ? '+' : '';
+  return (
+    <span
+      data-testid="compare-change"
+      style={{ color: `var(--color-status-${row.good ? 'passed' : 'failed'})` }}
+    >
+      {sign}
+      {formatCell(row.absolute)}
+      {row.percent !== null && (
+        <span className="ml-1 text-[0.6875rem] text-muted">
+          ({sign}
+          {row.percent.toFixed(1)}%)
+        </span>
+      )}
+    </span>
   );
 }

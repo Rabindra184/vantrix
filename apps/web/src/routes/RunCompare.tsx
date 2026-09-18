@@ -370,7 +370,12 @@ export default function RunCompare() {
 
                 <CompareChart runs={overlayRuns} metric={metric} onMetricChange={setMetric} />
 
-                <CompareMatrix runs={matrixRuns} metric={metric} metricLabel={metricLabel} />
+                <CompareMatrix
+                  runs={matrixRuns}
+                  metric={metric}
+                  metricLabel={metricLabel}
+                  currentRunId={runId ?? ''}
+                />
               </>
             )}
           </>
