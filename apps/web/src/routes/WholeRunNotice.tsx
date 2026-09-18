@@ -33,3 +33,44 @@ export default function WholeRunNotice({ what }: { readonly what: string }) {
     </p>
   );
 }
+
+/**
+ * "This verdict is the whole run's" -- for a gate or a simulation check shown
+ * on a page whose STATISTICS are windowed.
+ *
+ * ═══ A DIFFERENT CLAIM FROM `WholeRunNotice`, WHICH IS WHY IT IS A SECOND
+ *     COMPONENT AND NOT A PROP ═══
+ *
+ * That one is about an ENDPOINT: the drill-downs carry `from`/`to` and their
+ * endpoints take none, so the figures CANNOT narrow. This one is about WHEN a
+ * decision was made. A platform gate and a simulation assertion are evaluated
+ * ONCE, at finalize, against the whole run -- there is no windowed verdict to
+ * compute, and computing one would invent a judgement nobody configured. That
+ * is the same line `RunStats` draws when it WITHHOLDS the SLA tint from a
+ * windowed tile rather than recolouring it.
+ *
+ * ═══ AND ITS CLOSING SENTENCE HAS TO DIFFER ═══
+ *
+ * `WholeRunNotice` ends "The run page's own figures still honour it", which is
+ * help for a reader who has LEFT the run page. Here the windowed figures are on
+ * screen directly above: the reader does not need to be sent anywhere, they
+ * need to know that the number and the verdict are scoped differently. Reusing
+ * the other wording would answer a question nobody on this page is asking.
+ *
+ * ═══ RENDERED ONLY UNDER A WINDOW, AND ONLY WITH SOMETHING TO DISCLAIM ═══
+ *
+ * With no window there is nothing to say, and over an empty gate list there is
+ * no verdict to scope -- both would be the over-explanation review N04 removed
+ * four rows of.
+ */
+export function FinalizedVerdictNotice({ what }: { readonly what: string }) {
+  return (
+    <p
+      data-testid="finalized-verdict-notice"
+      className="rounded-lg border border-default bg-sunken px-3 py-2 text-[0.8125rem] text-muted"
+    >
+      {what} were decided when the run finished, against the whole run — the selected time window
+      narrows the statistics on this page, not this verdict.
+    </p>
+  );
+}

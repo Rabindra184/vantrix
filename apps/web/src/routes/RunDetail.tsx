@@ -7,6 +7,7 @@ import type {
 import Button, { linkButtonClasses } from '../components/Button';
 import SectionHeading from '../components/SectionHeading';
 import { failingRequestNames } from './errorRequestFilter';
+import { FinalizedVerdictNotice } from './WholeRunNotice';
 import { Skeleton, SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import StatTile from '../components/StatTile';
@@ -564,6 +565,7 @@ export function RunOverviewTab() {
         runId={runId}
         assertions={runAssertions}
         projectSlug={run.data.run.project.slug}
+        windowSelected={window !== null}
       />
       {/* `stats.data` is what makes a target linkable, and it is window-scoped
           — which is the right scoping for a link that carries the window with
@@ -573,6 +575,7 @@ export function RunOverviewTab() {
         assertions={run.data.run.toolAssertions}
         runId={runId ?? ''}
         stats={stats.data?.stats ?? null}
+        windowSelected={window !== null}
       />
 
       <TableSection title="Statistics" query={stats} columns={STATISTICS_SKELETON_COLUMNS}>
@@ -1248,9 +1251,15 @@ function Assertions({
   runId,
   assertions,
   projectSlug,
+  windowSelected = false,
 }: {
   readonly runId: string;
   readonly assertions: readonly Assertion[];
+  /** A gate is decided once, at finalize, over the whole run -- so under a
+   *  window it is scoped differently from the statistics beside it. See
+   *  `FinalizedVerdictNotice`. Defaulted because the empty branch below, and
+   *  any caller that is not the windowed run page, want nothing said. */
+  readonly windowSelected?: boolean;
   /** For the empty state's own way out — see below. Optional because a run
    *  whose project is not yet known still renders the section. */
   readonly projectSlug?: string;
@@ -1338,6 +1347,7 @@ function Assertions({
           Export CSV
         </Button>
       </div>
+      {windowSelected && <FinalizedVerdictNotice what="Platform gates" />}
       <AssertionEvidencePanel assertions={assertions} />
       <TableFrame caption={ASSERTIONS_CAPTION} label="Platform gates table">
           <table className={TABLE}>
@@ -1514,11 +1524,16 @@ function ToolAssertions({
   assertions,
   runId,
   stats,
+  windowSelected = false,
 }: {
   readonly assertions: readonly ToolAssertion[] | null | undefined;
   readonly runId: string;
   /** This run's statistics rows as currently scoped, or null until they load. */
   readonly stats: readonly StatRow[] | null;
+  /** The simulation's own checks are decided by Gatling when the run finishes,
+   *  so like the platform gates they do not narrow with a window. Defaulted:
+   *  only the windowed run page has anything to say. */
+  readonly windowSelected?: boolean;
 }) {
   // BEFORE the early returns: a hook cannot sit behind one. CLAUDE.md records
   // this exact shape — "Rendered more hooks than during the previous render"
@@ -1645,6 +1660,7 @@ function ToolAssertions({
         style={{ scrollMarginTop: FRAGMENT_SCROLL_MARGIN }}
       >
       <SectionHeading>Simulation assertions</SectionHeading>
+      {windowSelected && <FinalizedVerdictNotice what="Simulation assertions" />}
       <TableFrame
         caption={TOOL_ASSERTIONS_CAPTION}
         summary="Every assertion the simulation declared, re-checked against this run."

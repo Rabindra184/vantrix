@@ -5,7 +5,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RunResponse, StatsResponse, ToolAssertion } from '@perfportal/contracts';
+import type { Assertion, RunResponse, StatsResponse, ToolAssertion } from '@perfportal/contracts';
 import reference from './fixtures/reference-run.json';
 import { runQueryKey } from '../src/api/run';
 import { RunOverviewTab } from '../src/routes/RunDetail';
@@ -59,6 +59,23 @@ function details(parts: readonly string[], outcome: ToolAssertion['outcome']): T
   };
 }
 
+/** One PLATFORM gate -- the organisation's own SLA rule, judged at finalize.
+ *  Distinct from the simulation's checks above: two systems, two sections. */
+const PLATFORM_GATE: Assertion = {
+  ruleId: '22222222-2222-4222-8222-222222222222',
+  outcome: 'failed',
+  actualValue: 1830,
+  message: 'p99 breached its threshold.',
+  rule: {
+    scope: 'run',
+    targetName: null,
+    family: 'response_time',
+    metric: 'p99',
+    comparator: 'lte',
+    threshold: 750,
+  },
+};
+
 const GLOBAL_ASSERTION: ToolAssertion = {
   expression: 'Global: max of response time is less than 30000.0',
   assertion: {
@@ -88,7 +105,10 @@ const UNDECODED_ASSERTION: ToolAssertion = {
   outcome: 'passed',
 };
 
-function readyRun(toolAssertions: readonly ToolAssertion[]): RunResponse {
+function readyRun(
+  toolAssertions: readonly ToolAssertion[],
+  assertions: readonly Assertion[] = [],
+): RunResponse {
   return {
     id: RUN_ID,
     project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
@@ -101,7 +121,7 @@ function readyRun(toolAssertions: readonly ToolAssertion[]): RunResponse {
     durationMs: 63161,
     startedAt: '2026-08-14T10:43:49.546Z',
     toolStartedAt: '2026-08-07T05:30:02.171Z',
-    assertions: [],
+    assertions: [...assertions],
     toolAssertions: [...toolAssertions],
   };
 }
@@ -118,7 +138,15 @@ function readyRun(toolAssertions: readonly ToolAssertion[]): RunResponse {
  */
 function renderOverview(
   toolAssertions: readonly ToolAssertion[],
-  { search = '' }: { search?: string } = {},
+  {
+    search = '',
+    window = null,
+    assertions = [],
+  }: {
+    search?: string;
+    window?: RunWindowContext['window'];
+    assertions?: readonly Assertion[];
+  } = {},
 ) {
   vi.stubGlobal('fetch', (input: RequestInfo | URL) =>
     Promise.resolve(
@@ -130,7 +158,10 @@ function renderOverview(
   );
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: readyRun(toolAssertions) });
+  client.setQueryData(runQueryKey(RUN_ID), {
+    state: 'ready',
+    run: readyRun(toolAssertions, assertions),
+  });
 
   return render(
     <QueryClientProvider client={client}>
@@ -142,7 +173,7 @@ function renderOverview(
               <Outlet
                 context={
                   {
-                    window: null,
+                    window,
                     durationMs: 63161,
                     liveDurationMs: null,
                     live: null,
@@ -419,4 +450,89 @@ describe('ToolAssertions — the target leads somewhere', () => {
     expect(h2s.filter((h) => /assertion/i.test(h))).toEqual(['Simulation assertions']);
     expect(h2s.filter((h) => /gate/i.test(h))).toEqual(['Platform gates']);
   });
+
+  /* ══════════════════════════════════════════════════════════════════════ *
+   * A VERDICT AND A STATISTIC, SIDE BY SIDE, IN DIFFERENT SCOPES
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ═══ THE EVIDENCE MISTAKE, MADE A FOURTH TIME ═══
+   *
+   * The evidence-window-scope branch found one mistake made three times: a
+   * number the window narrowed under a caption that still described the whole
+   * run. It fixed the run totals, the percentile note, and the SLA TINT -- that
+   * last one by WITHHOLDING the tint, because "an assertion is evaluated once
+   * at finalize against the run" and recolouring it per window would invent a
+   * verdict nobody configured.
+   *
+   * The two evidence SECTIONS on this tab are the same fact and were left
+   * saying nothing. Platform gates and simulation assertions are decided when
+   * the run finishes, over the whole run; the statistics directly above them
+   * are re-read per window. So a reader who narrows to a healthy ten seconds
+   * sees a windowed p95 beside a whole-run FAILED gate whose actual is a number
+   * that appears nowhere on their screen, with nothing saying why.
+   *
+   * Both sections are asserted because each was silent independently -- fixing
+   * the gates alone would leave the simulation's own checks making the same
+   * unlabelled claim one heading down.
+   */
+  it('says both verdicts are the whole run\'s when a window is selected', async () => {
+    renderOverview([details(['Search'], 'failed')], {
+      window: { fromMs: 10_000, toMs: 30_000, bucketWidthMs: 1_000 },
+      assertions: [PLATFORM_GATE],
+    });
+
+    const notices = await screen.findAllByTestId('finalized-verdict-notice');
+    expect(notices).toHaveLength(2);
+    const said = notices.map((n) => (n.textContent ?? '').trim());
+    expect(said.some((t) => t.startsWith('Platform gates'))).toBe(true);
+    expect(said.some((t) => t.startsWith('Simulation assertions'))).toBe(true);
+    // The claim itself, not just its presence: it has to say the window does
+    // not move THIS, while conceding that it moves the figures beside it.
+    expect(said[0]).toMatch(/decided when the run finished, against the whole run/);
+  });
+
+  /**
+   * THE HALF THAT KEEPS THE OTHER HONEST. With no window there is nothing to
+   * disclaim, and a permanent "these are whole-run verdicts" on a page whose
+   * verdicts are always whole-run is exactly the over-explanation review N04
+   * spent four rows removing. An assertion that only checked the windowed case
+   * passes against a notice rendered unconditionally.
+   */
+  it('says nothing about scope when no window is selected', async () => {
+    // A PLATFORM GATE IS SEEDED HERE ON PURPOSE. Without one the gates section
+    // takes its empty branch and never reaches the notice at all, so this case
+    // could not see a notice that had stopped being gated on the window --
+    // measured: ungating it left all fifteen green. The keeper has to exercise
+    // the same branch the mutation lands on.
+    renderOverview([details(['Search'], 'failed')], { assertions: [PLATFORM_GATE] });
+    // Awaited on the table rather than on an absence: `queryAllBy` over a tab
+    // that has not rendered yet answers "none" for the wrong reason.
+    await assertionTable();
+    expect(screen.queryAllByTestId('finalized-verdict-notice')).toHaveLength(0);
+  });
+
+
+  /**
+   * AND IT FOLLOWS THE EVIDENCE, NOT MERELY THE WINDOW. A project with no SLA
+   * rule has no gate verdict to be scoped, and the gates section takes its
+   * empty branch -- "not configured" -- which is a statement about the PROJECT
+   * and not about this window. Putting a scope notice over it would disclaim a
+   * verdict that does not exist.
+   *
+   * The simulation's own checks are still there and still whole-run, so exactly
+   * one notice survives. A component that rendered the notice on the window
+   * alone would show two here.
+   */
+  it('scopes only the evidence that exists: no gates, no gate notice', async () => {
+    renderOverview([details(['Search'], 'failed')], {
+      window: { fromMs: 10_000, toMs: 30_000, bucketWidthMs: 1_000 },
+      assertions: [],
+    });
+
+    const notices = await screen.findAllByTestId('finalized-verdict-notice');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toHaveTextContent(/^Simulation assertions/);
+  });
+
 });
