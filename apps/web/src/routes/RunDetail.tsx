@@ -42,7 +42,7 @@ import { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
 import StatisticsTable, { formatCount, formatMs } from '../tables/StatisticsTable';
 import { downloadCsv } from '../tables/csv';
 import { assertionsCsv } from './assertionExport';
-import { countAssertions, describeAssertionRule, firstFailedAssertion } from './assertions';
+import { countAssertions, describeAssertionRuleForReader, firstFailedAssertion } from './assertions';
 import { baselineRun } from './runBaseline';
 import { formatDuration } from './format';
 import { ASSERTION_OUTCOME, Marked } from './marks';
@@ -1376,7 +1376,7 @@ function Assertions({
                   <td data-testid="assertion-outcome" className={`${TD} whitespace-nowrap`}>
                     <Marked mark={ASSERTION_OUTCOME[assertion.outcome]} />
                   </td>
-                  <td className={`${TD} font-mono text-[0.75rem]`}>{describeAssertionRule(assertion.rule)}</td>
+                  <td className={TD}>{describeAssertionRuleForReader(assertion.rule)}</td>
                   {/* Null for a not_applicable assertion — there was nothing to
                       measure (AssertionSchema). A dash, never `0`: zero is a
                       measurement, and this is the absence of one. */}
@@ -1462,7 +1462,7 @@ function AssertionEvidenceRow({ assertion }: { assertion: Assertion }) {
     <article className="rounded-lg border border-default bg-sunken px-3 py-2">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-mono text-[0.75rem] leading-relaxed text-primary">{describeAssertionRule(assertion.rule)}</p>
+          <p className="text-[0.75rem] leading-relaxed text-primary">{describeAssertionRuleForReader(assertion.rule)}</p>
           <p className="mt-0.5 text-[0.75rem] leading-relaxed text-muted">
             Actual {formatAssertionValue(assertion.rule.metric, assertion.actualValue)}
           </p>

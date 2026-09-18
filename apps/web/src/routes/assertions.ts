@@ -1,4 +1,4 @@
-import { formatSlaValue } from '@perfportal/contracts';
+import { describeSlaMeasurement, formatSlaValue } from '@perfportal/contracts';
 import type { Assertion } from '@perfportal/contracts';
 
 /** One count per outcome, keyed by the outcome itself. */
@@ -31,6 +31,32 @@ export function describeAssertionRule(rule: Assertion['rule']): string {
      single place that decision lives, so the table, the run page's evidence
      panel and the CSV export cannot drift apart. */
   return `${rule.metric} of ${target} (${rule.family}) ${comparator} ${formatSlaValue(rule.metric, rule.threshold)}`;
+}
+
+/**
+ * The same rule, for a READER rather than for a machine.
+ *
+ * ═══ TWO DESCRIBERS ON PURPOSE, AND WHICH IS WHICH IS THE POINT ═══
+ *
+ * `describeAssertionRule` above is the PRECISE form — `metric of target
+ * (family)` — every field of the stored snapshot, in the evaluator's own
+ * vocabulary. The second review's finding 3 is that it was also the only form,
+ * so `error_rate of the run (response_time)` was what the run page and the
+ * rules table showed people.
+ *
+ * This one is what those surfaces render now. The precise form is not deleted:
+ * it still writes the CSV, which is the artifact somebody attaches to a review
+ * or diffs against another run, and where a field the UI folds away is exactly
+ * what a reader has gone looking for. That is the finding's own "put the raw
+ * expression in Details", with the export as the details.
+ *
+ * The BOUND is identical in both, through `formatSlaValue` — the one place that
+ * decision lives, so a table cell and the exported row cannot disagree about
+ * what `≤ 0.01` means.
+ */
+export function describeAssertionRuleForReader(rule: Assertion['rule']): string {
+  const comparator = rule.comparator === 'lte' ? '≤' : '≥';
+  return `${describeSlaMeasurement(rule)} ${comparator} ${formatSlaValue(rule.metric, rule.threshold)}`;
 }
 
 /**

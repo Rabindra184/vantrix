@@ -31,7 +31,7 @@ import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
 import { fetchRuns, runsQueryKey } from '../api/runs';
 import { statsQuery } from '../api/metrics';
 import { INPUT, ROW, TABLE, TD, TH, THEAD } from '../components/tableStyles';
-import { describeAssertionRule } from './assertions';
+import { describeAssertionRuleForReader } from './assertions';
 
 /**
  * Authoring the gates a project's runs are judged against.
@@ -1303,13 +1303,14 @@ function RulesTable({
 }
 
 /**
- * A stored rule in the shape `describeAssertionRule` reads.
+ * A stored rule in the shape `describeAssertionRuleForReader` reads.
  *
  * THE WIDENING IS THE REASON THIS EXISTS. `SlaRuleSchema` types `scope`,
  * `family` and `comparator` as plain strings on purpose — a response schema
  * echoes whatever is stored, so one row written before an enum narrowed
  * renders as itself instead of 500ing the list (see `TokenSummarySchema`).
- * `describeAssertionRule` takes the evaluator's narrower `Assertion['rule']`.
+ * `describeAssertionRuleForReader` takes the evaluator's narrower
+ * `Assertion['rule']`.
  * Reconciling them in one named function keeps the assertion to a single
  * place with the argument attached, rather than an inline cast in the middle
  * of a table cell.
@@ -1319,7 +1320,7 @@ function RulesTable({
  * exactly what that function would conclude anyway.
  */
 function describe(rule: SlaRule): string {
-  return describeAssertionRule({
+  return describeAssertionRuleForReader({
     scope: rule.scope,
     targetName: rule.targetName,
     family: rule.family,

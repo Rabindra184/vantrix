@@ -115,6 +115,66 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The rule-language-human branch added no unit FILE and 5 cases to
+`packages/contracts/test/rules.test.ts`, from a floor of 153 / 1891 to
+**153 / 1896**. Integration moves with it (that file is a `.ts` integration
+runs); e2e is unchanged at 142. `review.md`'s finding 3.
+
+**THE STORED SCHEMA WAS BEING READ ALOUD TO PEOPLE.** The run page's gates
+table, its evidence cards and the rules table all rendered
+`metric of target (family)` — `error_rate of the run (response_time)`,
+`p95 of Cart (group_cumulated)`. Half of that is unreadable and half is FALSE:
+an error rate is not a kind of response time, so the parenthesis states
+something untrue about the quantity it qualifies.
+
+**THE FAMILY IS NOISE FOR SOME METRICS AND MEANING FOR OTHERS, WHICH IS WHY IT
+COULD NOT SIMPLY BE DROPPED.** The finding's own three examples are the
+specification and they encode the rule:
+
+```
+  run,     error_rate, response_time    ->  Whole-run error rate
+  request, p95,        response_time    ->  Search p95 response time
+  group,   p95,        group_cumulated  ->  Cart p95 cumulative response time
+```
+
+`family` is the statistics family a row is filed under and `metric` is the
+statistic taken over it, so the family qualifies a TIME statistic and says
+nothing about an error rate, a throughput or a count.
+`slaMetricUnit(metric) === 'ms'` is exactly that test — data this file already
+owns rather than a second list to keep in step. `group_cumulated` against
+`group_duration` is the pair that proves the family had to survive: a group's
+summed request time against its wall-clock span, and they differ by nothing
+else.
+
+**`p95`, NOT "95th percentile", AND THE TWO DESCRIBERS ARE BOTH RIGHT.**
+`slaMetricLabel` renders the long form for the authoring PREVIEW, a sentence
+where "95th percentile response time must be at most 800 ms" reads as a claim.
+A table cell is not a sentence, and the other review's N01 spent four branches
+making `p95` mean one thing across the statistics table, the run totals tile
+and the rules form — so the word in the cell is the word the reader will look
+for on the run page afterwards.
+
+**THE PRECISE FORM IS KEPT AND NOW HAS EXACTLY ONE CALLER: THE CSV.**
+`describeAssertionRule` still writes the export, which is the artifact somebody
+attaches to a review or diffs against another run — where a field the UI folds
+away is precisely what they went looking for. That is the finding's own "put
+the raw expression in Details", with the export as the details, and it is why
+this is two functions rather than one rewritten one.
+
+**TWO TESTS PINNED THE OLD WORDING AND WERE RE-POINTED AT THE CLAIM.**
+`ProjectRules.test.tsx` asserted `p95 of the run (response_time) ≤ 800 ms`
+verbatim. That is the verbatim-prose trap this file records for the M18 caveat
+and C06's caption, in its benign form: the strings were right when written and
+the product deliberately changed underneath them, so they move rather than the
+product bending to suit them.
+
+**AND A FOURTH SURFACE IS DELIBERATELY LEFT.** The LIVE SLA banner prints the
+`description` the WORKER wrote into each delta (`packages/sla`'s own
+`describe`), in the same raw vocabulary. Changing that changes what the worker
+stores and streams — and what every delta already recorded says — rather than
+how a page renders. That is a data change with a migration question attached,
+not a rendering one, and it belongs in its own branch.
+
 The sla-actual-units branch added no unit FILE and 1 case to
 `apps/web/test/ToolAssertions.test.tsx`, from a floor of 153 / 1890 to
 **153 / 1891** — `packages/contracts/test/rules.test.ts` gained assertions

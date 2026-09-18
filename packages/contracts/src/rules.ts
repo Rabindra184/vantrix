@@ -386,6 +386,87 @@ export function slaMetricLabel(metric: string): string {
   return metric;
 }
 
+/**
+ * What a rule MEASURES, in the words the rest of the product uses.
+ *
+ * ═══ THE SCHEMA WAS BEING READ ALOUD TO PEOPLE ═══
+ *
+ * The run page and the rules table rendered `metric of target (family)` —
+ * `error_rate of the run (response_time)`, `p95 of Cart (group_cumulated)`.
+ * The second review's finding 3 calls that difficult to read and sometimes
+ * conceptually confusing, and the confusion is real rather than stylistic: an
+ * error rate is not a kind of response time, so the parenthesis states
+ * something false about the quantity it qualifies.
+ *
+ * ═══ THE FAMILY IS NOISE FOR SOME METRICS AND MEANING FOR OTHERS ═══
+ *
+ * Which is why this cannot simply drop it, and why the finding's own three
+ * examples are the specification:
+ *
+ *   run,     error_rate, response_time    ->  Whole-run error rate
+ *   request, p95,        response_time    ->  Search p95 response time
+ *   group,   p95,        group_cumulated  ->  Cart p95 cumulative response time
+ *
+ * `family` names the STATISTICS FAMILY a row is filed under; `metric` is the
+ * statistic taken over it. So the family qualifies a metric that is a TIME
+ * statistic and says nothing about one that is not — an error rate, a
+ * throughput or a count is its own quantity. `slaMetricUnit(metric) === 'ms'`
+ * is exactly that test, and it is data this file already owns rather than a
+ * second list to keep in step.
+ *
+ * ═══ `p95`, NOT "95th percentile" ═══
+ *
+ * `slaMetricLabel` renders the long form and is right to: it builds the
+ * authoring PREVIEW, a sentence, where "95th percentile response time must be
+ * at most 800 ms" reads as a claim. This builds a table cell, and the other
+ * review's N01 spent four branches making `p95` mean one thing across the
+ * statistics table, the run totals tile and this form — so the word here is
+ * the word a reader will look for on the run page afterwards.
+ */
+export function describeSlaMeasurement(rule: {
+  readonly scope: SlaRuleScope;
+  readonly targetName: string | null;
+  readonly family: string;
+  readonly metric: string;
+}): string {
+  const target =
+    rule.scope === 'run' || rule.targetName === null || rule.targetName.trim() === ''
+      ? 'Whole-run'
+      : rule.targetName.trim();
+
+  const metric = SHORT_METRIC[rule.metric] ?? rule.metric;
+  const qualifier = slaMetricUnit(rule.metric) === 'ms' ? FAMILY_WORDS[rule.family] : undefined;
+
+  return qualifier === undefined ? `${target} ${metric}` : `${target} ${metric} ${qualifier}`;
+}
+
+/** The SHORT spelling, for a cell. `slaMetricLabel` owns the long one. */
+const SHORT_METRIC: Record<string, string | undefined> = {
+  count: 'request count',
+  mean: 'mean',
+  min: 'fastest',
+  max: 'slowest',
+  stddev: 'spread',
+  error_rate: 'error rate',
+  throughput_rps: 'throughput',
+};
+
+/**
+ * The quantity a time statistic is taken over.
+ *
+ * `group_cumulated` and `group_duration` are the two that carry real meaning —
+ * a group's summed request time against its wall-clock span, which is the
+ * distinction `engine.ts` files them under and the one a reader gating a group
+ * has to get right. An unknown family renders nothing rather than its own
+ * identifier: a word nobody can act on is what this function exists to remove.
+ */
+const FAMILY_WORDS: Record<string, string | undefined> = {
+  response_time: 'response time',
+  latency: 'latency',
+  group_cumulated: 'cumulative response time',
+  group_duration: 'duration',
+};
+
 /** `95` → `95th`, `99.9` → `99.9th`. The run page's own rule, restated. */
 function ordinal(digits: string): string {
   const n = Number(digits);
