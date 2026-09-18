@@ -806,7 +806,18 @@ function HealthTile({
        and widened the document (measured: the run list at 1338 of 1280). The
        row-gap is deliberately tighter than the column-gap — wrapped, these are
        continuations of one line rather than separate rows. */
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5" style={{ color: colour }}>
+    <div
+      /* A HANDLE, because the three spans below carry no role and no accessible
+         name of their own: the count, its label and its detail are siblings, so
+         a query for the LABEL has to climb to a parent indistinguishable from
+         the row wrapping it -- which resolves to two elements under strict
+         mode. `health-scope` just above already takes this shape. Derived from
+         the label so the two cannot drift, the way `EntryCard` derives its
+         own; grep for the derived value, not only the label. */
+      data-testid={`health-${label.toLowerCase().replace(/\s+/g, '-')}`}
+      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"
+      style={{ color: colour }}
+    >
       <span className="font-mono text-base font-semibold tabular-nums text-primary">{value}</span>
       <span className="text-[0.75rem] text-primary">{label}</span>
       <span className="text-[0.6875rem] text-muted">{detail}</span>

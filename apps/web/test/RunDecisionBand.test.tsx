@@ -121,6 +121,43 @@ describe('RunDecisionBand', () => {
     expect(screen.queryByRole('heading')).toBeNull();
   });
 
+  /* ════════════════════════════════════════════════════════════════════ *
+   * THE RUN STATE NOTHING HAD EVER RENDERED
+   * ════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ═══ `incomplete` IS NOT `failed`, AND THE BAND IS WHERE THAT IS SAID ═══
+   *
+   * `executionText` has three terminal branches and only two were ever
+   * rendered by a test. The third is reachable and load-bearing: the sweeper's
+   * `running` arm calls `RunRepository.markIncomplete` when a live run's
+   * producer stops reporting, and `RunsService.statusFor` gives it an explicit
+   * 200 -- deliberately NOT 202, because an aborted live run has no worker left
+   * to move it past one, so a poller would retry it for ever.
+   *
+   * THE TWO SENTENCES SEND A READER SOMEWHERE DIFFERENT. "could not be
+   * processed" is an ingest that rejected the bundle: nothing was measured, and
+   * the fix is to re-upload. "the stream stopped early" is a producer that died
+   * mid-run: what arrived IS real data, and the fix is to re-run the test.
+   * Collapsing them tells an engineer to do the wrong one.
+   *
+   * Asserted as an EXCLUSIVE pair, the shape this file already uses above:
+   * "says incomplete" alone is satisfied by a band that says every run is.
+   */
+  it('says an incomplete run stopped early, not that it could not be processed', () => {
+    renderBand({ status: 'incomplete', verdict: null, assertions: undefined });
+    expect(screen.getByText(/the stream stopped early/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be processed/i)).toBeNull();
+  });
+
+  /** The other side of the pair: a genuinely failed run keeps ITS sentence, so
+   *  the branch above cannot have been widened to cover both. */
+  it('still says a failed run could not be processed', () => {
+    renderBand({ status: 'failed', verdict: null, assertions: undefined });
+    expect(screen.getByText(/could not be processed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/stream stopped early/i)).toBeNull();
+  });
+
   it('does render the no-verdict badge for a run that WAS evaluated', () => {
     renderBand({ verdict: null, assertions: [] });
     expect(screen.getByText('no verdict yet')).toBeInTheDocument();
