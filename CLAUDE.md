@@ -116,10 +116,16 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The review20-heading-ladder branch added no unit FILE and 1 case to
-`apps/web/test/Card.test.tsx`, from **153 / 1916 to 153 / 1917**. Integration is
+`apps/web/test/Card.test.tsx`, from **153 / 1919 to 153 / 1920**. Integration is
 UNCHANGED and **e2e stays 144**. `review.md`'s finding 20 — and the entry is
-mostly about what it did NOT change. (Cut while review19 was open; re-measure
-if that lands first.)
+mostly about what it did NOT change.
+
+**ITS FIRST FLOOR WAS 153 / 1916 to 1917, AND review19 LANDED UNDERNEATH IT.**
+Third reconciliation in a row, which is the point at which it stops being an
+accident: cutting a branch while another is open means its floor is true only
+of the tree it was cut from. RE-MEASURED after merging `main` in — the
+arithmetic (1 unit case, no spec) is what survives. **Finish and merge one
+branch before cutting the next, or budget the re-measure.**
 
 **FINDING 20 IS A DESIGN ASSESSMENT, AND THIS FILE ALREADY RECORDS LEAVING THAT
 CLASS ALONE** — the other review's m01/m02 were left as "a direction to be
