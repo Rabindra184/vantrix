@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunProcessing, RunResponse } from '@perfportal/contracts';
@@ -207,34 +207,36 @@ describe('RunCompare — the empty state offers a way on', () => {
  * matching a picker against a legend by eye. What is added is everything else
  * they need to recognise it.
  */
+/** A cohort row, varied only where a case cares. */
+const cohortRunAt = (over: Record<string, unknown>) => ({
+  id: RUN_ID,
+  startedAt: '2026-08-15T12:00:00.000Z',
+  toolStartedAt: '2026-08-15T12:00:00.000Z',
+  durationMs: 63_161,
+  verdict: 'passed',
+  count: 895,
+  okCount: 871,
+  koCount: 24,
+  errorRate: 0.0268,
+  minMs: 12,
+  maxMs: 2503,
+  meanMs: 228,
+  throughputRps: 14.4,
+  percentiles: { p95: 646 },
+  ...over,
+});
+
+const OTHER = '00000000-0000-4000-8000-0000000000ff';
+const populated = (runs: unknown[]) => ({ ...EMPTY_TRENDS, cohortSize: runs.length, runs });
+
+
 describe('RunCompare — the picker says which run each candidate is', () => {
-  const cohortRun = (over: Record<string, unknown>) => ({
-    id: RUN_ID,
-    startedAt: '2026-08-15T12:00:00.000Z',
-    toolStartedAt: '2026-08-15T12:00:00.000Z',
-    durationMs: 63_161,
-    verdict: 'passed',
-    count: 895,
-    okCount: 871,
-    koCount: 24,
-    errorRate: 0.0268,
-    minMs: 12,
-    maxMs: 2503,
-    meanMs: 228,
-    throughputRps: 14.4,
-    percentiles: { p95: 646 },
-    ...over,
-  });
-
-  const OTHER = '00000000-0000-4000-8000-0000000000ff';
-  const populated = (runs: unknown[]) => ({ ...EMPTY_TRENDS, cohortSize: runs.length, runs });
-
   it('names the conditions a run carries, and says nothing for one that carries none', async () => {
     renderCompare(
       { state: 'ready', run: COMPLETE_RUN },
       populated([
-        cohortRun({ environment: 'production', branch: 'main', commitSha: 'a1b2c3d4e5f6' }),
-        cohortRun({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+        cohortRunAt({ environment: 'production', branch: 'main', commitSha: 'a1b2c3d4e5f6' }),
+        cohortRunAt({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
       ]),
     );
 
@@ -258,12 +260,89 @@ describe('RunCompare — the picker says which run each candidate is', () => {
     renderCompare(
       { state: 'ready', run: COMPLETE_RUN },
       populated([
-        cohortRun({}),
-        cohortRun({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+        cohortRunAt({}),
+        cohortRunAt({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
       ]),
     );
 
     expect(await screen.findByTestId(`compare-role-${RUN_ID}`)).toHaveTextContent('Current');
     expect(screen.getByTestId(`compare-role-${OTHER}`)).toHaveTextContent('Baseline');
+  });
+});
+
+
+/**
+ * ═══ WHICH CONDITIONS DIFFER, NOT THAT SOME DO (review.md 19) ═══
+ *
+ * The panel opened with "These runs differ in ways that change what a
+ * comparison means" over six facts shown whether or not they said anything.
+ * That sentence is true of every non-matching selection and actionable for
+ * none of them.
+ */
+describe('RunCompare — the comparability notice is concise', () => {
+  const differing = () =>
+    populated([
+      cohortRunAt({ environment: 'production', branch: 'main', commitSha: 'a1b2c3d4e5' }),
+      cohortRunAt({
+        id: OTHER,
+        startedAt: '2026-08-15T11:00:00.000Z',
+        toolStartedAt: '2026-08-15T11:00:00.000Z',
+        environment: 'staging',
+        branch: 'feature/cart',
+        commitSha: 'ffeeddccbb',
+      }),
+    ]);
+
+  it('names the dimensions that differ instead of warning in general', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, differing());
+
+    const panel = await screen.findByTestId('comparability');
+    expect(panel).toHaveTextContent('Different environment, branch and build');
+    // The retired sentence must not come back. Asserted as an absence beside
+    // the positive above, because an absence alone passes against a panel that
+    // failed to render at all.
+    expect(panel).not.toHaveTextContent('ways that change what a comparison means');
+  });
+
+  /**
+   * "Details available" is the other half of the finding — the six facts are
+   * FILED, not deleted. The ones that MATCH are what a reader needs to conclude
+   * a comparison is sound rather than merely un-flagged, so they survive too.
+   *
+   * Asserted on the `open` attribute, never on visibility: jsdom keeps a closed
+   * disclosure's children queryable, which is why `queryByTestId` would find
+   * these either way.
+   */
+  it('files the per-dimension facts behind a disclosure, shut when the headline already said it', async () => {
+    renderCompare({ state: 'ready', run: COMPLETE_RUN }, differing());
+
+    const details = await screen.findByTestId('comparability-details');
+    expect(details).toHaveProperty('open', false);
+    expect(within(details).getByTestId('comparability-environment')).toHaveTextContent('production');
+  });
+
+  /**
+   * AND OPEN WHEN EVERYTHING MATCHES, which is the case the pair exists for: the
+   * headline is then six words with no detail in it, and this is the only place
+   * the evidence lives. A disclosure that was always shut would hide the answer
+   * exactly when it is the whole answer.
+   */
+  it('opens the facts when the runs match, since the headline then carries none', async () => {
+    const same = { environment: 'production', branch: 'main', commitSha: 'a1b2c3d4e5' };
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      populated([
+        cohortRunAt(same),
+        cohortRunAt({
+          ...same,
+          id: OTHER,
+          startedAt: '2026-08-15T11:00:00.000Z',
+          toolStartedAt: '2026-08-15T11:00:00.000Z',
+        }),
+      ]),
+    );
+
+    const details = await screen.findByTestId('comparability-details');
+    expect(details).toHaveProperty('open', true);
   });
 });

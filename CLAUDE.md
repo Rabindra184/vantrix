@@ -115,6 +115,74 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review19-concise-comparability branch added no unit FILE and 3 cases to
+`apps/web/test/RunCompare.test.tsx`, from **153 / 1916 to 153 / 1919**.
+Integration is UNCHANGED and **e2e stays 144** — its browser assertions went
+inside an existing `test(` block. `review.md`'s finding 19.
+
+**THE PANEL OPENED WITH A SENTENCE TRUE OF EVERY SELECTION IT COULD APPEAR
+OVER.** "These runs differ in ways that change what a comparison means" is
+correct for any non-matching cohort and actionable for none of them, and it sat
+above six facts rendered whether or not they said anything. The headline names
+the dimensions now — `Different environment, branch and build` — and the facts
+are a disclosure, which is the finding's own "concise notice with details
+available".
+
+**AND THE SENTENCE MOVED TO WHERE THE FINDINGS LIVE.** `summariseConditions`
+was written for the run overview's baseline note two branches ago and is
+`comparability.ts`'s now, because a reader moves between those two pages and
+two copies would drift into describing the same six findings two different
+ways. **The module that defines a fact should own how it is said.**
+
+**THE FACTS THAT MATCH SURVIVE, AND THAT IS THE HALF WORTH ARGUING.** The
+instinct is to file only what differs. A reader concluding a comparison is
+SOUND needs the matches — "un-flagged" and "checked and equal" are different
+claims, and only the second justifies trusting a delta. So all six stay, one
+disclosure away.
+
+**IT IS OPEN WHEN EVERYTHING MATCHES AND SHUT WHEN SOMETHING DIFFERS**, which
+reads backwards until you see what each headline carries. A differing headline
+already names the actionable part, so the detail is optional; a matching one is
+six words with no detail in it at all, and shutting the evidence away would
+hide the answer exactly when it IS the answer.
+
+**THE COUNT TILE IS GONE.** "Summary cards then repeat the active selection and
+metric" — it read `2` over "p95 across the active selection", a number the
+reader gets by counting the pressed chips directly above and a metric every
+other tile's unit already carries. It spent a third of the row restating the
+controls, which is why the principal delta was not the first thing there.
+`metricLabel` died with it, and `lint` is what said so: `tsc` is perfectly
+happy with a prop nobody reads.
+
+**AND THE TILE'S ABSENCE IS ASSERTED IN THE BROWSER, NOT IN jsdom, FOR A
+REASON.** `CompareSummary` renders only once the runs' statistics arrive, and
+the unit harness answers `/stats` with a body that fails its schema — so a
+jsdom `queryByText('Selected runs')` would return null against a summary that
+never rendered at all. **A negative assertion in a harness that cannot reach
+the positive state proves nothing**, which is the `toBeHidden()` lesson this
+file already records, met from a second direction.
+
+**TWO CLAUSES ARE DELIBERATELY NOT DONE, AND SAYING WHICH IS THE POINT.** "Keep
+the warning near the conclusion it qualifies" was already satisfied — the panel
+sits immediately above the summary tiles, and the comment there has argued that
+placement since the review-criticals branch ("whether a delta MEANS anything
+has to be settled before the delta is read"). "Put metric and baseline controls
+together" is a layout restructure: the metric selector belongs to `CompareChart`
+and hoisting it above the summary is a different change from making this notice
+concise. Recorded as checked-and-already-true and as left, rather than quietly
+skipped.
+
+**AND THE BRANCH WAS CUT FROM A `main` THAT WENT STALE UNDER IT — RECOVERED BY
+STASHING BY PATHSPEC.** review17 and review15 both landed while this was in
+progress, so the working tree was editing a `RunCompare.tsx` that predated
+review17's picker chips. `git stash push <three paths>`, `git merge
+origin/main`, `git stash pop` three-way merged cleanly and kept BOTH — the
+chips and this panel — which is the SAFE form of the manoeuvre this file
+already warns about: **`--include-untracked` is what sweeps
+`docs/ui-review-2026-09-13/`, `review.md` and `scripts/seed-manual-test.mjs`
+into a stash; naming paths never touches them.** Verified by grepping for one
+marker from each change before trusting the result.
+
 The review15-scannable-rules branch added no unit FILE and 2 cases to
 `apps/web/test/ProjectRules.test.tsx`, from **153 / 1914 to 153 / 1916**.
 Integration is UNCHANGED and **e2e stays 144** — no spec changed.

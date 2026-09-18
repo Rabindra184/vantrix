@@ -34,6 +34,7 @@ import { buildCompareSummary, type CompareSummaryModel } from './compareSummary'
 import {
   comparability,
   needsComparabilityCheck,
+  summariseConditions,
   type ComparabilityFinding,
 } from './comparability';
 
@@ -439,7 +440,6 @@ export default function RunCompare() {
                 {matrixRuns.length > 0 && (
                   <CompareSummary
                     summary={buildCompareSummary(matrixRuns, runId ?? '', metric)}
-                    metricLabel={metricLabel}
                     unit={compareUnit(metric)}
                   />
                 )}
@@ -478,11 +478,12 @@ function countRequested(raw: string | null, current: string): number {
 
 function CompareSummary({
   summary,
-  metricLabel,
   unit,
 }: {
   readonly summary: CompareSummaryModel;
-  readonly metricLabel: string;
+  /** The METRIC's own unit, for the two tiles that print a measurement. The
+   *  metric's NAME went with the count tile: the chart's selector states it,
+   *  and every value here carries this unit beside it. */
   readonly unit: string;
 }) {
   /* Each reason reads differently, because they are different facts. A zero
@@ -504,12 +505,14 @@ function CompareSummary({
         : 'var(--color-status-failed)';
 
   return (
-    <section aria-label="Comparison summary" className="grid gap-3 md:grid-cols-3">
-      <CompareSummaryTile
-        label="Selected runs"
-        value={String(summary.selectedCount)}
-        detail={`${metricLabel} across the active selection`}
-      />
+    <section aria-label="Comparison summary" className="grid gap-3 md:grid-cols-2">
+      {/* ═══ THE COUNT TILE IS GONE (review.md 19) ═══
+          "Summary cards then repeat the active selection and metric." It read
+          `2` over "p95 across the active selection" — a number the reader gets
+          by counting the pressed chips directly above, and a metric every other
+          tile's unit already carries. It spent a third of the row restating the
+          controls, which is why the principal delta was not the first thing
+          here. */}
       <CompareSummaryTile
         label="Current vs baseline"
         value={deltaText}
@@ -573,12 +576,37 @@ function Comparability({ findings }: { readonly findings: readonly Comparability
       data-testid="comparability"
       className="flex flex-col gap-2 rounded-xl border border-default bg-surface p-4"
     >
+      {/* ═══ WHICH DIMENSIONS, NOT THAT SOME DO (review.md 19) ═══
+          This opened with "These runs differ in ways that change what a
+          comparison means" — true of every non-matching selection and
+          actionable for none of them — above six facts shown whether or not
+          they said anything.
+
+          `summariseConditions` is the same sentence the run overview's
+          baseline note prints, off the same findings, so a reader moving
+          between the two pages meets one wording rather than two. */}
       <p role="status" className="text-[0.8125rem] leading-relaxed text-primary">
         {check
-          ? 'These runs differ in ways that change what a comparison means. Read the deltas below against this.'
+          ? summariseConditions(findings.filter((finding) => finding.kind !== 'same'))
           : 'These runs match on every dimension recorded here.'}
       </p>
-      <dl className="grid gap-x-4 gap-y-1 text-[0.75rem] sm:grid-cols-2">
+      {/* ═══ DETAILS AVAILABLE, WHICH IS WHAT THE FINDING ASKS FOR ═══
+          All six stay — including the ones that MATCH, which is the half a
+          reader needs to conclude a comparison is SOUND rather than merely
+          un-flagged. They are one disclosure away instead of six lines of
+          prose nobody asked for.
+
+          OPEN when everything matches, because the headline then says so in
+          six words and this is the only place the evidence for it lives;
+          CLOSED when something differs, because the headline has already said
+          the actionable part. A `<summary>` contributes an ARIA group and not
+          a heading, so the tab's outline is untouched. */}
+      <details className="group" data-testid="comparability-details" open={!check}>
+        <summary className="w-fit cursor-pointer list-none text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2">
+          <span className="group-open:hidden">What was compared</span>
+          <span className="hidden group-open:inline">Hide what was compared</span>
+        </summary>
+      <dl className="mt-2 grid gap-x-4 gap-y-1 text-[0.75rem] sm:grid-cols-2">
         {findings.map((finding) => (
           <div
             key={finding.label}
@@ -606,6 +634,7 @@ function Comparability({ findings }: { readonly findings: readonly Comparability
           </div>
         ))}
       </dl>
+      </details>
     </section>
   );
 }

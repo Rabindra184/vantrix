@@ -84,6 +84,20 @@ test('is reachable at its own URL and overlays both runs', async ({ page }) => {
 
   // The parity surface is present, as it is on every chart in this app.
   await expect(page.getByTestId(`chart-data-compare-overlay`)).toHaveCount(1);
+
+  // ═══ THE SUMMARY LEADS WITH THE DELTA (review.md 19) ═══
+  //
+  // "Summary cards then repeat the active selection and metric." A `Selected
+  // runs` tile read `2` over "p95 across the active selection" — a number the
+  // reader gets by counting the pressed chips directly above.
+  //
+  // ONLY THIS LAYER CAN SEE IT. `CompareSummary` renders only once the runs'
+  // statistics have arrived, and the unit harness answers `/stats` with a body
+  // that fails its schema — so a jsdom assertion that the tile is absent would
+  // pass against a summary that never rendered at all.
+  const summary = page.getByRole('region', { name: 'Comparison summary' });
+  await expect(summary.getByText('Current vs baseline')).toBeVisible();
+  await expect(summary.getByText('Selected runs')).toHaveCount(0);
 });
 
 test('the metric selector redraws without navigating away', async ({ page }) => {
