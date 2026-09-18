@@ -1037,3 +1037,41 @@ test('the evidence sections say their verdicts are the whole run’s under a win
   await expect(notices.first()).toBeVisible();
   await expect(notices.first()).toContainText(/decided when the run finished, against the whole run/);
 });
+
+/**
+ * ═══ THE LINK AND ITS DESTINATION USE ONE WORD (review.md 22) ═══
+ *
+ * The decision band's link read "See the failed simulation check" and targeted
+ * `#simulation-assertions`, a section headed "Simulation assertions". A reader
+ * followed a link about a CHECK and arrived at ASSERTIONS — two nouns for one
+ * thing, eight hundred pixels apart, on one screen.
+ *
+ * NOTHING WATCHED THE SEAM, which is how it drifted: N01 renamed the SECTION
+ * and every spec that asserts the Overview's heading outline, while the band's
+ * own wording is pinned only by `RunDecisionBand.test.tsx` — a file that never
+ * renders the section, and so cannot notice the two disagreeing.
+ *
+ * This follows the link. The assertion is that the heading it LANDS ON shares
+ * the band's noun, taken from the link's own text rather than written down, so
+ * it survives the vocabulary changing again as long as both change together.
+ */
+test('the band’s link to a failed assertion names what it lands on', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  const link = page.getByRole('link', { name: /failed simulation/i });
+  await expect(link).toHaveCount(1);
+
+  // The noun the band uses, read off the control rather than hard-coded.
+  const noun = ((await link.textContent()) ?? '').trim().split(/\s+/).pop() ?? '';
+  expect(noun).not.toBe('');
+
+  await link.click();
+  // Singular or plural, the heading it reaches is named with the same word.
+  const stem = noun.replace(/s$/, '');
+  await expect(
+    page.getByRole('heading', { name: new RegExp(stem, 'i') }).first(),
+  ).toBeVisible();
+});

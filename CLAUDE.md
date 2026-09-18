@@ -115,6 +115,51 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review22-one-word-per-thing branch added no unit FILE and no unit case —
+unit stays **153 / 1922** — and its **e2e rises to 145**. Integration is
+UNCHANGED. `review.md`'s finding 22. (review13 is open and moves the unit floor
+to 1924; this one adds a spec, so the two do not collide.)
+
+**ONE SCREEN CALLED ONE THING TWO NAMES, EIGHT HUNDRED PIXELS APART.**
+`RunDecisionBand`'s row read `Simulation checks` and its link `See the failed
+simulation check`, while the anchor that link targets —
+`#simulation-assertions` — is headed **Simulation assertions**. A reader
+followed a link about a CHECK and landed on a section about ASSERTIONS.
+
+**N01 SETTLED THE WORD AND THIS WAS THE CALLER IT DID NOT REACH.** That branch
+renamed the SECTION and every spec asserting the Overview's heading outline;
+the band's own wording is pinned only by `RunDecisionBand.test.tsx`, a file that
+never renders the section and therefore cannot see the two disagree. Fifth time
+this file records the one-call-site-short shape.
+
+**AND THE FINDING'S OWN SUGGESTION IS DECLINED, WITH THE EVIDENCE.** review.md
+22 asks for "Simulation check" as the standard term. N01 examined that exact
+rename and found the PRD pointing the other way — G-05 gives "Assertions table
+— expression, expected, actual, status" to the TOOL's own feature, so Gatling's
+assertions really are assertions, and it was the PLATFORM's rules that had
+borrowed the word. Those are `Platform gates` one row up. **When two reviews
+disagree, follow the one with the evidence and say so** — the M09 precedent,
+met again from the other direction.
+
+**NOTHING WATCHED THE SEAM, WHICH IS HOW IT DRIFTED.** No spec anywhere
+followed that link: `grep` for `simulation-assertions` across `apps/web/e2e`
+returned nothing. Unit tests pin the band's words and other unit tests pin the
+section's heading, and neither layer can see that the two describe one journey.
+The new e2e clicks the link and asserts the heading it LANDS ON shares the
+band's noun — **read off the control rather than written down**, so the case
+survives the vocabulary changing again provided both ends change together.
+
+**RED-VERIFIED BY PUTTING THE OLD WORD BACK**, which fails on
+`toBeVisible()` for a heading named "check" that does not exist. That is the
+drift that actually happened, caught by the one case that can see it.
+
+**AND `{/* … */}` IS NOT VALID BETWEEN JSX ATTRIBUTES.** The reasoning above was
+first written as a JSX child comment in the attribute list and the file stopped
+parsing — `Transform failed … \`...\` expected`, reported by vitest as
+`Tests no tests` rather than as a syntax error in the component. A plain
+`/* … */` IS valid there, and this file already used one twelve lines down.
+**When a suite reports no tests, read the transform error before the test.**
+
 The review8-filter-toolbar branch added no unit FILE and 1 case to
 `apps/web/test/RunList.test.tsx`, from **153 / 1921 to 153 / 1922**.
 Integration is UNCHANGED and **e2e stays 144**. `review.md`'s finding 8.

@@ -264,7 +264,7 @@ export default function RunDecisionBand({
            *
            * M02 asks the mobile band to "replace stacked repeated status prose
            * with short labeled rows". The rows are the `<dl>` directly below,
-           * which C02 built: Execution, Platform gates, Simulation checks, each
+           * which C02 built: Execution, Platform gates, Simulation assertions, each
            * naming the system that answered. This paragraph is the PROSE half,
            * and on this run it reads "This run completed, but no SLA rule
            * produced a release verdict" while the row beneath says "Platform
@@ -306,7 +306,27 @@ export default function RunDecisionBand({
             />
             <Outcome
               testId="outcome-simulation"
-              label="Simulation checks"
+              /* ═══ THE WORD THE SECTION THIS LINKS TO USES (review.md 22) ═══
+               *
+               * This row said "Simulation checks" and its link said "See the
+               * failed simulation check", while `#simulation-assertions` — the
+               * anchor that link targets — is headed "Simulation assertions". A
+               * reader followed a link about a CHECK and landed on a section
+               * about ASSERTIONS.
+               *
+               * N01 settled which word is right, and this is the caller it did
+               * not reach: the PRD gives "Assertions table — expression,
+               * expected, actual, status" to G-05, the TOOL's own feature, so
+               * Gatling's assertions really are assertions. It was the
+               * PLATFORM's rules that had borrowed the word, and those are
+               * "Platform gates" one row up.
+               *
+               * WHICH IS WHY review.md 22's OWN SUGGESTION IS DECLINED. It asks
+               * for "Simulation check" as the standard term; N01 examined that
+               * exact rename, found the evidence pointed the other way, and
+               * moved the platform's noun instead. Two reviews disagree and
+               * this follows the one with the PRD behind it. */
+              label="Simulation assertions"
               value={simulation.text}
               /* ═══ THE ONE ROW THAT IS BAD NEWS LOOKS LIKE BAD NEWS ═══
                *
@@ -317,7 +337,7 @@ export default function RunDecisionBand({
                * nothing about the check that failed.
                *
                * The emphasis is on the VALUE and never on the label, so the
-               * row still reads "Simulation checks: 1 failed — …" in order.
+               * row still reads "Simulation assertions: 1 failed — …" in order.
                * Colour is not the only signal: the word "failed" is in the
                * text, and the link below names the count. */
               tone={simulation.failedCount > 0 ? 'failed' : undefined}
@@ -328,8 +348,8 @@ export default function RunDecisionBand({
                     className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
                   >
                     {simulation.failedCount === 1
-                      ? 'See the failed simulation check'
-                      : `See ${simulation.failedCount} failed simulation checks`}
+                      ? 'See the failed simulation assertion'
+                      : `See ${simulation.failedCount} failed simulation assertions`}
                   </Link>
                 )
               }
