@@ -96,6 +96,44 @@ export function comparability(runs: readonly TrendRun[]): readonly Comparability
   ];
 }
 
+/**
+ * The one line a reader sees without opening anything.
+ *
+ * It has to carry WHICH dimensions are involved rather than merely that
+ * something is: "these runs differ in ways that change what a comparison
+ * means" is true of every non-matching selection and actionable for none of
+ * them, which is the verbosity review.md 19 objects to.
+ *
+ * A REAL DIFFERENCE AND MISSING EVIDENCE ARE STATED SEPARATELY. "Different
+ * branch" is a fact about two runs; "build not recorded" is a fact about what
+ * CI captured. A reader can act on the first, and only the second tells them to
+ * go fix their pipeline — so collapsing the two into one word would lose the
+ * only part that says what to do next.
+ *
+ * LIVES HERE, BESIDE THE FINDINGS IT SUMMARISES, and is read by both surfaces
+ * that carry them: this page's comparability panel and the run overview's
+ * baseline note. Two copies would drift into describing the same six findings
+ * two different ways on two pages a reader moves between.
+ */
+export function summariseConditions(notable: readonly ComparabilityFinding[]): string {
+  const named = (kind: ComparabilityFinding['kind']): string[] =>
+    notable.filter((finding) => finding.kind === kind).map((finding) => finding.label.toLowerCase());
+
+  const parts: string[] = [];
+  const differs = named('differs');
+  const unknown = named('unknown');
+  if (differs.length > 0) parts.push(`Different ${joinWords(differs)}`);
+  if (unknown.length > 0) parts.push(`${joinWords(unknown)} not recorded`);
+  const sentence = parts.join('; ');
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** `a`, `a and b`, `a, b and c` — an Oxford-comma-free list for prose. */
+function joinWords(words: readonly string[]): string {
+  if (words.length < 2) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`;
+}
+
 /** True when anything differs or is unknown — i.e. the reader must look. */
 export const needsComparabilityCheck = (findings: readonly ComparabilityFinding[]): boolean =>
   findings.some((f) => f.kind !== 'same');
