@@ -1233,3 +1233,101 @@ describe('ProjectRules — the refusal points at the field', () => {
     expect(statistic.value).toBe('p95');
   });
 });
+
+describe('ProjectRules — the page leads with what exists (review.md 12, 14, 21)', () => {
+  /**
+   * ═══ THE LIST FIRST, THE FORM BEHIND A CHOICE ═══
+   *
+   * A fully expanded creation form sat above the existing rules, so a project
+   * with six of them opened on the one task its reader had probably not come
+   * to do. Asserted by DOCUMENT ORDER rather than by presence — both elements
+   * were on the page before this change too, which is exactly why a presence
+   * assertion would have passed against the defect.
+   */
+  it('puts the existing rules before the creation form', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules();
+
+    const listed = await screen.findByText('Whole-run p95 response time ≤ 800 ms');
+    const form = screen.getByRole('button', { name: /add rule/i });
+    // Node.DOCUMENT_POSITION_FOLLOWING: the form comes after the list.
+    expect(listed.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /** Collapsed once there is something to read instead. */
+  it('keeps the creation form closed when rules already exist', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules();
+    await screen.findByText('Whole-run p95 response time ≤ 800 ms');
+
+    const form = screen.getByRole('button', { name: /add rule/i }).closest('details');
+    expect(form).not.toBeNull();
+    expect(form!.open).toBe(false);
+  });
+
+  /**
+   * AND OPEN WHEN THERE IS NOTHING TO LIST — which the finding asks for in as
+   * many words. A reader with no rules has no list to lead with, and making
+   * them click past an empty table to reach the only useful control would be
+   * ceremony. The pair is what makes either assertion mean anything.
+   */
+  it('opens the creation form for a project with no rules', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+
+    // WAITED FOR, not read once. The button is in the DOM from first paint —
+    // jsdom renders a closed disclosure's children — so reading `open`
+    // immediately asks the question while the query is still in flight, when
+    // the answer is deliberately `false`: the form stays shut until an EMPTY
+    // result is a settled fact, rather than flashing open and collapsing.
+    const button = await screen.findByRole('button', { name: /add rule/i });
+    await waitFor(() => {
+      expect(button.closest('details')!.open).toBe(true);
+    });
+  });
+
+  /**
+   * ═══ THE CONTROL IS NAMED, NOT LECTURED (finding 21) ═══
+   *
+   * The helper sentence lived inside the `<label>` wrapping this select, so a
+   * screen-reader user heard the whole log-header policy before reaching the
+   * first option. A name identifies; a description explains.
+   *
+   * `getByRole(name)` is EXACT in Testing Library — this file's own convention
+   * — so the query passing at all is the assertion: it would not match the
+   * concatenated name this used to have.
+   */
+  it('names the Applies to control without reading its help aloud', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+
+    const select = await screen.findByRole('combobox', { name: 'Applies to' });
+    expect(select).toHaveAccessibleDescription(/judges only that test’s runs/);
+    // The half that moved: the lifecycle clause is no longer part of either.
+    expect(select).not.toHaveAccessibleDescription(/log header/);
+  });
+
+  /**
+   * ═══ POLICY IS AVAILABLE, NOT UNAVOIDABLE (finding 14) ═══
+   *
+   * Both lifecycle paragraphs are behind one disclosure beside Save. Asserted
+   * on the disclosure's CONTAINMENT rather than on the text being absent: a
+   * closed `<details>` keeps its children in the DOM under jsdom, so
+   * `queryByText` finds them either way — the same reason `ProjectSetup`'s own
+   * accordion cases read the `open` attribute instead.
+   */
+  it('files the lifecycle policy behind a disclosure rather than in the form', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [] });
+    renderRules();
+
+    const policy = await screen.findByText(/A new rule judges runs finished after it is added/);
+    const disclosure = policy.closest('details');
+    expect(disclosure).not.toBeNull();
+    expect(disclosure!.open).toBe(false);
+    expect(disclosure!).toHaveTextContent('When does this rule apply?');
+    // The clause that used to be the Applies-to helper lives here now too, so
+    // the policy is stated once rather than split across the form.
+    expect(disclosure!).toHaveTextContent(/log header names the simulation/);
+  });
+});
+

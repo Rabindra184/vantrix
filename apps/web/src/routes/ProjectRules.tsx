@@ -191,6 +191,16 @@ const FIELD_GUIDANCE: Record<string, { label: string; help: string }> = {
  */
 const fieldId = (field: string): string => `rule-field-${field}`;
 
+/**
+ * A field's DESCRIPTION id, keyed by the same field name `fieldId` uses.
+ *
+ * One spelling of "which field", the rule M08 established here for
+ * `FIELD_GUIDANCE` and `fieldId`. A description and the control it describes
+ * drifting apart is silent: `aria-describedby` pointing at nothing announces
+ * nothing, and nothing looks exactly like a control that never had help.
+ */
+const helpId = (field: string): string => `rule-help-${field}`;
+
 /** The one message block, named once so its two references cannot drift. */
 const FORM_ERROR_ID = 'rule-form-error';
 
@@ -559,6 +569,16 @@ export default function ProjectRules({
   // on screen together.
   const [confirming, setConfirming] = useState<string | null>(null);
 
+  /**
+   * Whether the creation form is open, once the reader has said so.
+   *
+   * `null` means they have not touched it, and only then does the default
+   * below apply. A `<details>` whose `open` is recomputed from the data on
+   * every render is not a default — it is a controller that shuts the form
+   * under somebody the moment their first rule saves.
+   */
+  const [formOpen, setFormOpen] = useState<boolean | null>(null);
+
   // THE PREFIX, not this panel's own key. A rule authored on a test's page
   // changes what project setup shows too (and a project-wide one changes every
   // test's page), and TanStack matches keys by prefix — so invalidating
@@ -692,6 +712,19 @@ export default function ProjectRules({
 
   return (
     <div className="flex flex-col gap-4">
+      <RulesPanel
+        rules={rules}
+        scopedToTest={scopedToTest}
+        confirming={confirming}
+        onConfirming={setConfirming}
+        togglingId={updateMutation.isPending ? updateMutation.variables?.ruleId : undefined}
+        deletingId={deleteMutation.isPending ? deleteMutation.variables : undefined}
+        onToggle={(ruleId, enabled) => updateMutation.mutate({ ruleId, enabled })}
+        onDelete={(ruleId) => deleteMutation.mutate(ruleId)}
+        failedDelete={deleteMutation.isError ? deleteMutation.variables : undefined}
+        deleteError={deleteMutation.error}
+      />
+
       <Card
         // `title={undefined}` rather than a conditional spread: CLAUDE.md
         // records that the excess-property check does not reach inside a
@@ -705,7 +738,44 @@ export default function ProjectRules({
             : 'Gates this project’s runs are judged against. A rule can cover every test or just one. A run with no rules gets no verdict.'
         }
       >
-        <form onSubmit={onSubmit} className="flex flex-col gap-3">
+        {/* ═══ THE LIST LEADS; CREATING IS A CHOICE (review.md finding 12) ═══
+         *
+         * A fully expanded creation form sat above the existing rules, so a
+         * project with six of them opened on the one task its reader had
+         * probably not come to do. `RulesPanel` is above this now and the form
+         * is behind a disclosure.
+         *
+         * OPEN WHEN THERE IS NOTHING TO LIST, which the finding asks for in as
+         * many words — "for the empty state, show the creation flow
+         * immediately". A reader with no rules has no list to lead with, and
+         * making them click past an empty table to reach the only useful
+         * control would be ceremony.
+         *
+         * `open` on first render only, deliberately: `defaultOpen` semantics,
+         * not a controlled prop. Once a reader has opened or closed it, adding
+         * the first rule must not slam it shut underneath them — and a
+         * `<details>` whose `open` is recomputed on every render does exactly
+         * that. jsdom keeps a closed disclosure's children queryable (CLAUDE.md
+         * records it for `ProjectSetup`), so the unit suite reaches these
+         * fields either way and `project-tests.spec.ts` proves the browser
+         * behaviour. */}
+        {/* Closed WHILE LOADING, not open: `rules.data` is undefined then, and
+            defaulting to open would flash the whole form onto the screen and
+            then collapse it the moment six rules arrived. The empty state is a
+            fact about a SETTLED query. */}
+        <details
+          open={formOpen ?? (rules.isSuccess && (rules.data?.rules.length ?? 0) === 0)}
+          onToggle={(event) => setFormOpen(event.currentTarget.open)}
+          className="group"
+        >
+          <summary className="cursor-pointer list-none text-[0.8125rem] font-medium text-primary marker:hidden">
+            {/* "New rule", NOT "Add rule": the submit button inside already
+                carries that name, and two controls with one accessible name in
+                one form is the duplicate-name defect this repo has paid for
+                three times. */}
+            New rule
+          </summary>
+          <form onSubmit={onSubmit} className="mt-3 flex flex-col gap-3">
           {/* ═══ APPLIES TO — WHAT THE RULE JUDGES, NOT WHAT IT MEASURES ═══
 
               Deliberately the FIRST field, and deliberately not called a
@@ -727,11 +797,13 @@ export default function ProjectRules({
                   about a gap that no longer exists. */}
             </p>
           ) : (
+            <>
             <label className="flex flex-col gap-1.5 text-[0.8125rem] font-medium">
               Applies to
               <select
                 className={INPUT}
                 value={appliesTo}
+                aria-describedby={helpId('appliesTo')}
                 onChange={(e) => setAppliesTo(e.target.value)}
               >
                 <option value="">Every test in this project</option>
@@ -763,12 +835,28 @@ export default function ProjectRules({
                   and says the thing that is only true here: which runs a
                   test-scoped rule judges. The lifecycle is stated once, beside
                   the button that creates one. */}
-              <span className="text-[0.6875rem] font-normal text-muted">
-                A rule for one test judges only that test’s runs. A live run is matched to its
-                test as soon as the log header names the simulation, so the rules written for that
-                test apply from that moment on.
-              </span>
             </label>
+            {/* ═══ OUTSIDE THE LABEL, AND POINTED AT BY id (review.md 21) ═══
+             *
+             * This sentence used to live INSIDE the `<label>` that wraps the
+             * select, so it was part of the control's accessible NAME: a
+             * screen-reader user heard "Applies to, A rule for one test judges
+             * only that test's runs. A live run is matched to its test as soon
+             * as the log header names the simulation…" before reaching the
+             * first option.
+             *
+             * A name identifies; a description explains. `aria-describedby` is
+             * the difference, and it is announced AFTER the name and the value
+             * rather than in place of them.
+             *
+             * SHORTER, TOO (finding 14). The log-header clause is lifecycle
+             * detail and has moved to the disclosure beside Save, where a
+             * reader who wants the policy can find it and a reader filling in
+             * the form is not taught it mid-field. */}
+            <p id={helpId('appliesTo')} className="text-[0.6875rem] leading-snug text-muted">
+              A rule for one test judges only that test’s runs.
+            </p>
+            </>
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1006,10 +1094,38 @@ export default function ProjectRules({
                 keeps the set it was claimed with — `FoldState.rules` is loaded
                 once per run on purpose, so that a rule edited mid-run cannot
                 make a breach appear with no change in the data. */}
-            <p className="mt-2 text-[0.75rem] leading-snug text-muted">
-              A new rule judges runs finished after it is added. Runs already complete keep their
-              verdicts, and a run streaming right now keeps the rules it started under.
-            </p>
+            {/* ═══ POLICY BEHIND A DISCLOSURE, BESIDE SAVE (review.md 14) ═══
+             *
+             * Two paragraphs of lifecycle sat in the primary flow: this one,
+             * and the log-header clause that used to be the Applies-to helper.
+             * Both are true and both are useful — and neither is something a
+             * reader entering a threshold needs read to them first. The
+             * finding asks for exactly this shape: short field help, then a
+             * "When does this rule apply?" disclosure near Save.
+             *
+             * ITS WORDING IS THE BACKEND'S, WHICH THE FINDING INSISTS ON ("do
+             * not replace a complicated policy with an inaccurate promise").
+             * A run is judged by the rules that existed when it was finalized;
+             * `FoldState.rules` is loaded once per run on purpose, so a rule
+             * edited mid-run cannot make a breach appear with no change in the
+             * data; and a live run is matched to its test at the log header,
+             * which is `LiveFoldOwner.#identify` completing its initial load
+             * rather than a re-read. */}
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[0.75rem] font-medium text-muted">
+                When does this rule apply?
+              </summary>
+              <div className="mt-1 flex flex-col gap-1 text-[0.75rem] leading-snug text-muted">
+                <p>
+                  A new rule judges runs finished after it is added. Runs already complete keep
+                  their verdicts, and a run streaming right now keeps the rules it started under.
+                </p>
+                <p>
+                  A live run is matched to its test as soon as the log header names the
+                  simulation, so a test’s rules apply from that moment on.
+                </p>
+              </div>
+            </details>
           </div>
 
           <div>
@@ -1017,21 +1133,10 @@ export default function ProjectRules({
               Add rule
             </Button>
           </div>
-        </form>
+          </form>
+        </details>
       </Card>
 
-      <RulesPanel
-        rules={rules}
-        scopedToTest={scopedToTest}
-        confirming={confirming}
-        onConfirming={setConfirming}
-        togglingId={updateMutation.isPending ? updateMutation.variables?.ruleId : undefined}
-        deletingId={deleteMutation.isPending ? deleteMutation.variables : undefined}
-        onToggle={(ruleId, enabled) => updateMutation.mutate({ ruleId, enabled })}
-        onDelete={(ruleId) => deleteMutation.mutate(ruleId)}
-        failedDelete={deleteMutation.isError ? deleteMutation.variables : undefined}
-        deleteError={deleteMutation.error}
-      />
     </div>
   );
 }
