@@ -350,12 +350,17 @@ describe('runSummaryJson', () => {
  * nobody configured. The band reports both and conflates neither.
  */
 describe('RunDecisionBand — three outcomes, not one word', () => {
-  it('states execution, platform gates and simulation checks separately', () => {
+  it('states execution, platform gates and simulation assertions separately', () => {
     renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
     const outcomes = screen.getByTestId('run-outcomes');
     expect(outcomes).toHaveTextContent(/execution/i);
     expect(outcomes).toHaveTextContent(/platform gates/i);
-    expect(outcomes).toHaveTextContent(/simulation checks/i);
+    // THE SAME NOUN THE SECTION THIS LINKS TO USES. The row said "Simulation
+    // checks" while `#simulation-assertions` is headed "Simulation assertions",
+    // so a reader followed a link about a check and landed on assertions —
+    // review.md 22, and N01's own vocabulary reaching its last caller.
+    expect(outcomes).toHaveTextContent(/simulation assertions/i);
+    expect(outcomes).not.toHaveTextContent(/simulation checks/i);
   });
 
   it('says the platform gates are not configured rather than showing three zeros', () => {
@@ -371,7 +376,7 @@ describe('RunDecisionBand — three outcomes, not one word', () => {
   /** The acceptance: the failure is identifiable from the first screen. */
   it('links to the failing check and names it', () => {
     renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
-    const link = screen.getByRole('link', { name: /simulation check/i });
+    const link = screen.getByRole('link', { name: /simulation assertion/i });
     expect(link).toHaveAttribute('href', `/runs/${RUN.id}#simulation-assertions`);
     expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/Search/);
   });
@@ -383,7 +388,7 @@ describe('RunDecisionBand — three outcomes, not one word', () => {
       toolAssertions: [TOOL[0]!],
     });
     expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/all 1 passed|1 passed/i);
-    expect(screen.queryByRole('link', { name: /simulation check/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /simulation assertion/i })).not.toBeInTheDocument();
   });
 
   it('distinguishes a simulation that declared none from one that passed', () => {
