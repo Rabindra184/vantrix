@@ -165,6 +165,61 @@ files, a branch was cut from `main` and the commit cherry-picked onto it, and
 `git ls-remote` and the PR's own `headRefOid`). **The floors in this file are
 worth the trouble precisely because they are what catches a green run measuring
 the wrong tree.**
+The review9-one-evidence-surface branch added no unit FILE and 1 case to
+`apps/web/test/RunDetail.live.test.tsx` — one existing case was re-pointed and
+SPLIT in two — from **153 / 1920 to 153 / 1921**. Integration is UNCHANGED and
+**e2e stays 144**. `review.md`'s finding 9, the largest one left.
+
+**MOST OF THAT FINDING WAS ALREADY DONE, AND MEASURING SAID WHICH PART WAS
+NOT.** It names four presentations — "the decision band, an evidence summary,
+individual assertion cards, and a full table". The cards are long gone and the
+two tables are already explicitly grouped under their own headings (N01's
+work). What survived is the SUMMARY, and it was a summary of the table directly
+beneath it.
+
+**THE COUNTS WERE ON ONE SCREEN THREE TIMES.** `RunDecisionBand` spells them as
+a sentence (`3 passed · 1 failed · 0 not applicable`) AND as three
+`DecisionCount` tiles; `AssertionEvidencePanel` then rendered the same three as
+`AssertionCount` tiles. C01's entry above records removing exactly this
+duplication from the band's own spellings — and left the panel standing, which
+is how one screen comes to state one fact three times.
+
+**MEASURED BEFORE DELETING, because a summary carrying one unique fact would be
+worth keeping.** It carried none: the counts are the band's, the first
+failure's message is the band's `detail` AND the table's own column, and the
+rule description is the table's `Rule` column through the same describer. The
+panel, `AssertionCount` and `AssertionEvidenceRow` are gone, and
+`assertionProgress` and `assertionBarColour` went with them — **a helper dies
+with the one call site it was written for**, which `lint` says and `tsc` does
+not.
+
+**THE BAND AND THE TABLE BOTH STATE THE FAILURE, AND THAT STAYS.** The band is
+the CONCLUSION and the table is the EVIDENCE for it; M02 already argues that
+`detail` is the failing gate's own message rather than a summary of the rows.
+Two surfaces, two jobs. The panel was a third copy between them with no job at
+all.
+
+**AND THE SECOND HALF WAS AN ASYMMETRY BETWEEN TWO TABLES ON ONE TAB.**
+`ToolAssertions` has split its rows into failed-and-the-rest since it was
+written; the platform gates table rendered every gate, always. So a project
+with twelve rules put twelve rows on the Overview whatever they said — the
+"length without equivalent additional information" the finding names — and the
+two evidence tables disagreed about whether a passing check is worth a row. The
+rule is COPIED, not re-invented: same threshold, same wording, same control.
+
+**TWO MUTATIONS FAILED THE SAME CASE, WHICH IS THE LESSON THIS FILE ALREADY
+RECORDS AND THE REASON THE CASE IS NOW TWO.** Restoring the panel and pinning
+the table open both failed one bundled case, so the second demonstrated nothing
+the first had not. Split per claim, each mutation lands on its own.
+
+**AND SPLITTING THEM EXPOSED A HIDDEN COUPLING.** The first case reached the
+failure's row with `getByTestId('assertion-row')` — the SINGULAR form, which
+throws on more than one match — so it silently depended on the collapse being
+in force, a claim it does not make. Pinning the table open failed BOTH cases,
+which is how the coupling surfaced. It is `getAllByTestId(...)[0]` now.
+**A `getBy*` that happens to match once is an assertion about the count as
+well as the content**, and it will fail for the wrong reason the day the count
+changes.
 
 The review20-heading-ladder branch added no unit FILE and 1 case to
 `apps/web/test/Card.test.tsx`, from **153 / 1919 to 153 / 1920**. Integration is
