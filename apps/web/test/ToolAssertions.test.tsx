@@ -535,4 +535,59 @@ describe('ToolAssertions — the target leads somewhere', () => {
     expect(notices[0]).toHaveTextContent(/^Simulation assertions/);
   });
 
+
+  /**
+   * ═══ A BREACH THAT LOOKED LIKE HEADROOM ═══
+   *
+   * `error_rate` is stored as a fraction (`koCount / count`) and shown as a
+   * percentage on every other surface. The limit already went through
+   * `formatSlaValue`; the ACTUAL did not, so a failed rule read
+   *
+   *     error_rate of the run (response_time) ≤ 1%
+   *     Actual 0.02
+   *
+   * -- the number that BREACHED the gate rendered as something that looks like
+   * a fifth of it. The evidence TABLE was worse: it printed the raw field, so
+   * the same row carried `0.0223463687150838` in a column whose only job is to
+   * be compared with the limit beside it.
+   *
+   * Both surfaces are asserted because each formatted independently, and the
+   * raw string is asserted ABSENT rather than trusting the formatted one to
+   * have replaced it -- a second copy printed elsewhere in the row would
+   * satisfy a positive-only check.
+   */
+  it('shows a failed error-rate actual in the same unit as its limit', async () => {
+    renderOverview([details(['Search'], 'failed')], {
+      assertions: [
+        {
+          ...PLATFORM_GATE,
+          outcome: 'failed',
+          actualValue: 0.0223463687150838,
+          rule: {
+            scope: 'run',
+            targetName: null,
+            // `response_time` WITH an `error_rate` metric is what the evaluator
+            // really stores -- `family` is the statistics family the row comes
+            // from, not the quantity. `tsc` rejected `family: 'error_rate'`,
+            // which is how this fixture learned it. Review finding 3 is about
+            // exactly that pairing being shown to readers verbatim.
+            family: 'response_time',
+            metric: 'error_rate',
+            comparator: 'lte',
+            threshold: 0.01,
+          },
+        },
+      ],
+    });
+
+    // By its CAPTION, which is a table's accessible name -- the same way this
+    // file reaches the simulation table above. "Platform gates" is the
+    // section's heading, not the table's name.
+    const table = await screen.findByRole('table', { name: /every SLA rule evaluated against this run/i });
+    expect(table).toHaveTextContent('2.2346%');
+    expect(table).not.toHaveTextContent('0.0223463687150838');
+    // The limit it is judged against, in the same unit, in the same row.
+    expect(table).toHaveTextContent('1%');
+  });
+
 });

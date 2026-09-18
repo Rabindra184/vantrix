@@ -295,13 +295,34 @@ export type SlaRuleListResponse = z.infer<typeof SlaRuleListResponseSchema>;
  * a fraction, older rules still read correctly, and a run's verdict is
  * computed from exactly the value it always was.
  */
-export function formatSlaThreshold(metric: string, threshold: number): string {
+/**
+ * A rule's value, in the unit the rest of the product shows it in.
+ *
+ * ═══ ONE FUNCTION FOR THE LIMIT AND THE ACTUAL, BECAUSE THEY ARE ONE
+ *     QUANTITY ═══
+ *
+ * This was `formatSlaThreshold`, and the name was the defect. An assertion
+ * displays a bound AND the measurement that met or missed it -- the same
+ * metric, the same unit, necessarily the same rendering -- but only the bound
+ * went through here. The actual was printed raw, so a failed error-rate rule
+ * read `Actual 0.02` beside `Limit ≤ 1%`: a fraction next to a percentage, and
+ * the number that BREACHED the gate looked like half of it.
+ *
+ * The evidence TABLE was worse, printing `assertion.actualValue` with no
+ * formatting at all -- `0.0223463687150838`, floating-point serialisation in a
+ * column a reader is asked to compare against `1%`.
+ *
+ * So the name says `Value`, and the two callers that must never disagree call
+ * the same function. A separate `formatSlaActual` would be the drift this
+ * repo has already paid for between a form and the row it creates.
+ */
+export function formatSlaValue(metric: string, value: number): string {
   const unit = slaMetricUnit(metric);
-  if (unit === 'fraction') return `${fractionToPercent(threshold)}%`;
-  if (unit === 'ms') return `${threshold} ms`;
-  if (unit === 'req/s') return `${threshold}/s`;
-  if (unit === 'requests') return `${threshold}`;
-  return `${threshold}`;
+  if (unit === 'fraction') return `${fractionToPercent(value)}%`;
+  if (unit === 'ms') return `${value} ms`;
+  if (unit === 'req/s') return `${value}/s`;
+  if (unit === 'requests') return `${value}`;
+  return `${value}`;
 }
 
 /**
@@ -399,7 +420,7 @@ export interface SlaRuleSubject {
  *
  * ═══ IT TAKES THE STORED THRESHOLD, NOT THE TYPED ONE ═══
  *
- * `formatSlaThreshold` converts a fraction back to the percentage every other
+ * `formatSlaValue` converts a fraction back to the percentage every other
  * surface shows, so the caller must pass what would be SENT — the same value
  * the rules table renders. A preview built from the raw input would agree with
  * the form and disagree with the row it is about to create, which is the one
@@ -420,5 +441,5 @@ export function describeSlaRule(rule: {
         : `${rule.scope === 'request' ? 'Request' : rule.scope === 'group' ? 'Group' : 'Scenario'} “${rule.targetName.trim()}”`;
 
   const bound = rule.comparator === 'lte' ? 'at most' : 'at least';
-  return `${subject}: ${slaMetricLabel(rule.metric)} must be ${bound} ${formatSlaThreshold(rule.metric, rule.threshold)}.`;
+  return `${subject}: ${slaMetricLabel(rule.metric)} must be ${bound} ${formatSlaValue(rule.metric, rule.threshold)}.`;
 }

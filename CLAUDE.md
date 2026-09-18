@@ -115,6 +115,58 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The sla-actual-units branch added no unit FILE and 1 case to
+`apps/web/test/ToolAssertions.test.tsx`, from a floor of 153 / 1890 to
+**153 / 1891** — `packages/contracts/test/rules.test.ts` gained assertions
+INSIDE an existing block and so moved no count. Integration is unchanged at
+137 / 1733 and e2e at 142.
+
+**THERE IS A SECOND 13 SEPTEMBER REVIEW, AND IT HAD NEVER BEEN WORKED.**
+`review.md` at the repo root — untracked, so invisible to every grep of `docs/`
+— is a different reviewer's pass at baseline `d7cafc1`, 22 numbered findings,
+written the same day as `docs/ui-review-2026-09-13/REVIEW.md`. `main` is **116
+commits** past that baseline, so most of it landed as a side effect of the
+other review; this is the first branch taken from it deliberately.
+
+**ITS FINDING 1 IS A CORRECTNESS DEFECT, NOT A PRESENTATION ONE.** A failed
+error-rate rule displayed `Actual 0.02` under `Limit ≤ 1%`. `error_rate` is
+stored as a fraction and shown as a percentage everywhere else, so the number
+that BREACHED the gate rendered as roughly a fifth of it. The evidence TABLE
+printed the raw field — `0.0223463687150838` — in a column whose only job is to
+be compared with the limit in the cell before it.
+
+**THE FIX ALREADY EXISTED AND THE NAME IS WHY IT WAS NOT USED.**
+`formatSlaThreshold(metric, value)` is metric-aware and was already the single
+place that decision lives — for the THRESHOLD. An actual is the same quantity in
+the same unit, and a function called `…Threshold` does not look like the thing
+to format it with. It is `formatSlaValue` now, and both sides of the one
+comparison a reader has to make go through it.
+
+**THE SAME "ONE CALLER SHORT" SHAPE THIS FILE KEEPS RECORDING.** The
+sla-threshold-unit branch fixed the authoring side and the rules table; the
+run page's evidence card and table were the callers it did not reach. Same as
+`ErrorsTable`'s `windowSelected` (two call sites of three), `compareLabels`
+(named in its own docstring by the caller that ignored it), and the evidence
+sections one branch ago.
+
+**AND `tsc` CAUGHT THE FIXTURE, WHICH TAUGHT ME THE DATA SHAPE.** The new case
+built a rule with `family: 'error_rate'` and was rejected: the family union is
+`response_time | latency | group_cumulated | group_duration`. A real error-rate
+rule carries `family: 'response_time'` with `metric: 'error_rate'` — the family
+is the statistics family the row comes from, not the quantity. **That pairing
+is review.md's finding 3**, which shows readers `error_rate of the run
+(response_time)` verbatim, and it is left for its own branch: the expression
+feeds four surfaces including the CSV export, and `describeSlaRule` — which
+already renders the human sentence the finding asks for — has exactly one
+caller today, the authoring preview.
+
+**WHAT IS STILL OPEN IN THAT DOCUMENT**, audited against the code rather than
+assumed: findings 1 (this branch) and 3 are confirmed; 2, 5, 7, 10, 11 and 16
+are closed by the other review's work; 4, 6, 8, 9, 12, 13, 14, 15, 17, 18, 19,
+20, 21 and 22 were not verified in this pass and must be re-derived before any
+of them is called done — the heuristic that "the other review probably covered
+it" is exactly the one that gave four false positives earlier in this session.
+
 The evidence-verdict-scope branch added no unit FILE and 3 cases to
 `apps/web/test/ToolAssertions.test.tsx`, from a floor of 153 / 1887 to
 **153 / 1890**, and its **e2e rises to 142**. Integration is UNCHANGED (that

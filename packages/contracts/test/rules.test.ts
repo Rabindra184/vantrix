@@ -13,7 +13,7 @@ import {
   slaMetricUnit,
   slaThresholdWarning,
   SLA_METRIC_UNITS,
-  formatSlaThreshold,
+  formatSlaValue,
   fractionToPercent,
   percentToFraction,
 } from '../src/rules.js';
@@ -363,25 +363,42 @@ describe('slaThresholdWarning', () => {
  */
 describe('SLA threshold units', () => {
   it('renders a fraction metric as the percentage every other surface shows', () => {
-    expect(formatSlaThreshold('error_rate', 0.0268)).toBe('2.68%');
-    expect(formatSlaThreshold('error_rate', 0.01)).toBe('1%');
+    expect(formatSlaValue('error_rate', 0.0268)).toBe('2.68%');
+    expect(formatSlaValue('error_rate', 0.01)).toBe('1%');
   });
 
   it('names milliseconds for a latency metric', () => {
-    expect(formatSlaThreshold('p95', 800)).toBe('800 ms');
-    expect(formatSlaThreshold('mean', 250)).toBe('250 ms');
+    expect(formatSlaValue('p95', 800)).toBe('800 ms');
+    expect(formatSlaValue('mean', 250)).toBe('250 ms');
   });
 
   it('names the rate and count units too', () => {
-    expect(formatSlaThreshold('throughput_rps', 12)).toBe('12/s');
-    expect(formatSlaThreshold('count', 900)).toBe('900');
+    expect(formatSlaValue('throughput_rps', 12)).toBe('12/s');
+    expect(formatSlaValue('count', 900)).toBe('900');
   });
 
   /** IEEE 754 makes the naive form ugly AND wrong-looking: `0.07 * 100` is
    *  7.000000000000001, and extra digits in a gate invite a reader to wonder
    *  what they mean. */
   it('does not leak floating-point noise into a gate', () => {
-    expect(formatSlaThreshold('error_rate', 0.07)).toBe('7%');
+    expect(formatSlaValue('error_rate', 0.07)).toBe('7%');
+
+    /* ═══ THE ACTUAL GOES THROUGH THE SAME FUNCTION AS THE LIMIT ═══
+     *
+     * The rename is the fix: a rule's bound and the measurement judged against
+     * it are one quantity in one unit, and only the bound used to come through
+     * here. A failed error-rate rule read `Actual 0.02` under `≤ 1%` — the
+     * value that BREACHED the gate looking like half of it.
+     *
+     * Asserted as the PAIR rather than as one string, because that is the
+     * property: whatever the rendering becomes, the two sides of a comparison
+     * must not be in different units. The raw actual is included so the
+     * floating-point noise the evidence table used to print is visibly gone. */
+    const stored = 0.0223463687150838;
+    expect(formatSlaValue('error_rate', stored)).toBe('2.2346%');
+    expect(formatSlaValue('error_rate', stored)).not.toBe(String(stored));
+    // Both sides of the one comparison a reader has to make, in one unit.
+    expect(formatSlaValue('error_rate', 0.01)).toBe('1%');
     expect(fractionToPercent(0.07)).toBe(7);
     expect(fractionToPercent(0.001)).toBe(0.1);
   });
