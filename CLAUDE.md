@@ -115,6 +115,68 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The rules-page-trio branch added no unit FILE and 5 cases to
+`apps/web/test/ProjectRules.test.tsx`, from a floor of 153 / 1902 to
+**153 / 1907**. Integration is UNCHANGED at **137 files / 1744 tests** — that
+file is a `.tsx`, which that config never runs — and **e2e stays 142**, with no
+spec changed. `review.md`'s findings 12, 14 and 21 — one page, three findings that
+turn out to be one edit region.
+
+**THE LIST LEADS AND THE FORM IS A CHOICE (12).** A fully expanded creation
+form sat above the existing rules, so a project with six of them opened on the
+one task its reader had probably not come to do. `RulesPanel` renders first now
+and the form sits behind a `New rule` disclosure — OPEN when there is nothing
+to list, which the finding asks for in as many words.
+
+**`open` IS A DEFAULT, NOT A CONTROLLER, AND THE DIFFERENCE IS A REAL BUG.**
+`open={rules.length === 0}` recomputes on every render, so the form would slam
+shut under a reader the moment their first rule saved. It is
+`formOpen ?? (settled && empty)` with an `onToggle`: once they have touched it,
+their choice wins for ever. And the default is CLOSED while the query is in
+flight — `rules.data` is undefined then, and defaulting to open would flash the
+whole form onto the screen and collapse it when six rules arrived. **An empty
+state is a fact about a SETTLED query.**
+
+**THE CONTROL IS NAMED, NOT LECTURED (21).** The helper sentence lived INSIDE
+the `<label>` wrapping the Applies-to select, so its accessible name was
+"Applies to A rule for one test judges only that test's runs. A live run is
+matched to its test as soon as the log header names the simulation…" — the
+whole policy, before the first option. It is a sibling `<p>` with an id and
+`aria-describedby` now: a name identifies, a description explains, and the
+description is announced after the name and the value rather than in place of
+them. `helpId(field)` keys off the same field name `fieldId` and
+`FIELD_GUIDANCE` use, so there is one spelling of "which field" — M08's rule,
+and the reason a description pointing at nothing would be silent.
+
+**POLICY IS AVAILABLE, NOT UNAVOIDABLE (14).** Both lifecycle paragraphs are
+behind one `When does this rule apply?` disclosure beside Save, stated once
+instead of split across the form. The wording is the backend's, which the
+finding insists on ("do not replace a complicated policy with an inaccurate
+promise").
+
+**AND THE THIRD CLAUSE OF 12 WAS ALREADY DONE** — "distinguish project-wide and
+test-specific rules" is M17's separate tables, with its reasoning in
+`RulesPanel`'s own docstring. Checked rather than re-implemented.
+
+**jsdom KEPT EVERY EXISTING TEST GREEN, WHICH IS WHY THIS WAS CHEAP.** 27 form
+interactions across 55 cases, and not one needed touching: a closed `<details>`
+keeps its children queryable there, the property this file already records for
+`ProjectSetup`. The unit cases therefore assert the `open` ATTRIBUTE, never
+visibility.
+
+**AND THE ONE e2e I "FIXED" DID NOT NEED FIXING, WHICH `toBeHidden()` HID.**
+`project-tests.spec.ts` authors a rule on a TEST's page, where the test's own
+rules are empty — so the form is open by default and the original assertions
+were already right. The edit added a summary click that CLOSED it, and the
+failure surfaced two lines later as "Add rule not found".
+
+**`toBeHidden()` PASSES FOR AN ELEMENT THAT DOES NOT EXIST**, which is what let
+the wrong assumption look confirmed: the new "the form starts closed" assertion
+went green against a page that was still loading. **A negative visibility
+assertion is not evidence the thing exists and is hidden** — pair it with a
+positive, or assert the attribute. Reverted; that spec is unchanged on this
+branch.
+
 The compare-request-delta branch added no unit FILE and 6 cases to
 `apps/web/test/buildCompareMatrix.test.ts`, from a floor of 153 / 1896 to
 **153 / 1902**. Integration moves with it (that file is a `.ts` integration
