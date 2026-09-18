@@ -559,6 +559,41 @@ describe('ProjectRules — the table', () => {
     await waitFor(() => expect(deleteProjectRule).toHaveBeenCalledTimes(1));
   });
 
+  /**
+   * ═══ ONE PRIMARY ACTION PER TASK, INCLUDING WHILE ARMED (review.md 20) ═══
+   *
+   * `Button`'s own docstring states the rule — "exactly ONE `primary` per
+   * screen" — and it was enforced by nothing, which is how THREE destructive
+   * confirms came to wear it: revoke a token, delete a rule, delete a test.
+   * Each sat beside its page's own primary, so the moment a reader armed a
+   * confirmation the most prominent control on screen became the destructive
+   * one.
+   *
+   * ASSERTED IN THE ARMED STATE, because that is the only state where the
+   * second one exists — a count taken before the confirmation opens is one
+   * either way and proves nothing.
+   *
+   * `.bg-accent` is the primary variant's own definition (`buttonVariants`),
+   * which is the same kind of class-level assertion `tokens.test.ts` already
+   * makes. A `variant` prop cannot be read off the DOM.
+   */
+  it('keeps one primary action on screen while a delete is armed', async () => {
+    const user = userEvent.setup();
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    const { container } = renderRules();
+
+    await user.click(await screen.findByRole('button', { name: /more actions/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete this rule' }));
+    // The confirmation really is open — otherwise the count below is the
+    // unarmed one and the case asserts nothing.
+    expect(screen.getByRole('button', { name: 'Confirm delete' })).toBeInTheDocument();
+
+    const primaries = [...container.querySelectorAll('button.bg-accent')];
+    expect(primaries).toHaveLength(1);
+    // And it is the page's own action, not the destructive one.
+    expect(primaries[0]).toHaveTextContent('Add rule');
+  });
+
   it('lets the reader back out of an armed delete', async () => {
     const user = userEvent.setup();
     fetchProjectRules.mockResolvedValue({ rules: [rule()] });
