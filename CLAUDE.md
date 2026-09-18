@@ -115,6 +115,66 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The incomplete-run-unwitnessed branch added no unit FILE and 3 cases — 2 to
+`apps/web/test/RunDecisionBand.test.tsx` and 1 to `RunList.test.tsx` — from a
+floor of 153 / 1884 to **153 / 1887**, and its **e2e rises to 141**.
+Integration is UNCHANGED at 137 / 1733 (both files are `.tsx`, and the other
+two it touches are e2e).
+
+**EVERY FINDING IN THE 09-13 REVIEW IS CLOSED. THE ACCEPTANCE LIST IS NOT, AND
+THAT IS A DIFFERENT DOCUMENT.** C01-C06, M01-M18 and N01-N04 are all done —
+M05, M18 and M12 last. What remains is the final paragraph's exercise list
+("live/disconnected/failed/incomplete runs; … invalid uploads; permission-denied
+states; …"), which earlier branches took in clusters. Re-derived by reading the
+SUITE rather than the notes, three of those four run states are exercised and
+one is not.
+
+**`incomplete` APPEARED IN NO SPEC AT ALL, IN A PRODUCT THAT GIVES IT FOUR
+SURFACES.** A status filter option, its own glyph in `marks.tsx`, its own
+sentence in the decision band, and a place in the run list's "Needs attention"
+tally. `RunDecisionBand.test.tsx` and `RunList.test.tsx` each matched it ZERO
+times, and no e2e ever rendered one. This is the M16 shape again — reachable,
+correct, and unwitnessed.
+
+**REACHABILITY WAS READ OUT OF THE SYSTEM, NOT ASSUMED.** The sweeper's
+`running` arm finalizes a live run whose producer stopped via
+`RunRepository.markIncomplete`, and `RunsService.statusFor` answers **200** for
+it with a comment saying why it must not be 202: an aborted live run has no
+worker left to move it past one, so a poller would retry it for ever. Verdict is
+always `not_evaluated`, so nothing but the STATUS can put such a run in the
+attention tally.
+
+**AND THE TWO SENTENCES SEND A READER TO DIFFERENT WORK.** "could not be
+processed" is an ingest that rejected the bundle — nothing was measured, so
+re-upload. "incomplete — the stream stopped early" is a producer that died
+mid-run — what arrived IS real data, so re-run the test. Both cases assert the
+pair exclusively, because "says incomplete" alone passes against a band that
+says every run is.
+
+**THE FILTER IS A `<form>`, AND THE FIRST VERSION OF THE e2e READ AS A PRODUCT
+DEFECT BECAUSE OF IT.** Selecting `Status = Incomplete` sets the form's own
+state and nothing else; the narrowing is a SUBMIT. So the list still showed a
+complete run, for five seconds and fourteen polls, with the option reported
+`[selected]` in the snapshot — which looks exactly like a filter the API
+ignores. **Before believing a filter is broken, check whether applying it is an
+event you have not fired.** The case presses Apply and asserts `status=incomplete`
+reaches the URL, so the next reader sees which half failed.
+
+**A COUNT AND ITS LABEL ARE SIBLINGS, SO THE LABEL'S PARENT IS NOT A HANDLE.**
+`HealthTile` renders value, label and detail as three unlabelled spans, and
+`getByText('Needs attention').locator('..')` resolves to two elements under
+strict mode. It carries a derived `data-testid` now — `health-${label}`, the
+shape `EntryCard` already uses and the same reason `health-scope` beside it
+exists. Grep for the derived value, not only the label.
+
+**AND THE `git checkout --` TRAP DID NOT BITE THIS TIME, BECAUSE THE CHECKPOINT
+WENT IN FIRST.** The entry above records it as the third occurrence; the
+mechanical guard it prescribes — one `git commit -q` before the first mutation —
+was followed here, and a mutation whose anchor silently missed (the same
+two-space indentation slip, twice) cost a re-run instead of the work. **The
+anchor-count assertion is what catches that**: a mutation that changed nothing
+reported 19 passed and looked exactly like a vacuous guard.
+
 The residue-orphan-users branch added no unit FILE, no unit case and no spec —
 its diff is one SQL script and its two fixtures — so unit stays 153 / 1884,
 integration 137 / 1733 and e2e 140. It is guarded by CI's `test-residue` job,

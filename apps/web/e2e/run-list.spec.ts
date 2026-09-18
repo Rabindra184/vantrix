@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { seedAdmin, seedAdminForEmptyOrg, seedRunsAt, seedRunWithData, renameSimulation } from './fixtures.js';
+import {
+  seedAdmin,
+  seedAdminForEmptyOrg,
+  seedIncompleteRun,
+  seedRunsAt,
+  seedRunWithData,
+  renameSimulation,
+} from './fixtures.js';
 import { firstRowId, signIn } from './helpers.js';
 
 /**
@@ -438,4 +445,57 @@ test('a real simulation class does not push the triage columns off screen', asyn
        is exactly what breaks that distinction. */
     expect(docOverflows, `the document scrolls sideways at ${width}`).toBe(false);
   }
+});
+
+/**
+ * ═══ THE ONE RUN STATE THE SUITE HAD NEVER PUT ON A SCREEN ═══
+ *
+ * The 09-13 review's acceptance list asks for "live/disconnected/failed/
+ * incomplete runs" to be exercised. Three of those four were; `incomplete`
+ * appeared in no spec at all, while the product gives it a filter option, its
+ * own glyph in `marks.tsx`, its own sentence in the decision band, and a place
+ * in this page's "Needs attention" tally.
+ *
+ * It is produced by the sweeper finalizing a live run whose producer stopped
+ * (`RunRepository.markIncomplete`), and `RunsService.statusFor` answers 200 for
+ * it rather than 202 -- so unlike a pending run it really does render as a
+ * finished thing a reader can open.
+ *
+ * WHAT ONLY A BROWSER PROVES HERE is the JOIN: the filter's value travels to
+ * `GET /v1/runs?status=incomplete`, the API understands that value, and the row
+ * that comes back is this run. `RunList.test.tsx` supplies both sides of that
+ * from a fixture and so can only prove the component's own arithmetic.
+ */
+test('an incomplete run is reachable by its own filter and counted as needing attention', async ({ page }) => {
+  const admin = await seedAdmin();
+  const incompleteId = await seedIncompleteRun(admin.orgId);
+  await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto('/runs');
+
+  // Both runs are listed before any narrowing, so the filter below is shown to
+  // EXCLUDE rather than merely to find something.
+  await expect(page.getByRole('row')).toHaveCount(3); // header + two runs
+
+  // Selecting only sets the form's own state -- these filters are a `<form>`
+  // with an Apply button, so the narrowing is a SUBMIT and the URL changes
+  // with it. Asserting the count without pressing it reads as a broken filter.
+  await page.getByLabel('Status').selectOption('incomplete');
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page).toHaveURL(/status=incomplete/);
+  await expect(page.getByRole('row')).toHaveCount(2); // header + the one run
+  await expect(page.getByRole('row').nth(1)).toContainText('StoppedEarly');
+
+  // The tile counts it. A reader scanning this page must not scroll past a run
+  // whose stream died, and its verdict is `not_evaluated` rather than failed,
+  // so only the STATUS can put it in this tally.
+  const health = page.getByRole('region', { name: 'Run health on this page' });
+  await expect(health.getByTestId('health-needs-attention')).toContainText('Needs attention');
+  await expect(health.getByTestId('health-needs-attention')).toContainText('1');
+
+  // And it opens: `statusFor` answers 200, not the 202 a pending run gets, so
+  // this is a finished run rather than one the page keeps polling.
+  await page.getByRole('row').nth(1).getByRole('link').first().click();
+  await expect(page).toHaveURL(new RegExp(incompleteId));
+  await expect(page.getByText(/the stream stopped early/i)).toBeVisible();
 });

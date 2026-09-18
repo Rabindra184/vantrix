@@ -757,6 +757,53 @@ export async function seedPendingRun(orgId: string): Promise<string> {
 }
 
 /**
+ * A run in the `incomplete` state -- the one terminal state no test had ever
+ * rendered.
+ *
+ * ═══ WHAT PRODUCES THIS IN THE REAL SYSTEM ═══
+ *
+ * A LIVE run whose producer stops reporting. The sweeper's `running` arm ages
+ * it from `stream_updated_at` and finalizes it in place with
+ * `RunRepository.markIncomplete` -- it must never re-enqueue, because nothing
+ * is assembled at `bundleKey` until `close()` runs. `RunsService.statusFor`
+ * then answers 200 rather than 202, deliberately: an aborted live run has no
+ * worker left to move it past a 202, so a poller would retry it for ever.
+ *
+ * The verdict is `not_evaluated` because `markIncomplete` writes exactly that,
+ * and this fixture matches it: a run whose stream stopped has not been judged,
+ * and giving it a verdict here would test a row the product cannot produce.
+ *
+ * NO METRIC ROWS, and that is a simplification worth naming. A real incomplete
+ * run usually carries PARTIAL data -- whatever arrived before the producer
+ * died. Nothing asserted against this fixture reads a metric, so seeding a
+ * half-run would add machinery without adding a claim; a case that wants to
+ * show partial evidence should seed it rather than assume this one has it.
+ *
+ * Created directly via Prisma, never posted through HTTP and never handed to
+ * PipelineService, exactly like `seedPendingRun` above.
+ */
+export async function seedIncompleteRun(orgId: string): Promise<string> {
+  const projectId = await projectFor(orgId);
+  const run = await prisma.run.create({
+    data: {
+      orgId,
+      projectId,
+      status: 'incomplete',
+      verdict: 'not_evaluated',
+      tool: 'gatling',
+      simulation: 'example.StoppedEarlySimulation',
+      bundleKey: `e2e-fixture/${randomUUID()}`,
+      bundleSha256: '0'.repeat(64),
+      bundleBytes: BigInt(1),
+      startedAt: new Date(),
+      startedOn: new Date(),
+      engineOptions: {},
+    },
+  });
+  return run.id;
+}
+
+/**
  * A run that is COMPLETE but carries no metric rows whatsoever — created
  * directly via Prisma, never posted through HTTP and never handed to
  * PipelineService, exactly like seedPendingRun above.

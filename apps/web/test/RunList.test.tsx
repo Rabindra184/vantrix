@@ -381,6 +381,27 @@ describe('RunList — a row carries enough to triage on', () => {
     expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('0');
   });
 
+  /**
+   * ═══ THE OTHER STATE "NEEDS ATTENTION" COUNTS, AND NOTHING RENDERED IT ═══
+   *
+   * `needsAttention` names `failed` and `incomplete` in the same breath, and
+   * only `failed` had ever reached this component from a test. An incomplete
+   * run is a live run whose producer stopped reporting -- `markIncomplete`,
+   * driven by the sweeper -- so its verdict is always `not_evaluated` and its
+   * data is partial rather than absent. It is exactly the run an engineer must
+   * not scroll past, and the tile is what stops them.
+   *
+   * `verdict: 'not_evaluated'` is deliberate: this row must be counted on its
+   * STATUS alone. A fixture that also carried a failed verdict or a failed
+   * check would be counted by a component that had lost the status branch
+   * entirely, and would prove nothing about it.
+   */
+  it('counts an incomplete run as needing attention, on its status alone', async () => {
+    renderList([{ ...TRIAGE_ROW, status: 'incomplete', verdict: 'not_evaluated', checks: { failed: 0, total: 3 } }]);
+    const health = await screen.findByRole('region', { name: 'Run health on this page' });
+    expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('1');
+  });
+
   /** A server that reports no checks must not be counted either way. */
   it('does not count a run that reported no checks at all', async () => {
     renderList([{ ...TRIAGE_ROW, checks: null }]);
