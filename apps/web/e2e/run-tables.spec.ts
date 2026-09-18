@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { seedAdmin, seedRunWithData } from './fixtures.js';
-import { plot, signIn } from './helpers.js';
+import { seedAdmin, seedRunWithData, seedRunWithFailedAssertion } from './fixtures.js';
+import { openTimeWindow, plot, signIn } from './helpers.js';
 import { runErrorsPath, runPath } from '../src/routes/paths.js';
 
 /**
@@ -993,4 +993,47 @@ test('the errors table can be narrowed to the request that failed', async ({ pag
   await filter.selectOption('');
   await expect(page).not.toHaveURL(/[?&]request=/);
   await expect(errorsTable(page)).toContainText('found 503');
+});
+
+/**
+ * ═══ A VERDICT AND A STATISTIC, SIDE BY SIDE, IN DIFFERENT SCOPES ═══
+ *
+ * The evidence-window-scope branch fixed one mistake made three times -- a
+ * number the window narrowed under wording that still described the whole run
+ * -- and the two evidence SECTIONS were the fourth. Platform gates and
+ * simulation assertions are decided once, at finalize, over the whole run; the
+ * statistics above them are re-read per window. A reader narrowing to a healthy
+ * stretch saw a windowed p95 beside a whole-run FAILED gate whose actual
+ * appears nowhere on their screen.
+ *
+ * WHAT ONLY A BROWSER PROVES. `ToolAssertions.test.tsx` hands the tab a window
+ * through a stand-in for the shell's `<Outlet context>`, so it can only show
+ * the section renders what it is given. Whether the REAL shell's brush delivers
+ * a window to this tab is a different question -- the "a test that writes both
+ * sides of a join proves neither" rule this repo already records for M13's
+ * Target link.
+ *
+ * Both states are asserted, because the notice is withheld without a window and
+ * an assertion on the windowed state alone passes against one rendered always.
+ */
+test('the evidence sections say their verdicts are the whole run’s under a window', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithFailedAssertion(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // The gate is on screen and there is nothing to disclaim yet.
+  await expect(page.getByRole('heading', { name: 'Platform gates' })).toBeVisible();
+  await expect(page.getByTestId('finalized-verdict-notice')).toHaveCount(0);
+
+  await openTimeWindow(page);
+  await page.getByTestId('window-from').fill('0');
+  await page.getByTestId('window-to').fill('10');
+  await page.getByTestId('window-apply').click();
+  await expect(page).toHaveURL(/[?&]from=0/);
+
+  // The window reached the tab, and the gate says which scope it belongs to.
+  const notices = page.getByTestId('finalized-verdict-notice');
+  await expect(notices.first()).toBeVisible();
+  await expect(notices.first()).toContainText(/decided when the run finished, against the whole run/);
 });

@@ -115,6 +115,59 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The evidence-verdict-scope branch added no unit FILE and 3 cases to
+`apps/web/test/ToolAssertions.test.tsx`, from a floor of 153 / 1887 to
+**153 / 1890**, and its **e2e rises to 142**. Integration is UNCHANGED (that
+file is a `.tsx`).
+
+**THE EVIDENCE CLUSTER'S ONE MISTAKE, MADE A FOURTH TIME.** The
+evidence-window-scope branch found a number the window narrowed under wording
+that still described the whole run, and fixed it in three places — the run
+totals, the percentile note, and the SLA tint. That last fix is the one that
+names this branch's defect in its own reasoning: the tint is WITHHELD under a
+window because "an assertion is evaluated once at finalize against the run",
+and recolouring it per window would invent a verdict nobody configured.
+
+**THE TWO EVIDENCE SECTIONS ARE THAT SAME FACT AND SAID NOTHING.** Platform
+gates and simulation assertions are decided when the run finishes, over the
+whole run; the statistics directly above them are re-read per window
+(`statsQuery(runId, window)`). So a reader who narrows to a healthy ten seconds
+sees a windowed p95 beside a whole-run FAILED gate whose `actual` appears
+nowhere on their screen — two true numbers in different scopes, one of them
+labelled.
+
+**A SECOND COMPONENT RATHER THAN A PROP ON `WholeRunNotice`, AND THE REASON IS
+THE CLAIM.** That one is about an ENDPOINT: the drill-downs carry `from`/`to`
+and their endpoints take none, so the figures CANNOT narrow. This one is about
+WHEN a decision was made. Its closing sentence has to differ too —
+`WholeRunNotice` ends "The run page's own figures still honour it", which is
+help for a reader who has LEFT the run page, and here the windowed figures are
+on screen directly above. Reusing that wording would answer a question nobody
+on this page is asking.
+
+**AND THE NOTICE FOLLOWS THE EVIDENCE, NOT THE WINDOW.** A project with no SLA
+rule takes the gates section's empty branch — "not configured", a statement
+about the PROJECT — and a scope notice over it would disclaim a verdict that
+does not exist. One case pins exactly that: a window, no gates, one notice.
+
+**A KEEPER CASE THAT CANNOT REACH THE MUTATED BRANCH IS NOT A KEEPER.** The
+"says nothing without a window" case was written with no platform gates, so the
+gates section early-returned and the notice was never reached — and rendering it
+UNCONDITIONALLY left all fifteen cases green. The mutation was unreachable from
+the assertion meant to catch it. Seeding a gate into that case makes it fail.
+
+**Second time in two branches**: the residue fixture could not tell its two arms
+apart because every seeded user satisfied both. The shape generalises — **check
+that the keeper exercises the same branch the mutation lands on**, not merely
+that it describes the opposite state.
+
+**AND THE BROWSER HALF PROVES THE SEAM THE UNIT HALF SUPPLIES.**
+`ToolAssertions.test.tsx` hands the tab a window through a stand-in for
+`RunShell`'s `<Outlet context>`, so it can only show the section renders what it
+is given; whether the real shell's brush delivers one to this tab is the other
+side of the join. `run-tables.spec.ts` drives the real control and asserts both
+states.
+
 The incomplete-run-unwitnessed branch added no unit FILE and 3 cases — 2 to
 `apps/web/test/RunDecisionBand.test.tsx` and 1 to `RunList.test.tsx` — from a
 floor of 153 / 1884 to **153 / 1887**, and its **e2e rises to 141**.
