@@ -165,6 +165,58 @@ nothing. Split per claim, each lands on its own. **The habit is to write one
 case per claim from the start**, rather than discovering the bundling from a
 red-verify — it has now cost two branches an extra cycle.
 
+The review8-filter-toolbar branch added no unit FILE and 1 case to
+`apps/web/test/RunList.test.tsx`, from **153 / 1921 to 153 / 1922**.
+Integration is UNCHANGED and **e2e stays 144**. `review.md`'s finding 8.
+(Measured after merging `main`: review9 landed underneath it, so its first
+floor of 1920 to 1921 described a tree that no longer exists.)
+
+**THE COMPACT VIEWPORT HAD THE FIX AND THE DESKTOP DID NOT.** Below 768px the
+run list's filters are `CompactFilters` — a disclosure, folded until something
+is filtering, carrying its own summary. On a desktop the same controls were a
+CARD: `rounded-xl border border-default bg-surface p-4 shadow-panel`, with a
+`Filter runs` header row above them. That is the finding's "over-framed" in one
+line, and it is **M02's lesson exactly — A FIX APPLIED AT ONE BREAKPOINT IS NOT
+APPLIED**, which this file already records costing the run-health caveat its
+correction.
+
+**THE FRAME IS THE WEIGHT.** Border + surface fill + shadow is how this app
+says "this is a thing to read" — `Card`, the statistics table and the decision
+band all wear it. Spending it on the controls ABOVE the data gave a routine
+filter the same weight as the run it exists to help you find, which is the
+finding's own "give routine filters less visual weight than the data".
+
+**AND THE HEADER ROW WAS ALREADY KNOWN TO BE REDUNDANT.** `showHeader={false}`
+existed solely so the compact path would not print `Filter runs` eight pixels
+under a `<summary>` reading `Filter runs` — the comment there says so and names
+`ProjectRules.showTitle` as the same problem one page over. The desktop kept
+it. The prop is gone rather than defaulted: with both callers wanting the same
+answer it was a flag with one value, and the `<form>`'s own
+`aria-label="Run filters"` is what names the region (and what
+`RunList.test.tsx` has always found it by).
+
+**BEHAVIOUR IS DELIBERATELY UNTOUCHED.** The finding says "retain a deliberate
+Apply interaction if querying is expensive; do not change search behavior
+merely for appearance" — so Apply still submits and Clear still appears only
+when something is filtering. The new case asserts the controls are all still
+present and labelled BESIDE asserting the frame is gone, because a form that
+failed to render satisfies the absence perfectly.
+
+**AND THE BRANCH WAS NEVER CUT, WHICH THE FLOOR COUNT CAUGHT.** This work was
+done on top of `fix/review9-one-evidence-surface` — PR #172's branch — because
+`git checkout -b` was never run after that PR was pushed. **Fourth occurrence
+of the trap this file records, and the SECOND where `-b` was skipped entirely
+rather than run from the wrong place.**
+
+**THE TELL WAS `1922` WHERE `1921` WAS DUE.** One case added to a floor of 1920
+cannot be 1922, and nothing else about the run looked wrong — every gate was
+green, on a tree carrying two findings at once. Recovered before pushing:
+`git show --stat` confirmed the stray commit touched only this finding's two
+files, a branch was cut from `main` and the commit cherry-picked onto it, and
+`git branch -f` put the other branch back on its pushed head (verified against
+`git ls-remote` and the PR's own `headRefOid`). **The floors in this file are
+worth the trouble precisely because they are what catches a green run measuring
+the wrong tree.**
 The review9-one-evidence-surface branch added no unit FILE and 1 case to
 `apps/web/test/RunDetail.live.test.tsx` — one existing case was re-pointed and
 SPLIT in two — from **153 / 1920 to 153 / 1921**. Integration is UNCHANGED and
