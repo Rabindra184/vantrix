@@ -35,6 +35,31 @@ import { runMinuteLabel } from './runLabel';
 export type CompareMetric = 'p50' | 'p95' | 'p99' | 'max' | 'throughput' | 'errors';
 
 /**
+ * Which way is an improvement, for one metric.
+ *
+ * ═══ ONE PLACE, BECAUSE IT IS ABOUT TO HAVE A SECOND READER ═══
+ *
+ * `compareSummary` has owned this since the review-majors branch and is right
+ * about it: throughput going up is good, and every other metric here — the
+ * response-time percentiles, the max, the error rate — is better going down.
+ * The per-request matrix now needs the identical judgement, and a second copy
+ * is how the tiles above a table come to disagree with the table.
+ *
+ * It lives beside `CompareMetric` rather than in either consumer, so neither
+ * owns a decision the other depends on.
+ *
+ * TAKES A SIGNED CHANGE, not specifically a percentage. Only the sign is read,
+ * and the matrix has a case the summary does not: a baseline of ZERO has no
+ * percentage at all — errors rising from 0 to 2/s is the regression an
+ * engineer most needs to see — while the ABSOLUTE change is still perfectly
+ * signed. Naming the parameter for the percentage would have quietly excluded
+ * exactly that row.
+ */
+export function isChangeGood(signedChange: number, metric: CompareMetric): boolean {
+  return metric === 'throughput' ? signedChange >= 0 : signedChange <= 0;
+}
+
+/**
  * What the selector offers, and nothing else.
  *
  * ONLY WHAT `/series` CAN ANSWER. Gatling's own comparison also offers

@@ -115,6 +115,67 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The compare-request-delta branch added no unit FILE and 6 cases to
+`apps/web/test/buildCompareMatrix.test.ts`, from a floor of 153 / 1896 to
+**153 / 1902**. Integration moves with it (that file is a `.ts` integration
+runs); **e2e stays 142** — one existing case was rewritten, not added to.
+`review.md`'s finding 18.
+
+**THE TABLE THAT ATTRIBUTES WAS ASKING THE READER TO DO THE ARITHMETIC.** The
+per-request matrix put one number per run per row and nothing else, so
+`146.95` beside `2515.46` was homework — and, worse, the rows that had NOT
+moved looked exactly like the rows that had. That is the one job this table
+has: the overlay above it already shows THAT a run got slower.
+
+**THE SUBJECT IS PASSED, NEVER INFERRED FROM COLUMN ORDER.** `runs[0]` is the
+obvious shortcut and is wrong in a way nothing would report: selection order
+does put the current run first, but `RunCompare` DROPS a run whose statistics
+failed to load before the matrix is built — so on exactly the day one request
+errors, `runs[0]` is a different run and every change in the table silently
+changes meaning. `currentRunId` is a required parameter with no default, the
+rule this file already records for `listEnabled`'s `testId`, and `tsc` then
+named the single call site.
+
+**THE PAIR IS THE SUMMARY'S PAIR, DELIBERATELY.** `buildCompareSummary` defines
+the subject as the run the reader came from and the baseline as the first other
+selected run. A table that chose its own pair would put two different
+comparisons on one screen under one metric selector.
+
+**ONE DIRECTION RULE, MOVED BEFORE IT ACQUIRED A SECOND COPY.** `isDeltaGood`
+lived in `compareSummary`; the matrix needed the identical judgement. It is
+`isChangeGood` in `charts/transforms/compare.ts` now, beside the `CompareMetric`
+it is about, so neither consumer owns a decision the other depends on — and it
+takes a SIGNED CHANGE rather than a percentage, because the matrix has a case
+the tiles do not (below).
+
+**A ZERO BASELINE HAS NO PERCENTAGE AND STILL HAS A CHANGE.** Errors rising
+from 0 to 2/s is the regression an engineer most needs to see and the one a
+percentage cannot describe — the distinction `compareSummary`'s
+`deltaUnavailable` already draws. `percent` is `null` there, the ABSOLUTE is
+shown alone, and `good` is still decided, which is only possible because the
+direction rule reads a sign rather than a ratio.
+
+**BOTH NUMBERS, BECAUSE EACH ALONE MISLEADS.** A percentage cannot say whether
+40% is four milliseconds or four seconds, and on a fast request it turns noise
+into a headline; an absolute hides that +60 ms doubled a 60 ms request while
+barely moving a 3 s one.
+
+**AND THE HALF OF THE FINDING THAT WAS ALREADY DONE IS WORTH RECORDING.**
+"Treat missing measurements as unavailable, never zero" was already true, with
+the reasoning in the builder's own comment — a zero "would sort to the top of a
+column of durations as though it were the fastest thing in the comparison". The
+new column inherits it: a request only one run made has a DASH, not a zero
+change.
+
+**PORT 3000 WAS HELD BY SOMEBODY ELSE'S PROJECT, AND THAT IS NOT A THING TO
+KILL.** `pnpm test:e2e` failed before a single spec with `http://localhost:3000
+is already used` — `reuseExistingServer` is false on purpose. The process was a
+`remotion render` from an unrelated checkout. `PERFPORTAL_E2E_PORT=3100` is the
+lever, and it moves all four things the harness needs moved (this file records
+that it is four, not three). **Check the cwd of whatever holds the port before
+reaching for `kill`**; the answer here was that it belonged to another repo
+entirely.
+
 The rule-language-human branch added no unit FILE and 5 cases to
 `packages/contracts/test/rules.test.ts`, from a floor of 153 / 1891 to
 **153 / 1896**. Integration moves with it (that file is a `.ts` integration

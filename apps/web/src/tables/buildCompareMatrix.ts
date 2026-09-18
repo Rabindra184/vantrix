@@ -1,5 +1,5 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
-import type { CompareMetric } from '../charts/transforms/compare';
+import { isChangeGood, type CompareMetric } from '../charts/transforms/compare';
 
 /**
  * The per-request comparison matrix: requests down, runs across.
@@ -28,6 +28,49 @@ export interface CompareMatrix {
   readonly labels: readonly string[];
   /** `cells[request][run]`. `null` where that run has no such request. */
   readonly cells: readonly (readonly (number | null)[])[];
+  /**
+   * How the run being read changed against its baseline, per request — or
+   * `null` when there is no pair to compare.
+   *
+   * ═══ THE COLUMN THE TABLE WAS ASKING THE READER TO COMPUTE ═══
+   *
+   * `review.md`'s finding 18: the matrix put one number per run per row and
+   * nothing else, so `146.95` beside `2515.46` was arithmetic homework in a
+   * table whose whole purpose is attribution — and the rows that did NOT move
+   * looked exactly like the rows that did.
+   *
+   * SAME PAIR AS THE SUMMARY TILES ABOVE IT, deliberately. `buildCompareSummary`
+   * defines the subject as the run the reader came from and the baseline as the
+   * first other selected run; a table that chose a different pair would put two
+   * different comparisons on one screen under one metric selector.
+   */
+  readonly change: CompareChange | null;
+}
+
+/** The per-request change between one pair of runs. */
+export interface CompareChange {
+  /** The run the change is ABOUT. */
+  readonly subjectLabel: string;
+  /** The run it is measured AGAINST. */
+  readonly referenceLabel: string;
+  /** Per request, in `requests` order. `null` where either side has no value. */
+  readonly rows: readonly (CompareChangeRow | null)[];
+}
+
+export interface CompareChangeRow {
+  /** Subject minus reference, in the metric's own unit. */
+  readonly absolute: number;
+  /**
+   * The same change as a percentage, or `null` when the reference is ZERO.
+   *
+   * Not an error and not "no change": errors rising from 0 to 2/s has no
+   * percentage and is the regression an engineer most needs to see, which is
+   * the distinction `compareSummary`'s `deltaUnavailable` already draws. The
+   * absolute value carries it, and `good` below is still decided.
+   */
+  readonly percent: number | null;
+  /** Whether the change is an improvement — see `isChangeGood`. */
+  readonly good: boolean;
 }
 
 /**
@@ -66,6 +109,18 @@ export function metricValue(row: StatRow, metric: CompareMetric): number | null 
 export function toCompareMatrix(
   runs: readonly CompareStats[],
   metric: CompareMetric,
+  /**
+   * The run the reader is looking at — the subject of `change` below.
+   *
+   * REQUIRED, WITH NO DEFAULT, because every wrong answer here is silent. The
+   * obvious shortcut is `runs[0]`: selection order does put the current run
+   * first (`parseCompareSelection` prepends it). But `RunCompare` drops a run
+   * whose statistics failed to load before this is called, so on exactly the
+   * day one request errors, `runs[0]` is a DIFFERENT run and every change in
+   * the table silently changes meaning. A caller that cannot say which run is
+   * the subject should get no change column, which is what `''` yields.
+   */
+  currentRunId: string,
 ): CompareMatrix {
   /**
    * REQUEST SCOPE ONLY. `StatsResponse` carries run, group and request rows in
@@ -104,17 +159,50 @@ export function toCompareMatrix(
     }
   }
 
+  const cells = requests.map((name) =>
+    perRun.map((lookup) => {
+      const row = lookup.get(name);
+      return row === undefined ? null : metricValue(row, metric);
+    }),
+  );
+
+  /* The pair, resolved exactly as `buildCompareSummary` resolves it: the run
+     the reader came from, against the first OTHER selected run. Both have to
+     exist — a comparison of one run has nothing to change against, and saying
+     so with `null` is what keeps the column out of a table that cannot fill
+     it. */
+  const subjectIndex = runs.findIndex((run) => run.id === currentRunId);
+  const referenceIndex = runs.findIndex((run, i) => i !== subjectIndex && subjectIndex !== -1);
+  const change: CompareChange | null =
+    subjectIndex === -1 || referenceIndex === -1
+      ? null
+      : {
+          subjectLabel: runs[subjectIndex]!.label,
+          referenceLabel: runs[referenceIndex]!.label,
+          rows: cells.map((row) => {
+            const subject = row[subjectIndex];
+            const reference = row[referenceIndex];
+            // `null` where EITHER side is missing: a request one run never made
+            // has no change, and treating the absence as zero is the same lie
+            // the cells above refuse to tell.
+            if (subject === null || subject === undefined) return null;
+            if (reference === null || reference === undefined) return null;
+            const absolute = subject - reference;
+            return {
+              absolute,
+              percent: reference === 0 ? null : (absolute / reference) * 100,
+              good: isChangeGood(absolute, metric),
+            };
+          }),
+        };
+
   return {
     requests,
+    change,
     labels: runs.map((run) => run.label),
     // `null`, never `0`, for a request a run does not have. It did not take no
     // time — it did not run, and a zero would sort to the top of a column of
     // durations as though it were the fastest thing in the comparison.
-    cells: requests.map((name) =>
-      perRun.map((lookup) => {
-        const row = lookup.get(name);
-        return row === undefined ? null : metricValue(row, metric);
-      }),
-    ),
+    cells,
   };
 }
