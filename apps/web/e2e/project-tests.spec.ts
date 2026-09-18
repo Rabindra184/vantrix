@@ -6,7 +6,8 @@ import {
   seedRunWithData,
   seedTestWithRuns,
 } from './fixtures.js';
-import { plot, signIn } from './helpers.js';
+import { apiJson, plot, signIn } from './helpers.js';
+import { runPath } from '../src/routes/paths.js';
 
 /**
  * `Organization → Project → Test → Run`, walked in a real browser against a
@@ -447,4 +448,54 @@ test('a bundle can be uploaded from the browser and becomes a run', async ({ pag
   // The run is real, and it is THIS bundle: the reference run's own numbers.
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]{36}/);
   await expect(page.getByRole('heading', { level: 1 })).toContainText('ParitySimulation');
+});
+
+/**
+ * ═══ THE HEADING LEADS WITH THE TEST, AGAINST THE REAL STACK (review.md 6) ═══
+ *
+ * WHAT ONLY THIS LAYER CAN PROVE. `RunHeader.test.tsx` hands the component a
+ * `test: { name: 'Checkout smoke' }` of its own making, so it can only show the
+ * heading renders what it is given. Whether a test ever HAS a name different
+ * from its simulation class is a fact about `test-resolver.ts` and the run
+ * payload, and it is the fact the whole finding rests on: if a declared test
+ * were named after its class like an auto-created one, leading with the test
+ * would change nothing on any page in the product.
+ *
+ * It is not. `resolveDeclared` inserts `VALUES (…, $3, $3, $4, …)` — slug, name
+ * from the SLUG, and the class beside it — so a declared test carries the name
+ * its author chose. `seedTestWithRuns` writes the same shape directly.
+ *
+ * Both halves are asserted because either alone passes against the wrong page:
+ * a heading that merely CONTAINS the test name is satisfied by one that appends
+ * it to the class, and a class that is merely absent is satisfied by a page that
+ * dropped it instead of demoting it.
+ */
+test('a run of a declared test is headed by the test, with the class beside it', async ({ page }) => {
+  const admin = await seedAdmin();
+  await seedTestWithRuns(admin.orgId, {
+    slug: 'checkout-smoke',
+    name: 'Checkout smoke',
+    simulationClass: 'example.ParitySimulation',
+    runs: 1,
+  });
+  await signIn(page, admin);
+
+  // Through the API rather than by clicking a row: what is under test is the
+  // run PAGE, and reaching it by the list would fail for a second reason if the
+  // list ever changed shape.
+  //
+  // `/v1/runs`, NOT `/v1/projects/checkout/runs` — that one is bearer-only by
+  // design (a session names no project, so the pair of overrides on that path
+  // gives each credential exactly one way in), and answers a session with 400
+  // PROJECT_REQUIRED. Its own remediation says to come here.
+  const runs = await apiJson<{ items: { id: string }[] }>(page, '/v1/runs?limit=1');
+  const runId = runs.items[0]!.id;
+  await page.goto(runPath(runId));
+
+  const heading = page.getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText('Checkout smoke');
+  await expect(heading).not.toContainText('ParitySimulation');
+  // Demoted, not deleted — the engineer who needs to know what executed still
+  // has it, as the technical metadata the finding calls it.
+  await expect(page.getByTestId('run-simulation')).toHaveText('example.ParitySimulation');
 });

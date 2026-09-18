@@ -59,9 +59,11 @@ const COMPACT_STRIP = `flex flex-col gap-3 ${BOX}`;
  *   `run-detail.spec.ts` asserts `getByText('8 peak users')` is visible, which
  *   requires that string to be one element's whole text.
  *
- *   The same spec reads the `<h1>` with `toHaveText`, an EXACT match, so the
- *   heading may hold the simulation and nothing else — no badge, no id, no
- *   copy button.
+ *   The same spec reads the `<h1>` with `toHaveText`. That was an exact
+ *   STRING, and it is a RegExp since review.md 6 put the run id into the
+ *   heading — so the heading still holds no badge and no copy button, but
+ *   "nothing but the simulation", which this said until that finding, is
+ *   no longer true of it.
  *
  * INSIDE THE VALUE NODE is the operative phrase, and it is what the
  * control-room redesign changed. This row was a `<dl>` whose `<dt>`s named
@@ -189,8 +191,35 @@ export default function RunHeader({
         )}
     </>
   );
+  // `null` whenever the heading already carries the class — see the chip below.
+  const simulationChip =
+    identity.simulation != null &&
+    identity.simulation !== '' &&
+    identity.simulation !== headingSubject(identity)
+      ? identity.simulation
+      : null;
   const restChips = (
     <>
+        {/* ═══ THE CLASS, DEMOTED TO WHAT IT IS: TECHNICAL METADATA ═══
+            (review.md 6: "show the simulation class as secondary technical
+            metadata. Retain class search for engineers who need it.")
+
+            ONLY WHEN THE HEADING IS NOT ALREADY SAYING IT. An auto-created
+            test takes its name FROM the class (`test-resolver.ts` writes
+            `name` and `simulation_class` from one value), so on the majority
+            of runs the heading IS the class and a chip repeating it would be
+            the duplication this review spends four findings removing. It earns
+            its place exactly where it adds something: a run whose test was
+            declared, where the heading says `checkout-smoke` and the class is
+            the one thing on the page that says what actually executed.
+
+            The class search the finding asks to retain is the run list's, which
+            this does not touch. */}
+        {simulationChip != null && (
+          <Chip name="Simulation" label={`Simulation: ${simulationChip}`} testId="run-simulation">
+            <code>{simulationChip}</code>
+          </Chip>
+        )}
         {identity.branch != null && identity.branch !== '' && (
           <Chip name="Branch" label={`Branch: ${identity.branch}`} testId="run-branch">
             {identity.branch}
@@ -319,6 +348,11 @@ export default function RunHeader({
             </>
           )}
           <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
+          {/* THE SHORT ID, and it is load-bearing rather than decorative: the
+              `<h1>` below names the TEST now, so two runs of one test are
+              distinguishable on this page by nothing else. That is the same
+              argument this rung carried when the heading was the simulation —
+              it survives review.md 6 intact, one level down. */}
           <code aria-current="page" className="text-[0.75rem]">
             {identity.id.slice(0, 8)}
           </code>
@@ -327,21 +361,38 @@ export default function RunHeader({
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
         <div className="flex min-w-0 flex-col gap-1.5">
-          {/* The simulation is the run's identity to the person who ran it, so
-              it is the heading. Rendered fully-qualified, exactly as the tool
-              reported it (`example.ParitySimulation`), rather than trimmed to
-              the class name: two simulations in different packages can share a
-              class name, and truncating identity to save a few characters is
-              how two different runs come to look like the same one. Falls back
-              to the short id for a run whose header carried no simulation —
-              including a run whose identity is nothing but that id.
+          {/* ═══ THE TEST LEADS, NOT THE CLASS (review.md 6) ═══
+              AND THIS REVERSES WHAT THIS COMMENT USED TO ARGUE, which was:
+              "the simulation is the run's identity to the person who ran it,
+              so it is the heading."
+
+              That is true of the person who WROTE the simulation and false of
+              the person reading a run of it. One class is run as many tests —
+              `declaredTestSlug` exists precisely so `checkout-smoke` and
+              `checkout-soak` can share `example.ParitySimulation` — and with
+              the class as the heading those two pages are identical above the
+              fold. The finding names that exactly: "repeating the class as the
+              main identity makes different user tasks look the same".
+
+              `test.name` FALLS BACK TO THE CLASS ON ITS OWN, so the auto-created
+              case loses nothing: `test-resolver.ts` inserts `name` and
+              `simulation_class` from the same value, so a run nobody declared a
+              test for is headed by its class exactly as before. The heading
+              improves precisely where there was something better to say.
+
+              THE RUN ID STAYS IN THE BREADCRUMB, one line above. Two runs of
+              one test are otherwise indistinguishable here — the argument the
+              old comment made for the class, which survives the reversal
+              intact — and the rung already carries it. See `headingFor` for why
+              it is not repeated in the heading as the wireframe draws it.
 
               `break-all` rather than `truncate`: a fully-qualified class name
-              is long by design, and hiding the END of it — which is the part
-              that distinguishes two simulations in the same package — is the
-              one truncation this heading cannot afford. */}
+              is long by design and can still land here through the fallback,
+              and hiding the END of it — the part that distinguishes two
+              simulations in the same package — is the one truncation this
+              heading cannot afford. */}
           <h1 className="text-xl font-semibold tracking-tight break-all sm:text-2xl">
-            {identity.simulation ?? `Run ${identity.id.slice(0, 8)}`}
+            {headingFor(identity)}
           </h1>
           {identity.description != null && identity.description !== '' && (
             <p className="max-w-2xl text-[0.8125rem] leading-relaxed text-muted">
@@ -492,6 +543,46 @@ export default function RunHeader({
  * chip's own text content stays exactly what the caller wrote — which is what
  * the three text-content assertions in the module docstring depend on.
  */
+/** What this run is a run OF, as a reader would say it. */
+type Identity = Partial<RunIdentity> & { readonly id: string };
+
+/**
+ * The subject of the heading: the test, else the class, else nothing.
+ *
+ * ONE EXPRESSION, READ TWICE — the heading and the simulation chip both key off
+ * it, and the chip's whole rule is "say the class only where the heading is not
+ * already saying it". Computed in two places those two would drift into either
+ * printing the class twice or dropping it entirely, and both failures are
+ * silent.
+ */
+function headingSubject(identity: Identity): string | null {
+  const test = identity.test?.name;
+  if (test != null && test !== '') return test;
+  return identity.simulation != null && identity.simulation !== '' ? identity.simulation : null;
+}
+
+/**
+ * ═══ THE SUBJECT ALONE, AND NOT THE WIREFRAME'S `— run c2a7c145` ═══
+ *
+ * review.md 6 asks to "lead with the test name and a short run identifier",
+ * and its wireframe spells the title `Checkout smoke — run c2a7c145`. The
+ * identifier is here — one line up, as the breadcrumb's current-page rung,
+ * where it has always been.
+ *
+ * MEASURED, because the difference is not a matter of taste: putting it in the
+ * heading TOO wraps to a second line at 375px and pushed the run's own totals
+ * to **830px against `mobile.spec.ts`'s 812 bound**. That bound is the one
+ * number in that file which is the GOAL rather than the measurement — M02 took
+ * three branches to reach it and left ten pixels of headroom — and spending it
+ * to print eight characters already on screen is the wrong trade.
+ *
+ * Recorded as a deviation with its measurement rather than rounded up to
+ * compliance, which is the discipline M01's geometry bound already set.
+ */
+function headingFor(identity: Identity): string {
+  return headingSubject(identity) ?? `Run ${identity.id.slice(0, 8)}`;
+}
+
 function Chip({
   name,
   label,
