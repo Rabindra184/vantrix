@@ -165,13 +165,32 @@ hint exists specifically to keep six values on a common baseline, and the grid
 comment above it records that defect being fixed twice. Position is the
 emphasis this grid has.
 
-**NO e2e CHANGE, AND THE REASON IS GEOMETRY RATHER THAN LUCK.** At 1440 the
-grid is `@5xl:grid-cols-6`, so all six tiles share ONE row and their sequence
-within it changes no vertical position — the M01 bound is untouched. On a
-phone the two-column grid moves p95 from the third row to the first, i.e.
-UP, so every `toBeLessThan` bound in `mobile.spec.ts` passes more easily.
-Checked before concluding it, because a reorder that pushed p95 DOWN would
-have broken the one bound this file spent three branches earning.
+**AND THE "NO e2e CHANGE" CLAIM WAS WRONG — CI CAUGHT IT.** This entry first
+read: "at 1440 the grid is `@5xl:grid-cols-6`, so all six tiles share ONE row
+and their sequence changes no vertical position; on a phone the two-column
+grid moves p95 from the third row to the FIRST, i.e. UP, so every
+`toBeLessThan` bound in `mobile.spec.ts` passes more easily." Both halves of
+that are true and the conclusion does not follow. `mobile.spec.ts`'s M02 bound
+is anchored on **`stat-total-requests`**, and this reorder moves Requests from
+first to FOURTH — which in a two-column grid is the second ROW, past a bound
+with ten pixels of headroom. **I checked the tile I had promoted and not the
+tile the assertion names.** `build` failed on it; the four other jobs passed.
+
+**THE FIX IS TO DERIVE THE ANCHOR, NOT TO MOVE THE BOUND.** 812 is the
+viewport and M02 took three branches to earn it, so raising it would undo that
+work to accommodate a reorder that made nothing worse: the section's top and
+its first row are exactly where they were. The assertion's own comment says it
+is about where the numbers START, and it named one tile as a proxy for "the
+first one" — so it asks the DOM instead (`section[aria-label="Run totals"]
+dd[data-testid^="stat-"]`, `.first()`), which is `run-list.spec.ts`'s `.nth(3)`
+lesson one file over. `dd[...]` rather than the bare prefix because the
+empty-window branch names its own section `stats-empty-window`, which
+`^="stat-"` also matches.
+
+**THE GENERAL SHAPE: A GEOMETRY BOUND IS ANCHORED ON AN ELEMENT, AND THE
+ELEMENT IS NOT THE CLAIM.** Before concluding a layout change cannot reach a
+geometry assertion, read what that assertion SELECTS — not what the change
+moved.
 
 **A SECOND GUARD FOR THE HALF jsdom CANNOT SEE.** DOM order is the reading
 order only while these are grid items in source order; an `order-*` utility
