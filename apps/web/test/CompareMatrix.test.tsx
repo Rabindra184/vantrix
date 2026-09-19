@@ -76,21 +76,33 @@ describe('CompareMatrix — review.md copy row 7', () => {
   });
 
   /* Clause two, and the half that matters most for the reader this table is
-     hardest on. The definition used to BE the accessible name, so a screen
+     hardest on: the definition used to BE the accessible name, so a screen
      reader announced the whole paragraph before the first number, every
-     visit. Asserted as a pair: the name is short AND the definition is still
-     reachable — dropping the explanation entirely would satisfy the first
-     assertion perfectly and lose the thing row 7 says to keep. */
-  it('keeps the dash definition out of the accessible name and in the help', () => {
+     visit.
+
+     SPLIT FROM THE CASE BELOW ON PURPOSE. These were one case asserting both
+     halves, and two separate mutations — restoring the prose as the name, and
+     deleting the definition outright — both failed it, on different
+     assertions under one test name. That is the bundled-claim shape review9
+     earned: the coverage was right and the REPORT named one defect for two.
+     Apart, each mutation fails the case that describes it. */
+  it('keeps the dash definition out of the accessible name', () => {
     renderMatrix();
     const table = screen.getByRole('table');
     expect(table).toHaveAccessibleName('Per-request 95th percentile across the selected runs');
     expect(table.querySelector('caption')?.textContent ?? '').not.toMatch(/a dash means/i);
+  });
 
-    // Still available — `<details>` keeps its children in the DOM under
-    // jsdom, which is exactly why this asserts presence and the disclosure's
-    // own behaviour is the browser's business.
-    expect(screen.getByText(/a dash means the request did not run in that one/i)).toBeInTheDocument();
+  /* ...and the other half, which is what stops the case above being satisfied
+     by simply deleting the explanation. row 7 says to MOVE it, not drop it.
+     `<details>` keeps its children in the DOM under jsdom, so this asserts
+     presence; whether a reader has to open the disclosure to see it is the
+     browser's business and `TableFrame`'s own contract. */
+  it('keeps the dash definition available in the help', () => {
+    renderMatrix();
+    expect(
+      screen.getByText(/a dash means the request did not run in that one/i),
+    ).toBeInTheDocument();
   });
 
   /* The claim the definition is ABOUT, so the prose and the product cannot
