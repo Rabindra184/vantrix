@@ -1383,7 +1383,27 @@ function RulesTable({
                   gates table has rendered the first since review.md 3. */}
               <th className={TH}>Measurement</th>
               <th className={TH}>Limit</th>
-              <th className={TH}>Status</th>
+              {/* ═══ `Enabled`, NOT `Status` — review N01's OWN RESERVATION ═══
+                *
+                * `Status` is this product's word for a RUN's execution state:
+                * the run list gives it a column (Project, Simulation, Status,
+                * Verdict) and the status filter its vocabulary. N01 renamed
+                * the simulation assertions table's `Status` to `Outcome` for
+                * exactly that reason — "a check has a result, not a state" —
+                * and this column was the caller that rename did not reach.
+                *
+                * A rule has neither a state nor a result: it is in force or it
+                * is not, which is the contract's own `enabled` field. So the
+                * column is named after the field it renders, and review.md's
+                * rule-management wireframe heads it `Enabled` too.
+                *
+                * THE CELLS KEEP `Enabled`/`Disabled` RATHER THAN THE
+                * WIREFRAME'S `Yes`. Mildly redundant under this header, and
+                * worth it: "Disabled" states what is true of a rule that
+                * judges nothing, where "No" leaves the reader to infer it —
+                * and `ProjectRules.test.tsx`'s own case asserts that a
+                * disabled rule SAYS so, which is a claim about that word. */}
+              <th className={TH}>Enabled</th>
               <th className={TH}>Actions</th>
             </tr>
           </thead>

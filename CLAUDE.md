@@ -115,6 +115,69 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The rules-enabled-column branch added no unit FILE and 1 case to
+`apps/web/test/ProjectRules.test.tsx`, from **154 / 1939** to **154 / 1940**.
+Integration is UNCHANGED (that file is a `.tsx`) and **e2e stays 145** — no
+spec changed.
+
+**A TABLE HAD BORROWED THE RUN VOCABULARY, AND N01 HAD ALREADY FORBIDDEN IT.**
+That branch reserved `Status` for a RUN's execution state — the run list gives
+it a column (Project, Simulation, Status, Verdict) and the status filter its
+vocabulary — and renamed the simulation assertions table's `Status` to
+`Outcome` on exactly that ground ("a check has a result, not a state"). The
+SLA rules table was the caller that rename did not reach: its last column was
+headed `Status` over cells reading `Enabled`/`Disabled`, **a header one
+abstraction level off its own data**.
+
+A rule has neither a state nor a result — it is in force or it is not, which
+is the contract's own `enabled` field. So the column is named after the field
+it renders, which is also how `review.md`'s rule-management wireframe heads
+it. Found by auditing that wireframes section, which is the one part of
+`review.md` the earlier sweeps never enumerated.
+
+**THE CELLS KEEP `Enabled`/`Disabled` RATHER THAN THE WIREFRAME'S `Yes`.**
+Mildly redundant under this header and worth it: "Disabled" states what is
+true of a rule that judges nothing, where "No" leaves the reader to infer it —
+and this file's own case asserts that a disabled rule SAYS so, which is a
+claim about that word rather than about the column.
+
+**THE EXCLUSIVE PAIR IS WHAT THE SECOND MUTATION EARNS.** Reverting the header
+fails both halves; ADDING an `Enabled` column while keeping `Status` beside it
+fails only the absence — and that second shape is the drift rather than the
+fix, so a positive-only assertion would wave it through. Same shape the
+token-mint-copy branch used for its own retired jargon, and kept as ONE case
+because these are two halves of one exclusivity claim about one column, not
+two claims.
+
+**AND THE e2e SELECTORS WERE READ THIS TIME, WHICH IS THE LESSON FROM THE
+BRANCH BELOW.** That one failed CI because a geometry bound was anchored on a
+tile the change moved, and the reasoning had checked a different tile. So
+before concluding no spec could reach this rename: no spec selects a
+`columnheader` named `Status` or `Enabled` anywhere, and
+`run-list.spec.ts:186` — which scans **every** columnheader on the page
+UNSCOPED to find the Status column's index — runs on `/runs`, which does not
+render the rules table.
+
+**THAT UNSCOPED SCAN IS WORTH KNOWING ABOUT, BECAUSE THIS RENAME MAKES IT
+SAFER RATHER THAN RISKIER.** `TestRuns` renders `ProjectRules` and `RunList` as
+SIBLINGS, so on a test's page that query would have seen TWO `Status` headers
+and `findIndex` would have taken whichever came first — silently picking a
+rules column and then reading a run row's cell at that index. One `Status`
+header exists in the product now. Left as it is rather than scoped: it is
+correct where it runs, and narrowing it is a change to a passing test in a
+file this branch otherwise does not touch.
+
+**AND `git commit -m "… \`enabled\` …"` RAN THE BACKTICKS AS A COMMAND.** The
+message went in reading "the contract's own  field" — `enabled` eaten by
+command substitution inside a double-quoted shell string, with
+`bash: enabled: command not found` printed among the test output where it was
+easy to miss. This file already records "A SQL COMMENT CANNOT CONTAIN A
+BACKTICK" for a template literal; a shell double-quoted string is the same
+trap, and these commit messages are full of backticked identifiers. **Use
+`git commit -F -` with a quoted heredoc** (`<<'MSG'`), which interprets
+nothing — amended here, and it is what every long message in this session
+should have used.
+
 The target-layout-tile-order branch added no unit FILE and 2 cases to
 `apps/web/test/RunStats.test.tsx`. Cut from **153 / 1932**, it measured
 153 / 1934 on its own; compare-matrix-units merged FIRST and took `main` to

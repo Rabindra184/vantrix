@@ -517,6 +517,34 @@ describe('ProjectRules — the table', () => {
   });
 
   /**
+   * ═══ `Status` IS RESERVED, AND THIS COLUMN HAD BORROWED IT ═══
+   *
+   * Review N01's rule: `Status` is this product's word for a RUN's execution
+   * state — the run list gives it a column (Project, Simulation, Status,
+   * Verdict) and the status filter its vocabulary. That branch renamed the
+   * simulation assertions table's `Status` to `Outcome` on exactly that
+   * ground, and this table was the caller the rename did not reach.
+   *
+   * ASSERTED AS AN EXCLUSIVE PAIR. "Has an Enabled column" alone passes
+   * against a table that grew one and kept `Status` beside it, which is the
+   * drift rather than the fix; "has no Status column" alone passes against a
+   * table whose header row failed to render at all. Neither half is worth
+   * having without the other — the shape the token-mint-copy branch used for
+   * its own retired jargon.
+   */
+  it('heads the enabled column Enabled, never Status', async () => {
+    fetchProjectRules.mockResolvedValue({ rules: [rule()] });
+    renderRules();
+    await screen.findByText('Every test');
+
+    const headers = screen
+      .getAllByRole('columnheader')
+      .map((th) => (th.textContent ?? '').trim());
+    expect(headers).toContain('Enabled');
+    expect(headers).not.toContain('Status');
+  });
+
+  /**
    * A disabled rule must still be listed: "disabled" is a state a reader put
    * it in and has to be able to undo. `listEnabled`, which evaluation uses,
    * stays as narrow as it always was.
