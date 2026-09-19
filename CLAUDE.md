@@ -115,6 +115,77 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The glossary-percentile-parity branch added no unit FILE and 2 cases to
+`apps/web/test/RunGlossary.test.tsx`, from **154 / 1946 to 154 / 1948**.
+Integration is UNCHANGED (that file is a `.tsx`, which that config never runs)
+and **e2e stays 145** — no spec changed. It comes out of verifying the product
+against four real Gatling runs, and it is a defect in a CLAIM rather than in a
+number.
+
+**THE GLOSSARY PROMISED COLUMN-BY-COLUMN PARITY AND PERCENTILES ARE THE
+EXCEPTION.** `RunGlossary`'s `OK, KO` entry tells a reader the statistics table
+"can be read beside Gatling's own report column by column — its headings are
+the same words in the same order", and the module docstring explains the
+headings are byte-identical FOR THAT PURPOSE. Every exactly-tracked quantity
+honours it. The percentile columns do not, and nothing said so.
+
+**MEASURED, ON A REAL 1,718-REQUEST RUN.** `List Products` p99 reads **809**
+here and **1368** in Gatling's own report. Sorted, that request's tail is
+`… 435, 809, 1368, 1492, 1654` over 300 samples — so the two answers are **one
+order statistic apart**, which in a heavy tail is a 69% gap. The whole-run p99
+diverges the other way: 10617 here, 7904 in Gatling, against a true
+nearest-rank value of **10513**.
+
+**AND THE SKETCH IS NOT WHAT DIVERGES, WHICH IS THE PART WORTH WRITING DOWN.**
+Compared naively against Gatling, **14 of 40 percentiles fell outside the 1%
+the caption advertises, worst 41%** — which reads as a serious defect in the
+product's most scrutinised number. Re-measured against exact nearest-rank
+values computed from the raw log, it is **28 of 28 INSIDE 1%, worst 0.99%**,
+and where the two products differ PerfPortal is the closer of the pair. The
+DDSketch bound holds exactly as `sketch.ts` claims for itself ("up to ~1.000%
+max relative error … not slack we have to spare").
+
+**A COMPARISON IS ONLY AS GOOD AS ITS ORACLE.** Gatling's report is the right
+oracle for counts and extremes and the WRONG one for percentiles, because the
+question "what is p99" has two defensible answers at small N. Trusting the
+first table would have raised a false alarm; the raw log is what adjudicates.
+This file already records the inverse — a red result that is a build claim
+before it is a code claim — and this is the same shape from the other side: a
+red result that is an ORACLE claim before it is a product claim.
+
+**THE FIX IS IN THE GLOSSARY, BECAUSE THAT IS ALREADY THE PAGE'S ANSWER TO
+"WHY DOES THIS WORD NOT MEAN WHAT I EXPECTED".** The `estimate` entry now says
+percentiles are taken at the nearest rank, that one here can differ from
+Gatling's own column by a whole measurement, that both numbers are right, and
+**which figures ARE exact** — Total, OK, KO, Min, Max and Mean, i.e. what to
+diff the two reports on. The caption's "accurate to within 1%" is untouched
+and was never the problem: it is a claim about the sketch, not about Gatling.
+
+**THE CLAIM IS ASSERTED AS A PAIR AND NEITHER HALF IS SUFFICIENT.** A warning
+with no exception list reads as "trust none of this table"; an exception list
+with no warning is the promise that caused the defect. Two mutations, each
+landing on its own case and reporting differently — keeping the Gatling
+mention while deleting the disagreement fails the first alone, and deleting
+the exact-columns sentence fails the second alone. Asserted as a CLAIM rather
+than as wording, because this file records twice what pinning prose verbatim
+costs: a sentence that was right when written becomes the reason a correction
+cannot land.
+
+**AND NO SUITE COULD HAVE FOUND IT — IT TOOK EXECUTING GATLING.** Every gate
+was green throughout, because nothing in the repo compares this product's
+percentiles against Gatling's own REPORT; `parity.test.ts` deliberately binds
+"exact quantities only — never its percentiles". That is the right test and it
+is why the gap in the PROSE survived. Same lesson as `declaredTestSlug`: when
+a claim is about agreement with another product, only running that product
+checks it.
+
+**WHAT WAS RUN, AND WHAT WAS NOT.** `typecheck` and `lint` are green by their
+own exit codes; `RunGlossary.test.tsx` passes 24/24. The full unit suite was
+NOT measured — the machine was at **4,691 free pages with 17,103 MB of 18,432
+MB of swap gone**, which this file already calls a tree not worth measuring.
+The arithmetic is 2 cases onto whatever it sits on, and CI's clean containers
+are the arbiter.
+
 The allow-insecure-cookies branch added no unit FILE and 6 cases to
 `packages/persistence/test/auth-cookies.test.ts`, from **154 / 1940 to
 154 / 1946**. Integration moves with it (that file is a `.ts` integration runs

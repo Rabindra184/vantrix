@@ -179,3 +179,54 @@ describe('RunGlossary — what it must not do to the page', () => {
     expect(terms.length).toBeGreaterThan(5);
   });
 });
+
+/**
+ * ═══ THE PARITY PROMISE HAS TO NAME ITS OWN EXCEPTION ═══
+ *
+ * The `OK, KO` entry tells a reader the statistics table can be read beside
+ * Gatling's own report "column by column", and the module docstring says the
+ * headings are byte-identical for exactly that purpose. True of the headings,
+ * true of every exactly-tracked quantity — and NOT true of the percentile
+ * columns, because the two products break the rank differently.
+ *
+ * MEASURED on a real 1,718-request run of the Gatling demo fixture: `List
+ * Products` p99 reads 809 here and 1368 in Gatling's own report. Both are
+ * right. Sorted, that request's tail is `… 435, 809, 1368, 1492, 1654` over
+ * 300 samples, so the two answers are ONE ORDER STATISTIC apart — which in a
+ * heavy tail is a 69% gap. The whole-run p99 diverges the other way (10617
+ * here against Gatling's 7904, where the true nearest-rank value is 10513).
+ *
+ * So a reader who takes the promise at face value concludes this product is
+ * wrong about its most scrutinised number. The glossary is where that is
+ * cheapest to prevent, because it is already the page's answer to "why does
+ * this word not mean what I expected".
+ *
+ * THE CLAIM IS ASSERTED AS A PAIR, and neither half is sufficient. A warning
+ * with no exception list reads as "trust none of this table"; an exception
+ * list with no warning is the promise that caused the problem. Asserted as a
+ * CLAIM rather than as wording — this file already carries the lesson that
+ * pinning prose verbatim is how a sentence becomes impossible to correct.
+ */
+describe('RunGlossary — the Gatling parity promise names its exception', () => {
+  /** The entry that takes on the percentile/Gatling question, whichever it is. */
+  const warning = ENTRIES.find(
+    (e) => /percentile/i.test(e.meaning) && /gatling/i.test(e.meaning),
+  );
+
+  it('warns that a percentile here can differ from Gatling’s own report', () => {
+    expect(
+      warning,
+      'no glossary entry connects percentiles to Gatling, so a reader diffing the two reports is unwarned',
+    ).toBeDefined();
+    expect(warning?.meaning, 'the entry mentions both but never says they can disagree').toMatch(
+      /differ|disagree|not match|apart/i,
+    );
+  });
+
+  it('names figures that are exact, so the warning does not read as “trust nothing”', () => {
+    expect(
+      warning?.meaning,
+      'the warning never tells the reader which columns they CAN diff against Gatling',
+    ).toMatch(/exact/i);
+  });
+});
