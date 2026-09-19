@@ -115,6 +115,96 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The windowed-stats-all-scopes branch added no unit FILE and no unit case —
+unit stays **154 / 1948** — and 2 INTEGRATION cases to
+`apps/api/test/window.integration.test.ts`, from **137 / 1756 to 137 / 1758**.
+**e2e stays 145.** Found by brushing a time window on a real run while
+verifying the product against Gatling, not by any suite.
+
+**ONE QUERY PARAMETER MEANT TWO THINGS ON ONE ENDPOINT.** `GET
+/v1/runs/:id/stats` treats `scope` as a FILTER when no window is applied —
+`rows.filter((s) => (scope ? s.scope === scope : true))` — and the windowed
+branch read `scope ?? 'run'`. So brushing a window dropped every per-request
+and per-group row and collapsed the statistics table to the run's own totals,
+**at precisely the moment a reader narrows to a spike to find out WHICH
+request it belongs to**. That is the one question brushing exists to answer.
+
+**THE ROWS WERE NEVER MISSING. NOTHING ASKED FOR THEM.** `windowedBuckets`
+selects by (scope, family) and returns every NAME within it, so the data was
+one parameter away the whole time — proven against the live instance before
+any code changed:
+
+```
+  ?from=30000&to=60000&scope=request&name=Session       186 requests, p95 2046
+  ?from=30000&to=60000&scope=request&name=Place Order    65 requests, p95 455
+  ?from=30000&to=60000&scope=group&name=Cart             67 groups,   p95 589
+```
+
+**AND A CASE NAMED FOR THIS EXACT BEHAVIOUR COULD NOT SEE IT.** `window.integration.test.ts`
+has had "windows the per-request rows too, not only the run" since the feature
+shipped — and it passes `?scope=request` on BOTH sides. It proves the explicit
+path and says nothing about the DEFAULT, which is the only thing the
+statistics table ever sends. **A test that supplies the parameter it is
+checking proves the consumer, never the default** — the same shape this file
+records for `resolveTestId` being handed the slug it then verified.
+
+**THE FIRST FIX WAS WRONG AND THE BENCHMARK IS WHAT SAID SO.** It derived the
+(scope, family) pairs from `run_stat` and issued one `windowedBuckets` call
+per pair. Every window case passed. `window-bench.integration.test.ts` then
+failed on `expected [] to have a length of 50` — because that fixture seeds
+BUCKETS DIRECTLY and writes no `run_stat` row at all, so the pair discovery
+found nothing and the endpoint returned zero rows. **The buckets are the
+source of truth for a windowed read**, and a run can carry buckets with no
+matching stats row. The benchmark exists for cost and caught a correctness
+defect; it was the only test in the repo that could, because it is the only
+one that builds its fixture from the bottom.
+
+**SO THE PREDICATES BECAME OPTIONAL INSTEAD, WHICH IS ALSO FEWER QUERIES.**
+`WINDOWED_BUCKETS_SQL` takes `($5::text IS NULL OR scope = $5)` and the same
+for family, and carries `scope`/`family` on each row so one pass can be
+grouped back into the table. A caller naming both still gets the narrow
+predicate it always did; an unscoped read now costs a wider result set rather
+than N round trips.
+
+**AND `git checkout --` DESTROYED THE FIX. SIXTH TIME IN THIS FILE, AND THE
+SECOND WHERE THE CHECKPOINT WAS THE TRAP.** The checkpoint was committed
+against the FIRST (pairs) implementation; the rewrite that replaced it was
+never committed, so restoring after the first red-verify silently reverted to
+the version the benchmark had already rejected. The tell was the next
+mutation reporting `ANCHOR MISSED` — the string it was looking for existed
+only in the lost rewrite. `read.ts` survived only because it was never the
+mutation target.
+
+The entry two above this one prescribes the guard — "commit again after any
+material change, before the next mutation" — and it was written in this same
+session. **A checkpoint is only a checkpoint if it holds the shape you are
+verifying**, and the cheap mechanical version is `git commit --amend` the
+moment an implementation is replaced, not when it is first drafted.
+
+**TWO MUTATIONS, EACH LANDING ON ITS OWN CASE.** Restoring `scope ?? 'run'`
+fails ONLY the new unscoped case; passing `{scope: null, family: null}`
+regardless of the caller fails "still narrows to a named scope under a
+window". The second guard is why the fix is a FILTER rather than "return
+everything" — widening without keeping narrowing true would trade one wrong
+answer for another, and every chart caller that names a scope would start
+paying for rows it never reads.
+
+**AND TWO MUTATIONS THAT NEVER APPLIED BOTH REPORTED GREEN.** One anchor
+matched three times — twice as code and once inside the new comment quoting
+it — and one died on nested quotes in the shell. Both runs came back
+16/16 passed, which is indistinguishable from a mutation that changed nothing
+important. **Assert the replacement COUNT before running, never the result**;
+this file already records that a red-verify which passes means the mutation
+missed.
+
+**WHAT WAS RUN, AND AGAINST WHAT.** `typecheck` and `lint` green by their own
+exit codes. The six integration suites that read `/stats` — window,
+window-bench, read, parity-endpoints, trends and parity.e2e — pass **101 /
+101**. They were run against a SCRATCH DATABASE (`perfportal_verify`), not
+the developer one: `test:integration` truncates every table, and this machine
+was holding real runs somebody was mid-way through reading. The unit suite is
+untouched by this change and was not re-run.
+
 The glossary-percentile-parity branch added no unit FILE and 2 cases to
 `apps/web/test/RunGlossary.test.tsx`, from **154 / 1946 to 154 / 1948**.
 Integration is UNCHANGED (that file is a `.tsx`, which that config never runs)
