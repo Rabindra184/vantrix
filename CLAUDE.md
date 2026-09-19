@@ -115,6 +115,104 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The allow-insecure-cookies branch added no unit FILE and 6 cases to
+`packages/persistence/test/auth-cookies.test.ts`, from **154 / 1940 to
+154 / 1946**. Integration moves with it (that file is a `.ts` integration runs
+too) at **137 / 1756**, and **e2e stays 145** — no spec changed. It SHIPPED WITHOUT AN ENTRY
+HERE, which is the gap this paragraph closes: the two entries below it record
+the deployment work on either side of it and neither mentions the flag that
+makes a deployment reachable by hostname work at all.
+
+**THE FLOORS ABOVE ARE CI's, NOT THIS MACHINE'S, AND THAT IS WHAT MAKES THEM
+MEASUREMENTS.** `vm_stat` here reported **3,609 free pages — about 56 MB** with
+16,999 MB of 18,432 MB of swap gone, at a load average of 3.03. That is worse
+than the 4,390 free pages the review20-one-primary entry already calls
+untrustworthy, and the low load is not evidence to the contrary — this file
+records that a machine waiting on swap looks idle. So no local suite was run.
+The one FILE was (**23 passed** = the 17 release-readiness added plus this
+branch's 6), and the totals came off the `build` job's own log:
+
+```
+  pnpm test:unit         Test Files 154 passed (154)   Tests 1946 passed (1946)
+  pnpm test:integration  Test Files 137 passed (137)   Tests 1756 passed (1756)
+  pnpm test:e2e          Running 145 tests using 2 workers
+```
+
+**AND THIS ENTRY FIRST RECORDED 1946 AS ARITHMETIC, WHICH WAS HONEST AND
+WEAKER THAN IT NEEDED TO BE.** "A floor nobody measured has to say so" is the
+rule, and the corollary nobody had written down is that **CI is somewhere to
+measure it**: a green `build` prints all three totals from clean containers,
+which is a better arbiter than this machine on its best day. When the machine
+cannot be trusted, read the floors off the runner that can — the numbers are
+already there, in a log that has been produced for every branch in this file.
+
+**A DEPLOYMENT REACHED BY HOSTNAME FAILED SILENTLY, WHICH IS THE WORST SHAPE A
+REFUSAL CAN TAKE.** `cookiesAreSecure` exempted loopback and nothing else, so
+an instance at `http://perfportal.internal:3000` served its login page,
+accepted correct credentials and answered **200** — and the browser then
+discarded the `Secure` cookie it had been handed over plain HTTP, leaving
+every later request signed out with nothing on screen saying why. No amount of
+configuration fixed it, and a DNS name behaves exactly like an IP: the SCHEME
+is what decides, so "it works if I use the hostname" was never available.
+
+**AND IT WAS STRICTER THAN EVERY COMPARABLE PRODUCT, WHICH IS WHY THE
+EXPECTATION WAS RIGHT AND THIS APP WAS THE OUTLIER.** Grafana, Jenkins, Nexus
+and GitLab all serve a session over plain HTTP on an internal network. "It is
+an HTTP app, I can reach it by hostname" is therefore correct everywhere a
+deployer has been before — which is how it was reported here, from having used
+the application — and the answer was to build the switch those products have
+rather than to defend the restriction with the security argument that
+justified it.
+
+**OFF BY DEFAULT, AND READ WITH `=== 'true'` RATHER THAN TRUTHINESS.**
+`allowInsecure` defaults to false so every existing caller behaves to the byte
+as before, and `config.ts` compares the string exactly: under a truthiness
+test `ALLOW_INSECURE_COOKIES=false` would switch it ON, which is the one value
+an operator is most likely to write while meaning the opposite. The variable
+is `PERFPORTAL_ALLOW_INSECURE_COOKIES` in `.env` and `ALLOW_INSECURE_COOKIES`
+in the process — the compose file maps one to the other — and it is in
+`.env.example` because `infra/test/env-example-covers-compose.mjs` fails the
+`compose` job otherwise, which is the whole reason that guard exists.
+
+**IT CANNOT DOWNGRADE TLS, AND THAT IS THE PROPERTY THAT MAKES IT SHIPPABLE AT
+ALL.** `cookiesAreSecure` returns on `url.protocol === 'https:'` BEFORE the
+flag is consulted, so an operator who turns it on for an internal host and
+later puts the same compose file behind the `tls` profile does not silently go
+on sending cookies in the clear. Two of the six cases pin exactly that, and
+they are the pair worth having: the flag asserted OPT-IN (a default that
+flipped would be INVISIBLE, because everything would simply keep working) and
+the flag IGNORED over HTTPS.
+
+**API TOKENS WERE NEVER AFFECTED, SO CI OVER PLAIN HTTP NEEDS NO FLAG.**
+`Secure` is a property of a COOKIE; a bearer token is a header a client sends
+wherever it is pointed. Worth writing in the deployment guide because the
+natural reading of "sessions do not work over HTTP" is that ingest does not
+either, and a deployer who believes that will go looking for a TLS termination
+their pipeline never needed.
+
+**`PERFPORTAL_HTTP_PORT` MOVES THE HOST SIDE ONLY, AND BOTH OF ITS TRAPS ARE
+SILENT.** The container still listens on 3000, so nothing in the image and
+nothing in `BETTER_AUTH_URL`'s default has to know the published port changed.
+But `PERFPORTAL_PUBLIC_URL` must then be written WITHOUT `:80` — a browser
+omits a default port from the `Origin` header, so `http://host:80` never
+matches what arrives and sign-in is refused as an invalid origin, which is the
+same failure the trusted-origin note in `.env.example` already warns about,
+reached from a new direction. And it conflicts with the `tls` profile, whose
+caddy publishes `80:80` and `443:443`: two containers cannot publish one host
+port, and behind TLS the api needs no published port at all.
+
+**AND THE FIRST LIVE CHECK REPORTED THE FEATURE BROKEN WHEN THE HARNESS HAD
+DONE NOTHING.** The verification rewrote a scratch `fresh.env` with a
+`re.sub` — and that file predated `PERFPORTAL_ALLOW_INSECURE_COOKIES`, so the
+pattern matched nothing, the stack came up with the flag unset, the cookie came
+back `Secure` exactly as before, and I briefly reported the feature broken on
+that evidence. **The tell was a grep printing ONE line where TWO were
+expected** — a count in a status line, which this file already records as the
+tell for a mutation that missed its anchor, met here as a fixture that missed
+its file. The fix is to stop reading the file you wrote and read the
+CONTAINER's own `printenv`: what the process actually holds is the only thing
+the claim was ever about.
+
 The stronger-default-password branch added no unit FILE, no unit case and no
 spec — unit stays **154 / 1940**, integration is unchanged and **e2e stays
 145**. One CI step, in `test-residue`.
