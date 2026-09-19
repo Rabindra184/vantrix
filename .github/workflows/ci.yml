@@ -514,8 +514,16 @@ jobs:
           test "$before" = "$after" || {
             echo "::error::the second run CHANGED the stored credential"; exit 1; }
 
-          members="$($PSQL -At -c 'select count(*) from org_member;')"
-          test "$members" = "1" || { echo "::error::expected 1 membership, saw $members"; exit 1; }
+          # SCOPED TO THIS ORG. Counting the whole table asks "how many
+          # memberships exist", which is not the claim — the residue steps
+          # above seed their own orgs and members and leave them behind, so
+          # the global count was 3 and this failed on a bootstrap that had
+          # behaved perfectly. Same shape as the unscoped `getByRole('alert')`
+          # this repo already records: a global query stops meaning what it
+          # did the moment something else appears beside it.
+          members="$($PSQL -At -c "select count(*) from org_member m join org o on o.id = m.org_id where o.slug = 'ci-org';")"
+          test "$members" = "1" || {
+            echo "::error::expected exactly 1 membership in ci-org, saw $members"; exit 1; }
           echo "idempotent: account reused, credential untouched, no duplicate membership"
 
       # ...and an operator who chooses a password never gets the published one.
