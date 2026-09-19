@@ -135,21 +135,72 @@ export default function RunStats({
           that way first here, and it cost `run-tables.spec.ts`'s M01 geometry
           bound: the tiles fell to two columns at every width, which made the
           block tall enough to push the run totals past 900px. */}
+      {/* ═══ THE ORDER IS THE 09-13 REVIEW'S TARGET LAYOUT, ITEM 3 ═══
+       *
+       * "p95 response time, error rate, throughput, total requests; p99 and
+       * mean can follow at lower emphasis."
+       *
+       * This row read Requests, Error rate, Requests/s, Mean, p95, p99 — so
+       * the number a performance engineer triages on sat FOURTH, behind a
+       * count and a mean, and nothing anywhere argued that order. It was not a
+       * decision that was taken and defended; it was the order the tiles
+       * happened to be written in, and no test could see it: every assertion
+       * reaches these by `data-testid`, and `run-tables.spec.ts`'s M01 bound
+       * checks that three of them sit inside the first 900px, which is a claim
+       * about POSITION and says nothing about sequence.
+       *
+       * WHAT IT COSTS, STATED RATHER THAN GLOSSED: Mean/p95/p99 used to sit
+       * adjacent in ascending order, which is a real and coherent grouping.
+       * Promoting p95 breaks it. The review's reading wins because a reader
+       * arrives asking "is the latency acceptable", not "walk me up the
+       * distribution" — and the three still share one vocabulary with
+       * `StatisticsTable`'s columns, which is what N01 was about.
+       *
+       * ═══ AND "LOWER EMPHASIS" IS DECLINED, WITH THE REASON ═══
+       *
+       * The finding says p99 and mean "CAN follow at lower emphasis" —
+       * permission, not requirement — and in THIS component both spellings of
+       * emphasis are already spoken for. Colour is reserved for SLA `tone`,
+       * which `StatTile`'s own docstring argues at length ("colouring a number
+       * red is a JUDGEMENT, and the platform has only made one where a rule
+       * exists"), so a muted value would either collide with that vocabulary
+       * or invent a second one. Size is worse: `mt-auto` on the hint exists
+       * specifically to keep six values on a common baseline, and the grid
+       * comment above records that defect being fixed twice already.
+       *
+       * Position IS the emphasis this grid has. First is first. */}
       <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-3 @5xl:grid-cols-6">
         <StatTile
-          label="Requests"
-          value={formatCount(run.count)}
-          tone={slaTone(windowed === true ? undefined : assertions, 'count')}
-          /* "successful / failed", not "OK / KO" — review N01. Those two are
-             Gatling's words, and nothing in this repo requires them: the PRD
-             binds QUANTITIES (count, ok/ko count, % KO, count/second…) and
-             both parity suites compare only numbers, never a label. The
-             statistics table keeps them where a reader may be diffing this
-             against Gatling's own report side by side; a totals tile is not
-             that surface. */
-          hint={`${formatCount(run.okCount)} successful, ${formatCount(run.koCount)} failed`}
-          delta={deltaFor(run.count, baseline?.count, 'neutral')}
-          data-testid="stat-total-requests"
+          /* ═══ "Mean", "p95", "p99" — THE TABLE'S OWN WORDS ═══
+           *
+           * Review N01 asks for `p95 response time` as the standard spelling,
+           * and these three deliberately fall short of it. MEASURED: at
+           * 1280x800 the six-across grid gives each tile 147px and the label
+           * box 113px, where "Mean response time" wraps to two lines (h=36
+           * against 18) and pushes that tile's value 18px below its five
+           * neighbours — the baseline defect the grid comment above records
+           * fixing once already. Every other width was clear (1440, 1024, 390).
+           *
+           * What the finding is actually about is DRIFT: one quantity spelled
+           * differently on each surface. These now match `StatisticsTable`'s
+           * columns and `SLA_METRIC_SCALARS`' own names exactly, so the tile,
+           * the table and the metric a gate is authored against are one word.
+           * That is a stronger standardisation than the review's phrasing, and
+           * it fits. The long form belongs in PROSE, where `ProjectRules`
+           * already writes it out in full.
+           *
+           * The `ms` unit beside each value is what says these are times.
+           *
+           * This comment rides with p95 rather than Mean now, because the
+           * target-layout order above put p95 first of the three and it
+           * explains all three. */
+          label="p95"
+          value={percentileValue(run, 'p95')}
+          unit={percentileUnit(run, 'p95')}
+          tone={slaTone(windowed === true ? undefined : assertions, 'p95')}
+          hint="estimate"
+          delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
+          data-testid="stat-p95"
         />
         <StatTile
           label="Error rate"
@@ -178,42 +229,24 @@ export default function RunStats({
           data-testid="stat-throughput"
         />
         <StatTile
-          /* ═══ "Mean", "p95", "p99" — THE TABLE'S OWN WORDS ═══
-           *
-           * Review N01 asks for `p95 response time` as the standard spelling,
-           * and these three deliberately fall short of it. MEASURED: at
-           * 1280x800 the six-across grid gives each tile 147px and the label
-           * box 113px, where "Mean response time" wraps to two lines (h=36
-           * against 18) and pushes that tile's value 18px below its five
-           * neighbours — the baseline defect the grid comment above records
-           * fixing once already. Every other width was clear (1440, 1024, 390).
-           *
-           * What the finding is actually about is DRIFT: one quantity spelled
-           * differently on each surface. These now match `StatisticsTable`'s
-           * columns and `SLA_METRIC_SCALARS`' own names exactly, so the tile,
-           * the table and the metric a gate is authored against are one word.
-           * That is a stronger standardisation than the review's phrasing, and
-           * it fits. The long form belongs in PROSE, where `ProjectRules`
-           * already writes it out in full.
-           *
-           * The `ms` unit beside each value is what says these are times. */
-          label="Mean"
-          value={formatMs(run.meanMs)}
-          unit="ms"
-          tone={slaTone(windowed === true ? undefined : assertions, 'mean')}
-          hint={`up to ${formatMs(run.maxMs)} ms`}
-          delta={deltaFor(run.meanMs, baseline?.meanMs, 'lower')}
-          data-testid="stat-mean-response"
+          label="Requests"
+          value={formatCount(run.count)}
+          tone={slaTone(windowed === true ? undefined : assertions, 'count')}
+          /* "successful / failed", not "OK / KO" — review N01. Those two are
+             Gatling's words, and nothing in this repo requires them: the PRD
+             binds QUANTITIES (count, ok/ko count, % KO, count/second…) and
+             both parity suites compare only numbers, never a label. The
+             statistics table keeps them where a reader may be diffing this
+             against Gatling's own report side by side; a totals tile is not
+             that surface. */
+          hint={`${formatCount(run.okCount)} successful, ${formatCount(run.koCount)} failed`}
+          delta={deltaFor(run.count, baseline?.count, 'neutral')}
+          data-testid="stat-total-requests"
         />
-        <StatTile
-          label="p95"
-          value={percentileValue(run, 'p95')}
-          unit={percentileUnit(run, 'p95')}
-          tone={slaTone(windowed === true ? undefined : assertions, 'p95')}
-          hint="estimate"
-          delta={deltaFor(percentileMs(run, 'p95'), percentileMs(baseline, 'p95'), 'lower')}
-          data-testid="stat-p95"
-        />
+        {/* p99 THEN Mean, which is the order the finding lists them in ("p99
+            and mean can follow"). The ascending Mean → p95 → p99 grouping was
+            already broken by promoting p95, so preserving it between these two
+            alone would buy nothing and cost agreement with the spec. */}
         <StatTile
           label="p99"
           value={percentileValue(run, 'p99')}
@@ -222,6 +255,15 @@ export default function RunStats({
           hint="estimate"
           delta={deltaFor(percentileMs(run, 'p99'), percentileMs(baseline, 'p99'), 'lower')}
           data-testid="stat-p99"
+        />
+        <StatTile
+          label="Mean"
+          value={formatMs(run.meanMs)}
+          unit="ms"
+          tone={slaTone(windowed === true ? undefined : assertions, 'mean')}
+          hint={`up to ${formatMs(run.maxMs)} ms`}
+          delta={deltaFor(run.meanMs, baseline?.meanMs, 'lower')}
+          data-testid="stat-mean-response"
         />
       </dl>
 

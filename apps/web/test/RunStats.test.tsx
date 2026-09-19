@@ -600,3 +600,50 @@ describe('RunStats', () => {
     expect(labels).toContain(named);
   });
 });
+
+/**
+ * THE 09-13 REVIEW'S TARGET LAYOUT, ITEM 3.
+ *
+ * "p95 response time, error rate, throughput, total requests; p99 and mean can
+ * follow at lower emphasis."
+ *
+ * NOTHING PINNED THE ORDER, which is how this row came to read Requests, Error
+ * rate, Requests/s, Mean, p95, p99 — the triage number fourth, behind a count
+ * and a mean — against a section of the review nobody had audited. Every other
+ * assertion in this file and in the e2e suite reaches these tiles by
+ * `data-testid`, and `run-tables.spec.ts`'s M01 bound checks that three of them
+ * sit inside the first 900px: a claim about POSITION, satisfied by any
+ * sequence.
+ */
+describe('RunStats — the tile reading order', () => {
+  const stats = reference.stats as StatsResponse;
+
+  /* Asserted as the WHOLE list with `toEqual`, not as "p95 comes first". A
+     containment or pairwise check passes against several other orderings, and
+     the property worth keeping is the reading order itself — the argument
+     `run-charts.spec.ts` already makes for asserting `CHART_IDS` as a list so
+     a reorder cannot pass silently. */
+  it('leads with p95, error rate, throughput and requests', () => {
+    renderStats(<RunStats stats={stats} />);
+    const labels = [
+      ...document.querySelectorAll('section[aria-label="Run totals"] dt'),
+    ].map((dt) => (dt.textContent ?? '').trim());
+    expect(labels).toEqual(['p95', 'Error rate', 'Requests/s', 'Requests', 'p99', 'Mean']);
+  });
+
+  /* The DOM order is the READING order only because these are grid items in
+     source order — no `order-*` utility anywhere in the row. A tile moved
+     visually by CSS while the markup stayed put would satisfy the case above
+     and mislead every sighted reader, and jsdom computes no layout at all, so
+     this reads the source rather than the screen.
+
+     Comments are stripped first. This file already records that trap twice —
+     a source-scanning assertion that matched the paragraph documenting the
+     defect instead of the product. */
+  it('orders them by markup, not by a css override', () => {
+    const here = readFileSync(fromRepo('apps/web/src/routes/RunStats.tsx'), 'utf8');
+    const code = here.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toMatch(/\border-\d/);
+    expect(code).not.toMatch(/\bflex-col-reverse\b/);
+  });
+});

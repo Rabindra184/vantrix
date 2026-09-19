@@ -138,8 +138,29 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
    * its totals near 854, still inside the second screen rather than the first.
    * Measured, both, rather than inferred; the case below is the one that seeds
    * provenance, and it asserts placement rather than height for that reason. */
-  await expect(page.getByTestId('stat-total-requests')).toBeVisible();
-  const totals = await topOf(page, '[data-testid="stat-total-requests"]');
+  /* ANCHORED ON THE FIRST TILE, ASKED OF THE DOM RATHER THAN NAMED.
+   *
+   * This measured `[data-testid="stat-total-requests"]`, which was the first
+   * tile when the bound was written and is the FOURTH since the 09-13
+   * review's target layout put p95 first. The claim above is about where the
+   * numbers START; naming one tile quietly made it a claim about the Requests
+   * tile's position, so a reorder that moved nothing a reader cares about —
+   * the section's top and its first row are unchanged — dropped Requests to
+   * the second row of the two-column grid and failed a bound with ten pixels
+   * of headroom.
+   *
+   * `dd[...]`, not `[data-testid^="stat-"]` alone: the empty-window branch
+   * names its own SECTION `stats-empty-window`, which that prefix also
+   * matches. The tiles' testids are on their `<dd>` values, which is also what
+   * the 802 measurement above was taken from, so this stays apples-to-apples
+   * with the history.
+   *
+   * This is `run-list.spec.ts`'s `.nth(3)` lesson one file over: derive the
+   * handle from the relationship the assertion is about, and it does not rot
+   * when the thing it names moves. */
+  const firstTile = 'section[aria-label="Run totals"] dd[data-testid^="stat-"]';
+  await expect(page.locator(firstTile).first()).toBeVisible();
+  const totals = await topOf(page, firstTile);
   expect(totals, 'the run’s own numbers start inside the first screen').toBeLessThan(812);
 });
 
