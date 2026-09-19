@@ -115,6 +115,73 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The compare-matrix-units branch added ONE unit file —
+`apps/web/test/CompareMatrix.test.tsx` (5) — from **153 / 1932** to
+**154 / 1937**. Integration is UNCHANGED (that file is a `.tsx`, which that
+config never runs) and **e2e stays 145**. It closes `review.md`'s copy row 7,
+which the entry below recorded as measured-and-open — and with it **that
+document's copy table is fully worked.**
+
+**BOTH CLAUSES WERE ONE MISTAKE MADE TWICE.** "Put unit in the table header;
+missing-data definition in help" — and the only statement of the UNIT and the
+only definition of the DASH both lived in one caption paragraph above the
+numbers, met on every visit by a reader who needed either of them once.
+
+**THE UNIT RIDES WITH THE COLUMN, AND THE REASON IS THE READER THIS TABLE IS
+HARDEST ON.** A cell's announced context IS its own column header, so
+`09-13 11:31 (ms)` gives a screen-reader user the unit with every value
+instead of asking them to carry a sentence from above the table. That is why
+it is repeated per run rather than stated once somewhere tidier: any single
+placement is a sentence again.
+
+**AND `compareUnit` ALREADY OWNED THE DECISION.** Its docstring says "for the
+axis and the tooltip"; this table draws the same numbers as both and was the
+caller that never reached for it. The mildest form of the one-caller-short
+shape this file keeps recording — nothing was wrong, one consumer just had
+its own answer, which here was no answer at all.
+
+**AND IT TOOK C06's SECOND HALF, WHICH `StatisticsTable` COULD NOT.** The
+table's accessible NAME was the whole paragraph, so a screen reader announced
+the dash definition before the first number, every visit — exactly what C06
+objects to. `TableFrame`'s docstring records that fixing it for the statistics
+table "changes what `getByRole('table', { name })` matches in six specs, so it
+is a separate change". Nothing finds THIS table by name — checked against
+`apps/web/test` and `apps/web/e2e` before changing it — so the short name went
+in beside the disclosure. **Whether a deferral applies is a property of the
+call site, not of the finding**: the same fix was cheap one table over.
+
+**THE COMPONENT HAD NO TEST FILE AT ALL.** `buildCompareMatrix.test.ts` covers
+the transform, which is pure and well pinned; nothing ever RENDERED the table,
+so neither half of row 7 could have been noticed by the suite. Third time this
+file records it: grep for components with no test file before looking for
+untested behaviour.
+
+**FOUR MUTATIONS, AND THE SECOND CASE IS THE ONE THAT EARNS ITS PLACE:**
+
+```
+  unit dropped from the headers     both unit cases fail
+  unit HARD-CODED to `(ms)`         only the metric-derived case fails
+  prose restored as the name        the accessible-name case fails
+  definition deleted, not moved     only the available-in-help case fails
+```
+
+A header pinned to `ms` satisfies "carries the unit" perfectly and mislabels
+every throughput and error-rate comparison in the product — the same class of
+defect review.md 1 found in the SLA actuals, one table over.
+
+**AND A BUNDLED CASE WAS SPLIT AFTER THE RED-VERIFY SHOWED WHY.** The name and
+the availability were asserted in one case, and mutations three and four both
+failed it on different assertions under one test name — coverage right, report
+wrong. review9 earned that lesson and this is its second outing. Apart, each
+mutation fails the case that describes it.
+
+**ONE COUPLING IS RECORDED RATHER THAN ENGINEERED AWAY.** Mutation three still
+trips the availability case as well, because making the prose the name puts
+that text on screen TWICE and `getByText` is singular. That is the trap this
+file already documents, and it is left: the duplication really is a defect —
+`TableFrame` `aria-hidden`s its visible copy precisely so the words are not
+announced twice — so a case that fails on it is failing honestly.
+
 The review-copy-rows branch added no unit FILE and 7 cases — 6 to
 `packages/contracts/test/rules.test.ts` and 1 to
 `apps/web/test/RunDecisionBand.test.tsx` — from a MEASURED floor of
