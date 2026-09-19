@@ -115,6 +115,111 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review-copy-rows branch added no unit FILE and 7 cases — 6 to
+`packages/contracts/test/rules.test.ts` and 1 to
+`apps/web/test/RunDecisionBand.test.tsx` — from a MEASURED floor of
+**153 / 1925** to **153 / 1932**. Integration moves with it (that
+`rules.test.ts` is a `.ts` file integration runs too) and **e2e stays 145**.
+
+**AND THE RECORDED FLOOR WAS STALE BY ONE, WHICH IS THE ONLY REASON THAT IS
+WRITTEN DOWN.** Two entries above say "unit stays 153 / 1924". The
+review20-one-primary entry says it added 1 case FROM a floor of 1924 — so it
+finished at 1925 — and the 09-13 re-audit entry, written afterwards, restated
+1924. Counted exactly (`git show origin/main:<file> | grep -c`), this branch
+adds 6 + 1 + 0 and no `it.each`, so 1925 + 7 = 1932 is the measured run and
+the arithmetic closes. **A floor one ABOVE prediction is as much a
+discrepancy as one below**, and chasing it is what found the drift.
+
+**review.md's TWENTY-TWO FINDINGS ARE CLOSED AND ITS COPY TABLE WAS NOT.**
+This is the 09-13 re-audit's lesson repeating exactly: the numbered findings
+had all been worked, and the document has FIVE sections after them. The
+`## Copy guidance` table holds eight rows, of which six are genuinely done
+(two survive only in past-tense comments), **one was open and is this
+branch**, and one was satisfied by something other than what it proposed.
+
+**ROW 1 WAS THE PRODUCT READING ITS OWN SCHEMA ALOUD, IN THE LARGEST TEXT ON
+THE PAGE.** `packages/sla`'s `describe` writes every assertion's message at
+evaluation time as `${metric} of ${target} (${family}) ≤ ${threshold} —
+actual ${raw}`, and the copy table names that exact string as the pattern to
+replace. Three surfaces rendered it:
+
+```
+  RunDecisionBand  failed.message          the page's largest sentence   FIXED
+  RunDetail        assertion.message       the gates table's LAST column FIXED
+  SlaBanner        rule.description        the live banner               left
+```
+
+The gates table is the one worth seeing: review.md 1, 3 and 15 corrected its
+first three cells to `Whole-run error rate` / `≤ 1%` / `2.23%`, and the
+fourth column sat beside them printing `error_rate of the run (response_time)
+≤ 0.01 — actual 0.0223463687150838`. One row, one fact, two vocabularies.
+
+**AND THE RECORD WAS WRONG ABOUT WHY THIS WAS DEFERRED.** The
+rule-language-human entry files this surface under "a data change with a
+migration question attached". That is true of the LIVE banner and only of it
+— `LiveSlaRuleSchema` carries `description: z.string()` and no structured
+fields, so re-rendering it changes what the worker streams and what every
+delta already recorded says. The BATCH path was never that:
+`AssertionSchema` has always carried scope, targetName, family, metric,
+comparator, threshold and actualValue BESIDE the message, so every assertion
+already stored renders correctly from fields that were always on the wire.
+**Check whether a deferral's reason covers every surface it was applied to**
+— one sentence in a note kept two renderable surfaces closed for four
+branches.
+
+**THE COMPARATOR PICKS THE NOUN, NOT JUST THE VERB.** A breached `lte` is
+over a LIMIT and a breached `gte` is under a MINIMUM, and calling both a
+limit would misdescribe every throughput and count rule in the product. The
+case that pins it asserts the absence of "limit" beside the presence of the
+sentence.
+
+**PRECISION FOLLOWS THE COLUMN BESIDE IT, NOT THE REVIEW'S EXAMPLE.**
+`fractionToPercent` rounds to 4dp, so the sentence reads `2.2346%` where the
+copy table illustrates `2.23%`. Agreeing with the Actual cell one column over
+— the same `formatSlaValue` — beats matching an example that elides its own
+digits with an ellipsis. Recorded as a deviation with its reason, which is
+the discipline the N01 tiles entry set.
+
+**A CASE THAT CANNOT REACH ITS BRANCH IS NOT A KEEPER, AND THIS FILE NOW
+RECORDS IT THREE TIMES.** A second band case was written to pin the
+`?? failed.message` fallback, seeding a lone `not_applicable` assertion. The
+band reads only the FAILED assertion, so with none present it fell through to
+`decisionDetail` and the case failed reporting "One or more SLA rules
+failed…". The fallback is unreachable there by construction —
+`AssertionSchema` documents `actualValue` as null for `not_applicable` alone
+— so the case was deleted and the reason written where it was. The null
+answer is pinned at the contracts level instead.
+
+**AND `decision-detail` APPEARED IN NO ASSERTION IN ITS OWN TEST FILE**,
+which is how the band's wording survived three corrections to the table
+underneath it. `RunDetail.live.test.tsx` DID pin the gates column — verbatim,
+to the retired string — so it went red and was re-pointed at the claim rather
+than the words, the benign form of the verbatim-prose trap this file records
+for the M18 caveat.
+
+**ROW 7 IS OPEN AND MEASURED, NOT MISSED.** "Every request… a dash means…" →
+"Put unit in the table header; missing-data definition in help". Both clauses
+still fail in `tables/CompareMatrix.tsx`: the caption reads `{metricLabel}
+for every request, in each selected run. A dash means the request did not run
+in that one — not that it took no time.`, so the UNIT lives only in prose
+while the column headers carry bare run labels, and the dash definition sits
+in the caption — which `TableFrame` also renders as the table's accessible
+NAME, so a screen-reader user meets it unavoidably. Left because putting a
+shared unit into per-run headers is a layout decision (repeat it per column,
+or hoist it) rather than a correction, and it wants its own branch.
+
+**ROW 8 IS SATISFIED BY SOMETHING OTHER THAN WHAT IT PROPOSED, DELIBERATELY.**
+The table asks for `Vs previous` → `Vs [identified baseline]`, i.e. the tile
+LABEL naming the run. Finding 4's own prose asks instead to "identify the
+actual baseline near the metric comparison, link to it, and surface material
+environment/build differences next to deltas" — which is exactly what
+`BaselineNote` does. And the label could not carry it: the N01 tiles entry
+measured `Mean response time` already wrapping in a 147px tile at 1280, so a
+timestamp there would break the baseline the grid's own comment records
+fixing twice. **The finding's prose outranks the table's shorthand**, the
+same way the 09-13 row 6 was answered by checking what the proposed
+replacement would PRODUCE.
+
 The orphan-sweep-force branch added no unit FILE, no unit case and no spec —
 its diff is one `infra/` script, its fixture and three CI steps — so unit
 stays **153 / 1924**, integration is unchanged and e2e stays **145**. It is
