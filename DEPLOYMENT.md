@@ -139,6 +139,7 @@ upserted by slug, and an admin that exists is reused untouched.
 | `PERFPORTAL_PUBLIC_URL` | `http://localhost:3000` | The origin a **browser** uses. Sign-in is refused as an invalid origin if this is wrong |
 | `PERFPORTAL_DOMAIN` | `localhost` | Hostname for the bundled Caddy, without the scheme |
 | `PERFPORTAL_ALLOW_INSECURE_COOKIES` | `false` | Serve sessions over plain HTTP. See below |
+| `PERFPORTAL_HTTP_PORT` | `3000` | Host port. Set to `80` to drop the port from the URL |
 
 #### Reaching it from another machine
 
@@ -163,6 +164,23 @@ hostname behaves exactly like an IP here; DNS changes nothing.
 PERFPORTAL_PUBLIC_URL=http://perfportal.internal:3000
 PERFPORTAL_ALLOW_INSECURE_COOKIES=true
 ```
+
+**On port 80**, so the URL carries no port at all:
+
+```bash
+PERFPORTAL_HTTP_PORT=80
+PERFPORTAL_PUBLIC_URL=http://perfportal.internal      # NOT :80 — see below
+PERFPORTAL_ALLOW_INSECURE_COOKIES=true
+```
+
+Write the public URL **without** `:80`. A browser omits a default port from
+the `Origin` header, so `http://perfportal.internal:80` never matches what
+arrives and sign-in is refused as an invalid origin.
+
+`PERFPORTAL_HTTP_PORT` moves the host side only — the container always listens
+on 3000 — and it conflicts with the `tls` profile, whose Caddy binds 80 and
+443. Behind TLS, leave it at the default: Caddy reaches the API on the compose
+network and it needs no published port.
 
 > **A session cookie sent in the clear can be read and replayed by anyone on
 > the path.** That is the whole cost, and it is worth it only on a network
