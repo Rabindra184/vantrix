@@ -115,6 +115,60 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+THE 09-13 REVIEW WAS RE-AUDITED END TO END AND IS CLOSED. No code, no floor
+movement — unit stays **153 / 1924**, integration is unchanged and e2e stays
+**145**. This entry exists for the reason the M12 one does: "nothing to do" and
+"nobody checked" look identical in a review ledger a month later, and this
+session found real work behind three verdicts nobody had re-derived.
+
+**ITS FINDINGS WERE ALREADY RECORDED CLOSED. WHAT NOBODY HAD RE-CHECKED WERE
+THE TWO SECTIONS AFTER THEM** — the "Copy changes to make immediately" table
+and the acceptance list in the final paragraph.
+
+**THE COPY TABLE: 11 OF 12 ROWS FULLY DONE, AND THE TWO THAT LOOK OPEN ARE
+COMMENTS.** Grepping the retired strings finds `No runner seen yet` and `No
+telemetry was recorded` still in the tree — both inside PAST-TENSE comments
+explaining what they replaced. That is the shape the review-copy-batch entry
+warns about, met from the other direction: **a grep that finds the old string
+is not evidence the defect survived, and a grep that misses it is not evidence
+the replacement arrived.** Only reading decides, both ways.
+
+**ROW 6 IS DELIBERATELY NOT "FIXED", AND THE REASON IS THE REVIEW'S OWN.** It
+proposes replacing "Every build posts its own report, so the trend line keeps
+itself up to date" with `Send reports from your CI pipeline.` The card reads
+"Send reports from your CI pipeline, so the trend line keeps itself up to
+date." — the proposal ADOPTED, with the trailing clause kept. Taking it
+literally would leave a card TITLED `Configure CI` whose description says
+"Send reports from your CI pipeline", which is a description restating its
+title — the thing this same document objects to two sections down ("remove …
+repeated titles where the content already establishes context"). The tail is
+the only part carrying information the title does not. **A prescribed
+replacement is a claim like any other; check what it would PRODUCE before
+applying it** — the N04 lesson from the other side.
+
+**THE ACCEPTANCE LIST IS GENUINELY COVERED, AND THE TWO LEAST LIKELY ITEMS WERE
+READ RATHER THAN GREPPED.** Fourteen items, every one with a spec — and a
+keyword match is not coverage, so the two that looked weakest were opened:
+
+```
+  invalid uploads    project-tests.spec.ts sets a .zip and an EMPTY .tgz through
+                     the real picker and asserts each refusal by its own wording,
+                     over uploadBundle.test.ts's 13 cases
+  permission-denied  run-detail.spec.ts opens another org's run and asserts the
+                     API's OWN 404 detail, id included; auth.spec.ts covers a
+                     signed-in user who belongs to no org
+```
+
+Both are real, and so are the rest: pagination at the `PAGE_SIZE + 1` boundary,
+live regions asserted across four specs, 200% zoom at four pages, three
+engines, six viewports.
+
+**NOTHING CHANGED, WHICH IS THE RESULT.** The alternative — trusting "all
+findings closed" — is what left `review.md` unworked for 116 commits while
+sitting untracked in the repo root, and what left that document's own copy
+table reading as done while five of its rows were open, because every retired
+phrase had a comment quoting it.
+
 The review20-one-primary branch added no unit FILE and 1 case to
 `apps/web/test/ProjectRules.test.tsx`, from a floor of **153 / 1924**.
 Integration is UNCHANGED and **e2e stays 145** — no spec changed. It takes the
