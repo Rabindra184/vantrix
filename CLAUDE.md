@@ -115,6 +115,84 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The orphan-sweep-force branch added no unit FILE, no unit case and no spec —
+its diff is one `infra/` script, its fixture and three CI steps — so unit
+stays **153 / 1924**, integration is unchanged and e2e stays **145**. It is
+guarded by CI's `test-residue` job, which no `pnpm` gate runs.
+
+**A CLEANUP SCRIPT REFUSED TO CLEAN THE ONE DATABASE THAT MOST NEEDED IT, FOR
+EVER.** `clean-orphaned-objects.mjs` declines `--delete` when the run table is
+empty — right, and the entry further down argues why. What nobody had noticed
+is that **the refusal is not time-based**: a dev database emptied on purpose
+never acquires a run, so the sweep never becomes available. Measured after a
+deliberate residue sweep this session: **80,247 objects / 63.2 MB**, every one
+genuinely orphaned, permanently unreachable by the tool written to remove it.
+
+**`--force` LIFTS ONE CHECK, AND THE AGE GUARD IS DELIBERATELY NOT IT.** The
+two guards answer different questions, and only one of them is answerable from
+outside the process:
+
+```
+  age guard        might this object belong to a run that has not
+                   recorded its row yet?                        NOT overridable
+  empty-table      did this keep-list come from the database
+                   I meant?                                     the operator knows
+```
+
+So a `--force` that also skipped the age guard would delete an in-flight run's
+chunks on a live instance, and being sure of your `DATABASE_URL` does nothing
+to make that safe. **The step that pins the separation is the one worth
+keeping** — without it, a later tidy-up collapsing the two flags passes every
+other assertion.
+
+**AND BOTH MESSAGES NAME THE DATABASE NOW, HOST AND PATH ONLY.** The refusal
+exists BECAUSE `DATABASE_URL` is the likely culprit, so `(currently set)` was
+the least useful thing it could report — and `--force` moves that from
+something the script catches to something the operator has to be right about.
+`${u.username}:${u.password}@` must never reach a CI log, so it is
+`${u.host}${u.pathname}` and a `try`/`catch` for an unparseable URL.
+
+**FOUR MUTATIONS, FOUR DISTINCT FAILURES**, the property this file keeps asking
+for:
+
+```
+  --force parsed but never consulted   assert-forced : the bundle survived
+  --force lifts the age guard          assert-guard  : deleted inside the guard
+  --force stops honouring bundle_key   assert        : a live bundle went too
+  the refusal removed entirely         the existing refusal step
+```
+
+The pair is bidirectional the way `buckets-fixture.mjs` is — with `--force` all
+four objects go, without it none do — so this half needs no
+deliberately-broken script.
+
+**A RED-VERIFY THAT PASSES MEANS YOUR MUTATION DID NOT DO WHAT YOU THOUGHT.**
+The first attempt at the age-guard mutation set `cutoff` to `new Date(0)`,
+reasoning that an epoch cutoff disables the guard. It does the opposite: the
+test is `LastModified > cutoff`, so an epoch cutoff makes EVERYTHING "too new"
+and nothing is ever deleted. The step passed, and for a moment that read as
+"the guard survives the mutation" rather than "the mutation tightened the
+guard". The tell was in the output — `too new 4` where the mutation was
+supposed to produce `too new 0`. **This file already records reading WHICH
+assertion failed; the mirror is reading which NUMBER moved when nothing
+failed.** `new Date(Date.now() + 86_400_000)` is the mutation that lifts it.
+
+**AND THE VERIFICATION RAN AGAINST A SCRATCH BUCKET, WHICH IS WHY THE REAL
+RESIDUE IS STILL THERE.** Both the script and the fixture honour `S3_BUCKET`,
+so the whole local replay of the CI steps ran in `pp-force-verify` and
+`perfportal` stayed at its 80,247 objects throughout. **Testing the flag and
+using the flag are two different jobs**, and conflating them would have swept
+63 MB as a side effect of a test run rather than as a decision.
+
+**WHAT WAS AND WAS NOT RUN, BECAUSE `infra/` IS IN NO `pnpm` GATE.**
+`typecheck` and `lint` are green by their own exit codes; `test:unit`,
+`test:integration` and `test:e2e` cannot see any file in this diff and are not
+claimed. The machine was also at **16,392 MB of 17,408 MB swap with ~5,076 free
+pages**, which is worse than the 8,973-page case this file records producing
+eight spurious failures — so a suite run would have been unreadable either way.
+CI's `test-residue` job is the arbiter, and its four steps were replayed
+locally step-for-step first.
+
 THE 09-13 REVIEW WAS RE-AUDITED END TO END AND IS CLOSED. No code, no floor
 movement — unit stays **153 / 1924**, integration is unchanged and e2e stays
 **145**. This entry exists for the reason the M12 one does: "nothing to do" and

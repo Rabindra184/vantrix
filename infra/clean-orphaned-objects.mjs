@@ -41,11 +41,22 @@
 // --min-age-hours (default 24) is ever deleted, which is far longer than any
 // ingest or live stream takes to record its row.
 //
+// --force DOES NOT LIFT THAT, AND THE SEPARATION IS THE WHOLE POINT. The two
+// guards answer different questions: the age guard asks "might this object
+// belong to a run that has not recorded its row yet", and the empty-table
+// refusal asks "is this keep-list computed from the database I meant". Only
+// the second is something an operator can be sure about from outside, so only
+// the second has an override. A --force that also skipped the age guard would
+// delete an in-flight run's chunks on a live instance, which is exactly the
+// failure the age guard exists to prevent -- and nothing about knowing your
+// DATABASE_URL makes that safe. ci.yml's `test-residue` job pins this.
+//
 // Usage, from the repository root:
 //
 //   node infra/clean-orphaned-objects.mjs                  # dry run
 //   node infra/clean-orphaned-objects.mjs --delete
 //   node infra/clean-orphaned-objects.mjs --delete --min-age-hours 72
+//   node infra/clean-orphaned-objects.mjs --delete --force  # empty run table
 //
 // Reads DATABASE_URL, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET.
 
@@ -68,6 +79,7 @@ const { Pool } = requirePersistence('pg');
 
 const argv = process.argv.slice(2);
 const DELETE = argv.includes('--delete');
+const FORCE = argv.includes('--force');
 const BUCKET = process.env.S3_BUCKET ?? 'perfportal';
 
 const ageIdx = argv.indexOf('--min-age-hours');
@@ -118,19 +130,54 @@ try {
   await pool.end();
 }
 
+// WHICH DATABASE ANSWERED, WITHOUT ITS CREDENTIALS. The refusal below exists
+// because the likeliest cause of an empty run table is a mis-pointed
+// DATABASE_URL, and --force turns that from something the script can catch
+// into something the operator has to be right about -- so both messages have
+// to name the database rather than say "set". Host and path only: this prints
+// into CI logs, and `${u.username}:${u.password}@` must never reach one.
+const dbLabel = (() => {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) return 'DATABASE_URL UNSET';
+  try {
+    const u = new URL(raw);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return 'DATABASE_URL unparseable';
+  }
+})();
+
 // A database with no runs at all is far more likely to be the wrong
 // DATABASE_URL, or one a test run has just truncated, than a real instance
 // that has never ingested anything -- and in that state every rule below says
 // "delete everything". Refuse rather than compute the right answer to the
 // wrong question.
-if (runIds.size === 0 && DELETE) {
+//
+// --force is for the case that refusal cannot distinguish: a dev database
+// somebody has just emptied on purpose, whose bucket is then entirely
+// orphaned and which this script would otherwise decline to clean for ever.
+// It lifts THIS check and nothing else -- see the age-guard note at the top.
+if (runIds.size === 0 && DELETE && !FORCE) {
   console.error(
     `refusing to delete: the run table is empty, so every object in ` +
       `${BUCKET} would be classified as orphaned. Check DATABASE_URL ` +
-      `(currently ${process.env.DATABASE_URL ? 'set' : 'UNSET'}). Re-run ` +
-      `without --delete to see the classification.`,
+      `(currently ${dbLabel}). Re-run without --delete to see the ` +
+      `classification, or pass --force if that database is empty on purpose.`,
   );
   process.exit(1);
+}
+
+if (DELETE && FORCE) {
+  // Loud, and specific about what it is overriding: a --force that printed
+  // nothing would make the two runs indistinguishable in a CI log or a
+  // scrollback, which is precisely when somebody needs to see it.
+  console.warn(
+    runIds.size === 0
+      ? `--force: the run table at ${dbLabel} is empty, so EVERY object in ` +
+          `${BUCKET} outside the age guard is treated as orphaned.`
+      : `--force: no effect here — ${dbLabel} reports ${runIds.size} run(s), ` +
+          `so the keep-list is the ordinary one.`,
+  );
 }
 
 console.log(
