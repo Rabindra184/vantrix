@@ -115,6 +115,82 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The target-layout-tile-order branch added no unit FILE and 2 cases to
+`apps/web/test/RunStats.test.tsx`. Cut from **153 / 1932**, it measured
+153 / 1934 on its own; compare-matrix-units merged FIRST and took `main` to
+154 / 1937, so after merging `main` back in this branch measures
+**154 / 1939**. Integration is UNCHANGED (that file is a `.tsx`) and **e2e
+stays 145**. Third floor reconciliation in this run of branches — the
+arithmetic (2 cases onto whatever it sits on) is what survives.
+
+**THE 09-13 REVIEW HAS A SECTION NOBODY HAD AUDITED, AND IT IS NOT THE ONE THE
+RE-AUDIT CLOSED.** That entry further down records the copy table (11 of 12
+rows) and the acceptance list (14 items) and says the document is closed. It
+never enumerated `## Target layout for a performance engineer`, which sits
+between them — six numbered items specifying the run overview top to bottom,
+plus a line per other page. **Five of the six check out. Item 3 did not.**
+
+**THE TRIAGE NUMBER SAT FOURTH.** The finding: "p95 response time, error rate,
+throughput, total requests; p99 and mean can follow at lower emphasis." The
+row read **Requests, Error rate, Requests/s, Mean, p95, p99** — so a reader
+arriving to ask whether the latency was acceptable met a count and a mean
+first.
+
+**NOTHING ARGUED THE ORDER AND NOTHING PINNED IT, WHICH IS THE SAME FACT
+TWICE.** `RunStats.tsx` argues every other layout decision in a comment —
+the six-across threshold, the container query, the three short labels — and
+had no comment about sequence at all: it was the order the tiles happened to
+be written in. And no assertion could see it. Every unit case and every spec
+reaches these by `data-testid`, and `run-tables.spec.ts`'s M01 bound checks
+that three of them sit inside the first 900px — **a claim about POSITION,
+satisfied by any sequence.** The new case asserts the whole list with
+`toEqual`, the shape `run-charts.spec.ts` already uses for `CHART_IDS` so a
+reorder cannot pass silently.
+
+**WHAT IT COSTS IS STATED RATHER THAN GLOSSED.** Mean/p95/p99 used to sit
+adjacent in ascending order, which is a real and coherent grouping, and
+promoting p95 breaks it. The review's reading wins because a reader arrives
+asking whether the latency is acceptable, not to be walked up the
+distribution — and the three still share one vocabulary with
+`StatisticsTable`'s columns, which is what N01 was about.
+
+**AND THE EMPHASIS ARM IS DECLINED, WITH THE COMPONENT'S OWN REASONS.** The
+finding says p99 and mean "CAN follow at lower emphasis" — permission, not
+requirement — and in `StatTile` both spellings of emphasis are already spoken
+for. **Colour is reserved for SLA `tone`**, which that file's docstring argues
+at length ("colouring a number red is a JUDGEMENT, and the platform has only
+made one where a rule exists"), so a muted value would either collide with
+that vocabulary or invent a second one. **Size is worse**: `mt-auto` on the
+hint exists specifically to keep six values on a common baseline, and the grid
+comment above it records that defect being fixed twice. Position is the
+emphasis this grid has.
+
+**NO e2e CHANGE, AND THE REASON IS GEOMETRY RATHER THAN LUCK.** At 1440 the
+grid is `@5xl:grid-cols-6`, so all six tiles share ONE row and their sequence
+within it changes no vertical position — the M01 bound is untouched. On a
+phone the two-column grid moves p95 from the third row to the first, i.e.
+UP, so every `toBeLessThan` bound in `mobile.spec.ts` passes more easily.
+Checked before concluding it, because a reorder that pushed p95 DOWN would
+have broken the one bound this file spent three branches earning.
+
+**A SECOND GUARD FOR THE HALF jsdom CANNOT SEE.** DOM order is the reading
+order only while these are grid items in source order; an `order-*` utility
+would move a tile visually with the markup untouched, satisfying the list
+assertion while misleading every sighted reader. That case scans the source
+with comments STRIPPED — the trap this file already records twice, where a
+source-scanning assertion matched the paragraph documenting the defect.
+
+**AND TWO PROCESS SLIPS, BOTH CAUGHT BY GUARDS RATHER THAN BY CARE.** The
+first red-verify mutation was malformed — a perl substitution injected
+`order-last` as a bare token before `label="p95"`, which is a syntax error and
+not a mutation of anything — and was spotted by checking the replacement
+before running the suite, not by reading the result. Then an `Edit` anchor was
+built from `sed 's/^/  /'` output and failed to match on the two added spaces:
+**the display-filter trap, for the third time in this session**, and the good
+failure mode — the edit refused rather than corrupting the file. Read the
+target with the Read tool, never from anything that has been through a
+formatter.
+
 The compare-matrix-units branch added ONE unit file —
 `apps/web/test/CompareMatrix.test.tsx` (5) — from **153 / 1932** to
 **154 / 1937**. Integration is UNCHANGED (that file is a `.tsx`, which that
