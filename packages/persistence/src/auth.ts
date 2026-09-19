@@ -37,11 +37,36 @@ import { createPrisma } from './client.js';
  * production-mode build against `http://localhost:3000`, and a deployment can
  * perfectly well run with NODE_ENV unset.
  */
-export function cookiesAreSecure(baseUrl: string): boolean {
+export function cookiesAreSecure(baseUrl: string, allowInsecure = false): boolean {
   let host: string;
   try {
     const url = new URL(baseUrl);
     if (url.protocol === 'https:') return true;
+    /* ═══ THE OPERATOR'S OPT-OUT, AND WHY IT EXISTS ═══
+     *
+     * Everything below this line fails closed, deliberately, and that is the
+     * right default. It is also stricter than Grafana, Jenkins, Nexus or
+     * GitLab, every one of which will serve a session over plain HTTP on an
+     * internal network — so the behaviour a deployer expects from "it is an
+     * HTTP app, I can reach it by hostname" is the behaviour they get
+     * everywhere except here.
+     *
+     * What they actually met was the worst shape a refusal can take: the page
+     * loads, credentials are accepted, sign-in answers 200, and then every
+     * request says signed out, because the browser discarded a `Secure`
+     * cookie it was handed over HTTP. Nothing on screen says why, and no
+     * amount of configuration fixed it.
+     *
+     * So there is a switch now. It is OFF by default — `allowInsecure`
+     * defaults to false and every existing caller keeps its behaviour to the
+     * byte — and turning it on is a decision an operator makes in one place,
+     * about their own network, with `DEPLOYMENT.md` spelling out the cost:
+     * a session cookie sent in the clear is readable by anyone on the path,
+     * so this belongs on a trusted LAN and nowhere else.
+     *
+     * HTTPS ignores it entirely — the check above returns before this — so
+     * the flag can never downgrade a TLS deployment, even set by mistake. */
+    if (allowInsecure) return false;
     host = url.hostname;
   } catch {
     // An unparseable baseUrl is a misconfiguration, and the safe reading of a
@@ -74,7 +99,16 @@ export function cookiesAreSecure(baseUrl: string): boolean {
  * tenancy source of truth (spec §3). Two org models would give two answers to
  * "what may this caller see?", and that disagreement is a tenancy leak.
  */
-export function createAuth(opts: { databaseUrl: string; baseUrl: string }) {
+export function createAuth(opts: {
+  databaseUrl: string;
+  baseUrl: string;
+  /**
+   * Serve sessions over plain HTTP to a non-loopback host. OFF unless the
+   * operator says otherwise, ignored entirely when `baseUrl` is HTTPS, and
+   * described at `cookiesAreSecure`.
+   */
+  allowInsecureCookies?: boolean;
+}) {
   return betterAuth({
     basePath: '/auth',
     baseURL: opts.baseUrl,
@@ -86,7 +120,7 @@ export function createAuth(opts: { databaseUrl: string; baseUrl: string }) {
       defaultCookieAttributes: {
         httpOnly: true,
         sameSite: 'strict',
-        secure: cookiesAreSecure(opts.baseUrl),
+        secure: cookiesAreSecure(opts.baseUrl, opts.allowInsecureCookies ?? false),
       },
     },
   });

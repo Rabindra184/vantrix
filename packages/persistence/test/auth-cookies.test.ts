@@ -70,4 +70,44 @@ describe('cookiesAreSecure', () => {
     expect(cookiesAreSecure('not a url')).toBe(true);
     expect(cookiesAreSecure('')).toBe(true);
   });
+
+  /**
+   * ═══ THE OPERATOR'S OPT-OUT ═══
+   *
+   * Every case above is the DEFAULT and none of them moved: the parameter
+   * defaults to false, so a caller that does not know about it behaves
+   * exactly as before. These four are the switch itself, and the last two
+   * matter more than the first two.
+   */
+  describe('allowInsecure', () => {
+    it.each([
+      'http://perf.example.com',
+      'http://perf.internal:3000',
+      'http://192.168.1.10:3000',
+    ])('lets a plain-HTTP deployment hold a session when asked: %s', (url) => {
+      expect(cookiesAreSecure(url, true)).toBe(false);
+      // …and that it is OPT-IN is the half worth pinning, because a default
+      // that flipped would be invisible: everything would simply keep working.
+      expect(cookiesAreSecure(url)).toBe(true);
+    });
+
+    /* IT CANNOT DOWNGRADE TLS, EVEN SET BY MISTAKE. `cookiesAreSecure`
+       returns on the scheme before the flag is consulted, so an operator who
+       turns this on for an internal host and later puts the same compose file
+       behind HTTPS does not silently keep sending cookies in the clear. This
+       is the case that makes the flag safe to ship at all. */
+    it.each([
+      'https://perf.example.com',
+      'https://localhost:3000',
+    ])('is ignored over HTTPS, where there is nothing to opt out of: %s', (url) => {
+      expect(cookiesAreSecure(url, true)).toBe(true);
+    });
+
+    /* An unparseable base URL stays strict either way: the flag is a
+       statement about a network, not permission to guess. */
+    it('does not rescue a misconfigured base URL', () => {
+      expect(cookiesAreSecure('not a url', true)).toBe(true);
+      expect(cookiesAreSecure('', true)).toBe(true);
+    });
+  });
 });

@@ -138,6 +138,61 @@ upserted by slug, and an admin that exists is reused untouched.
 |---|---|---|
 | `PERFPORTAL_PUBLIC_URL` | `http://localhost:3000` | The origin a **browser** uses. Sign-in is refused as an invalid origin if this is wrong |
 | `PERFPORTAL_DOMAIN` | `localhost` | Hostname for the bundled Caddy, without the scheme |
+| `PERFPORTAL_ALLOW_INSECURE_COOKIES` | `false` | Serve sessions over plain HTTP. See below |
+| `PERFPORTAL_HTTP_PORT` | `3000` | Host port. Set to `80` to drop the port from the URL |
+
+#### Reaching it from another machine
+
+Two things have to agree, and the second one surprises people.
+
+**1. `PERFPORTAL_PUBLIC_URL` must be exactly what the browser's address bar
+shows** — scheme, host and port. It is what the CSRF origin check compares
+against, so a mismatch refuses sign-in as an invalid origin.
+
+**2. Over plain HTTP, sessions need `PERFPORTAL_ALLOW_INSECURE_COOKIES=true`.**
+The session cookie is `Secure` by default, and a browser will not store a
+`Secure` cookie that arrived over HTTP — except from `localhost`, `127.0.0.1`
+and `[::1]`, which browsers treat as trustworthy origins.
+
+So a deployment at `http://perfportal.internal:3000` with the default settings
+does something worse than fail: the page loads, credentials are accepted,
+sign-in returns 200, and every page after that says you are signed out. A
+hostname behaves exactly like an IP here; DNS changes nothing.
+
+```bash
+# Plain HTTP on a LAN you trust
+PERFPORTAL_PUBLIC_URL=http://perfportal.internal:3000
+PERFPORTAL_ALLOW_INSECURE_COOKIES=true
+```
+
+**On port 80**, so the URL carries no port at all:
+
+```bash
+PERFPORTAL_HTTP_PORT=80
+PERFPORTAL_PUBLIC_URL=http://perfportal.internal      # NOT :80 — see below
+PERFPORTAL_ALLOW_INSECURE_COOKIES=true
+```
+
+Write the public URL **without** `:80`. A browser omits a default port from
+the `Origin` header, so `http://perfportal.internal:80` never matches what
+arrives and sign-in is refused as an invalid origin.
+
+`PERFPORTAL_HTTP_PORT` moves the host side only — the container always listens
+on 3000 — and it conflicts with the `tls` profile, whose Caddy binds 80 and
+443. Behind TLS, leave it at the default: Caddy reaches the API on the compose
+network and it needs no published port.
+
+> **A session cookie sent in the clear can be read and replayed by anyone on
+> the path.** That is the whole cost, and it is worth it only on a network
+> where you already trust every host. For anything wider, use the `tls`
+> profile — it is no more work and none of the exposure. The flag is ignored
+> when `PERFPORTAL_PUBLIC_URL` is `https://`, so it cannot downgrade a TLS
+> deployment by being left switched on.
+
+**API tokens are unaffected.** CI posting runs, the Gatling plugin and the
+on-prem runner all authenticate with `Authorization: Bearer …`, which touches
+neither cookies nor the origin check. If only machines need to reach the
+instance, plain HTTP over a DNS name works with no flag at all.
 
 ### Optional: the on-prem runner
 

@@ -115,6 +115,20 @@ services:
       # fails every single /auth request. Generate one with
       # `openssl rand -base64 32`.
       BETTER_AUTH_SECRET: ${PERFPORTAL_AUTH_SECRET:-}
+      # ═══ PLAIN HTTP ON A TRUSTED NETWORK ═══
+      #
+      # The session cookie is `Secure` unless the public URL is loopback, so a
+      # deployment reached at http://perfportal.internal:3000 serves a login
+      # page, accepts correct credentials, answers 200 — and the browser then
+      # discards the cookie, leaving every later request signed out with
+      # nothing on screen saying why.
+      #
+      # `true` here serves sessions over plain HTTP instead. It is the setting
+      # Grafana, Jenkins and Nexus all have; it belongs on a LAN you trust,
+      # because a cookie sent in the clear is readable by anyone on the path.
+      # It is IGNORED when PERFPORTAL_PUBLIC_URL is https, so it cannot
+      # downgrade a TLS deployment left over from an earlier config.
+      ALLOW_INSECURE_COOKIES: ${PERFPORTAL_ALLOW_INSECURE_COOKIES:-false}
       RUNNER_ARTIFACT_DIR: /var/lib/perfportal/runner-artifacts
       RUNNER_WORK_DIR: /var/lib/perfportal/runner-work
       RUNNER_LOG_DIR: /var/log/perfportal/runner
@@ -177,7 +191,23 @@ services:
       context: ..
       dockerfile: infra/Dockerfile
     environment: *app_env
-    ports: ['3000:3000']
+    # ═══ THE HOST PORT, SO PORT 80 IS A SETTING AND NOT A FILE EDIT ═══
+    #
+    # Only the LEFT side moves. The container always listens on 3000, so
+    # nothing inside the image, and nothing in `BETTER_AUTH_URL`'s default,
+    # has to know about this.
+    #
+    # Set it to 80 and the instance is reachable at `http://host` with no
+    # port in the URL — in which case PERFPORTAL_PUBLIC_URL must be written
+    # WITHOUT `:80`, because a browser omits a default port from the `Origin`
+    # header and `http://host:80` would never match what arrives.
+    #
+    # NOT 80 IF YOU ALSO RUN THE `tls` PROFILE: the caddy service binds 80 and
+    # 443 to answer the ACME challenge and redirect to HTTPS, and two
+    # containers cannot publish the same host port. Behind TLS the API does
+    # not need a published port at all — Caddy reaches it on the compose
+    # network — so leave this at its default there.
+    ports: ['${PERFPORTAL_HTTP_PORT:-3000}:3000']
     volumes:
       - runner-artifacts:/var/lib/perfportal/runner-artifacts
       - runner-logs:/var/log/perfportal/runner
