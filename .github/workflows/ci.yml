@@ -455,6 +455,93 @@ jobs:
           fi
           echo "assertion correctly rejected the broken script"
 
+      # `bootstrap` is `node dist/scripts/bootstrap.js`, and this job has never
+      # built anything — it installs and migrates, because everything it ran
+      # until now (`orphans-fixture.mjs`, `buckets-fixture.mjs`) talks to `pg`
+      # and the S3 SDK directly and needs no built workspace at all.
+      #
+      # THIS WAS `npx tsc -b packages/persistence` FIRST, AND THAT WAS A CLAIM
+      # ABOUT MY MACHINE. It succeeded locally because the workspace was
+      # already built from earlier work; on a clean runner it failed twelve
+      # ways at once — `Cannot find module '@perfportal/core'` and
+      # `'@perfportal/statistics'`, because workspace packages resolve through
+      # node_modules symlinks to a `dist` that only a full build produces, and
+      # `has no exported member 'PrismaClient'`, because nothing had run
+      # `prisma generate`. Same shape as the entry CLAUDE.md records for the
+      # integration suite reading `dist`: a cross-package failure is a BUILD
+      # claim before it is a code claim, and the inverse holds too — a
+      # cross-package SUCCESS on a dirty tree proves nothing about a clean one.
+      - run: pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm build
+
+      # ═══ BOOTSTRAP RUNS ON EVERY `compose up`, SO IT HAS TO SURVIVE ONE ═══
+      #
+      # `docker-compose.yml`'s bootstrap service is what makes a fresh
+      # deployment sign-in-able, and it re-runs on every `up`. The first
+      # version of that was NOT idempotent: the second run died on `Unique
+      # constraint failed on the fields: (user_id, org_id)`, because the
+      # re-membership call was a plain `create`. An idempotency fix that was
+      # not idempotent — found by running it twice by hand, which is exactly
+      # the thing a human stops doing once it works once.
+      #
+      # The credential fingerprint is the half that matters most. Bootstrap
+      # must never re-password an account that exists, or a published default
+      # would come back on the next `up` for every operator who had changed
+      # it. Asserted as md5 of the stored hash, and asserted NON-EMPTY first:
+      # the hand-run version of this check joined on `user_id` where the
+      # column is `"userId"`, so it compared two empty strings and passed
+      # against nothing.
+      - name: Bootstrap is idempotent and never re-passwords an account
+        env:
+          PERFPORTAL_ORG_SLUG: ci-org
+          PERFPORTAL_PROJECT_SLUG: ci-project
+          PERFPORTAL_ADMIN_EMAIL: ci-admin@perfportal.local
+        run: |
+          FP() { $PSQL -At -c "select md5(a.password) from account a join \"user\" u on u.id=a.\"userId\" where u.email='ci-admin@perfportal.local';"; }
+
+          pnpm --filter @perfportal/persistence run bootstrap > /tmp/b1.txt 2>&1
+          grep -q 'PUBLISHED DEFAULT' /tmp/b1.txt || {
+            echo "::error::seeding the default password printed no warning"; exit 1; }
+          before="$(FP)"
+          test -n "$before" || { echo "::error::no credential stored — the fingerprint check would be vacuous"; exit 1; }
+
+          pnpm --filter @perfportal/persistence run bootstrap > /tmp/b2.txt 2>&1 || {
+            echo "::error::the second run failed; bootstrap is not idempotent"; cat /tmp/b2.txt; exit 1; }
+          grep -q 'already present, left untouched' /tmp/b2.txt || {
+            echo "::error::the second run did not report reusing the account"; exit 1; }
+
+          after="$(FP)"
+          test "$before" = "$after" || {
+            echo "::error::the second run CHANGED the stored credential"; exit 1; }
+
+          # SCOPED TO THIS ORG. Counting the whole table asks "how many
+          # memberships exist", which is not the claim — the residue steps
+          # above seed their own orgs and members and leave them behind, so
+          # the global count was 3 and this failed on a bootstrap that had
+          # behaved perfectly. Same shape as the unscoped `getByRole('alert')`
+          # this repo already records: a global query stops meaning what it
+          # did the moment something else appears beside it.
+          members="$($PSQL -At -c "select count(*) from org_member m join org o on o.id = m.org_id where o.slug = 'ci-org';")"
+          test "$members" = "1" || {
+            echo "::error::expected exactly 1 membership in ci-org, saw $members"; exit 1; }
+          echo "idempotent: account reused, credential untouched, no duplicate membership"
+
+      # ...and an operator who chooses a password never gets the published one.
+      - name: A chosen admin password is used, and warns about nothing
+        env:
+          PERFPORTAL_ORG_SLUG: ci-org-2
+          PERFPORTAL_PROJECT_SLUG: ci-project-2
+          PERFPORTAL_ADMIN_EMAIL: chosen@perfportal.local
+          PERFPORTAL_ADMIN_PASSWORD: a-password-the-operator-chose
+        run: |
+          pnpm --filter @perfportal/persistence run bootstrap > /tmp/b3.txt 2>&1
+          grep -q 'a-password-the-operator-chose' /tmp/b3.txt || {
+            echo "::error::the chosen password was not used"; exit 1; }
+          if grep -q 'PUBLISHED DEFAULT' /tmp/b3.txt; then
+            echo "::error::warned about a default that was never used"; exit 1
+          fi
+          echo "chosen password honoured, no default warning"
+
       # THE OBJECT-STORE HALF. `packages/storage`'s integration tests leave a
       # `test-<uuid>` BUCKET behind apiece, and nothing has ever removed them:
       # `test:integration` truncates the database on setup and never touches

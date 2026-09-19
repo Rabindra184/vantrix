@@ -181,9 +181,25 @@ Safari**, and the WebKit end-to-end project cannot get past the login form.
 
 ## Deploying it
 
-`infra/docker-compose.yml`'s `onprem` profile builds and runs the whole
-platform on one node. Three things about it are not optional, and each one
-fails in a way that does not name itself:
+> **[→ Full deployment guide](DEPLOYMENT.md)** — requirements, quick start,
+> first sign-in, configuration reference, TLS, upgrades and troubleshooting.
+
+```bash
+cp infra/.env.example infra/.env     # then set the four required values
+docker compose -f infra/docker-compose.yml --profile onprem up -d --build
+```
+
+That brings up the platform AND creates an org, a project, an API token and an
+admin account, so <http://localhost:3000> is signed-in-able immediately:
+`admin@perfportal.local` / `perfportal`.
+
+**Change that password, or set `PERFPORTAL_ADMIN_PASSWORD` before the first
+`up`.** It is published in this repository, which makes it a default
+credential — the class of weakness automated scanners exploit fastest. It is
+only ever seeded, never re-applied, so changing it is permanent.
+
+The rest of this section is the *why*: three things that are not optional, and
+each one fails in a way that does not name itself.
 
 **`PERFPORTAL_AUTH_SECRET` is required.** It becomes `BETTER_AUTH_SECRET`,
 which signs every session cookie. Better Auth refuses to run on its built-in
