@@ -12,4 +12,8 @@ import { loadConfig } from '../config.js';
  * moved here — the shape did not.
  */
 const config = loadConfig();
-export const auth = createAuth({ databaseUrl: config.databaseUrl, baseUrl: config.betterAuthUrl });
+export const auth = createAuth({
+  databaseUrl: config.databaseUrl,
+  baseUrl: config.betterAuthUrl,
+  allowInsecureCookies: config.allowInsecureCookies,
+});

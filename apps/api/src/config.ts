@@ -36,6 +36,8 @@ export interface AppConfig {
    */
   maxStreamChunkBytes: number;
   betterAuthUrl: string;
+  /** See `cookiesAreSecure` — off unless `ALLOW_INSECURE_COOKIES=true`. */
+  allowInsecureCookies: boolean;
 }
 
 /**
@@ -127,5 +129,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     // check) from this — see better-auth.instance.ts. Set it to the public
     // origin in any real deployment.
     betterAuthUrl: env.BETTER_AUTH_URL ?? `http://localhost:${Number(env.PORT ?? 3000)}`,
+    /* Lets a plain-HTTP deployment reached by hostname or IP hold a session.
+     * Off unless explicitly enabled, and it cannot downgrade an HTTPS
+     * deployment — `cookiesAreSecure` returns on the scheme before it is
+     * consulted. What it costs is described there and in DEPLOYMENT.md.
+     *
+     * `=== 'true'`, not truthiness: `ALLOW_INSECURE_COOKIES=false` must not
+     * switch the thing ON, and every non-empty string is truthy. That is the
+     * shape of a setting nobody notices is inverted until sessions are
+     * already crossing the network in the clear. */
+    allowInsecureCookies: env.ALLOW_INSECURE_COOKIES === 'true',
   };
 }
