@@ -542,6 +542,30 @@ jobs:
           fi
           echo "chosen password honoured, no default warning"
 
+      # The default is published in THREE places — DEPLOYMENT.md, the README
+      # and .env.example — and a guide that names a password the product no
+      # longer sets is worse than one that says nothing: the reader tries it,
+      # it fails, and they have no way to tell whether the deployment broke or
+      # the document lied. This repo has paid for that shape twice already
+      # (the `Cnt/s` hint naming a deleted label, "Mint one under Access"
+      # naming a renamed page), so the value is read from the SOURCE and the
+      # documents are required to carry it.
+      #
+      # Extracted non-empty first: a regex that stopped matching would make
+      # `grep -qF ""` succeed against every file and the guard would pass
+      # while checking nothing.
+      - name: The documented default password is the one the code seeds
+        run: |
+          pw="$(sed -n "s/^const DEFAULT_ADMIN_PASSWORD = '\(.*\)';\$/\1/p" packages/persistence/scripts/bootstrap.ts)"
+          test -n "$pw" || {
+            echo "::error::could not read DEFAULT_ADMIN_PASSWORD out of bootstrap.ts — this guard is checking nothing"
+            exit 1; }
+          for f in DEPLOYMENT.md README.md infra/.env.example; do
+            grep -qF "$pw" "$f" || {
+              echo "::error::$f does not name the default password the code seeds ($pw)"; exit 1; }
+          done
+          echo "default password documented in all three: $pw"
+
       # THE OBJECT-STORE HALF. `packages/storage`'s integration tests leave a
       # `test-<uuid>` BUCKET behind apiece, and nothing has ever removed them:
       # `test:integration` truncates the database on setup and never touches
