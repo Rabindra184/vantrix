@@ -138,6 +138,6 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
   {
     term: 'estimate',
     meaning:
-      'The p95 and p99 tiles say estimate because percentiles are read from a sketch rather than counted. “How percentiles are measured”, up beside the tiles, says how close.',
+      'The p95 and p99 tiles say estimate because percentiles are read from a sketch rather than counted. “How percentiles are measured”, up beside the tiles, says how close. They are also taken at the nearest rank, so a percentile here can differ from the same column in Gatling’s own report by a whole measurement — on a small sample that gap can be wide, and both numbers are right. Total, OK, KO, Min, Max and Mean are exact, and are what to diff the two reports on.',
   },
 ];
