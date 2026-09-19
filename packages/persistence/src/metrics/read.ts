@@ -38,6 +38,9 @@ export interface StoredUserBucket {
 }
 
 export interface StoredWindowBucket {
+  /** Carried so one unscoped read can be grouped back into its rows. */
+  scope: string;
+  family: string;
   name: string;
   startOffsetMs: number;
   /**
@@ -151,13 +154,17 @@ export const USER_SERIES_SQL = `SELECT scenario, start_offset_ms, started, ended
  * The range is HALF-OPEN, `>= from AND < to`, so two adjacent windows never
  * both claim the boundary bucket and no observation is counted twice.
  */
-export const WINDOWED_BUCKETS_SQL = `SELECT name, start_offset_ms, histogram_ok, histogram_ko
+export const WINDOWED_BUCKETS_SQL = `SELECT scope, family, name, start_offset_ms, histogram_ok, histogram_ko
          FROM run_series_bucket
         WHERE run_started_on = $1 AND run_id = $2
           AND org_id = $3 AND project_id = $4
-          AND scope = $5 AND family = $6
+          -- NULL means "every one", so an unscoped windowed read can serve the
+          -- whole statistics table from a single pass. A caller that names
+          -- both still gets the narrow predicate it always did.
+          AND ($5::text IS NULL OR scope = $5)
+          AND ($6::text IS NULL OR family = $6)
           AND start_offset_ms >= $7 AND start_offset_ms < $8
-        ORDER BY name, start_offset_ms`;
+        ORDER BY scope, family, name, start_offset_ms`;
 
 /**
  * The largest value `start_offset_ms` can hold: it is an INTEGER column, so
@@ -388,7 +395,8 @@ export class MetricReader {
     scope: ProjectScope,
     runId: string,
     runStartedOn: Date,
-    sel: { scope: string; family: string },
+    /** Either field may be null, meaning "every one" — see the SQL. */
+    sel: { scope: string | null; family: string | null },
     range: { fromMs: number; toMs: number },
   ): Promise<StoredWindowBucket[]> {
     const { rows } = await this.pool.query(
@@ -403,6 +411,8 @@ export class MetricReader {
       ],
     );
     return rows.map((r) => ({
+      scope: r.scope,
+      family: r.family,
       name: r.name,
       startOffsetMs: r.start_offset_ms,
       histogramOk: r.histogram_ok ? Histogram.deserialize(new Uint8Array(r.histogram_ok)) : null,

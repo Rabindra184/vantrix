@@ -359,35 +359,68 @@ export class MetricsController {
     name: string | undefined,
     family: string | undefined,
   ): Promise<StatsResponse> {
-    const wanted = scope ?? 'run';
-    const wantedFamily = family ?? 'response_time';
+    /**
+     * ═══ `scope` IS A FILTER HERE TOO, NOT A DEFAULT ═══
+     *
+     * This used to read `scope ?? 'run'` while the UNWINDOWED branch above
+     * treats the same parameter as a filter (`scope ? s.scope === scope :
+     * true`). One query parameter, one endpoint, two meanings — so applying
+     * a time window silently dropped every per-request and per-group row and
+     * collapsed the statistics table to the run's own totals, at precisely
+     * the moment a reader brushes a spike to find out WHICH request it
+     * belongs to.
+     *
+     * Passing the filters through as NULL lets one pass serve the whole
+     * table, so this costs a wider result set rather than another query.
+     * Deriving the (scope, family) pairs from `run_stat` instead was the
+     * first attempt and is WRONG: the buckets are the source of truth for a
+     * windowed read, and a run can carry buckets with no matching stats row
+     * — `window-bench.integration.test.ts` seeds exactly that and returned
+     * zero rows, which is how the mistake was caught.
+     */
     const rows = await this.reader.windowedBuckets(
-      tenant, run.id, run.startedOn, { scope: wanted, family: wantedFamily }, range,
+      tenant,
+      run.id,
+      run.startedOn,
+      { scope: scope ?? null, family: family ?? null },
+      range,
     );
 
     const window = snapWindow(rows.map((r) => r.startOffsetMs), range);
 
-    const byName = new Map<string, { ok: Histogram; ko: Histogram }>();
+    const byKey = new Map<
+      string,
+      { scope: string; family: string; name: string; ok: Histogram; ko: Histogram }
+    >();
     for (const row of rows) {
-      let entry = byName.get(row.name);
+      // NUL joins the key because it cannot occur in a name — the same
+      // reason `tool-assertions.ts` separates its scope prefix with one.
+      const key = `${row.scope}\0${row.family}\0${row.name}`;
+      let entry = byKey.get(key);
       if (!entry) {
-        entry = { ok: new Histogram(), ko: new Histogram() };
-        byName.set(row.name, entry);
+        entry = {
+          scope: row.scope,
+          family: row.family,
+          name: row.name,
+          ok: new Histogram(),
+          ko: new Histogram(),
+        };
+        byKey.set(key, entry);
       }
       if (row.histogramOk) entry.ok.merge(row.histogramOk);
       if (row.histogramKo) entry.ko.merge(row.histogramKo);
     }
 
-    const stats: StatsResponse['stats'] = [...byName.entries()]
-      .filter(([rowName]) => (name !== undefined ? rowName === name : true))
-      .map(([rowName, h]) => ({
-        scope: wanted as StatsResponse['stats'][number]['scope'],
-        name: rowName,
-        family: wantedFamily as StatsResponse['stats'][number]['family'],
-        ...rollupFromHistograms(h.ok, h.ko, window.toMs - window.fromMs, settings.percentiles),
+    const stats: StatsResponse['stats'] = [...byKey.values()]
+      .filter((e) => (name !== undefined ? e.name === name : true))
+      .map((e) => ({
+        scope: e.scope as StatsResponse['stats'][number]['scope'],
+        name: e.name,
+        family: e.family as StatsResponse['stats'][number]['family'],
+        ...rollupFromHistograms(e.ok, e.ko, window.toMs - window.fromMs, settings.percentiles),
         // From the WINDOW's own OK histogram, so the bands describe the same
         // requests as every other column in the row.
-        indicators: bandsFrom(h.ok, h.ko.total, settings.indicators),
+        indicators: bandsFrom(e.ok, e.ko.total, settings.indicators),
       }));
 
     const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
