@@ -76,7 +76,7 @@ Open **<http://localhost:3000>**.
 
 ```
 Email     admin@perfportal.local
-Password  perfportal
+Password  PerfPortal-Setup-2026
 ```
 
 ### Change that password now
@@ -127,7 +127,7 @@ compose file**, not at the repository root.
 | `PERFPORTAL_ORG_SLUG` | `perfportal` | Created if absent, reused if present |
 | `PERFPORTAL_PROJECT_SLUG` | `demo` | Same |
 | `PERFPORTAL_ADMIN_EMAIL` | `admin@perfportal.local` | The account you sign in as |
-| `PERFPORTAL_ADMIN_PASSWORD` | *(published default)* | **Set this.** Empty seeds `perfportal` |
+| `PERFPORTAL_ADMIN_PASSWORD` | *(published default)* | **Set this.** Empty seeds `PerfPortal-Setup-2026` |
 
 `bootstrap` runs on every `up` and is idempotent: the org and project are
 upserted by slug, and an admin that exists is reused untouched.

@@ -115,6 +115,48 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The stronger-default-password branch added no unit FILE, no unit case and no
+spec — unit stays **154 / 1940**, integration is unchanged and **e2e stays
+145**. One CI step, in `test-residue`.
+
+**THE DEFAULT IS `PerfPortal-Setup-2026` NOW, AND THE REASON IS NARROWER THAN
+"STRONGER".** `perfportal` sat squarely in the class an undiscriminating sweep
+tries against every host it finds — `admin`, `password`, `changeme`, and the
+product's own name. This is not. **It buys nothing against anyone who knows
+what they are looking at**: the value is published in four places, so it is
+looked up rather than guessed, and entropy is irrelevant to that. Recorded in
+the constant's own docstring so the next reader does not mistake length for
+safety. The two things that actually help are unchanged — set
+`PERFPORTAL_ADMIN_PASSWORD`, or change it after first sign-in, which sticks
+because bootstrap never re-passwords an account that exists.
+
+**FOUR COPIES OF ONE STRING, SO IT GETS A GUARD.** It appears in
+`bootstrap.ts`, `DEPLOYMENT.md`, the README and `.env.example`. This file
+already records two documents that named something the product had renamed —
+the `Cnt/s` hint for a deleted label, "Mint one under Access" for a renamed
+page — and a deployment guide is the worst place for it: the reader tries the
+password, it fails, and they cannot tell whether the deployment broke or the
+document lied. The CI step reads the constant out of the SOURCE and requires
+all three documents to carry it, **extracting non-empty first** so a regex
+that stopped matching cannot make `grep -qF ""` succeed against everything.
+Red-verified both ways.
+
+**AND `git checkout --` DESTROYED THE FIX. FIFTH TIME IN THIS FILE, AND THE
+FIRST WHERE THE LESSON WAS FRESH IN THE SAME SESSION.** The red-verify
+mutated `bootstrap.ts` — the file being fixed — and restoring it from HEAD
+took the new constant and its docstring with it. The entries below record
+this four times and prescribe the guard: **one `git commit -q` before the
+first mutation.** I had read those entries hours earlier, written about them,
+and still skipped it.
+
+The tell was not a failure. It was the ACCIDENTAL PASS: after the revert the
+code said `perfportal` and the documents said `PerfPortal-Setup-2026`, which
+is exactly the drift the new guard exists to detect — so the guard was
+briefly right about a mistake I had just made to myself. **Writing the lesson
+down is not the same as having it**, which the entry below already says; what
+is new is that reading it in the same session is not either. The mechanical
+guard is the only part that works.
+
 The turnkey-deployment branch added no unit FILE, no unit case and no spec —
 unit stays **154 / 1940**, integration is unchanged and **e2e stays 145**. It
 is guarded by TWO new steps in CI's `test-residue` job, which no `pnpm` gate

@@ -191,7 +191,7 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d --build
 
 That brings up the platform AND creates an org, a project, an API token and an
 admin account, so <http://localhost:3000> is signed-in-able immediately:
-`admin@perfportal.local` / `perfportal`.
+`admin@perfportal.local` / `PerfPortal-Setup-2026`.
 
 **Change that password, or set `PERFPORTAL_ADMIN_PASSWORD` before the first
 `up`.** It is published in this repository, which makes it a default

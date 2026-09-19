@@ -112,8 +112,27 @@ function generatePassword(): string {
  *     variable that removes it.
  *
  * `DEPLOYMENT.md` makes changing it step one after the first sign-in.
+ *
+ * ═══ WHAT A LONGER DEFAULT BUYS, AND WHAT IT DOES NOT ═══
+ *
+ * This value is published — here, in `DEPLOYMENT.md`, in the README and in
+ * `.env.example` — so an attacker does not guess it, they look it up, and no
+ * amount of entropy changes that. What it defends against is the generic
+ * sweep that tries `admin`, `password`, `changeme` and the product's own name
+ * against every host it finds. `perfportal` was squarely in that class; this
+ * is not. Against anyone who knows what they are looking at it buys nothing,
+ * and the two things that do are the ones above: set
+ * `PERFPORTAL_ADMIN_PASSWORD` so nothing published is ever seeded, or change
+ * it after first sign-in, which sticks because bootstrap never re-passwords
+ * an account that exists.
+ *
+ * A GUARD KEEPS THE FOUR COPIES IN STEP — `ci.yml`'s `test-residue` job reads
+ * this constant and fails if the three documents stop naming it. A guide that
+ * tells a reader a password the product no longer sets is worse than one that
+ * says nothing: they try it, it fails, and they cannot tell whether the
+ * deployment broke or the document lied.
  */
-const DEFAULT_ADMIN_PASSWORD = 'perfportal';
+const DEFAULT_ADMIN_PASSWORD = 'PerfPortal-Setup-2026';
 
 /**
  * Who to create, and with what — CLI first, then environment, then the
