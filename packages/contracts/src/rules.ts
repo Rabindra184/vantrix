@@ -524,3 +524,84 @@ export function describeSlaRule(rule: {
   const bound = rule.comparator === 'lte' ? 'at most' : 'at least';
   return `${subject}: ${slaMetricLabel(rule.metric)} must be ${bound} ${formatSlaValue(rule.metric, rule.threshold)}.`;
 }
+
+/**
+ * A judged gate as a sentence: what was measured, what it came to, and how
+ * that compares with the bound.
+ *
+ * ═══ WHY THIS EXISTS RATHER THAN THE STORED `message` ═══
+ *
+ * `packages/sla`'s own `describe` writes each assertion's message at
+ * evaluation time as `${metric} of ${target} (${family}) ≤ ${threshold} —
+ * actual ${raw}`, which is the stored schema read aloud: `error_rate of the
+ * run (response_time) ≤ 0.01 — actual 0.0223463687150838`. review.md's copy
+ * table names that exact string as the pattern to replace, and review.md 3
+ * explains why half of it is not merely unreadable but FALSE — an error rate
+ * is not a kind of response time, so the parenthesis states something untrue
+ * about the quantity it qualifies.
+ *
+ * The rules table and the gates table were both corrected to render from the
+ * structured fields (`describeSlaMeasurement`, `formatSlaValue`). The two
+ * surfaces that still printed the raw message were the run page's decision
+ * band -- the largest sentence on the page, the one a reader uses to decide
+ * whether a release is safe -- and the gates table's own trailing column,
+ * which sat beside the three corrected ones showing the same fact twice in
+ * two vocabularies. This is the one-caller-short shape this repo keeps
+ * recording, and the fix is a renderer both can share.
+ *
+ * ═══ IT NEEDS NO MIGRATION, WHICH IS THE POINT ═══
+ *
+ * `AssertionSchema` already carries scope, targetName, family, metric,
+ * comparator, threshold and actualValue beside the message, so every
+ * assertion ALREADY STORED renders correctly from fields that were always on
+ * the wire. Nothing about what the worker writes changes.
+ *
+ * The live SLA banner is genuinely a different question and is deliberately
+ * left: `LiveSlaRuleSchema` carries `description: z.string()` and no
+ * structured fields at all, so re-rendering it means changing what the worker
+ * streams and what every delta already recorded says. That is a data change
+ * with a migration question attached, and it belongs in its own branch.
+ *
+ * ═══ NULL RATHER THAN A SENTENCE WITH A HOLE IN IT ═══
+ *
+ * A `not_applicable` gate has no actual, and its stored message explains WHY
+ * it was not checked ("no response_time statistics for Search in this run",
+ * "3 of 20 observations") -- reasons with no structured equivalent here. So
+ * this answers null for those and the caller keeps showing the message, which
+ * is the one case where the evaluator's own words say more than these fields
+ * can.
+ */
+export function describeSlaOutcome(assertion: {
+  readonly outcome: 'passed' | 'failed' | 'not_applicable';
+  readonly actualValue: number | null;
+  readonly rule: {
+    readonly scope: SlaRuleScope;
+    readonly targetName: string | null;
+    readonly family: string;
+    readonly metric: string;
+    readonly comparator: SlaRuleComparator;
+    readonly threshold: number;
+  };
+}): string | null {
+  if (assertion.outcome === 'not_applicable' || assertion.actualValue === null) {
+    return null;
+  }
+
+  const measurement = describeSlaMeasurement(assertion.rule);
+  const actual = formatSlaValue(assertion.rule.metric, assertion.actualValue);
+  const bound = formatSlaValue(assertion.rule.metric, assertion.rule.threshold);
+
+  // The comparator decides the NOUN as well as the verb: a breached `lte` is
+  // over a limit, a breached `gte` is under a minimum, and calling both a
+  // "limit" would misdescribe every throughput or count rule in the product.
+  const verdict =
+    assertion.outcome === 'failed'
+      ? assertion.rule.comparator === 'lte'
+        ? `exceeds the ${bound} limit`
+        : `is below the ${bound} minimum`
+      : assertion.rule.comparator === 'lte'
+        ? `is within the ${bound} limit`
+        : `meets the ${bound} minimum`;
+
+  return `${measurement} ${actual} ${verdict}.`;
+}

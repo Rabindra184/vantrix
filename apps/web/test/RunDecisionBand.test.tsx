@@ -495,6 +495,45 @@ describe('RunDecisionBand — the export says what it exports', () => {
     expect(screen.getByRole('button', { name: /SLA summary/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Export run$/ })).not.toBeInTheDocument();
   });
+
+  /* review.md's copy table, row 1, on the surface that renders it largest.
+     This band printed `failed.message` — the string `packages/sla`'s own
+     `describe` writes, which is the stored schema read aloud — directly above
+     a gates table that has spoken the reader's vocabulary since review.md 1,
+     3 and 15 landed. Two vocabularies for one fact on one screen, and the raw
+     one was the prominent one.
+
+     NOTHING PINNED THIS TEXT. `decision-detail` appears in no other assertion
+     in this file, which is exactly how the drift survived three corrections
+     to the table beneath it.
+
+     Asserted as a PAIR, because either half alone passes against the wrong
+     product: the positive alone is satisfied by a band rendering both
+     strings, and the absence alone by a band rendering neither. */
+  it('states a failed gate in the reader-facing vocabulary, not the stored message', () => {
+    renderBand();
+    const detail = screen.getByTestId('decision-detail');
+    expect(detail).toHaveTextContent(
+      'Whole-run p99 response time 1830 ms exceeds the 750 ms limit.',
+    );
+    expect(detail).not.toHaveTextContent('p99 breached its threshold.');
+  });
+
+  /* NO CASE HERE FOR THE `?? failed.message` FALLBACK, DELIBERATELY. The band
+     reads only the FAILED assertion, and `AssertionSchema` documents
+     `actualValue` as null for `not_applicable` alone — so a failed gate
+     always has an actual and `describeSlaOutcome` always answers a sentence
+     here. A case seeding failed-with-no-actual would pin defensive behaviour
+     for data the evaluator cannot produce.
+
+     Where that fallback IS reachable is the gates table, which renders a row
+     per assertion including the not_applicable ones. The null answer itself
+     is pinned in `packages/contracts/test/rules.test.ts`. The first draft of
+     this file seeded a lone `not_applicable` assertion and asserted its
+     message appeared — it cannot: with no failed assertion the band falls
+     through to `decisionDetail`, and the case failed reporting "One or more
+     SLA rules failed…". Same lesson as the evidence-verdict-scope branch: a
+     case that cannot reach the branch it describes is not a keeper. */
 });
 
 /**

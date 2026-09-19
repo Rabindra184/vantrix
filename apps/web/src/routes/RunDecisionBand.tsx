@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { describeSlaOutcome } from '@perfportal/contracts';
 import type { Assertion, RunIdentity, RunResponse, RunVerdict } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
@@ -125,7 +126,21 @@ export default function RunDecisionBand({
    * we have not heard from. */
   const unconfigured = assertions !== undefined && assertions.length === 0;
   const word = decisionWord(decision, counts, unconfigured);
-  const detail = failed?.message ?? decisionDetail(decision, counts);
+  /* RENDERED FROM THE FIELDS, NOT THE STORED MESSAGE. `failed.message` is
+     written by `packages/sla`'s own `describe` as the stored schema read
+     aloud — `error_rate of the run (response_time) ≤ 0.01 — actual
+     0.0223463687150838` — which review.md's copy table names verbatim as the
+     pattern to replace, and which this band renders at the largest size on
+     the page, directly above a gates table that has said "Whole-run error
+     rate / ≤ 1% / 2.23%" since review.md 1, 3 and 15 landed. Two vocabularies
+     for one fact, and the raw one was the prominent one.
+
+     The message survives as the fallback for exactly the case the fields
+     cannot describe: a `not_applicable` gate, where `describeSlaOutcome`
+     answers null and the evaluator's own words say why nothing was checked. */
+  const detail =
+    (failed ? (describeSlaOutcome(failed) ?? failed.message) : null) ??
+    decisionDetail(decision, counts);
   const runId = identity.id;
   const exportRun = () =>
     downloadRunSummary(
