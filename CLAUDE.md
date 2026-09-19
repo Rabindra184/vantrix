@@ -118,20 +118,33 @@ see the eighth lesson below.
 The allow-insecure-cookies branch added no unit FILE and 6 cases to
 `packages/persistence/test/auth-cookies.test.ts`, from **154 / 1940 to
 154 / 1946**. Integration moves with it (that file is a `.ts` integration runs
-too) and **e2e stays 145** — no spec changed. It SHIPPED WITHOUT AN ENTRY
+too) at **137 / 1756**, and **e2e stays 145** — no spec changed. It SHIPPED WITHOUT AN ENTRY
 HERE, which is the gap this paragraph closes: the two entries below it record
 the deployment work on either side of it and neither mentions the flag that
 makes a deployment reachable by hostname work at all.
 
-**THE 1946 IS ARITHMETIC AND THE 23 IS A MEASUREMENT, AND SAYING WHICH IS THE
-POINT.** `vm_stat` reported **3,609 free pages — about 56 MB** with 16,999 MB
-of 18,432 MB of swap gone, at a load average of 3.03. That is worse than the
-4,390 free pages the review20-one-primary entry already calls untrustworthy,
-and the low load is not evidence to the contrary — this file records that a
-machine waiting on swap looks idle. So the FILE was run alone (**23 passed** =
-the 17 release-readiness added plus this branch's 6) and the suite total was
-not re-measured. **A floor nobody measured has to say so**, or the next reader
-calibrates against a number that was inferred.
+**THE FLOORS ABOVE ARE CI's, NOT THIS MACHINE'S, AND THAT IS WHAT MAKES THEM
+MEASUREMENTS.** `vm_stat` here reported **3,609 free pages — about 56 MB** with
+16,999 MB of 18,432 MB of swap gone, at a load average of 3.03. That is worse
+than the 4,390 free pages the review20-one-primary entry already calls
+untrustworthy, and the low load is not evidence to the contrary — this file
+records that a machine waiting on swap looks idle. So no local suite was run.
+The one FILE was (**23 passed** = the 17 release-readiness added plus this
+branch's 6), and the totals came off the `build` job's own log:
+
+```
+  pnpm test:unit         Test Files 154 passed (154)   Tests 1946 passed (1946)
+  pnpm test:integration  Test Files 137 passed (137)   Tests 1756 passed (1756)
+  pnpm test:e2e          Running 145 tests using 2 workers
+```
+
+**AND THIS ENTRY FIRST RECORDED 1946 AS ARITHMETIC, WHICH WAS HONEST AND
+WEAKER THAN IT NEEDED TO BE.** "A floor nobody measured has to say so" is the
+rule, and the corollary nobody had written down is that **CI is somewhere to
+measure it**: a green `build` prints all three totals from clean containers,
+which is a better arbiter than this machine on its best day. When the machine
+cannot be trusted, read the floors off the runner that can — the numbers are
+already there, in a log that has been produced for every branch in this file.
 
 **A DEPLOYMENT REACHED BY HOSTNAME FAILED SILENTLY, WHICH IS THE WORST SHAPE A
 REFUSAL CAN TAKE.** `cookiesAreSecure` exempted loopback and nothing else, so
