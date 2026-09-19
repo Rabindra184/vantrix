@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { formatSlaValue } from '@perfportal/contracts';
+import { describeSlaOutcome, formatSlaValue } from '@perfportal/contracts';
 import type {
   Assertion, LiveDelta, SeriesResponse, StatRow, ToolAssertion,
 } from '@perfportal/contracts';
@@ -1427,7 +1427,20 @@ function Assertions({
                   <td className={TD_NUM}>
                     {formatAssertionValue(assertion.rule.metric, assertion.actualValue)}
                   </td>
-                  <td className={`${TD} text-muted`}>{assertion.message}</td>
+                  {/* THE LAST COLUMN WAS THE ONE STILL SPEAKING SCHEMA. The
+                      three cells before it have rendered from the structured
+                      fields since review.md 1, 3 and 15 — `Whole-run error
+                      rate`, `≤ 1%`, `2.23%` — and this one printed the stored
+                      message beside them: `error_rate of the run
+                      (response_time) ≤ 0.01 — actual 0.0223463687150838`. One
+                      row, one fact, two vocabularies.
+
+                      Falls back to the message for a `not_applicable` gate,
+                      where there is no actual and the evaluator's sentence
+                      explains what could not be checked. */}
+                  <td className={`${TD} text-muted`}>
+                    {describeSlaOutcome(assertion) ?? assertion.message}
+                  </td>
                 </tr>
               ))}
             </tbody>

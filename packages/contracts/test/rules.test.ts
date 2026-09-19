@@ -14,6 +14,7 @@ import {
   slaThresholdWarning,
   SLA_METRIC_UNITS,
   describeSlaMeasurement,
+  describeSlaOutcome,
   formatSlaValue,
   fractionToPercent,
   percentToFraction,
@@ -591,6 +592,110 @@ describe('describeSlaMeasurement', () => {
     expect(
       describeSlaMeasurement({ scope: 'run', targetName: null, family: 'future_family', metric: 'p95' }),
     ).toBe('Whole-run p95');
+  });
+});
+
+/**
+ * review.md's copy table, row 1. Its "current pattern" column holds the exact
+ * string `packages/sla` writes into every assertion's message, and until this
+ * function existed the run page rendered it in two places: the decision band,
+ * at the largest size on the page, and the last column of the gates table,
+ * beside three cells that had already been corrected.
+ */
+describe('describeSlaOutcome', () => {
+  const errorRate = (outcome: 'passed' | 'failed', actualValue: number | null) => ({
+    outcome,
+    actualValue,
+    rule: {
+      scope: 'run' as const,
+      targetName: null,
+      family: 'response_time',
+      metric: 'error_rate',
+      comparator: 'lte' as const,
+      threshold: 0.01,
+    },
+  });
+
+  /** The row-1 case itself: a fraction on the wire, a percentage on both
+   *  sides of the comparison, and the same formatter the Actual column beside
+   *  it uses — which is why the precision is 4dp rather than the review's
+   *  illustrative `2.23%`. Agreeing with the adjacent cell matters more than
+   *  matching an example that elides its own digits with an ellipsis. */
+  it('states the breach in the vocabulary the gates table already uses', () => {
+    expect(describeSlaOutcome(errorRate('failed', 0.0223463687150838))).toBe(
+      'Whole-run error rate 2.2346% exceeds the 1% limit.',
+    );
+  });
+
+  /** The claim that actually matters, and the one a verbatim assertion above
+   *  would not survive a rewording of: none of the stored schema reaches the
+   *  reader. `(response_time)` is the half review.md 3 calls not merely
+   *  unreadable but FALSE, and the raw fraction is the half review.md 1 calls
+   *  a correctness defect. */
+  it('lets no part of the stored expression through', () => {
+    const sentence = describeSlaOutcome(errorRate('failed', 0.0223463687150838))!;
+    expect(sentence).not.toMatch(/\(response_time\)/);
+    expect(sentence).not.toMatch(/error_rate/);
+    expect(sentence).not.toMatch(/of the run/);
+    expect(sentence).not.toMatch(/0\.0223/);
+  });
+
+  /** A breached `gte` is under a MINIMUM, not over a limit. Calling both a
+   *  limit would misdescribe every throughput or count rule in the product,
+   *  which is why the comparator picks the noun as well as the verb. */
+  it('calls a breached lower bound a minimum, never a limit', () => {
+    const sentence = describeSlaOutcome({
+      outcome: 'failed',
+      actualValue: 41.5,
+      rule: {
+        scope: 'run',
+        targetName: null,
+        family: 'response_time',
+        metric: 'throughput_rps',
+        comparator: 'gte',
+        threshold: 50,
+      },
+    })!;
+    expect(sentence).toBe('Whole-run throughput 41.5/s is below the 50/s minimum.');
+    expect(sentence).not.toMatch(/limit/);
+  });
+
+  /** Both outcomes are rendered, because this is the gates table's column for
+   *  every row and not only the failing one — and a passing gate described as
+   *  exceeding its limit would invert the verdict beside it. */
+  it('describes a passing gate without saying it exceeded anything', () => {
+    const sentence = describeSlaOutcome(errorRate('passed', 0.004))!;
+    expect(sentence).toBe('Whole-run error rate 0.4% is within the 1% limit.');
+    expect(sentence).not.toMatch(/exceeds/);
+  });
+
+  /** The one case the fields cannot describe. `not_applicable` has no actual,
+   *  and the evaluator's own message says WHY nothing was checked ("3 of 20
+   *  observations", "no response_time statistics for Search in this run") —
+   *  reasons with no structured equivalent. Null tells the caller to keep it. */
+  it('answers null when there is no measurement, so the caller keeps the reason', () => {
+    expect(describeSlaOutcome({ ...errorRate('failed', null), outcome: 'not_applicable' })).toBeNull();
+    expect(describeSlaOutcome(errorRate('failed', null))).toBeNull();
+  });
+
+  /** A scoped rule names its target, so a reader knows which request breached
+   *  without going back to the table. Same describer the Measurement column
+   *  uses, so the two cannot drift. */
+  it('names the target of a scoped rule', () => {
+    expect(
+      describeSlaOutcome({
+        outcome: 'failed',
+        actualValue: 812,
+        rule: {
+          scope: 'request',
+          targetName: 'Search',
+          family: 'response_time',
+          metric: 'p95',
+          comparator: 'lte',
+          threshold: 800,
+        },
+      }),
+    ).toBe('Search p95 response time 812 ms exceeds the 800 ms limit.');
   });
 });
 

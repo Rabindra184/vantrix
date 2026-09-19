@@ -346,7 +346,21 @@ describe('RunDetail — one shell, for every state', () => {
       // the COLLAPSE — a claim it does not make and the case below does.
       // Pinning the table open then failed both, which is how the coupling
       // surfaced. The failed gates sort first, so this is the failure's row.
-      within(screen.getAllByTestId('assertion-row')[0]!).getByText('p99 breached its threshold.'),
+      //
+      // RE-POINTED AT THE CLAIM RATHER THAN THE STRING. This read the stored
+      // message verbatim — `p99 breached its threshold.` — which was how it
+      // LOCATED the row, never what the case is about. That column now states
+      // the gate in the reader's vocabulary (review.md's copy table, row 1),
+      // so the assertion follows the product instead of the product bending
+      // to suit it. The claim is untouched: the evidence appears ONCE, as
+      // table rows, with no panel repeating it.
+      //
+      // It doubles as this branch's pin on the gates-table caller — the one
+      // surface a fix for the decision band alone would have left speaking
+      // schema, which is the one-caller-short shape the branch is about.
+      within(screen.getAllByTestId('assertion-row')[0]!).getByText(
+        'Whole-run p99 response time 1830 ms exceeds the 750 ms limit.',
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByTestId('assertion-evidence-panel')).toBeNull();
 
