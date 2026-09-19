@@ -25,6 +25,14 @@
 // project does exist. And one that keyed `live/` off bundle_key would delete
 // the real run's chunks. Only a fixture holding both shapes at once can tell
 // those two mistakes apart.
+//
+// `assert-forced` is the same four objects after `TRUNCATE org CASCADE` has
+// emptied the run table and --force has lifted the refusal that state
+// triggers: with no run to reference anything, all four are orphaned and all
+// four must go. It is deliberately the exact opposite assertion to `assert`,
+// over the identical seed -- which is what makes the pair able to catch a
+// --force that widened what counts as an orphan rather than lifting one
+// check. See the three `--force` steps in ci.yml's `test-residue` job.
 
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
@@ -165,6 +173,24 @@ if (mode === 'seed') {
     }
   }
   console.log('age guard: nothing newer than the window was deleted');
+} else if (mode === 'assert-forced') {
+  // The run table was emptied, so nothing references anything: every object
+  // here is genuinely orphaned and --force must have removed all four. The
+  // bundle is the one that matters -- it is the object the ordinary `assert`
+  // requires be KEPT, so a --force that quietly did nothing leaves it behind
+  // and fails here, and a refusal that was never lifted fails here too.
+  for (const Key of [BUNDLE, LIVE_KEEP, LIVE_DROP, STRAY]) {
+    if (await exists(Key)) {
+      die(
+        `${Key} survived --force against an empty run table -- with no run ` +
+          `rows left, nothing references it and it is orphaned`,
+      );
+    }
+  }
+  console.log('--force: every object of an emptied database was swept');
 } else {
-  die(`usage: orphans-fixture.mjs seed|assert|assert-guard (got ${JSON.stringify(mode)})`);
+  die(
+    `usage: orphans-fixture.mjs seed|assert|assert-guard|assert-forced ` +
+      `(got ${JSON.stringify(mode)})`,
+  );
 }

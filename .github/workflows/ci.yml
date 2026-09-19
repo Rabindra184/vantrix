@@ -525,6 +525,45 @@ jobs:
           node infra/clean-orphaned-objects.mjs --min-age-hours 0
           echo "refused with --delete, still classified in a dry run"
 
+      # THE OVERRIDE, AND WHY IT HAD TO EXIST. A dev database somebody emptied
+      # on purpose is the one state that refusal cannot tell apart from a
+      # mis-pointed DATABASE_URL — and the refusal is not time-based, so with
+      # no way through it this script declines to clean that bucket for ever.
+      # Measured on a dev machine after a deliberate sweep: 80,247 objects /
+      # 63.2 MB, every one orphaned, permanently unreachable by the tool
+      # written to remove them. --force is the operator saying "empty on
+      # purpose"; all four objects are then orphaned and all four must go.
+      - name: ...unless --force says the empty table is deliberate
+        run: |
+          node infra/test/orphans-fixture.mjs seed
+          $PSQL -q -c "TRUNCATE org CASCADE"
+          node infra/clean-orphaned-objects.mjs --delete --min-age-hours 0 --force
+          node infra/test/orphans-fixture.mjs assert-forced
+
+      # AND IT LIFTS EXACTLY ONE CHECK. The age guard answers a different
+      # question — "might this object belong to a run that has not recorded
+      # its row yet" — and being sure of your DATABASE_URL says nothing about
+      # that. A --force that skipped it too would delete an in-flight run's
+      # chunks on a live instance, which is the failure the age guard exists
+      # to prevent. Same seed, same empty table, DEFAULT age: nothing goes.
+      - name: ...and --force does not lift the age guard
+        run: |
+          node infra/test/orphans-fixture.mjs seed
+          $PSQL -q -c "TRUNCATE org CASCADE"
+          node infra/clean-orphaned-objects.mjs --delete --force
+          node infra/test/orphans-fixture.mjs assert-guard
+
+      # ...NOR WIDENS WHAT COUNTS AS AN ORPHAN. With runs present there is no
+      # refusal to lift, so the keep-list must be the ordinary one. This is
+      # the step that separates "lifts one check" from "deletes everything":
+      # a --force implemented as a blanket delete passes both steps above and
+      # fails here, on the bundle that run.bundle_key still names.
+      - name: ...nor widens what counts as an orphan when runs exist
+        run: |
+          node infra/test/orphans-fixture.mjs seed
+          node infra/clean-orphaned-objects.mjs --delete --min-age-hours 0 --force
+          node infra/test/orphans-fixture.mjs assert
+
   # ═══ FIREFOX AND WEBKIT ═══
   #
   # `pnpm test:e2e` is Chromium-only and stays that way; see the comment on
