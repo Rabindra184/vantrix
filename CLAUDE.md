@@ -170,12 +170,28 @@ warning is printed — because a warning about a default nobody seeded trains
 the reader to ignore it, which is the overstated-warning lesson M08 already
 records for the empty-threshold help.
 
-**`npx tsc -b packages/persistence`, NOT `pnpm build`.** That job has never
-built anything — it installs and migrates — and `bootstrap` is
-`node dist/scripts/bootstrap.js`. The targeted build produces persistence plus
-the project references it needs (core, for the token mint and Argon2id hash)
-in seconds, where the full build would add minutes and a web bundle nothing
-here reads.
+**AND THE "TARGETED BUILD" WAS A CLAIM ABOUT MY MACHINE, WHICH CI KILLED.**
+That job has never built anything — it installs and migrates, because
+everything it ran until now (`orphans-fixture.mjs`, `buckets-fixture.mjs`)
+talks to `pg` and the S3 SDK directly. `bootstrap` is
+`node dist/scripts/bootstrap.js`, so it needs one, and the first version used
+`npx tsc -b packages/persistence` on the reasoning that it would build
+persistence plus its references in seconds rather than adding minutes.
+
+It succeeded locally and **failed twelve ways on a clean runner**:
+`Cannot find module '@perfportal/core'` and `'@perfportal/statistics'`,
+because workspace packages resolve through node_modules symlinks to a `dist`
+that only a full build produces and persistence's tsconfig does not reference
+them as projects; and `has no exported member 'PrismaClient'`, because
+nothing had run `prisma generate`. It worked here only because the tree was
+already built from earlier work.
+
+**A CROSS-PACKAGE SUCCESS ON A DIRTY TREE PROVES NOTHING ABOUT A CLEAN ONE.**
+This file already records the other direction — "a red integration result
+that crosses a package boundary is a build claim before it is a code claim",
+from the branch where `packages/contracts/dist` had been built on a different
+branch. The inverse is the same fact and is easier to miss, because green
+looks like evidence. It is `prisma generate` plus `pnpm build` now.
 
 **AND THE GUIDE IS ITS OWN FILE, LINKED FROM THE README RATHER THAN BURIED IN
 IT.** `DEPLOYMENT.md` is the quick start, the first sign-in, the configuration

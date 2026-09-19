@@ -456,11 +456,23 @@ jobs:
           echo "assertion correctly rejected the broken script"
 
       # `bootstrap` is `node dist/scripts/bootstrap.js`, and this job has never
-      # built anything — it only installs and migrates. A targeted `tsc -b`
-      # builds persistence plus the project references it needs (core, for the
-      # token mint and Argon2id hash) in seconds, where `pnpm build` would add
-      # minutes and the web bundle nothing here reads.
-      - run: npx tsc -b packages/persistence
+      # built anything — it installs and migrates, because everything it ran
+      # until now (`orphans-fixture.mjs`, `buckets-fixture.mjs`) talks to `pg`
+      # and the S3 SDK directly and needs no built workspace at all.
+      #
+      # THIS WAS `npx tsc -b packages/persistence` FIRST, AND THAT WAS A CLAIM
+      # ABOUT MY MACHINE. It succeeded locally because the workspace was
+      # already built from earlier work; on a clean runner it failed twelve
+      # ways at once — `Cannot find module '@perfportal/core'` and
+      # `'@perfportal/statistics'`, because workspace packages resolve through
+      # node_modules symlinks to a `dist` that only a full build produces, and
+      # `has no exported member 'PrismaClient'`, because nothing had run
+      # `prisma generate`. Same shape as the entry CLAUDE.md records for the
+      # integration suite reading `dist`: a cross-package failure is a BUILD
+      # claim before it is a code claim, and the inverse holds too — a
+      # cross-package SUCCESS on a dirty tree proves nothing about a clean one.
+      - run: pnpm --filter @perfportal/persistence exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm build
 
       # ═══ BOOTSTRAP RUNS ON EVERY `compose up`, SO IT HAS TO SURVIVE ONE ═══
       #
