@@ -115,6 +115,56 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The review20-one-primary branch added no unit FILE and 1 case to
+`apps/web/test/ProjectRules.test.tsx`, from a floor of **153 / 1924**.
+Integration is UNCHANGED and **e2e stays 145** — no spec changed. It takes the
+two clauses of `review.md` 20 the heading-ladder branch measured and left, and
+**one of them needed no code at all.**
+
+**"FEWER NESTED PANELS" IS ALREADY TRUE — MEASURED, NOT ASSUMED.** Twelve card
+surfaces exist, one per component, and the nesting candidates were checked
+individually rather than inferred from the count: `LiveNotice` renders as a
+SIBLING of `LiveStatusStrip`'s card, not inside it; `TableFrame` draws no
+surface at all; `payload.tsx` has no card. The finding was true of its baseline
+116 commits ago and the intervening work removed the nesting — review9's
+deletion of the evidence panel among it. **A count of card CLASSES is not a
+count of nested PANELS**, and the first was what the earlier measurement
+reported.
+
+**"ONE PRIMARY ACTION PER TASK" WAS REAL, AND THE CODE HAD ALREADY WRITTEN THE
+RULE DOWN.** `Button.tsx`'s docstring states "exactly ONE `primary` per screen"
+and then explains why there is no `danger` variant: "nothing in this app
+destroys anything yet". **That premise expired.** A token can be revoked, a rule
+deleted, a test removed — and all THREE confirms reached for `primary`, so
+arming any confirmation made the destructive button the most prominent control
+on screen, breaking the rule stated two paragraphs above it.
+
+**THE DAY THAT COMMENT ANTICIPATED ARRIVED, AND THE ANSWER WAS THE CHEAPER
+HALF.** It says a `danger` variant is "worth adding on the day something needs
+it, with the token question answered then" — and the fix turned out to be to
+STOP REACHING FOR `primary` rather than to add one. A destructive confirm lives
+inside a block the reader armed deliberately, under a sentence saying what it
+does, beside a Cancel; it does not need the weight that says "this is what the
+page is for". The token argument against a red variant stands untouched.
+
+**AND IT WAS ENFORCED BY NOTHING: THERE IS NO `Button.test.tsx`.** A rule in a
+docstring is a rule three callers can break without a single test going red.
+The new case asserts one primary WHILE A DELETE IS ARMED — the only state where
+the second one exists, so a count taken before the confirmation opens proves
+nothing — and reads `.bg-accent`, the variant's own definition, because a
+`variant` prop cannot be read off the DOM.
+
+**A FULL UNIT RUN ON THIS BRANCH IS NOT TRUSTWORTHY AND IS NOT CLAIMED.** It
+reported **141 files / 1659 tests** — twelve files and 265 tests BELOW the
+floor — with three package tests at ~1,013,000ms each, on a machine at
+**726 MB of 17,408 MB swap free and 4,390 free pages**. That is worse than the
+thrashing this file already documents at 8,973 pages. `typecheck` and `lint`
+are deterministic and stayed green; the three files this branch can actually
+reach pass 104/104 on their own; CI's clean containers are the arbiter for the
+rest. **A run below the floor is not a failure and not a pass — it is a
+measurement of the wrong tree**, which is the whole reason those two numbers
+are written down.
+
 The review22-one-word-per-thing branch added no unit FILE and no unit case —
 unit stays **153 / 1924** — and its **e2e rises to 145**. Integration is
 UNCHANGED. `review.md`'s finding 22.

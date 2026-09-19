@@ -1429,7 +1429,17 @@ function RulesTable({
                       </p>
                       <div className="flex flex-wrap gap-2">
                         <Button
-                          variant="primary"
+                          /* NOT `primary` — review.md 20, "one primary action per task".
+                             `Button`'s own docstring states that rule ("exactly ONE `primary`
+                             per screen"), and an armed confirmation broke it: this sat beside
+                             the page's own primary, so the most prominent control on screen
+                             became the destructive one.
+                          
+                             `secondary`, not a new `danger` variant: `Button.tsx` records that
+                             the red one would need cannot be written as a utility, because
+                             status colour is deliberately kept out of `@theme`. Demoting costs
+                             nothing — this button lives inside a block the reader armed on
+                             purpose, under a sentence saying what it does, beside a Cancel. */
                           size="sm"
                           loading={deletingId === rule.id}
                           onClick={() => {

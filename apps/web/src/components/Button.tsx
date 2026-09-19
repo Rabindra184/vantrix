@@ -21,14 +21,27 @@ import { SpinnerIcon } from './icons';
  * is the default because most buttons in a data product — Next, First page,
  * Check again — are peers, not the thing the page is for.
  *
- * THERE IS NO `danger` VARIANT, and its absence is a decision rather than an
- * omission. Nothing in this app destroys anything yet, and the red it would
- * need cannot be written as a utility: status colour is deliberately kept out
- * of `@theme` (see `test/tokens.test.ts`) precisely so nobody reaches for
- * `text-status-failed` and gets `--chart-status-failed`, a chart FILL that
- * fails contrast as text. A variant with no caller that also has to punch
- * through that rule is worth adding on the day something needs it, with the
- * token question answered then.
+ * THERE IS NO `danger` VARIANT, and its absence is still a decision — but the
+ * reason this gave has expired and the correction is the point. It read
+ * "nothing in this app destroys anything yet", which stopped being true the day
+ * a token could be revoked, a rule deleted and a test removed. **All three then
+ * reached for `primary`**, which put a second one on the screen the moment a
+ * confirmation was armed — breaking the rule two paragraphs up, in the one
+ * place where the most prominent control on screen became the destructive one.
+ *
+ * So the day this anticipated arrived, and the answer turned out to be the
+ * cheaper half: STOP REACHING FOR `primary`, rather than add a variant. Those
+ * three confirms are `secondary` now (review.md 20, "one primary action per
+ * task"), which costs them nothing — each lives inside a block the reader armed
+ * deliberately, under a sentence saying what it will do, beside a Cancel.
+ *
+ * The token argument against a red variant stands and is why one still is not
+ * here: status colour is deliberately kept out of `@theme` (see
+ * `test/tokens.test.ts`) precisely so nobody reaches for `text-status-failed`
+ * and gets `--chart-status-failed`, a chart FILL that fails contrast as text. A
+ * `danger` variant needs a SURFACE token and its own contrast measurement, and
+ * is worth adding when a destructive action needs prominence that a confirmation
+ * block does not already give it.
  *
  * NO `as`/`asChild` ESCAPE HATCH, and links are not buttons here. A `<Link>`
  * that looks like a button is still a link — it navigates, it opens in a new
