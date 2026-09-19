@@ -115,6 +115,76 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The turnkey-deployment branch added no unit FILE, no unit case and no spec —
+unit stays **154 / 1940**, integration is unchanged and **e2e stays 145**. It
+is guarded by TWO new steps in CI's `test-residue` job, which no `pnpm` gate
+runs.
+
+**A FRESH DEPLOYMENT STILL HAD NOBODY WHO COULD SIGN IN.** The
+onprem-deploy-gaps entry below found that and fixed the DOCUMENTATION —
+`docker compose run --rm migrate pnpm bootstrap …`. That is still a command
+the deployer has to know to run, and the first thing anybody saw after a
+successful `up` was a login page that refused every address. There is a
+`bootstrap` SERVICE now: it runs after `migrate`, `api` waits on IT rather
+than on migrate, and the first page a browser is served already has an
+account behind it.
+
+**THE DEFAULT PASSWORD IS A KNOWN VULNERABILITY CLASS AND IS SHIPPED
+ANYWAY.** Scanners try published defaults within hours of a host appearing.
+It exists because the alternative was measurably worse — a healthy platform
+nobody could log in to — and it is the trade ReportPortal, Grafana and GitLab
+all make. What makes it defensible is the scoping, and all three parts are
+load-bearing:
+
+```
+  only when PERFPORTAL_ADMIN_PASSWORD is unset   an operator who sets one is never exposed
+  only SEEDED, never re-applied                  changing it in the UI survives every later `up`
+  warns on every bootstrap that uses it          naming the variable that removes it
+```
+
+**AND THE IDEMPOTENCY FIX WAS NOT IDEMPOTENT, WHICH RUNNING IT TWICE FOUND.**
+The service re-runs on every `up`, so bootstrap had to stop throwing on a
+duplicate email — it reuses the account instead. The first version then
+called `OrgMemberRepository.add` unconditionally to re-attach that account to
+the org, and `add` is a plain `create` against a table unique on
+`(user_id, org_id)`: the SECOND run died with `Unique constraint failed`. A
+deployer restarting their stack would have got a failed deployment.
+
+Nothing about reading the code would have shown it. **Run the thing twice —
+it is the one check a human stops doing the moment it works once**, and it is
+exactly what the compose service does forever.
+
+**THE CHECK THAT THE PASSWORD SURVIVES WAS VACUOUS AT FIRST, AND SAID SO
+PASSED.** The hand-run fingerprint compared `md5(account.password)` joined on
+`a.user_id` — the column is `"userId"`, camelCase and quoted, so both sides
+were empty strings and the comparison reported UNCHANGED against nothing.
+Better Auth's tables are not snake_cased the way this repo's own are. The CI
+step asserts the fingerprint is **non-empty before comparing it**, which is
+the same guard `fk-free-tables.sql` already applies to its own query.
+
+**TWO STEPS, AND THE SECOND IS THE ONE THAT KEEPS THE FIRST HONEST.** One
+runs bootstrap twice and requires exit 0, the reuse message, an unchanged
+credential and exactly one membership. The other sets
+`PERFPORTAL_ADMIN_PASSWORD` and requires that it is used AND that no default
+warning is printed — because a warning about a default nobody seeded trains
+the reader to ignore it, which is the overstated-warning lesson M08 already
+records for the empty-threshold help.
+
+**`npx tsc -b packages/persistence`, NOT `pnpm build`.** That job has never
+built anything — it installs and migrates — and `bootstrap` is
+`node dist/scripts/bootstrap.js`. The targeted build produces persistence plus
+the project references it needs (core, for the token mint and Argon2id hash)
+in seconds, where the full build would add minutes and a web bundle nothing
+here reads.
+
+**AND THE GUIDE IS ITS OWN FILE, LINKED FROM THE README RATHER THAN BURIED IN
+IT.** `DEPLOYMENT.md` is the quick start, the first sign-in, the configuration
+reference, the pre-exposure checklist, upgrades, backup and the failure modes
+this file has accumulated — the runner's correct `Exited (1)` on a first boot,
+`Invalid origin`, the `Secure` cookie over plain HTTP, and `df -i` rather than
+`df -h`. README's "Deploying it" keeps its three non-optional things as the
+WHY and opens with the link.
+
 The rules-enabled-column branch added no unit FILE and 1 case to
 `apps/web/test/ProjectRules.test.tsx`, from **154 / 1939** to **154 / 1940**.
 Integration is UNCHANGED (that file is a `.tsx`) and **e2e stays 145** — no

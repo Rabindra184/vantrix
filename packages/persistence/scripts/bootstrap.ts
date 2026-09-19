@@ -86,6 +86,70 @@ function generatePassword(): string {
   return randomBytes(24).toString('base64url');
 }
 
+/**
+ * The password a container deployment starts with, when the operator has not
+ * chosen one.
+ *
+ * ═══ THIS IS A DEFAULT CREDENTIAL, WHICH IS A KNOWN VULNERABILITY CLASS ═══
+ *
+ * A fixed password shipped to every server is how exposed dashboards are taken
+ * over: scanners try the published default of every product they can
+ * fingerprint, and they try it within hours of a host appearing. It exists
+ * here anyway because the alternative was worse in practice — before this, a
+ * fresh `docker compose --profile onprem up` produced a healthy platform with
+ * NO account that could sign in, and the documented fix was a `pnpm` command
+ * on the host that a deployer who only runs compose does not have.
+ *
+ * So it is scoped the way the same trade is scoped in ReportPortal, Grafana
+ * and GitLab:
+ *
+ *   - it is only ever used when `PERFPORTAL_ADMIN_PASSWORD` is unset, so an
+ *     operator who sets one never has a published secret on their instance;
+ *   - it is only ever SEEDED into an empty deployment — `signUpEmail` runs
+ *     once, and a re-run finds the account and leaves it alone, so it can
+ *     never reset a password somebody has changed;
+ *   - and using it prints the warning below on every bootstrap, naming the
+ *     variable that removes it.
+ *
+ * `DEPLOYMENT.md` makes changing it step one after the first sign-in.
+ */
+const DEFAULT_ADMIN_PASSWORD = 'perfportal';
+
+/**
+ * Who to create, and with what — CLI first, then environment, then the
+ * documented defaults.
+ *
+ * `--admin-email` keeps its old meaning exactly: passing it opts in to
+ * creating an admin, and without it (and without the env var) no account is
+ * created at all. That matters because this script's other caller is a human
+ * at a terminal following `infra/README.md`, and turning admin creation on by
+ * default would have changed what that command does underneath them.
+ *
+ * The CONTAINER path opts in through `PERFPORTAL_ADMIN_EMAIL`, which
+ * `docker-compose.yml`'s bootstrap service always sets. That is the whole
+ * difference between the two callers.
+ */
+function resolveAdmin(adminEmail: string | undefined): {
+  email: string;
+  password: string;
+  usingDefaultPassword: boolean;
+} | undefined {
+  const email = adminEmail ?? process.env.PERFPORTAL_ADMIN_EMAIL;
+  if (!email) return undefined;
+
+  const chosen = process.env.PERFPORTAL_ADMIN_PASSWORD;
+  if (chosen) return { email, password: chosen, usingDefaultPassword: false };
+
+  // A CLI caller gets a random password, as it always has: they are reading
+  // stdout and can save it. Only the container path, which nobody is watching,
+  // falls back to the documented default — otherwise every `compose up` would
+  // mint a password the deployer has to go hunting for in logs.
+  if (process.env.PERFPORTAL_ADMIN_EMAIL && !adminEmail) {
+    return { email, password: DEFAULT_ADMIN_PASSWORD, usingDefaultPassword: true };
+  }
+  return { email, password: generatePassword(), usingDefaultPassword: false };
+}
+
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -128,22 +192,73 @@ async function main(): Promise<void> {
     // way to recover it. Every retry against the same taken email minted
     // another orphaned token. Sign-up first means a duplicate-email failure
     // here happens before any token exists to orphan.
-    let admin: { email: string; password: string } | undefined;
-    if (adminEmail) {
+    const wanted = resolveAdmin(adminEmail);
+
+    /* ═══ IDEMPOTENT NOW, BECAUSE `docker compose up` RUNS IT EVERY TIME ═══
+     *
+     * This used to let `signUpEmail`'s duplicate-email error escape, on the
+     * reasoning quoted at the top of this file: re-running with the same
+     * address "fails loudly rather than minting a second password silently".
+     * That is right for a human retyping a command and wrong for the compose
+     * service added beside it, which re-runs on every `up` and would fail the
+     * whole deployment on the second one — a deployer who restarts their
+     * stack does not want an error, they want their instance back.
+     *
+     * So an existing account is now REUSED, not recreated, and emphatically
+     * not re-passworded: nothing here touches the credential of an account
+     * that already exists, which is what keeps a default password from
+     * reappearing on an instance whose operator has changed it.
+     *
+     * The loud-failure property survives where it belongs — a CLI caller who
+     * passes `--admin-email` for an address that exists is told so, rather
+     * than being handed a password that is not the account's. */
+    let admin: { email: string; password: string; usingDefaultPassword: boolean } | undefined;
+    let adminExisted = false;
+    if (wanted) {
+      const existing = await prisma.user.findFirst({ where: { email: wanted.email } });
+      if (existing) {
+        adminExisted = true;
+        if (adminEmail) {
+          throw new Error(
+            `An account already exists for ${wanted.email}. Bootstrap will not change ` +
+              'its password. Use a different --admin-email, or sign in with the ' +
+              'existing account.',
+          );
+        }
+        /* Make sure the account can actually reach the org this run targets:
+         * a deployment whose ADMIN exists but whose ORG was recreated would
+         * otherwise sign in to nothing.
+         *
+         * GUARDED, because `add` is a plain `create` and `org_member` is
+         * unique on `(user_id, org_id)`. Calling it unconditionally is what
+         * the first version of this did, and the second `compose up` of a
+         * deployment died on `Unique constraint failed on the fields:
+         * (user_id, org_id)` — an idempotency fix that was not idempotent,
+         * found by running the thing twice rather than by reading it. */
+        const membership = await prisma.orgMember.findFirst({
+          where: { userId: existing.id, orgId: org.id },
+        });
+        if (!membership) {
+          await new OrgMemberRepository(prisma).add(existing.id, org.id, 'admin');
+        }
+      }
+    }
+
+    if (wanted && !adminExisted) {
       const auth = createAuth({
         databaseUrl,
         baseUrl: process.env.BETTER_AUTH_URL ?? `http://localhost:${Number(process.env.PORT ?? 3000)}`,
       });
-      const password = generatePassword();
+      const password = wanted.password;
       const signUp = await auth.api.signUpEmail({
         body: {
-          email: adminEmail,
+          email: wanted.email,
           password,
-          name: titleCase(adminEmail.split('@')[0] ?? 'admin'),
+          name: titleCase(wanted.email.split('@')[0] ?? 'admin'),
         },
       });
       await new OrgMemberRepository(prisma).add(signUp.user.id, org.id, 'admin');
-      admin = { email: adminEmail, password };
+      admin = { email: wanted.email, password, usingDefaultPassword: wanted.usingDefaultPassword };
     }
 
     // Reuse the API's own token format and hashing path (@perfportal/core) —
@@ -197,8 +312,25 @@ async function main(): Promise<void> {
               '',
               '  Only its hash is stored. Save the plaintext now, then log in via',
               '  POST /auth/sign-in/email.',
+              ...(admin.usingDefaultPassword
+                ? [
+                    '',
+                    '  !! THIS IS THE PUBLISHED DEFAULT PASSWORD. Anyone who can reach',
+                    '  !! this instance knows it. Sign in and change it now, or redeploy',
+                    '  !! with PERFPORTAL_ADMIN_PASSWORD set to something of your own.',
+                  ]
+                : []),
             ]
-          : []),
+          : adminExisted
+            ? [
+                '',
+                '  Admin account: already present, left untouched.',
+                '',
+                '    Its password was NOT changed — bootstrap never re-passwords an',
+                '    account that exists, which is what stops a default reappearing',
+                '    on an instance whose operator has already changed it.',
+              ]
+            : []),
         '======================================================================',
         '',
       ].join('\n'),

@@ -123,6 +123,54 @@ services:
         condition: service_healthy
     command: pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
 
+  # ═══ THE STEP THAT MAKES A FRESH DEPLOYMENT SIGN-IN-ABLE ═══
+  #
+  # Before this service, `docker compose --profile onprem up` produced a
+  # correct, healthy platform with NO org, NO project, NO token and NO account
+  # that could log in: the migrations create the schema and stop. The fix was
+  # documented as a `pnpm` command on the host — which a deployer who only
+  # runs compose does not have — so the first thing anybody saw after a
+  # successful deployment was a login page that refused every address.
+  #
+  # It runs on EVERY `up`, not just the first, and that is why bootstrap had
+  # to become idempotent: the org and project are upserted by slug, and an
+  # admin account that already exists is reused and never re-passworded. A
+  # deployer restarting their stack gets their instance back, not an error.
+  #
+  # `service_completed_successfully` on migrate, because bootstrap writes rows
+  # into tables the migrations create; `api` in turn waits on THIS, so the
+  # first request a browser makes already has an account behind it.
+  bootstrap:
+    profiles: ['onprem']
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    environment:
+      <<: *app_env
+      PERFPORTAL_ORG_SLUG: ${PERFPORTAL_ORG_SLUG:-perfportal}
+      PERFPORTAL_PROJECT_SLUG: ${PERFPORTAL_PROJECT_SLUG:-demo}
+      # Setting this is what opts the container path in to creating an admin;
+      # the CLI keeps its own `--admin-email` opt-in, unchanged.
+      PERFPORTAL_ADMIN_EMAIL: ${PERFPORTAL_ADMIN_EMAIL:-admin@perfportal.local}
+      # ═══ A DEFAULT CREDENTIAL, DELIBERATELY, AND SCOPED ═══
+      #
+      # Unset here means the published default (`perfportal`) is seeded and
+      # bootstrap prints a warning naming this variable. That is a known
+      # vulnerability class — scanners try published defaults within hours of
+      # a host appearing — and it is the same trade ReportPortal, Grafana and
+      # GitLab make, for the same reason: the alternative was a deployment
+      # nobody could log in to.
+      #
+      # What keeps it defensible is that it is only ever SEEDED, never
+      # re-applied: bootstrap leaves an existing account's password alone, so
+      # changing it in the UI is permanent across every later `up`. Set this
+      # to your own value and the published default never touches the disk.
+      PERFPORTAL_ADMIN_PASSWORD: ${PERFPORTAL_ADMIN_PASSWORD:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: pnpm --filter @perfportal/persistence run bootstrap
+
   api:
     profiles: ['onprem']
     build:
@@ -140,7 +188,14 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      migrate:
+      # `bootstrap`, not `migrate` — it already waits on migrate itself, and
+      # waiting on the later step is what guarantees the first page a browser
+      # is served has an account behind it. Without this the API can be up and
+      # answering while the org, project and admin are still being written,
+      # which is a login page that refuses correct credentials for a second or
+      # two on every cold start — the worst possible first impression, and one
+      # that reads as a broken deployment rather than a race.
+      bootstrap:
         condition: service_completed_successfully
     command: pnpm --filter @perfportal/api start
 
