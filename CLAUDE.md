@@ -115,6 +115,64 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The browser-downloads branch added ONE e2e file —
+`apps/web/e2e/downloads.spec.ts` (2) — so **e2e rises to 147** from 145. Unit
+stays **154 / 1955** and integration **137 / 1762**, both UNCHANGED BY
+CONSTRUCTION: the unit config includes `apps/*/test/**` and the integration
+config `apps/*/test/**/*.test.ts`, and this is `apps/web/e2e/*.spec.ts`, which
+neither matches. It closes a gap the export-every-column branch RECORDED
+rather than fixed.
+
+**NOTHING IN ANY SUITE HAD EVER DOWNLOADED A FILE.** `downloadBlob`
+(`src/download.ts`) is six lines and was exercised by nothing at all. jsdom
+implements neither `URL.createObjectURL` nor `URL.revokeObjectURL`, so
+`StatisticsTable.test.tsx` and `RunDecisionBand.test.tsx` both STUB THE PAIR
+and assert the `Blob` they capture — which proves what a component BUILDS and
+says nothing about whether a browser writes it anywhere.
+
+**AND THE CLAIM THAT LEFT UNTESTED IS A RACE, WRITTEN DOWN AS SAFE.**
+`downloadBlob` revokes the object URL on the line AFTER `anchor.click()`,
+under a comment asserting "the click has already been dispatched
+synchronously, so the browser has what it needs". Red-verified by swapping
+those two lines:
+
+```
+  URL.revokeObjectURL(url);      BOTH cases fail
+  anchor.click();                Error: download.createReadStream: canceled
+```
+
+**THE EVENT STILL FIRES AND THE BYTES ARE CANCELLED**, which is the whole
+argument for reading the SAVED FILE rather than awaiting the event. A spec
+that asserted only `waitForEvent('download')` resolving would have passed
+against a product that downloads nothing — and the stub in the unit suite
+never revokes anything, so no amount of jsdom could reach it. The ordering is
+load-bearing, it was only ever asserted in prose, and now it is measured.
+
+**TWO MUTATIONS, LANDING DIFFERENTLY, AND THE SECOND PINS A DIVISION OF
+LABOUR.** Moving the BOM into the SHARED helper fails the JSON case ALONE —
+the CSV already expects one, and `JSON.parse` on a BOM-prefixed body throws.
+That is what keeps `\uFEFF` the property of `downloadCsv` rather than of
+handing a file over, which `download.ts`'s own docstring argues at length and
+nothing checked.
+
+**ASSERT NON-EMPTY BEFORE ASSERTING CONTENT.** A revoked-too-early blob
+delivers a started download carrying zero bytes, so `byteLength > 0` comes
+first in both cases; a `toContain` on an empty string fails for a reason that
+does not name the cause.
+
+**THE WAIT IS ARMED BEFORE THE CLICK**, because a local download can complete
+faster than the next statement runs and a wait attached afterwards misses it —
+the same shape as this file's note that `page.on('domcontentloaded')` must be
+attached before navigating.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **154 / 1955**; `pnpm test:e2e` **147 passed** at `--workers=2`
+against a SCRATCH DATABASE (`perfportal_e2e`, created, migrated, dropped) —
+that suite seeds through the real API and this machine was holding the nine
+real Gatling runs the last five branches were verified against. Confirmed
+untouched. Chromium only, as `test:e2e` always is; whether a WebKit download
+behaves the same is NOT claimed here and `e2e-cross-browser` is the arbiter.
+
 The clamp-percentiles-everywhere branch added ONE source file —
 `apps/web/src/percentile.ts` — and 4 cases, 2 to
 `apps/web/test/transforms.trends.test.ts` and 2 to `transforms.compare.test.ts`,
