@@ -37,8 +37,8 @@ export function problemFromIngestError(err: IngestError, traceId?: string): Prob
     code: err.code,
     detail: err.message,
     remediation: err.remediation,
-    ...(traceId ? { traceId } : {}),
-    ...(err.detail ? { meta: err.detail } : {}),
+    traceId: traceId ? traceId : undefined,
+    meta: err.detail ? err.detail : undefined,
   };
 }
 
@@ -56,7 +56,7 @@ export function problem(
     code,
     detail,
     remediation,
-    ...(traceId ? { traceId } : {}),
+    traceId: traceId ? traceId : undefined,
   };
 }
 

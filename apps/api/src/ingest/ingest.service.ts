@@ -81,18 +81,18 @@ export class IngestService {
         orgId: tenant.orgId,
         projectId: tenant.projectId,
         tool: metadata.tool,
-        ...(metadata.environment ? { environment: metadata.environment } : {}),
-        ...(metadata.branch ? { branch: metadata.branch } : {}),
-        ...(metadata.commitSha ? { commitSha: metadata.commitSha } : {}),
+        environment: metadata.environment ? metadata.environment : undefined,
+        branch: metadata.branch ? metadata.branch : undefined,
+        commitSha: metadata.commitSha ? metadata.commitSha : undefined,
         // Frozen at accept time beside the three above, and the same kind of
         // thing: what the CALLER asserts, never what the platform measured.
         // The worker resolves it against a real `test` row once it has the
         // simulation class too — see `resolveTestId`.
-        ...(metadata.test ? { declaredTestSlug: metadata.test } : {}),
+        declaredTestSlug: metadata.test ? metadata.test : undefined,
         bundleKey: key,
         bundleSha256: sha256,
         bundleBytes: bytes,
-        ...(metadata.idempotencyKey ? { idempotencyKey: metadata.idempotencyKey } : {}),
+        idempotencyKey: metadata.idempotencyKey ? metadata.idempotencyKey : undefined,
         startedAt: new Date(),
         engineOptions: engineOptionsFrom(settings),
       });

@@ -205,7 +205,27 @@ describe('NewRunnerRun', () => {
     // NOT `test: ''`. The server's grammar rejects an empty slug — correctly,
     // it names nothing — so a form that always sent the field would refuse
     // every run where the user simply left it alone.
-    expect(startRunnerRunMock.mock.calls[0]?.[0]?.metadata).not.toHaveProperty('test');
+    //
+    // ═══ ASSERTED ON THE WIRE, NOT ON THE OBJECT ═══
+    //
+    // This read `expect(metadata).not.toHaveProperty('test')`, which is a
+    // claim about the object the form BUILDS, as a stand-in for the payload
+    // the server RECEIVES. The two are not the same thing: `startRunnerRun`
+    // sends `JSON.stringify(metadata)` (`api/runner.ts`), and stringify drops
+    // an undefined value — so `{ test: undefined }` and a missing key are
+    // byte-identical on the wire, and nothing in that module ever inspects
+    // the keys.
+    //
+    // The distinction stopped being academic when the field moved from
+    // `...(x ? { test: x } : {})` to a named `test: x || undefined`, which
+    // closes a real hole in type checking (see `eslint.config.js`) and makes
+    // the key PRESENT. Serialising here asserts what the server actually
+    // gets, which is what the paragraph above is about — and it still fails
+    // loudly on the regression it was written for, `test: ''`.
+    const sent = JSON.parse(
+      JSON.stringify(startRunnerRunMock.mock.calls[0]?.[0]?.metadata ?? {}),
+    ) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty('test');
   });
 
   it('sends the slug of an existing test when one is picked', async () => {

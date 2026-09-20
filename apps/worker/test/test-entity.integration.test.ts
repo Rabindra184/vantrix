@@ -69,7 +69,7 @@ beforeEach(async () => {
 const resolve = (simulation: string | null, declaredTestSlug?: string): Promise<string | null> =>
   resolveTestId(
     pool,
-    { id: randomUUID(), orgId, projectId, ...(declaredTestSlug ? { declaredTestSlug } : {}) },
+    { id: randomUUID(), orgId, projectId, declaredTestSlug: declaredTestSlug || undefined },
     simulation,
   );
 

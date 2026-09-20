@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import type { ProjectScope } from './tenant.js';
 
 export interface SlaRuleRecord {
@@ -135,6 +135,8 @@ export class RuleRepository {
    * test is not a run of anything a test-scoped rule could be about.
    */
   async listEnabled(scope: ProjectScope, testId: string | null): Promise<SlaRuleRecord[]> {
+    const testScope: Prisma.SlaRuleWhereInput =
+      testId === null ? { testId: null } : { OR: [{ testId: null }, { testId }] };
     const rows = await this.prisma.slaRule.findMany({
       where: {
         orgId: scope.orgId,
@@ -144,7 +146,15 @@ export class RuleRepository {
         // whose two branches are the same predicate. `{ OR: [{ testId: null },
         // { testId: null }] }` would be correct and would read as though the
         // second branch meant something.
-        ...(testId === null ? { testId: null } : { OR: [{ testId: null }, { testId }] }),
+        //
+        // ANNOTATED, BECAUSE A SPREAD IS NOT AN OBJECT LITERAL. Excess-property
+        // checking applies to a literal assigned to a typed target and NOT to
+        // one spread into it, so inline this accepted `testID` or `Or` in
+        // silence — and a `where` that silently stops narrowing is the
+        // silent-gate class: a test-scoped rule that reads as protection and
+        // judges nothing. `Prisma.SlaRuleWhereInput` gives BOTH branches a
+        // contextual type, which is what puts them back in front of `tsc`.
+        ...testScope,
       },
       orderBy: { id: 'asc' },
     });
@@ -190,13 +200,17 @@ export class RuleRepository {
      */
     appliesToTestId?: string,
   ): Promise<SlaRuleRow[]> {
+    // Annotated for the same reason `listEnabled`'s is — see the comment
+    // there. A spread is not a literal, so `testID` or `Or` would compile.
+    const testScope: Prisma.SlaRuleWhereInput =
+      appliesToTestId === undefined
+        ? {}
+        : { OR: [{ testId: null }, { testId: appliesToTestId }] };
     const rows = await this.prisma.slaRule.findMany({
       where: {
         orgId: scope.orgId,
         projectId: scope.projectId,
-        ...(appliesToTestId === undefined
-          ? {}
-          : { OR: [{ testId: null }, { testId: appliesToTestId }] }),
+        ...testScope,
       },
       include: WITH_TEST,
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],

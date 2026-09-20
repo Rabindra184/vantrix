@@ -197,15 +197,15 @@ function NewRunnerRunProject({
       name: form.name.trim(),
       artifactKind: form.artifactKind,
       simulationClass: form.simulationClass.trim(),
-      ...(form.gatlingVersion.trim() ? { gatlingVersion: form.gatlingVersion.trim() } : {}),
-      ...(form.environment.trim() ? { environment: form.environment.trim() } : {}),
-      ...(form.branch.trim() ? { branch: form.branch.trim() } : {}),
-      ...(form.commitSha.trim() ? { commitSha: form.commitSha.trim() } : {}),
+      gatlingVersion: form.gatlingVersion.trim() ? form.gatlingVersion.trim() : undefined,
+      environment: form.environment.trim() ? form.environment.trim() : undefined,
+      branch: form.branch.trim() ? form.branch.trim() : undefined,
+      commitSha: form.commitSha.trim() ? form.commitSha.trim() : undefined,
       // `testMode` decides whether a slug travels at all: 'default' means
       // the worker groups by simulation class, which is not the same fact
       // as an empty text box.
-      ...(form.testMode !== 'default' && form.test.trim() ? { test: form.test.trim() } : {}),
-      ...(form.javaOptions.trim() ? { javaOptions: form.javaOptions.trim() } : {}),
+      test: form.testMode !== 'default' && form.test.trim() ? form.test.trim() : undefined,
+      javaOptions: form.javaOptions.trim() ? form.javaOptions.trim() : undefined,
       systemProperties: parsedProps.value,
     });
   };

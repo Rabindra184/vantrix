@@ -103,9 +103,10 @@ function AccessLoaded({ slug }: { readonly slug: string }) {
            lunch would otherwise mint a token counted from when the page
            loaded. Omitted entirely for "never", because the field is optional
            and `undefined` is what the schema reads as "no expiry". */
-        ...(expiresInDays === null
-          ? {}
-          : { expiresAt: new Date(Date.now() + expiresInDays * 86_400_000).toISOString() }),
+        expiresAt:
+          expiresInDays === null
+            ? undefined
+            : new Date(Date.now() + expiresInDays * 86_400_000).toISOString(),
       }),
     onSuccess: (token) => {
       setMinted(token);

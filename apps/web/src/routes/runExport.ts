@@ -40,7 +40,7 @@ export function runSummaryJson({
   const payload: RunSummaryExport = {
     exportedAt,
     run: { ...identity, status, verdict },
-    ...(assertions === undefined ? {} : { assertions }),
+    assertions,
   };
 
   return JSON.stringify(payload, null, 2);

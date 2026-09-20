@@ -136,8 +136,8 @@ export class TestRepository {
     const result = await this.prisma.test.updateMany({
       where: { orgId: scope.orgId, projectId: scope.projectId, slug },
       data: {
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
+        name: input.name !== undefined ? input.name : undefined,
+        description: input.description !== undefined ? input.description : undefined,
       },
     });
     if (result.count === 0) return null;

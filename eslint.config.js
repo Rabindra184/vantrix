@@ -74,6 +74,74 @@ export default tseslint.config(
     ],
   },
   ...tseslint.configs.recommended,
+
+  /*
+   * ═══ A CONDITIONAL SPREAD IS A HOLE IN TYPE CHECKING ═══
+   *
+   * TypeScript's excess-property check applies to an object LITERAL assigned
+   * to a typed target. A literal SPREAD into one is not that literal, so
+   *
+   *     ...(job.testSlug ? { test: job.testSlug } : {})
+   *
+   * compiles against a target whose field is `declaredTestSlug`, and the
+   * value silently never arrives. That is not hypothetical: it is how the
+   * on-prem runner's declared-test feature shipped completely broken with
+   * every gate green, and it took executing a real Gatling run to find
+   * (CLAUDE.md, `live-sink.ts`).
+   *
+   * MEASURED BOTH WAYS on `CreateLiveRunInput`, the same type that defect
+   * was about — one typo, two spellings:
+   *
+   *     declaredTestSlugTYPO: cond ? v : undefined     TS2561, "Did you mean…"
+   *     ...(cond ? { declaredTestSlugTYPO: v } : {})   exit 0, no errors
+   *
+   * THE FIX IS TO NAME THE KEY: `key: cond ? value : undefined`. That is a
+   * real property of a real literal, so the compiler sees it again — and it
+   * is equivalent at runtime, because `exactOptionalPropertyTypes` is off
+   * here, `JSON.stringify` drops an undefined value, and Prisma reads
+   * `undefined` as "not provided" (which is exactly what the spread meant).
+   *
+   * Where a branch is a whole object rather than a key — a `where` clause
+   * with two shapes — annotate the value instead (`const w: Prisma.XWhereInput
+   * = cond ? A : B`) and spread THAT: a typed value is checked, an inline
+   * literal is not.
+   *
+   * ONLY LITERALS WITH PROPERTIES ARE FLAGGED. `...(cond ? typedValue : {})`
+   * is safe — the value carries its own type — and the selector leaves it
+   * alone.
+   */
+  {
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'SpreadElement > ConditionalExpression > ObjectExpression[properties.length>0]',
+          message:
+            'A conditional spread hides a mistyped key from the compiler: an object literal spread into a typed target is not excess-property checked. Write `key: cond ? value : undefined`, or annotate the branches and spread a typed value. See eslint.config.js.',
+        },
+      ],
+    },
+  },
+  /*
+   * ═══ EXEMPT, AND THE REASON IS A MEASUREMENT ═══
+   *
+   * `Chart.tsx` assembles the ECharts option bag. The rule above exists
+   * because a spread loses the excess-property check on a typed target — and
+   * here there is no such check TO lose: `EChartsOption` carries index
+   * signatures, so the literal handed to `setOption` accepts anything.
+   * Measured, by putting a bogus key inside that literal as a plain property:
+   *
+   *     bogusKeyThatCannotExist: 1,      pnpm typecheck -> exit 0
+   *
+   * Converting its six conditional spreads would therefore buy no safety at
+   * all, in the most delicate rendering file in the app. Recorded as an
+   * exemption with its evidence rather than waved through — and if ECharts
+   * ever tightens that type, delete this block and do the conversion.
+   */
+  {
+    files: ['apps/web/src/charts/Chart.tsx'],
+    rules: { 'no-restricted-syntax': 'off' },
+  },
   {
     files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],
     rules: {
