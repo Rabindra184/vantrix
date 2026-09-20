@@ -209,7 +209,7 @@ every suite and every source-scanning guard was unaffected. What breaks is
 of "grep for X before doing Y", which is the whole cost.
 
 **WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes,
-`test:unit` **154 / 1949**. Integration and e2e are untouched by construction
+`test:unit` **154 / 1951** on the merged tree. Integration and e2e are untouched by construction
 and were not re-run. Found by reconciling the drill-down against the main
 table on a real run — and the drill-down itself came out CLEAN: 12 rows
 compared against their own scoped series, **36 of 36** exact on count, min and
