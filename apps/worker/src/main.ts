@@ -115,7 +115,7 @@ const chunks = new LiveChunkStore(blobs);
 
 const pipeline = new PipelineService(config, prisma, pool, blobs);
 const worker = startConsumer(config, pipeline);
-const sweeper = new Sweeper(config, pool);
+const sweeper = new Sweeper(config, pool, chunks, blobs, new Redis(config.redisUrl));
 // This owner's Redis connection is its own -- not the one BullMQ's
 // `startConsumer`/`Sweeper` open via `{ connection: { url } }` -- because
 // `LiveFoldOwner.close()` calls `.quit()` on it directly (see that method's

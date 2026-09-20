@@ -1,0 +1,23 @@
+-- When a live run's producer stopped and the sweeper finalized it in place.
+--
+-- WHY A COLUMN AND NOT AN INFERENCE. The pipeline commits statistics and the
+-- terminal status in ONE transaction, writing `'complete'` as a literal. An
+-- abandoned run has to end at `'incomplete'` — that state is what the run
+-- list's filter, the needs-attention tally and the decision band all read —
+-- while still carrying the statistics parsed from whatever arrived. Nothing
+-- else in the row distinguishes the two: `claimForClose` and this sweep both
+-- move a run to `'parsing'`, and `stream_offset` is positive for a healthy
+-- close as well.
+--
+-- NULL MEANS WHAT IT ALWAYS MEANT. Every run that exists today reads NULL and
+-- takes the `'complete'` branch byte-for-byte as before, and so does every
+-- future run that closes properly. Only the sweeper's `running` arm ever sets
+-- it, so the new behaviour is reachable by exactly one writer.
+--
+-- timestamptz, NOT a bare timestamp — `run`'s own instants were moved to
+-- timestamptz by 20260817000000 for the reason recorded there: Prisma decodes
+-- a bare `timestamp` as UTC and node-postgres decodes it in the node process's
+-- local zone, and this column is read by the SWEEPER through the raw pool AND
+-- by the pipeline through Prisma. A bare timestamp here would be that bug
+-- waiting for an operator outside UTC.
+ALTER TABLE "run" ADD COLUMN "stream_abandoned_at" TIMESTAMPTZ(3);

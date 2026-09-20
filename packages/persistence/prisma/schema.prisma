@@ -303,6 +303,20 @@ model Run {
   /// close() that failed afterwards does not make that untrue or buy the
   /// producer a fresh silence budget.
   streamUpdatedAt  DateTime? @map("stream_updated_at") @db.Timestamptz(3)
+
+  /// When the sweeper finalized this run because its producer stopped.
+  ///
+  /// NULL for every run that closed properly, and for every run that predates
+  /// the column. It exists because the pipeline commits statistics and the
+  /// terminal status together and writes `complete` as a literal: an abandoned
+  /// run must end at `incomplete` — the state the run list filter, the
+  /// needs-attention tally and the decision band all read — while still
+  /// carrying whatever its stream delivered. Nothing else tells the two apart;
+  /// `claimForClose` and the sweep both write `parsing`.
+  ///
+  /// Set by ONE writer (Sweeper's running arm) and read by ONE (the pipeline's
+  /// terminal UPDATE), so the new behaviour has exactly one way in.
+  streamAbandonedAt DateTime? @map("stream_abandoned_at") @db.Timestamptz(3)
   idempotencyKey   String?   @map("idempotency_key")
   /// When the platform received this run's bundle (accept time), NOT when
   /// the load test itself ran. Deliberately ingest time: see startedOn.

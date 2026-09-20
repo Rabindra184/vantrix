@@ -1,5 +1,10 @@
 import { Queue } from 'bullmq';
+import { Readable } from 'node:stream';
+import { LIVE_CHANNELS } from '@perfportal/core';
+import type { Redis } from 'ioredis';
 import type pg from 'pg';
+import { truncateToWholeRecords } from '@perfportal/plugin-gatling';
+import type { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import type { WorkerConfig } from './config.js';
 
 /**
@@ -47,6 +52,33 @@ export class Sweeper {
   constructor(
     private readonly config: WorkerConfig,
     private readonly pool: pg.Pool,
+    /**
+     * The two stores an ABANDONED run needs, and which this class had no
+     * reason to hold until it started keeping such a run's data. Injected
+     * rather than constructed here for the reason `main.ts` already gives for
+     * sharing one `BlobStore`: a second client is a second bucket-ensure and
+     * a second set of credentials to get wrong.
+     */
+    private readonly chunks: LiveChunkStore,
+    private readonly blobs: BlobStore,
+    /**
+     * The publisher for `live:closed`, and it is NOT an optimisation here.
+     *
+     * `LiveFoldOwner` holds an advisory lock on every run it owns, and
+     * `PipelineService.process` needs that same lock the instant it picks the
+     * job up. `LiveService.close` publishes this channel AT ITS CLAIM for
+     * exactly that reason — the owner gets the whole of assemble-and-hash as a
+     * head start on releasing.
+     *
+     * MEASURED WITHOUT IT: the run reached `parsing`, assembled correctly
+     * (18,883 bytes, sha written), and the pipeline then failed with
+     * `RunLockedError: ... is locked by the live fold owner; will retry`,
+     * exhausted its attempts, and left the run stuck at `parsing` for ever.
+     * The owner's own tick does release a run that has left `running`, so
+     * this is a race the job can lose rather than a deadlock — which is worse
+     * to diagnose, not better.
+     */
+    private readonly redis: Redis,
   ) {
     this.#queue = new Queue('ingest', { connection: { url: config.redisUrl } });
   }
@@ -79,8 +111,13 @@ export class Sweeper {
       // that column on every accepted chunk. COALESCE covers a run opened
       // and abandoned before its first chunk, which has no cursor movement
       // to measure and whose open time is then the honest reading.
-      const { rows } = await client.query<{ id: string; status: string }>(
-        `SELECT id, status FROM run
+      const { rows } = await client.query<{
+        id: string;
+        status: string;
+        bundle_key: string;
+        stream_offset: string;
+      }>(
+        `SELECT id, status, bundle_key, stream_offset FROM run
           WHERE (status = 'pending'
                  AND created_at < now() - ($1::int * interval '1 millisecond'))
              OR (status = 'parsing'
@@ -94,14 +131,51 @@ export class Sweeper {
           FOR UPDATE SKIP LOCKED`,
         [this.config.staleAfterMs, this.config.parsingStaleAfterMs, this.config.runningStaleAfterMs],
       );
+      /* ═══ CLAIMED IN HERE, ASSEMBLED OUT THERE ═══
+       *
+       * An abandoned run that received bytes now keeps them, which means
+       * reading every chunk out of the object store, cutting the half-written
+       * tail off and hashing the result. NONE of that may happen inside this
+       * transaction: the SELECT above holds these rows under FOR UPDATE, and
+       * holding a row lock across S3 round trips is how one slow bucket turns
+       * a 100-row sweep into a stalled `running` state for every producer.
+       *
+       * So the transaction does what a transaction is for — a CAS off
+       * `running` that no other replica can race — and the work happens after
+       * COMMIT, exactly as `LiveService.close` claims first and assembles
+       * afterwards. */
+      const toAssemble: { id: string; bundleKey: string }[] = [];
       for (const row of rows) {
         // Routed per ROW, not per batch: one sweep can select a stale
         // 'pending' run and a stale 'running' run together, and they need
         // opposite treatments.
-        if (row.status === 'running') await this.#finalizeIncomplete(client, row.id);
-        else await this.#reenqueue(row.id);
+        if (row.status !== 'running') {
+          await this.#reenqueue(row.id);
+          continue;
+        }
+        // A run that never received a byte has nothing to assemble — the
+        // chunk store would write an empty object and the pipeline would
+        // fail a run whose only fault is that nothing was sent. Same
+        // reasoning, and the same branch, as `close()`'s `hasData`.
+        if (BigInt(row.stream_offset) === 0n) {
+          await this.#finalizeIncomplete(client, row.id);
+          continue;
+        }
+        if (await this.#claimForAssembly(client, row.id)) {
+          // AT THE CLAIM, not after the assembly below — see the constructor.
+          // Fire-and-forget by signature like every other publish of this
+          // channel: a dropped message costs the owner's next tick, and a
+          // failure here must not roll back a claim that has committed.
+          void this.redis.publish(LIVE_CHANNELS.closed, row.id).catch(() => {});
+          toAssemble.push({ id: row.id, bundleKey: row.bundle_key });
+        }
       }
       await client.query('COMMIT');
+
+      // Past the commit the rows are no longer locked and the claim is
+      // durable: each of these is at `parsing` with `stream_abandoned_at`
+      // set, which no other sweep will select and no producer can revive.
+      for (const run of toAssemble) await this.#assembleAbandoned(run.id, run.bundleKey);
       return rows.length;
     } catch (err) {
       await client.query('ROLLBACK');
@@ -150,6 +224,110 @@ export class Sweeper {
    * way to move a failed job back to `wait` under its stable, run-derived id
    * — rather than assuming `add` always enqueues.
    */
+  /**
+   * The in-transaction half: move an abandoned run off `running` and stamp
+   * WHY, so the pipeline can end it at `incomplete` rather than `complete`.
+   *
+   * `parsing`, not `incomplete`, because this run now has work left to do and
+   * `incomplete` is terminal. The guard is the same CAS `claimForClose` uses —
+   * `status = 'running'` — so a producer that sends a chunk in the same
+   * instant loses the race cleanly rather than both writers proceeding.
+   * `stream_abandoned_at` is set in the SAME statement: a row at `parsing`
+   * without it is indistinguishable from a healthy close, and the pipeline
+   * would finish it as `complete`.
+   *
+   * `parsing_started_at` is stamped too, for the reason its own docstring
+   * gives — the `parsing` arm of this very sweep ages from that column, and a
+   * null there would make this run look instantly stale and be re-enqueued
+   * while the assembly below is still running.
+   *
+   * Returns whether the claim landed. False means somebody else moved the row
+   * between the SELECT and here, and the assembly must not run.
+   */
+  async #claimForAssembly(client: pg.PoolClient, runId: string): Promise<boolean> {
+    const { rowCount } = await client.query(
+      `UPDATE run
+          SET status = 'parsing', parsing_started_at = now(), stream_abandoned_at = now()
+        WHERE id = $1 AND status = 'running'`,
+      [runId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * The post-commit half: give an abandoned run the data it actually
+   * collected.
+   *
+   * ═══ THE TAIL HAS TO COME OFF ═══
+   *
+   * A producer that died mid-write left a half-record at the end, and
+   * `parseSimulationLog` — what the pipeline runs — throws `TruncatedError`
+   * on it rather than stopping short. `truncateToWholeRecords` asks the
+   * STREAMING decoder where the last whole record ended and cuts there, which
+   * is the same answer the live fold was already using, from the same code.
+   *
+   * ═══ FAILURE LEAVES TODAY'S OUTCOME, NEVER A WORSE ONE ═══
+   *
+   * If any of this throws — the bucket is unreachable, the chunks are gone,
+   * the log is so short it holds no whole record — the run is finalized
+   * `incomplete` with no statistics, which is precisely what it got before
+   * this method existed. So the change is an improvement in the good case and
+   * a no-op in the bad one, and it can never strand a run at `parsing`.
+   */
+  async #assembleAbandoned(runId: string, bundleKey: string): Promise<void> {
+    try {
+      await this.chunks.finalize(runId, bundleKey);
+      const assembled = await this.blobs.get(bundleKey);
+      const whole = truncateToWholeRecords(assembled);
+      // Nothing decodable arrived — a header with no complete record, say.
+      // Enqueuing this would drive the pipeline into a parse failure and mark
+      // the run `failed`, which would be a WORSE answer than the truth:
+      // the stream stopped, and it stopped before it said anything.
+      if (whole.length === 0) {
+        await this.#finalizeIncompleteOnPool(runId);
+        return;
+      }
+      // `putStream` rather than a put plus a hand-rolled hash: it meters and
+      // hashes in ONE pass and is the same call the upload path uses, so the
+      // sha256 recorded here is produced by the code every other run's is.
+      // `maxDecompressedBundleBytes` is the right ceiling, not the upload
+      // cap: what is being written here is an assembled simulation.log, i.e.
+      // exactly the DECOMPRESSED content that limit bounds for a tarball.
+      // The stream path caps each chunk and nothing caps their sum, so this
+      // is also the first ceiling an abandoned run has ever met.
+      const { sha256, bytes } = await this.blobs.putStream(
+        bundleKey,
+        Readable.from(whole),
+        this.config.maxDecompressedBundleBytes,
+      );
+      await this.pool.query(
+        `UPDATE run SET bundle_sha256 = $2, bundle_bytes = $3 WHERE id = $1`,
+        [runId, sha256, bytes],
+      );
+      await this.#reenqueue(runId);
+    } catch (err) {
+      // NOT swallowed silently. The tick must not die because one abandoned
+      // run's bucket misbehaved — the run still reaches a correct terminal
+      // state on the line below — but a failure here means a reader lost
+      // data the product had, and this repository ships no error reporter,
+      // so the stack goes to stderr or nowhere. (Swallowing it cost an hour
+      // of diagnosis the first time this method had a bug.)
+      console.error(`sweeper: could not keep abandoned run ${runId}'s data:`, err);
+      await this.#finalizeIncompleteOnPool(runId).catch(() => {});
+    }
+  }
+
+  /** `#finalizeIncomplete`'s statement, for the post-commit path that holds no
+   *  transaction. Same guard, same verdict — see that method. */
+  async #finalizeIncompleteOnPool(runId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE run
+          SET status = 'incomplete', verdict = 'not_evaluated', ingested_at = now()
+        WHERE id = $1 AND status NOT IN ('complete', 'failed', 'incomplete')`,
+      [runId],
+    );
+  }
+
   async #reenqueue(runId: string): Promise<void> {
     const existing = await this.#queue.getJob(runId);
     if (!existing) {

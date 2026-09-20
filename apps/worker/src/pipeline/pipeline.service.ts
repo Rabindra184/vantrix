@@ -366,7 +366,24 @@ export class PipelineService {
       // 'complete' out from under it. Doesn't affect the single-worker happy
       // path — status is 'parsing' here, never already terminal.
       await client.query(
-        `UPDATE run SET status = 'complete', verdict = $2, tool_version = $3, ingested_at = now(),
+        /* ═══ 'incomplete' WHEN THE STREAM WAS ABANDONED, AND IT IS STILL ONE
+         *     TRANSACTION ═══
+         *
+         * An abandoned run reaches this method with real statistics parsed
+         * from whatever its producer managed to send, and must NOT end at
+         * `complete`: `incomplete` is what the run list's filter, the
+         * needs-attention tally and the decision band all read, and losing it
+         * would hide a half-measured run among the finished ones.
+         *
+         * A CASE on the column rather than a second statement, so statistics
+         * and the terminal status keep committing together — the property the
+         * comment above this block is about. `stream_abandoned_at` is NULL for
+         * every run that predates it and every run that closes properly, so
+         * this expression is `'complete'` byte-for-byte on every existing
+         * path; only `Sweeper`'s running arm ever sets it. */
+        `UPDATE run SET status = CASE WHEN stream_abandoned_at IS NULL
+                                      THEN 'complete' ELSE 'incomplete' END,
+                verdict = $2, tool_version = $3, ingested_at = now(),
                 tool_started_at = $4, simulation = $5, description = $6, duration_ms = $7,
                 tool_assertions = $8, activity_ms = $9, test_id = $10
           WHERE id = $1 AND status NOT IN ('complete', 'failed')`,
