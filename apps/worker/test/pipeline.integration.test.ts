@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { createPool, createPrisma, MetricReader } from '@perfportal/persistence';
-import { BlobStore } from '@perfportal/storage';
+import { Redis } from 'ioredis';
+import { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PipelineService, RUN_INGEST_LOCK_NAMESPACE } from '../src/pipeline/pipeline.service.js';
 import { isTransient } from '../src/pipeline/retry.js';
@@ -34,8 +35,18 @@ const config = loadWorkerConfig({
 const pool = createPool(config.databaseUrl);
 const prisma = createPrisma(config.databaseUrl);
 const blobs = new BlobStore(config.blob);
+// The sweeper keeps an abandoned run's data now, so it holds the same two
+// stores the close path does.
+const chunks = new LiveChunkStore(blobs);
+// The sweeper publishes `live:closed` at its claim so the fold owner drops
+// the advisory lock before the pipeline needs it.
+const redisPub = new Redis(config.redisUrl);
 
 let bundle: Buffer;
+/** The RAW log, not the tarball. A live run streams simulation.log bytes
+ *  directly — `LiveChunkStore` never sees an archive — so a test that seeds
+ *  chunks has to seed what a producer actually sends. */
+let log: Buffer;
 
 beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pipe-'));
@@ -45,6 +56,7 @@ beforeAll(async () => {
   const out = join(dir, 'bundle.tgz');
   execFileSync('tar', ['-czf', out, '-C', dir, 'run-1']);
   bundle = readFileSync(out);
+  log = readFileSync(FIXTURE_LOG);
   await blobs.ensureBucket();
 });
 
@@ -419,7 +431,7 @@ describe('Sweeper', () => {
     ]);
     const fresh = await seedRunKeepingExisting();
 
-    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000 }, pool);
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000 }, pool, chunks, blobs, redisPub);
     try {
       const swept = await sweeper.sweep();
       expect(swept).toBe(1);
@@ -445,7 +457,7 @@ describe('Sweeper', () => {
       other.id,
     ]);
 
-    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000 }, pool);
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000 }, pool, chunks, blobs, redisPub);
     const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
     try {
       await sweeper.sweep(); // batch of 2 -> old code: jobId `sweep-${runId}-2`
@@ -478,7 +490,7 @@ describe('Sweeper', () => {
       [ctx.runId],
     );
 
-    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool, chunks, blobs, redisPub);
     const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
     try {
       const swept = await sweeper.sweep();
@@ -503,7 +515,7 @@ describe('Sweeper', () => {
     const ctx = await seedRun(bundle);
     await pool.query(`UPDATE run SET status = 'parsing' WHERE id = $1`, [ctx.runId]);
 
-    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool, chunks, blobs, redisPub);
     try {
       const swept = await sweeper.sweep();
       expect(swept).toBe(0);
@@ -533,13 +545,118 @@ describe('Sweeper', () => {
       [ctx.runId],
     );
 
-    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool, chunks, blobs, redisPub);
     try {
       const swept = await sweeper.sweep();
       expect(swept).toBe(0);
     } finally {
       await sweeper.close();
     }
+  });
+
+  /**
+   * ═══ AN ABANDONED RUN KEEPS WHAT IT DID MANAGE TO SEND ═══
+   *
+   * MEASURED BEFORE THIS EXISTED, against a real stack: a live run given
+   * 18,884 bytes of a real `simulation.log` published a live delta reading
+   * `count 440 / ok 428 / ko 12` — numbers a reader WATCHED — and the sweeper
+   * then finalized it with ZERO stat rows, no simulation and no duration. The
+   * chunks sat in the object store, unreachable.
+   *
+   * ═══ WHY IT COULD NOT SIMPLY BE ENQUEUED ═══
+   *
+   * `parseSimulationLog`, which the pipeline runs, reads a FINISHED buffer and
+   * throws `TruncatedError` on the half-record a dead producer leaves —
+   * measured, `needed 4 bytes at 18884, have 0`. `truncateToWholeRecords` asks
+   * the STREAMING decoder where the last whole record ended (18,883 here, 882
+   * events) and cuts there, which is what makes the partial log a valid one.
+   *
+   * This asserts the SWEEP's half: the run is claimed off `running`, marked
+   * abandoned, and its bundle assembled and hashed. The pipeline's half — that
+   * such a run ends `incomplete` WITH statistics rather than `complete` — is
+   * the case below.
+   */
+  it('keeps the data an abandoned run did manage to send', async () => {
+    const { Sweeper } = await import('../src/sweeper.js');
+    const ctx = await seedRun(bundle);
+    // NOTHING AT bundleKey, WHICH IS WHAT A LIVE RUN LOOKS LIKE. `seedRun`
+    // uploads a tarball there for the upload path's sake, and
+    // `LiveChunkStore.finalize` SKIPS re-assembly when the key already
+    // exists — so leaving it made the sweeper hand the pipeline a .tgz and
+    // the decoder read gzip's magic byte as a record type ("expected Run
+    // record (0) at byte 0, got 31"). A run that is still `running` has
+    // never had a bundle assembled; the fixture has to say so.
+    const { rows: keyRows } = await pool.query<{ bundle_key: string }>(
+      'SELECT bundle_key FROM run WHERE id = $1',
+      [ctx.runId],
+    );
+    await blobs.delete(keyRows[0]!.bundle_key);
+    // Half a real log, as a real stream would have left it.
+    const half = log.subarray(0, Math.floor(log.length / 2));
+    await chunks.put(ctx.runId, 0, half);
+    await pool.query(
+      `UPDATE run
+          SET status = 'running',
+              stream_offset = $2,
+              stream_updated_at = now() - interval '30 minutes'
+        WHERE id = $1`,
+      [ctx.runId, half.length],
+    );
+
+    const sweeper = new Sweeper(
+      { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
+      pool,
+      chunks,
+      blobs,
+      redisPub,
+    );
+    try {
+      expect(await sweeper.sweep()).toBe(1);
+    } finally {
+      await sweeper.close();
+    }
+
+    const { rows } = await pool.query<{
+      status: string;
+      stream_abandoned_at: Date | null;
+      bundle_bytes: string;
+    }>('SELECT status, stream_abandoned_at, bundle_bytes FROM run WHERE id = $1', [ctx.runId]);
+    // Claimed for work rather than finalized: `incomplete` is terminal and
+    // this run still has a bundle to parse.
+    expect(rows[0]?.status).toBe('parsing');
+    // WITHOUT THIS the pipeline would finish it `complete`, losing the one
+    // signal that says the stream stopped early.
+    expect(rows[0]?.stream_abandoned_at).not.toBeNull();
+    // Assembled AND cut: strictly shorter than what was streamed, because the
+    // last record is half-written.
+    expect(Number(rows[0]?.bundle_bytes)).toBeGreaterThan(0);
+    expect(Number(rows[0]?.bundle_bytes)).toBeLessThan(half.length);
+  });
+
+  /**
+   * The pipeline's half of the same journey: a run carrying
+   * `stream_abandoned_at` ends `incomplete` WITH its statistics, where any
+   * other run ends `complete`. One CASE in the terminal UPDATE, so the
+   * statistics and the status still commit together.
+   */
+  it('finishes an abandoned run as incomplete, with the statistics it parsed', async () => {
+    const ctx = await seedRun(bundle);
+    await pool.query(`UPDATE run SET stream_abandoned_at = now() WHERE id = $1`, [ctx.runId]);
+
+    await pipeline().process(ctx.runId);
+
+    const { rows } = await pool.query<{ status: string; verdict: string | null }>(
+      'SELECT status, verdict FROM run WHERE id = $1',
+      [ctx.runId],
+    );
+    expect(rows[0]?.status).toBe('incomplete');
+
+    // THE POINT OF THE WHOLE CHANGE: terminal, and not empty.
+    const stats = await pool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM run_stat WHERE run_id = $1`,
+      [ctx.runId],
+    );
+    expect(Number(stats.rows[0]?.n)).toBeGreaterThan(0);
   });
 
   it('finalizes a "running" run whose producer vanished as incomplete — the state has no other exit', async () => {
@@ -550,9 +667,11 @@ describe('Sweeper', () => {
     // markIncomplete existed for this transition with no caller anywhere
     // outside its own test.
     //
-    // NOT a re-enqueue, unlike every other branch of this sweep: there is
-    // nothing to parse until close() assembles the per-chunk objects into
-    // bundleKey, so handing this run to PipelineService would only fail it.
+    // NOT a re-enqueue, and this run is the reason that is still true: it
+    // carries `stream_offset = 0`, so nothing was ever streamed and there is
+    // nothing to assemble. A run that DID receive bytes now takes the other
+    // branch and keeps them — see "keeps the data an abandoned run did
+    // manage to send" below.
     //
     // This asserts the ROW only. The run's live/{runId}/* objects survive the
     // sweep by design and no assertion here implies otherwise — they are left
@@ -570,6 +689,9 @@ describe('Sweeper', () => {
     const sweeper = new Sweeper(
       { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
       pool,
+      chunks,
+      blobs,
+      redisPub,
     );
     try {
       const swept = await sweeper.sweep();
@@ -611,6 +733,9 @@ describe('Sweeper', () => {
     const sweeper = new Sweeper(
       { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
       pool,
+      chunks,
+      blobs,
+      redisPub,
     );
     try {
       expect(await sweeper.sweep()).toBe(0);
@@ -643,6 +768,9 @@ describe('Sweeper', () => {
     const sweeper = new Sweeper(
       { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
       pool,
+      chunks,
+      blobs,
+      redisPub,
     );
     try {
       expect(await sweeper.sweep()).toBe(1);
@@ -677,6 +805,9 @@ describe('Sweeper', () => {
     const sweeper = new Sweeper(
       { ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000, runningStaleAfterMs: 60_000 },
       pool,
+      chunks,
+      blobs,
+      redisPub,
     );
     const queue = new Queue('ingest', { connection: { url: config.redisUrl } });
     try {
@@ -727,7 +858,7 @@ describe('Sweeper', () => {
     const beforeState = await (await queue.getJob(ctx.runId))?.getState();
     expect(beforeState).toBe('failed');
 
-    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool);
+    const sweeper = new Sweeper({ ...config, staleAfterMs: 60_000, parsingStaleAfterMs: 60_000 }, pool, chunks, blobs, redisPub);
     try {
       const swept = await sweeper.sweep();
       expect(swept).toBe(1);

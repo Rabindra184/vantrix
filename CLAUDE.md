@@ -115,6 +115,100 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The abandoned-runs-keep-their-data branch added ONE unit file —
+`packages/plugin-gatling/test/truncate.test.ts` (3) — from **154 / 1958 to
+155 / 1961**, and 2 cases to `apps/worker/test/pipeline.integration.test.ts`.
+**e2e stays 148.** It is the arm the branch below recorded as NOT taken, and
+it is a FEATURE rather than a correction: an abandoned run now keeps what it
+measured.
+
+**MEASURED BEFORE AND AFTER, ON THE SAME SCENARIO.** A live run opened, handed
+18,884 bytes of a real `simulation.log`, producer killed:
+
+```
+                 before                     after
+  status         incomplete                 incomplete
+  simulation     null                       example.ParitySimulation
+  durationMs     null                       36028
+  stat rows      0                          14   (1 run, 7 request, 6 group)
+  run totals     —                          count 440 / ok 428 / ko 12
+```
+
+Those totals are EXACTLY the live delta the fold owner had already published
+and a reader had already watched. The data was never missing; nothing
+assembled it.
+
+**THE PULL PARSER REFUSES A PARTIAL LOG, AND THAT IS WHY THIS NEEDED A NEW
+FUNCTION.** `parseSimulationLog` reads a FINISHED buffer —
+`TruncatedError: needed 4 bytes at 18884, have 0`. `StreamingLogDecoder`
+already rewinds to the last whole record for the live feed and reports it as
+`consumedBytes`. `truncateToWholeRecords` cuts there: 18,884 in, 882 events,
+**18,883 out**, one byte dropped. A complete log comes back byte-identical, so
+the normal close path pays nothing. **ONE DECODER STILL** — this asks the
+module that owns record framing rather than re-deriving it.
+
+**CLAIMED IN THE TRANSACTION, ASSEMBLED OUTSIDE IT.** The sweep holds its rows
+under `FOR UPDATE`, and this file already records that reaching for a second
+connection there self-deadlocks. Reading every chunk out of S3 under those
+locks would be the same mistake wearing network latency. So the transaction
+does a CAS off `running` to `parsing` — stamping `stream_abandoned_at` in the
+SAME statement — and the assembly happens after `COMMIT`, exactly as
+`LiveService.close` claims first and assembles after.
+
+**AND THE FIRST ATTEMPT LEFT EVERY ABANDONED RUN STUCK AT `parsing` FOR
+EVER.** Assembly worked — 18,883 bytes, sha written — and the pipeline then
+failed with `RunLockedError: … is locked by the live fold owner; will retry`,
+exhausted its attempts, and stopped. `close()` publishes `live:closed` AT ITS
+CLAIM precisely so the owner drops the advisory lock before the pipeline wants
+it, and this file says so in that method's own comment. The sweeper published
+nothing. **The owner's own tick does release a run that has left `running`, so
+this is a race the job can LOSE rather than a deadlock** — which is worse to
+diagnose, not better, because the lock is gone by the time you look.
+
+**A NEW COLUMN, BECAUSE THE PIPELINE COMMITS STATISTICS AND THE STATUS
+TOGETHER.** That terminal `UPDATE` wrote `'complete'` as a literal, and an
+abandoned run must end `incomplete` — the state the run list's filter, the
+needs-attention tally and the decision band all read. It is a `CASE` on
+`stream_abandoned_at` now, so the two still commit in one transaction. NULL
+for every existing run and every healthy close, and exactly one writer ever
+sets it, so the expression is `'complete'` byte-for-byte on every path that
+existed. Regression-verified end to end: a full log closed normally still
+reads `complete`, 895 / 871 / 24.
+
+**FAILURE LEAVES TODAY'S OUTCOME AND SAYS SO.** If the bucket is unreachable
+or nothing decodable arrived, the run is finalized `incomplete` with no
+statistics — precisely what it got before this existed — so the change cannot
+strand a run at `parsing`. The catch **logs**: the first version swallowed it
+silently and cost an hour, because `expected Run record (0) at byte 0, got 31`
+was invisible until the handler was made to print.
+
+**THAT ERROR WAS THE FIXTURE, NOT THE PRODUCT, AND 31 IS GZIP'S MAGIC BYTE.**
+`seedRun` uploads a tarball to `bundleKey` for the upload path's sake, and
+`LiveChunkStore.finalize` SKIPS re-assembly when the key already exists — so
+the sweeper handed the pipeline a `.tgz`. A run that is still `running` has
+never had a bundle assembled; the fixture now clears it. **A seeder written
+for one path is a claim about the other**, and the guard that made it visible
+was reading the error rather than the status.
+
+**WHAT WAS RUN, AND WHAT THE MACHINE WOULD NOT ANSWER.** `typecheck` and
+`lint` green by their own exit codes; `test:unit` **155 / 1961**. The two new
+integration cases pass in isolation (2 passed, 24 skipped). The FULL
+`pipeline.integration.test.ts` reported **4 failed** — and the same file on
+clean `origin/main`, with this change entirely backed out, reported **4 failed
+too**, the same sweeper cases plus the same 120-second timeout. `vm_stat` said
+**3,888 free pages** with 17,235 MB of 18,432 MB of swap gone, which is worse
+than the 4,390 this file already calls untrustworthy. **Backing the change out
+and re-running the same file is what separates "I broke this" from "this
+machine cannot answer"**, and it is cheaper than either guess. CI's clean
+containers are the arbiter.
+
+**AND `git add -A` STAGED THREE FILES THAT PREDATE THE SESSION** —
+`docs/ui-review-2026-09-13/`, `review.md` and `scripts/seed-manual-test.mjs`,
+1,264 lines of unrelated documentation into a nine-file change. This file
+already records those three by name as what `git stash -u` sweeps up; `-A`
+is the same trap with a different verb. Caught by reading `--cached --stat`
+before committing, which is the habit worth keeping.
+
 The incomplete-run-discards-data branch added no unit FILE and 3 cases to
 `apps/web/test/StatisticsTable.test.tsx`, from **154 / 1955 to 154 / 1958**,
 and its **e2e rises to 148**. Integration is UNCHANGED (every file it touches
