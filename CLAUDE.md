@@ -116,14 +116,18 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The errors-tally-counts-errors branch added no unit FILE and 1 case to
-`apps/web/test/ErrorsTable.test.tsx`, from **154 / 1948 to 154 / 1949**.
+`apps/web/test/ErrorsTable.test.tsx`. Cut from **154 / 1948**, it measured
+154 / 1949 on its own; export-every-column merged FIRST and took `main` to
+154 / 1950, so after merging `main` back in this branch measures
+**154 / 1951** — RE-MEASURED, not inferred.
 Integration is UNCHANGED (every file it touches is a `.tsx`) and **e2e stays
 145** — `run-detail.spec.ts`'s errors case asserts the ROW COUNT against the
 KO column and never reads the tally, so the wording its NAME carries is a test
 name rather than an assertion. **CUT FROM THE SAME `main` AS
-export-every-column**, which also adds unit cases and also inserts here, so
-whichever merges second re-measures and resolves this file: the arithmetic (1
-case onto whatever it sits on) is what survives.
+export-every-column**, and this paragraph is the reconciliation that predicted
+itself: both branches inserted an entry at the same point in this file, so the
+second to merge resolved the conflict by keeping both. The arithmetic — 1 case
+onto whatever it sits on — is what survived.
 
 **THE ERRORS TAB SAID "310 FAILED REQUESTS" ON A RUN WITH 294.** The tally
 line under the heading renders `{rows.length} error types · {total} failed
@@ -222,6 +226,106 @@ filter silently dropped a real maximum (4219 read as 4166). The honest
 emptiness test is the documented one — empty `percentiles` — and with it the
 36 comparisons are exact. **Third false alarm of this verification, and the
 product was right all three times.**
+The export-every-column branch added no unit FILE and 2 cases to
+`apps/web/test/StatisticsTable.test.tsx`, from **154 / 1948 to 154 / 1950**.
+Integration is UNCHANGED (both files it touches are `.tsx`, which that config
+never runs) and **e2e stays 145** — no spec has ever downloaded a CSV. Found
+by asking whether the export agrees with the screen it came from, which is
+the seam the two findings before it also lived on.
+
+**A VARIABLE CALLED `allColumns` HELD THE VISIBLE ONES, FOR 237 COMMITS.**
+Review M11 opened the statistics table on eight of the thirteen columns the
+payload carries, and argued — correctly — that fifteen columns is an archive
+rather than a table. It said in the same breath that "the rest are one
+disclosure away, **the CSV export is unchanged**". Then it changed the export's
+own line from `[...columns...]` to `[...shown...]`, KEPT THE NAME, and wrote a
+comment above it reading "the CSV export below deliberately still uses every
+column — a download is an archive".
+
+**THREE WRITTEN CLAIMS, ALL FALSE, AND EACH ONE MADE THE NEXT LESS LIKELY TO
+BE CHECKED.** The constant's docstring, the expression's own comment, and the
+test file's M11 describe all state the invariant. A reader arriving at that
+line met an identifier asserting it, a comment restating it, and an expression
+breaking it. **A NAME IS NOT A CHECK**, and this one was doing a check's job.
+
+**MEASURED, ON THE REFERENCE PAYLOAD, BOTH WAYS IN ONE RUN:**
+
+```
+  on screen at rest   9   Requests Total KO %KO Cnt/s 50th 95th 99th Max
+  the CSV header      9   Requests Total KO %KO Cnt/s 50th 95th 99th Max
+  every column       14   … + OK, Min, 75th, Mean, Std Dev
+```
+
+`inCsvButNotOnScreen` was the empty list. The file was exactly the screen.
+
+**AND IT LANDED ON THE SENTENCE THIS FILE SHIPPED TWO BRANCHES EARLIER.**
+`RunGlossary`'s `estimate` entry — the glossary-percentile-parity branch —
+tells a reader that "Total, OK, KO, Min, Max and Mean are exact, and are what
+to diff the two reports on". **Three of those six — OK, Min and Mean — are off
+by default.** So the product sent a reader to the download to diff against
+Gatling and handed them a file missing half the columns it had just named,
+with nothing on screen saying so. The advice was right and the artifact could
+not support it.
+
+**THE EXISTING HEADER CASE COULD NOT SEE IT, AND ITS NAME SAYS WHY.** "heads
+the file with the columns **the table is rendering**" asserts every VISIBLE
+header appears in the file — which an export of exactly the visible columns
+satisfies perfectly. It pins the INTERSECTION; the claim is about the
+SUPERSET. This is the windowed-scope lesson one file over and one branch
+later: **an assertion that takes its expectation from the thing under test
+proves the consumer, never the default.** There, a case passed `?scope=request`
+on both sides; here, a case reads the headers off the very table it is
+checking.
+
+**ASSERTED AS A PAIR, AND THE VACUITY GUARD IS THE HALF THAT EARNS ITS
+LINES.** "the file carries Std Dev" alone passes against a table that has
+stopped hiding anything — M11 undone, the export merely agreeing with a screen
+that now shows everything. So the case first requires that the default really
+is narrower than the payload, and only then that the hidden columns are in the
+file. Two mutations, landing on DIFFERENT ASSERTIONS INSIDE ONE CASE:
+
+```
+  export takes the visible set   "OK is off by default and must still be in the file"
+  the picker hides nothing       "the default column set no longer hides anything"
+```
+
+The second also fails M11's own two cases, which is right — it is M11 being
+undone — and does NOT fail the glossary case, because every column is then
+present. That asymmetry is what proves the pair is exclusive rather than
+redundant.
+
+**THE GLOSSARY CASE SPELLS THE SIX LABELS RATHER THAN IMPORTING THEM.** The
+coupling is a claim that TWO SURFACES AGREE, and a shared constant would move
+both sides together and assert nothing — the same reason this file already
+gives for asserting a claim rather than pinning prose.
+
+**AND THE PROBE RAN ON NODE 20 FIRST AND REPORTED NOTHING AT ALL.**
+`webidl.util.markAsUncloneable is not a function`, `Test Files no tests` — the
+trap at the top of this section, met while measuring rather than while
+gating, and it costs a round trip in exactly the same way. `nvm use` first,
+even for a throwaway probe.
+
+**TWO SMALLER THINGS, BOTH CAUGHT BY GUARDS RATHER THAN CARE.** A
+`\ballColumns\b` rename matched SIX times as intended and a seventh inside
+the new comment quoting the old name — the "an anchor matched inside my own
+new comment" shape this file already records, caught because the replacement
+count was asserted before the file was written rather than after. And
+vitest SWALLOWS `console.log` in this configuration, so the first probe passed
+and printed nothing; forcing the values into a deliberately failing
+`toEqual` is what made them readable.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes.
+`test:unit` **154 / 1950**, which is the recorded floor plus exactly this
+branch's two cases. Integration and e2e are untouched by construction and
+were not re-run. The machine was at 44,311 free pages and load 4.07 — the
+first branch in a while where the suite was worth believing.
+
+**WHAT IS STILL NOT COVERED, STATED RATHER THAN IMPLIED.** No test in any
+suite has ever downloaded a file in a BROWSER: jsdom implements neither
+`URL.createObjectURL` nor `revokeObjectURL`, so `StatisticsTable.test.tsx`
+stubs both and asserts the Blob it captures. `downloadBlob` itself — six
+lines, unchanged here — is therefore exercised by nothing, and the same is
+true of the run-summary JSON export beside it.
 
 The windowed-stats-all-scopes branch added no unit FILE and no unit case —
 unit stays **154 / 1948** — and 2 INTEGRATION cases to
