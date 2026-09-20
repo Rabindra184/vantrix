@@ -1,6 +1,7 @@
 import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
 import { compareLabels } from './compare';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { clampPercentile } from '../../percentile';
 
 /**
  * `TrendsResponse` → the three trend figures.
@@ -201,7 +202,18 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
   // A run without this key has NO VALUE on this series, which is not zero —
   // zero milliseconds is a measurement, and drawing one puts the fastest
   // point in the chart where a missing one belongs.
-  const at = (run: TrendRun, key: string): number | null => run.percentiles[key] ?? null;
+  //
+  // CLAMPED AGAINST ITS OWN RUN'S EXTREMES, which is what the run page has
+  // always done to the same number. Each point is a different run, so each
+  // clamps against its own `minMs`/`maxMs` — the pair `TrendRun` carries for
+  // exactly this, and which `PercentileRange` was narrowed to accept.
+  // Unclamped, this line plotted a p99 ABOVE the max the run's own page had
+  // already projected it onto: 2515.46 here against 2503 there, for one run,
+  // one quantity, two surfaces.
+  const at = (run: TrendRun, key: string): number | null => {
+    const raw = run.percentiles[key];
+    return raw === undefined ? null : clampPercentile(raw, run);
+  };
 
   const series: ChartSeries[] = keys.map((key) => ({
     name: percentileLabel(key),

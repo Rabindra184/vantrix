@@ -208,16 +208,82 @@ describe('toPercentileTrend', () => {
     expect(d.series.map((s) => s.name)).toContain(`${Number.parseFloat('99.9')}%`);
   });
 
+  /**
+   * ═══ THE TREND LINE CLAMPS, BECAUSE THE RUN PAGE ALWAYS DID ═══
+   *
+   * A percentile of a sample cannot lie outside that sample's own range, and
+   * DDSketch's 1% relative error means the estimate sometimes does. The
+   * statistics table and the run totals tiles have projected it back since
+   * that was first measured; this series plotted the raw value, so ONE RUN'S
+   * p99 read 2515.46 on the trend line and 2503 on its own page.
+   *
+   * Measured across nine real runs before fixing it: 30 of 384 percentile
+   * values (7.8%) sit above their own maximum, worst +0.59%.
+   *
+   * PER RUN, NOT PER COHORT. Each point is a different run with its own
+   * extremes, so the clamp reads the range off the point it is drawing —
+   * which is the pair `TrendRun` carries and `PercentileRange` was narrowed
+   * to accept.
+   */
+  it('projects a percentile back onto the run it was taken from', () => {
+    const d = toPercentileTrend(
+      response([
+        run({
+          id: 'over',
+          startedAt: '2026-08-01T10:00:00.000Z',
+          minMs: 100,
+          maxMs: 2503,
+          // Above its own maximum — what a sketch really produces in a sparse
+          // tail, and what the run's own page has always shown as 2503.
+          percentiles: { p50: 400, p99: 2515.46 },
+        }),
+      ]),
+    );
+    const p99 = d.series.find((s) => s.name === '99%')!.data as readonly (number | null)[];
+    expect(p99[0]).toBe(2503);
+
+    // THE DATA TABLE UNDER THE CHART IS BUILT FROM THE SAME READ, and a
+    // reader opening it is doing the diff this clamp exists to make possible.
+    // Asserted separately because a fix applied to the plotted series alone
+    // would leave the tabulated number contradicting it.
+    expect(d.rows[0]!.values).toContain(2503);
+    expect(d.rows[0]!.values).not.toContain(2515.46);
+  });
+
+  /** A value already inside the range is untouched — otherwise "clamped"
+   *  could mean "pinned to the maximum", which would flatten every series. */
+  it('leaves a percentile inside its own range exactly where it is', () => {
+    const d = toPercentileTrend(
+      response([
+        run({
+          id: 'in',
+          startedAt: '2026-08-01T10:00:00.000Z',
+          minMs: 100,
+          maxMs: 2503,
+          percentiles: { p50: 400, p99: 1800.25 },
+        }),
+      ]),
+    );
+    const p99 = d.series.find((s) => s.name === '99%')!.data as readonly (number | null)[];
+    expect(p99[0]).toBe(1800.25);
+  });
+
   it('leaves a run missing a percentile as a gap, not zero', () => {
     const d = toPercentileTrend(
       response([
-        run({ id: 'b', startedAt: '2026-08-02T10:00:00.000Z', percentiles: { p50: 5 } }),
-        run({ id: 'a', startedAt: '2026-08-01T10:00:00.000Z', percentiles: { p50: 4, p95: 9 } }),
+        run({ id: 'b', startedAt: '2026-08-02T10:00:00.000Z', percentiles: { p50: 50 } }),
+        run({ id: 'a', startedAt: '2026-08-01T10:00:00.000Z', percentiles: { p50: 40, p95: 90 } }),
       ]),
     );
     const p95 = d.series.find((s) => s.name === '95%')!.data as readonly (number | null)[];
+    // INSIDE THE FIXTURE'S OWN `minMs`/`maxMs`, which it inherits from
+    // REFERENCE. It used to say `p50: 4, p95: 9` against a minimum of 16 —
+    // data that cannot exist, and which the clamp correctly lifted to 16 the
+    // moment this series started honouring the run's own range. The claim
+    // here is about a MISSING percentile being a gap; the values are only
+    // scaffolding for it, and scaffolding should still be possible.
     // Oldest first: 'a' has p95, 'b' does not.
-    expect(p95[0]).toBe(9);
+    expect(p95[0]).toBe(90);
     expect(p95[1]).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
+import { clampPercentile } from '../../percentile';
 import { runMinuteLabel } from './runLabel';
 
 /**
@@ -144,7 +145,13 @@ function valueOf(
   }
 
   if (Object.keys(bucket.percentiles).length === 0) return null;
-  return bucket.percentiles[metric] ?? null;
+  const raw = bucket.percentiles[metric];
+  // CLAMPED, as the run page clamps the same quantity. The scope here is the
+  // BUCKET rather than the run — its percentiles and its `minMs`/`maxMs` come
+  // from one sketch over one slice — so the invariant is the same one a
+  // narrower window down: an estimate cannot lie outside the sample it was
+  // taken from. `max` above is deliberately read BEFORE this, and is exact.
+  return raw === undefined ? null : clampPercentile(raw, bucket);
 }
 
 /**

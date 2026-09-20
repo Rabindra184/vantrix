@@ -4,14 +4,9 @@ import type { Assertion, StatRow, StatsResponse, TrendRun } from '@perfportal/co
 import StatTile from '../components/StatTile';
 import { comparability, summariseConditions } from './comparability';
 import { formatInstant } from './format';
+import { clampPercentile, type PercentileRange } from '../percentile';
 import { runPath } from './paths';
-import {
-  clampPercentile,
-  formatCount,
-  formatMs,
-  formatRate,
-  type PercentileRange,
-} from '../tables/StatisticsTable';
+import { formatCount, formatMs, formatRate } from '../tables/StatisticsTable';
 
 /**
  * §13.2's headline numbers, above the tables.
@@ -30,7 +25,7 @@ import {
  * not already carry.
  *
  * EVERY NUMBER IS WRITTEN DOWN THE SAME WAY THE TABLE WRITES IT: `formatCount`,
- * `formatMs`, `formatRate` and `clampPercentile` are all imported from
+ * `formatMs` and `formatRate` are imported from
  * `StatisticsTable`, never re-derived here. `formatCount` in particular is
  * `String(value)` — no grouping separator — and that is not a style choice
  * this file gets to make independently: `StatisticsTable`'s own docstring
