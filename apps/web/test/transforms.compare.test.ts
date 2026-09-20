@@ -274,6 +274,36 @@ describe('toCompare — one population, the same one the matrix uses', () => {
     ...over,
   });
 
+  /**
+   * ═══ AND IT CLAMPS THAT POPULATION TO ITS OWN RANGE ═══
+   *
+   * The same invariant the statistics table and the run totals tiles have
+   * always applied, one scope narrower: a bucket's percentiles and its
+   * `minMs`/`maxMs` come from one sketch over one slice, so an estimate above
+   * that bucket's own maximum is known to be wrong. The overlay plotted the
+   * raw value, so the same run's p99 could read higher here than on its own
+   * page — 30 of 384 percentile values across nine real runs sit above their
+   * own max, worst +0.59%.
+   *
+   * `max` is deliberately read BEFORE this and is exact — the case above
+   * pins that, and this must not disturb it.
+   */
+  it('projects a percentile back onto the bucket it was taken from', () => {
+    const run = asRun('r', {
+      buckets: [bucketAt({ minMs: 100, maxMs: 2503, percentiles: { p99: 2515.46 } })],
+    });
+    expect(points(toCompare([run], 'p99').series[0]!.data)[0]![1]).toBe(2503);
+  });
+
+  /** Inside its range, untouched — or "clamped" would mean "pinned to the
+   *  maximum", which would flatten every line this chart draws. */
+  it('leaves a percentile inside its bucket range exactly where it is', () => {
+    const run = asRun('r', {
+      buckets: [bucketAt({ minMs: 100, maxMs: 2503, percentiles: { p99: 1800.25 } })],
+    });
+    expect(points(toCompare([run], 'p99').series[0]!.data)[0]![1]).toBe(1800.25);
+  });
+
   it('reads the combined percentiles, as `metricValue` does', () => {
     const run = asRun('r', {
       buckets: [bucketAt({ percentiles: { p95: 500 }, percentilesOk: { p95: 111 } })],

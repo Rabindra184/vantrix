@@ -2,8 +2,8 @@ import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
+import { clampPercentile } from '../src/percentile';
 import StatisticsTable, {
-  clampPercentile,
   percentileColumnLabel,
 } from '../src/tables/StatisticsTable.js';
 import fixture from './fixtures/reference-run.json';

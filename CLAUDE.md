@@ -115,6 +115,106 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The clamp-percentiles-everywhere branch added ONE source file —
+`apps/web/src/percentile.ts` — and 4 cases, 2 to
+`apps/web/test/transforms.trends.test.ts` and 2 to `transforms.compare.test.ts`,
+from **154 / 1951 to 154 / 1955**. Integration moves with it (both are `.ts`
+files integration runs) at **137 / 1762**, and **e2e stays 145** —
+`run-trends.spec.ts` names the chart `trend-percentiles` by id and asserts no
+value. Found by auditing Trends against the runs it draws.
+
+**TWO OF FOUR SURFACES CLAMPED, SO ONE RUN'S p99 HAD TWO ANSWERS.** A
+percentile of a sample cannot lie outside that sample's own range, and
+DDSketch's 1% error means the estimate sometimes does. `clampPercentile`
+projects it back — and only the statistics table and the run totals tiles
+called it. The trend line and the compare overlay plotted the raw value:
+
+```
+  the run page      p99  2503        (clamped to its own max)
+  the trend line    p99  2515.4601…  (raw)        one run, one quantity
+```
+
+**MEASURED BEFORE FIXING, ACROSS NINE REAL RUNS: 30 of 384 percentile values
+(7.8%) SIT ABOVE THEIR OWN MAXIMUM**, worst overshoot **+0.59%** — which is
+the advertised bound behaving exactly as advertised, and precisely what the
+clamp exists to absorb. So it bites often and by little; the defect is that
+two surfaces disagreed, not that either number was wildly wrong.
+
+**AND THE HELPER'S OWN DOCSTRING NAMED THE CALLER THAT NEVER CALLED IT.**
+`PercentileRange` is documented as "narrower than `StatRow` on purpose, so
+**`TrendRun`** (which carries the same pair, from the same rollup) can be
+clamped by the same function". The type was narrowed FOR trends. Sixth time
+this file records the one-caller-short shape, and the second where the helper
+says out loud who else should be reaching for it — `compareLabels` was the
+first. **When a helper exists to correct something, grep its own docstring for
+who it names.**
+
+**THE BARRIER WAS LAYERING, NOT INTENT, WHICH IS WHY THE FIX IS A MOVE.**
+`clampPercentile` lived in `StatisticsTable.tsx`; `charts/transforms/*.ts` are
+pure, and importing a React component into one to reach a `Math.min` is not
+something to do. So the decision moved to `apps/web/src/percentile.ts`, which
+every surface can reach — the same move `isChangeGood` made when the matrix
+needed the direction rule `compareSummary` owned. No re-export left behind: a
+second name for one decision is how two callers come to disagree about it.
+
+**THE DEFERRAL IN THAT DOCSTRING IS KEPT AND ITS SCOPE CORRECTED.** It said
+the right long-term home is `packages/statistics` — still true, still
+follow-up, because the API, any export and every future consumer would benefit
+— and it ended "doing it in the browser fixes one surface, which is this one".
+It reached TWO and stopped. **A deferral's reason is an argument for also
+doing the bigger thing; it is not an argument for two browser surfaces to
+disagree with each other**, and two-of-four is the worst available state:
+neither consistently raw nor consistently projected. Same discipline as
+"check whether a deferral's reason covers every surface it was applied to".
+
+**A FIXTURE DESCRIBED DATA THAT CANNOT EXIST, AND THE CLAMP IS WHAT REVEALED
+IT.** `transforms.trends.test.ts`'s gap case built a run with `p50: 4, p95: 9`
+while inheriting `REFERENCE`'s `minMs` of 16 — a p95 below the minimum. The
+moment the series honoured the run's own range the clamp correctly lifted 9 to
+16 and the case failed, reading `expected 16 to be 9`. The values were
+scaffolding for a claim about a MISSING percentile; they are inside the range
+now. **Scaffolding should still be possible**, and a synthetic fixture is
+where impossible numbers survive longest.
+
+**THE DATA TABLE IS ASSERTED SEPARATELY FROM THE PLOTTED SERIES.** Both are
+built from the same read in `toPercentileTrend`, and a fix applied to the line
+alone would leave the table under it contradicting the chart — which is the
+whole failure mode this branch is about, one level down. The case pins 2503
+present and 2515.46 absent.
+
+**AND EACH SURFACE HAS A MUTATION THAT LANDS ON IT ALONE:**
+
+```
+  trends returns the raw value     "projects a percentile back onto the run…"
+  compare returns the raw value    "…onto the bucket it was taken from"
+  clamp drops its lower bound      the existing pure case, both ends
+```
+
+The third failing the OLD test rather than either new one is the right result:
+the lower bound was already covered, and the new cases are about the two
+callers, not about `Math.min`. A paired "inside its range, untouched" case sits
+beside each, because "clamped" must not come to mean "pinned to the maximum",
+which would flatten every series the chart draws.
+
+**WHAT WAS RUN, AND WHAT THE MACHINE WAS DOING.** `typecheck` and `lint` green
+by their own exit codes; `test:unit` **154 / 1955**. `test:integration` against
+a SCRATCH DATABASE (`perfportal_clamp`) reported **137 / 1762 with 2 failed** —
+and those two are the documented pressure flake, not this change:
+
+```
+  auth.integration.test.ts     last_used_at  expected null not to be null
+  window.integration.test.ts   Parse Error: Expected HTTP/, RTSP/ or ICE/
+```
+
+The second is a socket receiving non-HTTP bytes, which this file already
+records **cannot be produced by any application-level diff** — and this diff is
+eight files, every one of them under `apps/web`, so it cannot reach either
+suite. `vm_stat` said **4,856 free pages** with 17,007 MB of 18,432 MB of swap
+gone, which is worse than the 4,390 this file already calls untrustworthy, at
+a load average of 6.18 — the low-load-high-swap combination this file warns
+reads as health. Re-run alone, the two files pass **29 / 29**. CI's clean
+containers are the arbiter.
+
 The conditional-spread-sweep branch added no unit FILE, no unit case and no
 spec — unit stays **154 / 1951**, integration **137 / 1758** and **e2e stays
 145**. Its diff is 36 converted expressions, one re-pointed assertion and one
