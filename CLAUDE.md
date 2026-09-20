@@ -115,6 +115,116 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The runner-retry-keeps-declared-test branch added no unit FILE and no unit
+case — unit stays **155 / 1961** — and 2 cases to
+`packages/persistence/test/runner.integration.test.ts`, from **138 / 1767 to
+138 / 1769**. **e2e stays 148.** Found by submitting a real job to a real
+on-prem runner, failing it, and retrying it.
+
+**`retry` IS AN `INSERT..SELECT`, AND `test_slug` WAS IN NEITHER HALF.** Every
+other per-job field is carried forward — environment, branch, commit sha, java
+options, system properties — and the declared test is the one that was
+omitted. Measured on a live runner, the same artifact three times:
+
+```
+  3adc74fb  test_slug onprem-demo   the original
+  7d9b8c85  test_slug NULL          a retry
+  231caed1  test_slug NULL          a retry
+```
+
+**AND IT CHANGES WHAT THE RUN MEANS, NOT HOW IT EXECUTES.** The job still
+runs, still streams, still completes. What moves is the RUN's test:
+
+```
+  5d5df0f1   declared NULL          resolved example-basicsimulation
+  0972bf5c   declared onprem-demo   resolved onprem-demo          (after)
+```
+
+`declaredTestSlug` exists precisely so `checkout-smoke` and `checkout-soak`
+can share one simulation class, so a retry that loses it files the run under
+the auto-created test named after the CLASS — which is the exact grouping
+declaring a test exists to replace. Silently: the cohort a reader is watching
+simply does not contain the retried run, and the trends line it feeds is short
+by one with nothing anywhere saying so.
+
+**NO TEST IN THIS REPOSITORY CALLED `retry`.** Not one — the whole path was
+uncovered, which is why an omission in a column list survived. This file
+already records "grep for components with no test file before looking for
+untested BEHAVIOUR"; the repository-method version of that is cheaper still.
+
+**THE NEW CASE ASSERTS THE WHOLE SET, NOT THE FIELD.** A case pinning
+`testSlug` alone would leave the identical hole open for the next column
+anybody adds — which is exactly how this one got in. It selects every carried
+field for both rows and compares them as OBJECTS, so a new column joins the
+assertion by being selected rather than by anybody remembering a new `expect`.
+A second case pins what is deliberately NOT carried — status and requester —
+because "equals its source" would otherwise be satisfied by cloning the row
+wholesale.
+
+**AND THE FIRST RED-VERIFY WAS VACUOUS, CAUGHT BY THE ANCHOR ASSERTION.** The
+mutation's two anchors did not match (the SQL had been reformatted by the fix
+itself) and the suite came back **9 passed** — indistinguishable from a guard
+that works. Asserting the replacement count before running is what turned that
+into an error instead of a false pass, which this file records as the rule and
+which earns its keep again here. Re-aimed by LINE, it fails exactly the new
+case and nothing else.
+
+**AND THE BACKTICK TRAP BIT AGAIN, IN A `$executeRaw` THIS TIME.** The SQL
+comment explaining the fix quoted `test_slug` in backticks; the statement is a
+Prisma template literal, so the first one ended the string and produced
+`TS1005: ',' expected` two lines down. This file already records that for
+`TRENDS_SQL` and then for two more SQL comments an hour later. **Third file,
+same trap** — the rule is no backticks inside any SQL comment in this
+repository, and the comment now says so where the next reader will be.
+
+═══ WHAT RUNNING THE REAL RUNNER ALSO ESTABLISHED ═══
+
+**THE UID GUARD WORKS AND REFUSES WELL.** Outside compose the first job failed
+`RUNNER_UID_ISOLATION_REQUIRED` — "Refusing to execute an uploaded simulation
+as the runner's own user; uploaded code would share the control-plane process
+credentials and network reach" — naming `RUNNER_CHILD_UID` and the
+`RUNNER_ALLOW_SAME_UID` escape. `infra/docker-compose.yml` sets
+`RUNNER_CHILD_UID: 20001` with `user: root` and `cap_add: [SETUID, SETGID]`,
+so the shipped deployment is configured and the guard fires exactly where it
+should. Not a defect; recorded because a reader meeting that error outside
+compose should know it is the product working.
+
+**AND `RUNNER_ARTIFACT_DIR` DEFAULTS TO A RELATIVE PATH, WHICH TWO PROCESSES
+RESOLVE DIFFERENTLY.** `.perfportal/runner-artifacts` is resolved against each
+process's own cwd, so an API started with `pnpm --filter @perfportal/api` and
+a runner started the same way disagree by two directories, and the job fails
+`ARTIFACT_NOT_FOUND` after creating its run. Compose gives both the same
+absolute volume, so this cannot happen there — but anyone running the two by
+hand meets it, and the error names the artifact rather than the directory.
+Recorded rather than changed: the default is right for the container and the
+harness is what was unusual.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **155 / 1961** and `test:integration` **138 / 1769** against a
+SCRATCH DATABASE. The end-to-end proof is the table above — the same artifact
+retried before and after the fix, on a real runner executing real Gatling
+against a real target, 1,728 requests and 99,955 ms of load per run.
+
+**AND THE FIRST INTEGRATION RUN FAILED FOUR WAYS BECAUSE OF THE HAND-RUN
+STACK, WHICH IS THE TRAP THIS FILE ALREADY RECORDS FROM THE OTHER SIDE.** The
+entry above about a stray worker is about the DATABASE; this is REDIS. A
+worker left running from the verification was consuming the `ingest` queue the
+suite enqueues into, so three of the four failures were a job list the test
+had just written coming back EMPTY:
+
+```
+  expected [] to include 'd82e5e3c…'          commits the run row before enqueuing
+  expected [] to have a length of 1           two sweeps dedupe to one job
+  Test timed out in 120000ms                  re-queues a job in the failed set
+```
+
+**A SEPARATE DATABASE IS NOT ISOLATION.** The suite was pointed at its own
+scratch database and still failed, because `REDIS_URL` was shared and the
+queue is the thing being asserted on. Re-run with nothing of ours running:
+**138 / 1769, clean.** `pgrep -f dist/main.js` before believing an integration
+result, and check the queue depth too — `LLEN bull:ingest:wait` was 3 when
+this started.
+
 The abandoned-runs-keep-their-data branch added ONE unit file —
 `packages/plugin-gatling/test/truncate.test.ts` (3) — from **154 / 1958 to
 155 / 1961**, and 2 cases to `apps/worker/test/pipeline.integration.test.ts`.

@@ -468,9 +468,27 @@ export class RunnerRepository {
 
   async retry(input: RetryRunnerJobInput): Promise<RunnerJobWithArtifact | null> {
     const inserted = await this.prisma.$executeRaw`
+      -- ═══ EVERY FIELD THE OPERATOR CHOSE, INCLUDING test_slug ═══
+      --
+      -- A retry is the SAME JOB run again, so it carries the whole of what
+      -- was asked for. test_slug was the one omission, and it is the one that
+      -- changes what the RUN means rather than how it executes: a declared
+      -- test exists precisely so two configurations of one simulation can be
+      -- told apart, so a retry that loses it files the run under the
+      -- auto-created test named after the simulation class. Silently -- the
+      -- job succeeds, the run completes, and the cohort the reader is
+      -- watching simply does not contain it.
+      --
+      -- Found by retrying a real job on a real runner. Nothing could have
+      -- caught it: no test in this repository called this method.
+      --
+      -- NO BACKTICKS IN THIS COMMENT. It sits inside a $executeRaw TEMPLATE
+      -- LITERAL, so one would end the string and fail as TS1005 two lines
+      -- down -- which is exactly how the first draft of it failed, and which
+      -- CLAUDE.md already records happening twice before.
       INSERT INTO runner_job (
         id, org_id, project_id, artifact_id, status, requested_by,
-        environment, branch, commit_sha, java_options, system_properties
+        environment, branch, commit_sha, test_slug, java_options, system_properties
       )
       SELECT
         ${input.id}::uuid,
@@ -482,6 +500,7 @@ export class RunnerRepository {
         j.environment,
         j.branch,
         j.commit_sha,
+        j.test_slug,
         j.java_options,
         j.system_properties
       FROM runner_job j
