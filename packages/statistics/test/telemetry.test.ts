@@ -148,12 +148,17 @@ describe('toTelemetrySeries', () => {
     expect(bucket.rxBytesPerSec).toBeCloseTo((rate1 + rate2) / 2, 6);
   });
 
-  it('reports the largest ABSOLUTE clock gap, signed — not merely the last sample seen', () => {
-    // The LARGE-magnitude skew sits on the EARLIER sample; a much smaller one
-    // follows it chronologically. An implementation that dropped the running
-    // `Math.abs(...) > Math.abs(...)` maximum and simply kept whichever
-    // sample it processed last would report the SECOND (small, positive)
-    // skew here instead of the first (large, negative) one.
+  it('reports a fast agent from the sample that shows it, not the last one seen', () => {
+    // The skew sits on the EARLIER sample; a much smaller gap follows it
+    // chronologically. An implementation that simply kept whichever sample it
+    // processed last would report the SECOND (small, positive) gap here
+    // instead of the first.
+    //
+    // This case is unchanged by the max -> min switch, and that is the point:
+    // an agent that is AHEAD makes every gap negative, so the MINIMUM is the
+    // most negative of them and lands on the same sample the old
+    // largest-absolute rule did. The two only disagree for an agent that is
+    // not skewed, which is what the case below is about.
     const early = at(0, { receivedAtMs: T0 - 30_000 });
     const later = at(5);
     const [series] = toTelemetrySeries([early, later], T0, 1000);
@@ -161,6 +166,39 @@ describe('toTelemetrySeries', () => {
     // server's. Negative, and large — a generator thirty seconds fast would
     // otherwise misalign every chart with nothing looking wrong.
     expect(series!.clockSkewMs).toBe(early.receivedAtMs - early.sampledAtMs);
+  });
+
+  /**
+   * ═══ A SPREAD IS DELAY; A CONSTANT IS SKEW ═══
+   *
+   * `receivedAt - sampledAt` is the offset PLUS the transport delay, and the
+   * delay is never negative — an agent batches, so the oldest sample in a
+   * flush has waited the whole interval and the newest almost none. Taking
+   * the widest gap therefore reports the worst-case buffering as the clock.
+   *
+   * MEASURED where the skew was provably zero (agent and API on one machine,
+   * one clock), 155 real samples: min 1,027 ms, median 6,031 ms, max
+   * 11,069 ms. The old rule reported 11,069 — past CLOCK_SKEW_WARN_MS — so
+   * the page warned an operator about a generator that was perfectly
+   * synchronised, and about a misalignment that cannot occur: a point is
+   * placed at `sampledAt - toolStartedAt`, the AGENT's own clock, so waiting
+   * in a buffer moves nothing.
+   *
+   * The fixture is that shape: one host, no offset, delays fanning out the
+   * way a flush makes them.
+   */
+  it('reads a synchronised agent with variable delay as the floor, not the peak', () => {
+    const samples = [0, 1, 2, 3, 4].map((n) =>
+      // Delay grows the way a batch drains: 200ms, then 2s, 4s, 6s, 8s.
+      at(n, { receivedAtMs: T0 + n * 1000 + (n === 0 ? 200 : n * 2000) }),
+    );
+    const [series] = toTelemetrySeries(samples, T0, 10_000);
+
+    // The tightest bound on the offset, which is the smallest gap observed.
+    expect(series!.clockSkewMs).toBe(200);
+    // And explicitly NOT the widest — the number the old rule reported, and
+    // the one that tripped a 5s warning on a host with no skew at all.
+    expect(series!.clockSkewMs).not.toBe(8000);
   });
 
   it('returns nothing for no samples', () => {
