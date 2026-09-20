@@ -129,6 +129,91 @@ describe('live streaming', () => {
     expect(slugOf(undeclared.body.runId)).toBeNull();
   });
 
+  /**
+   * ═══ THE REFUSAL THAT GUARDS A HANG, AND WHICH NOTHING ASSERTED ═══
+   *
+   * Nest registers Express's global `json()` and `urlencoded()`, and either
+   * one DRAINS a body whose Content-Type matches its own before any handler
+   * runs. `readRawBody` then attaches 'data'/'end' to a stream that has
+   * already ended, so 'end' never fires again and the promise never settles:
+   * no response written, and a socket plus a promise leaked PER REQUEST, with
+   * no timeout anywhere on that path. `req.readableEnded` is the guard.
+   *
+   * ═══ WHICH IS WHY THIS CASE CARRIES A DEADLINE ═══
+   *
+   * Remove the guard and this does not go red — it HANGS, taking the file's
+   * whole `testTimeout` with it and reporting as a timeout, which reads like
+   * a slow machine rather than a defect. `.timeout()` turns that into a
+   * failure that names the request. Verified by deleting the guard: the case
+   * fails in about a second instead of hanging.
+   *
+   * A legitimate ZERO-BYTE chunk is deliberately not this state — its 'end'
+   * fires once the listener attaches, so `readableEnded` is still false — and
+   * the case below pins that, because a guard that refused an empty chunk
+   * would break the one shape a real agent sends at the very start of a run.
+   */
+  it('refuses a chunk whose body a parser already drained, rather than hanging on it', async () => {
+    ctx = await createTestApp();
+    const opened = await open(ctx.streamToken);
+
+    const res = await request(ctx.app.getHttpServer())
+      .post(`/v1/runs/${opened.body.runId}/stream`)
+      .set('Authorization', `Bearer ${ctx.streamToken}`)
+      // The whole point: a Content-Type Express itself consumes.
+      .set('Content-Type', 'application/json')
+      .set('X-Stream-Offset', '0')
+      .timeout({ deadline: 5_000, response: 5_000 })
+      .send({ pretending: 'to be a chunk' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('STREAM_BODY_CONSUMED');
+    expect(res.body.remediation).toBeTruthy();
+  });
+
+  it('still accepts a zero-byte chunk, which is not a consumed body', async () => {
+    ctx = await createTestApp();
+    const opened = await open(ctx.streamToken);
+
+    const res = await stream(ctx.streamToken, opened.body.runId, 0, Buffer.alloc(0));
+    // 202 and the cursor unmoved: nothing arrived, and nothing is wrong.
+    expect(res.status).toBe(202);
+    expect(res.body.nextOffset).toBe(0);
+  });
+
+  /** The offset is a HEADER, and a malformed one must be refused by name
+   *  rather than coerced to zero — which would silently rewrite the start of
+   *  a run's log. */
+  it('refuses a malformed offset header instead of coercing it', async () => {
+    ctx = await createTestApp();
+    const opened = await open(ctx.streamToken);
+
+    const res = await request(ctx.app.getHttpServer())
+      .post(`/v1/runs/${opened.body.runId}/stream`)
+      .set('Authorization', `Bearer ${ctx.streamToken}`)
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Stream-Offset', 'not-a-number')
+      .send(Buffer.from('abc'));
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_STREAM_OFFSET');
+    // The message has to name the header, or a caller cannot act on it.
+    expect(String(res.body.detail)).toContain('x-stream-offset');
+  });
+
+  /** Closing twice is a client retry, not a client error to be puzzled over:
+   *  it answers 409 by NAME rather than falling into the stream endpoint's
+   *  offset refusal, which would describe a cursor the caller never sent. */
+  it('names a second close as not-running rather than as an offset problem', async () => {
+    ctx = await createTestApp();
+    const opened = await open(ctx.streamToken);
+    await stream(ctx.streamToken, opened.body.runId, 0, Buffer.from('bytes'));
+    await close(ctx.streamToken, opened.body.runId);
+
+    const res = await close(ctx.streamToken, opened.body.runId);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('RUN_NOT_RUNNING');
+  });
+
   it('refuses a gap and names the offset to resume from', async () => {
     ctx = await createTestApp();
     const opened = await open(ctx.streamToken);
