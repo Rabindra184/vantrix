@@ -1,6 +1,46 @@
 import { bucketLatency, type EngineResult } from '@perfportal/statistics';
-import type { LiveDelta } from '@perfportal/contracts';
-import type { EvaluatedAssertion } from '@perfportal/sla';
+import {
+  SLA_RULE_FAMILIES,
+  SLA_RULE_SCOPES,
+  type AssertionRule,
+  type LiveDelta,
+} from '@perfportal/contracts';
+import type { EvaluableRule, EvaluatedAssertion } from '@perfportal/sla';
+
+/**
+ * Narrow an evaluated rule onto the wire's own shape, or answer undefined.
+ *
+ * `packages/sla` is a PURE package and does not depend on `@perfportal/contracts`
+ * (see its `package.json`), so `EvaluableRule` types `scope` and `family` as
+ * bare strings. `AssertionRuleSchema` types them as the enums a reader's
+ * describer switches on. Something has to bridge that, and a cast would be
+ * the version of this that fails silently: the browser drops a frame whose
+ * `rule` does not parse, so a rule carrying an unexpected family would blank
+ * the live page rather than degrade.
+ *
+ * Answering `undefined` instead puts such a rule on exactly the path a delta
+ * written before this field takes — the banner falls back to the evaluator's
+ * own message. ONE fallback, two causes, both honest.
+ *
+ * Unreachable in practice: `RuleRepository.listEnabled` reads rows a schema
+ * already validated on the way in. It is written as a check rather than an
+ * assertion because "unreachable" is a claim about today's callers, and the
+ * cost of being wrong about it is the whole banner.
+ */
+function wireRule(rule: EvaluableRule): AssertionRule | undefined {
+  const scope = SLA_RULE_SCOPES.find((s) => s === rule.scope);
+  const family = SLA_RULE_FAMILIES.find((f) => f === rule.family);
+  if (scope === undefined || family === undefined) return undefined;
+
+  return {
+    scope,
+    targetName: rule.targetName,
+    family,
+    metric: rule.metric,
+    comparator: rule.comparator,
+    threshold: rule.threshold,
+  };
+}
 
 export interface DeltaCursor {
   seq: number;
@@ -309,6 +349,12 @@ export function buildDelta(
       description: a.message,
       actualValue: a.actualValue ?? 0,
       sinceOffsetMs: sla.breachingSince.get(a.ruleId) ?? 0,
+      // The SNAPSHOT, never a re-read of the live rule: `ruleSnapshot` is the
+      // rule as it read when this breach was judged, and its own comment says
+      // why ("editing a threshold later must never rewrite the history of
+      // what passed"). A banner that described a breach using a threshold
+      // edited since would be stating a comparison nobody made.
+      rule: wireRule(a.ruleSnapshot),
     }));
   // `passed` and `failed` were both judged; `not_applicable` was not --
   // whether because there was nothing to measure or because the live

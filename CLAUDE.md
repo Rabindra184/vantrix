@@ -115,6 +115,212 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The live-banner-reads-its-schema branch added no unit FILE and 5 cases — 3 to
+`apps/web/test/SlaBanner.test.tsx`, 1 to `packages/contracts/test/live-delta.test.ts`
+and 1 to `apps/worker/test/live-delta.test.ts` — from **155 / 1962 to
+155 / 1967**. Integration moves with TWO of those (the `.tsx` never runs
+there) at **138 / 1776**, and its **e2e rises to 149**. It is the third and
+last surface of `review.md`'s copy row 1, which the review-copy-rows entry
+below recorded as deliberately left.
+
+**THE LIVE BANNER READ THE STORED SCHEMA ALOUD, AND THE COMMENT ON THE FIELD
+SAID IT DID NOT.** `LiveBreachSchema.description` was documented as "the
+evaluator's own message — one sentence, already human-readable". Traced end
+to end, it is not:
+
+```
+  evaluate.ts:187   `${describe(rule)} — actual ${actual}`
+  evaluate.ts:33    `${metric} of ${target} (${family}) ${≤} ${threshold}`
+  live/delta.ts     description: a.message
+  SlaBanner.tsx     {rule.description}
+```
+
+So a reader watching a run stream saw
+`error_rate of the run (response_time) ≤ 0.01 — actual 0.0223463687150838`,
+and the same run's gates table — once it finished — said
+`Whole-run error rate 2.2346% exceeds the 1% limit.` One product, two
+vocabularies, split by whether the run was still running.
+
+**FOURTH TIME THIS FILE RECORDS A DOCSTRING ASSERTING A BEHAVIOUR THE PRODUCT
+DOES NOT HAVE**, and the first where the false sentence is the plausible
+reason nobody re-checked the surface: "already human-readable" is exactly
+what a reader auditing this field would have taken at face value.
+
+**AND THE DEFERRAL'S REASON WAS TRUE AND MUCH SMALLER THAN IT READ.** That
+note says re-rendering means "changing what the worker streams and what every
+delta already recorded says — a data change with a migration question
+attached". There is no history to migrate: `SNAPSHOT_TTL_SECONDS` and
+`REPLAY_TTL_SECONDS` are both **3600**, so every delta and every snapshot
+expires within the hour. What remains is exactly the ROLLING-DEPLOY question,
+and `live-delta.ts` already answers it four screens above where this change
+lands — the `sla` field's own `.default()` argues it at length, because the
+browser drops a whole frame that fails `safeParse` and the gateway forwards
+stored bodies without validating them.
+
+**SO THE ANSWER WAS WRITTEN DOWN BEFORE THE QUESTION WAS ASKED.** `rule` is
+OPTIONAL, the banner falls back to the stored message, and a delta from an
+older worker degrades instead of blanking the page. **Check whether a
+deferral's stated cost is still the cost** — the review-copy-rows entry
+records the same shape one surface over, where one sentence in a note kept
+two renderable surfaces closed for four branches.
+
+**ONE DEFINITION OF THE SIX FIELDS, NOT TWO.** `AssertionSchema.rule` was an
+inline `z.object` and is `AssertionRuleSchema` now, referenced by the batch
+assertion AND the live breach. Two inline copies agree today; the day one
+gains a family the other does not, the banner and the gates table describe
+one rule differently with nothing failing. `describeSlaOutcome` already took
+exactly that shape, so the browser needed no new renderer — this is a second
+CALLER of a decision made once, which is the shape this file keeps asking for
+rather than the one it keeps recording.
+
+**NESTED, BECAUSE SIX SIBLING OPTIONALS CAN ARRIVE HALF-PRESENT.** Five
+fields and no comparator describes nothing, and every consumer would have to
+check all six to discover it. One optional object cannot be partially there.
+
+**THE WORKER NARROWS BY CHECKING, AND A CAST WOULD HAVE BEEN THE SILENT
+VERSION.** `packages/sla` is a PURE package that does not depend on
+`@perfportal/contracts`, so `EvaluableRule` types `scope` and `family` as bare
+strings while the wire types them as enums. `wireRule` bridges that with a
+lookup and answers `undefined` on a miss — which puts such a rule on the same
+path a pre-deploy delta takes. **ONE fallback, two causes, both honest.** A
+cast would have published a frame the browser rejects, taking the whole live
+view down for as long as that rule kept breaching.
+
+**AND IT SENDS THE SNAPSHOT, NEVER A RE-READ.** `ruleSnapshot` is the rule as
+it read when the breach was judged, and its own comment says why ("editing a
+threshold later must never rewrite the history of what passed"). A banner
+describing a breach against a threshold edited since would state a comparison
+nobody made.
+
+**THE LINE IS BUILT IN ONE FUNCTION BECAUSE THE TWO DESCRIPTIONS ARE
+DIFFERENT PARTS OF SPEECH.** `describeSlaOutcome` returns a finished sentence
+ending in a full stop; the evaluator's raw message is a fragment. Joining
+both in the JSX gives one join for two shapes, and the fallback then reads
+`… actual 900 Breaching since 1m 2s into the run` — two fragments run
+together. The fragment path keeps its em dash and is byte-identical to what
+shipped.
+
+**THE TENSE IS DELIBERATELY NOT REPEATED PER LINE.** A first draft flipped
+each line on `frozen`; the headline above the list already makes that
+statement once ("breaching when streaming stopped" against "currently
+breaching"), so a per-line tense would have been a second answer to a
+decision one element up — and scope nobody asked for.
+
+**FOUR MUTATIONS, FOUR DISTINCT FAILURES**, each anchored by asserting the
+replacement COUNT before running:
+
+```
+  banner ignores `rule`              the 2 new vocabulary cases; fallback stays GREEN
+  worker stops sending it            the worker's whole-object envelope case
+  wireRule casts instead of checking the degrade case ALONE
+  `rule` never reaches the schema    the contracts back-compat case ALONE
+```
+
+The fourth is the one worth having: **zod STRIPS unknown keys**, so removing
+the field throws nothing — the value simply never arrives and the banner
+falls back for ever. And the contracts case is a PAIR for the same reason:
+"a breach without `rule` parses" is satisfied perfectly by a schema that
+never gained the field, which is the before-state.
+
+**THE FIXTURE THAT HID THIS WAS A STRING THE EVALUATOR NEVER WRITES.**
+`SlaBanner.test.tsx`'s breach carried `description: 'p95 ≤ 100 — actual 900'`
+— already readable, already short, and produced by nothing in this product.
+A fixture that cannot tell the two vocabularies apart is how a banner comes
+to print the schema for four branches. It is the evaluator's real output now.
+
+**AND THE e2e IS WHAT PROVES THE SEAM, WHICH NO UNIT CASE CAN REACH.**
+`SlaBanner.test.tsx` builds the `LiveBreach` it renders, so it says nothing
+about whether a `rule` on the wire ever arrives — three layers sit between
+the worker and that render (the schema, the gateway that does not validate,
+and `parseFrame`, which drops a failing frame), each tested alone. The new
+case in `run-live.spec.ts` seeds a real delta into real Redis and asserts the
+sentence on screen, with the absence of `response_time` beside it — because
+`toContainText('p95')`, which the case before it checks, passes just as
+happily against the schema read aloud.
+
+**WHAT WAS RUN, AND AGAINST WHAT.** `typecheck` and `lint` green by their own
+exit codes; `test:unit` **155 / 1967** and `pnpm test:e2e` **149 / 149** at
+`--workers=2`, which are the recorded floors plus exactly this branch's five
+cases and one spec — the arithmetic closing is what makes that
+number worth trusting on a machine at 3,978 free pages. `test:integration`
+ran against a SCRATCH DATABASE (`perfportal_slabanner`) **and a scratch Redis
+INDEX** (`redis://localhost:6380/3`): the developer database held nine real
+Gatling runs, and `bull:ingest:wait` held three stale jobs on db 0. **A
+separate database is not isolation when the suite asserts on a queue** —
+this file already records a leftover worker draining shared Redis failing
+four cases that had nothing wrong with them, and the same contamination is
+available with no worker running at all.
+
+**AND ONE e2e CASE FAILED THAT THIS DIFF CANNOT REACH — THE INVESTIGATION IS
+THE ENTRY.** `acceptance.spec.ts:281` ("a keyboard alone can open a chart's
+data table and get back out") failed on `expect(locator).toBeFocused()`. It
+drives `ChartActions`, a Radix menu; this branch changes a shell banner, a
+wire schema and a worker. So the first instinct was to call it unreachable —
+which this file rightly forbids, because "my diff cannot reach it" is an
+argument and the suites are evidence.
+
+**THE MEASUREMENT THAT LOOKED DECISIVE WAS TWO COIN FLIPS.** Backing the four
+source files out to `origin/main` and running that one file gave a PASS in
+3.0s, against a FAIL in 7.4s on the branch — and the built bundle hashes
+genuinely differ (`RunDetail-tSVBWn4e` against `RunDetail-BiLctx4A`), because
+`SlaBanner` now carries a VALUE import of `describeSlaOutcome` where it
+previously imported a type alone. Everything lined up, and I reported that it
+overturned my reasoning.
+
+**IT DID NOT. THE RATE IS WHAT SETTLES AN INTERMITTENT FAILURE, AND ONE RUN
+PER SIDE IS NOT A RATE.** Measured on the branch:
+
+```
+  whole file, run A     FAIL      the original observation
+  whole file, runs 1-3  PASS      3 of 3
+  that case alone       PASS      4.3s
+  whole suite, re-run   149/149   PASS
+```
+
+One failure in four whole-file runs, and green when the case runs alone —
+which also rules the cause out of the case itself and into what the six tests
+before it leave behind. The clean-`main` pass was one sample of the same
+distribution, not a control.
+
+**THIS FILE ALREADY PRESCRIBES BACKING THE CHANGE OUT AND RE-RUNNING, AND
+THAT IS NECESSARY RATHER THAN SUFFICIENT.** The abandoned-runs entry uses it
+correctly — there the same four cases failed on both trees, so one run each
+was enough to ACQUIT. Acquitting needs one matching failure; CONVICTING needs
+a rate, because a single differing pair is exactly what a coin produces. **Do
+not let a bundle hash change turn a coincidence into a mechanism**: it was
+true that the bundle differed and true that the two runs disagreed, and
+neither fact bore on the question.
+
+**AND REVERTING SOURCE WITHOUT ITS TESTS DOES NOT BUILD.** The first attempt
+at the `origin/main` comparison reverted the four source files alone and the
+webServer died before a single spec — `packages/contracts/test/live-delta.test.ts`
+still referenced `rule`, `tsc -b` covers the test projects, and Playwright
+reports that as `Process from config.webServer was not able to start. Exit
+code: 1` with the TypeScript errors buried above it. Revert the tests with
+the source, and read the build output before concluding anything about the
+run.
+
+**AND `openapi.integration.test.ts` FLAKED A SECOND TIME, WHICH UPGRADES WHAT
+THIS FILE SAYS ABOUT IT.** The openapi-public entry records one occurrence of
+`expected 401 to be 200`, never reproduced, and calls the mechanism
+undiagnosed. Here the same file failed one case with
+`GET /v1/openapi.json -> 400: {}` — a 400 with an EMPTY BODY on the document
+endpoint itself, not an assertion about the document's content.
+
+**THE OTHER CASES IN THAT FILE ARE WHAT ACQUIT THE CHANGE.** Every one of its
+23 cases calls the same `fetchDoc`, and 22 got their 200 in the same run — so
+the document generated fine and this was not the zod-to-OpenAPI conversion
+choking on the newly-named `AssertionRuleSchema`, which is the hazard that
+file exists to catch and the one worth ruling out before anything else. In
+isolation it is **23/23, three times**, and the full suite re-ran **138 /
+1776 clean**.
+
+**THE TELL IS THE DURATION.** That run took **876s against a usual ~480s** on
+a machine whose load had been in the teens all session. Two different status
+codes across two occurrences, both on the same endpoint, both transient,
+both on a loaded machine — so it is the resource-exhaustion shape this file
+already documents rather than anything about the document.
+
 The refusals-nobody-asserts branch added no unit FILE, no unit case and no
 spec — unit stays **155 / 1962** and **e2e stays 148** — and 4 cases to
 `apps/api/test/live.integration.test.ts`, from **138 / 1770 to 138 / 1774**.

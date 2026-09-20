@@ -38,8 +38,11 @@ function buildDeltaWithSla(sla: {
   assertions: readonly Omit<EvaluatedAssertion, 'ruleSnapshot'>[];
   breachingSince: ReadonlyMap<string, number>;
   rulesUnavailable?: boolean;
+  /** Overridden only by the case about a rule the wire's enums cannot hold. */
+  ruleSnapshot?: EvaluableRule;
 }): ReturnType<typeof buildDelta>['delta'] {
-  const assertions: EvaluatedAssertion[] = sla.assertions.map((a) => ({ ...a, ruleSnapshot: RULE_SNAPSHOT }));
+  const snapshot = sla.ruleSnapshot ?? RULE_SNAPSHOT;
+  const assertions: EvaluatedAssertion[] = sla.assertions.map((a) => ({ ...a, ruleSnapshot: snapshot }));
   const { delta } = buildDelta(RUN_ID, runEngine([]), INITIAL_CURSOR, {
     rulesUnavailable: false,
     ...sla,
@@ -431,10 +434,22 @@ describe('buildDelta', () => {
       breachingSince: new Map([['a', 42_000], ['b', 10_000]]),
     });
 
+    // Whole-object, so a field added to the wire cannot arrive here unnoticed
+    // -- which is why `rule` is spelled out rather than elided: both breaches
+    // carry `RULE_SNAPSHOT`, since this fixture gives every assertion the same
+    // one.
+    const wired = {
+      scope: 'run', targetName: null, family: 'response_time',
+      metric: 'p95', comparator: 'lte', threshold: 100,
+    };
     expect(delta.sla.breaching).toEqual([
-      { ruleId: 'a', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 42_000 },
-      { ruleId: 'b', description: 'p99 ≤ 200 — actual 950', actualValue: 950, sinceOffsetMs: 10_000 },
+      { ruleId: 'a', description: 'p95 ≤ 100 — actual 900', actualValue: 900, sinceOffsetMs: 42_000, rule: wired },
+      { ruleId: 'b', description: 'p99 ≤ 200 — actual 950', actualValue: 950, sinceOffsetMs: 10_000, rule: wired },
     ]);
+    // `id` is deliberately NOT among the wired fields: the breach already
+    // carries `ruleId`, and two spellings of one identity on one object is
+    // how they come to disagree.
+    expect(delta.sla.breaching[0]?.rule).not.toHaveProperty('id');
     // Passed (0 here) AND failed (2) count as evaluated; not_applicable did
     // not get judged and must not inflate the count.
     expect(delta.sla.evaluated).toBe(2);
@@ -444,6 +459,37 @@ describe('buildDelta', () => {
     // which is why the case below adds a passing rule).
     expect(delta.sla.notJudged).toBe(1);
     expect(delta.sla.rulesUnavailable).toBe(false);
+  });
+
+  /**
+   * `packages/sla` is a pure package and does not depend on
+   * `@perfportal/contracts`, so `EvaluableRule` types `scope` and `family` as
+   * bare strings while the wire types them as enums. `wireRule` bridges that
+   * by CHECKING rather than casting, and this is the branch that earns it.
+   *
+   * The failure it prevents is not a wrong sentence, it is a blank page: the
+   * browser drops any frame whose body fails `safeParse`, so a rule carrying
+   * a family the enum does not list would take the whole live view down for
+   * as long as that rule kept breaching. Omitting `rule` instead puts the
+   * breach on the same path a pre-deploy delta takes — the banner falls back
+   * to the evaluator's own message, which is degraded rather than absent.
+   *
+   * And the breach itself must still travel, which is the half a bare
+   * `toBeUndefined()` would not catch: dropping the whole row would hide a
+   * real breach from a reader.
+   */
+  it('omits the rule it cannot put on the wire, rather than publishing a frame the browser drops', () => {
+    const delta = buildDeltaWithSla({
+      assertions: [
+        { ruleId: 'a', outcome: 'failed', actualValue: 900, message: 'p95 ≤ 100 — actual 900' },
+      ],
+      breachingSince: new Map([['a', 42_000]]),
+      ruleSnapshot: { ...RULE_SNAPSHOT, family: 'a_family_the_wire_does_not_list' },
+    });
+
+    expect(delta.sla.breaching).toHaveLength(1);
+    expect(delta.sla.breaching[0]?.rule).toBeUndefined();
+    expect(delta.sla.breaching[0]?.description).toBe('p95 ≤ 100 — actual 900');
   });
 
   /**
