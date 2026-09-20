@@ -118,7 +118,10 @@ see the eighth lesson below.
 The abandoned-runs-keep-their-data branch added ONE unit file —
 `packages/plugin-gatling/test/truncate.test.ts` (3) — from **154 / 1958 to
 155 / 1961**, and 2 cases to `apps/worker/test/pipeline.integration.test.ts`.
-**e2e stays 148.** It is the arm the branch below recorded as NOT taken, and
+Integration moves with BOTH (that new file is a `.ts` integration runs too),
+from 137 / 1762 to **138 / 1767**. **e2e stays 148.** All three READ OFF CI's
+own `build` log rather than this machine — see the closing paragraph, which
+is why. It is the arm the branch below recorded as NOT taken, and
 it is a FEATURE rather than a correction: an abandoned run now keeps what it
 measured.
 
@@ -199,8 +202,26 @@ too**, the same sweeper cases plus the same 120-second timeout. `vm_stat` said
 **3,888 free pages** with 17,235 MB of 18,432 MB of swap gone, which is worse
 than the 4,390 this file already calls untrustworthy. **Backing the change out
 and re-running the same file is what separates "I broke this" from "this
-machine cannot answer"**, and it is cheaper than either guess. CI's clean
-containers are the arbiter.
+machine cannot answer"**, and it is cheaper than either guess.
+
+**AND CI ANSWERED IT, SO THE FLOORS ABOVE ARE MEASUREMENTS RATHER THAN A
+DEFERRAL.** The `build` job passed `pipeline.integration.test.ts` on clean
+containers and printed all three totals:
+
+```
+  pnpm test:unit         Test Files 155 passed (155)   Tests 1961 passed (1961)
+  pnpm test:integration  Test Files 138 passed (138)   Tests 1767 passed (1767)
+  pnpm test:e2e          Running 148 tests using 2 workers
+```
+
+The integration arithmetic closes exactly — 137 + 1 file, 1762 + 3 unit cases
++ 2 integration cases — which is the check that makes those numbers worth
+writing down. **This entry first said the integration floor was unmeasurable
+and pointed at CI, which was honest and is no longer true**; the
+read-the-floors-off-the-runner rule this file already records for the
+allow-insecure-cookies branch is a thing to go back and DO, not only to cite.
+A floor recorded as unknown once it is known is the same staleness the whole
+section exists to prevent.
 
 **AND `git add -A` STAGED THREE FILES THAT PREDATE THE SESSION** —
 `docs/ui-review-2026-09-13/`, `review.md` and `scripts/seed-manual-test.mjs`,
