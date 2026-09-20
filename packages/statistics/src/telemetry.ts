@@ -139,7 +139,38 @@ export function toTelemetrySeries(
   for (const [host, list] of byHost) {
     list.sort((a, b) => a.sampledAtMs - b.sampledAtMs);
 
-    let clockSkewMs = 0;
+    /*
+     * ═══ THE MINIMUM GAP, NOT THE WIDEST ═══
+     *
+     * `receivedAt - sampledAt` is the clock OFFSET plus the transport delay,
+     * and the delay is never negative: an agent batches its samples, so the
+     * oldest one in a flush has waited the whole interval and the newest has
+     * waited almost none. A clock offset is CONSTANT; a delay is not. So the
+     * smallest gap a host ever shows is the tightest bound on its offset, and
+     * the largest is the worst — this took the largest.
+     *
+     * MEASURED ON A HOST WHERE THE SKEW IS PROVABLY ZERO, because the agent
+     * and the API were the same machine sharing one clock. 155 samples:
+     *
+     *     min 1,027 ms      median 6,031 ms      max 11,069 ms
+     *
+     * A spread, not a constant — the signature of buffering. Reported as
+     * 11,069, which is past `CLOCK_SKEW_WARN_MS`, so the page told an
+     * operator that a perfectly synchronised generator was eleven seconds
+     * out and that its points might be misaligned by that much.
+     *
+     * AND THE MISALIGNMENT IT WARNED ABOUT CANNOT HAPPEN FROM DELAY. A point
+     * is placed at `sampledAt - toolStartedAt` — the AGENT's own clock —
+     * so however long a sample waits in a buffer, it lands in the same
+     * bucket. Only a genuine offset moves it, and only the offset is what
+     * this number is for.
+     *
+     * The minimum still catches the case the test below exists for: an agent
+     * thirty seconds FAST makes every gap about -30,000, and the minimum is
+     * the most negative of them. The two only disagree for an agent that is
+     * not skewed at all, which is exactly where the old answer was wrong.
+     */
+    let clockSkewMs = list[0]!.receivedAtMs - list[0]!.sampledAtMs;
     // Rates accumulate per bucket and are averaged; several samples can land
     // in one bucket once the engine has halved a long run's resolution.
     const buckets = new Map<number, { sums: Map<string, number>; counts: Map<string, number>; last: TelemetryInput }>();
@@ -148,7 +179,7 @@ export function toTelemetrySeries(
       const cur = list[i]!;
 
       const skew = cur.receivedAtMs - cur.sampledAtMs;
-      if (Math.abs(skew) > Math.abs(clockSkewMs)) clockSkewMs = skew;
+      if (skew < clockSkewMs) clockSkewMs = skew;
 
       const offsetMs = cur.sampledAtMs - toolStartedAtMs;
       // The lookback samples land here. They produce no point of their own —

@@ -115,6 +115,91 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The clock-skew-is-the-minimum branch added no unit FILE and 1 case to
+`packages/statistics/test/telemetry.test.ts`, from **155 / 1961 to
+155 / 1962**. Integration moves with it (that file is a `.ts` integration runs
+too) at **138 / 1770**, and **e2e stays 148**. Found by running the real Go
+agent against a real instance, which nothing in this repository had ever done.
+
+**IT TOLD AN OPERATOR A SYNCHRONISED GENERATOR'S CLOCK WAS ELEVEN SECONDS
+OUT.** `clockSkewMs` was the WIDEST `receivedAt - sampledAt` a host showed.
+Measured on a machine where the skew is provably ZERO — the agent and the API
+were the same process tree sharing one clock — across 155 real samples:
+
+```
+  min 1,027 ms      median 6,031 ms      max 11,069 ms
+```
+
+**A SPREAD IS DELAY; A CONSTANT IS SKEW.** A clock offset does not vary
+between samples. That fan-out is the signature of BATCHING: the oldest sample
+in a flush has waited the whole interval and the newest almost none. The rule
+took the maximum, so it reported the worst-case buffering as the clock, tripped
+`CLOCK_SKEW_WARN_MS` (5,000), and printed "gen-01's clock reports samples
+roughly 11s behind the server's".
+
+**AND THE CONSEQUENCE IT WARNED ABOUT CANNOT FOLLOW FROM DELAY.** The sentence
+continues "so its points on these charts may be misaligned by about that
+much". A point is placed at `sampledAt - toolStartedAt` — the AGENT's own
+clock — so however long a sample waits in a buffer it lands in the same
+bucket. Only a genuine offset moves it. The number is therefore wrong AND the
+harm it predicts is unreachable by the thing it actually measures.
+
+**THE MINIMUM IS THE TIGHTEST BOUND, AND IT IS WHY THIS IS A ONE-LINE FIX.**
+Transport delay is never negative, so the smallest gap a host ever shows is
+the closest any sample gets to the true offset — the same minimum-filter NTP
+uses. Real data after: **1,033 ms**, under the threshold, no warning, which is
+correct.
+
+**AND IT STILL CATCHES THE CASE THE OLD RULE EXISTED FOR.** An agent thirty
+seconds FAST makes every gap about -30,000, and the minimum is the most
+negative of them — so the existing "a generator thirty seconds fast" case
+passes UNCHANGED. The two rules only disagree for an agent that is not skewed
+at all, which is exactly where the old answer was wrong. That case was
+re-pointed at the claim it is really making (report the sample that shows it,
+not the last one seen) rather than at the rule it was named for.
+
+**TWO MUTATIONS, ONE CASE, AND THAT IS STATED RATHER THAN DRESSED UP.**
+Restoring the widest-gap rule and initialising the accumulator at `0` instead
+of the first sample BOTH fail the new case and nothing else. They are two ways
+to get the floor wrong, so one case covering both is honest coverage — but
+the second mutation demonstrated nothing the first had not, which this file
+asks to be said out loud rather than counted twice.
+
+═══ WHAT ELSE RUNNING THE AGENT ESTABLISHED, ALL OF IT CLEAN ═══
+
+**THE GO GATE NO `pnpm` COMMAND RUNS.** `cd agent && go vet ./... && go test
+./... -race` — exit 0 on both, four packages. Worth running when `agent/`
+changes, and worth knowing nobody had.
+
+**THE THREE-STATE DISTINCTION IS REAL, AND NOW WITNESSED ON REAL DATA.**
+`available` is computed BEFORE the range filter, so:
+
+```
+  no agent ever reported          available false  hosts 0
+  recorded, window is quiet       available true   hosts 0     <- the one that matters
+  recorded, window has samples    available true   hosts 1
+```
+
+The middle row is the claim `RunTelemetry`'s docstring rests on and which
+M16's entry called "reachable, correct, and unwitnessed". Produced here by
+asking for `?from=1&to=999` on a run sampled every 2s.
+
+**AND THE SAMPLES RECONCILE EXACTLY.** 108 sent, **54 inside the run's own
+window, 54 drawn** — offsets 0..106,000 at the agent's 2,000 ms interval,
+monotonic, unique, no negative offsets (the lookback is dropped as documented),
+every `cpuTotalPct` inside [0,100], no `memUsedBytes` above `memTotalBytes`.
+
+**THE AGENT REPORTS A PLATFORM LIMIT INSTEAD OF SILENTLY ZEROING.** On macOS:
+"TCP protocol counters are not available on this platform; segment and
+connection-event series will be empty (spec §10)". Named, with the spec
+section. The zeros in those columns are honest and the log says why.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **155 / 1962**; `test:integration` **138 / 1770** against a
+SCRATCH DATABASE, with every hand-started process stopped FIRST — the lesson
+from the branch below, where a leftover worker draining the shared `ingest`
+queue failed four cases that had nothing wrong with them.
+
 The runner-retry-keeps-declared-test branch added no unit FILE and no unit
 case — unit stays **155 / 1961** — and 2 cases to
 `packages/persistence/test/runner.integration.test.ts`, from **138 / 1767 to
