@@ -506,6 +506,20 @@ const TOTAL_LABEL = 'All Requests';
  *     nobody re-reads against the screen. So this takes the FULLY FLATTENED
  *     tree, not `visibleRows`.
  *
+ * ═══ WHICH COLUMNS, AND WHY THEY ARE NOT THE VISIBLE ONES EITHER ═══
+ *
+ * EVERY column the payload carries, not the ones the picker has on. The
+ * picker exists because fifteen columns is an archive rather than a table
+ * (review M11) — and a downloaded file IS an archive, so the argument that
+ * narrows the screen is the argument for not narrowing the file.
+ *
+ * It matters more than it looks. `RunGlossary` tells a reader that Total,
+ * OK, KO, Min, Max and Mean are the exactly-tracked figures, and therefore
+ * what to diff this product against Gatling's own report on. THREE of those
+ * six — OK, Min and Mean — are off by default. An export honouring the
+ * picker hands somebody sent here by that sentence a file missing half the
+ * columns it named, with nothing on screen saying so.
+ *
  * ═══ THE FULL PATH, NOT THE LEAF NAME ═══
  *
  * On screen, indentation supplies a row's context and `name` can be the leaf.
@@ -737,10 +751,23 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
     );
   }
 
-  // The VISIBLE columns drive the header, the cells and the colspans. The
-  // CSV export below deliberately still uses every column — a download is an
-  // archive, and hiding a column on screen is not a decision about the file.
-  const allColumns = [...shown.executions, ...shown.responseTime];
+  /*
+   * WHAT DRIVES THE TABLE IS NOT WHAT DRIVES THE FILE, AND THE NAME IS HALF
+   * THE REASON THAT DRIFTED.
+   *
+   * These are the columns the reader turned ON: they head the table, fill its
+   * cells and set every colspan. The EXPORT takes `everyColumn` instead — a
+   * download is an archive, and hiding a column on screen is not a decision
+   * about the file. Review M11 says so in as many words ("the rest are one
+   * disclosure away, the CSV export is unchanged") — and then changed this
+   * line from `[...columns...]` to `[...shown...]` while KEEPING THE NAME
+   * `allColumns` and writing that comment above it. 237 commits that way.
+   *
+   * A NAME IS NOT A CHECK, AND THIS ONE WAS DOING A CHECK'S JOB. Every
+   * reader after M11 met an identifier that stated the invariant, beside a
+   * comment that restated it, over an expression that broke it.
+   */
+  const visibleColumns = [...shown.executions, ...shown.responseTime];
 
   /**
    * `flatten(sorted)`, not `rows`: the export follows the sort and the filter
@@ -753,7 +780,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
   const exportCsv = () =>
     downloadCsv(
       `perfportal-${runId}-statistics.csv`,
-      statisticsCsv(total, flatten(sorted), allColumns),
+      statisticsCsv(total, flatten(sorted), everyColumn),
     );
 
   return (
@@ -897,7 +924,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
               </th>
             </tr>
             <tr className={ROW}>
-              {allColumns.map((column, index) => (
+              {visibleColumns.map((column, index) => (
                 <SortableHeader
                   key={column.column}
                   column={column.column}
@@ -962,7 +989,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                       the reader is already on its page. */}
                   All Requests
                 </th>
-                <Cells row={total} columns={allColumns} />
+                <Cells row={total} columns={visibleColumns} />
               </tr>
             </tbody>
           )}
@@ -973,7 +1000,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 key={row.key}
                 row={row}
                 runId={runId}
-                columns={allColumns}
+                columns={visibleColumns}
                 expanded={isExpanded(row.key)}
                 onToggle={toggle}
               />
@@ -984,7 +1011,7 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
                 and it is handled above. */}
             {filtering && rows.length === 0 && (
               <tr>
-                <td colSpan={allColumns.length + 1} className={`${TD} py-8 text-center text-muted`}>
+                <td colSpan={visibleColumns.length + 1} className={`${TD} py-8 text-center text-muted`}>
                   No rows match this filter.
                 </td>
               </tr>

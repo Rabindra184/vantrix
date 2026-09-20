@@ -1516,6 +1516,81 @@ describe('StatisticsTable — CSV export', () => {
     expect(csv).not.toContain('"Search"');
   });
 
+  /**
+   * ═══ THE EXPORT IS AN ARCHIVE, SO THE PICKER DOES NOT NARROW IT ═══
+   *
+   * `DEFAULT_STATISTIC_COLUMNS` opens the table on eight of the thirteen this
+   * payload carries. M11 argued that is right for a TABLE and said in the same
+   * breath that "the CSV export is unchanged" — then shipped
+   * `allColumns = [...shown...]`, the visible set under the other one's name,
+   * and the file lost OK, Min, 75th, Mean and Std Dev for 237 commits.
+   *
+   * ═══ WHY THE EXISTING HEADER CASE COULD NOT SEE IT ═══
+   *
+   * "heads the file with the columns the table is rendering" asserts every
+   * VISIBLE header appears in the file — which an export of exactly the
+   * visible columns satisfies perfectly. It pins the intersection; the claim
+   * is about the superset, and no assertion in this file made it. Same shape
+   * CLAUDE.md records for `window.integration.test.ts`, where a case named for
+   * the behaviour passed `?scope=request` on both sides and so proved the
+   * consumer rather than the default.
+   *
+   * ═══ ASSERTED AS A PAIR, AND NEITHER HALF IS SUFFICIENT ═══
+   *
+   * "the file carries Std Dev" alone passes against a table that has simply
+   * stopped hiding anything — the picker broken, M11 undone, and the export
+   * merely agreeing with a screen that now shows everything. "Std Dev is not
+   * on screen" alone is satisfied by a file that does not have it either,
+   * which is the defect. Only the two together say the file is WIDER than the
+   * screen, which is the whole claim.
+   */
+  it('carries every column the payload has, not the ones the picker has on', async () => {
+    renderTable();
+
+    const onScreen = () =>
+      screen
+        .getAllByRole('columnheader')
+        .map((th) => th.textContent?.trim() ?? '')
+        .filter((label) => label !== '');
+
+    // The default really is narrower than the payload — otherwise the case
+    // below is vacuous, and it would be vacuous SILENTLY.
+    const atRest = onScreen();
+    const hidden = ['OK', 'Min', 'Mean', 'Std Dev'].filter(
+      (label) => !atRest.some((h) => h.includes(label)),
+    );
+    expect(hidden, 'the default column set no longer hides anything').not.toHaveLength(0);
+
+    const csv = await csvText();
+    const header = csv.split('\r\n')[0] ?? '';
+    for (const label of hidden) {
+      expect(header, `${label} is off by default and must still be in the file`).toContain(
+        `"${label}"`,
+      );
+    }
+  });
+
+  /**
+   * THE REASON THE CASE ABOVE IS WORTH ITS LINES, STATED AS A TEST.
+   *
+   * `RunGlossary`'s `estimate` entry — the branch that named the one column
+   * Gatling parity cannot keep — tells a reader that "Total, OK, KO, Min, Max
+   * and Mean are exact, and are what to diff the two reports on". Three of
+   * those six are off by default. A reader who follows that sentence to the
+   * download gets the file it sent them for, or the sentence is wrong.
+   *
+   * Spelled as the six labels rather than by importing the glossary: the
+   * coupling is a CLAIM about two surfaces agreeing, and a shared constant
+   * would make both sides move together and assert nothing.
+   */
+  it('carries every column the glossary calls exact, which is what a Gatling diff needs', async () => {
+    renderTable();
+    const header = (await csvText()).split('\r\n')[0] ?? '';
+    for (const label of ['Total', 'OK', 'KO', 'Min', 'Max', 'Mean']) {
+      expect(header, `the glossary sends readers here to diff ${label}`).toContain(`"${label}"`);
+    }
+  });
+
   it('writes a UTF-8 BOM, so Excel does not mangle a non-ASCII name', async () => {
     // Asserted on the BYTES. Blob.text() UTF-8-decodes, and decoding consumes
     // the BOM, so a text-level assertion can never see one and would fail
