@@ -115,6 +115,117 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The errors-tally-counts-errors branch added no unit FILE and 1 case to
+`apps/web/test/ErrorsTable.test.tsx`. Cut from **154 / 1948**, it measured
+154 / 1949 on its own; export-every-column merged FIRST and took `main` to
+154 / 1950, so after merging `main` back in this branch measures
+**154 / 1951** — RE-MEASURED, not inferred.
+Integration is UNCHANGED (every file it touches is a `.tsx`) and **e2e stays
+145** — `run-detail.spec.ts`'s errors case asserts the ROW COUNT against the
+KO column and never reads the tally, so the wording its NAME carries is a test
+name rather than an assertion. **CUT FROM THE SAME `main` AS
+export-every-column**, and this paragraph is the reconciliation that predicted
+itself: both branches inserted an entry at the same point in this file, so the
+second to merge resolved the conflict by keeping both. The arithmetic — 1 case
+onto whatever it sits on — is what survived.
+
+**THE ERRORS TAB SAID "310 FAILED REQUESTS" ON A RUN WITH 294.** The tally
+line under the heading renders `{rows.length} error types · {total} failed
+requests`, and `total` is the sum of the error counts. Measured on a real
+1,724-request Gatling run: 6 error types, `total` **310**, and the run's own
+KO tile one tab over reading **294**.
+
+**THE RAW LOG ADJUDICATES, AND BOTH NUMBERS ARE RIGHT.** Decoded with
+`parseSimulationLog`: `{"meta":1,"user":960,"request":1724,"group":780,
+"error":16}` — **1,724 request records of which 294 KO, plus SIXTEEN
+STANDALONE `error` RECORDS**. Gatling emits a session or EL failure as its own
+record type, carrying a message and a timestamp and NO request name:
+
+```
+  {"type":"error","message":"Add To Cart: No attribute named 'sessionId' is defined ",…}
+```
+
+294 + 16 = 310. So `total` is every recorded error and `koCount` is failed
+requests, and the label named the one thing `total` is not.
+
+**THE COMPONENT'S OWN CAPTION HAD IT RIGHT ALL ALONG.** Three lines below the
+tally: "share of the 310 errors this run recorded — **not of the requests it
+made**". One component, one number, two nouns, and the correct one was already
+written down. **When two expressions in one file describe one value, the seam
+is inside the file** — this repo usually records that shape across components.
+
+**AND THE DENOMINATOR'S COMMENT ASSERTED THE BUG AS AN INVARIANT.** It read
+"the two are equal by construction anyway (measured in task 1: 15 + 9 = 24 =
+the run row's `koCount`)". That measurement is CORRECT about the reference run
+and false in general — `ParitySimulation` emits no standalone `error` record
+at all, so on that fixture `total` and `koCount` genuinely coincide. **A
+FIXTURE THAT CANNOT DISTINGUISH TWO QUANTITIES IS THE PLACE A FALSE INVARIANT
+GETS WRITTEN DOWN**, and this file already records the same shape for a
+geometry bound measured against a 24-character simulation name.
+
+**THE THREE EXISTING CASES PINNED THE FIXTURE'S NUMBERS VERBATIM** — `/24
+failed requests/i` — so they were green throughout and would have been the
+reason the label survived. Re-pointed at the claim, which is this file's
+standing rule for prose, met for the fourth time.
+
+**THE NEW CASE ASSERTS THE AGREEMENT, NOT EITHER WORDING.** Two mutations,
+landing distinctly: restoring `failed requests` fails all three tally cases,
+while deleting the caption's "not of the requests it made" fails ONLY the new
+one. That asymmetry is the argument for it — the two old cases cannot see the
+caption at all, which is the half that was already correct.
+
+**AND THE GLOSSARY GUARD CAUGHT WHAT THE CHANGE ORPHANED, WHICH IS THE SYSTEM
+WORKING.** `RunGlossary.test.tsx` asserts every word the glossary DEFINES is a
+word the product RENDERS, per-word and per-file. Renaming the tally left
+`failed requests` defined and rendered nowhere, and the full unit run failed
+on exactly that — one case, naming the word and the file. The entry is
+`Errors, recorded errors` now, and `WORDS` is derived from the glossary's own
+`term` field, so the guard's map moved with it rather than being re-listed.
+
+**AND THAT ENTRY WAS BUILT ON THE SAME FALSE PREMISE.** It read "the Errors
+tab counts distinct error messages; the run totals count failed requests …
+this run's 2 and 24 are both right" — the reference run's coincidence again,
+explaining TWO numbers where the product shows THREE. It now names all three
+(distinct messages, recorded errors, KO) and says why the second can exceed
+the third. Same shape as the glossary-percentile-parity branch: **the glossary
+is where this product records the exception to a promise it makes elsewhere.**
+
+**A SOURCE FILE HELD A LITERAL NUL BYTE, AND `grep` SILENTLY SKIPPED IT.**
+`ErrorsTable.tsx` keyed its folded-remainder row on a string beginning with a
+RAW NUL. `file` reports the whole file as `data`, so every `grep` over it
+returns nothing at all — which is how the caption/tally disagreement survived
+a grep-based audit of exactly that file, and is why this one-character change
+rides with this branch rather than waiting for its own. It is the `\u0000`
+escape now: verified byte-identical by evaluating the literal straight out of
+the source (`codePointAt(0) === 0`, length 6), so the React key is unchanged.
+
+**THIS FILE ALREADY RECORDS THE SAME BYTE IN `tool-assertions.ts`** and
+already prescribes the fix ("same bytes"). Second occurrence, in
+`apps/web/src` this time. **AND THE COST IS NARROWER THAN IT LOOKS — MEASURED
+RATHER THAN ASSUMED**: `git diff` renders it as ordinary text (`--numstat`
+gives real counts, not `-  -`), and Node's `readFileSync` reads it fine, so
+every suite and every source-scanning guard was unaffected. What breaks is
+`grep`, `file`, and any CLI text tool — in a repo whose conventions are full
+of "grep for X before doing Y", which is the whole cost.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes,
+`test:unit` **154 / 1951** on the merged tree. Integration and e2e are untouched by construction
+and were not re-run. Found by reconciling the drill-down against the main
+table on a real run — and the drill-down itself came out CLEAN: 12 rows
+compared against their own scoped series, **36 of 36** exact on count, min and
+max, and `RequestDetail` cannot drift by construction because it reads the
+run's own payload rather than a scoped one.
+
+**AND THE FIRST TWO ATTEMPTS AT THAT RECONCILIATION BOTH CRIED WOLF.** A
+series bucket with an empty sketch reports **0** for min/max/mean and `{}` for
+percentiles — `bucketLatency`'s documented asymmetry — so an unfiltered
+`min over buckets` reads 0 and accuses the product. Filtering on
+`endedCount > 0` is WRONG IN THE OTHER DIRECTION: the sketch is keyed on
+START, so a bucket that ended nothing still carries real latencies, and that
+filter silently dropped a real maximum (4219 read as 4166). The honest
+emptiness test is the documented one — empty `percentiles` — and with it the
+36 comparisons are exact. **Third false alarm of this verification, and the
+product was right all three times.**
 The export-every-column branch added no unit FILE and 2 cases to
 `apps/web/test/StatisticsTable.test.tsx`, from **154 / 1948 to 154 / 1950**.
 Integration is UNCHANGED (both files it touches are `.tsx`, which that config

@@ -517,15 +517,30 @@ describe('ErrorsTable — it says when a window does not reach it', () => {
 });
 
 /**
- * REVIEW M09 — "ERRORS (2)" AND "24 FAILED REQUESTS" ARE BOTH TRUE.
+ * REVIEW M09 — "ERRORS (2)" AND THE OCCURRENCE COUNT ARE BOTH TRUE.
  *
- * The tab counts distinct error MESSAGES; the run totals count failed
- * REQUESTS. Two numbers, an order of magnitude apart, neither labelled as to
- * which it is — so a reader reconciling "Errors (2)" against "24 failed"
- * assumes one of them is wrong.
+ * The tab counts distinct error MESSAGES; this line counts the occurrences
+ * they sum to. Two numbers, an order of magnitude apart, neither labelled as
+ * to which it is — so a reader reconciling them assumes one is wrong. The
+ * table holds both already: `rows.length` and the `total` it divides its
+ * shares by.
  *
- * This table holds both already: `rows.length` is the type count and `total`
- * is the occurrence count it divides its shares by. It just never said so.
+ * ═══ AND THE LABEL IT SHIPPED WITH WAS THE ONE THING `total` IS NOT ═══
+ *
+ * It read "failed requests". A Gatling ERROR record — a session or EL
+ * failure — is recorded in this payload and belongs to NO request, so it is
+ * in `total` and in no row's `koCount`. Measured on a real 1,724-request
+ * run: 310 recorded errors against 294 KO requests, a gap of 16, displayed
+ * as "310 failed requests" on a page whose own KO tile read 294.
+ *
+ * ═══ WHY THESE CASES COULD NOT SEE IT ═══
+ *
+ * They assert against the reference fixture's 15 + 9 = 24 — the run where
+ * `total` and `koCount` COINCIDE, because that simulation emits no
+ * standalone ERROR record at all. So "24 failed requests" was true of the
+ * fixture and false of the product, and pinning it verbatim is what would
+ * have kept it. Asserted as a CLAIM now: this file already records that a
+ * test pinning prose protects it from correction.
  */
 describe('ErrorsTable — it distinguishes error types from occurrences', () => {
   const two = {
@@ -540,14 +555,41 @@ describe('ErrorsTable — it distinguishes error types from occurrences', () => 
     render(<ErrorsTable errors={two} />);
     const tally = screen.getByTestId('errors-tally');
     expect(tally).toHaveTextContent(/2 error types/i);
-    expect(tally).toHaveTextContent(/24 failed requests/i);
+    expect(tally).toHaveTextContent(/24 recorded errors/i);
   });
 
   it('reads in the singular for one of each', () => {
     render(<ErrorsTable errors={{ runId: RUN_ID, errors: [{ message: 'boom', count: 1 }] }} />);
     const tally = screen.getByTestId('errors-tally');
     expect(tally).toHaveTextContent(/1 error type/i);
-    expect(tally).toHaveTextContent(/1 failed request/i);
+    expect(tally).toHaveTextContent(/1 recorded error/i);
+  });
+
+  /**
+   * THE TALLY AND THE CAPTION DESCRIBE ONE NUMBER AND MUST AGREE ABOUT IT.
+   *
+   * `total` appears twice in this component — once in the tally and once in
+   * the caption, which has always called it "errors ... not of the requests
+   * it made". The tally called the same number "failed requests". The claim
+   * is the AGREEMENT, not either wording, so this asserts the noun the
+   * caption uses is the noun the tally uses.
+   *
+   * ASSERTED AS A PAIR. The absence alone ("the tally does not say failed
+   * requests") passes against a tally that failed to render at all, and the
+   * presence alone passes against one that says both.
+   */
+  it('calls the occurrence count what the caption calls it, never failed requests', () => {
+    render(<ErrorsTable errors={two} />);
+    const tally = screen.getByTestId('errors-tally');
+    const caption = screen.getByRole('table', { name: /errors/i }).textContent ?? '';
+
+    expect(tally).toHaveTextContent(/24 recorded errors/i);
+    expect(tally.textContent ?? '').not.toMatch(/failed requests?/i);
+
+    // The caption's own claim about the same number, unchanged by this fix —
+    // it is the half that was right.
+    expect(caption).toMatch(/24 errors/i);
+    expect(caption).toMatch(/not of the requests it made/i);
   });
 
   it('says nothing at all when there are no errors', () => {
