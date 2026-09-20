@@ -121,9 +121,9 @@ export const ENTRIES: readonly { term: string; meaning: string }[] = [
       'The same rank, spelled for its surface: p95 on a tile and in an SLA rule, 95th as a table column, 95% in a chart legend whose axis is itself a percentile.',
   },
   {
-    term: 'Errors, failed requests',
+    term: 'Errors, recorded errors',
     meaning:
-      'The Errors tab counts distinct error messages; the run totals count failed requests. One message can fail many requests, so these two numbers are not meant to match — this run’s 2 and 24 are both right.',
+      'Three numbers here, none of them meant to match. The Errors tab counts distinct messages. The line under its heading counts recorded errors — every occurrence of those messages — so it is usually the larger, because one message can fail many requests. KO, in the run totals and the statistics table, counts requests that failed. Recorded errors can exceed KO as well: Gatling records a session or expression failure as an error in its own right, belonging to no request, so it is counted here and in nothing’s KO.',
   },
   {
     term: 'Platform gates, Simulation assertions',

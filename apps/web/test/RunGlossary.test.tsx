@@ -69,7 +69,7 @@ const RENDERED_IN: Readonly<Record<string, string>> = {
   '95th': 'apps/web/src/tables/StatisticsTable.tsx',
   '95%': 'apps/web/src/charts/transforms/percentiles.ts',
   Errors: 'apps/web/src/tables/ErrorsTable.tsx',
-  'failed requests': 'apps/web/src/tables/ErrorsTable.tsx',
+  'recorded errors': 'apps/web/src/tables/ErrorsTable.tsx',
   'Platform gates': 'apps/web/src/routes/RunDetail.tsx',
   'Simulation assertions': 'apps/web/src/routes/RunDetail.tsx',
   Verdict: 'apps/web/src/routes/RunList.tsx',

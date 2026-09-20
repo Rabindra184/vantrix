@@ -156,10 +156,21 @@ export default function ErrorsTable({
    * counts and nothing else.
    *
    * Not `koCount` from the statistics payload — this component is not handed
-   * it, and the two are equal by construction anyway (measured in task 1: 15 +
-   * 9 = 24 = the run row's `koCount`). Not the request count either: 24 of 895
-   * requests failed, and a reader who reads "62.5%" as "62.5% of requests"
-   * has misread the table by a factor of thirty-seven. The caption says which.
+   * it, and THEY ARE NOT THE SAME NUMBER, which this comment used to claim
+   * they were ("equal by construction anyway (measured in task 1: 15 + 9 =
+   * 24 = the run row's `koCount`)"). That measurement was right about the
+   * reference run and wrong about runs in general: Gatling emits a standalone
+   * ERROR record for a session or EL failure, which belongs to no request and
+   * is therefore counted here and NOT in any row's `koCount`. Measured on a
+   * real 1,724-request run, the gap is 16 — 310 recorded errors against 294
+   * KO requests, the difference being eight `Add To Cart: No attribute named
+   * 'sessionId' is defined` and eight of the same for `Place Order`.
+   *
+   * THE REFERENCE FIXTURE CANNOT TELL THE TWO APART, which is why the claim
+   * survived: its 15 + 9 = 24 really does equal its `koCount`, because that
+   * simulation emits no standalone ERROR record at all. Not the request count
+   * either: a reader who reads "62.5%" as "62.5% of requests" has misread the
+   * table by a factor of thirty-seven. The caption says which.
    */
   const total = rows.reduce((sum, row) => sum + row.count, 0);
 
@@ -232,13 +243,26 @@ export default function ErrorsTable({
       <SectionHeading id={headingId}>Errors</SectionHeading>
 
       {/* TWO COUNTS, AN ORDER OF MAGNITUDE APART, BOTH TRUE. The tab strip
-          counts distinct MESSAGES ("Errors (2)") and the run totals count
-          failed REQUESTS (24) — so a reader reconciling them assumes one is
-          wrong. This table already holds both: the row count and the `total`
-          it divides its shares by. It simply never said which was which. */}
+          counts distinct MESSAGES ("Errors (2)") and this line counts the
+          OCCURRENCES they sum to — so a reader reconciling them assumes one
+          is wrong. This table already holds both: the row count and the
+          `total` it divides its shares by. It simply never said which was
+          which.
+
+          AND IT SAID "failed requests", WHICH IS THE ONE THING `total` IS
+          NOT. A Gatling ERROR record — a session or EL failure — is recorded
+          here and belongs to no request, so on a real run this line read
+          "310 failed requests" on a page whose own KO tile read 294. The
+          caption three lines down had it right all along ("share of the 310
+          errors this run recorded — not of the requests it made"); the two
+          halves of one component disagreed about one number's noun.
+
+          THE NOUN IS NOW THE CAPTION'S. Naming the KO count here instead is
+          not available: `koCount` lives in the statistics payload and this
+          component is deliberately not handed it (see `total` above). */}
       <p data-testid="errors-tally" className="text-[0.8125rem] text-primary">
         {rows.length} {rows.length === 1 ? 'error type' : 'error types'} ·{' '}
-        {total} {total === 1 ? 'failed request' : 'failed requests'}
+        {total} {total === 1 ? 'recorded error' : 'recorded errors'}
       </p>
       {windowNote}
 
@@ -286,7 +310,7 @@ export default function ErrorsTable({
                 // MESSAGE, so a scope's rows cannot repeat one. The folded
                 // remainder is `null` — a value no message can take, and at
                 // most one row carries it — so it keys itself.
-                <tr key={row.message ?? ' other'} data-testid="error-row" className={ROW}>
+                <tr key={row.message ?? '\u0000other'} data-testid="error-row" className={ROW}>
                   {/* `<th scope="row">`: the message is what makes "15" mean
                       something when a screen reader announces it out of
                       context. `break-words` because these are raw assertion
