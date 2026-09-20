@@ -1,7 +1,7 @@
 import { useId, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useWindowSuffix } from '../routes/useRunWindow';
-import type { StatRow, StatsResponse } from '@perfportal/contracts';
+import type { RunResponse, StatRow, StatsResponse } from '@perfportal/contracts';
 import {
   buildTree,
   filterTree,
@@ -515,7 +515,25 @@ export function statisticsCsv(
   ]);
 }
 
-export default function StatisticsTable({ stats, runId }: { stats: StatsResponse; runId: string }) {
+export default function StatisticsTable({
+  stats,
+  runId,
+  runStatus,
+}: {
+  stats: StatsResponse;
+  runId: string;
+  /**
+   * WHY THIS TABLE IS EMPTY, WHICH IT CANNOT WORK OUT FOR ITSELF.
+   *
+   * The payload carries a runId and rows and nothing about the run's fate, so
+   * an absent row set reads identically for a run that measured nothing and
+   * one whose measurements were discarded. The caller knows; `ErrorsTable`
+   * takes `scopeLabel` for exactly this reason.
+   *
+   * Optional, so every other caller keeps the unconditional wording.
+   */
+  runStatus?: RunResponse['status'];
+}) {
   const headingId = useId();
   const filterId = useId();
   /** Prefix for the per-column label ids the headings name themselves by. */
@@ -710,7 +728,29 @@ export default function StatisticsTable({ stats, runId }: { stats: StatsResponse
         <SectionHeading id={headingId} overline="Run telemetry">Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
-        <EmptyState title="No statistics were recorded for this run" />
+        {/* ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
+         *
+         * Measured end to end: a live run given 18,884 bytes of a real
+         * simulation log published a delta reading count 440 / ok 428 /
+         * ko 12 — numbers a reader WATCHED on the live page — and the
+         * sweeper then finalized it `incomplete` with zero stat rows, no
+         * simulation and no duration. The bytes are still in the object
+         * store; nothing assembles them, because `finalizeLive` only runs
+         * under `close()` and the sweeper must not re-enqueue.
+         *
+         * So those statistics were recorded and are not RETAINED, and the
+         * unconditional sentence told a reader who had just seen 440
+         * requests that none existed. Whether an abandoned run should keep
+         * its partial data is a product decision and is not made here; what
+         * is fixed is the product describing it wrongly. */}
+        {runStatus === 'incomplete' ? (
+          <EmptyState
+            title="No statistics were retained for this run"
+            body="This run's stream stopped before it finished, and figures measured while it was live are not kept. Re-run the test for a complete set."
+          />
+        ) : (
+          <EmptyState title="No statistics were recorded for this run" />
+        )}
       </section>
     );
   }

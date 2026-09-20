@@ -611,7 +611,9 @@ export function RunOverviewTab() {
           // rather than judging the reader for opening it.
           action="Open detailed table"
         >
-              {() => <StatisticsTable stats={data} runId={runId} />}
+              {() => (
+                <StatisticsTable stats={data} runId={runId} runStatus={run.data.run.status} />
+              )}
             </DesktopOnly>
           </>
         )}

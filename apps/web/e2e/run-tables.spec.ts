@@ -1,5 +1,10 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { seedAdmin, seedRunWithData, seedRunWithFailedAssertion } from './fixtures.js';
+import {
+  seedAdmin,
+  seedIncompleteRun,
+  seedRunWithData,
+  seedRunWithFailedAssertion,
+} from './fixtures.js';
 import { openTimeWindow, plot, signIn } from './helpers.js';
 import { runErrorsPath, runPath } from '../src/routes/paths.js';
 
@@ -1074,4 +1079,32 @@ test('the band’s link to a failed assertion names what it lands on', async ({ 
   await expect(
     page.getByRole('heading', { name: new RegExp(stem, 'i') }).first(),
   ).toBeVisible();
+});
+
+/**
+ * ═══ AN INCOMPLETE RUN SAYS ITS FIGURES WERE DISCARDED, NOT NEVER TAKEN ═══
+ *
+ * `StatisticsTable.test.tsx` proves the component says the right sentence
+ * WHEN HANDED a status — and it hands itself that status, so it proves the
+ * consumer and never the seam. This drives the real page: whether `RunDetail`
+ * passes the run's own `status` through is a different claim, and the one
+ * that was actually missing.
+ *
+ * MEASURED END TO END BEFORE WRITING THIS. A live run given 18,884 bytes of a
+ * real `simulation.log` published a delta reading `count 440 / ok 428 /
+ * ko 12`, and the sweeper then finalized it `incomplete` with zero stat rows.
+ * The unconditional "No statistics were recorded for this run" told a reader
+ * who had just watched 440 requests that none had existed.
+ */
+test('an incomplete run says its statistics were not retained', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedIncompleteRun(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  // The PAIR, as in the unit cases: the narrower sentence present AND the
+  // unconditional one gone. Either alone passes against a page that says both
+  // or renders neither.
+  await expect(page.getByText(/no statistics were retained/i)).toBeVisible();
+  await expect(page.getByText(/no statistics were recorded/i)).toHaveCount(0);
 });
