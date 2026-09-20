@@ -104,11 +104,11 @@ export class RunsController {
     const parsedCursor = parseCursor(cursor);
     const filters = parseRunListFilters({ q, status, verdict });
     const page = await this.runs.runs().list(
-      { orgId: tenant.orgId, ...(projectId ? { projectId } : {}) },
+      { orgId: tenant.orgId, projectId: projectId ? projectId : undefined },
       {
         limit: parseLimit(limit),
-        ...(parsedCursor ? { cursor: parsedCursor } : {}),
-        ...(testId ? { testId } : {}),
+        cursor: parsedCursor ? parsedCursor : undefined,
+        testId: testId ? testId : undefined,
         ...filters,
       },
     );
@@ -307,7 +307,7 @@ export class ProjectRunsController {
       { orgId: tenant.orgId, projectId },
       {
         limit: parseLimit(limit),
-        ...(parsedCursor ? { cursor: parsedCursor } : {}),
+        cursor: parsedCursor ? parsedCursor : undefined,
         ...filters,
       },
     );

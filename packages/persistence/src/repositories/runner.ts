@@ -425,14 +425,14 @@ export class RunnerRepository {
       await tx.runnerJob.deleteMany({
         where: {
           orgId: scope.orgId,
-          ...(scope.projectId ? { projectId: scope.projectId } : {}),
+          projectId: scope.projectId ? scope.projectId : undefined,
           artifactId: { in: ids },
         },
       });
       await tx.runnerArtifact.deleteMany({
         where: {
           orgId: scope.orgId,
-          ...(scope.projectId ? { projectId: scope.projectId } : {}),
+          projectId: scope.projectId ? scope.projectId : undefined,
           id: { in: ids },
         },
       });

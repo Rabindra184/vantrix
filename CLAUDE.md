@@ -115,6 +115,117 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The conditional-spread-sweep branch added no unit FILE, no unit case and no
+spec — unit stays **154 / 1951**, integration **137 / 1758** and **e2e stays
+145**. Its diff is 36 converted expressions, one re-pointed assertion and one
+new lint rule. It executes an instruction this file has carried unexecuted
+since the runner branch: "**Grep for `...(x ? { … } : {})` before trusting
+that a field reaches its repository.**"
+
+**THE HOLE, MEASURED BOTH WAYS, ON THE TYPE THE ORIGINAL DEFECT WAS ABOUT.**
+One typo, two spellings, against `CreateLiveRunInput`:
+
+```
+  declaredTestSlugTYPO: cond ? v : undefined      TS2561, "Did you mean…"  exit 2
+  ...(cond ? { declaredTestSlugTYPO: v } : {})    no errors                exit 0
+```
+
+That is the `live-sink.ts` defect reproduced on demand — excess-property
+checking applies to a LITERAL assigned to a typed target and not to one spread
+into it. **Every green gate this repo runs is blind to it**, which is why that
+branch shipped a feature that had never once worked.
+
+**GREP FOUND 31 SITES. THE AST FOUND 40.** The nine grep missed were
+multi-line spreads and shapes the regex could not express — and one of them is
+the reason this branch exists at all. **A pattern worth banning is worth
+banning with a parser**, not a `grep` written to find it once.
+
+**ALL 36 CONVERTED SITES WERE ALREADY CORRECT.** `typecheck` is green after
+the conversion, so no key was mistyped anywhere. The result is not a bug fix:
+it is 36 expressions moving from unfalsifiable to compiler-checked, and the
+red-verify above is what makes "green" mean something rather than nothing.
+
+**AND ONE FIX THIS FILE CLAIMS TO HAVE MADE WAS NEVER MADE.** The
+token-lifecycle entry says the mint payload was "Written as a named `expiresAt:
+… ? undefined : …` instead … Verified by making it and watching `tsc` reject
+it." `ProjectAccess.tsx` still held the spread. `git log -S` settles it: the
+named form **has never existed in that file**, and the spread was introduced by
+`19efaad` — **the same commit that added the paragraph claiming it was
+converted.**
+
+**SO THE RED-VERIFY'S RESTORE TOOK THE FIX WITH IT, AND ONLY THE WRITE-UP
+SURVIVED.** That is the `git checkout --` trap this file records SIX times,
+in its worst form yet: the previous five cost a re-run, this one shipped a
+documented-as-fixed defect and left a paragraph asserting a verification the
+tree contradicts. **A lesson written down is not a lesson applied, and an
+entry asserting a specific verification is a claim like any other** — check
+it against the code, which is what this sweep did.
+
+**THE GUARD IS AN eslint SELECTOR, BECAUSE THE ALTERNATIVE IS THIS AGAIN IN
+SIX MONTHS.** `SpreadElement > ConditionalExpression > ObjectExpression[properties.length>0]`
+— a conditional spread carrying an object LITERAL. `...(cond ? typedValue : {})`
+is deliberately allowed: the value carries its own type, so there is nothing
+to lose. Red-verified by putting one spread back, which fails `pnpm lint` with
+the file and line.
+
+**`Chart.tsx` IS EXEMPT, AND THE REASON IS A MEASUREMENT RATHER THAN A
+PREFERENCE.** Its six spreads assemble the ECharts option bag, and the rule's
+premise — that a typed target would otherwise check the literal — does not
+hold there. Measured, by putting a bogus key in that literal as a plain
+property:
+
+```
+  bogusKeyThatCannotExist: 1,      pnpm typecheck -> exit 0
+```
+
+`EChartsOption` carries index signatures, so there is no check to lose.
+Converting six multi-line spreads in the most delicate rendering file in the
+app would have bought exactly nothing. **An exemption gets its evidence
+attached**, and the block says to delete it if ECharts ever tightens that type.
+
+**WHERE A BRANCH IS A WHOLE OBJECT RATHER THAN A KEY, ANNOTATE INSTEAD.**
+`rule.ts` had two `where` spreads whose branches differ in SHAPE
+(`{ testId: null }` against `{ OR: [...] }`), so no single named key exists.
+`const testScope: Prisma.SlaRuleWhereInput = …` gives BOTH branches a
+contextual type and the spread of a typed value is checked. Red-verified:
+`testId` to `testID` in one branch is `TS2322`. Worth closing rather than
+exempting — a `where` that silently stops narrowing is the silent-gate class
+this file already records, a test-scoped rule reading as protection and
+judging nothing.
+
+**ONE CONVERSION CHANGED BEHAVIOUR, AND A REAL TEST CAUGHT IT.**
+`NewRunnerRun.test.tsx`'s "omits the test entirely when the default grouping
+is kept" asserted `expect(metadata).not.toHaveProperty('test')` — and a named
+key holding `undefined` IS present. **The object changed; the WIRE did not:**
+
+```
+  'test' in obj     spread false   named true
+  JSON.stringify    {"name":"soak"}   {"name":"soak"}    identical
+```
+
+`startRunnerRun` sends `JSON.stringify(metadata)` and nothing in that module
+ever inspects the keys, so the server receives the same bytes either way. The
+assertion was a claim about the object AS A STAND-IN for the payload; it
+serialises now and asserts what is actually sent. **Re-pointed, not
+weakened** — red-verified by making the payload always carry `test`, which
+fails it.
+
+**AND THAT RED-VERIFY WAS VACUOUS ON THE FIRST ATTEMPT.** A regex for
+`test: <anything>,` matched the FORM'S INITIAL STATE (`test: ''` at line 80)
+rather than the payload expression at 207, so the mutation changed a default
+nobody asserts and the suite came back **13 passed** — indistinguishable from
+a guard that works. The tell was the count, again. **Anchor a mutation on the
+whole expression, not on a key that appears in three places.**
+
+**WHAT WAS RUN, AND AGAINST WHAT.** `typecheck` and `lint` green by their own
+exit codes; `test:unit` **154 / 1951**; `test:integration` **137 / 1758**
+against a SCRATCH DATABASE (`perfportal_sweep`, created, migrated, dropped) —
+that suite truncates every table and this machine was holding the nine real
+Gatling runs the last three branches were verified against. Confirmed
+untouched afterwards. Integration matters here because four persistence
+repositories changed, and Prisma's reading of `undefined` as "not provided" is
+the property the whole conversion rests on.
+
 The errors-tally-counts-errors branch added no unit FILE and 1 case to
 `apps/web/test/ErrorsTable.test.tsx`. Cut from **154 / 1948**, it measured
 154 / 1949 on its own; export-every-column merged FIRST and took `main` to

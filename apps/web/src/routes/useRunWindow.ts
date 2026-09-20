@@ -143,7 +143,7 @@ export function useRunTerminal(
     queryKey: runQueryKey(runId ?? ''),
     queryFn: () => fetchRun(runId!),
     enabled: runId !== undefined,
-    ...(options.refetchInterval === undefined ? {} : { refetchInterval: options.refetchInterval }),
+    refetchInterval: options.refetchInterval === undefined ? undefined : options.refetchInterval,
   });
   return { detail, terminal: detail.data?.state === 'ready' };
 }

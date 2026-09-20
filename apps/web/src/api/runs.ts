@@ -22,9 +22,9 @@ export interface RunListFilters {
 function normaliseFilters(filters: RunListFilters = {}) {
   const q = filters.q?.trim();
   return {
-    ...(q ? { q } : {}),
-    ...(filters.status ? { status: filters.status } : {}),
-    ...(filters.verdict ? { verdict: filters.verdict } : {}),
+    q: q ? q : undefined,
+    status: filters.status ? filters.status : undefined,
+    verdict: filters.verdict ? filters.verdict : undefined,
   };
 }
 

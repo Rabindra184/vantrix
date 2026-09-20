@@ -676,7 +676,7 @@ export class RunRepository {
       where: {
         id,
         orgId: scope.orgId,
-        ...(scope.projectId ? { projectId: scope.projectId } : {}),
+        projectId: scope.projectId ? scope.projectId : undefined,
       },
       include: { project: true, test: true },
     });
@@ -781,7 +781,7 @@ export class RunRepository {
         where: {
           id: opts.cursor,
           orgId: scope.orgId,
-          ...(scope.projectId ? { projectId: scope.projectId } : {}),
+          projectId: scope.projectId ? scope.projectId : undefined,
         },
         select: { id: true, startedAt: true, toolStartedAt: true },
       });

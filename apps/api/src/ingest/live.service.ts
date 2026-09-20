@@ -66,15 +66,15 @@ export class LiveService {
       orgId: tenant.orgId,
       projectId: tenant.projectId,
       tool: body.tool,
-      ...(body.environment ? { environment: body.environment } : {}),
-      ...(body.branch ? { branch: body.branch } : {}),
-      ...(body.commitSha ? { commitSha: body.commitSha } : {}),
+      environment: body.environment ? body.environment : undefined,
+      branch: body.branch ? body.branch : undefined,
+      commitSha: body.commitSha ? body.commitSha : undefined,
       // Same freeze-at-open treatment as the three above. `LiveFoldOwner`
       // resolves it against a real `test` row the moment the decoder reads the
       // log header, so a declared test's SLA rules judge this run from its
       // first ticks rather than only from the finished report.
-      ...(body.test ? { declaredTestSlug: body.test } : {}),
-      ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
+      declaredTestSlug: body.test ? body.test : undefined,
+      idempotencyKey: body.idempotencyKey ? body.idempotencyKey : undefined,
       startedAt: new Date(),
       engineOptions: engineOptionsFrom(settings),
     });
