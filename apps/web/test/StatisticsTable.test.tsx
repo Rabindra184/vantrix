@@ -1390,6 +1390,57 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   });
 });
 
+describe('StatisticsTable — why it is empty, when it is', () => {
+  const empty: StatsResponse = { ...stats, stats: [] };
+
+  /**
+   * ═══ "RECORDED" IS FALSE FOR A RUN WHOSE STREAM STOPPED ═══
+   *
+   * MEASURED END TO END, not reasoned about. A live run was opened against a
+   * real stack, given 18,884 bytes of a real `simulation.log`, and its
+   * producer was then killed. The fold owner published a delta reading
+   * `count 440 / ok 428 / ko 12` — numbers a reader WATCHED on the live page
+   * — and the sweeper finalized the run `incomplete` with ZERO stat rows, no
+   * simulation and no duration. The chunks are still in the object store;
+   * nothing assembles them, because `finalizeLive` runs only under `close()`
+   * and the sweeper must never re-enqueue.
+   *
+   * So the unconditional "No statistics were recorded for this run" told a
+   * reader who had just watched 440 requests that none had existed. They were
+   * recorded; they are not RETAINED, and those are different claims.
+   *
+   * ASSERTED AS A PAIR. "says retained" alone passes against a table that
+   * says it for EVERY empty run — a new wrong sentence for a run that
+   * genuinely measured nothing, which is the state the case below pins.
+   */
+  it('says statistics were not RETAINED when the stream stopped early', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={empty} runId={RUN_ID} runStatus="incomplete" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/no statistics were retained/i)).toBeTruthy();
+    expect(screen.queryByText(/no statistics were recorded/i)).toBeNull();
+  });
+
+  it('keeps "recorded" for a completed run that measured nothing', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={empty} runId={RUN_ID} runStatus="complete" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
+    expect(screen.queryByText(/no statistics were retained/i)).toBeNull();
+  });
+
+  /** No caller is obliged to pass it, and an un-told table must fall back to
+   *  the unconditional wording rather than to the narrower claim. */
+  it('falls back to "recorded" when nobody says what happened', () => {
+    renderTable(empty);
+    expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
+  });
+});
+
 describe('StatisticsTable — the table itself', () => {
   /**
    * A real `<table>`, with a caption that names it — which is what makes

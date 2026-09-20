@@ -115,6 +115,97 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The incomplete-run-discards-data branch added no unit FILE and 3 cases to
+`apps/web/test/StatisticsTable.test.tsx`, from **154 / 1955 to 154 / 1958**,
+and its **e2e rises to 148**. Integration is UNCHANGED (every file it touches
+is a `.tsx`, a fixture or a spec). Found by producing a real incomplete run
+end to end rather than by reading about one.
+
+**A RUN THAT MEASURED 440 REQUESTS REPORTED THAT NONE HAD BEEN RECORDED.**
+Opened live against a real stack, handed **18,884 bytes** of a real
+`simulation.log`, producer then killed. Observed, in order:
+
+```
+  POST /v1/runs/live          202   run opened
+  POST /v1/runs/:id/stream    202   {"nextOffset":18884}
+  live:<run>:snapshot               count 440 / ok 428 / ko 12
+  t+8s, the sweeper                 status incomplete
+  GET  /v1/runs/:id/stats           0 rows
+  GET  /v1/runs/:id                 simulation null, durationMs null
+```
+
+The fold owner DID process it — the delta is in Redis and a reader watching
+the live page saw those 440 requests. The chunks are still in the object store
+(`live/<run>/0000000000000000.bin`). **Nothing assembles them**, because
+`finalizeLive` runs only under `close()` and the sweeper must never re-enqueue
+— which this file already explains, correctly, as a LIMITATION. What nobody
+had checked is what the product then SAYS.
+
+**IT SAID "No statistics were recorded for this run".** To a reader who had
+just watched 440 requests stream past. They were recorded; they are not
+RETAINED, and those are different claims. The sentence is now conditional on
+the run's own status, and `RunDetail` passes it — the `scopeLabel` shape
+`ErrorsTable` already uses, for the same reason: the payload carries a runId
+and nothing about the run's fate, so an empty row set reads identically for a
+run that measured nothing and one whose measurements were discarded.
+
+**AND THE e2e FIXTURE ASSERTED THE OPPOSITE OF THE SYSTEM, IN A DOCSTRING
+WRITTEN TO TELL THE NEXT READER WHAT THE SYSTEM DOES.** `seedIncompleteRun`
+said "a real incomplete run usually carries PARTIAL data — whatever arrived
+before the producer died" and called its own emptiness "a simplification".
+Measured, the fixture is FAITHFUL and the note was wrong: there is no partial
+data to carry, and a case wanting partial evidence cannot get it by seeding
+harder — it would be seeding a row the product does not produce. **Third time
+this session a docstring asserted a behaviour the product does not have**
+(after "the CSV export is unchanged" and "equal by construction"), and the
+first where the note was specifically written to describe reality.
+
+**THE UNIT CASES PROVE THE COMPONENT AND THE e2e PROVES THE WIRING, AND THE
+DIFFERENCE WAS MEASURED.** Removing `runStatus` from `RunDetail`'s call site,
+leaving the component untouched:
+
+```
+  StatisticsTable.test.tsx   70 passed   blind — it hands itself the status
+  run-tables.spec.ts          1 failed   it drives the real page
+```
+
+That is "a test that supplies both sides of a join proves neither" with a
+number attached, and it is why the browser case is not redundant with the
+three unit ones.
+
+**ASSERTED AS A PAIR IN BOTH LAYERS, AND BOTH DIRECTIONS RED-VERIFY
+DISTINCTLY.** Restoring the unconditional sentence fails the `retained` case
+alone; showing the NARROWER sentence for every empty run fails the two
+`recorded` cases — one of which is a completed run that genuinely measured
+nothing, the state the new wording must not claim. A third case pins the
+fallback for a caller that passes nothing.
+
+**WHAT IS NOT DONE, AND IS A PRODUCT DECISION RATHER THAN A CORRECTION.**
+Whether an abandoned run should KEEP what it measured. The machinery exists —
+the chunks are stored, `close()` already assembles and parses them, and
+`StreamingLogDecoder` handles a truncated tail by design (`TruncatedError`,
+rewind) — so a sweeper that assembled the partial bundle before finalizing is
+buildable. It changes what an abandoned run IS, so it is recorded here rather
+than taken in passing.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **154 / 1958**; `pnpm test:e2e` **148 passed**. Both suites, and
+the live-run exercise that found this, ran against a SCRATCH DATABASE
+(`perfportal_fail`, created, migrated, dropped) with
+`RUNNING_STALE_AFTER_MS=5000` and `SWEEP_INTERVAL_MS=2000` so the sweeper
+could act inside a session rather than in ten minutes — **both are env-tunable
+and that is what makes this path reachable by hand at all.** The nine real
+Gatling runs were confirmed untouched afterwards.
+
+**AND TWO TRAPS THIS FILE ALREADY RECORDS BIT AGAIN.** An inserted block used
+`toBeInTheDocument` — `StatisticsTable.test.tsx` does not import
+`@testing-library/jest-dom/vitest`, so it is an "Invalid Chai property" rather
+than a failed assertion, exactly as recorded for `NewRunnerRun.test.tsx`; read
+the file's existing matchers before writing new ones. And the first insertion
+anchored on a docstring line that did not match, which reported an
+ASSERTION ERROR and left the suite at its old count — caught because the count
+did not move, which is the tell this file keeps naming.
+
 The browser-downloads branch added ONE e2e file —
 `apps/web/e2e/downloads.spec.ts` (2) — so **e2e rises to 147** from 145. Unit
 stays **154 / 1955** and integration **137 / 1762**, both UNCHANGED BY

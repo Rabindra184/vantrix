@@ -773,11 +773,20 @@ export async function seedPendingRun(orgId: string): Promise<string> {
  * and this fixture matches it: a run whose stream stopped has not been judged,
  * and giving it a verdict here would test a row the product cannot produce.
  *
- * NO METRIC ROWS, and that is a simplification worth naming. A real incomplete
- * run usually carries PARTIAL data -- whatever arrived before the producer
- * died. Nothing asserted against this fixture reads a metric, so seeding a
- * half-run would add machinery without adding a claim; a case that wants to
- * show partial evidence should seed it rather than assume this one has it.
+ * NO METRIC ROWS, AND THAT IS NOT A SIMPLIFICATION -- IT IS WHAT THE REAL
+ * SYSTEM PRODUCES. This used to read "a real incomplete run usually carries
+ * PARTIAL data -- whatever arrived before the producer died". Measured end to
+ * end, it carries none: a live run given 18,884 bytes of a real simulation
+ * log published a delta reading count 440 / ok 428 / ko 12, and the sweeper
+ * then finalized it with ZERO stat rows, no simulation and no duration. The
+ * chunks are still in the object store; nothing assembles them, because
+ * `finalizeLive` runs only under `close()` and the sweeper must never
+ * re-enqueue (see above).
+ *
+ * So this fixture is faithful, and a case that wants partial evidence cannot
+ * get it by seeding harder -- it would be seeding a row the product does not
+ * produce. Whether an abandoned run SHOULD keep what it measured is a product
+ * decision, recorded in CLAUDE.md and not taken here.
  *
  * Created directly via Prisma, never posted through HTTP and never handed to
  * PipelineService, exactly like `seedPendingRun` above.
