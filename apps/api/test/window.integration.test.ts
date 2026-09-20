@@ -201,6 +201,67 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     const total = (b: StatsResponse) => b.stats.reduce((n, s) => n + s.count, 0);
     expect(total(part)).toBeLessThan(total(whole));
   });
+
+  /**
+   * ═══ `scope` MEANS THE SAME THING WINDOWED AND UNWINDOWED ═══
+   *
+   * The case above passes `?scope=request` on BOTH sides. That proves the
+   * explicit path and says nothing about the DEFAULT — which is the one the
+   * statistics table actually uses, because it asks for no scope at all.
+   *
+   * Windowed, that default used to be `run` while the unwindowed branch
+   * treats an absent `scope` as "no filter". So brushing a window collapsed
+   * the table to the run's own totals and dropped every per-request and
+   * per-group row, at precisely the moment a reader is asking WHICH request
+   * a spike belongs to. The rows were never missing from the database;
+   * nothing asked for them.
+   *
+   * Asserted as a PAIR, because neither half is sufficient. Presence alone
+   * passes against rows rolled up from the wrong buckets, so the second half
+   * requires each row to equal what naming that scope explicitly returns.
+   */
+  it('serves every scope for an unscoped windowed read, not only the run', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const series = await seriesOf(id);
+    const offsets = series.buckets.map((b) => b.startOffsetMs).sort((a, b) => a - b);
+    const half = offsets[Math.floor(offsets.length / 2)]!;
+    const range = `from=0&to=${half}`;
+
+    const all = StatsResponseSchema.parse((await stats(id, `?${range}`)).body);
+    const scopes = new Set(all.stats.map((s) => s.scope));
+    expect(scopes.has('run'), 'the run row disappeared').toBe(true);
+    expect(
+      scopes.has('request'),
+      'a windowed read carried no per-request row, so the table loses its breakdown',
+    ).toBe(true);
+
+    const scoped = StatsResponseSchema.parse((await stats(id, `?scope=request&${range}`)).body);
+    const mine = all.stats.filter((s) => s.scope === 'request');
+    expect(mine.length).toBe(scoped.stats.length);
+    for (const row of scoped.stats) {
+      const match = mine.find((s) => s.name === row.name);
+      expect(match, `request ${row.name} missing from the unscoped windowed read`).toBeDefined();
+      expect(match!.count, `${row.name} count`).toBe(row.count);
+      expect(match!.maxMs, `${row.name} max`).toBe(row.maxMs);
+    }
+  });
+
+  /**
+   * The other direction, and the reason the fix is a FILTER rather than
+   * "return everything": naming a scope must still narrow to it. Widening
+   * the default without keeping this true would trade one wrong answer for
+   * another, and the chart callers that name a scope would start paying for
+   * rows they never read.
+   */
+  it('still narrows to a named scope under a window', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const only = StatsResponseSchema.parse(
+      (await stats(id, '?scope=request&from=0&to=20000')).body);
+    expect(only.stats.length).toBeGreaterThan(0);
+    expect(only.stats.every((s) => s.scope === 'request')).toBe(true);
+  });
 });
 
 describe('the range applies to every time-axis endpoint', () => {
