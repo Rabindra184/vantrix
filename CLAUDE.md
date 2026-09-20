@@ -115,6 +115,90 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The refusals-nobody-asserts branch added no unit FILE, no unit case and no
+spec — unit stays **155 / 1962** and **e2e stays 148** — and 4 cases to
+`apps/api/test/live.integration.test.ts`, from **138 / 1770 to 138 / 1774**.
+It is TESTS ONLY: every refusal it covers was already correct. Found by
+executing each one against a real API rather than by reading for one.
+
+**SEVEN REFUSALS WERE EXERCISED LIVE AND ALL SEVEN WERE RIGHT.**
+
+```
+  TOOL_UNKNOWN            400 at upload, names the supported tools
+  BUNDLE_NOT_ARCHIVE      failed by the WORKER: "not a gzipped tar archive"
+  BUNDLE_EMPTY            reachable only via a VALID archive with no entries
+  INVALID_STREAM_OFFSET   400, names the x-stream-offset header
+  STREAM_BODY_CONSUMED    400 in 0s
+  STREAM_OFFSET_REJECTED  409 on a run that has closed
+  RUN_NOT_RUNNING         409 on a SECOND close
+```
+
+**FOUR OF THEM WERE ASSERTED BY NOTHING**, which is the whole branch:
+`TOOL_UNKNOWN`, `RUN_NOT_RUNNING`, `INVALID_STREAM_OFFSET` and
+`STREAM_BODY_CONSUMED` matched zero files across every suite.
+
+**AND ONE OF THOSE GUARDS A HANG, WHICH IS WHY IT CANNOT SIMPLY BE ASSERTED.**
+Nest registers Express's global `json()`, which DRAINS a body whose
+Content-Type matches before any handler runs; `readRawBody` then waits on an
+`'end'` that has already fired. This file already records the consequence —
+"no response written, and the socket plus the promise leaked, per request,
+with no timeout anywhere on this path" — and `req.readableEnded` is the guard.
+
+**REMOVE IT AND THE TEST DOES NOT GO RED. IT HANGS.** Measured by neutralising
+the condition:
+
+```
+  without .timeout()   the case waits out the file's whole testTimeout and
+                       reports as a timeout — which reads as a slow machine
+  with .timeout()      × refuses a chunk whose body a parser already drained
+                       Error: Timeout of 5000ms exceeded        5,593ms
+```
+
+**A DEADLINE IS PART OF THE ASSERTION WHEN THE DEFECT IS A HANG**, not a
+nicety — this file already says "test the wrong Content-Type with a request
+DEADLINE", and this is what that costs to skip. The case carries
+`.timeout({ deadline: 5_000, response: 5_000 })` and says why in place.
+
+**AND THE ZERO-BYTE CHUNK IS PINNED BESIDE IT, BECAUSE THE OBVIOUS GUARD
+BREAKS IT.** A legitimate empty chunk — the shape a real agent sends at the
+very start of a run — has an `'end'` that fires once the listener attaches, so
+`readableEnded` is still false. A guard written as "no body" rather than "body
+already consumed" would refuse it, and nothing else in the file would notice.
+
+**`BUNDLE_EMPTY` IS NOT WHAT AN EMPTY FILE PRODUCES**, which is worth knowing
+before writing a fixture for it: a zero-byte upload fails `BUNDLE_NOT_ARCHIVE`,
+because it is not a gzip stream at all. `BUNDLE_EMPTY` needs a VALID archive
+containing no entries (`tar -czf x.tgz -T /dev/null`, 29 bytes). Two codes,
+two genuinely different mistakes, and the obvious fixture reaches the other
+one.
+
+**AND `RUN_NOT_RUNNING` BELONGS TO `close`, NOT TO `stream`.** Streaming to a
+closed run answers `STREAM_OFFSET_REJECTED` — correctly, and its message names
+both conditions ("a gap, or the run is no longer accepting chunks"). The first
+probe here aimed at the wrong endpoint and briefly read as a dead error code.
+**Grep for who RAISES a code before concluding nothing does**; the answer was
+one file away.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **155 / 1962** (unchanged — these are `.integration.test.ts`
+cases, which the unit config excludes); `test:integration` **138 / 1774**
+against a SCRATCH DATABASE, with every hand-started process stopped FIRST.
+
+**THE FIRST INTEGRATION RUN FAILED TWO, AT LOAD 16.50.** `tokens` and
+`parity.e2e`, neither of which this diff can reach — it adds cases to ONE
+file — and both passing 42/42 in isolation. `vm_stat` said **3,709 free
+pages**, which is worse than the 4,390 this file already calls untrustworthy.
+The second full run was **138 / 1774 clean**. The order here is the cheap
+part: isolate the failures, check what the diff can reach, then re-run.
+
+**AND `git add -A` COMMITTED THE THREE UNTRACKED FILES A THIRD TIME.**
+`docs/ui-review-2026-09-13/`, `review.md` and `scripts/seed-manual-test.mjs`,
+into a two-file change, for the third time in one session — and the second
+time AFTER this file gained a paragraph naming them. Caught all three times by
+reading `git diff --cached --stat` before committing, and prevented zero times
+by having written it down. **The rule is therefore mechanical, not
+attentional: never `git add -A` in this repository — name the paths.**
+
 The clock-skew-is-the-minimum branch added no unit FILE and 1 case to
 `packages/statistics/test/telemetry.test.ts`, from **155 / 1961 to
 155 / 1962**. Integration moves with it (that file is a `.ts` integration runs
