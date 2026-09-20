@@ -174,6 +174,79 @@ describe('RunnerRepository.claimNext tenancy scoping', () => {
  * fails soft, as a run that simply groups by simulation class, which is
  * exactly what it would have done anyway.
  */
+/**
+ * ═══ A RETRY IS THE SAME JOB, SO IT CARRIES THE SAME ASKS ═══
+ *
+ * `retry` is an INSERT..SELECT, and `test_slug` was in neither its column
+ * list nor its SELECT while every other per-job field was. So a retried job
+ * silently lost its declared test and its run filed under the auto-created
+ * test named after the simulation class instead — the exact grouping a
+ * declared test exists to replace.
+ *
+ * FOUND BY RETRYING A REAL JOB ON A REAL RUNNER, and nothing in this
+ * repository could have caught it: no test called this method at all.
+ *
+ * ═══ ASSERTED AS THE WHOLE SET, NOT AS ONE FIELD ═══
+ *
+ * A case pinning `testSlug` alone would leave the identical hole open for
+ * the next column anybody adds — which is precisely how this one survived.
+ * So the claim is that the retry equals its source on EVERY field the
+ * operator chose, and it fails whichever of them goes missing.
+ */
+describe('RunnerRepository.retry', () => {
+  it('carries every field the operator chose onto the retried job', async () => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const sourceId = await queueJob(repo, orgA, projectA1, 'checkout-soak');
+
+    // Only a failed or cancelled job is retryable, so put it there first.
+    await pool.query(`UPDATE runner_job SET status = 'failed' WHERE id = $1`, [sourceId]);
+
+    const retried = await repo.retry({
+      id: randomUUID(),
+      orgId: orgA,
+      projectId: projectA1,
+      sourceJobId: sourceId,
+      requestedBy: 'tester',
+    });
+    expect(retried).not.toBeNull();
+
+    const { rows } = await pool.query<Record<string, unknown>>(
+      `SELECT artifact_id, environment, branch, commit_sha, test_slug,
+              java_options, system_properties
+         FROM runner_job WHERE id = ANY($1::uuid[]) ORDER BY created_at`,
+      [[sourceId, retried!.job.id]],
+    );
+    expect(rows).toHaveLength(2);
+    // The RETRY equals the SOURCE on all of them. Compared as objects so a
+    // newly-added column joins this assertion by being selected above,
+    // rather than needing anyone to remember a new `expect`.
+    expect(rows[1]).toEqual(rows[0]);
+  });
+
+  /** The status and the requester are deliberately NOT carried: a retry is
+   *  queued afresh, by whoever asked for it. Without this, "equals its
+   *  source" could be satisfied by copying the row wholesale. */
+  it('queues the retry afresh rather than cloning the failure', async () => {
+    const { orgA, projectA1 } = await seed();
+    const repo = new RunnerRepository(prisma);
+    const sourceId = await queueJob(repo, orgA, projectA1, 'checkout-soak');
+    await pool.query(`UPDATE runner_job SET status = 'failed' WHERE id = $1`, [sourceId]);
+
+    const retried = await repo.retry({
+      id: randomUUID(),
+      orgId: orgA,
+      projectId: projectA1,
+      sourceJobId: sourceId,
+      requestedBy: 'someone-else',
+    });
+
+    expect(retried?.job.status).toBe('queued');
+    expect(retried?.job.requestedBy).toBe('someone-else');
+    expect(retried?.job.runId).toBeNull();
+  });
+});
+
 describe('a runner job that names its test', () => {
   it('round-trips the slug the requester declared', async () => {
     const { orgB, projectB1 } = await seed();
