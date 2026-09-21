@@ -316,9 +316,24 @@ failed twice**:
 All six pass in isolation (102/102 and 31/31). Two are shapes this file
 already names by signature — a socket receiving non-HTTP bytes "cannot be
 produced by any application-level diff", and a wall-clock budget missed by 2x
-at load 15-27 is timing. **A clean local integration run is therefore NOT
-claimed here; CI's containers are the arbiter**, which is the same resolution
-the clamp-percentiles branch reached for the same reason.
+at load 15-27 is timing.
+
+**AND CI ANSWERED IT, SO THAT GATE IS A MEASUREMENT RATHER THAN A DEFERRAL.**
+This paragraph first ended "a clean local integration run is NOT claimed here;
+CI's containers are the arbiter", which was honest and is no longer true — the
+`build` job passed on clean containers and printed all three totals:
+
+```
+  pnpm test:unit         Test Files 155 passed (155)   Tests 1972 passed (1972)
+  pnpm test:integration  Test Files 138 passed (138)   Tests 1781 passed (1781)
+  pnpm test:e2e          Running 149 tests using 2 workers
+```
+
+Every one matches the local measurement exactly, and 1776 + 5 closes. **A floor
+recorded as unknown once it is known is the same staleness this whole section
+exists to prevent** — the abandoned-runs entry already says to go back and DO
+this rather than only cite it, and six flakes across two local runs is exactly
+the case where it is worth the two minutes.
 
 **AND `openapi.integration.test.ts` HAS NOW FLAKED THREE TIMES, ON THREE
 DIFFERENT STATUS CODES.** 401 (the openapi-public entry), 400 (the live-banner
