@@ -389,6 +389,39 @@ export class MetricsController {
 
     const window = snapWindow(rows.map((r) => r.startOffsetMs), range);
 
+    /**
+     * THROUGHPUT DIVIDES BY THE SPAN THAT COULD HAVE CONTRIBUTED, NOT BY THE
+     * REPORTED WINDOW.
+     *
+     * `window` is snapped OUTWARD — `snapWindow` floors its left edge so that
+     * "nothing the reader selected falls outside the answer", which
+     * `window.integration.test.ts` pins deliberately. The SELECTION is
+     * inward and half-open (`WINDOWED_BUCKETS_SQL`: `start_offset_ms >= from`,
+     * matching `inRange`), so with a 1000 ms width a brush from 1500 reports
+     * a window starting at 1000 while the first bucket it can include starts
+     * at 2000.
+     *
+     * Dividing by the outward span therefore charges the rate for a bucket
+     * that contributed nothing. Measured on the reference run, two brushes
+     * selecting the IDENTICAL 32 requests:
+     *
+     *     from=1500  window [1000,6000)  32 requests  6.4 req/s
+     *     from=2000  window [2000,6000)  32 requests  8   req/s
+     *
+     * A brush is a drag, so an aligned start is the exception rather than the
+     * rule — this was wrong on very nearly every window a reader created. And
+     * it is the one number this re-aggregation most has to get right:
+     * `rollupFromHistograms`' own docstring calls a rate that moves with the
+     * brush "the single most visible thing a re-aggregation has to get right".
+     *
+     * The REPORTED window is deliberately left alone. It describes how the
+     * reader's request was snapped; this describes what the data covers, and
+     * conflating them is what produced the defect.
+     */
+    const firstSelectableMs =
+      Math.ceil(range.fromMs / window.bucketWidthMs) * window.bucketWidthMs;
+    const spanMs = Math.max(0, window.toMs - firstSelectableMs);
+
     const byKey = new Map<
       string,
       { scope: string; family: string; name: string; ok: Histogram; ko: Histogram }
@@ -418,7 +451,7 @@ export class MetricsController {
         scope: e.scope as StatsResponse['stats'][number]['scope'],
         name: e.name,
         family: e.family as StatsResponse['stats'][number]['family'],
-        ...rollupFromHistograms(e.ok, e.ko, window.toMs - window.fromMs, settings.percentiles),
+        ...rollupFromHistograms(e.ok, e.ko, spanMs, settings.percentiles),
         // From the WINDOW's own OK histogram, so the bands describe the same
         // requests as every other column in the row.
         indicators: bandsOrRefuse(e.ok, e.ko.total, settings.indicators),

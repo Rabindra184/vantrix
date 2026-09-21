@@ -137,6 +137,53 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     expect(body.window!.toMs).toBeGreaterThanOrEqual(width * 3 + 1);
   });
 
+  /**
+   * TWO BRUSHES THAT SELECT THE SAME BUCKETS MUST REPORT THE SAME RATE.
+   *
+   * The selection is inward and half-open (`start_offset_ms >= from`), so a
+   * brush starting mid-bucket includes exactly the same buckets as one
+   * starting at the next boundary. The reported window is snapped OUTWARD —
+   * deliberately, and the case above pins it — so the two answers differ in
+   * `window.fromMs` while describing identical data.
+   *
+   * Throughput used to divide by that outward span, charging the rate for a
+   * leading bucket that contributed nothing:
+   *
+   *     from=1.5w   window [w,6w)   32 requests   6.4 req/s
+   *     from=2w     window [2w,6w)  32 requests   8   req/s
+   *
+   * A brush is a DRAG, so an aligned start is the exception — this was wrong
+   * on very nearly every window a reader made.
+   *
+   * ASSERTED AS AGREEMENT PLUS AN ABSOLUTE. Agreement alone passes against a
+   * product that divides both by the run's whole duration, which is the
+   * defect `rollupFromHistograms` exists to prevent; the absolute alone would
+   * not say the two paths agree. The vacuity guard comes first: with no
+   * requests selected both rates are 0 and every other assertion holds
+   * trivially.
+   */
+  it('reports one rate for two brushes that select the same buckets', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    const w = (await seriesOf(id)).bucketWidthMs;
+
+    // Both select `start >= …` from the SAME first boundary: 1.5w rounds up
+    // to 2w, and 2w is already there. Identical bucket sets by construction.
+    const unaligned = runRowOf(
+      StatsResponseSchema.parse((await stats(id, `?from=${w * 1.5}&to=${w * 6}`)).body));
+    const aligned = runRowOf(
+      StatsResponseSchema.parse((await stats(id, `?from=${w * 2}&to=${w * 6}`)).body));
+
+    expect(unaligned.count, 'the window must select something, or this is vacuous')
+      .toBeGreaterThan(0);
+    expect(unaligned.count).toBe(aligned.count);
+    expect(unaligned.throughputRps).toBeCloseTo(aligned.throughputRps, 9);
+
+    // And the shared rate is over the span those buckets COVER — four widths
+    // here — rather than over the outward-snapped window or the whole run.
+    expect(unaligned.throughputRps).toBeCloseTo(unaligned.count / ((w * 4) / 1000), 9);
+  });
+
   it('rejects an inverted or malformed range instead of guessing', async () => {
     ctx = await createTestApp();
     const id = await ingested();
