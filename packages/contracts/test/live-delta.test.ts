@@ -162,4 +162,38 @@ describe('LiveDeltaSchema', () => {
     // And nothing else about the field was reinterpreted.
     expect(parsed.sla.breaching).toHaveLength(1);
   });
+
+  /**
+   * The same hazard one field deeper again, for the structured rule the live
+   * banner describes a breach from.
+   *
+   * ASSERTED AS A PAIR. "A breach without `rule` parses" is satisfied just as
+   * well by a schema that never gained the field, which is the before-state —
+   * so the second half requires that a breach WITH one keeps it. Between them
+   * they say the field exists and is optional, and neither says that alone.
+   */
+  it('accepts a breach written before `rule` existed, and carries one that has it', () => {
+    const before = validDelta();
+    expect(LiveDeltaSchema.parse(before).sla.breaching[0]?.rule).toBeUndefined();
+
+    const after = validDelta();
+    // Cast to add a key the fixture's inferred type does not carry — the same
+    // idiom the two cases above use to `delete` one.
+    (after.sla.breaching[0] as Record<string, unknown>).rule = {
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: 'error_rate',
+      comparator: 'lte',
+      threshold: 0.01,
+    };
+    expect(LiveDeltaSchema.parse(after).sla.breaching[0]?.rule).toEqual({
+      scope: 'run',
+      targetName: null,
+      family: 'response_time',
+      metric: 'error_rate',
+      comparator: 'lte',
+      threshold: 0.01,
+    });
+  });
 });

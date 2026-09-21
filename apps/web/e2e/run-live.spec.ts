@@ -67,7 +67,24 @@ type SlaFixture = {
    * default through the real gateway, which does not validate what it
    * forwards. */
   notJudged?: number;
-  breaching: { ruleId: string; description: string; actualValue: number; sinceOffsetMs: number }[];
+  breaching: {
+    ruleId: string;
+    description: string;
+    actualValue: number;
+    sinceOffsetMs: number;
+    /** Optional here for the reason it is optional on the wire: a delta
+     * published by a worker that predates the field is a routine thing during
+     * a rolling deploy, and the case below this type's one `rule`-carrying
+     * caller is what proves that path still renders. */
+    rule?: {
+      scope: string;
+      targetName: string | null;
+      family: string;
+      metric: string;
+      comparator: string;
+      threshold: number;
+    };
+  }[];
 };
 
 /**
@@ -288,6 +305,72 @@ test.describe('a running run shows which SLA rules it is currently breaching', (
       await page.goto(runChartsPath(runId));
       await expect(page.getByTestId('sla-banner')).toBeVisible();
       await expect(page.getByTestId('sla-banner')).toContainText('p95');
+    } finally {
+      await redis.del(`live:${runId}:snapshot`, `live:${runId}:deltas`);
+      await redis.quit();
+    }
+  });
+
+  /**
+   * THE SEAM, which no unit case can reach.
+   *
+   * `SlaBanner.test.tsx` hands the component a `LiveBreach` it builds itself,
+   * so it proves the component renders what it is given and nothing about
+   * whether a `rule` on the wire ever arrives. Three layers sit between the
+   * worker and that render — the schema, the gateway that forwards stored
+   * bodies without validating them, and the browser's own `parseFrame`, which
+   * DROPS a frame that fails `safeParse` — and each is tested on its own.
+   *
+   * This drives a real delta through real Redis and asserts the sentence on
+   * screen. Deleting `rule` from `LiveBreachSchema` leaves every unit case in
+   * this repo green: zod strips unknown keys, so the field would simply never
+   * arrive and the banner would fall back, silently.
+   */
+  test('describes a breach the way the finished run will, not the way the schema stores it', async ({
+    page,
+  }) => {
+    const admin = await seedAdmin();
+    const runId = await openLiveRun(admin.orgId);
+    const redis = new Redis(REDIS_URL);
+    const delta = deltaFixture(runId, 5, {
+      evaluated: 1,
+      breaching: [
+        {
+          ruleId: 'p95-checkout',
+          // What the evaluator stores, and what the banner printed verbatim
+          // until this branch. Kept on the fixture because it is what a real
+          // delta carries — the assertions below require that it is NOT what
+          // reaches the reader.
+          description: 'p95 of the run (response_time) ≤ 100 — actual 470',
+          actualValue: 470,
+          sinceOffsetMs: 2000,
+          rule: {
+            scope: 'run',
+            targetName: null,
+            family: 'response_time',
+            metric: 'p95',
+            comparator: 'lte',
+            threshold: 100,
+          },
+        },
+      ],
+    });
+
+    try {
+      await seedSnapshot(redis, runId, delta);
+      await signIn(page, admin);
+      await page.goto(runPath(runId));
+
+      const banner = page.getByTestId('sla-banner');
+      await expect(banner).toBeVisible();
+      await expect(banner).toContainText('Whole-run p95 response time 470 ms exceeds the 100 ms limit.');
+      await expect(banner).toContainText('Breaching since 2s into the run.');
+
+      // The tell of the stored form. Asserted as an ABSENCE beside the
+      // presence above, because `toContainText('p95')` — which is what the
+      // case before this one checks — passes just as happily against the
+      // schema read aloud.
+      await expect(banner).not.toContainText('response_time');
     } finally {
       await redis.del(`live:${runId}:snapshot`, `live:${runId}:deltas`);
       await redis.quit();

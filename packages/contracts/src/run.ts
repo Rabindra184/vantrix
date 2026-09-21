@@ -20,20 +20,38 @@ export type RunVerdict = z.infer<typeof RunVerdictSchema>;
 export const AssertionOutcomeSchema = z.enum(['passed', 'failed', 'not_applicable']);
 export type AssertionOutcome = z.infer<typeof AssertionOutcomeSchema>;
 
+/**
+ * The six fields the evaluator needs to judge a run, and the six a reader
+ * needs to be told what was judged.
+ *
+ * NAMED because it has two consumers now. `AssertionSchema` below is the
+ * BATCH path — an assertion recorded when a run finished — and
+ * `LiveBreachSchema` (`live-delta.ts`) is the LIVE one, a rule breaching in
+ * a run still streaming. Both render through `describeSlaOutcome`, which
+ * takes exactly this shape.
+ *
+ * Two inline copies would be the "two expressions deciding one thing" shape
+ * this repo keeps recording: they agree today, and the day one gains a
+ * family the other does not, the live banner and the gates table start
+ * describing the same rule differently with nothing failing.
+ */
+export const AssertionRuleSchema = z.object({
+  scope: z.enum(['run', 'scenario', 'group', 'request']),
+  targetName: z.string().nullable(),
+  family: z.enum(['response_time', 'latency', 'group_cumulated', 'group_duration']),
+  metric: z.string(),
+  comparator: z.enum(['lte', 'gte']),
+  threshold: z.number(),
+});
+export type AssertionRule = z.infer<typeof AssertionRuleSchema>;
+
 export const AssertionSchema = z.object({
   ruleId: z.string().uuid(),
   outcome: AssertionOutcomeSchema,
   /** Null when the outcome is not_applicable — there was nothing to measure. */
   actualValue: z.number().nullable(),
   message: z.string(),
-  rule: z.object({
-    scope: z.enum(['run', 'scenario', 'group', 'request']),
-    targetName: z.string().nullable(),
-    family: z.enum(['response_time', 'latency', 'group_cumulated', 'group_duration']),
-    metric: z.string(),
-    comparator: z.enum(['lte', 'gte']),
-    threshold: z.number(),
-  }),
+  rule: AssertionRuleSchema,
 });
 export type Assertion = z.infer<typeof AssertionSchema>;
 

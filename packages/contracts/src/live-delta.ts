@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AssertionRuleSchema } from './run.js';
 
 /**
  * Summary statistics included in a delta, updated by the fold engine on each
@@ -184,11 +185,49 @@ export type LiveErrors = z.infer<typeof LiveErrorsSchema>;
 
 export const LiveBreachSchema = z.object({
   ruleId: z.string(),
-  /** The evaluator's own message — one sentence, already human-readable. */
+  /**
+   * The evaluator's own message, and it is NOT human-readable — this comment
+   * used to say it was, which is why nobody re-checked this surface for four
+   * branches.
+   *
+   * `packages/sla`'s own `describe` writes it as
+   * `${metric} of ${target} (${family}) ≤ ${threshold} — actual ${raw}`:
+   * `error_rate of the run (response_time) ≤ 0.01 — actual 0.0223463687150838`.
+   * That is the stored schema read aloud, and review.md's copy table names
+   * that exact string as the pattern to replace. Kept as the FALLBACK below,
+   * because for a delta that predates `rule` it is the only description there
+   * is.
+   */
   description: z.string(),
   actualValue: z.number(),
   /** Elapsed run offset at which this rule began breaching. */
   sinceOffsetMs: z.number().int(),
+  /**
+   * The structured rule, so the banner can say what the gates table says.
+   *
+   * ═══ OPTIONAL, AND THE OPTIONAL HALF IS THE LOAD-BEARING ONE ═══
+   *
+   * Exactly the reasoning `sla`'s own default carries further down this file:
+   * the browser validates every inbound frame and DROPS THE WHOLE FRAME on
+   * failure, and the gateway forwards stored bodies without validating. So a
+   * REQUIRED `rule` means that during any rolling deploy — new web assets,
+   * old worker still publishing — every delta fails `safeParse` and the live
+   * page renders nothing at all, which is a strictly worse outcome than the
+   * raw sentence this exists to replace.
+   *
+   * The window is bounded and the bound is already written down:
+   * `SNAPSHOT_TTL_SECONDS` and `REPLAY_TTL_SECONDS` are both one hour, so
+   * nothing here is history. `describeSlaOutcome` rendering from these fields
+   * is what the run page's gates table already does, from the same six
+   * fields, through the same function.
+   *
+   * ═══ ALL SIX OR NONE, WHICH IS WHY IT IS NESTED ═══
+   *
+   * Six sibling optionals can arrive partially — five fields and no
+   * comparator describes nothing, and every consumer would have to check all
+   * six to find out. One optional object cannot be half-present.
+   */
+  rule: AssertionRuleSchema.optional(),
 });
 export type LiveBreach = z.infer<typeof LiveBreachSchema>;
 

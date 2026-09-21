@@ -6,12 +6,49 @@ import SlaBanner from '../src/routes/SlaBanner';
 
 afterEach(cleanup);
 
+/**
+ * A breach as an OLD worker published it: a message and no `rule`.
+ *
+ * The `description` is the evaluator's real output, copied from
+ * `packages/sla`'s own `describe` rather than invented. It used to read
+ * `p95 ≤ 100 — actual 900`, which is a sentence nothing in this product
+ * writes — and a fixture that cannot tell the two vocabularies apart is
+ * exactly why the banner went four branches printing the schema aloud.
+ */
 const BREACH = {
   ruleId: 'a',
-  description: 'p95 ≤ 100 — actual 900',
+  description: 'p95 of the run (response_time) ≤ 100 — actual 900',
   actualValue: 900,
   sinceOffsetMs: 62_000,
 };
+
+/**
+ * The same breach as a CURRENT worker publishes it, carrying the six fields
+ * `describeSlaOutcome` renders from. Measured against a real error-rate rule,
+ * the pair is:
+ *
+ *   before  error_rate of the run (response_time) ≤ 0.01 — actual 0.0223463687150838
+ *   after   Whole-run error rate 2.2346% exceeds the 1% limit.
+ *
+ * An error rate is the shape worth pinning: the raw form is not merely
+ * unreadable but FALSE twice over — `0.01` is a fraction where every other
+ * surface shows a percentage, and `(response_time)` states something untrue
+ * about the quantity it qualifies.
+ */
+const STRUCTURED_BREACH = {
+  ruleId: 'b',
+  description: 'error_rate of the run (response_time) ≤ 0.01 — actual 0.0223463687150838',
+  actualValue: 0.0223463687150838,
+  sinceOffsetMs: 62_000,
+  rule: {
+    scope: 'run',
+    targetName: null,
+    family: 'response_time',
+    metric: 'error_rate',
+    comparator: 'lte',
+    threshold: 0.01,
+  },
+} as const;
 
 /**
  * A wire `sla` field, with every count at its quietest value. Cases override
@@ -123,5 +160,49 @@ describe('SlaBanner — frozen', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/breaching when streaming stopped/);
     // Not both tenses on the same render.
     expect(screen.getByRole('status')).not.toHaveTextContent(/currently breaching/);
+  });
+});
+
+/**
+ * The live banner and the run page's gates table describe one rule with one
+ * vocabulary — `review.md`'s copy row 1, whose third surface this is.
+ *
+ * ASSERTED AS A PAIR, because "renders something about an error rate" passes
+ * perfectly against the schema-read-aloud form this replaces: the raw string
+ * also contains `error_rate`. What separates them is the absence of the
+ * stored spelling and the presence of the reader's one.
+ */
+describe('SlaBanner vocabulary', () => {
+  it('describes a breach the way the run page does, not the way the schema stores it', () => {
+    render(<SlaBanner sla={sla({ breaching: [STRUCTURED_BREACH] })} />);
+    const banner = screen.getByRole('status');
+
+    expect(banner).toHaveTextContent('Whole-run error rate 2.2346% exceeds the 1% limit.');
+
+    // The three tells of the stored form, each its own mistake: the schema's
+    // own field name, the family parenthesis that is false for an error rate,
+    // and the fraction where the product shows a percentage.
+    expect(banner).not.toHaveTextContent(/error_rate/);
+    expect(banner).not.toHaveTextContent(/response_time/);
+    expect(banner).not.toHaveTextContent(/0\.0223463687150838/);
+  });
+
+  it('still names how long the rule has been breaching', () => {
+    render(<SlaBanner sla={sla({ breaching: [STRUCTURED_BREACH] })} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Breaching since 1m 2s into the run.');
+  });
+
+  /**
+   * `rule` is optional on the wire so a rolling deploy degrades instead of
+   * blanking the page — `LiveBreachSchema` argues that at length. This is the
+   * only state in which the evaluator's raw message is still the right thing
+   * to show, so it has to keep working AND keep its separator: run together,
+   * the line reads `… actual 900 Breaching since 1m 2s into the run`.
+   */
+  it('falls back to the evaluator’s own message for a delta that predates the fields', () => {
+    render(<SlaBanner sla={sla({ breaching: [BREACH] })} />);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'p95 of the run (response_time) ≤ 100 — actual 900 — breaching since 1m 2s into the run',
+    );
   });
 });

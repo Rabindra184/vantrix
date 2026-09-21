@@ -1,6 +1,59 @@
-import type { LiveDelta } from '@perfportal/contracts';
+import { describeSlaOutcome, type LiveBreach, type LiveDelta } from '@perfportal/contracts';
 import { ASSERTION_OUTCOME } from './marks';
 import { formatOffset } from './format';
+
+/**
+ * What this breach says, in the vocabulary the rest of the product uses.
+ *
+ * `describeSlaOutcome` is the run page's own describer — the gates table and
+ * the decision band already render through it — so a reader who watches a
+ * rule breach live and then opens the finished run meets one sentence, not
+ * two spellings of one fact.
+ *
+ * ═══ THE FALLBACK IS NOT DEFENSIVE PADDING ═══
+ *
+ * `rule` is optional on the wire, deliberately (`LiveBreachSchema` argues it
+ * at length). A delta published by a worker that predates the field is a
+ * routine thing during a rolling deploy, and for that delta the evaluator's
+ * raw message is genuinely the only description in existence. Reading as the
+ * schema did is worse than reading badly.
+ *
+ * `describeSlaOutcome` also answers null for an outcome it cannot phrase; a
+ * breach is `failed` with a real `actualValue`, so that branch is unreachable
+ * from here, and it costs one `??` not to depend on that.
+ *
+ * ═══ WHY THIS OWNS THE WHOLE LINE, INCLUDING THE OFFSET ═══
+ *
+ * The two descriptions are different PARTS OF SPEECH and cannot take the same
+ * join. `describeSlaOutcome` returns a finished sentence ending in a full
+ * stop, so the offset follows as its own sentence; the evaluator's raw
+ * message is a fragment, which is why the em dash was right for it and still
+ * is. Building the line in the JSX means one join for two shapes, and the
+ * fallback would read `… actual 0.0223 Breaching since 12s into the run` —
+ * two fragments run together with nothing between them.
+ *
+ * The TENSE is deliberately not a question here. `frozen` flips the headline
+ * above ("breaching when streaming stopped" against "currently breaching"),
+ * which is one statement about the whole list; repeating that decision per
+ * line would be a second answer to it, and the fragment path's wording is
+ * then byte-identical to what shipped before.
+ */
+function breachLine(breach: LiveBreach): string {
+  const since = `since ${formatOffset(breach.sinceOffsetMs)} into the run`;
+
+  const described =
+    breach.rule === undefined
+      ? null
+      : describeSlaOutcome({
+          outcome: 'failed',
+          actualValue: breach.actualValue,
+          rule: breach.rule,
+        });
+
+  return described === null
+    ? `${breach.description} — breaching ${since}`
+    : `${described} Breaching ${since}.`;
+}
 
 /**
  * Which SLA rules a streaming run is breaching, right now — the banner
@@ -130,9 +183,7 @@ export default function SlaBanner({
           </p>
           <ul className="flex flex-col gap-1">
             {sla.breaching.map((rule) => (
-              <li key={rule.ruleId}>
-                {rule.description} — breaching since {formatOffset(rule.sinceOffsetMs)} into the run
-              </li>
+              <li key={rule.ruleId}>{breachLine(rule)}</li>
             ))}
           </ul>
           {sla.notJudged > 0 && (
