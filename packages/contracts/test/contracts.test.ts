@@ -278,4 +278,21 @@ describe('TrendRunSchema — comparability fields', () => {
     expect(parsed.branch).toBe('main');
     expect(parsed.commitSha).toBe('abcdef1234567890');
   });
+
+  /**
+   * `tool` and `simulation` joined them for AC-STAT-5 — they are two of the
+   * three fingerprint axes a trend line breaks across, and `base` above
+   * carries neither, so the first case already proves a pod predating them
+   * still parses. Pinned here for the same reason the three above are: the
+   * browser DROPS a body that fails this schema, so making either required
+   * would blank the trends page for the length of a rolling deploy rather
+   * than degrading it, and "these are redundant" is exactly how that gets
+   * tidied away.
+   */
+  it('parses a run from a server that reports the fingerprint axes, and one that does not', () => {
+    expect(TrendRunSchema.safeParse({ ...base, tool: null, simulation: null }).success).toBe(true);
+    const parsed = TrendRunSchema.parse({ ...base, tool: 'gatling', simulation: 'example.Checkout' });
+    expect(parsed.tool).toBe('gatling');
+    expect(parsed.simulation).toBe('example.Checkout');
+  });
 });

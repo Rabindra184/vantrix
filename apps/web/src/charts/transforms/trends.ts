@@ -2,6 +2,11 @@ import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
 import { compareLabels } from './compare';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 import { clampPercentile } from '../../percentile';
+import {
+  comparabilityBreaks,
+  summariseBreaks,
+  type ComparabilityBreak,
+} from '../../routes/comparability';
 
 /**
  * `TrendsResponse` → the three trend figures.
@@ -63,6 +68,67 @@ function axisLabels(runs: readonly TrendRun[]): string[] {
 const fullTimestamp = (run: TrendRun): string => run.toolStartedAt ?? run.startedAt;
 
 /**
+ * The axis with a SPACER wherever the footing changed, and the runs beside it.
+ *
+ * ═══ WHY A SPACER CATEGORY AND NOT TWO SERIES ═══
+ *
+ * A `null` in a series is already how this chart draws "no value here", and
+ * ECharts breaks a line across one — so the break needs a slot of its own.
+ * The obvious alternative, one series per comparable segment, cannot work
+ * here: `Chart` assigns colour by series index from a six-hue palette that
+ * never cycles (`assignPalette`), so four percentiles across two segments
+ * would be eight series and two of them would go undrawn. The spacer keeps
+ * one series per percentile, its colour, and every measured point.
+ *
+ * The spacer carries the TRANSITION as its label, so the break names itself
+ * on the axis as well as in the note below the figure. Disambiguated with a
+ * count when the same transition happens twice, for the reason `compareLabels`
+ * disambiguates colliding run labels: two identical categories on one axis is
+ * a question nobody should have to ask.
+ *
+ * `rows` is deliberately NOT slotted — the data table lists runs, and a spacer
+ * is not a run. The two are no longer index-aligned, which is why `slots` is
+ * returned rather than callers re-deriving it.
+ */
+function slotted(runs: readonly TrendRun[]): {
+  readonly axis: string[];
+  readonly slots: readonly (TrendRun | null)[];
+  readonly breaks: readonly ComparabilityBreak[];
+} {
+  const labels = axisLabels(runs);
+  const breaks = comparabilityBreaks(runs);
+  const byIndex = new Map(breaks.map((b) => [b.index, b]));
+
+  const axis: string[] = [];
+  const slots: (TrendRun | null)[] = [];
+  const used = new Map<string, number>();
+  runs.forEach((run, i) => {
+    const brk = byIndex.get(i);
+    if (brk !== undefined) {
+      const seen = (used.get(brk.detail) ?? 0) + 1;
+      used.set(brk.detail, seen);
+      axis.push(seen === 1 ? brk.detail : `${brk.detail} (${seen})`);
+      slots.push(null);
+    }
+    axis.push(labels[i]!);
+    slots.push(run);
+  });
+  return { axis, slots, breaks };
+}
+
+/**
+ * Every caveat this figure carries, in one line.
+ *
+ * Joined rather than picking one: a cohort can be BOTH truncated and broken,
+ * and a reader told only the newer of the two facts is told the chart is
+ * trustworthy in a way it is not.
+ */
+function trendNote(t: TrendsResponse, breaks: readonly ComparabilityBreak[]): string | undefined {
+  const parts = [truncation(t), summariseBreaks(breaks)].filter((p): p is string => p !== undefined);
+  return parts.length === 0 ? undefined : parts.join(' ');
+}
+
+/**
  * Set when the window is shorter than the cohort.
  *
  * A reader shown twenty of sixty runs, with nothing saying so, reads a
@@ -122,6 +188,7 @@ export function toStatusTrend(t: TrendsResponse): ChartData {
 
   const runs = ordered(t);
   const labels = axisLabels(runs);
+  const { axis, slots, breaks } = slotted(runs);
 
   const rows: ChartTableRow[] = runs.map((run, i) => ({
     label: labels[i]!,
@@ -135,13 +202,13 @@ export function toStatusTrend(t: TrendsResponse): ChartData {
 
   return {
     series: [
-      { name: 'OK', data: runs.map((r) => share(r.okCount, r.count)) },
-      { name: 'KO', data: runs.map((r) => share(r.koCount, r.count)) },
+      { name: 'OK', data: slots.map((r) => (r === null ? null : share(r.okCount, r.count))) },
+      { name: 'KO', data: slots.map((r) => (r === null ? null : share(r.koCount, r.count))) },
     ],
-    axisLabels: labels,
+    axisLabels: axis,
     columns: STATUS_COLUMNS,
     rows,
-    limitation: truncation(t),
+    limitation: trendNote(t, breaks),
   };
 }
 
@@ -198,6 +265,7 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
 
   const runs = ordered(t);
   const labels = axisLabels(runs);
+  const { axis, slots, breaks } = slotted(runs);
 
   // A run without this key has NO VALUE on this series, which is not zero —
   // zero milliseconds is a measurement, and drawing one puts the fastest
@@ -217,7 +285,7 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
 
   const series: ChartSeries[] = keys.map((key) => ({
     name: percentileLabel(key),
-    data: runs.map((run) => at(run, key)),
+    data: slots.map((run) => (run === null ? null : at(run, key))),
   }));
 
   const rows: ChartTableRow[] = runs.map((run, i) => ({
@@ -225,7 +293,7 @@ export function toPercentileTrend(t: TrendsResponse): ChartData {
     values: [fullTimestamp(run), ...keys.map((key) => at(run, key) ?? '—')],
   }));
 
-  return { series, axisLabels: labels, columns, rows, limitation: truncation(t) };
+  return { series, axisLabels: axis, columns, rows, limitation: trendNote(t, breaks) };
 }
 
 /* ── ③ throughput ──────────────────────────────────────────────────────── */
@@ -249,6 +317,7 @@ export function toThroughputTrend(t: TrendsResponse): ChartData {
 
   const runs = ordered(t);
   const labels = axisLabels(runs);
+  const { axis, slots, breaks } = slotted(runs);
 
   const rows: ChartTableRow[] = runs.map((run, i) => ({
     label: labels[i]!,
@@ -262,12 +331,12 @@ export function toThroughputTrend(t: TrendsResponse): ChartData {
 
   return {
     series: [
-      { name: 'OK', data: runs.map((r) => rateShare(r.okCount, r)) },
-      { name: 'KO', data: runs.map((r) => rateShare(r.koCount, r)) },
+      { name: 'OK', data: slots.map((r) => (r === null ? null : rateShare(r.okCount, r))) },
+      { name: 'KO', data: slots.map((r) => (r === null ? null : rateShare(r.koCount, r))) },
     ],
-    axisLabels: labels,
+    axisLabels: axis,
     columns: THROUGHPUT_COLUMNS,
     rows,
-    limitation: truncation(t),
+    limitation: trendNote(t, breaks),
   };
 }

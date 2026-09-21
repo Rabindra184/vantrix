@@ -383,3 +383,65 @@ describe('trends — runs that share a minute', () => {
     }
   });
 });
+
+/**
+ * AC-STAT-5 — "given two runs with different comparability fingerprints, when
+ * a trend chart spans them, then the line is visibly broken with an
+ * explanatory marker, never silently connected."
+ *
+ * Measured on the developer database before this existed: of four real
+ * cohorts, TWO already mixed environments — `example-paritysimulation` spanned
+ * production and staging, and its p95 line was drawn as one continuous series.
+ */
+describe('a trend breaks where the conditions changed', () => {
+  /** Newest first, as the endpoint returns them: staging, staging, production. */
+  const MIXED = response([
+    run({ id: 'c', startedAt: '2026-08-03T10:00:00.000Z', environment: 'staging' }),
+    run({ id: 'b', startedAt: '2026-08-02T10:00:00.000Z', environment: 'staging' }),
+    run({ id: 'a', startedAt: '2026-08-01T10:00:00.000Z', environment: 'production' }),
+  ]);
+
+  it('puts a spacer on the axis, naming the transition', () => {
+    const d = toPercentileTrend(MIXED);
+    // Plotted oldest-first, so production comes first and the change is after it.
+    expect(d.axisLabels).toHaveLength(4);
+    expect(d.axisLabels[1]).toBe('production → staging');
+  });
+
+  it('breaks EVERY series at the spacer, and loses no measured point', () => {
+    for (const d of [toPercentileTrend(MIXED), toStatusTrend(MIXED), toThroughputTrend(MIXED)]) {
+      for (const s of d.series) {
+        const data = s.data as readonly (number | null)[];
+        expect(data).toHaveLength(4);
+        // The break itself…
+        expect(data[1]).toBeNull();
+        // …and the three runs still have their values. A break that dropped a
+        // point would satisfy "the line is broken" while losing the history.
+        expect([data[0], data[2], data[3]].every((v) => v !== null)).toBe(true);
+      }
+    }
+  });
+
+  it('keeps the data table one row per run — a spacer is not a run', () => {
+    for (const d of [toPercentileTrend(MIXED), toStatusTrend(MIXED), toThroughputTrend(MIXED)]) {
+      expect(d.rows).toHaveLength(3);
+      expect(d.rows.map((r) => r.label)).not.toContain('production → staging');
+    }
+  });
+
+  it('says so below the figure, and still says the cohort was truncated', () => {
+    const truncated = response(MIXED.runs, { cohortSize: 60 });
+    const note = toPercentileTrend(truncated).limitation!;
+    expect(note).toContain('environment');       // the break
+    expect(note).toContain('3 of 60');           // and the truncation, not one or the other
+  });
+
+  it('draws one unbroken line when the conditions held', () => {
+    const d = toPercentileTrend(THREE);
+    expect(d.axisLabels).toHaveLength(3);
+    for (const s of d.series) {
+      expect((s.data as readonly (number | null)[]).some((v) => v === null)).toBe(false);
+    }
+    expect(d.limitation).toBeUndefined();
+  });
+});

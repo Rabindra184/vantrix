@@ -282,6 +282,8 @@ export class MetricReader {
         environment: r.environment,
         branch: r.branch,
         commitSha: r.commit_sha,
+        tool: r.tool,
+        simulation: r.simulation,
         count: r.count,
         okCount: r.ok_count,
         koCount: r.ko_count,

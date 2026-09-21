@@ -137,3 +137,104 @@ function joinWords(words: readonly string[]): string {
 /** True when anything differs or is unknown — i.e. the reader must look. */
 export const needsComparabilityCheck = (findings: readonly ComparabilityFinding[]): boolean =>
   findings.some((f) => f.kind !== 'same');
+
+/* ═════════════════════════════════════════════════════════════════════════ *
+ * THE TREND BREAK — a different question from the findings above
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/** Where a trend line stops being one line, and what changed there. */
+export interface ComparabilityBreak {
+  /** Index into the run list AS GIVEN: the first run on the new footing. */
+  readonly index: number;
+  /** The axes that changed, lower-case, in reading order. */
+  readonly changed: readonly string[];
+  /** `staging → production`, joined when more than one axis moved. */
+  readonly detail: string;
+}
+
+/**
+ * The axes a trend line breaks across, and the ones it deliberately does not.
+ *
+ * ═══ THIS IS NOT `comparability()` WITH A FILTER ═══
+ *
+ * That function answers "are these selected runs comparable, and where not",
+ * over a SET, for a reader who chose them. This answers "did the footing
+ * change between consecutive runs", over a SEQUENCE, for a line that would
+ * otherwise assert continuity nobody checked. Same subject, different question
+ * — which is why the axis lists differ rather than one being a subset by
+ * accident.
+ *
+ * ═══ BRANCH AND COMMIT ARE EXCLUDED, DELIBERATELY ═══
+ *
+ * The PRD's comparability fingerprint (§24.1) is over tool, simulation,
+ * environment and the injection profile, and says of branch and commit that
+ * they are "what varies between comparable runs". A trend that broke on every
+ * commit would be nothing but breaks, and the thing a reader watches a trend
+ * FOR is the effect of commits. `comparability()` still reports them, because
+ * a reader comparing two runs by hand wants them named.
+ *
+ * ═══ THE INJECTION PROFILE IS MISSING, AND NOT SUBSTITUTED FOR ═══
+ *
+ * Gatling's `simulation.log` carries no declaration of the injection profile —
+ * the reference run's "60 ramp + 4/s over 60s" was read out of the simulation
+ * SOURCE, not the log — so three of the fingerprint's four components are
+ * available and the fourth is not.
+ *
+ * The tempting substitute is a measured proxy: peak users, or request count.
+ * That would be actively worse than omitting it. A fingerprint has to be
+ * derived from DECLARED intent; two runs of the SAME profile differ in peak
+ * concurrency by a user or two, so a measured proxy fragments the line on
+ * noise — breaking it where nothing changed, which is the failure this exists
+ * to prevent, inverted. Carrying the profile needs the client to declare it,
+ * the way `declaredTestSlug` is declared. Recorded as the gap it is.
+ *
+ * ═══ KNOWN-TO-KNOWN ONLY ═══
+ *
+ * A break is a positive claim that two runs sit on different footing, and
+ * `undefined`/`null` is not evidence for it any more than it is evidence of
+ * sameness — the rule this module already applies to its findings. Breaking on
+ * unknown would also shatter the line for every run predating these fields,
+ * which is the outcome `nullable().optional()` exists to avoid.
+ */
+export function comparabilityBreaks(runs: readonly TrendRun[]): readonly ComparabilityBreak[] {
+  const axes = [
+    { label: 'tool', of: (r: TrendRun) => r.tool },
+    { label: 'simulation', of: (r: TrendRun) => r.simulation },
+    { label: 'environment', of: (r: TrendRun) => r.environment },
+  ] as const;
+
+  const breaks: ComparabilityBreak[] = [];
+  for (let i = 1; i < runs.length; i += 1) {
+    const before = runs[i - 1]!;
+    const after = runs[i]!;
+    const changed: string[] = [];
+    const moves: string[] = [];
+    for (const axis of axes) {
+      const a = axis.of(before);
+      const b = axis.of(after);
+      // Both KNOWN and different. `fmt`'s 'unknown' is not a value to compare.
+      if (a === null || a === undefined || a === '') continue;
+      if (b === null || b === undefined || b === '') continue;
+      if (a === b) continue;
+      changed.push(axis.label);
+      moves.push(`${a} → ${b}`);
+    }
+    if (changed.length > 0) breaks.push({ index: i, changed, detail: moves.join(', ') });
+  }
+  return breaks;
+}
+
+/**
+ * The sentence a broken trend carries, naming every axis that moved.
+ *
+ * One sentence for the whole chart rather than one per break: a cohort that
+ * alternates between two environments would otherwise print the same fact
+ * twenty times, and the reader needs to know the line is not continuous, not
+ * to be told once per gap.
+ */
+export function summariseBreaks(breaks: readonly ComparabilityBreak[]): string | undefined {
+  if (breaks.length === 0) return undefined;
+  const axes = [...new Set(breaks.flatMap((b) => b.changed))];
+  const gaps = breaks.length === 1 ? 'a gap' : `${breaks.length} gaps`;
+  return `The line is broken at ${gaps}: ${joinWords(axes)} changed between runs, so the points either side were not measured under the same conditions.`;
+}

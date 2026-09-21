@@ -115,6 +115,157 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The trends-break-on-changed-conditions branch added no unit FILE and 12
+cases — 6 to `apps/web/test/comparability.test.ts`, 5 to
+`transforms.trends.test.ts` and 1 to `packages/contracts/test/contracts.test.ts`
+— from **155 / 1974 to 155 / 1986**. Integration moves with all twelve (every
+one is a `.ts` file integration runs) plus 1 case in
+`apps/api/test/trends.integration.test.ts`, at **138 / 1797**, and **e2e stays
+149**. It is the first branch taken from the PRD rather than from a review or a
+verification run: **AC-STAT-5**, which no test and no code had ever referenced.
+
+**THE TREND LINE WAS CONNECTING PRODUCTION TO STAGING, IN THIS DATABASE,
+TODAY.** AC-STAT-5: "given two runs with different comparability fingerprints,
+when a trend chart spans them, then the line is visibly broken with an
+explanatory marker, never silently connected." Measured on the nine real runs
+before anything changed, in the trend's own order:
+
+```
+  example-paritysimulation   production -> staging -> staging     ONE break
+  checkout-demo              staging -> staging -> staging -> (null)   none
+```
+
+So the p95 trend for `example-paritysimulation` was drawn as one continuous
+line across production and staging runs.
+
+**AND THE SECOND COHORT IS THE RESTRAINT RULE PAYING FOR ITSELF ON REAL DATA,
+WHICH IS WHY BOTH ROWS ARE HERE.** Both cohorts MIX — a naive "the values
+differ" rule breaks both. `checkout-demo`'s mix is three `staging` runs
+followed by one that recorded no environment at all, and a break there would
+tell a reader that the load moved when all that happened is that a field went
+unreported. One of two candidate cohorts in this database is a false positive,
+so known-to-known is not a corner case: **it is half the real transitions
+here.**
+
+**THE COMPARE TAB HAS WARNED ABOUT EXACTLY THIS SINCE THE review-criticals
+BRANCH.** `comparability.ts` was written for it, and this file's own entry
+says "A COHORT IS NOT A CONTROLLED EXPERIMENT" — and the trend line, which is
+the OTHER surface built on the same cohort, never asked. Seventh time this file records the one-caller-short shape,
+and the first found by reading the specification rather than the code.
+
+**THE FINGERPRINT HAS FOUR COMPONENTS AND THIS PRODUCT CAN COMPUTE THREE.**
+§24.1 is `tool ‖ simulation ‖ environment ‖ normalize(injection_profile)`.
+Gatling's `simulation.log` carries no declaration of the injection profile —
+the reference run's "60 ramp + 4/s over 60 s" was read out of the simulation
+SOURCE, not the log — so the fourth is unavailable.
+
+**AND THE TEMPTING SUBSTITUTE WOULD BE WORSE THAN THE OMISSION.** Peak users
+and request count are both to hand and both MEASURED. A fingerprint has to be
+derived from DECLARED intent: two runs of the same profile differ in peak
+concurrency by a user or two, so a measured proxy fragments the line on noise
+— breaking it where nothing changed, which is this feature's own failure mode
+inverted. Carrying the profile needs the client to declare it, the way
+`declaredTestSlug` is declared. Recorded as the gap it is rather than papered
+over, which is also what §24.1's "components stored alongside the hash so the
+algorithm can be revised" exists for.
+
+**BRANCH AND COMMIT ARE EXCLUDED, AND THAT IS THE HALF THAT KEEPS IT USABLE.**
+§24.1 says of them that they are "what varies between comparable runs". A
+trend that broke on every commit would be nothing but breaks, and watching the
+effect of commits is what a reader opens a trend FOR. `comparability()` still
+REPORTS them, because a reader comparing two runs by hand wants them named —
+so the two functions have deliberately different axis lists rather than one
+being a subset by accident, and each says so.
+
+**KNOWN-TO-KNOWN ONLY.** A break is a POSITIVE claim that two runs sit on
+different footing, and `undefined`/`null` is not evidence for it any more than
+it is evidence of sameness — the rule this module already applies to its
+findings. It also keeps the line whole for every run predating these fields,
+which is what `nullable().optional()` exists for.
+
+**A SPACER CATEGORY, NOT ONE SERIES PER SEGMENT, AND THE REASON IS THE
+PALETTE.** The obvious shape is a series per comparable stretch. `Chart`
+assigns colour by series index from a six-hue palette that NEVER CYCLES
+(`assignPalette` leaves a seventh undrawn and says so), so four percentiles
+across two segments would be eight series and two would go undrawn — the chart
+would lose data to show a break, which is the wrong trade. A spacer category
+with `null` in every series breaks the line, keeps one series per percentile,
+keeps its colour, and keeps every measured point. The spacer's LABEL is the
+transition (`production → staging`), so the break names itself on the axis as
+well as in the note.
+
+**AND THE DATA TABLE IS DELIBERATELY NOT SLOTTED.** `rows` lists runs; a
+spacer is not a run. That makes `rows` and `axisLabels` no longer
+index-aligned, which is why `slotted` returns the slots rather than letting
+three callers re-derive them — the alignment was implicit before and would
+have rotted silently.
+
+**THE NOTE JOINS RATHER THAN PICKS.** A cohort can be both truncated and
+broken, and a reader told only the newer of the two facts is told the chart is
+trustworthy in a way it is not. One case asserts both sentences survive
+together.
+
+**FIVE MUTATIONS, FIVE DISTINCT LANDINGS, AND THE TWO RESTRAINT RULES EACH GET
+THEIR OWN:**
+
+```
+  never breaks at all            7 cases across both files
+  branch joins the axes          the do-not-break-on-branch case ALONE
+  breaks on unknown too          the unknown case ALONE
+  no spacer emitted              the two transform cases
+  the SQL stops sending `tool`   the integration wire case ALONE
+```
+
+**THE FIFTH IS THE ONE WORTH HAVING.** `transforms.trends.test.ts` builds its
+own `TrendRun`s, so every case there passes against a server that sends
+neither `tool` nor `simulation`: the rule would read `undefined` on both
+sides, decline to break (known-to-known), and the line would stay silently
+connected exactly as before — a green suite over the unfixed defect. That is
+"a test that supplies both sides of a join proves neither" with the wire on
+the other side, and the integration case is the half no unit test can supply.
+
+**NO BROWSER TEST CAN SEE THIS, AND THAT IS STATED RATHER THAN IMPLIED.**
+`seedTestWithRuns` writes `tool: 'gatling'` and the same `simulation` to every
+run in its cohort and no environment at all, so the seeded cohort is
+HOMOGENEOUS — no break, no spacer, and `run-trends.spec.ts` is untouched at
+149. Seeding a heterogeneous cohort would be a new fixture arm for one
+assertion, and what it would prove is the RENDERER rather than this change.
+
+**SO THE RENDERER WAS READ INSTEAD OF ASSUMED, WHICH IS WHERE THE ONE REAL
+HAZARD WAS.** A spacer is only a break if a `null` actually interrupts the
+line, and `connectNulls: true` anywhere would have made this whole feature
+draw nothing while every unit case stayed green. Traced:
+
+```
+  connectNulls          set NOWHERE in apps/web/src -> ECharts default false
+  Chart.tsx:531         data: [...data.axisLabels]   the spacer reaches the axis
+  Chart.tsx:804         data: [...source.data]       the null reaches the series
+  Chart.tsx:788         the ONLY branch that rewrites data is `kind === 'pie'`
+```
+
+No trend chart is a pie, so all three take the pass-through path. **A feature
+whose visible effect is an ABSENCE needs the absence traced to the renderer**
+— a green transform suite cannot distinguish "emits a null" from "draws a
+gap", and those are two claims.
+
+**AND THE DATA TABLE'S ROW COUNT IS ALREADY PINNED IN A BROWSER, WHICH IS WHY
+LEAVING `rows` UNSLOTTED IS MORE THAN TIDINESS.** `run-trends.spec.ts` asserts
+`tbody tr` is exactly one row per run, under a comment saying "a row per run
+is the claim being" made. Slotting the rows would have put a spacer row in
+that table and failed it at 3 against 2 — the existing assertion is the guard
+for a decision taken two layers away, and it was read before the decision
+rather than discovered by a red run.
+
+**WHAT IS NOT DONE, AND IS A SEPARATE CHANGE RATHER THAN AN OMISSION.**
+FR-META-9 says each run CARRIES the fingerprint — a stored hash plus
+`fingerprint_components` — so that baselines and regression queries can filter
+on equality and the algorithm can be recomputed over history. This branch
+derives the comparison at read time from fields the wire already carries,
+which is what AC-STAT-5 needs and needs no migration. The stored column is
+worth having when there is a second consumer (§24.3's regression detection is
+the obvious one), and the PRD's components-alongside design is precisely what
+makes adding it later a recomputation rather than a rewrite.
+
 The windowed-row-survives-the-overflow-bin branch added no unit FILE and 2
 cases to `packages/statistics/test/window.test.ts`, from **155 / 1972 to
 155 / 1974**. Integration moves with both (that file is a `.ts` integration
