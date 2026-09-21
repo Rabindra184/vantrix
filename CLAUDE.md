@@ -266,6 +266,25 @@ worth having when there is a second consumer (§24.3's regression detection is
 the obvious one), and the PRD's components-alongside design is precisely what
 makes adding it later a recomputation rather than a rewrite.
 
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **155 / 1986**; `test:integration` **138 / 1797, exit 0, zero
+failures** against a SCRATCH DATABASE (`perfportal_fp`) and a scratch Redis
+INDEX (db 10). Both floors are the recorded ones plus exactly this branch's
+cases, and the integration arithmetic closes at 1784 + 13 — twelve unit cases
+in `.ts` files that suite also runs, plus its one integration case. **e2e was
+not re-run**: every file this branch touches is a `.ts`, and the seeded cohort
+is homogeneous, so no spec can reach the change.
+
+**AND IT PASSED CLEAN ON A MACHINE THAT SHOULD NOT HAVE BEEN TRUSTED.** The
+run started at load **10.83 with 3,895 free pages** — below the 4,390 this
+file already calls untrustworthy — and took **945s against a usual ~480s**.
+It still came back 138/138 with nothing red. **A slow run that passes is a
+pass**: pressure inflates duration and manufactures flakes, and neither makes
+a green result false. The rule this file records is to distrust a FAILURE on
+a loaded machine, not to discard a success — and the distinction is worth
+stating, because the branch before this one re-ran a clean suite twice for
+want of it.
+
 The windowed-row-survives-the-overflow-bin branch added no unit FILE and 2
 cases to `packages/statistics/test/window.test.ts`, from **155 / 1972 to
 155 / 1974**. Integration moves with both (that file is a `.ts` integration
