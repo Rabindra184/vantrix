@@ -1,6 +1,11 @@
 import type { TrendRun } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { comparability, needsComparabilityCheck } from '../src/routes/comparability';
+import {
+  comparability,
+  comparabilityBreaks,
+  needsComparabilityCheck,
+  summariseBreaks,
+} from '../src/routes/comparability';
 
 /**
  * REVIEW C06 — COHORT MEMBERSHIP IS NOT COMPARABILITY.
@@ -92,5 +97,73 @@ describe('comparability', () => {
   it('does not divide by a zero baseline', () => {
     expect(find([run({ throughputRps: 0 }), run({ throughputRps: 10 })], 'Throughput').kind)
       .toBe('same');
+  });
+});
+
+/**
+ * AC-STAT-5 — a trend line must never silently connect runs measured on
+ * different footing. This is the rule that decides where it stops.
+ */
+describe('comparabilityBreaks', () => {
+  const seq = (...overs: Partial<TrendRun>[]) => overs.map((o) => run(o));
+
+  it('breaks where the environment changed, naming the transition', () => {
+    const breaks = comparabilityBreaks(seq(
+      { environment: 'staging' }, { environment: 'staging' }, { environment: 'production' },
+    ));
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0]!.index).toBe(2);       // the FIRST run on the new footing
+    expect(breaks[0]!.changed).toEqual(['environment']);
+    expect(breaks[0]!.detail).toBe('staging → production');
+  });
+
+  it('breaks on tool and on simulation, the other axes of the fingerprint', () => {
+    expect(comparabilityBreaks(seq({ tool: 'gatling' }, { tool: 'k6' }))[0]!.changed).toEqual(['tool']);
+    expect(comparabilityBreaks(seq({ simulation: 'A' }, { simulation: 'B' }))[0]!.changed)
+      .toEqual(['simulation']);
+  });
+
+  /**
+   * THE HALF THAT KEEPS THE FEATURE USABLE. §24.1 excludes branch and commit
+   * because they are "what varies between comparable runs" — a trend that
+   * broke on every commit would be nothing but breaks, and watching the
+   * effect of commits is what a reader opens a trend FOR.
+   */
+  it('does NOT break on a branch or commit change', () => {
+    expect(comparabilityBreaks(seq(
+      { branch: 'main', commitSha: 'aaa' },
+      { branch: 'feature/x', commitSha: 'bbb' },
+    ))).toEqual([]);
+  });
+
+  /**
+   * A break is a positive claim that two runs sit on different footing, and
+   * absence is not evidence for it — the rule this module already applies to
+   * its findings. It also keeps the line whole for runs predating the fields,
+   * which is what `nullable().optional()` exists for.
+   */
+  it('does NOT break where a value is unknown on either side', () => {
+    expect(comparabilityBreaks(seq({ environment: null }, { environment: 'staging' }))).toEqual([]);
+    expect(comparabilityBreaks(seq({ environment: 'staging' }, { environment: undefined }))).toEqual([]);
+    expect(comparabilityBreaks(seq({ environment: 'staging' }, { environment: '' }))).toEqual([]);
+  });
+
+  it('reports one break per transition, and none for a steady cohort', () => {
+    expect(comparabilityBreaks(seq(
+      { environment: 'staging' }, { environment: 'staging' }, { environment: 'staging' },
+    ))).toEqual([]);
+    expect(comparabilityBreaks(seq(
+      { environment: 'a' }, { environment: 'b' }, { environment: 'a' },
+    ))).toHaveLength(2);
+  });
+
+  it('summarises every axis that moved, once for the whole chart', () => {
+    const breaks = comparabilityBreaks(seq(
+      { environment: 'staging' }, { environment: 'production' },
+    ));
+    const note = summariseBreaks(breaks)!;
+    expect(note).toContain('broken at a gap');
+    expect(note).toContain('environment');
+    expect(summariseBreaks([])).toBeUndefined();
   });
 });

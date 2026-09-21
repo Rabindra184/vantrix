@@ -363,6 +363,22 @@ export const TrendRunSchema = z.object({
   environment: z.string().nullable().optional(),
   branch: z.string().nullable().optional(),
   commitSha: z.string().nullable().optional(),
+  /* ═══ AND THE THREE THE TREND LINE BREAKS ON, WHICH ARE NOT THESE ═══
+   *
+   * `environment` above is one of them; `branch` and `commitSha` are NOT.
+   * The PRD's comparability fingerprint (§24.1) is over tool, simulation,
+   * environment and the injection profile, and excludes branch and commit
+   * deliberately: those are WHAT VARIES BETWEEN COMPARABLE RUNS. A trend
+   * that broke on every commit would be nothing but breaks.
+   *
+   * `tool` because two tools do not measure the same thing (§6.4.6 refuses
+   * to put them on one numeric axis at all), and `simulation` because a
+   * declared test slug outlives the class it names — rename or refactor the
+   * simulation and the same cohort carries two different workloads.
+   *
+   * Nullable AND optional for the reason the block above gives at length. */
+  tool: z.string().nullable().optional(),
+  simulation: z.string().nullable().optional(),
 });
 export type TrendRun = z.infer<typeof TrendRunSchema>;
 

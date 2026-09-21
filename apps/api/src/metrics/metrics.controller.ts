@@ -160,6 +160,8 @@ export class MetricsController {
         environment: r.environment,
         branch: r.branch,
         commitSha: r.commitSha,
+        tool: r.tool,
+        simulation: r.simulation,
         count: r.count,
         okCount: r.okCount,
         koCount: r.koCount,

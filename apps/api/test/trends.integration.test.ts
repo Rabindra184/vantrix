@@ -294,6 +294,32 @@ describe('GET /v1/runs/:id/trends', () => {
    * own header said, it still belongs to that test. The string cohort could
    * not express this at all, and it is what makes renaming safe later.
    */
+  /**
+   * AC-STAT-5's WIRE. The browser breaks a trend line where the tool,
+   * simulation or environment changed between consecutive runs — and it can
+   * only do that for fields the endpoint actually sends.
+   *
+   * `transforms.trends.test.ts` builds its own `TrendRun`s, so every case
+   * there passes just as happily against a server that sends neither: the
+   * break rule would read `undefined` on both sides, decline to break (it
+   * breaks only known-to-known), and the line would stay silently connected
+   * exactly as before. This is the half of that join no unit case supplies.
+   */
+  it('carries the fingerprint axes a trend line breaks on', async () => {
+    ctx = await createTestApp();
+    const id = await seedRun({
+      simulation: 'checkout', startedAt: at('2026-08-01T10:00:00Z'), environment: 'staging',
+    });
+
+    const body = TrendsResponseSchema.parse((await trends(id)).body);
+    const [only] = body.runs;
+    expect(only?.tool).toBe('gatling');
+    expect(only?.simulation).toBe('checkout');
+    // Environment rides with them and was already sent; asserted here so the
+    // three axes the break rule reads are pinned in one place.
+    expect(only?.environment).toBe('staging');
+  });
+
   it('follows test_id rather than the simulation string when they disagree', async () => {
     ctx = await createTestApp();
     const shared = await testFor('checkout');
