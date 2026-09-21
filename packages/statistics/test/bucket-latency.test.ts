@@ -19,6 +19,28 @@ describe('bucketLatency', () => {
     expect(out.meanMs).toBe(30);
   });
 
+  /**
+   * The same rule `RollupBuilder` holds, one level down: a bucket reports
+   * `minMs`/`maxMs` beside its bands, so no band may fall outside them. It is
+   * a SEPARATE assembler rather than a consequence of that one — the clamp is
+   * deliberately not inside `Sketch.quantile`, because a reloaded sketch's
+   * extremes are bucket-approximate and clamping against them achieves nothing
+   * (see `clampPercentile`). The OK and KO splits are clamped against their own
+   * sketches, which are subsets of the range reported, so tighter and still
+   * inside it.
+   */
+  it('keeps every band inside the min and max it reports, where the tail plateaus', () => {
+    const plateau = [...Array<number>(450).fill(100), ...Array<number>(50).fill(2503)];
+    const out = bucketLatency(bucketOf(plateau, plateau, []));
+    expect(out.maxMs).toBe(2503); // the tail really is a plateau at the maximum
+    for (const [key, v] of Object.entries(out.percentiles)) {
+      expect(v, `${key} is inside [${out.minMs}, ${out.maxMs}]`).toBeLessThanOrEqual(out.maxMs);
+      expect(v, `${key} is inside [${out.minMs}, ${out.maxMs}]`).toBeGreaterThanOrEqual(out.minMs);
+    }
+    // Unclamped the top bands answered 2515.4601126102525 here.
+    expect(out.percentiles.p99!).toBe(2503);
+  });
+
   it('emits every fixed band, for each outcome split', () => {
     const out = bucketLatency(bucketOf([10, 20, 60], [10, 20], [60]));
     const expected = BUCKET_PERCENTILES.map((p) => `p${p}`);

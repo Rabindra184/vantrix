@@ -3,6 +3,7 @@ export * from './histogram.js';
 export * from './distribution.js';
 export * from './buckets.js';
 export * from './bucket-latency.js';
+export * from './percentile.js';
 export * from './rollup.js';
 export * from './indicators.js';
 export * from './errors-rollup.js';

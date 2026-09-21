@@ -177,6 +177,22 @@ describe('GET /v1/runs/:id/stats', () => {
     // the types rather than restating it.
     expect(afterPercentiles['p99.9']!).toBeGreaterThanOrEqual(afterPercentiles['p90']!);
 
+    // AND A RECOMPUTED PERCENTILE STAYS INSIDE THE RANGE THIS RESPONSE REPORTS
+    // BESIDE IT. This is the one path where the two do not come from the same
+    // object: `minMs`/`maxMs` are the exact values the engine wrote to the row,
+    // while these percentiles are re-derived from the DESERIALIZED sketch, whose
+    // own extremes are bucket-approximate and sit OUTSIDE the true range. So a
+    // clamp taken against the sketch would leave this serving a percentile above
+    // the maximum printed next to it — which is why `clampPercentile` is called
+    // with the row here (see its docstring).
+    const row = after.body.stats.find(
+      (s: { scope: string; family: string }) => s.scope === 'run' && s.family === 'response_time',
+    ) as { minMs: number; maxMs: number };
+    for (const [key, value] of Object.entries(afterPercentiles)) {
+      expect(value, `${key}=${value} inside [${row.minMs}, ${row.maxMs}]`).toBeLessThanOrEqual(row.maxMs);
+      expect(value, `${key}=${value} inside [${row.minMs}, ${row.maxMs}]`).toBeGreaterThanOrEqual(row.minMs);
+    }
+
     // Restore: settings are shared state for the rest of this file.
     await ctx.pool.query(
       `UPDATE project SET settings = jsonb_set(settings, '{percentiles}', $1::jsonb) WHERE id = $2`,

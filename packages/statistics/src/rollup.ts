@@ -1,5 +1,6 @@
 import type { MetricFamily, MetricScope } from '@perfportal/core';
 import { Histogram } from './histogram.js';
+import { clampPercentile } from './percentile.js';
 import { Sketch } from './sketch.js';
 
 export interface StatRollup {
@@ -67,8 +68,24 @@ export class RollupBuilder {
      */
     clone?: boolean;
   }): StatRollup {
+    // ONE expression for the exact extremes, read by the clamp below and by the
+    // `minMs`/`maxMs` returned to the caller. Two copies would let the estimate be
+    // projected onto a range other than the one reported beside it, which is the
+    // whole property `clampPercentile` exists to hold.
+    const range = {
+      minMs: this.#count === 0 ? 0 : this.#min,
+      maxMs: this.#count === 0 ? 0 : this.#max,
+    };
+
+    // A percentile of a sample cannot lie outside the sample's own range, and the
+    // sketch's 1% error means the estimate sometimes does — 24 of 436 values across
+    // the nine real runs measured, worst +12.46 ms. Unclamped it reached the SLA
+    // evaluator, which failed runs on a p99 above their own exactly-tracked maximum.
+    // NaN for an empty sketch passes through unchanged, which is what it did before.
     const percentiles: Record<string, number> = {};
-    for (const p of opts.percentiles) percentiles[`p${p}`] = this.#sketch.quantile(p / 100);
+    for (const p of opts.percentiles) {
+      percentiles[`p${p}`] = clampPercentile(this.#sketch.quantile(p / 100), range);
+    }
 
     const copyOf = <T extends { merge(other: T): void }>(src: T, empty: T): T => {
       empty.merge(src);
@@ -83,8 +100,8 @@ export class RollupBuilder {
       okCount: this.#ok,
       koCount: this.#count - this.#ok,
       errorRate: this.#count === 0 ? 0 : (this.#count - this.#ok) / this.#count,
-      minMs: this.#count === 0 ? 0 : this.#min,
-      maxMs: this.#count === 0 ? 0 : this.#max,
+      minMs: range.minMs,
+      maxMs: range.maxMs,
       meanMs: this.#mean,
       stddevMs: this.#count === 0 ? 0 : Math.sqrt(this.#m2 / this.#count),
       percentiles,

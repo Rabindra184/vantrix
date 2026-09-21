@@ -67,6 +67,37 @@ describe('resolveMetric', () => {
   it('returns null for a percentile when there is no sketch to fall back to', () => {
     expect(resolveMetric(stat({ sketch: undefined }), 'p99.9')).toBeNull();
   });
+
+  /**
+   * THE FALLBACK IS A SECOND DOOR ONTO THE SAME QUESTION, AND IT HAS TO GIVE THE
+   * SAME ANSWER.
+   *
+   * A gate on a percentile the project does not store — `p90` where the project
+   * configures p50/75/95/99 — never reads `stat.percentiles` at all; it asks the
+   * sketch. So a clamp installed where the STORED percentiles are projected
+   * (`StatRollupBuilder.finish`) would have left exactly this path judging a value
+   * the product refuses to display. It lives in `Sketch.quantile` for that reason,
+   * and this case is what tells the two apart.
+   *
+   * The plateau fixture is the one from `sketch.test.ts`: unclamped, p95 answered
+   * 2515.4601126102525 on a sample whose largest observation is 2503. `minMs` and
+   * `maxMs` are set to the sketch's own extremes here because that is what the
+   * engine always produces — measured on the reference run, the two agree on all
+   * fourteen rows, merged group and run scopes included.
+   */
+  it('answers the sketch fallback inside the range, so a gate cannot judge an impossible value', () => {
+    const plateau = stat({
+      minMs: 100,
+      maxMs: 2503,
+      percentiles: {}, // nothing stored, so the sketch is the only answer
+      sketch: sketchOf([...Array<number>(450).fill(100), ...Array<number>(50).fill(2503)]),
+    });
+
+    const v = resolveMetric(plateau, 'p95');
+    expect(v).not.toBeNull();
+    expect(v!).toBeLessThanOrEqual(plateau.maxMs);
+    expect(v!).toBe(2503);
+  });
 });
 
 describe('evaluateRules', () => {
