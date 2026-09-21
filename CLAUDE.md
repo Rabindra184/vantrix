@@ -115,6 +115,125 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The windowed-row-survives-the-overflow-bin branch added no unit FILE and 2
+cases to `packages/statistics/test/window.test.ts`, from **155 / 1972 to
+155 / 1974**. Integration moves with both (that file is a `.ts` integration
+runs) plus 1 case in `apps/api/test/window.integration.test.ts`, at
+**138 / 1784**, and **e2e stays 149**. Found by checking a claim this file's
+own previous entry made and had not measured.
+
+**BRUSHING A TIME WINDOW RETURNED 500 ON A RUN WHOSE UNBRUSHED PAGE RENDERED
+FINE.** `Histogram` folds anything past a 120 s cap into one overflow bin, and
+`quantile` REFUSES a rank that lands there — deliberately, and its docstring
+argues the case well ("a percentile that silently guesses is the defect this
+class exists to avoid"). That reasoning is about the histogram. Nothing said
+what a READ HANDLER should do with the refusal, and the answer was: let it out.
+`rollupFromHistograms` did not catch it, `metrics.controller` does not wrap it,
+and `ProblemFilter` turned it into
+
+```
+  {"status":500,"code":"INTERNAL","detail":"The request could not be completed.",
+   "remediation":"Retry the request. If it keeps failing, report trace 2dfe7ea8-…"}
+```
+
+**REMEDIATION THAT CAN NEVER WORK**, because the run's stored buckets overflow
+on every retry. Meanwhile the UNWINDOWED read of the same run answers 200 —
+that path reads the sketch, which has no cap.
+
+**AND THE CAP'S OWN COMMENT IS WHY NOBODY LOOKED.** It read "120s is above any
+realistic HTTP timeout, so the loss is theoretical". True of REQUESTS, and
+false of the `group_duration` rows the same histograms hold: a group's
+duration is its WALL-CLOCK SPAN, so `group("Browse") { during(5.minutes) { … } }`
+— ordinary Gatling, not a pathology — produces 300 s observations. Measured on
+exactly that shape through the real engine:
+
+```
+  the slowest REQUEST in the run      400 ms
+  the group's wall-clock duration     300,700 ms
+  unwindowed  (sketch, uncapped)      p50 300700 — answers
+  windowed    (histogram, capped)     THREW AT p50 — every rank in the bin
+```
+
+**IT THROWS AT p50, NOT JUST THE TAIL.** With every observation past the cap
+`counted` is 0, so the FIRST percentile asked for lands in the bin and the
+whole row dies — the reader loses the entire windowed statistics table, not
+one column. **SIXTH TIME THIS FILE RECORDS A COMMENT JUSTIFYING SOMETHING WITH
+A CLAIM THAT HOLDS FOR ONE FAMILY AND NOT ANOTHER THE SAME STRUCTURE SERVES**,
+and the tell was in the word: "HTTP timeout" is a claim about requests, in a
+structure whose rows are not all requests.
+
+**OMITTED, NOT GUESSED, AND NOT ZERO — WHICH IS THIS REPO'S OWN EXISTING
+RULE.** `bucketLatency`'s `percentilesOf` already answers `{}` rather than a
+band of zeros for an empty sketch, because "a p95 of 0 is a fabricated
+observation", and `StatisticsTable` already renders a missing percentile as a
+dash. So an unrecoverable percentile is simply ABSENT and the row is answered.
+
+**AND THE ROW THAT SURVIVES IS EXACT, WHICH IS WHAT MAKES THAT ACCEPTABLE.**
+`Histogram#accept` updates `#min`, `#max` and `#sum` BEFORE it folds an
+observation into the bin, and `merge` carries all three — so count, min, max,
+mean and standard deviation are the real figures even when every observation
+overflowed. The reader loses the ESTIMATED columns and keeps the MEASURED
+ones, and still sees the tail in Max. Checked rather than assumed: the case
+asserts `maxMs` is 300700 on a row whose percentiles are `{}`.
+
+**FOUR MUTATIONS, AND THE SECOND EARNS THE SECOND CASE:**
+
+```
+  the throw escapes again        both unit cases
+  all-or-nothing on any overflow the partial case ALONE
+  guesses 0 instead of omitting  both unit cases
+  the throw reaches the endpoint the integration case ALONE — a real 500
+```
+
+Dropping every percentile whenever ANY observation overflows satisfies the
+first case perfectly while throwing away answers the histogram still holds —
+nine fast observations and one past the cap has a recoverable p50 and an
+unrecoverable p99. That is why the pair exists.
+
+**THE INTEGRATION CASE IS THE ONE THAT PROVES THE CLAIM**, because the claim
+is about an ENDPOINT and no unit case can reach it: the unit cases call
+`rollupFromHistograms` directly and would pass against a handler that caught
+the throw and returned a 422, or against one that never called it. It writes
+an over-cap histogram straight onto the stored buckets rather than ingesting
+one — producing it through the fixture would mean a five-minute simulation,
+and the subject is what the endpoint does with a bucket it has to merge. Its
+red-verify is the 500 body quoted above.
+
+**THE PRODUCT ALREADY HANDLED THIS ONE SURFACE OVER.** `distribution.ts` and
+`percentileDistribution.ts` both read `overflowCount` and render a limitation
+note; the browser has known about the bin for as long as it has existed. Only
+the windowed statistics path treated the refusal as impossible. **When a
+structure has a documented degenerate state, grep for who ALREADY handles it
+before assuming nobody has to.**
+
+**WHAT WAS RUN, AND FOR ONCE THE MACHINE COULD ANSWER.** `typecheck` and
+`lint` green by their own exit codes; `test:unit` **155 / 1974**;
+`test:integration` **138 / 1784 CLEAN, exit 0, no flakes**; `pnpm test:e2e`
+**149 / 149** at `--workers=2`. Every floor is the recorded one plus exactly
+this branch's cases, and the integration run is the first clean local one in
+several branches — at **43,722 free pages and load 5.56**, against the 3,825
+pages the branch before it was measured on. That contrast is the whole reason
+this file records machine state beside a result: the same suite produced six
+disjoint flakes yesterday and none today, with the product unchanged between
+them. Scratch databases and scratch Redis indexes throughout; the nine real
+Gatling runs confirmed intact afterwards.
+
+**AND PORT 3000 WAS STILL HELD BY THE SAME UNRELATED `remotion` CHECKOUT**, so
+`PERFPORTAL_E2E_PORT=3100` again. Third occurrence; it is a standing fact
+about this machine rather than an incident.
+
+**AND IT CORRECTS A DOCSTRING THIS FILE'S PREVIOUS ENTRY SHIPPED THE DAY
+BEFORE.** `percentile.ts` said `window.ts` "reports the merged RELOADED
+sketch's own extremes" — describing a mechanism it does not have, because a
+windowed row is built from `Histogram`, not `Sketch`. The CONCLUSION survived
+and is stronger than the argument given for it (a histogram is exact, so its
+quantile is inside its own range by construction rather than by estimate), but
+the reason was false. **That is the exact class the previous entry's headline
+is about, committed by the branch criticising it**, and it was found by going
+back to measure a claim rather than re-reading it. The rule that catches this
+is the cheap one: a docstring asserting what ANOTHER module does is a claim
+about that module, so open that module.
+
 The percentiles-clamped-at-the-source branch added ONE source file —
 `packages/statistics/src/percentile.ts` — and 5 cases: 2 to
 `packages/statistics/test/rollup.test.ts`, 1 to `bucket-latency.test.ts`, 1 to

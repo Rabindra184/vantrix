@@ -79,8 +79,69 @@ export function rollupFromHistograms(
     // 400 — but a rate of Infinity leaking into a response is worse than a
     // guard nobody trips.
     throughputRps: windowMs > 0 ? count / (windowMs / 1000) : 0,
-    percentiles: Object.fromEntries(
-      percentiles.map((p) => [`p${p}`, all.quantile(p / 100)]),
-    ),
+    percentiles: recoverablePercentiles(all, percentiles),
   };
+}
+
+/**
+ * The percentiles this window can actually answer — OMITTING any whose rank
+ * lands in the histogram's overflow bin, rather than letting that throw.
+ *
+ * ═══ WHY THE THROW IS RIGHT AND CATCHING IT HERE IS ALSO RIGHT ═══
+ *
+ * `Histogram#quantile` refuses a rank above the cap on purpose: the value is
+ * genuinely unrecoverable and a percentile that silently guesses is the defect
+ * that class exists to avoid. That reasoning is about the HISTOGRAM. It says
+ * nothing about what a read handler should do with the refusal, and until this
+ * function caught it the answer was "throw out of the request" — a 500 on
+ * `GET /v1/runs/:id/stats?from=&to=` for a run whose UNWINDOWED page renders
+ * perfectly, because that path reads the uncapped sketch instead.
+ *
+ * ═══ AND IT IS NOT THE PATHOLOGICAL RUN THE CAP'S COMMENT IMAGINED ═══
+ *
+ * 120 s is above any realistic HTTP timeout, which is true of REQUESTS and
+ * false of the `group_duration` rows the same histograms hold: a group's
+ * duration is its wall-clock span, so `group("Browse") { during(5.minutes) }`
+ * — ordinary Gatling — produces 300 s observations. Measured on exactly that
+ * shape, with a slowest REQUEST of 400 ms:
+ *
+ *     unwindowed  p50 300700   (the sketch, uncapped)
+ *     windowed    THREW at p50 — every rank was in the overflow bin
+ *
+ * ═══ OMITTED, NOT GUESSED, AND NOT ZERO ═══
+ *
+ * `bucketLatency`'s `percentilesOf` already answers `{}` for a sketch with
+ * nothing in it, on the same reasoning: "a p95 of 0 is a fabricated
+ * observation for a bucket that made none". An unrecoverable p95 is the same
+ * kind of non-answer, and `StatisticsTable` already renders a missing
+ * percentile as a dash rather than as the fastest row in the column.
+ *
+ * The rest of the row is EXACT and survives: `Histogram#accept` updates
+ * `#min`, `#max` and `#sum` BEFORE it folds an observation into the overflow
+ * bin, so count, min, max, mean and standard deviation are all still the real
+ * figures. The reader loses the estimated columns and keeps the measured ones,
+ * which is the right half to lose.
+ *
+ * NOT DONE, AND RECORDED RATHER THAN MISSED: `bandsFrom` reaches
+ * `Histogram#countBelow`, which throws on the same bin. It needs an indicator
+ * bound ABOVE the cap as well as an overflow observation — `higherMs` is
+ * `z.number().int().positive()` with no ceiling, so it is configurable — where
+ * this path needs only the overflow, and trips on the DEFAULT percentile set.
+ */
+function recoverablePercentiles(
+  all: Histogram,
+  percentiles: readonly number[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of percentiles) {
+    // Asking is cheaper than re-deriving the rank arithmetic here, and asking
+    // keeps ONE definition of which ranks the overflow covers — `quantile`'s.
+    // A second copy of that boundary is how the two would come to disagree.
+    try {
+      out[`p${p}`] = all.quantile(p / 100);
+    } catch {
+      // Unrecoverable at this rank. The key is absent, never 0.
+    }
+  }
+  return out;
 }

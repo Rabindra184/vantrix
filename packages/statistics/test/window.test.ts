@@ -38,6 +38,49 @@ describe('rollupFromHistograms', () => {
     expect(w.throughputRps).toBeCloseTo(full.throughputRps, 9);
   });
 
+  /**
+   * A `group_duration` row measures a group's WALL-CLOCK span, so
+   * `group("Browse") { during(5.minutes) { … } }` — ordinary Gatling — lands
+   * every observation above the 120 s histogram cap on a run whose slowest
+   * REQUEST is 400 ms. `Histogram#quantile` refuses a rank in the overflow
+   * bin, correctly; before this the refusal escaped `rollupFromHistograms`
+   * and became a 500 on `GET /v1/runs/:id/stats?from=&to=`, for a run whose
+   * unwindowed page rendered fine because that path reads the uncapped sketch.
+   */
+  describe('when observations land in the overflow bin', () => {
+    const OVER = [300_700, 300_700, 300_700, 300_700];
+
+    it('answers the row instead of throwing, and omits the unrecoverable percentiles', () => {
+      const w = rollupFromHistograms(
+        fill(new Histogram(), OVER), new Histogram(), 600_000, [50, 95, 99]);
+
+      // ABSENT, never 0 — `bucketLatency` already answers {} rather than a
+      // band of zeros for the same reason, and the table renders a dash.
+      expect(w.percentiles).toEqual({});
+      expect(w.percentiles.p50).toBeUndefined();
+
+      // And the measured columns are EXACT and survive: `accept` records min,
+      // max and sum BEFORE folding an observation into the bin.
+      expect(w.count).toBe(4);
+      expect(w.minMs).toBe(300_700);
+      expect(w.maxMs).toBe(300_700);
+      expect(w.meanMs).toBeCloseTo(300_700, 9);
+    });
+
+    it('still answers the ranks the overflow does not cover', () => {
+      // Nine fast observations and one past the cap: p50 is recoverable and
+      // p99 is not. Asserted as a PAIR — dropping every percentile whenever
+      // any observation overflows would satisfy the case above perfectly
+      // while throwing away answers the histogram still holds.
+      const w = rollupFromHistograms(
+        fill(new Histogram(), [...Array<number>(9).fill(500), 300_700]),
+        new Histogram(), 600_000, [50, 99]);
+
+      expect(w.percentiles.p50).toBe(500);
+      expect(w.percentiles).not.toHaveProperty('p99');
+    });
+  });
+
   it('takes percentiles over OK AND KO together, like the full-run row', () => {
     // Not OK-only. The statistics table's percentile columns describe every
     // request; only the percentiles-over-time chart is OK-only (G-22).

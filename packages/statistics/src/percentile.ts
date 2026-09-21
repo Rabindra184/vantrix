@@ -52,9 +52,18 @@
  * **a percentile is clamped against the same min and max reported beside it.**
  * `StatRollupBuilder.finish` and `bucketLatency` assemble that triple;
  * `resolveMetric` and the metrics controller recompute a percentile against
- * one already assembled. `window.ts` needs no call — it reports the merged
- * RELOADED sketch's own extremes, so its estimates are bucket representatives
- * between two bucket representatives and cannot escape by construction.
+ * one already assembled.
+ *
+ * `window.ts` needs no call, and THE REASON FIRST WRITTEN HERE WAS WRONG. It
+ * said that file "reports the merged RELOADED sketch's own extremes", which
+ * describes a mechanism it does not have: a windowed row is built from
+ * `Histogram`, not `Sketch`. The conclusion survives and is stronger than the
+ * argument it was given — a `Histogram` is an EXACT 1 ms structure whose
+ * `quantile` is nearest-rank over observed values and whose `min`/`max` are
+ * observed values, so its answer is inside its own range by construction
+ * rather than by estimate. Corrected here rather than quietly, because a
+ * docstring asserting a mechanism the code does not have is the defect this
+ * very file was written to fix, and it went in with the fix.
  */
 export function clampPercentile(value: number, range: PercentileRange): number {
   return Math.min(Math.max(value, range.minMs), range.maxMs);
