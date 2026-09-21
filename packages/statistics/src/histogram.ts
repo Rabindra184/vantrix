@@ -2,9 +2,23 @@
 export const HISTOGRAM_KIND = 'sparse-ms-v1' as const;
 
 /**
- * Observations above this fold into a single overflow bin. 120s is above any
- * realistic HTTP timeout, so the loss is theoretical; the bin exists so a
- * pathological run degrades loudly (countBelow throws) instead of silently.
+ * Observations above this fold into a single overflow bin, and the bin exists
+ * so a run that reaches it degrades loudly (`countBelow` and `quantile` throw)
+ * instead of silently.
+ *
+ * THIS COMMENT USED TO ADD "120s is above any realistic HTTP timeout, so the
+ * loss is theoretical". That is true of REQUESTS and false of the
+ * `group_duration` rows these same histograms hold: a group's duration is its
+ * wall-clock span, so `group("Browse") { during(5.minutes) { … } }` — ordinary
+ * Gatling — produces 300 s observations on a run whose slowest request is
+ * 400 ms. Measured on exactly that shape, every rank landed in the overflow
+ * bin, so a windowed read threw at p50.
+ *
+ * The loss is therefore real and reachable, and the caller has to survive it:
+ * `rollupFromHistograms` omits an unrecoverable percentile rather than letting
+ * the refusal become a 500. Count, min, max, mean and standard deviation are
+ * unaffected — `accept` records them BEFORE folding into the bin — so what a
+ * reader loses is the estimated columns, not the measured ones.
  */
 export const DEFAULT_HISTOGRAM_CAP_MS = 120_000;
 

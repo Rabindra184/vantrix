@@ -7,6 +7,7 @@ import { Queue } from 'bullmq';
 import request from 'supertest';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { SeriesResponseSchema, StatsResponseSchema, type StatsResponse } from '@perfportal/contracts';
+import { Histogram } from '@perfportal/statistics';
 import { createTestApp, type TestContext } from './support/app.js';
 import { runPipelineFor } from './support/pipeline.js';
 
@@ -183,6 +184,47 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     expect(res.body.code).toBe('WINDOW_UNAVAILABLE');
     // And the unwindowed call still works — the run is readable, just not
     // brushable, which is exactly what `windowable` will tell the UI.
+    expect((await stats(id)).status).toBe(200);
+  });
+
+  /**
+   * A `group_duration` row measures a group's WALL-CLOCK span, so
+   * `group("Browse") { during(5.minutes) { … } }` — ordinary Gatling — puts
+   * every observation past the 120 s histogram cap on a run whose slowest
+   * REQUEST is milliseconds. `Histogram#quantile` refuses a rank in the
+   * overflow bin, correctly, and that refusal used to escape the handler: a
+   * 500 on a brushed read of a run whose UNWINDOWED page renders fine,
+   * because that path reads the uncapped sketch instead.
+   *
+   * The histograms are written straight onto the stored buckets rather than
+   * ingested: producing one through the fixture would mean a five-minute
+   * simulation, and the subject here is what the ENDPOINT does with a bucket
+   * it has to merge, not how the bucket came to be.
+   */
+  it('answers a window whose observations exceed the histogram cap, rather than failing the read', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const over = new Histogram();
+    for (let i = 0; i < 8; i += 1) over.accept(300_700);
+    await ctx.pool.query(
+      'UPDATE run_series_bucket SET histogram_ok = $2, histogram_ko = $3 WHERE run_id = $1',
+      [id, Buffer.from(over.serialize()), Buffer.from(new Histogram().serialize())],
+    );
+
+    const res = await stats(id, '?from=0&to=2147483647');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const row = runRowOf(StatsResponseSchema.parse(res.body));
+    // The MEASURED columns survive and are exact — `accept` records min, max
+    // and sum before folding an observation into the bin.
+    expect(row.maxMs).toBe(300_700);
+    // The ESTIMATED ones are absent, never 0: a fabricated p95 would sort to
+    // the top of a column of durations as though it were the fastest row.
+    expect(row.percentiles).toEqual({});
+
+    // And the unwindowed read was never affected, which is the asymmetry that
+    // made this worth finding: one page worked and the other returned 500.
     expect((await stats(id)).status).toBe(200);
   });
 
