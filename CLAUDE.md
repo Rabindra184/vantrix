@@ -115,6 +115,106 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The brushed-throughput-divides-by-data branch added no unit FILE, no unit case
+and no spec — unit stays **155 / 1986** and **e2e stays 149** — and 1 case to
+`apps/api/test/window.integration.test.ts`, from **138 / 1798 to 138 / 1799**.
+It is a wrong NUMBER rather than a wrong error, and it was wrong on very
+nearly every window a reader ever made.
+
+**TWO BRUSHES SELECTING THE SAME REQUESTS REPORTED RATES 25% APART.** Measured
+against a real API on the reference run, the identical 32 requests both times:
+
+```
+  from=1500   window [1000,6000)   32 requests   6.4 req/s
+  from=2000   window [2000,6000)   32 requests   8   req/s
+```
+
+The only difference is that one brush started 500 ms off a bucket boundary.
+**A brush is a DRAG, so an aligned start is the exception rather than the
+rule.**
+
+**AND IT IS THE ONE NUMBER THIS RE-AGGREGATION MOST HAS TO GET RIGHT, BY ITS
+OWN ACCOUNT.** `rollupFromHistograms`' docstring argues that dividing by the
+run's duration "would leave throughput unchanged as a reader brushes, which
+is the single most visible thing a re-aggregation has to get right". The
+module singles the quantity out, and **zero assertions in the windowed
+integration suite touched it** — which is how a 25% error survived.
+
+**THE SELECTION IS INWARD AND THE REPORTED WINDOW IS OUTWARD, BOTH ON
+PURPOSE.** `WINDOWED_BUCKETS_SQL` takes `start_offset_ms >= from`, matching
+`inRange`, whose docstring says the half-open form is deliberate so "two
+adjacent windows never both claim the boundary bucket". `snapWindow` floors
+its left edge so the reported window covers everything the reader dragged
+over. Neither is wrong. What was wrong is that THROUGHPUT DIVIDED BY THE
+OUTWARD SPAN WHILE COUNTING INWARD-SELECTED DATA, charging the rate for a
+leading bucket that contributed nothing.
+
+**THE FIRST DESIGN WAS TO SNAP THE WINDOW INWARD, AND READING THE EXISTING
+TESTS KILLED IT.** Both reasons are worth keeping, because either alone would
+have made the change look safe:
+
+```
+  window.integration.test.ts   DELIBERATELY pins the outward snap — `from = width+1`
+                               asserting `fromMs <= width+1`, commented "OUTWARD, so
+                               nothing the reader selected falls outside the answer"
+  telemetry.integration.test.ts  shares `snapWindow`, and its samples are NOT
+                               bucket-aligned (hence `knownBucketWidthMs`); an inward
+                               snap pushes `window.fromMs` above included points and
+                               breaks the half-open invariant that file asserts
+```
+
+**Changing `snapWindow` would have broken two endpoints to fix a third.**
+This file records the inverse shape repeatedly — a fix applied at one call
+site and not another — and this is the mirror: a fix applied at a SHARED
+helper that only one of its callers wanted. **Before changing a shared
+function, list its callers and ask which of them asked for the change.**
+
+**SO THE REPORTED WINDOW IS UNTOUCHED AND ONLY THE DIVISOR MOVED.** `windowMs`
+feeds `throughputRps` and nothing else — checked, not assumed — so correcting
+it alone has exactly the defect's blast radius. The window describes how the
+reader's REQUEST was snapped; the span describes what the DATA covers, and
+conflating the two is what produced the defect.
+
+**ASSERTED AS AGREEMENT PLUS AN ABSOLUTE, BOTH DERIVED FROM THE PAYLOAD.**
+Agreement alone passes against a product that divides both by the run's whole
+duration — which is precisely the defect `rollupFromHistograms` exists to
+prevent, so the weaker assertion would have re-opened the hole it was written
+to close. The absolute alone would not say the two paths agree. A vacuity
+guard runs first, because with nothing selected both rates are 0 and every
+other assertion holds trivially.
+
+**ONE MUTATION, ONE CASE, AND THE FAILURE REPRODUCES THE MEASUREMENT.**
+Restoring `window.toMs - window.fromMs` as the divisor:
+
+```
+  baseline   18 passed
+  mutation   1 failed | 17 passed    expected 6.4 to be close to 8
+```
+
+The numbers in the red-verify are the numbers from the live probe, which is
+the strongest form this check takes: the test fails with the defect's own
+measurement rather than with an arbitrary expectation.
+
+**A RELATED PROPERTY, RECORDED RATHER THAN CHANGED.** `snapWindow`'s right
+edge caps at `last + width`, where `last` comes from whichever offsets the
+CALLER passes — ALL buckets for `/series` and `/errors/series`, only the
+SELECTED ones for windowed stats. For a sparse tail that makes `toMs` hug the
+data rather than the request. This change does not make it worse and it is
+not what was measured, so it is written down rather than quietly altered.
+
+**AND I RACED THE INTEGRATION SUITE AGAINST ITSELF, WHICH THIS FILE ALREADY
+FORBIDS IN AS MANY WORDS.** The first probe ran against `perfportal_bands`
+while the full `test:integration` gate was still running on that same scratch
+database. They truncated each other and the probe died in `createTestApp`
+with `Foreign key constraint violated on api_token_project_id_fkey`. The
+entry for that trap says "two overlapping `pnpm test:integration` invocations
+sabotage each other" and "nothing else may touch the stack while either runs,
+INCLUDING DIAGNOSIS" — and a hand-run probe is diagnosis. **A scratch database
+is only isolation if exactly one thing is using it**, and the cheap rule is a
+fresh database per concurrent run, not per branch. The gate run it collided
+with was discarded rather than reported: a suite whose data was truncated
+underneath it neither passes nor fails anything.
+
 The windowed-bands-refuse-not-500 branch added no unit FILE, no unit case and
 no spec — unit stays **155 / 1986** and **e2e stays 149** — and 1 case to
 `apps/api/test/window.integration.test.ts`, from **138 / 1797 to 138 / 1798**.
