@@ -361,10 +361,24 @@ export function LiveSummary({
 
 /**
  * A percentile tile's value, straight off the wire — unlike `RunStats`' own
- * `percentileValue`, this has no `clampPercentile` step: that clamp projects
- * a raw estimate onto a `StatRow`'s own `minMs`/`maxMs`, and a live summary
- * carries neither. `—`, never `0`, for a project configured with no such
- * percentile: a gap in `summary.percentiles` is not a measurement of zero.
+ * `percentileValue`, this has no `clampPercentile` step, and it no longer
+ * needs one.
+ *
+ * That was not always true and the reason it gave was the wrong one. This
+ * comment used to end "a live summary carries neither" — accurate about
+ * `LiveSummary`, which has no `minMs`/`maxMs`, and it read as though the live
+ * tile therefore had to print whatever arrived. It did: the same p99 that read
+ * 2515 while a run streamed read 2503 once it finished, one run, one quantity,
+ * two answers split by nothing but whether the run was still going.
+ *
+ * `Sketch.quantile` projects an interior estimate onto the sample's own range
+ * now, so `runStat.percentiles` is already inside it before `delta.ts` copies
+ * it onto the wire. The value here is clamped at the source; there is nothing
+ * left for this function to correct and no range on this payload to do it
+ * with.
+ *
+ * `—`, never `0`, for a project configured with no such percentile: a gap in
+ * `summary.percentiles` is not a measurement of zero.
  */
 function livePercentileValue(summary: LiveDelta['summary'], key: string): string {
   const raw = summary.percentiles[key];

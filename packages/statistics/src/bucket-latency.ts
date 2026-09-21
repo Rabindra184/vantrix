@@ -1,5 +1,6 @@
 import type { Bucket } from './buckets.js';
 import { BUCKET_PERCENTILES } from './engine.js';
+import { clampPercentile } from './percentile.js';
 
 /** A bucket's latency fields, as both the batch writer and the live publisher need them. */
 export interface BucketLatency {
@@ -14,11 +15,20 @@ export interface BucketLatency {
 /**
  * An empty sketch returns {}, not a band of zeros. A p95 of 0 is a fabricated
  * observation for a bucket that made none.
+ *
+ * CLAMPED AGAINST THE SKETCH'S OWN EXTREMES, not the all-outcomes ones this
+ * function is called with three times. A bucket reports one `minMs`/`maxMs`
+ * pair — the all-outcomes sketch's — and the OK and KO populations are subsets
+ * of it, so projecting each onto its own range is both tighter and still inside
+ * what is reported. See `clampPercentile` for why this is not in `Sketch`.
  */
-function percentilesOf(sketch: { count: number; quantile(q: number): number }): Record<string, number> {
+function percentilesOf(
+  sketch: { count: number; min: number; max: number; quantile(q: number): number },
+): Record<string, number> {
   if (sketch.count === 0) return {};
+  const range = { minMs: sketch.min, maxMs: sketch.max };
   const out: Record<string, number> = {};
-  for (const p of BUCKET_PERCENTILES) out[`p${p}`] = sketch.quantile(p / 100);
+  for (const p of BUCKET_PERCENTILES) out[`p${p}`] = clampPercentile(sketch.quantile(p / 100), range);
   return out;
 }
 

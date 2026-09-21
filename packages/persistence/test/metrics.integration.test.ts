@@ -1,4 +1,4 @@
-import { bandsFrom, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
+import { bandsFrom, bucketLatency, Histogram, HISTOGRAM_KIND, runEngine } from '@perfportal/statistics';
 import type { CanonicalEvent } from '@perfportal/core';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, createPrisma, ERROR_SERIES_SQL, MetricReader, MetricWriter, SERIES_SQL, MAX_OFFSET_MS, USER_SERIES_SQL, WINDOWED_BUCKETS_SQL } from '../src/index.js';
@@ -177,12 +177,22 @@ describe('MetricWriter / MetricReader', () => {
     const storedB = stored.find((b) => b.startOffsetMs === mixed!.startOffsetMs);
     expect(storedB).toBeDefined();
 
-    // Round-trips against the engine's OWN sketchOk/sketchKo (all eight
+    // Round-trips against the engine's OWN per-status figures (all eight
     // configured bands), not just spot-checking one figure.
+    //
+    // AGAINST `bucketLatency`, NOT A HAND-ROLLED `sketchOk.quantile(p)`. This
+    // read the sketches directly until the clamp landed, and that made it a
+    // SECOND COPY of the derivation whose own docstring says it is "THE ONLY
+    // derivation of a bucket's latency fields" because "a second copy drifts".
+    // It drifted the moment the real one started projecting an estimate onto
+    // its sample's range: stored 485 against a raw 487.92238360521986, on an
+    // OK population whose exactly-tracked maximum is 485. Asking the real
+    // assembler keeps the claim — these are the status-filtered figures, not
+    // the combined ones relabeled — and cannot drift again.
+    const derived = bucketLatency(mixed!);
     for (const key of Object.keys(storedB!.percentilesOk)) {
-      const p = Number(key.slice(1)) / 100;
-      expect(storedB!.percentilesOk[key]).toBeCloseTo(mixed!.sketchOk.quantile(p), 6);
-      expect(storedB!.percentilesKo[key]).toBeCloseTo(mixed!.sketchKo.quantile(p), 6);
+      expect(storedB!.percentilesOk[key]).toBeCloseTo(derived.percentilesOk[key]!, 6);
+      expect(storedB!.percentilesKo[key]).toBeCloseTo(derived.percentilesKo[key]!, 6);
     }
 
     // And the whole point: the OK-only figures must be their OWN thing, not

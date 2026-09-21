@@ -18,6 +18,7 @@ import {
 import {
   Histogram,
   bandsFrom,
+  clampPercentile,
   inferBucketWidthMs,
   rollupFromHistograms,
   toTelemetrySeries,
@@ -170,10 +171,14 @@ export class MetricsController {
         // The same expression `/stats` uses, including the `count > 0` guard:
         // an empty stat has a sketch with nothing to quantile, and its frozen
         // column is the only answer available.
+        // CLAMPED against the row's own exact `minMs`/`maxMs`, which is what this
+        // response reports beside these values. The sketch is DESERIALIZED here, so
+        // its own extremes are bucket-approximate and would clamp to the very
+        // over-estimate this is correcting — see `clampPercentile`.
         percentiles:
           r.sketch && r.count > 0
             ? Object.fromEntries(
-                settings.percentiles.map((p) => [`p${p}`, r.sketch!.quantile(p / 100)]),
+                settings.percentiles.map((p) => [`p${p}`, clampPercentile(r.sketch!.quantile(p / 100), r)]),
               )
             : r.percentiles,
       })),
@@ -258,10 +263,14 @@ export class MetricsController {
         // indicators below. Falls back to the frozen `percentiles` column
         // for rows written before the sketch was persisted, or for an
         // empty stat where the sketch has nothing to quantile.
+        // CLAMPED against the row's own exact `minMs`/`maxMs`, which is what this
+        // response reports beside these values. The sketch is DESERIALIZED here, so
+        // its own extremes are bucket-approximate and would clamp to the very
+        // over-estimate this is correcting — see `clampPercentile`.
         percentiles:
           s.sketch && s.count > 0
             ? Object.fromEntries(
-                settings.percentiles.map((p) => [`p${p}`, s.sketch!.quantile(p / 100)]),
+                settings.percentiles.map((p) => [`p${p}`, clampPercentile(s.sketch!.quantile(p / 100), s)]),
               )
             : s.percentiles,
         indicators: s.histogramOk

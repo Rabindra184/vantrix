@@ -99,4 +99,31 @@ describe('PT-G-12 percentiles vs ground truth', () => {
     expect(durations.includes(2369)).toBe(false);
     expect(run.percentiles.p99!).toBeGreaterThan(2400);
   });
+
+  /**
+   * THE WHOLE SET, NOT THE FOUR PERCENTILES NAMED ABOVE.
+   *
+   * `minMs` and `maxMs` are exactly tracked and a percentile is an estimate, so a
+   * percentile outside its own row's range is known to be wrong — and the run page
+   * puts the two in adjacent columns, where a reader sees it.
+   *
+   * MEASURED BEFORE THE CLAMP: eight of this run's percentile values sat above
+   * their own maximum, across the run scope, `Catalog/Recommendations/Related
+   * Items`, `Catalog/Recommendations` in both families, and `Catalog` — worst
+   * +12.46 ms. On the nine real Gatling runs in the developer database it was 24
+   * of 436 values. So this is not a theoretical bound being asserted for tidiness.
+   *
+   * IT ASSERTS THE WHOLE SET so a scope or family added later joins the check by
+   * being produced rather than by somebody remembering a new `expect` — the shape
+   * the runner-retry case settled on for the same reason. The list carries the row
+   * and the number, so a failure names which one rather than reporting `false`.
+   */
+  it('reports no percentile outside the range reported beside it, on any row', () => {
+    const outside = result.stats.flatMap((s) =>
+      Object.entries(s.percentiles)
+        .filter(([, v]) => v > s.maxMs || v < s.minMs)
+        .map(([k, v]) => `${s.scope}/${s.family} ${s.name || '(run)'} ${k}=${v} outside [${s.minMs}, ${s.maxMs}]`),
+    );
+    expect(outside).toEqual([]);
+  });
 });

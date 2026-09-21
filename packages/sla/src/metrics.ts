@@ -1,4 +1,4 @@
-import type { Sketch } from '@perfportal/statistics';
+import { clampPercentile, type Sketch } from '@perfportal/statistics';
 
 export interface EvaluableStat {
   scope: string;
@@ -51,5 +51,11 @@ export function resolveMetric(stat: EvaluableStat, metric: string): number | nul
   const p = Number(m[1]);
   if (!(p > 0 && p < 100)) return null;
   if (!stat.sketch || stat.sketch.count === 0) return null;
-  return stat.sketch.quantile(p / 100);
+  // THE SECOND DOOR ONTO THE SAME QUESTION, and it has to give the same answer as
+  // the stored column above. A gate on a percentile the project does not store
+  // never reads `stat.percentiles` at all, so a clamp applied only where those are
+  // projected would leave this path judging a value the product refuses to display.
+  // Clamped against the stat's own EXACT extremes, not the sketch's — after a
+  // reload the sketch's are bucket-approximate (see `clampPercentile`).
+  return clampPercentile(stat.sketch.quantile(p / 100), stat);
 }

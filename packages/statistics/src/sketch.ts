@@ -33,6 +33,16 @@ export class Sketch {
    * returning the wrong bucket. Querying at `(index + 0.5) / (n - 1)` instead gives the
    * float error half a rank of headroom in either direction before it can cross a rank
    * boundary, so the recomputed rank always floors back to `index`.
+   *
+   * AN INTERIOR RANK CAN ANSWER OUTSIDE [min, max], AND IS DELIBERATELY NOT CLAMPED
+   * HERE. The two branches below answer rank 0 with `min` and rank n-1 with `max`, so
+   * clamping the interior alongside them looks like the same decision made once — and
+   * it was written that way first. It is wrong after a round trip: the extremes below
+   * are exact only until this sketch is serialized (see the `min` getter), and a
+   * reloaded sketch's maximum IS the over-estimate. Measured on a plateau fixture,
+   * live [100, 2503] reloads as [100.494567708565, 2515.4601126101625]. The clamp is
+   * applied by whoever assembles a percentile beside the extremes it will be reported
+   * with — `clampPercentile` in `percentile.ts` names all four of them.
    */
   quantile(q: number): number {
     const n = this.#inner.count;

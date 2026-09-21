@@ -115,6 +115,258 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The percentiles-clamped-at-the-source branch added ONE source file —
+`packages/statistics/src/percentile.ts` — and 5 cases: 2 to
+`packages/statistics/test/rollup.test.ts`, 1 to `bucket-latency.test.ts`, 1 to
+`parity.test.ts` and 1 to `packages/sla/test/evaluate.test.ts`, from
+**155 / 1967 to 155 / 1972**. No unit FILE: that new file is source, and the
+two cases first written against `sketch.test.ts` MOVED rather than being added
+(see below). Integration moves with all five (each is a `.ts` file integration
+runs) at **138 / 1781**, plus assertions INSIDE an existing case in
+`apps/api/test/read.integration.test.ts`, which moves no count. **e2e stays
+149.** Found by asking which consumers the clamp branch's own deferral had
+never reached.
+
+**A PLATFORM GATE JUDGED A RUN AGAINST A NUMBER THE PRODUCT REFUSES TO
+DISPLAY.** `clampPercentile` corrected four BROWSER surfaces and nothing
+server-side did, so the raw estimate was what got stored, served and JUDGED.
+Driven end to end through the product's own modules over the reference
+fixture — `parseSimulationLog` → `runEngineAsync` → `toEvaluableStats` →
+`evaluateRules`, which is `pipeline.service.ts`'s own call sequence:
+
+```
+  the run                count 895   min 16   max 2503    both EXACT
+  p99, raw               2515.4601126102525               12.46 ms ABOVE the max
+  gate p99 ≤ 2510        FAILED — actual 2515.4601126102525
+  the statistics table   p99 2503, Max 2503 in the next column
+```
+
+**THE RUN PASSED. THE PRODUCT SAID IT FAILED, AND NO NUMBER ON THE PAGE
+EXPLAINS THE VERDICT** — a reader whose gate failed at 2515 opens the table
+one section below, reads a 99th percentile of 2503 beside a maximum of 2503,
+and concludes the gate is broken. `parity.test.ts` computes the true p99 from
+the sorted durations and it is **2501**, so the gate really was satisfied.
+After: `passed`, actual **2503**, the same number the table shows.
+
+**IT IS A BETTER ESTIMATE, NOT A PRETTIER ONE**, which is worth measuring
+rather than asserting:
+
+```
+  raw      2515.4601126102525    0.578% from the truth
+  clamped  2503                  0.080% from the truth      7x closer
+```
+
+**BOTH BOUNDS ARE REACHABLE, AND THE LOWER ONE HAD NEVER FIRED ON REAL DATA.**
+Across five distribution families × five sample sizes × ten quantiles: **49 of
+250 above the sample's own max** (worst +0.68%) and **12 of 250 below its own
+min** (worst -1.00%). On the nine real Gatling runs in the developer database
+it is **24 of 436 values, every one above the maximum**, worst +12.46 ms —
+and **none below the minimum**, because those runs' p50 sits nowhere near
+their min. So an upper-bound-only clamp would look complete against every run
+this project has ever ingested. The shape that reaches the floor is a PLATEAU
+— 90% of requests on one fast path, an ordinary load test — and it puts p5 at
+**49.903 on a sample whose fastest observation is 50**.
+
+═══ THE FIRST FIX WAS IN THE OBVIOUS PLACE AND WAS WRONG, AND AN EXISTING
+TEST IS WHAT SAID SO ═══
+
+**IT WENT IN `Sketch.quantile`, THREE LINES BELOW WHERE THAT FUNCTION ALREADY
+RETURNS `#inner.min` FOR RANK 0 AND `#inner.max` FOR RANK n-1.** That reads as
+airtight: an interior rank answering outside the pair those two branches
+already trust is the function disagreeing with itself, it is one line, and it
+covers every consumer of a sketch at once. Every new case passed, `typecheck`
+and `lint` were green, and the four mutations all landed.
+
+`packages/persistence/test/metrics.integration.test.ts` failed — "answers a
+percentile that was never stored in the JSONB", which compares a LIVE sketch's
+quantiles against the same sketch PERSISTED AND RELOADED. Measured on the
+plateau fixture:
+
+```
+  true      min 100                 max 2503
+  live      min 100                 max 2503
+  reloaded  min 100.494567708565    max 2515.4601126101625
+```
+
+**A RELOADED SKETCH'S MAXIMUM IS THE IMPOSSIBLE VALUE.** The extremes are
+exact only until serialization — the `min` getter says so in one line that had
+been sitting there the whole time — after which they are reconstructed from
+the bucket store and land OUTSIDE the true range. So clamping against them
+achieves exactly nothing on every reloaded path, while looking complete. The
+API's own `/stats` recomputes percentiles from that reloaded sketch and
+reports them beside `min_ms`/`max_ms` read from the row, so the first fix left
+the public endpoint serving a percentile above the maximum printed next to it.
+
+**THAT IS THE SHAPE THIS ENTRY WAS WRITTEN TO CRITICISE, COMMITTED BY THE
+BRANCH CRITICISING IT.** The draft already said "a deferral that reached TWO
+and stopped"; the first fix reached the live paths and stopped, and read as
+total because the mechanism was one line in the lowest-level module. **Depth
+is not coverage.** A clamp installed at the bottom is only as good as the
+bottom's own inputs, and here those inputs are lossy in exactly the direction
+being corrected.
+
+**AND THE TEST THAT CAUGHT IT WAS NOT LOOKING FOR THIS.** It exists to prove
+the sketch column survives a round trip; it caught a design error three
+packages away because it is the only case in the repository that compares a
+live sketch against a reloaded one. Worth remembering before writing off an
+integration failure in a file a diff "cannot reach" — this diff genuinely
+could reach it, and the honest reading was the expensive one.
+
+═══ THE RULE THAT REPLACED IT ═══
+
+**A PERCENTILE IS CLAMPED AGAINST THE SAME MIN AND MAX REPORTED BESIDE IT.**
+That is checkable by a reader on the page, it is true on every path whether
+the underlying extremes are exact or bucket-approximate, and it names its own
+call sites — whoever assembles the triple:
+
+```
+  RollupBuilder.finish        run/request/group rows, the evaluator, the live summary
+  bucketLatency               series buckets, and the charts drawn from them
+  resolveMetric               the evaluator's fallback for an unstored metric
+  metrics.controller          /stats recomputed at a reconfigured percentile set
+  window.ts                   NO CALL — see below
+```
+
+`window.ts` reports the merged RELOADED sketch's own extremes, so its
+estimates are bucket representatives lying between two bucket representatives
+and cannot escape by construction. Recorded rather than clamped: an
+unfalsifiable line is worse than a written argument.
+
+**AND THE BUCKET SPLITS CLAMP AGAINST THEIR OWN SKETCHES, NOT THE REPORTED
+PAIR.** A bucket reports one `minMs`/`maxMs` — the all-outcomes sketch's — and
+the OK and KO populations are subsets of it, so projecting each onto its own
+range is tighter AND still inside what is reported.
+
+**THE HELPER MOVED INTO `packages/statistics`, WHICH IS WHERE ITS OWN
+DOCSTRING SAID IT BELONGED** — "where the exact extremes and the estimated
+percentiles are produced together". **The browser copy STAYS**, and not by
+oversight: `apps/web` does not depend on `@perfportal/statistics`, so reaching
+it would pull the engine, the sketch and the histograms into the bundle for a
+`Math.min`; and rows already stored hold the raw value and are not rewritten,
+so those four surfaces still have raw input to correct.
+`apps/web/test/fixtures/reference-run.json` is a captured payload carrying
+2515.46, which is what keeps the browser cases exercising it.
+
+**FIVE MUTATIONS, AND THREE LAND ON EXACTLY ONE CASE:**
+
+```
+  rollup unclamped          both rollup cases + the parity whole-set
+  bucket unclamped          the bucket case ALONE
+  sla fallback unclamped    the SLA case ALONE
+  lower bound dropped       the below-min case ALONE
+  controller unclamped      the read.integration assertions ALONE
+```
+
+The lower-bound mutation is why the floor case exists at all: real data cannot
+reach that bound, so nothing else in the repository can see a half-written
+clamp. And each site having its own case is not tidiness — the first design
+failed precisely because one mechanism was assumed to cover four consumers.
+
+**THE PARITY CASE ASSERTS THE WHOLE SET, NOT THE FOUR PERCENTILES NAMED ABOVE
+IT.** It flat-maps every rollup's percentiles and expects the out-of-range
+list to be empty, so a scope or family added later joins the check by being
+PRODUCED rather than by somebody remembering a new `expect` — the shape the
+runner-retry case settled on. On the reference run that list went from **8
+entries to 0**, and the failure text carries the row and the number.
+
+**AND THE DEFERRAL'S OWN LIST WAS THE LEAD.** `percentile.ts` named the
+consumers still waiting — "the API, the charts, any future export" — and **not
+the EVALUATOR**, the one consumer that makes a judgement rather than a
+display. The transferable version is sharper than "do the bigger thing":
+**read a deferral's list of who would benefit as a list of who was
+ENUMERATED, and check it against who actually calls.** `resolveMetric` is two
+greps away and appears on no list.
+
+**IT ALSO CLOSES A FIFTH SURFACE NOBODY HAD COUNTED: THE LIVE TILES.**
+`livePercentileValue` printed `summary.percentiles` straight off the wire, so
+the same p99 read **2515 while a run streamed and 2503 once it finished** —
+one run, one quantity, two answers split by nothing but whether the run was
+still going, which is the sentence the live-banner entry below uses for its
+own defect. Its comment said this needed no clamp because "a live summary
+carries neither" `minMs` nor `maxMs`: **accurate about `LiveSummary` and the
+wrong reason**, because the value was already wrong before it reached the
+wire. **A comment that is true about the type can still be the wrong answer to
+the question it stands in front of.**
+
+**WHAT WAS RUN, AND WHAT THE MACHINE WOULD NOT ANSWER.** `typecheck` and
+`lint` green by their own exit codes; `test:unit` **155 / 1972**, the recorded
+floor plus exactly this branch's five cases; `pnpm test:e2e` **149 / 149** at
+`--workers=2`. Everything ran against SCRATCH stores — two scratch databases
+and two scratch Redis INDEXES (db 6 and db 7), because `bull:ingest:wait` held
+three stale jobs on db 0 and the developer database holds the nine real
+Gatling runs this branch measured against. Confirmed afterwards: 9 runs, 109
+stat rows, and **their 24 out-of-range values still there** — history is not
+rewritten, which is exactly what keeps the browser clamp load-bearing.
+
+**`test:integration` REACHED 138 / 1781 AND NEVER CAME BACK CLEAN, ACROSS TWO
+FULL RUNS WITH DISJOINT FAILURE SETS.** The arithmetic closes (1776 + 5) and
+one REAL failure was found and fixed — the hand-rolled `bucketLatency` copy
+above. The other five were infrastructure, and the tell is that **no test
+failed twice**:
+
+```
+  run 1   tests.integration     sign-up answered 503
+          fold-owner            snapshotOf(...) came back null
+          metrics.integration   THE REAL ONE — the hand-rolled copy
+  run 2   error-series          Parse Error: Expected HTTP/, RTSP/ or ICE/
+          openapi               GET /v1/openapi.json -> 501
+          window-bench          1088ms against a 500ms budget
+```
+
+All six pass in isolation (102/102 and 31/31). Two are shapes this file
+already names by signature — a socket receiving non-HTTP bytes "cannot be
+produced by any application-level diff", and a wall-clock budget missed by 2x
+at load 15-27 is timing.
+
+**AND CI ANSWERED IT, SO THAT GATE IS A MEASUREMENT RATHER THAN A DEFERRAL.**
+This paragraph first ended "a clean local integration run is NOT claimed here;
+CI's containers are the arbiter", which was honest and is no longer true — the
+`build` job passed on clean containers and printed all three totals:
+
+```
+  pnpm test:unit         Test Files 155 passed (155)   Tests 1972 passed (1972)
+  pnpm test:integration  Test Files 138 passed (138)   Tests 1781 passed (1781)
+  pnpm test:e2e          Running 149 tests using 2 workers
+```
+
+Every one matches the local measurement exactly, and 1776 + 5 closes. **A floor
+recorded as unknown once it is known is the same staleness this whole section
+exists to prevent** — the abandoned-runs entry already says to go back and DO
+this rather than only cite it, and six flakes across two local runs is exactly
+the case where it is worth the two minutes.
+
+**AND `openapi.integration.test.ts` HAS NOW FLAKED THREE TIMES, ON THREE
+DIFFERENT STATUS CODES.** 401 (the openapi-public entry), 400 (the live-banner
+entry) and **501** here. Three codes, one endpoint, every occurrence transient
+and under memory pressure — which retires the "mechanism undiagnosed" wording
+those two entries carry. A document defect does not change its status code per
+run, and the file passes 23/23 alone every time; this is the API failing to
+serve while the machine is contended. Check `vm_stat` before opening it.
+
+**AND PORT 3000 WAS HELD BY THE SAME UNRELATED CHECKOUT AS LAST TIME.**
+`pnpm test:e2e` refused before a single spec; the holder was a `remotion`
+process from `~/claude-certification`, which this file already records as "not
+a thing to kill". `PERFPORTAL_E2E_PORT=3100` and the run was 149/149. Second
+occurrence, same neighbour — check the cwd, then move the port.
+
+**THE `git checkout --` TRAP DID NOT BITE, WITH THE GUARD APPLIED PROPERLY FOR
+ONCE.** This file records it six times. The checkpoint was committed before
+the first mutation and **amended to hold the tests too**, then amended AGAIN
+when the design changed — so every `git checkout HEAD -- <path>` restored the
+finished shape rather than a half-settled one, including across a redesign
+that replaced the entire mechanism. `git status --short` reporting zero
+modified files after the last mutation is what makes that claim worth
+anything.
+
+**AND THE BARE-SPECIFIER TRAP BIT AGAIN, FROM THE SCRATCHPAD THIS TIME.** A
+probe written outside the workspace cannot `import '@perfportal/plugin-gatling'`
+however it is invoked — Node resolves a bare specifier relative to the
+IMPORTING FILE, which this file already records for `infra/`. And
+`createRequire` against `packages/statistics/package.json` is not enough
+either: that package does not depend on `@perfportal/sla`. `apps/worker` is
+the one that depends on all three, because it is the process that uses all
+three.
+
 The live-banner-reads-its-schema branch added no unit FILE and 5 cases — 3 to
 `apps/web/test/SlaBanner.test.tsx`, 1 to `packages/contracts/test/live-delta.test.ts`
 and 1 to `apps/worker/test/live-delta.test.ts` — from **155 / 1962 to
