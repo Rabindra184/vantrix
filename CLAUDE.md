@@ -115,6 +115,100 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The windowed-bands-refuse-not-500 branch added no unit FILE, no unit case and
+no spec — unit stays **155 / 1986** and **e2e stays 149** — and 1 case to
+`apps/api/test/window.integration.test.ts`, from **138 / 1797 to 138 / 1798**.
+It is the SAME defect as the windowed-row branch below, one call site over,
+and it survived that branch because that entry recorded it as unreachable for
+the wrong reason.
+
+**ONE ENDPOINT ANSWERED TWO WAYS FOR ONE RUN UNDER ONE CONFIGURATION.**
+`bandsFrom` reaches `Histogram#countBelow`, which refuses a bound above the
+120 s overflow cap while overflow observations exist. The unwindowed `stats`
+wrapped that in a try/catch; `#windowedStats` called it bare. Measured end to
+end against a real API, same run, same project settings:
+
+```
+  unwindowed  400 PROJECT_SETTINGS_INVALID  names higherMs (200000), says lower it to 120000
+  windowed    500 INTERNAL                  "Retry the request. If it keeps failing…"
+```
+
+```
+  Histogram: countBelow(200000) crosses the 120000ms overflow bin (440 observations)
+    at Histogram.countBelow -> bandsFrom -> MetricsController.#windowedStats
+```
+
+**REMEDIATION THAT CAN NEVER WORK, FOR THE SECOND TIME IN TWO BRANCHES.**
+Retrying re-reads the same stored buckets against the same setting, for ever.
+That is what makes a 500 the wrong answer here rather than merely an ugly
+one — the operator is told to do the one thing that cannot help, while the
+information they need (which setting, and what to lower it to) already exists
+in this same file, twenty lines up.
+
+**AND MY OWN ENTRY RECORDED IT AS NOT-DONE FOR A REASON THAT WAS TRUE AND
+BESIDE THE POINT.** The windowed-row entry says `bandsFrom` "needs an
+indicator bound ABOVE the cap as well as an overflow observation … where this
+path needs only the overflow". Both halves are correct, and they explain why
+the FIXTURE cannot see it — `higherMs` defaults to 1200, below the cap, so
+the existing over-cap case exercises the band call safely. What that reasoning
+missed is that **the unwindowed path was already guarded**. So this was never
+an unreached edge case; it was a fix that had landed on one of two callers,
+which is the shape this file records under one-caller-short and did not
+recognise in its own note. **A deferral that explains why a test cannot reach
+something has not established that the product handles it.**
+
+**IT IS ORDINARY CONFIGURATION, NOT A PATHOLOGY.** `higherMs` is
+`z.number().int().positive()` with NO ceiling, and the branch below already
+established that over-cap observations come from ordinary Gatling — a
+`group("Browse") { during(5.minutes) }` produces 300 s spans on a run whose
+slowest REQUEST is 400 ms.
+
+**A FUNCTION, NOT A SECOND try/catch, AND THAT IS THE WHOLE DESIGN.** Wrapping
+the windowed call in its own catch would have restored the wording by COPYING
+it — two expressions deciding one thing, which this file records drifting
+apart three separate times. `bandsOrRefuse` is one definition and both callers
+reach it; `bandsFrom` is now called in exactly one place in the app.
+
+**AND IT IS NARROWER THAN THE GUARD IT REPLACES, WHICH IS A SECOND FIX.** That
+try/catch wrapped the WHOLE row map — the sketch quantile included — while its
+message asserts the cause is `indicators.higherMs`. Its own comment argued
+"the only throw reachable from here is that overflow-cap case", which is an
+ARGUMENT rather than a guarantee: any future throw inside that map would have
+been reported to an operator as a settings problem they do not have. Scoped to
+the one call that can raise it, the claim is true by construction. **When a
+catch block's message names a specific cause, the block has to be narrow
+enough that the name cannot be wrong.**
+
+**ASSERTED AS A PAIR IN ONE CASE, AND THE RED-VERIFY IS WHY THAT IS HONEST.**
+The claim is that the two paths AGREE — a case pinning only the windowed 400
+would pass just as happily against a product where the unwindowed path had
+regressed to 500 beside it. This file records twice what bundling two
+mutations into one case costs ("coverage right, report wrong"), so the
+assertion carries a `label` and the two mutations were checked for
+distinguishable reports:
+
+```
+  windowed call reverted     1 failed | 16 passed   the message names `windowed:`
+  unwindowed call reverted   1 failed | 16 passed   the message names `unwindowed:`
+```
+
+Different iterations of one loop, each naming which path broke and printing
+the literal 500 body. **Bundling is honest when the failure says which half
+failed**; it is not when the report is ambiguous, which is the distinction
+the earlier entries were reaching for.
+
+**AND THE SECOND MUTATION PROVED SOMETHING THE FIRST DID NOT.** Reverting the
+UNWINDOWED site still produces a 500 — so narrowing the old broad try/catch
+down to one call did not quietly drop the protection it used to provide. That
+is a claim about the refactor rather than about the defect, and nothing else
+in the suite makes it.
+
+**FOUND BY READING THIS FILE'S OWN NOT-DONE NOTE AND CHECKING IT.** The whole
+branch is one paragraph of the entry below, taken literally and then
+measured — which is worth more than the defect: **an entry recording something
+as deliberately left is a claim, and claims in this file have been wrong
+before.**
+
 The trends-break-on-changed-conditions branch added no unit FILE and 12
 cases — 6 to `apps/web/test/comparability.test.ts`, 5 to
 `transforms.trends.test.ts` and 1 to `packages/contracts/test/contracts.test.ts`
