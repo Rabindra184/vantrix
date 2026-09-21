@@ -17,6 +17,7 @@ import {
 } from '@perfportal/persistence';
 import {
   Histogram,
+  type IndicatorBands,
   bandsFrom,
   clampPercentile,
   inferBucketWidthMs,
@@ -238,54 +239,43 @@ export class MetricsController {
     // frozen numbers that look live.
     const configurable = rows.every((s) => s.histogramOk !== null);
 
-    // bandsFrom throws when higherMs sits above the histogram's 120s overflow
-    // cap while overflow observations exist — the exact count is genuinely
-    // unrecoverable there. Bounds are already validated non-inverted by
-    // parseProjectSettings above, so the only throw reachable from here is
-    // that overflow-cap case. It is still a project-configuration problem
-    // (an unreasonably high "indicators.higherMs"), not a server bug.
-    let stats: StatsResponse['stats'];
-    try {
-      stats = rows.map((s) => ({
-        scope: s.scope as StatsResponse['stats'][number]['scope'],
-        name: s.name,
-        family: s.family as StatsResponse['stats'][number]['family'],
-        count: s.count,
-        okCount: s.okCount,
-        koCount: s.koCount,
-        errorRate: s.errorRate,
-        minMs: s.minMs,
-        maxMs: s.maxMs,
-        meanMs: s.meanMs,
-        stddevMs: s.stddevMs,
-        throughputRps: s.throughputRps,
-        // Recomputed from the persisted sketch at the project's currently
-        // configured percentile set (spec §9.1, K-03) — the whole reason the
-        // sketch is stored is so this needs no re-ingest, exactly like
-        // indicators below. Falls back to the frozen `percentiles` column
-        // for rows written before the sketch was persisted, or for an
-        // empty stat where the sketch has nothing to quantile.
-        // CLAMPED against the row's own exact `minMs`/`maxMs`, which is what this
-        // response reports beside these values. The sketch is DESERIALIZED here, so
-        // its own extremes are bucket-approximate and would clamp to the very
-        // over-estimate this is correcting — see `clampPercentile`.
-        percentiles:
-          s.sketch && s.count > 0
-            ? Object.fromEntries(
-                settings.percentiles.map((p) => [`p${p}`, clampPercentile(s.sketch!.quantile(p / 100), s)]),
-              )
-            : s.percentiles,
-        indicators: s.histogramOk
-          ? bandsFrom(s.histogramOk, s.koCount, settings.indicators)
-          : { under: 0, between: 0, over: 0, failed: s.koCount },
-      }));
-    } catch (err) {
-      throw badRequest(
-        'PROJECT_SETTINGS_INVALID',
-        `The project's "indicators.higherMs" (${settings.indicators.higherMs}) cannot be applied to this run: ${message(err)}`,
-        'Lower the project\'s "indicators.higherMs" setting to at most 120000 (the histogram overflow cap) and retry.',
-      );
-    }
+    // `bandsOrRefuse` converts the overflow-cap refusal into a 400 naming the
+    // setting. It is shared with `#windowedStats`, which is the whole point:
+    // this guard used to live here as a try/catch and the windowed path
+    // answered 500 for the identical run and configuration.
+    const stats: StatsResponse['stats'] = rows.map((s) => ({
+      scope: s.scope as StatsResponse['stats'][number]['scope'],
+      name: s.name,
+      family: s.family as StatsResponse['stats'][number]['family'],
+      count: s.count,
+      okCount: s.okCount,
+      koCount: s.koCount,
+      errorRate: s.errorRate,
+      minMs: s.minMs,
+      maxMs: s.maxMs,
+      meanMs: s.meanMs,
+      stddevMs: s.stddevMs,
+      throughputRps: s.throughputRps,
+      // Recomputed from the persisted sketch at the project's currently
+      // configured percentile set (spec §9.1, K-03) — the whole reason the
+      // sketch is stored is so this needs no re-ingest, exactly like
+      // indicators below. Falls back to the frozen `percentiles` column
+      // for rows written before the sketch was persisted, or for an
+      // empty stat where the sketch has nothing to quantile.
+      // CLAMPED against the row's own exact `minMs`/`maxMs`, which is what this
+      // response reports beside these values. The sketch is DESERIALIZED here, so
+      // its own extremes are bucket-approximate and would clamp to the very
+      // over-estimate this is correcting — see `clampPercentile`.
+      percentiles:
+        s.sketch && s.count > 0
+          ? Object.fromEntries(
+              settings.percentiles.map((p) => [`p${p}`, clampPercentile(s.sketch!.quantile(p / 100), s)]),
+            )
+          : s.percentiles,
+      indicators: s.histogramOk
+        ? bandsOrRefuse(s.histogramOk, s.koCount, settings.indicators)
+        : { under: 0, between: 0, over: 0, failed: s.koCount },
+    }));
 
     const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
     return {
@@ -431,7 +421,7 @@ export class MetricsController {
         ...rollupFromHistograms(e.ok, e.ko, window.toMs - window.fromMs, settings.percentiles),
         // From the WINDOW's own OK histogram, so the bands describe the same
         // requests as every other column in the row.
-        indicators: bandsFrom(e.ok, e.ko.total, settings.indicators),
+        indicators: bandsOrRefuse(e.ok, e.ko.total, settings.indicators),
       }));
 
     const runRow = stats.find((s) => s.scope === 'run' && s.family === 'response_time');
@@ -637,6 +627,54 @@ export class MetricsController {
 }
 
 /** Best-effort human-readable detail for an unexpected caught error. */
+/**
+ * Indicator bands, or a refusal that names the setting responsible.
+ *
+ * `bandsFrom` reaches `Histogram#countBelow`, which REFUSES a bound above the
+ * 120s overflow cap while overflow observations exist — the exact count is
+ * genuinely unrecoverable there, and that refusal is right. What a read
+ * handler must not do is let it out: `ProblemFilter` turns it into a 500
+ * whose remediation is "Retry the request", and retrying re-reads the same
+ * buckets against the same setting for ever.
+ *
+ * ═══ WHY THIS IS A FUNCTION AND NOT A SECOND try/catch ═══
+ *
+ * There are TWO callers — the unwindowed `stats` and `#windowedStats` — and
+ * only the first was guarded, so brushing a window turned a precise 400 into
+ * that 500 for one run under one project configuration:
+ *
+ *     unwindowed  400 PROJECT_SETTINGS_INVALID   names higherMs, says to lower it
+ *     windowed    500 INTERNAL                   "Retry the request…"
+ *
+ * Wrapping the second call site in its own try/catch would have restored the
+ * wording by copying it, which is how two expressions deciding one thing come
+ * to disagree. One definition, both callers.
+ *
+ * ═══ AND IT IS NARROWER THAN THE GUARD IT REPLACES ═══
+ *
+ * That try/catch wrapped the WHOLE row map — the sketch quantile included —
+ * while its message asserts the cause is `indicators.higherMs`. A comment
+ * argued "the only throw reachable from here is that overflow-cap case",
+ * which is an argument rather than a guarantee: any future throw in that map
+ * would have been reported as a settings problem the operator does not have.
+ * Scoped to the one call that can raise it, the claim is true by construction.
+ */
+function bandsOrRefuse(
+  ok: Histogram,
+  koCount: number,
+  indicators: { lowerMs: number; higherMs: number },
+): IndicatorBands {
+  try {
+    return bandsFrom(ok, koCount, indicators);
+  } catch (err) {
+    throw badRequest(
+      'PROJECT_SETTINGS_INVALID',
+      `The project's "indicators.higherMs" (${indicators.higherMs}) cannot be applied to this run: ${message(err)}`,
+      'Lower the project\'s "indicators.higherMs" setting to at most 120000 (the histogram overflow cap) and retry.',
+    );
+  }
+}
+
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }

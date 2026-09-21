@@ -228,6 +228,63 @@ describe('GET /v1/runs/:id/stats — windowed', () => {
     expect((await stats(id)).status).toBe(200);
   });
 
+  /**
+   * The SAME asymmetry, one call site over, and it survived the fix above.
+   *
+   * `bandsFrom` reaches `Histogram#countBelow`, which refuses a bound above
+   * the cap while overflow observations exist. The unwindowed `stats` wrapped
+   * that in a try/catch and answered 400 naming the setting; `#windowedStats`
+   * called it bare. Measured on one run under one configuration:
+   *
+   *     unwindowed  400 PROJECT_SETTINGS_INVALID   names higherMs (200000)
+   *     windowed    500 INTERNAL                   "Retry the request…"
+   *
+   * Retrying cannot work — it re-reads the same buckets against the same
+   * setting — which is what makes a 500 the wrong answer rather than merely
+   * an ugly one.
+   *
+   * `higherMs` is `z.number().int().positive()` with NO ceiling, so a bound
+   * above the cap is ordinary configuration rather than a pathology, and the
+   * case above already establishes that over-cap observations come from
+   * ordinary Gatling (`group("…") { during(5.minutes) }`).
+   *
+   * ASSERTED AS A PAIR, because the claim is that the two paths AGREE. A case
+   * pinning only the windowed 400 would pass just as happily against a
+   * product where the unwindowed path had regressed to 500 alongside it.
+   */
+  it('refuses an over-cap indicator bound the same way windowed and not', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+
+    const over = new Histogram();
+    for (let i = 0; i < 8; i += 1) over.accept(300_700);
+    const blob = Buffer.from(over.serialize());
+    const empty = Buffer.from(new Histogram().serialize());
+    // Both stores, so the two paths meet the same data and any difference in
+    // their answers is the handler's rather than the fixture's.
+    await ctx.pool.query(
+      'UPDATE run_series_bucket SET histogram_ok = $2, histogram_ko = $3 WHERE run_id = $1',
+      [id, blob, empty],
+    );
+    await ctx.pool.query(
+      'UPDATE run_stat SET histogram_ok = $2, histogram_ko = $3 WHERE run_id = $1',
+      [id, blob, empty],
+    );
+    await ctx.pool.query(
+      `UPDATE project SET settings = jsonb_set(settings, '{indicators}', $1::jsonb) WHERE id = $2`,
+      [JSON.stringify({ lowerMs: 800, higherMs: 200_000 }), ctx.projectId],
+    );
+
+    for (const [label, query] of [['unwindowed', ''], ['windowed', '?from=0&to=2147483647']] as const) {
+      const res = await stats(id, query);
+      expect(res.status, `${label}: ${JSON.stringify(res.body)}`).toBe(400);
+      expect(res.body.code, label).toBe('PROJECT_SETTINGS_INVALID');
+      // The remediation has to name the way out. "Retry the request" is what
+      // the 500 offered, and it can never work here.
+      expect(res.body.remediation, label).toContain('120000');
+    }
+  });
+
   it('windows the per-request rows too, not only the run', async () => {
     ctx = await createTestApp();
     const id = await ingested();
