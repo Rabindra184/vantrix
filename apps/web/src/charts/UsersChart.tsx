@@ -37,10 +37,15 @@ export interface UsersChartProps {
    */
   readonly group?: string;
   readonly domainMs?: TimeDomainMs;
+  /**
+   * The run's warm-up window, shaded on the elapsed-time axis (AC-STAT-4).
+   * Travels with `domainMs` because it is a fact about the same axis.
+   */
+  readonly warmupMs?: number;
 }
 
 /** ⑦ — the concurrency curve. Plots `maxConcurrent`; see `toConcurrentUsers`. */
-export function ConcurrentUsersChart({ users, group, domainMs }: UsersChartProps) {
+export function ConcurrentUsersChart({ users, group, domainMs, warmupMs }: UsersChartProps) {
   const data = useMemo(() => toConcurrentUsers(users, { x: 'ms' }), [users]);
 
   return (
@@ -66,6 +71,7 @@ export function ConcurrentUsersChart({ users, group, domainMs }: UsersChartProps
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
+        warmupMs,
       }}
       // Matching the axis above it, for the same reason that axis is named
       // apart from the arrival rate's: the tooltip is where the two charts are
@@ -76,7 +82,7 @@ export function ConcurrentUsersChart({ users, group, domainMs }: UsersChartProps
 }
 
 /** ⑦ᵇ — the arrival rate. Plots `started` per second; see `toUserStartRate`. */
-export function UserStartRateChart({ users, group, domainMs }: UsersChartProps) {
+export function UserStartRateChart({ users, group, domainMs, warmupMs }: UsersChartProps) {
   const data = useMemo(() => toUserStartRate(users, { x: 'ms' }), [users]);
 
   return (
@@ -98,6 +104,7 @@ export function UserStartRateChart({ users, group, domainMs }: UsersChartProps) 
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
+        warmupMs,
       }}
       unit="users/s"
     />

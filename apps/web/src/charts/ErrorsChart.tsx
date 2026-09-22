@@ -25,7 +25,15 @@ import { toErrorSeries } from './transforms/errorSeries';
  * does not exist: `text-status-failed` emits no CSS at all, silently.
  */
 export default function ErrorsChart(
-  { data, domainMs }: { readonly data: ErrorSeriesResponse; readonly domainMs?: TimeDomainMs },
+  { data, domainMs, warmupMs }: {
+    readonly data: ErrorSeriesResponse;
+    readonly domainMs?: TimeDomainMs;
+  /**
+   * The run's warm-up window, shaded on the elapsed-time axis (AC-STAT-4).
+   * Travels with `domainMs` because it is a fact about the same axis.
+   */
+    readonly warmupMs?: number;
+  },
 ) {
   const chart = useMemo(() => toErrorSeries(data), [data]);
 
@@ -50,6 +58,7 @@ export default function ErrorsChart(
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
+        warmupMs,
       }}
       yAxis={{ name: 'Errors/s' }}
       unit="/s"

@@ -11,7 +11,7 @@ import {
 } from '@perfportal/contracts';
 import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { RunsService } from './runs.service.js';
+import { RunsService, warmupMsOf } from './runs.service.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -225,6 +225,13 @@ export async function respondWithRun(
         description: run.description,
         durationMs: run.durationMs,
         activityMs: run.activityMs,
+        // AC-STAT-4, and it belongs HERE most of all: this is the 202 a
+        // RUNNING run answers, which is exactly when a reader is watching the
+        // charts stream. Omitted, the warm-up band would be absent while the
+        // run was live and appear the moment it finished — one run, one fact,
+        // two answers split by whether it was still going, which is the shape
+        // the live SLA banner already cost this project once.
+        warmupMs: warmupMsOf(run.engineOptions),
         startedAt: run.startedAt.toISOString(),
         toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
       });

@@ -51,7 +51,7 @@ import { Payload, TableSection, type Slot } from './payload';
 import {
   useLiveFromShell,
   useRunTerminal,
-  useTimeDomainFromShell,
+  useTimeDomainFromShell, useWarmupFromShell,
   useWindowFromShell,
   useWindowSuffix,
 } from './useRunWindow';
@@ -821,6 +821,8 @@ export function RunErrorsTab() {
   const window = useWindowFromShell();
   // One time axis across the page (§22.5) — see `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
+  // AC-STAT-4 — beside the domain, because it is a fact about that axis.
+  const warmupMs = useWarmupFromShell();
   const series = useQuery({
     ...errorSeriesQuery(runId ?? '', window),
     enabled: terminal,
@@ -860,7 +862,7 @@ export function RunErrorsTab() {
           down. `Payload` keeps a failed chart visible and saying why, rather
           than leaving a gap the reader cannot see is missing. */}
       <Payload query={series} slots={[{ id: 'errors-over-time', title: 'Errors per second' }]}>
-        {(data) => <ErrorsChart data={data} domainMs={domainMs} />}
+        {(data) => <ErrorsChart data={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />}
       </Payload>
 
       {/* The control sits ABOVE the table it narrows, and below the chart that
@@ -1054,6 +1056,8 @@ export function RunChartsTab() {
   // below share a crosshair, and a pointer means one instant only if they all
   // draw the same span. See `useTimeDomainFromShell`.
   const domainMs = useTimeDomainFromShell();
+  // AC-STAT-4 — beside the domain, because it is a fact about that axis.
+  const warmupMs = useWarmupFromShell();
   // §22.6. `enabled` carries it as well as the render below, because the point
   // is not to DRAW less on a phone — it is not to fetch four payloads and
   // build ten ECharts instances for a screen that cannot usefully show them.
@@ -1111,15 +1115,15 @@ export function RunChartsTab() {
           <>
             {/* Its OWN chart, sharing the crosshair — never an overlay on
                 requests/s. See RUN_TIME above. */}
-            <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
-            <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} />
+            <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+            <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
           </>
         )}
         {series.data !== undefined && (
           <>
-            <PercentilesChart series={series.data} domainMs={domainMs} />
-            <RequestRateChart series={series.data} domainMs={domainMs} />
-            <ResponseRateChart series={series.data} domainMs={domainMs} />
+            <PercentilesChart series={series.data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+            <RequestRateChart series={series.data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+            <ResponseRateChart series={series.data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
           </>
         )}
         {/* THE TWO CHART SLOTS WITH NO LIVE SOURCE ON ANY PATH — see this
@@ -1205,8 +1209,8 @@ export function RunChartsTab() {
             <>
               {/* Its OWN chart, sharing the crosshair — never an overlay on
                   requests/s. See RUN_TIME above. */}
-              <ConcurrentUsersChart users={data} group={RUN_TIME} domainMs={domainMs} />
-              <UserStartRateChart users={data} group={RUN_TIME} domainMs={domainMs} />
+              <ConcurrentUsersChart users={data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+              <UserStartRateChart users={data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
             </>
           )}
         </Payload>
@@ -1219,8 +1223,8 @@ export function RunChartsTab() {
         <Payload query={series} slots={[REQUESTS_PER_SECOND, RESPONSES_PER_SECOND]}>
           {(data) => (
             <>
-              <RequestRateChart series={data} domainMs={domainMs} />
-              <ResponseRateChart series={data} domainMs={domainMs} />
+              <RequestRateChart series={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+              <ResponseRateChart series={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
             </>
           )}
         </Payload>
@@ -1234,7 +1238,7 @@ export function RunChartsTab() {
           produced them" mistake this tab already had once. */}
       <ChartGroup id="charts-response-time" heading="Response time">
         <Payload query={series} slots={[PERCENTILES]}>
-          {(data) => <PercentilesChart series={data} domainMs={domainMs} />}
+          {(data) => <PercentilesChart series={data} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />}
         </Payload>
         <Payload query={stats} slots={[INDICATORS]}>
           {(data) => <IndicatorsChart stats={data} />}

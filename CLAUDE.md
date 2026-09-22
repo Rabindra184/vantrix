@@ -115,6 +115,172 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The demarcate-the-warmup-window branch added no unit FILE and 4 cases to
+`apps/web/test/Chart.test.tsx`, from **155 / 1986 to 155 / 1990**, plus 2
+INTEGRATION cases in `apps/api/test/ingest.integration.test.ts` — so
+integration moves by 6 (the four `.tsx` cases never run there; the two `.ts`
+ones do) to **138 / 1805**. **e2e stays 149.** It is a FEATURE rather than a
+correction — AC-STAT-4's second half — and it is the first work in this file
+taken from an acceptance criterion the product half-implemented.
+
+**THE ENGINE KEPT THE RAMP SO THE CHARTS COULD SHOW IT, AND NOTHING SHOWED
+IT.** `LiveEngine.add` accumulates every time SERIES before its warm-up guard
+and withholds only the summary ROLLUPS, with a comment saying exactly that:
+"BEFORE the warm-up guard below, unlike the flat `errorsFor` calls after it:
+this is a series, and series include warm-up." `isWarmup`'s own docstring
+agrees. So on a project with `warmupMs > 0` the charts draw traffic the
+statistics table does not count — correct, deliberate, and until now
+unsayable: **`warmup` appeared nowhere in `apps/web/src` and on no wire
+contract**, so the browser could not have marked the boundary if it wanted
+to. Keeping warm-up in the series is only meaningful if a reader can tell
+which part of the line it is.
+
+**AND I FIRST REPORTED THE OPPOSITE DEFECT, WHICH IS THE LESSON.** Reading
+`grep -n isWarmup` gave three `return`s inside `add`, and I concluded warm-up
+was dropped from everything — contradicting both the docstring and the AC. It
+is not: every one of those returns sits AFTER that branch's series
+accumulation. **A guard's line number says nothing about what precedes it in
+its own branch**, and the file already explained itself in a comment I had
+not read. Recorded because the wrong version was one sentence from being
+reported as a defect.
+
+**ON THE AXIS, NOT ON `ChartProps`.** The band is a fact about elapsed time
+from the run's start and is meaningless on any other axis, so `warmupMs` is a
+field of `ChartXAxis` beside `min`/`max`. That means it travels in the object
+every call site already builds from `domainMs`, and a chart with no
+elapsed-time axis has nowhere to put it — so it cannot be handed to a
+distribution or a scatter by mistake.
+
+**GATED ON `tickUnit`, WHICH IS THE LOAD-BEARING GUARD.** A `markArea`
+positions itself with `{ xAxis: 0 }` / `{ xAxis: warmupMs }`, and on a
+CATEGORY axis those are category INDICES — 5000 would shade the first five
+thousand bins and look entirely deliberate. `tickUnit: 'ms-as-s'` is this
+codebase's one marker for "x is elapsed milliseconds" (`timeAxis.test.ts`
+already guards that it and the axis name move together), so it is the honest
+test for whether the band means anything.
+
+**THE FIRST DRAWN SERIES ONLY, AND `position` RATHER THAN `index`.** A
+`markArea` belongs to a series, so attaching it to each would stack N
+translucent bands and deepen the ramp as a reader selected more percentiles —
+making the shading a property of the LEGEND rather than of the run. And
+`index` is the position in the whole series list while `drawn` may start past
+it once a band is deselected, so keying on `index === 0` would drop the
+shading exactly when the first series is hidden. The palette assignment ten
+lines up already draws that distinction, for the same reason.
+
+**FROM THE RUN, NEVER FROM THE PROJECT.** `engineOptionsFrom` freezes these
+knobs at ingest and its docstring gives the reason — "a project changing its
+warm-up must not silently reinterpret its own history" — so the wire carries
+`run.engineOptions.warmupMs`, not the project's current setting. Redrawing an
+old run's ramp at today's width is the same class of mistake `ruleSnapshot`
+exists to prevent for SLA thresholds.
+
+**NARROWED, NEVER CAST.** `engineOptions` is raw JSON that `engine-options.ts`
+says in as many words is "read here unvalidated", so a column holding a
+string, a negative or a fraction reaches the mapping. `warmupMsOf` answers
+null for all of them, which degrades to exactly what a run predating the
+field gets — no band, every other number unchanged. A cast would have put a
+value `RunIdentitySchema` rejects on the wire and blanked the whole run page,
+because the browser drops a body that fails `safeParse`.
+
+**TELEMETRY IS DELIBERATELY EXCLUDED, AND SAYING SO IS THE POINT.**
+`TelemetryCharts` takes `domainMs` too, so it would have been one more line.
+The warm-up rule is about which REQUESTS count toward summary statistics;
+agent CPU and memory samples are not request statistics and no table excludes
+them, so a band there would assert a relationship that does not exist. It is
+also a different tab, so the two are never read side by side.
+
+**FOUR CASES, AND THE TWO GUARDS RED-VERIFY DISTINCTLY:**
+
+```
+  the tickUnit gate removed       the CATEGORY case ALONE
+  the first-series rule removed   the FIRST-DRAWN case ALONE
+```
+
+Plus a case that the band is absent when a run had no warm-up — the common
+case by a wide margin, and the one that decides whether every ordinary run
+draws a spurious band at the origin.
+
+**AND THE INTEGRATION CASES ARE THE SEAM NO UNIT CASE REACHES.**
+`Chart.test.tsx` hands itself a `warmupMs`, so it proves the band is drawn
+from one and says nothing about whether the API sends one — three layers sit
+between `engineOptions` and the axis. The seam case asserts the response
+against the run's OWN frozen value rather than a literal, so it cannot pass
+against a handler returning some other constant.
+
+**AND `tsc -b` REPORTED EXIT 0 WHILE BUILDING NOTHING.** The contract field
+was in `src` and absent from `dist`, so `apps/api` would not compile against
+it — and `pnpm --filter @perfportal/contracts build` answered exit 0 twice
+without regenerating, because of a stale `.tsbuildinfo`. This file already
+records that workspace packages resolve through `dist` and that switching
+branches does not rebuild it; the new half is that **a green build command is
+not evidence the output changed**. `find -name '*.tsbuildinfo' -delete` plus
+`tsc -b --force`, and grep the `.d.ts` for the field rather than trusting the
+exit code.
+
+**AND THE SEAM CASE CAUGHT A ONE-CALLER-SHORT DEFECT IN THIS VERY BRANCH,
+WHICH IS THE BEST THING IN IT.** `GET /v1/runs/:id` has TWO response
+builders: `runs.service`'s identity for a terminal run, and a separate 202
+`RunProcessing` projection in `runs.controller` with its own hand-written
+field list. The mapping went into the first and not the second, so CI
+reported:
+
+```
+  × reports the run's frozen warm-up window to a reader   expected undefined to be 5000
+  × reports null when the project configured no warm-up   expected undefined to be null
+```
+
+**AND THE 202 IS THE CASE THAT MATTERS MOST.** `RunShell` mounts for every
+status, so a RUNNING run is exactly when a reader is watching the charts
+stream — the band would have been absent while the run was live and appeared
+the moment it finished. One run, one fact, two answers split by whether it
+was still going, which is the shape the live SLA banner already cost this
+project once. A feature about explaining a discrepancy would have shipped
+creating one.
+
+**THE FIX IS ONE DEFINITION, NOT A SECOND COPY.** `warmupMsOf` is exported
+and both builders call it; duplicating the narrowing is how two projections
+of one row come to disagree about it.
+
+**AND IT WAS ONLY REACHABLE BECAUSE OF AN OPTIMISATION.** The case posts with
+`waitMs: 0` — added purely so the file would not pay 25 seconds per post —
+which leaves the run PENDING, which is what routes the read down the 202
+path. Had it waited for a terminal run it would have taken the other builder
+and passed against the defect. **A speed change moved which branch the test
+exercises**, and nothing about it announced that; worth a thought whenever
+`waitMs` is added to a case that then reads the run back.
+
+**AND CI FAILED THIS BRANCH ON `typecheck`, BECAUSE THE LOCAL CHECK I RAN WAS
+NARROWER THAN THE GATE.** `npx tsc --noEmit -p apps/web/tsconfig.json` was
+green; `pnpm typecheck` was not, with **19 errors across 8 test files**. That
+project covers `apps/web/src`; the gate builds the TEST projects too
+(`apps/web/test/tsconfig.json` is its own), and every hand-built
+`RunWindowContext` fixture in them stopped compiling the moment the context
+gained a required field.
+
+**A PER-PROJECT `tsc -p` IS NOT `pnpm typecheck`, AND THE DIFFERENCE IS
+EXACTLY THE TESTS.** This file already records that "the gate's FIRST command
+is the only thing that sees a test built wrong" — five times, for props
+constructed by hand. This is the same fact from the other side: running a
+NARROWER typecheck reproduces the blindness the rule exists to remove. Run
+the gate's own command, never a subset of it, however much faster the subset
+is.
+
+**AND THE FIELD STAYED REQUIRED, WHICH IS WHY THE CHURN WAS WORTH IT.**
+Making `RunWindowContext.warmupMs` optional would have fixed all 19 errors by
+deleting the question. This file's rule is the opposite — "a parameter whose
+wrong value is silent must not have a default" — and it applies exactly here:
+there is ONE production producer, and an optional field lets a future shell
+forget it and draw no band for ever, silently. 23 fixtures now state their
+answer, which is what makes the requirement real.
+
+**AND THE DISPLAY-FILTER TRAP BIT AGAIN, FOR THE FOURTH TIME IN THIS FILE.**
+An anchor was built from output piped through `sed 's/^/  /'`, which adds two
+spaces to every line, so the replacement matched nothing. Caught by the count
+assertion rather than by care — and the fix is the one already written down:
+read the target with `repr()` and build the anchor from that, never from
+anything that has been through a display filter.
+
 The brushed-throughput-divides-by-data branch added no unit FILE, no unit case
 and no spec — unit stays **155 / 1986** and **e2e stays 149** — and 1 case to
 `apps/api/test/window.integration.test.ts`, from **138 / 1798 to 138 / 1799**.

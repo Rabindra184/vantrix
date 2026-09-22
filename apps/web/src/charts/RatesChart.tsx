@@ -26,12 +26,17 @@ import type { ChartData, TimeDomainMs } from './types';
  * render, including on every React Query background refetch.
  */
 
-function RateChart({ id, title, yName, data, domainMs, compact }: {
+function RateChart({ id, title, yName, data, domainMs, warmupMs, compact }: {
   readonly id: string;
   readonly title: string;
   readonly yName: string;
   readonly data: ChartData;
   readonly domainMs?: TimeDomainMs;
+  /**
+   * The run's warm-up window, shaded on the elapsed-time axis (AC-STAT-4).
+   * Travels with `domainMs` because it is a fact about the same axis.
+   */
+  readonly warmupMs?: number;
   readonly compact?: boolean;
 }) {
   return (
@@ -61,6 +66,7 @@ function RateChart({ id, title, yName, data, domainMs, compact }: {
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
+        warmupMs,
       }}
       unit="/s"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
@@ -89,16 +95,22 @@ export function RequestRateChart({
   series,
   title = 'Requests per second over time',
   domainMs,
+  warmupMs,
   compact,
 }: {
   readonly series: SeriesResponse;
   readonly title?: string;
   readonly domainMs?: TimeDomainMs;
+  /**
+   * The run's warm-up window, shaded on the elapsed-time axis (AC-STAT-4).
+   * Travels with `domainMs` because it is a fact about the same axis.
+   */
+  readonly warmupMs?: number;
   /** §22.6's sparkline — see `ChartProps.compact`. */
   readonly compact?: boolean;
 }) {
   const data = useMemo(() => toRequestRate(series, { x: 'ms' }), [series]);
-  return <RateChart id="requests-per-second" title={title} yName="Requests/s" data={data} domainMs={domainMs} compact={compact} />;
+  return <RateChart id="requests-per-second" title={title} yName="Requests/s" data={data} domainMs={domainMs} warmupMs={warmupMs} compact={compact} />;
 }
 
 /** ⑪ — responses per second over time, bucketed by END time (G-24). */
@@ -106,14 +118,20 @@ export function ResponseRateChart({
   series,
   title = 'Responses per second over time',
   domainMs,
+  warmupMs,
   compact,
 }: {
   readonly series: SeriesResponse;
   readonly title?: string;
   readonly domainMs?: TimeDomainMs;
+  /**
+   * The run's warm-up window, shaded on the elapsed-time axis (AC-STAT-4).
+   * Travels with `domainMs` because it is a fact about the same axis.
+   */
+  readonly warmupMs?: number;
   /** §22.6's sparkline — see `ChartProps.compact`. */
   readonly compact?: boolean;
 }) {
   const data = useMemo(() => toResponseRate(series, { x: 'ms' }), [series]);
-  return <RateChart id="responses-per-second" title={title} yName="Responses/s" data={data} domainMs={domainMs} compact={compact} />;
+  return <RateChart id="responses-per-second" title={title} yName="Responses/s" data={data} domainMs={domainMs} warmupMs={warmupMs} compact={compact} />;
 }

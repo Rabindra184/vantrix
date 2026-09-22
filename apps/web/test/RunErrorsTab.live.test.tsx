@@ -86,7 +86,7 @@ function renderErrors({
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, live } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live } satisfies RunWindowContext
                 }
               />
             }
@@ -155,7 +155,7 @@ describe('RunErrorsTab — live', () => {
               element={
                 <Outlet
                   context={
-                    { window: null, durationMs: null, liveDurationMs: null, live } satisfies RunWindowContext
+                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live } satisfies RunWindowContext
                   }
                 />
               }

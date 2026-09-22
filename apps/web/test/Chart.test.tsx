@@ -710,3 +710,50 @@ describe('Chart — a navigator reserves no room for the legend it does not draw
     expect((lastOption()['yAxis'] as { splitNumber?: number }).splitNumber).toBeUndefined();
   });
 });
+
+
+/**
+ * AC-STAT-4's demarcation.
+ *
+ * `LiveEngine.add` keeps warm-up events in every time SERIES and withholds
+ * them from the summary ROLLUPS — deliberately, and its own comment says so
+ * ("this is a series, and series include warm-up"). So the charts draw
+ * traffic the statistics table does not count, which is correct and was
+ * unsayable: nothing marked where the ramp ended.
+ */
+describe('Chart — the warm-up band', () => {
+  const twoSeries: ChartData = seriesData(['p50', 'p95']);
+  const msAxis = { type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' } as const;
+  const areaOf = (n: number) =>
+    (lastOption()['series'] as { markArea?: { data?: unknown[] } }[])[n]?.markArea;
+
+  it('shades from zero to the warm-up boundary on an elapsed-time axis', () => {
+    render(<Chart id="p" title="Response time" data={twoSeries} xAxis={{ ...msAxis, warmupMs: 5000 }} />);
+    expect(areaOf(0)?.data).toEqual([[{ xAxis: 0 }, { xAxis: 5000 }]]);
+  });
+
+  it('shades on the FIRST DRAWN series only, so the band cannot darken with the legend', () => {
+    // A markArea belongs to a series. On all of them the translucent bands
+    // stack, so the ramp would deepen as a reader selected more percentiles —
+    // making the shading a property of the legend rather than of the run.
+    render(<Chart id="p" title="Response time" data={twoSeries} xAxis={{ ...msAxis, warmupMs: 5000 }} />);
+    expect(areaOf(0)).toBeDefined();
+    expect(areaOf(1)).toBeUndefined();
+  });
+
+  it('draws nothing on a CATEGORY axis, whatever it is handed', () => {
+    // The load-bearing guard. `{ xAxis: 5000 }` on a category axis is the
+    // 5000th CATEGORY, not 5000ms — so an unguarded band would shade a
+    // distribution chart's first bins and look entirely deliberate.
+    render(
+      <Chart id="d" title="Distribution" data={twoSeries}
+        xAxis={{ type: 'category', name: 'Bucket', warmupMs: 5000 } as never} />,
+    );
+    expect(areaOf(0)).toBeUndefined();
+  });
+
+  it('draws nothing when the run had no warm-up, which is the common case', () => {
+    render(<Chart id="p" title="Response time" data={twoSeries} xAxis={msAxis} />);
+    expect(areaOf(0)).toBeUndefined();
+  });
+});

@@ -58,6 +58,12 @@ export class RunsService {
       environment: run.environment,
       branch: run.branch,
       commitSha: run.commitSha,
+      // AC-STAT-4. From the run's OWN frozen engine options, never from the
+      // project's current settings: `engineOptionsFrom` freezes these at
+      // ingest precisely so "a project changing its warm-up must not silently
+      // reinterpret its own history", and redrawing an old run's ramp at
+      // today's width would do exactly that.
+      warmupMs: warmupMsOf(run.engineOptions),
       // Joined on the RunRecord already (`include: { test: true }`), so this
       // costs no query of its own — the same free ride `project` takes.
       test: run.test,
@@ -118,4 +124,26 @@ export class RunsService {
   runs(): RunRepository {
     return new RunRepository(this.prisma);
   }
+}
+
+/**
+ * `warmupMs` out of a run's frozen engine options, or null.
+ *
+ * NARROWED, NEVER CAST. `run.engineOptions` is the RAW project-settings JSON
+ * — `engine-options.ts` says in as many words that these knobs "live in the
+ * same JSON column but outside that schema's modeled shape, so they are read
+ * here unvalidated". A column holding a string, a negative or a fraction
+ * therefore reaches this function, and a cast would put it on the wire where
+ * `RunIdentitySchema` rejects it — blanking the whole run page, because the
+ * browser drops a body that fails safeParse.
+ *
+ * Answering null instead degrades to exactly what a run predating this field
+ * gets: no ramp drawn, every other number unchanged. ONE fallback, several
+ * causes, all honest — the shape `wireRule` already uses one package over.
+ */
+export function warmupMsOf(engineOptions: unknown): number | null {
+  if (typeof engineOptions !== 'object' || engineOptions === null) return null;
+  const raw = (engineOptions as Record<string, unknown>)['warmupMs'];
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) return null;
+  return raw;
 }

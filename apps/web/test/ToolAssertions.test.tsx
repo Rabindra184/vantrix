@@ -175,7 +175,7 @@ function renderOverview(
                   {
                     window,
                     durationMs: 63161,
-                    liveDurationMs: null,
+                    liveDurationMs: null, warmupMs: null,
                     live: null,
                   } satisfies RunWindowContext
                 }
