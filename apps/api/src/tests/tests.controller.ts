@@ -71,7 +71,7 @@ export class TestsController {
   @Scopes('read')
   async list(@Param('slug') slug: string, @Req() req: Request): Promise<TestListResponse> {
     const tenant = req.tenant!;
-    const project = await this.resolveProject(tenant.orgId, slug);
+    const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
     const rows = await this.tests.listForProject({ orgId: tenant.orgId, projectId: project.id });
     return TestListResponseSchema.parse({ tests: rows.map(toSummary) });
   }
@@ -84,7 +84,7 @@ export class TestsController {
     @Req() req: Request,
   ): Promise<TestSummary> {
     const tenant = req.tenant!;
-    const project = await this.resolveProject(tenant.orgId, slug);
+    const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
     const row = await this.tests.findBySlug({ orgId: tenant.orgId, projectId: project.id }, testSlug);
     if (row === null) throw this.noSuchTest(testSlug);
     return toSummary(row);
@@ -105,7 +105,7 @@ export class TestsController {
     @Body() body: unknown,
   ): Promise<TestSummary> {
     const tenant = req.tenant!;
-    const project = await this.resolveProject(tenant.orgId, slug);
+    const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
 
     const parsed = UpdateTestRequestSchema.safeParse(body);
     if (!parsed.success) {
@@ -146,7 +146,7 @@ export class TestsController {
     @Req() req: Request,
   ): Promise<TestSummary> {
     const tenant = req.tenant!;
-    const project = await this.resolveProject(tenant.orgId, slug);
+    const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
 
     const row = await this.tests.remove({ orgId: tenant.orgId, projectId: project.id }, testSlug);
     if (row === null) throw this.noSuchTest(testSlug);
@@ -154,13 +154,59 @@ export class TestsController {
   }
 
   /**
+   * TWO refusals, not one, and this used to implement only the first.
+   *
+   * ═══ THE ORG RULE ═══
+   *
    * 404, NEVER 403, for a project outside the caller's org — the rule every
    * project-scoped controller here follows. A tenant learns nothing about what
    * exists elsewhere, including whether it exists.
+   *
+   * ═══ AND THE CREDENTIAL'S OWN PROJECT, WHICH IS AC-SEC-3 ═══
+   *
+   * A bearer token is minted against exactly ONE project (`Tenant.projectId`,
+   * absent for a session, which is org-scoped on purpose). Resolving by org
+   * and slug alone therefore honoured the org boundary and ignored the
+   * token's own, so a CI token for project A could read project B's test
+   * catalogue — measured against a real API before this changed:
+   *
+   *     GET /v1/projects/B/tests              200, slug + name +
+   *                                           simulationClass + latestRun
+   *     GET /v1/projects/B/tests/secret-test  200
+   *
+   * `RunnerController.resolveProject` has always checked both, and
+   * `RunsController` reaches the same end differently — it resolves the
+   * project from the TOKEN and ignores the slug, so it cannot name another
+   * one. `RulesController` and `TokensController` are `SessionOnlyGuard` at
+   * CLASS level, so no bearer reaches them at all. This controller is the only
+   * bearer-reachable slug-scoped route that resolved by org and slug alone,
+   * and only its two GETs are bearer-reachable — the PATCH and DELETE below
+   * are session-only, so what leaked was a READ.
+   *
+   * ═══ 404 RATHER THAN AC-SEC-3's 403, DELIBERATELY ═══
+   *
+   * The criterion says "rejected with `403`". A 403 confirms that project B
+   * exists, which is precisely what the org rule above refuses to do, and
+   * `RunnerController` already answers 404 for the identical mistake. One
+   * answer for "not yours" beats matching a literal that contradicts the rule
+   * stated four lines above it. AC-SEC-3's second clause — "and the attempt
+   * is audit-logged" — has no machinery here at all (there is no audit table;
+   * AC-SEC-4 is unbuilt), and is a feature rather than part of this fix.
+   *
+   * `credentialProjectId` is REQUIRED and has no default: a default of
+   * `undefined` reads as "no check", so a fifth handler added later would be
+   * unguarded and nothing would say so. Required, `tsc` names every call site
+   * — which is how all four of this file's were found.
    */
-  private async resolveProject(orgId: string, slug: string): Promise<{ id: string }> {
+  private async resolveProject(
+    orgId: string,
+    credentialProjectId: string | undefined,
+    slug: string,
+  ): Promise<{ id: string }> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (project === null) throw new NotFoundException(`No project "${slug}" in this organisation.`);
+    if (project === null || (credentialProjectId !== undefined && credentialProjectId !== project.id)) {
+      throw new NotFoundException(`No project "${slug}" in this organisation.`);
+    }
     return project;
   }
 
