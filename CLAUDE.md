@@ -146,6 +146,150 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The cardinality-samples-show-the-culprits branch added no unit FILE and 1 case
+to `packages/statistics/test/scopes.test.ts`, from **156 / 1996 to
+156 / 1997**. Integration moves with it (that file is a `.ts` integration runs
+too) at **139 / 1807**, and **e2e stays 149**. **AC-ING-6**, and it is a defect
+in EVIDENCE rather than in a verdict: the run is correctly rejected either way.
+
+**THE MESSAGE BLAMED DYNAMIC NAMES AND THEN EXHIBITED FIVE NAMES WITH NONE IN
+THEM.** Measured through the real engine on the shape the remediation
+describes — five stable endpoints, then forty `/order/{id}`, cap 10:
+
+```
+  remediation  "Request names appear to contain dynamic values such as IDs.
+                Parameterize them in the simulation, or raise the limit…"
+  samples      /login  /home  /search  /cart  /checkout
+```
+
+The forty names that actually breached the cap were never shown. **A reader
+cannot act on samples that omit the cause**, and worse, the evidence reads as a
+counter-example to the advice printed directly above it.
+
+**`slice(0, 5)` TAKES THE OLDEST, AND THE OLDEST ARE THE STABLE ONES.**
+`#endpoints` is a `Set`, so it is insertion-ordered, and a run opens with its
+stable endpoints — login, home, search — before any dynamic family has had
+time to explode. The fix is `slice(-5)`.
+
+**AND THE TAIL IS THE RIGHT SLICE RATHER THAN MERELY A BETTER ONE.** The throw
+fires on the statement AFTER the breaching name is added, so the final element
+IS the culprit and the four before it are the family it belongs to. The case
+asserts that exact name (`/order/1005` — five stable plus six dynamic is the
+eleventh distinct path against a cap of ten), which pins the reasoning rather
+than the outcome.
+
+**AC-ING-6's THREE CLAUSES WERE ALL PRESENT, WHICH IS WHY IT READ AS DONE.**
+"Fails with `ENDPOINT_CARDINALITY_EXCEEDED`" ✓, "naming dynamic request names
+as the likely cause" ✓, "listing samples" ✓. Every box ticked and the samples
+were the wrong five. **A criterion satisfied clause by clause can still be
+unsatisfied as a sentence** — which is the shape worth carrying forward from
+this one, because the check that finds it is reading the criterion as a whole
+and then producing the artifact it describes.
+
+**THE EXISTING CASE CANNOT SEE IT, AND ITS FIXTURE IS WHY.** "rejects a run
+that exceeds the endpoint cardinality cap" builds `ep-0`…`ep-11` — uniformly
+synthetic, so the first five and the last five are equally "dynamic" and
+either ordering passes. It also asserts `remediation.length > 0` and never
+looks at `samples` at all. **A FIXTURE THAT CANNOT DISTINGUISH TWO ANSWERS IS
+WHERE THE WRONG ONE SURVIVES**, which this file already records for the
+errors-tally invariant and for a geometry bound measured against a
+24-character simulation name. The new case is deliberately MIXED so the two
+orderings disagree; the old one is left alone, because its own claim — that
+the run is rejected — is true and covered.
+
+**TWO MUTATIONS, ONE CASE, AND THE SECOND IS WHAT EARNS THE PAIR:**
+
+```
+  slice(0, 5) restored        the new case ALONE
+  the WHOLE set returned      the new case ALONE
+```
+
+Returning every name satisfies "the samples contain a dynamic one" perfectly
+while still carrying the stable ones, so a one-sided assertion would wave it
+through. The case asserts BOTH that every sample is from the breaching family
+and that none is a stable name, and prints the sample list in the failure so
+the reason is legible without opening the file.
+
+**AND THE BLAST RADIUS IS SMALLER THAN IT LOOKS, WHICH IS STATED RATHER THAN
+GLOSSED.** `detail.samples` has exactly ONE writer and no reader: nothing in
+`apps/web` destructures it, and `ApiError` carries the problem's `detail`
+STRING rather than this object. So the samples reach an API consumer reading
+the raw problem document — a CI job, or somebody with curl — and never the
+browser. Recorded because a reader meeting this entry should not go looking
+for a UI surface that does not exist.
+
+**WHAT ELSE THE AC SWEEP CHECKED AND CLEARED.** `AC-SEC-5` (a revoked token
+fails with no cache grace beyond 60s): there is no caching anywhere on the
+auth path, so revocation is immediate — `authenticateRequest` reads the row
+every time, and the revoked check runs BEFORE the Argon2 verification.
+`AC-STAT-6` (decline a cross-tool overlay) is UNREACHABLE rather than broken:
+`TOOL_IDS` has one member and ingest refuses anything else with
+`TOOL_UNKNOWN`, so two runs cannot differ by tool. Recorded as latent, the
+same way `histogram_kind` is.
+
+**WHAT WAS RUN, AND WHICH RUN IS THE ONE TO BELIEVE.** `typecheck` and `lint`
+green by their own exit codes; `test:unit` **156 / 1997**, the recorded floor
+plus exactly this branch's one case. Integration was still running when this
+was pushed, so the entry claimed 139 / 1807 as ARITHMETIC and named CI as the
+arbiter — and CI then MEASURED exactly that on clean containers:
+
+```
+  pnpm test:unit         Test Files 156 passed (156)   Tests 1997 passed (1997)
+  pnpm test:integration  Test Files 139 passed (139)   Tests 1807 passed (1807)
+  pnpm test:e2e          Running 149 tests using 2 workers
+```
+
+**AND THE LOCAL INTEGRATION RUN OF THE SAME COMMIT FAILED 35 TESTS ACROSS 11
+FILES, WHICH IS NOT EVIDENCE ABOUT THE CODE.** It collected the same 1807, so
+nothing was skipped; what it reported is the pressure signature this file
+already documents, with every tell present at once:
+
+```
+  free pages      3,649      worse than the 4,390 this file calls untrustworthy
+  swap            14,276 of 15,360 MB — 93%
+  worst durations 80,726ms and 80,441ms on sub-second tests
+  the diff        one `slice`, its test, and this document
+  failures        token CRUD, a live-chunk Content-Type, project filtering
+```
+
+A one-line change to a cardinality THROW cannot reach token CRUD, and the
+80-second durations are the shape recorded for a machine waiting on swap.
+
+**AND THE PROXIMATE CAUSE TURNED OUT TO BE SHARPER THAN "PRESSURE": THE
+DOCKER DAEMON DIED.** Minutes later `docker ps` answered `failed to connect to
+the docker API at unix://…/docker.sock`, with no `Docker Desktop`,
+`com.docker.backend` or `dockerd` process alive and
+`~/.docker/run/` EMPTY. So Postgres, Redis and MinIO went away underneath a
+running suite, which is exactly what produces an 80-second timeout on a
+sub-second test and then a cascade of 3-to-9ms failures behind it as every
+later file fails to connect. The 93% swap above is the plausible reason the
+daemon was killed rather than a separate explanation.
+
+**THE TELL THAT SEPARATES IT FROM ORDINARY CONTENTION IS THE BIMODAL
+DURATIONS.** Contention makes everything slower; a backing service
+DISAPPEARING makes the tests holding a connection hang to their timeout and
+every test after them fail instantly. Two 80-second failures beside a row of
+single-digit-millisecond ones is that signature, and this file has recorded
+the everything-is-broken shape three times (a full disk, exhausted inodes,
+thrashing) without naming this fourth cause. **`docker ps` belongs in the same
+reflex as `vm_stat` and `uptime` before believing OR disbelieving an
+integration result** — it is one command, and it distinguishes "this machine
+is slow" from "the stack is gone".
+**CI IS THE CONTROLLED COMPARISON**: it holds the commit fixed and varies the
+machine, which is strictly better than backing the change out locally — the
+manoeuvre this file prescribes — because it changes exactly one variable and
+the one this run makes suspect. Both local suites ran against a SCRATCH
+DATABASE (`perfportal_card`) and a scratch Redis INDEX (db 14).
+
+**AND THE FLOOR MOVES AGAIN ON MERGE, WHICH IS RECORDED RATHER THAN
+OVERWRITTEN.** 139 / 1807 is what CI measured on the tree this branch was cut
+from (main at 3ae5052). token-scope-stops-at-its-project then merged
+underneath it and added four integration cases, so on the merged tree this
+branch is **139 / 1811**. Both numbers are kept because they describe
+different trees, and the unit floor is untouched at 156 / 1997 — that branch
+added no unit case. Third reconciliation in this run of branches; it is the
+standing tax on having two open at once.
+
 The token-scope-stops-at-its-project branch added no unit FILE and no unit
 case — unit stays **156 / 1996** (both files it touches are
 `.integration.test.ts`, which the unit config excludes; the figure was
