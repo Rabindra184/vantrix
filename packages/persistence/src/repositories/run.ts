@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { clampPercentile } from '@perfportal/statistics';
 import type { PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import type { ProjectScope, TenantScope } from './tenant.js';
@@ -214,6 +215,8 @@ interface RunSqlRow extends Omit<RunRow, 'project' | 'test'> {
   statErrorRate: number | null;
   statThroughputRps: number | null;
   statPercentiles: Record<string, number> | null;
+  statMinMs: number | null;
+  statMaxMs: number | null;
 }
 
 /**
@@ -280,6 +283,7 @@ function metricsFrom(row: RunSqlRow): RunListMetrics | null {
   // a state to represent — the same argument the test triple below makes.
   if (row.statCount === null) return null;
   const p95 = row.statPercentiles?.['p95'];
+  const usable = typeof p95 === 'number' && Number.isFinite(p95);
   return {
     count: row.statCount,
     errorRate: row.statErrorRate ?? 0,
@@ -287,17 +291,45 @@ function metricsFrom(row: RunSqlRow): RunListMetrics | null {
     // NOT a neighbouring percentile. The set is a project setting, so a
     // project that does not configure p95 genuinely has no answer here, and
     // p99 is a different question.
-    p95Ms: typeof p95 === 'number' && Number.isFinite(p95) ? p95 : null,
+    //
+    // ═══ CLAMPED, LIKE EVERY OTHER SURFACE THAT SHOWS A PERCENTILE ═══
+    //
+    // A percentile cannot lie outside the sample it came from, and `minMs`/
+    // `maxMs` are exact while the sketch carries 1% relative error — so the
+    // stored estimate sometimes does. `clampPercentile` projects it back, and
+    // the clamp branch installed it at every assembler: the rollup, the
+    // bucket split, the evaluator's fallback and `/stats`. This row was the
+    // one reader left holding the raw value, because it deliberately reads
+    // the FROZEN column rather than re-quantiling a sketch per row.
+    //
+    // That trade is right and is untouched here: the clamp needs no sketch.
+    // It is `Math.min(Math.max(v, min), max)` against two columns already on
+    // the row, so the list agrees with the run page for nothing.
+    //
+    // Measured on the nine real runs in the developer database: 9 stored
+    // values sit above their own maximum, 3 of them at RUN scope, worst
+    // +12.46 ms. All three happen to be p99 and this row surfaces p95, so
+    // the disagreement was not yet visible — which is the argument for
+    // closing it now rather than after a reader reports two p95s for one
+    // run. History is not rewritten (the clamp branch says so deliberately),
+    // so raw values keep arriving here for as long as those rows exist.
+    p95Ms:
+      usable && row.statMinMs !== null && row.statMaxMs !== null
+        ? clampPercentile(p95, { minMs: row.statMinMs, maxMs: row.statMaxMs })
+        : usable
+          ? p95
+          : null,
   };
 }
 
 function fromSqlRow(row: RunSqlRow): RunRecord {
   const {
     projectSlug, projectName, testId, testSlug, testName,
-    statCount, statErrorRate, statThroughputRps, statPercentiles,
+    statCount, statErrorRate, statThroughputRps, statPercentiles, statMinMs, statMaxMs,
     ...rest
   } = row;
   void statCount; void statErrorRate; void statThroughputRps; void statPercentiles;
+  void statMinMs; void statMaxMs;
   return toRecord({
     ...rest,
     project: { id: row.projectId, slug: projectSlug, name: projectName },
@@ -910,7 +942,12 @@ export class RunRepository {
         -- and one of those ends the string; CLAUDE.md records the same cut on
         -- TRENDS_SQL.)
         s.count AS "statCount", s.error_rate AS "statErrorRate",
-        s.throughput_rps AS "statThroughputRps", s.percentiles AS "statPercentiles"
+        s.throughput_rps AS "statThroughputRps", s.percentiles AS "statPercentiles",
+        -- The exact extremes, so the percentile above can be projected back
+        -- onto the range reported beside it. Two more columns off a row the
+        -- query already joins; no sketch is deserialized, so the scan-target
+        -- argument above is untouched.
+        s.min_ms AS "statMinMs", s.max_ms AS "statMaxMs"
       FROM run r
       JOIN project p ON p.id = r.project_id
       -- LEFT, for the same reason the test join is: a run still parsing, or
