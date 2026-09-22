@@ -254,6 +254,27 @@ already documents, with every tell present at once:
 
 A one-line change to a cardinality THROW cannot reach token CRUD, and the
 80-second durations are the shape recorded for a machine waiting on swap.
+
+**AND THE PROXIMATE CAUSE TURNED OUT TO BE SHARPER THAN "PRESSURE": THE
+DOCKER DAEMON DIED.** Minutes later `docker ps` answered `failed to connect to
+the docker API at unix://…/docker.sock`, with no `Docker Desktop`,
+`com.docker.backend` or `dockerd` process alive and
+`~/.docker/run/` EMPTY. So Postgres, Redis and MinIO went away underneath a
+running suite, which is exactly what produces an 80-second timeout on a
+sub-second test and then a cascade of 3-to-9ms failures behind it as every
+later file fails to connect. The 93% swap above is the plausible reason the
+daemon was killed rather than a separate explanation.
+
+**THE TELL THAT SEPARATES IT FROM ORDINARY CONTENTION IS THE BIMODAL
+DURATIONS.** Contention makes everything slower; a backing service
+DISAPPEARING makes the tests holding a connection hang to their timeout and
+every test after them fail instantly. Two 80-second failures beside a row of
+single-digit-millisecond ones is that signature, and this file has recorded
+the everything-is-broken shape three times (a full disk, exhausted inodes,
+thrashing) without naming this fourth cause. **`docker ps` belongs in the same
+reflex as `vm_stat` and `uptime` before believing OR disbelieving an
+integration result** — it is one command, and it distinguishes "this machine
+is slow" from "the stack is gone".
 **CI IS THE CONTROLLED COMPARISON**: it holds the commit fixed and varies the
 machine, which is strictly better than backing the change out locally — the
 manoeuvre this file prescribes — because it changes exactly one variable and
