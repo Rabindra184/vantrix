@@ -118,14 +118,18 @@ see the eighth lesson below.
 The share-the-sorted-filtered-table branch added no unit FILE and 4 cases to
 `apps/web/test/StatisticsTable.test.tsx`, from **156 / 1992 to 156 / 1996**.
 Integration is UNCHANGED BY THIS BRANCH (that file is a `.tsx`, which that
-config never runs), standing where guard-against-averaged-percentiles left it
-at **139 / 1809** — 138 / 1807 plus that branch's one `.ts` file and its two
-cases, which is ARITHMETIC rather than a local measurement and is what CI's
-`build` job prints. **e2e stays 149.** RE-MEASURED after merging `main`:
+config never runs), standing at **139 / 1810** — where
+guard-against-averaged-percentiles left it (139 / 1809) plus
+enumerate-every-run-route's one case, both of which merged under this branch
+while it was open. **e2e stays 149.** That figure is ARITHMETIC rather than a
+local measurement, and CI's `build` job is what prints it. RE-MEASURED after merging `main`:
 it was cut at 155 / 1990 and guard-against-averaged-percentiles landed
 underneath it, so the floors it first measured described a tree that no longer
-exists — the same reconciliation `enumerate-every-run-route` needed against
-the very same merge, an hour earlier.
+exists — and then `enumerate-every-run-route` landed under it too, so the
+integration figure moved a second time before this ever merged. That branch
+needed the identical reconciliation against the identical merge an hour
+earlier, which is the third time this file records it: **a floor is a property
+of a TREE, and an open branch's tree changes under it.**
 Taken from the PRD rather than from a review: **AC-DASH-4**, which names three
 things and the product did two.
 
@@ -265,6 +269,78 @@ Both suites ran against a SCRATCH DATABASE (`perfportal_share`) and a scratch
 Redis INDEX (db 9), on **port 3100** — the developer database holds nine real
 Gatling runs and `pnpm test:e2e` seeds through the real API without
 truncating. Confirmed 9 afterwards.
+
+The enumerate-every-run-route branch added no unit FILE and 1 case to
+`apps/api/test/session-auth.integration.test.ts`, plus 3 URLs to an existing
+case's list. Cut from **155 / 1990**, it measured integration 138 / 1808 on
+its own; guard-against-averaged-percentiles merged FIRST and took `main` to
+156 / 1992 unit and 139 / 1809 integration, so on the merged tree this branch
+is unit **156 / 1992** (UNCHANGED — that file is an `.integration.test.ts`,
+which the unit config excludes), integration **139 / 1810**, and **e2e stays
+149**. RECONCILED, not inferred from the branch it was cut from: the
+arithmetic that survives is 1 integration case onto whatever it sits on, and
+the two floors it first recorded described a tree that no longer exists.
+**A FLOOR IS A PROPERTY OF A TREE, NOT OF A BRANCH** — third time this file
+records two branches cut from one `main` and only one of them able to stay
+true. No product code: the whole diff is one
+test file. **AC-SEC-1**, whose promise is specifically that the test is
+exhaustive.
+
+**THE TEST THAT PROVES CROSS-ORG ISOLATION COVERED 7 OF 10 ROUTES.** AC-SEC-1
+says "an automated test enumerates every route". `session-auth.integration.test.ts`
+has a `describe` literally titled "cross-org isolation on every
+session-reachable endpoint", and its list is a hand-written array:
+
+```
+  in the list   :id  stats  series  errors  distribution  users  scatter
+  registered    those 7, plus  trends · errors/series · telemetry
+```
+
+**TENANCY WAS NEVER BROKEN — CHECKED BEFORE ANYTHING WAS WRITTEN.** All three
+resolve through `MetricsController.#run`, which scopes by
+`{orgId, projectId}` and throws 404. Adding them to the loop, all 18 cases
+pass first time: each already 404s across orgs and 200s within. **What was
+missing is the PROOF**, on the one invariant this product promises an
+exhaustive automated one for. Worth separating loudly — a missing test and a
+missing filter read identically in a summary and are not remotely the same
+finding.
+
+**AND THE LIST'S OWN COMMENT ASKED THE NEXT PERSON TO REMEMBER.** It reads:
+"Do not collapse this list to one endpoint: the list is the point, and a
+future endpoint added here without a tenancy filter is exactly what the
+negative loop below is meant to catch." Correct about WHY the list exists and
+wrong about what keeps it complete — "added here" assumes whoever registers a
+route also edits this file. Three endpoints say otherwise. **A comment asking
+for diligence is not a check**, which this file already records for
+`allColumns` ("A NAME IS NOT A CHECK") and for `SCHEMA_TABLES` ("DERIVED …
+NEVER HAND-MAINTAINED. This was a literal list, and it had already drifted").
+
+**SO THE GUARD ASKS THE CONTROLLERS.** It scans every `*.controller.ts`,
+keeps those whose `@Controller` prefix is `/v1/runs/:id`, collects their
+`@Get` paths, and fails when one has no case in the list — naming it. That is
+`infra/test/fk-free-tables.sql`'s shape exactly: compute the set from the
+system rather than restate it, and fail the day a seventh appears.
+
+**COMMENTS STRIPPED BEFORE SCANNING, AND THIS ONE WOULD HAVE MATCHED
+ITSELF.** This file records three occasions where a source-scanning assertion
+matched the prose explaining the rule rather than the code obeying it. The
+new guard's own docstring names `trends`, `errors/series` and `telemetry`,
+and the block above quotes `@Controller`; without the strip it would have
+been reading its own explanation.
+
+**TWO VACUITY GUARDS, BECAUSE A COLLECTOR THAT FINDS NOTHING PASSES
+PERFECTLY.** The scan asserts it collected more than five controllers AND
+found more than five run-scoped GETs before comparing anything. The
+tokens-test entry records exactly this failure from the other side: a guard
+"is only as wide as its file collector", and one that silently matched no
+files reported green.
+
+**RED-VERIFIED BY REPRODUCING THE REAL DRIFT.** Removing `telemetry` from the
+list — which IS the state `main` was in until this branch — fails with
+`run-scoped GETs with no cross-org case above — add them to 'endpoints':
+expected [ 'telemetry' ] to deeply equal []`. The message names the endpoint
+and the fix, which is the whole difference between a guard and an alarm.
+
 
 The guard-against-averaged-percentiles branch added ONE unit file —
 `packages/statistics/test/no-averaged-percentiles.test.ts` (2) — from

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -259,7 +259,82 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     `/v1/runs/${id}/distribution?scope=run&name=&family=response_time`,
     `/v1/runs/${id}/users`,
     `/v1/runs/${id}/scatter?name=${encodeURIComponent(scatterName)}`,
+    // ADDED after the guard below found them missing. All three resolve
+    // through `MetricsController.#run`, so tenancy was never broken — what
+    // was missing is the PROOF, on the one invariant the PRD promises an
+    // exhaustive automated test for (AC-SEC-1).
+    `/v1/runs/${id}/trends`,
+    `/v1/runs/${id}/errors/series`,
+    `/v1/runs/${id}/telemetry`,
   ];
+
+  /**
+   * THE LIST ABOVE IS NOW DERIVED-CHECKED, BECAUSE IT HAD ALREADY DRIFTED.
+   *
+   * AC-SEC-1 promises "an automated test enumerates every route". The loop
+   * below enumerates whatever the literal above happens to name, and its own
+   * comment asked the next person to remember: "a future endpoint added here
+   * without a tenancy filter is exactly what the negative loop is meant to
+   * catch." Three people added endpoints and did not — `trends`,
+   * `errors/series` and `telemetry` were registered and never checked.
+   *
+   * Tenancy was never actually broken: all three resolve through
+   * `MetricsController.#run`, which scopes by `{orgId, projectId}` and 404s.
+   * What was missing is the proof, on the one invariant this product promises
+   * an exhaustive automated one for.
+   *
+   * So this asks the CONTROLLERS what exists rather than trusting the list,
+   * and fails when a run-scoped GET is registered that the list does not
+   * cover. `infra/test/fk-free-tables.sql` already does exactly this shape
+   * for the FK-free tables — computing the closure and failing the day a
+   * seventh appears — and `SCHEMA_TABLES` is the entry recording what a
+   * hand-maintained list costs.
+   *
+   * SOURCE-SCANNED WITH COMMENTS STRIPPED. This file records three separate
+   * occasions where a source-scanning assertion matched the prose explaining
+   * the rule rather than the code obeying it — including a comment in this
+   * very block, which quotes route names.
+   */
+  it('covers every run-scoped GET the API registers, asked of the controllers', () => {
+    const dir = fileURLToPath(new URL('../src', import.meta.url));
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(d, e.name));
+        else if (e.name.endsWith('.controller.ts')) files.push(join(d, e.name));
+      }
+    };
+    walk(dir);
+    // A collector that finds no files would make every assertion below pass
+    // vacuously — the exact failure `tokens.test.ts` records for a guard whose
+    // collector took `.tsx` only.
+    expect(files.length, 'no controllers collected').toBeGreaterThan(5);
+
+    const registered = new Set<string>();
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '');
+      const prefix = /@Controller\('([^']*)'\)/.exec(src)?.[1];
+      if (prefix !== '/v1/runs/:id') continue;
+      for (const m of src.matchAll(/@Get\('([^']*)'\)/g)) registered.add(m[1]!);
+    }
+    expect(registered.size, 'no run-scoped GETs found — has the prefix changed?')
+      .toBeGreaterThan(5);
+
+    // What the list actually exercises, reduced to the same shape: the
+    // segment after the run id, without its query string.
+    const covered = new Set(
+      endpoints('ID', 'NAME')
+        .map((u) => u.replace('/v1/runs/ID', '').replace(/^\//, '').split('?')[0]!)
+        .filter((seg) => seg !== ''),
+    );
+
+    expect(
+      [...registered].filter((r) => !covered.has(r)).sort(),
+      'run-scoped GETs with no cross-org case above — add them to `endpoints`',
+    ).toEqual([]);
+  });
 
   it('404s every endpoint for a run in another org, and 200s the identical URL shape for a run in its own org', async () => {
     ctx = await createTestApp();
