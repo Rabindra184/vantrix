@@ -186,6 +186,37 @@ export const RunIdentitySchema = z.object({
   branch: z.string().nullable().optional(),
   commitSha: z.string().nullable().optional(),
   /**
+   * The warm-up window this run was PARSED under, in milliseconds, or null
+   * when the project configured none.
+   *
+   * ═══ WHY THE READER NEEDS IT AT ALL (AC-STAT-4) ═══
+   *
+   * `LiveEngine.add` keeps warm-up events in every time SERIES and withholds
+   * them from the summary ROLLUPS — deliberately, and `isWarmup`'s docstring
+   * says so ("Warm-up requests stay in the time series but are excluded from
+   * summary stats"). The charts therefore draw traffic the statistics table
+   * does not count, which is correct and, until now, unsayable: nothing on
+   * the wire told the browser where the ramp ended, so the two surfaces
+   * disagreed with nothing explaining why. Keeping warm-up in the series is
+   * only meaningful if a reader can tell which part of the line it is.
+   *
+   * ═══ FROM THE RUN, NEVER FROM THE PROJECT ═══
+   *
+   * `engineOptionsFrom` freezes this onto the run at ingest, and its docstring
+   * gives the reason: "a project changing its warm-up must not silently
+   * reinterpret its own history". Reading the project's CURRENT setting here
+   * would redraw an old run's ramp at whatever width the project happens to
+   * use today — the same class of mistake `ruleSnapshot` exists to prevent
+   * for SLA thresholds.
+   *
+   * NULLABLE AND OPTIONAL, for the reason every other field in this block is:
+   * `null` is a run parsed with no warm-up (the overwhelmingly common case,
+   * and the default), `undefined` is a body from an API pod that predates
+   * this field. Required-but-nullable would blank the run page for a whole
+   * rolling deploy, because the browser drops a body that fails safeParse.
+   */
+  warmupMs: z.number().int().nonnegative().nullable().optional(),
+  /**
    * The test this is a run of, or null.
    *
    * NULLABLE AND OPTIONAL, AND THE TWO MEAN DIFFERENT THINGS. `null` is a run

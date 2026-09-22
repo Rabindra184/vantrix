@@ -103,6 +103,24 @@ export interface ChartXAxis {
    */
   readonly min?: number;
   readonly max?: number;
+  /**
+   * The run's warm-up window in elapsed milliseconds, shaded from 0 when set.
+   *
+   * ═══ ON THE AXIS, NOT ON `ChartProps` (AC-STAT-4) ═══
+   *
+   * It is a fact about THIS axis — elapsed time from the run's start — and it
+   * is meaningless on any other. Living here means it travels in the same
+   * object the call sites already build from `domainMs`, and a chart with no
+   * elapsed-time axis has nowhere to put it, so it cannot be handed to a
+   * distribution or a scatter by mistake.
+   *
+   * Drawn because the two surfaces genuinely disagree and are both right:
+   * `LiveEngine.add` keeps warm-up events in every time SERIES and withholds
+   * them from the summary ROLLUPS, so the charts show traffic the statistics
+   * table does not count. Keeping it in the series is only meaningful if a
+   * reader can see which part of the line it is.
+   */
+  readonly warmupMs?: number;
 }
 
 export interface ChartProps {
@@ -342,6 +360,24 @@ export default function Chart({
   // Primitives, like every other axis field here — see `ChartXAxis.tickUnit`.
   const xAxisMin = xAxis?.min;
   const xAxisMax = xAxis?.max;
+  /**
+   * The warm-up band, or null when there is nothing to shade.
+   *
+   * GATED ON `tickUnit`, not merely on the value being set. A `markArea`
+   * positions itself with `{ xAxis: 0 }` / `{ xAxis: warmupMs }`, and on a
+   * CATEGORY axis those are category INDICES — so a millisecond count handed
+   * to a distribution chart would shade the first N bins and look deliberate.
+   * `tickUnit: 'ms-as-s'` is this codebase's one marker for "x is elapsed
+   * milliseconds" (`timeAxis.test.ts` guards that it and the axis name move
+   * together), so it is the honest test for whether the band means anything.
+   *
+   * A primitive, like the axis fields above it, so the option effect's
+   * dependency array stays comparable by value.
+   */
+  const warmupBandMs =
+    xAxis?.tickUnit === 'ms-as-s' && typeof xAxis.warmupMs === 'number' && xAxis.warmupMs > 0
+      ? xAxis.warmupMs
+      : null;
   // A scatter's x is numeric by definition; any other chart has to ask. Folded
   // to a primitive here for the same reason the other three are — see the
   // option effect's closing comment about identity-compared object props.
@@ -783,7 +819,7 @@ export default function Chart({
         // drawn set is a prefix of the series list, and an `essential` series
         // kept over an earlier one breaks that — pairing by position would then
         // draw each colour against the next series' numbers.
-        series: drawn.map(({ name, index }) => {
+        series: drawn.map(({ name, index }, position) => {
           const source = data.series[index]!;
           if (kind === 'pie') {
             return {
@@ -810,6 +846,40 @@ export default function Chart({
             // A scatter IS its symbols. `showSymbol: false` — right for a
             // 600-bucket line — draws an empty grid here.
             showSymbol: kind === 'scatter' ? true : false,
+            /**
+             * AC-STAT-4's demarcation, on the FIRST drawn series only.
+             *
+             * A `markArea` belongs to a series, so attaching it to each would
+             * stack N translucent bands and darken the ramp in proportion to
+             * how many percentiles happen to be selected — the shading would
+             * change when the reader toggled a legend entry, which is a
+             * property of the legend and not of the run.
+             *
+             * `position`, NOT `index`: `index` is the position in the whole
+             * series list and `drawn` may start past it once a band is
+             * deselected, so keying on `index === 0` would drop the shading
+             * exactly when the first series is hidden. The same distinction
+             * the palette assignment above this makes, for the same reason.
+             *
+             * `silent` so it never takes a tooltip or a click — it is a
+             * backdrop, and an axis-pointer readout of "warm-up" where a
+             * measurement belongs would be worse than no marker.
+             */
+            markArea:
+              position === 0 && warmupBandMs !== null
+                ? {
+                    silent: true,
+                    itemStyle: { color: theme.gridline, opacity: 0.55 },
+                    label: {
+                      show: !compact,
+                      position: 'insideTop' as const,
+                      color: theme.inkMuted,
+                      fontSize: 10,
+                      formatter: 'warm-up',
+                    },
+                    data: [[{ xAxis: 0 }, { xAxis: warmupBandMs }]],
+                  }
+                : undefined,
           };
         }),
       },
@@ -839,6 +909,7 @@ export default function Chart({
     xAxisTickUnit,
     xAxisMin,
     xAxisMax,
+    warmupBandMs,
     mode,
     assignment,
     hasBrush,

@@ -130,7 +130,7 @@ function renderOverview(window: RunWindowContext['window']) {
                   {
                     window,
                     durationMs: READY_RUN.durationMs ?? null,
-                    liveDurationMs: null,
+                    liveDurationMs: null, warmupMs: null,
                     live: null,
                   } satisfies RunWindowContext
                 }

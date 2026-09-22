@@ -75,7 +75,7 @@ function renderRunTelemetry(
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, live: null } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
                 }
               />
             }
@@ -382,7 +382,7 @@ describe('RunTelemetry', () => {
               element={
                 <Outlet
                   context={
-                    { window: null, durationMs: null, liveDurationMs: null, live: null } satisfies RunWindowContext
+                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
                   }
                 />
               }
@@ -463,7 +463,7 @@ describe('RunTelemetry', () => {
               element={
                 <Outlet
                   context={
-                    { window: null, durationMs: null, liveDurationMs: null, live: null } satisfies RunWindowContext
+                    { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live: null } satisfies RunWindowContext
                   }
                 />
               }

@@ -110,7 +110,7 @@ function renderCharts({
             element={
               <Outlet
                 context={
-                  { window: null, durationMs: null, liveDurationMs: null, live } satisfies RunWindowContext
+                  { window: null, durationMs: null, liveDurationMs: null, warmupMs: null, live } satisfies RunWindowContext
                 }
               />
             }
@@ -198,7 +198,7 @@ describe('RunChartsTab — live', () => {
                 <Outlet
                   context={
                     {
-                      window: null, durationMs: null, liveDurationMs: null,
+                      window: null, durationMs: null, liveDurationMs: null, warmupMs: null,
                       live: liveWith({ count: 1200 }),
                     } satisfies RunWindowContext
                   }

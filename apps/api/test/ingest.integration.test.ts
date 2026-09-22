@@ -87,6 +87,71 @@ describe('POST /v1/runs', () => {
     expect(row?.engineOptions).toMatchObject({ warmupMs: 5000, percentiles: [50, 90, 99] });
   });
 
+  /**
+   * AC-STAT-4, the seam. Frozen onto the run above; this is whether it ever
+   * reaches a reader.
+   *
+   * `Chart.test.tsx` hands itself a `warmupMs` and proves the band is drawn
+   * from it, so it says nothing about whether the API sends one — the "a test
+   * that supplies both sides of a join proves neither" rule. Three layers sit
+   * between `engineOptions` and the axis: the narrowing in `runs.service`,
+   * `RunIdentitySchema`, and the shell's outlet context.
+   *
+   * Asserted against the project's CONFIGURED value rather than a literal, so
+   * this cannot pass against a handler that returns some other constant.
+   */
+  it('reports the run\'s frozen warm-up window to a reader', async () => {
+    await drainQueue();
+    ctx = await createTestApp({ warmupMs: 5000, percentiles: [50, 90, 99] });
+
+    const posted = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      // `waitMs: 0`: this case reads the run's IDENTITY, not its verdict, and
+      // no worker runs in-process — so the default 25s wait would always
+      // expire, costing the file 50 seconds to assert a field written before
+      // the response was built.
+      .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+      .attach('bundle', bundle, 'bundle.tgz');
+
+    const got = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${posted.body.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    const frozen = (await ctx.prisma.run.findUnique({ where: { id: posted.body.id } }))
+      ?.engineOptions as { warmupMs?: number };
+    expect(frozen.warmupMs).toBe(5000);
+    expect(got.body.warmupMs, JSON.stringify(got.body).slice(0, 200)).toBe(frozen.warmupMs);
+  });
+
+  /**
+   * And a project with no warm-up sends null, not a missing key or a zero.
+   *
+   * The common case by a wide margin, and the one that decides whether every
+   * ordinary run draws a spurious band at the origin. `undefined` would be
+   * indistinguishable on the wire from an API pod predating the field, which
+   * is a state the contract models for a different reason.
+   */
+  it('reports null when the project configured no warm-up', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+
+    const posted = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      // `waitMs: 0`: this case reads the run's IDENTITY, not its verdict, and
+      // no worker runs in-process — so the default 25s wait would always
+      // expire, costing the file 50 seconds to assert a field written before
+      // the response was built.
+      .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+      .attach('bundle', bundle, 'bundle.tgz');
+
+    const got = await request(ctx.app.getHttpServer())
+      .get(`/v1/runs/${posted.body.id}`)
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+    expect(got.body.warmupMs).toBeNull();
+  });
+
   // ═══ THE ONE SUBMIT PATH THAT ALWAYS WORKED, AND HAD NO TEST EITHER ═══
   //
   // `metadata.test` reaches four entry points; three of them dropped it for

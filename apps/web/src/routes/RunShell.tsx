@@ -301,6 +301,7 @@ export default function RunShell({
           context={{
             window,
             durationMs: identity.durationMs ?? null,
+            warmupMs: identity.warmupMs ?? null,
             // NOW REAL. This was hard-coded `null` for as long as no live run
             // reached this shell; a live run reaches it now, and this is what
             // `useTimeDomainFromShell` consults to grow the shared domain.

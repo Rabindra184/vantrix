@@ -66,6 +66,16 @@ export interface RunWindowContext {
    */
   readonly durationMs: number | null;
   /**
+   * The warm-up window this run was PARSED under, or null when it had none.
+   *
+   * Here for the same reason `durationMs` is: the shell owns the run object,
+   * and a tab that re-read it would be a second source for a number every
+   * time chart has to agree on. It travels beside `domainMs` to exactly the
+   * charts drawn on the run's own elapsed-time axis — a chart that takes no
+   * domain is not on that axis and has no ramp to mark.
+   */
+  readonly warmupMs: number | null;
+  /**
    * The run's duration as of the latest live delta, while it is still
    * streaming — `useLiveRun(...).lastDelta?.summary.durationMs` (Task 8),
    * threaded through here for the same reason `durationMs` is: a tab that
@@ -197,6 +207,17 @@ export function growingDomainMs(durationMs: number): readonly [number, number] {
  * which is exactly the failure mode this file's own axis-pointer rule exists
  * to rule out.
  */
+/**
+ * The run's warm-up window, as `RunShell` read it off the run.
+ *
+ * AC-STAT-4: summary statistics exclude the ramp and the time series keep it,
+ * so a reader comparing the two needs to see where it ended. `LiveEngine.add`
+ * is explicit about that split ("this is a series, and series include
+ * warm-up"), which is only legible on screen if something draws the boundary.
+ */
+export const useWarmupFromShell = (): number | null =>
+  useOutletContext<RunWindowContext>().warmupMs;
+
 export function useTimeDomainFromShell(): readonly [number, number] | undefined {
   const { window, durationMs, liveDurationMs } = useOutletContext<RunWindowContext>();
   if (window !== null) return [window.fromMs, window.toMs];

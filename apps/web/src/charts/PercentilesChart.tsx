@@ -61,12 +61,18 @@ export default function PercentilesChart({
   id = 'percentiles',
   title = 'Response time percentiles over time',
   domainMs,
+  warmupMs,
   compact,
 }: {
   readonly series: SeriesResponse;
   readonly id?: string;
   readonly title?: string;
   readonly domainMs?: TimeDomainMs;
+  /**
+   * The run's warm-up window, shaded on the elapsed-time axis (AC-STAT-4).
+   * Travels with `domainMs` because it is a fact about the same axis.
+   */
+  readonly warmupMs?: number;
   /** §22.6's sparkline — see `ChartProps.compact`. */
   readonly compact?: boolean;
 }) {
@@ -171,6 +177,7 @@ export default function PercentilesChart({
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
+        warmupMs,
       }}
       unit="ms"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
