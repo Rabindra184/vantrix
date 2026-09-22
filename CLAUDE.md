@@ -115,6 +115,78 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The guard-against-averaged-percentiles branch added ONE unit file —
+`packages/statistics/test/no-averaged-percentiles.test.ts` (2) — from
+**155 / 1990 to 156 / 1992**. Integration moves with it (that file is a `.ts`
+integration runs too) and **e2e stays 149**. It adds no product code at all:
+the diff is one eslint block and its guard. **AC-STAT-3, which the PRD says
+twice that CI already enforces.**
+
+**A GATE THE SPECIFICATION ASSERTS AND THAT DID NOT EXIST.** AC-STAT-3:
+"static analysis confirms it derives from a sketch and never from an
+arithmetic mean of other percentiles. **A violation fails CI.**" And §24
+again: "Averaging percentiles anywhere in the system is a defect (FR-STAT-4,
+AC-STAT-3). **Static analysis enforces it in CI.**" Nothing in `ci.yml`,
+`infra/test/` or `eslint.config.js` did any such thing. Two statements, both
+present tense, both false.
+
+**AND NOTHING IS CURRENTLY AVERAGING A PERCENTILE — MEASURED BEFORE
+WRITING.** So this guards a property that HOLDS rather than fixing one that
+is broken, which is the only state in which a guard like this can be added
+at all: a rule written against a codebase that already violates it has to
+ship with exemptions, and exemptions are how a rule becomes decoration.
+`pnpm lint` green on the untouched tree is the evidence.
+
+**IT REPORTS ONCE PER DEFECT, AND THAT TOOK A SECOND PASS.** The first
+version matched each percentile OPERAND, so `(p95 + p99) / 2` produced TWO
+errors for one mistake — eight reports across four bad lines. Moving the
+constraint onto the SUM with `:has()` makes it three and one. Noise is not
+neutral in a lint rule: a reader who sees two errors for one expression
+starts discounting it, which is the overstated-warning lesson M08 already
+records for the empty-threshold help.
+
+**AND IT DELIBERATELY ALLOWS ARITHMETIC ON A PERCENTILE.** `p95 / 1000` is a
+unit conversion and every chart transform in the product does it; `p99 - p95`
+is a spread. A rule that refused those would be switched off within a week.
+The paired case pins it, because "forbid averaging" quietly becoming "forbid
+touching" is the failure mode that would actually get this deleted.
+
+**THE SELECTOR IS SYNTACTIC AND THE LIMIT IS STATED RATHER THAN IMPLIED.**
+Assign a percentile to `const x` and average `x`, and this says nothing. That
+is the honest boundary of an esquery selector, and the rule is still worth
+having: the shapes it catches are the ones somebody writes by reflex when
+asked to "roll these up".
+
+**PLACED AFTER THE `Chart.tsx` EXEMPTION, WHICH IS LOAD-BEARING.** That block
+sets `no-restricted-syntax: 'off'` for one file, for a measured reason about
+ECharts index signatures that has nothing to do with statistics. Folding
+these selectors into the existing array would have exempted them there too —
+silently, and for somebody else's reason. **An exemption written for one rule
+becomes an exemption for every rule that shares its name.**
+
+**AND THE GUARD HAS A GUARD, BECAUSE A LINT RULE THAT MATCHES NOTHING PASSES
+EXACTLY AS QUIETLY AS ONE THAT WORKS.** `pnpm lint` is green whether the
+selector fires or has rotted, so a rewritten attribute or an esquery change
+would disarm this with no signal at all. The new test runs the repo's OWN
+eslint against a deliberately-offending snippet and fails if it PASSES — the
+`residue-broken.sql` pattern, in the unit suite. It shells out rather than
+re-declaring the selectors, because a second copy here would drift from the
+config and end up testing itself.
+
+**BOTH LAYERS RED-VERIFIED, WHICH IS THE POINT OF THE BRANCH:**
+
+```
+  offending snippet vs the real rule   exit 1, 3 averaging + 1 reduce
+  the selector defanged                the test fails: expected [] to have a length of 3
+  the untouched tree                   pnpm lint exit 0
+```
+
+**AND `git checkout -b` TOOK THE PREVIOUS BRANCH AGAIN — CAUGHT BY THE COUNT,
+NOT BY CARE.** It was first cut while standing on an unmerged branch, so
+`git log --oneline origin/main..HEAD` reported **1** where it must report 0.
+This file records that trap four times and prescribes exactly this check; the
+check is what worked, not the memory of having read about it. Run it after
+every `-b`.
 The list-clamps-like-every-other-surface branch added no unit FILE, no unit
 case and no spec — unit stays **155 / 1990** and **e2e stays 149** — and 2
 cases to `apps/api/test/read.integration.test.ts`, at **138 / 1807**. It

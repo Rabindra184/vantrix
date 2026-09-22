@@ -142,6 +142,63 @@ export default tseslint.config(
     files: ['apps/web/src/charts/Chart.tsx'],
     rules: { 'no-restricted-syntax': 'off' },
   },
+  /*
+   * ═══ AVERAGING PERCENTILES IS A DEFECT (FR-STAT-4, AC-STAT-3) ═══
+   *
+   * A percentile is an order statistic. The mean of two of them is not a
+   * percentile of anything: `(p95 + p99) / 2` answers no question, and
+   * averaging one endpoint's p95 with another's is the classic way to report
+   * a latency nobody experienced. The whole reason this product stores a
+   * DDSketch per row is that percentiles must be merged by combining sketches
+   * and re-quantiling, never by arithmetic on the outputs.
+   *
+   * The PRD states this twice and says static analysis enforces it in CI
+   * ("A violation fails CI", AC-STAT-3; "Static analysis enforces it in CI",
+   * section 24). It did not exist. Measured before writing this: NOTHING in
+   * the codebase currently averages a percentile, so this guards a property
+   * that holds today rather than fixing one that is broken — which is the
+   * only state in which a guard like this can be added at all.
+   *
+   * ═══ WHAT IT CATCHES, AND WHAT IT DOES NOT ═══
+   *
+   * It catches a SUM of percentile reads used as the numerator of a division
+   * — the arithmetic-mean shape — and a `reduce` over a `percentiles` object
+   * or array. It deliberately does NOT flag a bare division like
+   * `p95 / 1000`, which is a unit conversion and correct.
+   *
+   * It is a syntactic guard and cannot see through an alias: assign a
+   * percentile to `const x` and average `x`, and this says nothing. That is
+   * the honest limit of a selector, and it is still worth having — the
+   * shapes it does catch are the ones somebody writes by reflex when asked
+   * to "roll these up".
+   *
+   * Placed AFTER the Chart.tsx exemption above deliberately. That block turns
+   * `no-restricted-syntax` off entirely for one file; folding these selectors
+   * into the same array would have exempted them there too, silently, for a
+   * reason (ECharts index signatures) that has nothing to do with statistics.
+   */
+  {
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // ONE report per offending expression, not one per percentile it
+          // mentions: `:has()` puts the constraint on the SUM rather than
+          // matching each operand, so `(p95 + p99) / 2` is a single error
+          // rather than two for one defect.
+          selector:
+            "BinaryExpression[operator='/'] > BinaryExpression[operator='+']:has(Identifier[name=/^p[0-9]+(Ms)?$/], MemberExpression[property.name=/^p[0-9]+(Ms)?$/], MemberExpression[object.name=/[Pp]ercentiles/])",
+          message:
+            'Averaging percentiles is a defect (FR-STAT-4, AC-STAT-3): the mean of two order statistics is not a percentile of anything. Merge the sketches and re-quantile instead. See eslint.config.js.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='reduce'][callee.object.name=/[Pp]ercentiles/]",
+          message:
+            'Reducing a percentile set to one number averages or sums order statistics, which is a defect (FR-STAT-4, AC-STAT-3). Merge the sketches and re-quantile instead. See eslint.config.js.',
+        },
+      ],
+    },
+  },
   {
     files: ['packages/{core,plugin-gatling,statistics,sla}/src/**/*.ts'],
     rules: {
