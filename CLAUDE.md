@@ -118,11 +118,13 @@ see the eighth lesson below.
 The share-the-sorted-filtered-table branch added no unit FILE and 4 cases to
 `apps/web/test/StatisticsTable.test.tsx`, from **156 / 1992 to 156 / 1996**.
 Integration is UNCHANGED BY THIS BRANCH (that file is a `.tsx`, which that
-config never runs), standing at **139 / 1810** — where
-guard-against-averaged-percentiles left it (139 / 1809) plus
-enumerate-every-run-route's one case, both of which merged under this branch
-while it was open. **e2e stays 149.** That figure is ARITHMETIC rather than a
-local measurement, and CI's `build` job is what prints it. RE-MEASURED after merging `main`:
+config never runs), standing at **139 / 1806** — two branches merged under
+this one while it was open, and the figure it first recorded (139 / 1810)
+inherited an arithmetic error four branches old: the
+demarcate-the-warmup-window entry added SIX where its own parenthetical says
+the four `.tsx` cases "never run there", i.e. TWO. Corrected against a
+measured run — see the token-scope-stops-at-its-project entry. **e2e stays
+149.** RE-MEASURED after merging `main`:
 it was cut at 155 / 1990 and guard-against-averaged-percentiles landed
 underneath it, so the floors it first measured described a tree that no longer
 exists — and then `enumerate-every-run-route` landed under it too, so the
@@ -256,7 +258,40 @@ CONTROL THIS BRANCH CHANGED.** `run-tables.spec.ts` fills the filter box three
 times (`Recommend`, `no-such-request`, then empty), so it is the one spec that
 can see a filter which now writes to the URL — and the empty fill is the case
 that would catch `?q=` being left behind as a filter that is not filtering.
-**19 passed**, the filter case among them. Everything else in the suite was
+**19 passed** — AND THAT ONE GREEN RUN WAS NOT ENOUGH, WHICH CI SAID NEXT.
+
+**THE FILTER CASE FAILED IN CI, TWICE, IN THE SPEC THIS ENTRY HAD JUST CALLED
+GREEN.** `expect(await renderedRows(page)).toEqual(opening)` came back
+`Received: []` after `filter.fill('')`. `renderedRows` is an `evaluateAll` —
+an immediate read with no auto-waiting, which this file already records for
+`allTextContents()` — and clearing the filter is now a router NAVIGATION
+rather than a `useState` commit, so the read lands while the table still
+shows the previous filter's empty set. The product is correct; the window
+simply widened, and a slower machine loses it every time.
+
+**AND THE TWO ASSERTIONS THAT LOOK LIKE A BARRIER ARE SATISFIED BY THE
+BEFORE-STATE.** The case's other immediate read, after `fill('Recommend')`,
+sits below `await expect(getByText('Catalog')).toBeVisible()` and
+`await expect(getByText('List Products')).toHaveCount(0)` — and `Catalog` is
+visible BEFORE filtering (it is a top-level group) while `List Products` is
+ALREADY absent (the tree opens collapsed). Neither waits for anything. So
+BOTH reads were racy and only one had been caught; **an `await expect(...)`
+that the before-state already satisfies is not a barrier, however much it
+reads like one.**
+
+**REPRODUCED DETERMINISTICALLY BEFORE FIXING, WHICH CHANGED THE DIAGNOSIS.**
+A 12x CPU throttle through CDP — the technique this file records for the
+compare-cap race — failed the FIRST read, not CI's second, showing all four
+opening rows. That is what proved the barrier was vacuous rather than merely
+insufficient. Both are `await expect.poll(...)` now, which retries the claim
+itself rather than a proxy for it: 1 passed at 12x where it had failed, and
+19 passed unthrottled.
+
+**ONE LOCAL RUN PER SIDE IS NOT A RATE**, and this entry asserted a spec was
+safe on exactly that. The rule was already here, written for a WebKit flake
+four branches ago; it applies just as well to a green.
+
+Everything else in the suite was
 read rather than run, and what the reading had to establish is that no
 assertion anchors the run page's URL after touching this table:
 `auth.spec.ts:74` does anchor it (`/runs/${runId}$`) and never touches the

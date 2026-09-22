@@ -346,11 +346,21 @@ test('filtering keeps the match in its group', async ({ page }) => {
    * and, while filtering runs, `Recommendations`' own child (`Related Items`,
    * nested one level further down post-D-10) is open too, since a matching
    * row's whole subtree is visible along with it. */
-  expect(await renderedRows(page)).toEqual([
-    'Catalog@0',
-    'Catalog/Recommendations@1',
-    'Catalog/Recommendations/Related Items@2',
-  ]);
+  /* POLLED, not read once. The filter now writes `q` into the URL, so
+   * applying it is a router navigation rather than a `useState` commit, and
+   * `renderedRows` is an `evaluateAll` — an immediate read with no
+   * auto-waiting. Read once, it can catch the tree as it was BEFORE the
+   * filter applied.
+   *
+   * AND THE TWO ASSERTIONS ABOVE ARE NOT A BARRIER, WHICH IS WHY THIS HAS TO
+   * POLL ITSELF. `Catalog` is visible before filtering — it is a top-level
+   * group — and `List Products` is ALREADY absent, because the tree opens
+   * collapsed. Both are satisfied by the unfiltered state, so neither waits
+   * for anything; they read as a barrier and are not one. Measured at a 12x
+   * CPU throttle, where this assertion caught all four opening rows. */
+  await expect
+    .poll(() => renderedRows(page))
+    .toEqual(['Catalog@0', 'Catalog/Recommendations@1', 'Catalog/Recommendations/Related Items@2']);
   await expect(rowAt(page, 'Catalog/Recommendations')).toBeVisible();
 
   /* A filter that matches nothing says so, rather than going silently empty. */
@@ -362,7 +372,11 @@ test('filtering keeps the match in its group', async ({ page }) => {
    * `Catalog` closed again, because the filter opened it and the reader never
    * did. */
   await filter.fill('');
-  expect(await renderedRows(page)).toEqual(opening);
+  /* Polled for the same reason, and this is the one CI caught: clearing goes
+   * through the same navigation, and the read landed while the table still
+   * showed `no-such-request`'s empty set — `Received: []` against the four
+   * opening rows. */
+  await expect.poll(() => renderedRows(page)).toEqual(opening);
 });
 
 /* ======================================================================== *
