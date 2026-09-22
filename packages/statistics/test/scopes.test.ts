@@ -38,6 +38,54 @@ describe('runEngine scope fan-out', () => {
     }
   });
 
+  /**
+   * THE SAMPLES HAVE TO SHOW THE NAMES THAT BROKE THE CAP (AC-ING-6).
+   *
+   * The remediation blames "dynamic values such as IDs", so the samples are
+   * the evidence for that claim and have to contain some. `slice(0, 5)` on an
+   * insertion-ordered Set returned the five EARLIEST names — the stable ones a
+   * run opens with — so the message exhibited five names with no dynamic
+   * values in them while blaming dynamic values.
+   *
+   * THE FIXTURE ABOVE CANNOT SEE THIS, WHICH IS WHY IT NEEDED A NEW ONE. Its
+   * names are `ep-0`…`ep-11`, uniformly synthetic, so the first five and the
+   * last five are equally "dynamic" and either ordering passes. It also
+   * asserts `remediation.length > 0` and never looks at `samples` at all.
+   * This one is deliberately MIXED — a stable prefix then an explosion — so
+   * the two orderings give different answers.
+   */
+  it('shows the names that breached the cap, not the stable ones the run opened with', () => {
+    const stable = ['/login', '/home', '/search', '/cart', '/checkout'];
+    const many: CanonicalEvent[] = [
+      { type: 'meta', simulation: 'S', toolVersion: 'v', startedAtMs: base },
+    ];
+    let off = 0;
+    for (const name of stable) many.push(req(name, [], off++, 10));
+    for (let i = 0; i < 40; i++) many.push(req(`/order/${1000 + i}`, [], off++, 10));
+
+    expect.assertions(4);
+    try {
+      runEngine(many, { maxEndpoints: 10 });
+    } catch (err) {
+      const e = err as IngestError;
+      const samples = (e.detail as { samples: string[] }).samples;
+
+      // The PAIR. Either half alone is satisfied by the wrong answer: a
+      // sample set of every name would contain a dynamic one, and an empty
+      // one would contain no stable one.
+      expect(samples.every((n) => n.startsWith('/order/')), `samples: ${samples.join(', ')}`).toBe(
+        true,
+      );
+      expect(samples.some((n) => stable.includes(n)), `samples: ${samples.join(', ')}`).toBe(false);
+
+      // The throw fires on the statement AFTER the breaching name is added,
+      // so the final sample is exactly the name that broke the cap — which is
+      // what makes the tail the right slice rather than merely a better one.
+      expect(samples[samples.length - 1]).toBe('/order/1005');
+      expect(samples).toHaveLength(5);
+    }
+  });
+
   it('counts endpoints by path, so one name under many groups is many endpoints', () => {
     // D-12. The cap exists to bound STORED ROLLUPS. One bare name under twelve
     // groups is twelve rollups; a cap counting bare names would see one and

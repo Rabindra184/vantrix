@@ -325,7 +325,25 @@ export class LiveEngine {
       throw ingestError('ENDPOINT_CARDINALITY_EXCEEDED', {
         message: `Run exceeds the endpoint cardinality cap: more than ${this.#maxEndpoints} distinct request paths.`,
         remediation: 'Request names appear to contain dynamic values such as IDs. Parameterize them in the simulation, or raise the limit in project settings.',
-        detail: { limit: this.#maxEndpoints, samples: [...this.#endpoints].slice(0, 5) },
+        // THE LAST FIVE, NOT THE FIRST, AND THE REMEDIATION ABOVE IS WHY.
+        //
+        // `#endpoints` is a Set, so it is insertion-ordered, and this throw
+        // fires on the statement AFTER the name that broke the cap was added
+        // — so the final element IS the culprit and the tail is the family it
+        // belongs to. `slice(0, 5)` returned the five EARLIEST distinct names
+        // instead, which are the stable ones a run opens with.
+        //
+        // Measured on a run of five stable endpoints followed by forty
+        // `/order/{id}`, cap 10:
+        //
+        //     slice(0, 5)   /login /home /search /cart /checkout
+        //     slice(-5)     /order/1035 … /order/1039
+        //
+        // So the message blamed dynamic names and exhibited five names with
+        // no dynamic values in them — the evidence was the counter-example to
+        // the advice, and the forty that actually breached the cap were never
+        // shown. A reader cannot act on samples that omit the cause.
+        detail: { limit: this.#maxEndpoints, samples: [...this.#endpoints].slice(-5) },
       });
     }
 

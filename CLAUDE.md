@@ -115,6 +115,97 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The cardinality-samples-show-the-culprits branch added no unit FILE and 1 case
+to `packages/statistics/test/scopes.test.ts`, from **156 / 1996 to
+156 / 1997**. Integration moves with it (that file is a `.ts` integration runs
+too) at **139 / 1807**, and **e2e stays 149**. **AC-ING-6**, and it is a defect
+in EVIDENCE rather than in a verdict: the run is correctly rejected either way.
+
+**THE MESSAGE BLAMED DYNAMIC NAMES AND THEN EXHIBITED FIVE NAMES WITH NONE IN
+THEM.** Measured through the real engine on the shape the remediation
+describes — five stable endpoints, then forty `/order/{id}`, cap 10:
+
+```
+  remediation  "Request names appear to contain dynamic values such as IDs.
+                Parameterize them in the simulation, or raise the limit…"
+  samples      /login  /home  /search  /cart  /checkout
+```
+
+The forty names that actually breached the cap were never shown. **A reader
+cannot act on samples that omit the cause**, and worse, the evidence reads as a
+counter-example to the advice printed directly above it.
+
+**`slice(0, 5)` TAKES THE OLDEST, AND THE OLDEST ARE THE STABLE ONES.**
+`#endpoints` is a `Set`, so it is insertion-ordered, and a run opens with its
+stable endpoints — login, home, search — before any dynamic family has had
+time to explode. The fix is `slice(-5)`.
+
+**AND THE TAIL IS THE RIGHT SLICE RATHER THAN MERELY A BETTER ONE.** The throw
+fires on the statement AFTER the breaching name is added, so the final element
+IS the culprit and the four before it are the family it belongs to. The case
+asserts that exact name (`/order/1005` — five stable plus six dynamic is the
+eleventh distinct path against a cap of ten), which pins the reasoning rather
+than the outcome.
+
+**AC-ING-6's THREE CLAUSES WERE ALL PRESENT, WHICH IS WHY IT READ AS DONE.**
+"Fails with `ENDPOINT_CARDINALITY_EXCEEDED`" ✓, "naming dynamic request names
+as the likely cause" ✓, "listing samples" ✓. Every box ticked and the samples
+were the wrong five. **A criterion satisfied clause by clause can still be
+unsatisfied as a sentence** — which is the shape worth carrying forward from
+this one, because the check that finds it is reading the criterion as a whole
+and then producing the artifact it describes.
+
+**THE EXISTING CASE CANNOT SEE IT, AND ITS FIXTURE IS WHY.** "rejects a run
+that exceeds the endpoint cardinality cap" builds `ep-0`…`ep-11` — uniformly
+synthetic, so the first five and the last five are equally "dynamic" and
+either ordering passes. It also asserts `remediation.length > 0` and never
+looks at `samples` at all. **A FIXTURE THAT CANNOT DISTINGUISH TWO ANSWERS IS
+WHERE THE WRONG ONE SURVIVES**, which this file already records for the
+errors-tally invariant and for a geometry bound measured against a
+24-character simulation name. The new case is deliberately MIXED so the two
+orderings disagree; the old one is left alone, because its own claim — that
+the run is rejected — is true and covered.
+
+**TWO MUTATIONS, ONE CASE, AND THE SECOND IS WHAT EARNS THE PAIR:**
+
+```
+  slice(0, 5) restored        the new case ALONE
+  the WHOLE set returned      the new case ALONE
+```
+
+Returning every name satisfies "the samples contain a dynamic one" perfectly
+while still carrying the stable ones, so a one-sided assertion would wave it
+through. The case asserts BOTH that every sample is from the breaching family
+and that none is a stable name, and prints the sample list in the failure so
+the reason is legible without opening the file.
+
+**AND THE BLAST RADIUS IS SMALLER THAN IT LOOKS, WHICH IS STATED RATHER THAN
+GLOSSED.** `detail.samples` has exactly ONE writer and no reader: nothing in
+`apps/web` destructures it, and `ApiError` carries the problem's `detail`
+STRING rather than this object. So the samples reach an API consumer reading
+the raw problem document — a CI job, or somebody with curl — and never the
+browser. Recorded because a reader meeting this entry should not go looking
+for a UI surface that does not exist.
+
+**WHAT ELSE THE AC SWEEP CHECKED AND CLEARED.** `AC-SEC-5` (a revoked token
+fails with no cache grace beyond 60s): there is no caching anywhere on the
+auth path, so revocation is immediate — `authenticateRequest` reads the row
+every time, and the revoked check runs BEFORE the Argon2 verification.
+`AC-STAT-6` (decline a cross-tool overlay) is UNREACHABLE rather than broken:
+`TOOL_IDS` has one member and ingest refuses anything else with
+`TOOL_UNKNOWN`, so two runs cannot differ by tool. Recorded as latent, the
+same way `histogram_kind` is.
+
+**WHAT WAS RUN, AND WHAT WAS STILL RUNNING.** `typecheck` and `lint` green by
+their own exit codes; `test:unit` **156 / 1997**, the recorded floor plus
+exactly this branch's one case. `test:integration` was STILL RUNNING when this
+was pushed and is expected at **139 / 1807** by arithmetic — that file is a
+`.ts`, so both suites run it. Said rather than asserted, because this session
+has already corrected one floor that was arithmetic wearing a measurement's
+clothes; CI's `build` job prints all three and is the arbiter. Both suites ran
+against a SCRATCH DATABASE (`perfportal_card`) and a scratch Redis INDEX
+(db 14).
+
 The share-the-sorted-filtered-table branch added no unit FILE and 4 cases to
 `apps/web/test/StatisticsTable.test.tsx`, from **156 / 1992 to 156 / 1996**.
 Integration is UNCHANGED BY THIS BRANCH (that file is a `.tsx`, which that
