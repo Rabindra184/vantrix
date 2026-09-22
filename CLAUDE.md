@@ -187,6 +187,66 @@ NOT BY CARE.** It was first cut while standing on an unmerged branch, so
 This file records that trap four times and prescribes exactly this check; the
 check is what worked, not the memory of having read about it. Run it after
 every `-b`.
+The list-clamps-like-every-other-surface branch added no unit FILE, no unit
+case and no spec — unit stays **155 / 1990** and **e2e stays 149** — and 2
+cases to `apps/api/test/read.integration.test.ts`, at **138 / 1807**. It
+closes the LAST surface reading a raw percentile, and it is recorded as
+LATENT rather than live, which is the honest description.
+
+**THE RUN LIST READ THE FROZEN COLUMN WHILE EVERY OTHER SURFACE CLAMPED.**
+The clamp branch installed `clampPercentile` at every assembler — the
+rollup, the bucket split, the evaluator's fallback, `/stats` — and
+deliberately did NOT rewrite history, so raw values keep arriving from rows
+written earlier. `RunRepository.list` selects `s.percentiles` straight out
+of the column and hands it to the reader.
+
+**MEASURED ON THE NINE REAL RUNS, AND THE MEASUREMENT IS WHY THIS SAYS
+LATENT:**
+
+```
+  9 stored values sit above their own maximum
+  3 of them at RUN scope, worst +12.46 ms
+  all three are p99 — and this row surfaces only p95
+```
+
+So the two surfaces genuinely disagree in MECHANISM and do not yet disagree
+on screen. Closing it now is the cheap moment; after a reader reports two
+different p95s for one run it is an incident. **A latent inconsistency is
+worth writing down with its measurement either way** — the number is what
+lets the next reader re-judge rather than re-investigate.
+
+**THE COST ARGUMENT FOR THE FROZEN COLUMN IS RIGHT AND IS UNTOUCHED.** That
+query's own comment says "a list row is a scan target, and re-quantiling 25
+sketches per page to move a column by fractions of a millisecond is not a
+trade this surface wants". True, and the clamp needs no sketch: it is
+`Math.min(Math.max(v, min), max)` against `min_ms`/`max_ms`, two columns on a
+row the query already joins. **Check whether a deferral's COST still applies
+to the fix you are actually making** — this one was written about
+re-quantiling and was inherited as an argument against clamping.
+
+**ASSERTED AS A PAIR.** "Equals the maximum" alone is satisfied by a list
+that pins every p95 to its max, which would flatten the column for every run
+there is. The in-range case is what rules that out, and the over-max case
+uses the reference run's real numbers (2515.4601126102525 against an exact
+2503) so it cannot pass against an invented fixture.
+
+**AND THE FIRST RED-VERIFY WAS VACUOUS BECAUSE `packages/persistence`
+RESOLVES THROUGH `dist`.** The mutation removed the clamp from `src`, the
+suite reported **38 passed**, and that looked exactly like a guard that does
+not work. It was not: `package.json` exports `./dist/src/index.js`, and
+`pnpm typecheck` had already EMITTED the clamp there, so the test ran the
+built copy while the mutation sat in the source.
+
+This file already records the same resolution fact for `@perfportal/contracts`
+("a red integration result that crosses a package boundary is a build claim
+before it is a code claim") and, one branch ago, that `tsc -b` can report
+exit 0 while building nothing. **The third face of it is the one that bites
+hardest: a MUTATION of a workspace package's source does not reach the suite
+until that package is rebuilt**, so a red-verify against `src` alone proves
+nothing and reads as reassurance. Rebuild between the mutation and the run —
+`find -name '*.tsbuildinfo' -delete` then `tsc -b <pkg> --force` — and grep
+the emitted `.js` for the change before believing either result. Re-run that
+way it fails exactly one case: `expected 2515.4601126102525 to be 2503`.
 
 The demarcate-the-warmup-window branch added no unit FILE and 4 cases to
 `apps/web/test/Chart.test.tsx`, from **155 / 1986 to 155 / 1990**, plus 2

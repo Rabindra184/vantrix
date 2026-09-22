@@ -714,6 +714,7 @@ describe('GET /v1/runs — the triage fields', () => {
     expect(mine.metrics!.errorRate).toBeCloseTo(24 / 895, 6);
     expect(mine.metrics!.p95Ms).toBeGreaterThan(0);
 
+
     // And the simulation's own checks, which the list never used to send at
     // all — ParitySimulation declares three, one of which fails.
     expect(mine.checks).not.toBeNull();
@@ -742,5 +743,61 @@ describe('GET /v1/runs — the triage fields', () => {
     expect(mine.metrics!.count).toBe(row.count);
     expect(mine.metrics!.errorRate).toBeCloseTo(row.errorRate, 9);
     expect(mine.metrics!.throughputRps).toBeCloseTo(row.throughputRps, 9);
+  });
+});
+
+
+/**
+ * THE LIST WAS THE LAST SURFACE READING A RAW PERCENTILE.
+ *
+ * A percentile cannot lie outside the sample it came from, and `minMs`/`maxMs`
+ * are exact while the sketch carries 1% relative error — so the stored value
+ * sometimes does. The clamp branch installed `clampPercentile` at every
+ * assembler (the rollup, the bucket split, the evaluator's fallback, `/stats`)
+ * and deliberately did NOT rewrite history, so raw values keep arriving from
+ * rows written earlier.
+ *
+ * This row reads the FROZEN percentiles column rather than re-quantiling a
+ * sketch per list item — the right trade, and untouched here: the clamp is
+ * `Math.min(Math.max(v, min), max)` against two columns already on the row.
+ *
+ * Measured on the nine real runs in the developer database: 9 stored values
+ * sit above their own maximum, 3 at RUN scope, worst +12.46 ms. All three
+ * happen to be p99 while this row surfaces p95, so the disagreement was not
+ * yet visible — which is the argument for closing it before a reader reports
+ * two different p95s for one run.
+ *
+ * ASSERTED AS A PAIR. "Equals the maximum" alone is satisfied by a list that
+ * pins every p95 to its max, which would flatten the column for every run
+ * there is; the in-range case is what rules that out.
+ */
+describe('GET /v1/runs — the list clamps like every other surface', () => {
+  const runStat = (id: string, p95: number, maxMs: number) =>
+    ctx.pool.query(
+      `UPDATE run_stat SET percentiles = jsonb_set(percentiles, '{p95}', $2::jsonb),
+              max_ms = $3, min_ms = 0
+        WHERE run_id = $1 AND scope = 'run' AND family = 'response_time'`,
+      [id, JSON.stringify(p95), maxMs],
+    );
+
+  const p95Of = async (id: string) => {
+    const res = await request(ctx.app.getHttpServer()).get('/v1/runs').set(auth());
+    return RunListResponseSchema.parse(res.body).items.find((r) => r.id === id)!.metrics!.p95Ms;
+  };
+
+  it('projects a stored percentile back onto the run\'s own maximum', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    // The reference run's real shape: p99 2515.4601… against an exact max of
+    // 2503. Written onto p95 because that is the one this row surfaces.
+    await runStat(id, 2515.4601126102525, 2503);
+    expect(await p95Of(id)).toBe(2503);
+  });
+
+  it('leaves a percentile inside its range exactly alone', async () => {
+    ctx = await createTestApp();
+    const id = await ingested();
+    await runStat(id, 1234.5, 2503);
+    expect(await p95Of(id)).toBe(1234.5);
   });
 });
