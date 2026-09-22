@@ -55,6 +55,29 @@ async function seedRun(testId: string | null, over: Record<string, unknown> = {}
   });
 }
 
+/**
+ * A SECOND project in ctx's OWN org, holding one test.
+ *
+ * The org is deliberately shared: cross-ORG refusal is already covered twice
+ * below, and a second org would re-prove that rule while saying nothing about
+ * the credential's own project, which is the axis AC-SEC-3 is about.
+ */
+async function seedOtherProjectWithTest() {
+  const other = await ctx.prisma.project.create({
+    data: { orgId: ctx.orgId, slug: 'other-project', name: 'Other Project', settings: {} },
+  });
+  await ctx.prisma.test.create({
+    data: {
+      orgId: ctx.orgId,
+      projectId: other.id,
+      slug: 'secret-test',
+      name: 'Secret Test',
+      simulationClass: 'com.acme.SecretSimulation',
+    },
+  });
+  return other;
+}
+
 describe('GET /v1/projects/:slug/tests', () => {
   it('lists a test with its run count and newest run', async () => {
     const test = await seedTest();
@@ -140,6 +163,44 @@ describe('GET /v1/projects/:slug/tests', () => {
     const res = await asSession('get', '/v1/projects/not-mine/tests');
     expect(res.status).toBe(404);
   });
+
+  /**
+   * AC-SEC-3, and the half this controller did not implement.
+   *
+   * A bearer token is minted against ONE project. `ctx.readToken` names
+   * ctx's own, so pointing it at a sibling project in the SAME org is the
+   * exact mistake: before this, it answered 200 and listed the sibling's
+   * slug, name, simulationClass and latestRun.
+   *
+   * The POSITIVE half lives in "accepts a bearer token, because reading which
+   * tests exist is an ordinary read" above — that case is what stops a
+   * resolver which simply 404s everything from satisfying this one.
+   */
+  it('404s for a project the bearer token was not minted against', async () => {
+    await seedOtherProjectWithTest();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/other-project/tests')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
+    // Not merely refused — the catalogue must not be in the body at all.
+    expect(JSON.stringify(res.body)).not.toContain('secret-test');
+    expect(JSON.stringify(res.body)).not.toContain('com.acme.SecretSimulation');
+  });
+
+  /**
+   * THE PAIR THAT KEEPS THE REFUSAL HONEST. A session carries NO `projectId`
+   * — it is org-scoped by design, so a human may read any project in their
+   * org. A guard written as `projectId !== project.id`, without the
+   * `undefined` arm, refuses every session instead and takes the whole
+   * browser with it; this is the only case here that can see that.
+   */
+  it('still lets a session read a project its org owns, because a session names no project', async () => {
+    await seedOtherProjectWithTest();
+    const res = await asSession('get', '/v1/projects/other-project/tests');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.tests).toHaveLength(1);
+  });
 });
 
 describe('GET /v1/projects/:slug/tests/:testSlug', () => {
@@ -176,6 +237,22 @@ describe('GET /v1/projects/:slug/tests/:testSlug', () => {
 
     const res = await asSession('get', `${TESTS}/secret-test`);
     expect(res.status).toBe(404);
+  });
+
+  /**
+   * The same refusal one route deeper. Both GETs on this controller are
+   * bearer-reachable on purpose, so both had the hole and both need pinning —
+   * a fix applied to `list` alone would leave the single read answering 200
+   * with the same fields.
+   */
+  it('404s for a test in a project the bearer token was not minted against', async () => {
+    await seedOtherProjectWithTest();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/projects/other-project/tests/secret-test')
+      .set('Authorization', `Bearer ${ctx.readToken}`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain('com.acme.SecretSimulation');
   });
 });
 

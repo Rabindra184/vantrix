@@ -50,6 +50,37 @@ gh pr edit <N> --base main
 Either way, **verify against the server** (`git ls-remote origin refs/heads/main`)
 rather than trusting a PR body or a merge click.
 
+### A CI verdict belongs to a COMMIT, and `gh` will happily pair it with another
+
+**A WATCH THAT READS THE HEAD SHA AND THE CHECK LIST IN TWO CALLS CAN REPORT
+GREEN FOR A COMMIT WHOSE CI NEVER RAN.** Measured on PR #210: a conflict
+resolution was pushed, and a background watcher that polled
+`gh pr view --json headRefOid` and then `gh pr checks` announced
+**"ALL GREEN at cc49d32"** — the new SHA, paired with the PREVIOUS commit's
+finished checks. Queried directly a moment later, every check on cc49d32 was
+`QUEUED`. The merge was one command from happening on a verdict that described
+a tree nobody had tested.
+
+**`mergeStateStatus` IS NOT A SUBSTITUTE EITHER** — it read `CLEAN` in the
+same window, and `mergeable=MERGEABLE` was stale for minutes after `main`
+moved under an open PR, reporting no conflict where a local
+`git merge origin/main` produced one immediately.
+
+The cheap fix is to pin the SHA on BOTH sides of the read and discard the
+result if it moved, plus require more checks than a partial list can supply:
+
+```
+  before=$(gh pr view N --json headRefOid -q .headRefOid)
+  s=$(gh pr checks N --json name,state)
+  after=$(gh pr view N --json headRefOid -q .headRefOid)
+  [ "$before" = "$after" ] && echo "$s" | jq -e 'length > 3 and all(.state=="SUCCESS" or .state=="SKIPPED")'
+```
+
+**THIS IS THE GREEN-RUN-MEASURING-THE-WRONG-TREE SHAPE THAT THE UNIT FLOORS
+EXIST TO CATCH, ONE LAYER OUT.** There the tell is a count below the floor;
+here it is a SHA that moved between two API calls, and nothing in the output
+says so. A green is a claim about a commit — check which commit it is about.
+
 **AND `git checkout -b` BRANCHES FROM WHERE YOU ARE STANDING, WHICH IS USUALLY
 THE BRANCH YOU JUST PUSHED.** Two findings in a row were taken this way —
 `fix/review-m11-onetitle` was cut from `fix/review-m09-labels` rather than from
@@ -196,15 +227,230 @@ every time, and the revoked check runs BEFORE the Argon2 verification.
 `TOOL_UNKNOWN`, so two runs cannot differ by tool. Recorded as latent, the
 same way `histogram_kind` is.
 
-**WHAT WAS RUN, AND WHAT WAS STILL RUNNING.** `typecheck` and `lint` green by
-their own exit codes; `test:unit` **156 / 1997**, the recorded floor plus
-exactly this branch's one case. `test:integration` was STILL RUNNING when this
-was pushed and is expected at **139 / 1807** by arithmetic — that file is a
-`.ts`, so both suites run it. Said rather than asserted, because this session
-has already corrected one floor that was arithmetic wearing a measurement's
-clothes; CI's `build` job prints all three and is the arbiter. Both suites ran
-against a SCRATCH DATABASE (`perfportal_card`) and a scratch Redis INDEX
-(db 14).
+**WHAT WAS RUN, AND WHICH RUN IS THE ONE TO BELIEVE.** `typecheck` and `lint`
+green by their own exit codes; `test:unit` **156 / 1997**, the recorded floor
+plus exactly this branch's one case. Integration was still running when this
+was pushed, so the entry claimed 139 / 1807 as ARITHMETIC and named CI as the
+arbiter — and CI then MEASURED exactly that on clean containers:
+
+```
+  pnpm test:unit         Test Files 156 passed (156)   Tests 1997 passed (1997)
+  pnpm test:integration  Test Files 139 passed (139)   Tests 1807 passed (1807)
+  pnpm test:e2e          Running 149 tests using 2 workers
+```
+
+**AND THE LOCAL INTEGRATION RUN OF THE SAME COMMIT FAILED 35 TESTS ACROSS 11
+FILES, WHICH IS NOT EVIDENCE ABOUT THE CODE.** It collected the same 1807, so
+nothing was skipped; what it reported is the pressure signature this file
+already documents, with every tell present at once:
+
+```
+  free pages      3,649      worse than the 4,390 this file calls untrustworthy
+  swap            14,276 of 15,360 MB — 93%
+  worst durations 80,726ms and 80,441ms on sub-second tests
+  the diff        one `slice`, its test, and this document
+  failures        token CRUD, a live-chunk Content-Type, project filtering
+```
+
+A one-line change to a cardinality THROW cannot reach token CRUD, and the
+80-second durations are the shape recorded for a machine waiting on swap.
+**CI IS THE CONTROLLED COMPARISON**: it holds the commit fixed and varies the
+machine, which is strictly better than backing the change out locally — the
+manoeuvre this file prescribes — because it changes exactly one variable and
+the one this run makes suspect. Both local suites ran against a SCRATCH
+DATABASE (`perfportal_card`) and a scratch Redis INDEX (db 14).
+
+**AND THE FLOOR MOVES AGAIN ON MERGE, WHICH IS RECORDED RATHER THAN
+OVERWRITTEN.** 139 / 1807 is what CI measured on the tree this branch was cut
+from (main at 3ae5052). token-scope-stops-at-its-project then merged
+underneath it and added four integration cases, so on the merged tree this
+branch is **139 / 1811**. Both numbers are kept because they describe
+different trees, and the unit floor is untouched at 156 / 1997 — that branch
+added no unit case. Third reconciliation in this run of branches; it is the
+standing tax on having two open at once.
+
+The token-scope-stops-at-its-project branch added no unit FILE and no unit
+case — unit stays **156 / 1996** (both files it touches are
+`.integration.test.ts`, which the unit config excludes; the figure was
+measured at 156 / 1992 and share-the-sorted-filtered-table merged underneath
+this branch while it was open, adding its four) — and 4 cases: 3 to
+`apps/api/test/tests.integration.test.ts` and 1 to
+`session-auth.integration.test.ts`, from **139 / 1806 to 139 / 1810** —
+MEASURED, and the measurement is what exposed a floor this file had been
+carrying wrongly for four branches (below). **e2e stays 149.** **AC-SEC-3**, and it is a live cross-project READ exposure rather
+than a correction to a number.
+
+**A TOKEN MINTED FOR ONE PROJECT COULD READ ANOTHER PROJECT'S TEST
+CATALOGUE.** Measured against a real API before anything changed — one org,
+two projects, a bearer token scoped to the first:
+
+```
+  GET /v1/projects/B/tests              200   slug, name, simulationClass,
+                                              description, runCount, latestRun
+  GET /v1/projects/B/tests/secret-test  200   the same fields
+  GET /v1/projects/B/runner/jobs/next   404   refused
+  GET /v1/projects/B/runs               404   refused
+```
+
+So a CI credential for one project enumerated a sibling project's tests,
+**including their fully-qualified simulation class names.**
+
+**EIGHTH TIME THIS FILE RECORDS ONE-CALLER-SHORT, AND THE TWO RESOLVERS SIT
+ONE CONCEPT APART:**
+
+```
+  runner   if (!project || (credentialProjectId !== undefined
+                            && credentialProjectId !== project.id))   -> 404
+  tests    if (project === null)                                      -> 404
+```
+
+`RulesController` and `TokensController` are `@UseGuards(SessionOnlyGuard)` at
+CLASS level, so no bearer reaches them at all. `RunsController` arrives at
+safety differently — it resolves the project FROM the token
+(`projects.byId(tenant.projectId)`) and ignores the slug, so it cannot name
+another one. `RunnerController` compares. `TestsController` was the only
+bearer-reachable slug-scoped route resolving by org and slug alone, and only
+its two GETs are bearer-reachable — the PATCH and DELETE are session-only, so
+what leaked was a READ and never a write.
+
+**AND THE DOCSTRING WAS ACCURATE, WHICH IS WHY READING IT FLAGGED NOTHING.**
+It said "404, NEVER 403, for a project outside the caller's **org** — the rule
+every project-scoped controller here follows." True, and implemented. It
+simply describes ONE of the two boundaries a slug-scoped route has, and the
+sentence "every project-scoped controller here follows" is true of the org
+rule while `RunnerController` quietly follows a stricter one. **This file
+records five docstrings that asserted a behaviour the product lacked; this is
+the inverse and is harder — a docstring that is true about the half it
+describes and silent about the half that is missing.**
+
+**AND #209 COULD NOT HAVE FOUND IT.** That branch enumerated every run-scoped
+GET for cross-ORG isolation (AC-SEC-1) and its derived guard is keyed on
+`@Controller('/v1/runs/:id')`. This is cross-PROJECT, within one org, on a
+`/v1/projects/:slug` controller — the sibling axis one level in. Two
+criteria, two prefixes, and covering one says nothing about the other.
+
+**THE PARAMETER IS REQUIRED AND HAS NO DEFAULT, WHICH IS HOW ALL FOUR CALL
+SITES WERE FOUND.** A default of `undefined` reads as "no check", so a fifth
+handler added later would be unguarded with nothing saying so — the rule this
+file already records for `listEnabled`'s `testId` and `buildCompareMatrix`'s
+`currentRunId`. Required, `tsc` named every one.
+
+**404 RATHER THAN AC-SEC-3's LITERAL 403, DELIBERATELY.** The criterion says
+"rejected with `403`". A 403 CONFIRMS that project B exists, which is exactly
+what the org rule four lines above refuses to do, and `RunnerController`
+already answers 404 for the identical mistake. One answer for "not yours"
+beats matching a literal that contradicts the rule stated beside it —
+recorded as a deviation with its reason, the discipline the N01 tiles entry
+set. **AC-SEC-3's second clause is NOT done and is a feature rather than an
+omission**: "and the attempt is audit-logged" has no machinery at all — there
+is no audit table, and AC-SEC-4 (immutable audit records with actor, target,
+before/after, IP, user agent) is unbuilt.
+
+**FIVE MUTATIONS, AND THREE LAND ON EXACTLY WHAT THEY SHOULD:**
+
+```
+  the resolver ignores the credential again   the 2 bearer-refusal cases
+  only the LIST is fixed                      the single-GET case ALONE
+  every handler forgets (the before-state)    the DERIVED guard ALONE
+  the `undefined` arm dropped                 14 cases — see below
+  the guard's loose spelling + before-state    NOTHING — see below
+```
+
+**THE `undefined` ARM PROTECTS THE ENTIRE HUMAN PATH, AND 14 IS THE
+MEASUREMENT.** A session carries NO `projectId` — it is org-scoped on purpose,
+so a person may read any project in their org. Written as
+`credentialProjectId !== project.id` without the `undefined` arm, the guard
+refuses every session instead: 14 of 52 cases fail, across list, single,
+PATCH and DELETE. That is a blunt mutation, and this file's own
+share-the-sorted-filtered-table entry warns that **a red-verify failing MORE
+cases is not a better one** — what matters is that the case written for it
+(`still lets a session read a project its org owns`) is among them, which it
+is. The breadth is the finding rather than the proof: one missing arm takes
+the whole browser down.
+
+**AND THE DERIVED GUARD'S OWN DOCSTRING WAS WRONG, CAUGHT BY MUTATING IT.**
+The guard scans every `@Controller('/v1/projects/:slug` file and requires
+either a class-level `@UseGuards(SessionOnlyGuard)` or a mention of
+`tenant.projectId`. Its first docstring credited the NARROWED decorator window
+— the slice between `@Controller(...)` and `export class` — for not being
+fooled. Measured, that is false: widening the window alone still fails,
+because this controller's own `@UseGuards(SessionOnlyGuard)` decorators sit on
+the PATCH and DELETE handlers BELOW the class. What actually does the work is
+requiring the EXACT string `@UseGuards(SessionOnlyGuard)`, which an `import`
+line cannot match.
+
+**THE THROWAWAY PROBE THAT FOUND THE DEFECT HAD EXACTLY THAT BUG**, and it
+reported `tests.controller.ts` as class-guarded on the strength of its import
+— the one file that was unguarded, exonerated by the check written to find it.
+Reproduced deliberately: the loose spelling plus the before-state **passes**.
+So the docstring now claims only what the mutation demonstrates, and says the
+window is belt-and-braces. **A comment crediting the wrong mechanism inside a
+security guard is the defect class this file records five times, and it was
+about to ship in the branch fixing a security hole.**
+
+**AND THE GUARD'S HONEST LIMIT IS STATED IN IT.** It is SYNTACTIC: it cannot
+prove the comparison is right, only that the credential's project is consulted
+at all — mutation one leaves the four call sites intact and the guard stays
+green, which is why the behavioural cases exist beside it. What it catches is
+the shape that actually happened: a controller that never mentions it.
+
+**COMMENTS ARE STRIPPED BEFORE SCANNING, FOR THE FOURTH TIME IN THIS FILE.**
+The guard's own block names the safe controllers and the corrected
+`resolveProject` docstring quotes `tenant.projectId` while explaining the fix —
+either would exonerate a future file that only TALKS about the rule.
+
+**AND THE SECOND PROJECT SHARES THE ORG DELIBERATELY.** Cross-org refusal is
+already covered twice in that file; a second org would re-prove the rule that
+works and say nothing about the axis AC-SEC-3 is about. The positive half —
+a bearer reading its OWN project — is the existing "accepts a bearer token,
+because reading which tests exist is an ordinary read", which is what stops a
+resolver that 404s everything from satisfying the new cases.
+**WHAT WAS RUN, AND THE FLOOR IS THE PART WORTH READING.** `typecheck` and
+`lint` green by their own exit codes; `test:unit` **156 / 1992** — UNCHANGED,
+which is the prediction for a branch whose every file is an
+`.integration.test.ts`; `test:integration` **139 / 1810, exit 0, zero
+failures**, against a SCRATCH DATABASE (`perfportal_sec`) and a scratch Redis
+INDEX (db 12). The nine real Gatling runs were confirmed intact.
+
+**AND 1810 WAS FOUR ABOVE WHAT THE RECORDED FLOOR PREDICTED, WHICH IS HOW A
+FOUR-BRANCH-OLD ARITHMETIC ERROR SURFACED.** This entry first predicted
+139 / 1814 from the recorded base of 139 / 1810. The run said 1810, so either
+four cases had not run or the base was 1806. Counted exactly
+(`git show origin/main:<file> | grep -c`), the branch adds 3 + 1 and no
+`it.each`, so the cases are real and the BASE was wrong. Re-derived from the
+last measured value:
+
+```
+  138 / 1797   trends-break-on-changed-conditions   MEASURED
+  +1           windowed-bands-refuse-not-500        1798
+  +1           brushed-throughput-divides-by-data   1799
+  +2           demarcate-the-warmup-window          1801   <- recorded as +6
+  +2           list-clamps-like-every-other-surface 1803
+  +2           guard-against-averaged-percentiles   1805   (139 files)
+  +1           enumerate-every-run-route            1806
+  +4           this branch                          1810   <- MEASURED
+```
+
+**THE WARM-UP ENTRY CONTRADICTED ITSELF INSIDE ONE SENTENCE.** It reads "4
+cases to `apps/web/test/Chart.test.tsx` … plus 2 INTEGRATION cases … so
+integration moves by 6 (**the four `.tsx` cases never run there**; the two
+`.ts` ones do)". The parenthetical is correct and the number is not: a `.tsx`
+case cannot move the integration floor, so it moves by TWO. Four branches
+then added to a base that was already four too high, and every one of them
+"closed" because each was only checking its own delta.
+
+**A DELTA THAT CLOSES IS NOT A FLOOR THAT IS RIGHT.** Each intervening entry
+verified `previous + mine`, which is exactly the check that cannot see an
+error in `previous`. What caught it was a prediction that DISAGREED with a
+measurement — and the reflex this file already records for the other
+direction ("a floor one ABOVE prediction is as much a discrepancy as one
+below") applies here with the sign flipped: the measurement was LOWER than
+predicted, and the temptation was to assume four cases had silently not run.
+Counting the cases in the source is what separated "my tests did not run"
+from "the base was wrong", and it is two commands.
+
+The three affected entries are corrected in place rather than annotated,
+because a floor is read as an instruction and a wrong one is followed.
 
 The share-the-sorted-filtered-table branch added no unit FILE and 4 cases to
 `apps/web/test/StatisticsTable.test.tsx`, from **156 / 1992 to 156 / 1996**.
@@ -402,8 +648,9 @@ case's list. Cut from **155 / 1990**, it measured integration 138 / 1808 on
 its own; guard-against-averaged-percentiles merged FIRST and took `main` to
 156 / 1992 unit and 139 / 1809 integration, so on the merged tree this branch
 is unit **156 / 1992** (UNCHANGED — that file is an `.integration.test.ts`,
-which the unit config excludes), integration **139 / 1810**, and **e2e stays
-149**. RECONCILED, not inferred from the branch it was cut from: the
+which the unit config excludes), integration **139 / 1806**, and **e2e stays
+149**. (CORRECTED from 139 / 1810: that figure inherited the warm-up entry's
+arithmetic error, and 1806 is what a measured run reports.) RECONCILED, not inferred from the branch it was cut from: the
 arithmetic that survives is 1 integration case onto whatever it sits on, and
 the two floors it first recorded described a tree that no longer exists.
 **A FLOOR IS A PROPERTY OF A TREE, NOT OF A BRANCH** — third time this file
@@ -542,7 +789,9 @@ check is what worked, not the memory of having read about it. Run it after
 every `-b`.
 The list-clamps-like-every-other-surface branch added no unit FILE, no unit
 case and no spec — unit stays **155 / 1990** and **e2e stays 149** — and 2
-cases to `apps/api/test/read.integration.test.ts`, at **138 / 1807**. It
+cases to `apps/api/test/read.integration.test.ts`, at **138 / 1803**
+(CORRECTED: it recorded 138 / 1807, inheriting the warm-up entry's error
+below). It
 closes the LAST surface reading a raw percentile, and it is recorded as
 LATENT rather than live, which is the honest description.
 
@@ -604,8 +853,12 @@ way it fails exactly one case: `expected 2515.4601126102525 to be 2503`.
 The demarcate-the-warmup-window branch added no unit FILE and 4 cases to
 `apps/web/test/Chart.test.tsx`, from **155 / 1986 to 155 / 1990**, plus 2
 INTEGRATION cases in `apps/api/test/ingest.integration.test.ts` — so
-integration moves by 6 (the four `.tsx` cases never run there; the two `.ts`
-ones do) to **138 / 1805**. **e2e stays 149.** It is a FEATURE rather than a
+integration moves by TWO (the four `.tsx` cases never run there; only the two
+`.ts` ones do) to **138 / 1801**. THIS LINE READ "moves by 6 … to 138 / 1805"
+FOR FOUR BRANCHES, contradicting its own parenthetical in the same sentence,
+and every entry after it inherited the error. Corrected against a measured run
+— see the token-scope-stops-at-its-project entry above, whose own floor is
+what exposed it. **e2e stays 149.** It is a FEATURE rather than a
 correction — AC-STAT-4's second half — and it is the first work in this file
 taken from an acceptance criterion the product half-implemented.
 

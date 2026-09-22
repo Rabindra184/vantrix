@@ -336,6 +336,91 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     ).toEqual([]);
   });
 
+  /**
+   * AC-SEC-3, one axis in from the cross-ORG case above.
+   *
+   * A bearer token is minted against exactly ONE project, so a route that
+   * takes a project SLUG in its path has two boundaries to honour, not one:
+   * the caller's org, and the credential's own project. Resolving by org and
+   * slug alone honours the first and ignores the second — which is what
+   * `TestsController` did, so a CI token for project A listed project B's
+   * tests (200, with slug, name and simulationClass). The behavioural cases
+   * live in `tests.integration.test.ts`; this one exists so the NEXT
+   * slug-scoped controller cannot reintroduce it silently.
+   *
+   * TWO WAYS TO BE SAFE, because the six today use both:
+   *
+   *   session-only at CLASS level   no bearer ever reaches it
+   *                                 (rules, tokens, project-ingest)
+   *   consults `tenant.projectId`   runner compares it to the resolved
+   *                                 project; runs resolves FROM it and
+   *                                 ignores the slug; tests now compares
+   *
+   * SYNTACTIC, and that is its honest limit: it cannot prove the comparison
+   * is correct, only that the credential's project is consulted at all. What
+   * it catches is the shape that actually happened — a controller that never
+   * mentions it.
+   *
+   * IT MATCHES THE EXACT DECORATOR STRING, AND THAT IS THE LOAD-BEARING HALF.
+   * The throwaway probe that found this defect asked whether
+   * `SessionOnlyGuard` appeared anywhere above `export class`, and reported
+   * `TestsController` as class-guarded on the strength of its IMPORT — the
+   * one file that was unguarded. A guard that exonerates its own defect.
+   * `@UseGuards(SessionOnlyGuard)` cannot match an import line, which is what
+   * actually prevents that; MEASURED, by running the loose spelling against
+   * the before-state, where it passes.
+   *
+   * The window between `@Controller(...)` and `export class` is narrowed too,
+   * and that part is belt-and-braces rather than load-bearing: with the exact
+   * string required, widening it alone still fails, because this controller's
+   * own `@UseGuards(SessionOnlyGuard)` decorators sit on the PATCH and DELETE
+   * handlers BELOW the class. Both are kept — the window is what stops a
+   * future file that mentions the decorator in prose above the class from
+   * reading as guarded — but only the first is claimed to do the work.
+   */
+  it('makes every slug-scoped controller answer to the credential’s project, not just its org', () => {
+    const dir = fileURLToPath(new URL('../src', import.meta.url));
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(d, e.name));
+        else if (e.name.endsWith('.controller.ts')) files.push(join(d, e.name));
+      }
+    };
+    walk(dir);
+    expect(files.length, 'no controllers collected').toBeGreaterThan(5);
+
+    const unguarded: string[] = [];
+    let slugScoped = 0;
+    for (const f of files) {
+      // Comments STRIPPED: this very block names the safe controllers, and
+      // the docstring on `TestsController.resolveProject` quotes
+      // `tenant.projectId` while explaining the fix. Either would exonerate a
+      // future file that only talks about the rule.
+      const src = readFileSync(f, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '');
+      const at = src.indexOf("@Controller('/v1/projects/:slug");
+      if (at === -1) continue;
+      slugScoped += 1;
+
+      const decorators = src.slice(at, src.indexOf('export class', at));
+      const classSessionOnly = decorators.includes('@UseGuards(SessionOnlyGuard)');
+      const consultsProject = src.includes('tenant.projectId');
+      if (!classSessionOnly && !consultsProject) unguarded.push(f.split('/').pop()!);
+    }
+
+    // A filter that matched nothing would make the assertion below pass
+    // against every controller at once.
+    expect(slugScoped, 'no slug-scoped controllers found — has the prefix changed?')
+      .toBeGreaterThan(3);
+    expect(
+      unguarded.sort(),
+      'slug-scoped controllers reachable by a bearer token that never consult `tenant.projectId` — ' +
+        'a token minted for one project can act on another',
+    ).toEqual([]);
+  });
+
   it('404s every endpoint for a run in another org, and 200s the identical URL shape for a run in its own org', async () => {
     ctx = await createTestApp();
     const cookie = await signUpAsOrgMember(ctx, 'cross-org@example.test');
