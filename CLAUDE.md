@@ -115,6 +115,157 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The share-the-sorted-filtered-table branch added no unit FILE and 4 cases to
+`apps/web/test/StatisticsTable.test.tsx`, from **156 / 1992 to 156 / 1996**.
+Integration is UNCHANGED BY THIS BRANCH (that file is a `.tsx`, which that
+config never runs), standing where guard-against-averaged-percentiles left it
+at **139 / 1809** — 138 / 1807 plus that branch's one `.ts` file and its two
+cases, which is ARITHMETIC rather than a local measurement and is what CI's
+`build` job prints. **e2e stays 149.** RE-MEASURED after merging `main`:
+it was cut at 155 / 1990 and guard-against-averaged-percentiles landed
+underneath it, so the floors it first measured described a tree that no longer
+exists — the same reconciliation `enumerate-every-run-route` needed against
+the very same merge, an hour earlier.
+Taken from the PRD rather than from a review: **AC-DASH-4**, which names three
+things and the product did two.
+
+**"FILTERED, SORTED, ZOOMED" — AND ONLY ZOOMED WAS IN THE URL.** AC-DASH-4
+reads "given any filtered, sorted, zoomed view, when its URL is copied and
+opened in a new session by an authorized user, then the identical view
+renders." `useSearchParams` appeared ZERO times in `StatisticsTable.tsx`,
+which held four pieces of view state in `useState`:
+
+```
+  chosen        the column picker
+  expandedKeys  which groups are open
+  sort          AC-DASH-4's "sorted"      <- now in the URL
+  query         AC-DASH-4's "filtered"    <- now in the URL
+```
+
+`from`/`to` were in the URL from the beginning. So a reader who brushed a
+window, sorted by p99 and filtered to `Cart` handed over a link reproducing
+ONE THIRD of what they were looking at, with nothing saying which third —
+and the receiving reader has no way to tell a link that lost the question
+from a colleague who was looking at the default all along.
+
+**THE OTHER TWO ARE DELIBERATELY LEFT, AND THE LINE IS THE AC's OWN.** It
+names filtered, sorted and zoomed. A column selection and an expansion are
+READING PREFERENCES — how much of the answer you want visible — where a sort
+and a filter are the QUESTION. Recorded as an arm not taken rather than a
+clause missed.
+
+**THE SORT IS HONOURED ONLY FOR A COLUMN THIS PAYLOAD HAS**, which is the rule
+the column picker one screen down already follows ("a percentile the project
+does not configure cannot be turned on"), applied to a string a reader can
+type. It is NOT a crash guard: `valueOf` in `buildTree` reads `undefined` for
+an unknown column and treats the row as having no value, so junk renders every
+row in arrival order with no header marked sorted — **a broken table rather
+than an ignored parameter.** A malformed `dir` degrades the same way, to
+`desc`, which is this table's own opening direction rather than the FASTEST
+row — the one order nobody opens this table to see.
+
+**`replace: true` WAS THE ONE THING TO CHECK RATHER THAN ASSUME, AND THE
+EVIDENCE IS UNANIMOUS.** Every view-state write in `apps/web/src` copies the
+existing params and REPLACES rather than pushes, two of them with the argument
+already written down — `RunDetail`'s request filter ("narrowing a filter
+refines the view rather than being a place to go Back to") and `RunCompare`'s
+metric ("otherwise Back walks the reader through every checkbox"). The filter
+box is the strongest case of the three: a history entry per keystroke makes
+Back walk the reader backwards one letter at a time.
+
+**AND THAT AUDIT FOUND A LIVE INCONSISTENCY THAT IS RECORDED RATHER THAN
+TAKEN.** Of the eight view-state writes in the app, exactly one replaces the
+search string WHOLESALE:
+
+```
+  RunCompare.tsx:94   setMetric   new URLSearchParams(params)   preserves
+  RunCompare.tsx:143  toggle      setParams({ runs: … })        REPLACES
+```
+
+Forty lines apart, in one file, each arguing `replace: true` in its own
+comment. So ticking a run on Compare drops `from`/`to` — and the tab link back
+to Overview is built by `useWindowSuffix` FROM THE CURRENT PARAMS, so the
+window is not hidden, it is gone. The brush is deliberately withheld on
+Compare ("a control over a section that ignores it is a claim about that
+section"), which is what makes it silent: nothing on screen changes at the
+moment the selection is lost. Left because it is a separate finding with its
+own red-verify, and because it is a NAVIGATION seam — what would prove it is a
+browser case, not a unit one.
+
+**THE UNIT CASES PROVE THE COMPONENT READS THE PARAMS, NOT THAT THE PAGE
+DELIVERS THEM**, so the three facts the feature actually rests on were READ
+rather than assumed:
+
+```
+  useRunWindow.setWindow   new URLSearchParams(params)   brushing KEEPS the sort
+  useWindowSuffix          an allowlist of from/to       a TAB link drops them
+  StatisticsTable          ONE call site (RunDetail)     no two instances collide
+```
+
+The middle row is the one worth arguing rather than fixing. It is **not a
+regression**: before this the sort lived in `useState`, so a trip to Charts
+and back unmounted the component and lost it anyway — the behaviour on that
+path is unchanged — and carrying a statistics table's sort onto the Charts
+tab's URL would be noise. `ScopedStatistics` is not a second instance; it
+imports `columnsFor` and reads no parameters at all.
+
+**FOUR CASES, FOUR DISTINCT LANDINGS, AND THE SHARP MUTATION IS THE
+BEFORE-STATE ITSELF:**
+
+```
+  the exact before-state (local useState)   3 cases: both round-trips + the write
+  the column validation dropped             the unknown-column case ALONE
+```
+
+**AND THE BEFORE-STATE PASSES ALL SEVENTY EXISTING CASES**, which is the
+honest statement of the defect: **sorting and filtering WORKED — they were
+not shareable.** No existing case could have seen it, because every one of
+them clicks the control and reads the DOM back, and that is satisfied
+identically by component state and by a URL.
+
+**THE FIRST TWO MUTATIONS WERE BLUNT AND PROVED THE WRONG THING.** Disabling
+the URL READ while leaving the WRITE failed 7 and 9 cases — because the
+interaction is URL-mediated end to end now, so a sort click round-trips
+through nothing and the ordinary sort and filter cases fall over too. That
+demonstrates the mechanism is load-bearing and says NOTHING about whether the
+new cases are redundant with the old seventy; only a mutation that keeps
+interaction working can answer that, and the before-state is exactly it.
+**A red-verify that fails MORE cases is not a better red-verify** — the
+question is always which cases, and whether the ones you added are among them.
+
+**AND `toHaveValue` IS AN "Invalid Chai property" IN THIS FILE, WHICH IT
+ALREADY RECORDS ONE ENTRY OVER.** `StatisticsTable.test.tsx` does not import
+`@testing-library/jest-dom/vitest`, so the matcher is a missing property
+rather than a failed assertion and the message points at the test instead of
+the product. A plain `.value` comparison is what that file already uses.
+The same pass re-learned that `getAllByTestId(/^stat-row-/)` picks up the
+TOTALS row — the file's own `bodyRows()` helper exists for exactly that.
+**WHAT WAS RUN, AND WHAT WAS NOT.** `typecheck` and `lint` green by their own
+exit codes — `lint` on the MERGED tree, so it is also the check that this
+branch does not trip the eslint rule the entry below it added an hour earlier.
+`test:unit` **156 / 1996**, the recorded floor plus exactly this branch's four
+cases, with **zero `Errors` lines**, which is what says the jsdom project
+really loaded rather than being silently skipped on the wrong Node.
+
+**AND ONE e2e FILE WAS RUN RATHER THAN REASONED ABOUT, BECAUSE IT DRIVES THE
+CONTROL THIS BRANCH CHANGED.** `run-tables.spec.ts` fills the filter box three
+times (`Recommend`, `no-such-request`, then empty), so it is the one spec that
+can see a filter which now writes to the URL — and the empty fill is the case
+that would catch `?q=` being left behind as a filter that is not filtering.
+**19 passed**, the filter case among them. Everything else in the suite was
+read rather than run, and what the reading had to establish is that no
+assertion anchors the run page's URL after touching this table:
+`auth.spec.ts:74` does anchor it (`/runs/${runId}$`) and never touches the
+filter, and nothing in `StatisticsTable.tsx` writes a parameter on MOUNT —
+there is no `useEffect` in the file at all — so a run page still opens with a
+bare URL. `test:integration` was not re-run: every file in the diff is a
+`.tsx` or this document.
+
+Both suites ran against a SCRATCH DATABASE (`perfportal_share`) and a scratch
+Redis INDEX (db 9), on **port 3100** — the developer database holds nine real
+Gatling runs and `pnpm test:e2e` seeds through the real API without
+truncating. Confirmed 9 afterwards.
+
 The guard-against-averaged-percentiles branch added ONE unit file —
 `packages/statistics/test/no-averaged-percentiles.test.ts` (2) — from
 **155 / 1990 to 156 / 1992**. Integration moves with it (that file is a `.ts`
