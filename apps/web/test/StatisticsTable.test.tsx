@@ -1,6 +1,6 @@
 import type { StatRow, StatsResponse } from '@perfportal/contracts';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { clampPercentile } from '../src/percentile';
 import StatisticsTable, {
@@ -1842,5 +1842,94 @@ describe('StatisticsTable — a group row is marked as one', () => {
     expect(page).toMatch(/tagged group/i);
     expect(page).toMatch(/never be added/i);
     expect(page).toMatch(/untagged row is a single request/i);
+  });
+});
+
+
+/**
+ * AC-DASH-4: "given any FILTERED, SORTED, zoomed view, when its URL is copied
+ * and opened in a new session, then the identical view renders."
+ *
+ * Zoomed was already true — the time window is a search param. Sorted and
+ * filtered were `useState`, so a reader who sorted by p95 and filtered to a
+ * request handed over the page and not the question. This product has made
+ * the same fix twice before (the compare metric, the errors request filter)
+ * and written down the reasoning both times.
+ *
+ * THE ROUND TRIP IS THE CLAIM, so these render from a URL rather than only
+ * asserting one gets written. A test that clicked a header and checked the
+ * address bar proves the WRITE and says nothing about whether a recipient's
+ * fresh mount reads it back — which is the half a shared link depends on.
+ */
+describe('StatisticsTable — a shared link carries the question', () => {
+  // A real request name out of the fixture's own roots, not a literal: the
+  // file already keeps `ROOT_PATHS` for exactly this reason.
+  const FILTERABLE = ROOT_PATHS[1]!;   // 'Catalog'
+
+  /** Renders the live location, so a case can read what a reader would copy. */
+  const Where = () => <span data-testid="where">{useLocation().search}</span>;
+
+  const at = (search: string) =>
+    render(
+      <MemoryRouter initialEntries={[`/runs/${RUN_ID}${search}`]}>
+        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <Where />
+      </MemoryRouter>,
+    );
+
+  // `bodyRows`/`pathsOf` are the file's own helpers, and they exclude the
+  // totals row — which carries no `data-path` and would answer null for
+  // every case below.
+  const firstBodyPath = () => pathsOf(bodyRows()).at(0) ?? null;
+
+  it('opens sorted the way the link says, not on its own default', () => {
+    // Ascending on the leftmost column is the one order this table never
+    // opens on by itself, so a match here cannot be the default wearing a
+    // disguise.
+    at('?sort=name&dir=asc');
+    const ascending = firstBodyPath();
+
+    cleanup();
+    at('');
+    expect(firstBodyPath(), 'the link must not render the default view').not.toBe(ascending);
+  });
+
+  it('opens filtered the way the link says', () => {
+    at(`?q=${encodeURIComponent(FILTERABLE)}`);
+    const paths = pathsOf(bodyRows());
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) {
+      expect((path ?? '').toLowerCase()).toContain(FILTERABLE.toLowerCase());
+    }
+    // And the box shows what is filtering, or the reader cannot tell why
+    // rows are missing and has nothing to clear.
+    // `.value` rather than `toHaveValue`: this file does not import
+    // `@testing-library/jest-dom/vitest`, so that matcher is an "Invalid Chai
+    // property" rather than a failed assertion — CLAUDE.md records the same
+    // trap in this same file.
+    expect((screen.getByLabelText(/filter/i) as HTMLInputElement).value).toBe(FILTERABLE);
+  });
+
+  it('writes the sort into the URL when a header is clicked', () => {
+    at('');
+    fireEvent.click(screen.getByRole('button', { name: /sort by 95th/i }));
+    // Read off the rendered location rather than a spy: the claim is about
+    // what a reader would copy out of the address bar.
+    expect(screen.getByTestId('where').textContent).toMatch(/sort=p95/);
+  });
+
+  /**
+   * The guard. `?sort=` is a string a reader can type, and `buildTree`'s
+   * `valueOf` degrades on an unknown column by reading `undefined` — so an
+   * unvalidated one would not crash, it would render every row in arrival
+   * order with no header marked sorted. That reads as a broken table rather
+   * than an ignored parameter.
+   */
+  it('ignores a sort column this payload does not have, falling back to the default', () => {
+    at('?sort=totally-not-a-column&dir=asc');
+    const junk = firstBodyPath();
+    cleanup();
+    at('');
+    expect(junk, 'an unknown column must render the default view').toBe(firstBodyPath());
   });
 });

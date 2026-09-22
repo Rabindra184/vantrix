@@ -1,4 +1,5 @@
 import { useId, useMemo, useState, type CSSProperties } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { useWindowSuffix } from '../routes/useRunWindow';
 import type { RunResponse, StatRow, StatsResponse } from '@perfportal/contracts';
@@ -661,23 +662,96 @@ export default function StatisticsTable({
    * whole decision, and the previous sub-project's only escaped defect was a
    * one-word interactive default that flipped with 459 tests staying green.
    */
-  const [sort, setSort] = useState<SortState | null>(null);
-  const opening: SortState = { column: columns.worstFirst, direction: 'desc' };
-  const activeSort = sort ?? opening;
+  /* ═══ THE SORT AND THE FILTER LIVE IN THE URL (AC-DASH-4) ═══
+   *
+   * "Given any filtered, sorted, zoomed view, when its URL is copied and
+   * opened in a new session, then the identical view renders." Zoomed was
+   * already true — the time window is a search param. These two were
+   * `useState`, so a reader who sorted by p95, filtered to `checkout` and
+   * sent the link handed over the PAGE and not the QUESTION.
+   *
+   * This product has made exactly this fix twice and written down why: the
+   * compare metric ("a link to an ERRORS comparison opened as p95 for
+   * whoever received it") and the errors request filter ("a link to 'the
+   * errors for Place Order' that opens showing every request's errors has
+   * dropped the question and kept only the page"). This table is the surface
+   * those two never reached.
+   *
+   * ABSENT MEANS DEFAULT, so an ordinary run URL stays clean and `null` keeps
+   * meaning exactly what it meant as state: the reader has not chosen. The
+   * opening sort is still applied on READ rather than written into the URL.
+   *
+   * `replace: true` for both, matching the errors filter: sorting or
+   * narrowing REFINES the view a reader is already looking at. A history
+   * entry per keystroke would make Back walk the filter box backwards one
+   * letter at a time.
+   */
+  const [params, setParams] = useSearchParams();
 
-  const sortBy = (column: SortColumn) =>
-    setSort((was) => {
-      const current = was ?? opening;
-      // The same column reverses; a new one starts at ITS own first direction,
-      // rather than inheriting the direction the previous column happened to
-      // be in — the reader clicked a question, not an arrow.
-      return current.column === column
+  const opening: SortState = { column: columns.worstFirst, direction: 'desc' };
+
+  /**
+   * Honoured only when the column is one THIS PAYLOAD has.
+   *
+   * The same rule the column picker below follows — "a percentile the project
+   * does not configure cannot be turned on" — applied to a string a reader
+   * can type. `valueOf` in `buildTree` degrades safely on an unknown column
+   * (it reads `undefined` and treats the row as having no value), so junk
+   * would not crash; it would render every row in arrival order with no
+   * header marked sorted, which reads as a broken table rather than an
+   * ignored parameter. Falling back to the default says the honest thing.
+   */
+  const sortable = useMemo(
+    () => new Set<string>(['name', ...columns.executions.map((c) => c.column),
+      ...columns.responseTime.map((c) => c.column)]),
+    [columns],
+  );
+
+  const chosenSort = ((): SortState | null => {
+    const column = params.get('sort');
+    if (column === null || !sortable.has(column)) return null;
+    // Any value but `asc` reads as `desc`, which is this table's own opening
+    // direction — a malformed `dir` therefore degrades to the default rather
+    // than to the FASTEST row, the one order nobody opens this table to see.
+    return { column: column as SortColumn, direction: params.get('dir') === 'asc' ? 'asc' : 'desc' };
+  })();
+  const activeSort = chosenSort ?? opening;
+
+  const sortBy = (column: SortColumn) => {
+    const current = activeSort;
+    // The same column reverses; a new one starts at ITS own first direction,
+    // rather than inheriting the direction the previous column happened to
+    // be in — the reader clicked a question, not an arrow.
+    const next: SortState =
+      current.column === column
         ? { column, direction: current.direction === 'asc' ? 'desc' : 'asc' }
         : { column, direction: firstDirectionFor(column) };
-    });
+    setParams(
+      (was) => {
+        const p = new URLSearchParams(was);
+        p.set('sort', String(next.column));
+        p.set('dir', next.direction);
+        return p;
+      },
+      { replace: true },
+    );
+  };
 
   /** G-14. The RAW input, straight through — see the pipeline below. */
-  const [query, setQuery] = useState('');
+  const query = params.get('q') ?? '';
+  const setQuery = (value: string) =>
+    setParams(
+      (was) => {
+        const p = new URLSearchParams(was);
+        // Deleted rather than set empty: `?q=` in a shared link is a filter
+        // that is not filtering, and it would survive every later edit of the
+        // URL as noise.
+        if (value === '') p.delete('q');
+        else p.set('q', value);
+        return p;
+      },
+      { replace: true },
+    );
 
   /* ---- the pipeline: filter, then sort, then decide what is visible ----
    *
