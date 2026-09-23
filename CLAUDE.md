@@ -146,6 +146,121 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The remediations-name-a-real-lever branch added no unit FILE and 1 case to
+`packages/core/test/errors.test.ts`, from **156 / 1998 to 156 / 1999**.
+Integration moves with it (that file is a `.ts` integration runs too),
+expected at **139 / 1812** — ARITHMETIC at the time of writing, with the run
+still going; see the closing paragraph. **e2e stays 149.** It corrects FOUR error messages, one of
+which this session shipped three branches earlier.
+
+**FOUR REMEDIATIONS SENT AN OPERATOR TO A SURFACE THAT DOES NOT EXIST.**
+
+```
+  engine.ts:327          "…or raise the limit in project settings"        cardinality cap
+  blobs.ts:215           "…or raise the limit in project settings"        bundle wire size
+  bundle.ts:45           "…or raise the decompressed-size limit in project settings"
+  metrics.controller:706 "Lower the project's indicators.higherMs setting … and retry"
+```
+
+**THERE IS NO PROJECT-SETTINGS SURFACE, CHECKED THREE WAYS.** Every `settings`
+reference in `apps/api/src` is a READ (`projects.settings(...)`);
+`ProjectRepository` has no update, set, write or patch method for them; and
+`projects.controller.ts` carries only `@Post()` while `ProjectShell` offers
+Tests, Runs, Add results, SLA rules and API tokens and nothing else. The only
+way to change one is direct SQL against the `project.settings` JSONB column.
+
+**THE FOURTH IS MINE, FROM THREE BRANCHES AGO.** The windowed-bands branch
+replaced a 500 whose remediation said "retry" when the stored buckets overflow
+on every retry — and replaced it with **"Lower the project's
+`indicators.higherMs` setting … and retry"**, which names a lever the product
+gives nobody a way to pull. **An impossible instruction swapped for an
+unreachable one**, in the branch whose whole subject was remediation that
+cannot work, because the new advice was checked for TRUTH and not for
+REACHABILITY. Those are two questions and only the first was asked.
+
+**AND THE PRODUCT ALREADY KNEW THE FORM.** The per-chunk 413 reads "Split the
+run into smaller chunks, or raise `MAX_STREAM_CHUNK_BYTES`. This is the
+per-chunk limit, not the run's cumulative size limit." It names a real
+environment variable and distinguishes itself from its sibling. Four others
+named a page. **Fourth time this file records a correct answer already present
+one call site away.**
+
+**THE FOUR SPLIT IN TWO, AND THE WORDING HAS TO FOLLOW — WHICH IS WHY THIS IS
+NOT A FIND-AND-REPLACE:**
+
+```
+  blobs.ts    MAX_BUNDLE_BYTES               deployment lever EXISTS
+  bundle.ts   MAX_DECOMPRESSED_BUNDLE_BYTES  deployment lever EXISTS
+  engine.ts   settings.maxEndpoints          project-only, NO env var
+  metrics.ts  settings.indicators.higherMs   project-only, NO env var
+```
+
+`maxEndpoints` is an `ENGINE_KEYS` member read raw off `project.settings` and
+frozen onto the run; `indicators.higherMs` is a `parseProjectSettings` field.
+Neither has an environment variable anywhere, so telling a reader to raise
+`MAX_ANYTHING` would have replaced one unreachable lever with another. Those
+two now say the limit is a stored project setting with no editing surface yet,
+which is the true and useful thing: it tells an operator the change is
+possible and where it has to happen.
+
+**AND THE ACTIONABLE HALF LEADS IN ALL FOUR.** Every one of these messages
+already carried advice a reader can act on alone — parameterize the request
+names, archive only the results directory, lower the bound. That half is now
+first and the configuration half second, because a remediation whose first
+clause needs an administrator is useless to the person reading it.
+
+**THE GUARD BANS A DESTINATION, NOT A TOPIC.** It scans every production `.ts`
+under `apps/` and `packages/`, strips comments, extracts `remediation:` string
+literals including `+`-joined ones, and fails any containing "in project
+settings". The two corrected project-only messages still discuss settings at
+length and pass, because what was misleading was naming a PLACE to go. Its
+docstring says to delete the guard the day a settings surface ships.
+
+**TWO MUTATIONS, TWO DISTINCT LANDINGS:**
+
+```
+  one phrase restored          names `packages/storage/src/blobs.ts`
+  the regex matches nothing    "no remediation strings found" — the vacuity guard
+```
+
+The second is the half that earns its lines: a `remediation:` shape that
+changes later would otherwise leave the guard reporting zero offenders
+for ever, which is indistinguishable from a clean tree. Both the collector
+(>50 files) and the match count (>5 remediations) are asserted before the
+offender list is.
+
+**COMMENTS ARE STRIPPED, FOR THE SIXTH TIME IN THIS FILE.** The guard's own
+docstring quotes the banned phrase four times while explaining it, and so does
+the note at each corrected site. Without stripping, the guard fails on itself.
+
+**AND `tsc` CAUGHT WHAT A GREEN SUITE DID NOT, FOR THE SIXTH TIME.** The walk
+annotated its entries `ReturnType<typeof readdirSync>`, which resolves to the
+BUFFER overload — so `e.name` typed as `NonSharedBuffer` and every comparison
+against a string was `TS2367: no overlap`. **vitest reported 3 passed.** The
+gate's first command is still the only thing that sees a test built wrong, and
+the fix is to let inference do it rather than to name a type with overloads.
+
+**WHAT IS NOT DONE, AND IS A PRODUCT GAP RATHER THAN AN OMISSION.** A project
+cannot edit its own settings through any surface the product offers, though
+the per-project mechanism is real and read on every ingest
+(`pipeline.service.ts` reads `settings.maxDecompressedBundleBytes` with a
+config fallback). Building that surface is a feature — an endpoint, a
+validated write path for keys `parseProjectSettings` deliberately does not
+model, and a section in `ProjectShell`. Recorded here so the next reader meets
+the gap as a decision rather than as four messages that read like a page
+exists.
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **156 / 1999**, the recorded floor plus exactly this branch's one
+case, ZERO failures — and for once on a machine worth believing: the
+unrelated `remotion` ffmpeg that had held 618% CPU through the previous branch
+was gone, and load had fallen from 169 to 22. `test:integration` was still
+running at push time against a SCRATCH DATABASE (`perfportal_rem`) and a
+scratch Redis INDEX (db 15), so **139 / 1812 is arithmetic and is labelled as
+such** rather than quoted as a measurement — which is the habit this very
+entry criticises one section up, and the floor this session already had to
+correct for exactly that reason. CI's `build` job prints all three and is the
+arbiter.
+
 The no-gate-on-a-measurement-we-never-produce branch added no unit FILE and
 1 case to `apps/web/test/ProjectRules.test.tsx`, from **156 / 1997 to
 156 / 1998** — one existing case was RE-POINTED rather than added to.
