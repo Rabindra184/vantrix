@@ -6,6 +6,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SlaRule } from '@perfportal/contracts';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * Where the families a rule can resolve against are actually produced.
+ *
+ * RESOLVED FROM `process.cwd()`, NOT `import.meta.url`, AND THAT IS A
+ * PROPERTY OF THIS FILE'S EXTENSION. `paths.test.ts` and `tokens.test.ts`
+ * both read source with `fileURLToPath(new URL(…, import.meta.url))` and both
+ * are `.ts`, so they run in the vitest `node` project. This file is a `.tsx`
+ * and runs in the `jsdom` one, where `import.meta.url` is NOT a `file:` URL —
+ * the same call throws `TypeError: The URL must be of scheme file`, and
+ * vitest reports it as `Tests no tests` rather than as a failing assertion.
+ * `process.cwd()` is the workspace root under both projects.
+ */
+const ENGINE_DIR = join(process.cwd(), 'packages/statistics/src');
 
 const createProjectRule = vi.fn();
 const updateProjectRule = vi.fn();
@@ -892,6 +908,64 @@ describe('ProjectRules — the target is picked, not remembered', () => {
     expect(options).not.toContain('Checkout');
   });
 
+  /**
+   * NO SCOPE MAY OFFER A MEASUREMENT THE ENGINE NEVER PRODUCES.
+   *
+   * M09 narrowed these lists by SCOPE and left `latency` on three of the four,
+   * so "Latency" authored a gate the evaluator reports `not_applicable` for on
+   * every run, for ever — the silent-gate class M09's own comment describes,
+   * one family further on. Measured through the product's real pipeline over
+   * the reference `simulation.log`: the run produces `response_time`,
+   * `group_cumulated` and `group_duration`, and a p95-latency rule came back
+   * `not_applicable` with verdict `not_evaluated`.
+   *
+   * ASSERTED AS A JOIN, NOT AS A LIST. Pinning the four arrays verbatim would
+   * pass the day somebody adds a fifth family the engine also never emits —
+   * which is exactly how `latency` survived. This reads the OFFERED values off
+   * the rendered control and requires each to appear as a family literal in
+   * `packages/statistics/src`, so a new family joins the check by being
+   * PRODUCED rather than by anybody remembering to extend a fixture.
+   *
+   * COMMENTS ARE STRIPPED before scanning, the trap this repo records four
+   * times: the engine's own prose mentions latency repeatedly, and
+   * `ProjectRules.tsx`'s new comment quotes the word while explaining why it
+   * is gone. Either would exonerate a family that is only TALKED about.
+   */
+  it('offers no measurement the statistics engine never files a row under', async () => {
+    const engineSrc = readdirSync(ENGINE_DIR)
+      .filter((f) => f.endsWith('.ts'))
+      .map((f) => readFileSync(join(ENGINE_DIR, f), 'utf8'))
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '');
+    // A collector that found nothing would make every assertion below vacuous.
+    expect(engineSrc.length, 'no engine source collected').toBeGreaterThan(1000);
+
+    const user = userEvent.setup();
+    renderRules();
+
+    const offered = new Set<string>();
+    for (const scope of ['run', 'scenario', 'request', 'group']) {
+      await user.selectOptions(await screen.findByLabelText(/scope/i), scope);
+      const measurement = await screen.findByLabelText(/measurement/i);
+      for (const o of within(measurement).getAllByRole('option')) {
+        offered.add((o as HTMLOptionElement).value);
+      }
+    }
+
+    // Vacuity: a form that rendered no options at all would satisfy the
+    // subset check perfectly.
+    expect(offered.size, 'no measurements offered').toBeGreaterThan(1);
+    expect(offered.has('response_time'), 'response_time is still offered').toBe(true);
+
+    const neverProduced = [...offered].filter((f) => !engineSrc.includes(`'${f}'`)).sort();
+    expect(
+      neverProduced,
+      'measurements the form offers that the engine never files a row under — ' +
+        'a rule using one is not_applicable on every run, for ever',
+    ).toEqual([]);
+  });
+
   it('follows the scope — a group rule is offered group names', async () => {
     const user = userEvent.setup();
     renderRules();
@@ -1350,8 +1424,14 @@ describe('ProjectRules — the refusal points at the field', () => {
     const optionsNow = () =>
       [...measurement.querySelectorAll('option')].map((o) => o.textContent?.trim());
 
-    // Whole run: the group measurements have no rows at this scope.
-    expect(optionsNow()).toEqual(['Response time', 'Latency']);
+    // Whole run: the group measurements have no rows at this scope — and
+    // NEITHER DOES LATENCY, which this case used to enshrine. The list read
+    // `['Response time', 'Latency']`, so a case written to prevent silent
+    // gates was pinning one: `engine.ts` never files a `latency` row at ANY
+    // scope, so that option authored exactly the rule the docstring above
+    // describes. Re-pointed at the claim rather than the strings, which is
+    // what the name always said.
+    expect(optionsNow()).toEqual(['Response time']);
 
     await user.selectOptions(screen.getByLabelText(/^scope$/i), 'group');
     expect(optionsNow()).toEqual(['Group cumulated', 'Group duration']);

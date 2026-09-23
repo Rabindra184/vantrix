@@ -85,14 +85,48 @@ const FAMILY_LABELS: Record<(typeof SLA_RULE_FAMILIES)[number], string> = {
  * trap this file already records: legal, resolvable-looking, and never firing.
  * The schema cannot refuse it — both fields are independently valid enums —
  * so the FORM is the only place it can be prevented.
+ *
+ * ═══ AND `latency` IS THE THIRD, WHICH M09 LEFT IN ALL THREE LISTS ═══
+ *
+ * That reasoning is exactly right and it stopped one family short. The engine
+ * emits `response_time`, `group_cumulated` and `group_duration` and NEVER
+ * `latency` — zero occurrences in `packages/statistics/src` — so every
+ * latency gate was the same silent gate the paragraph above describes, on
+ * three scopes rather than one. Measured through the product's own call
+ * sequence over the reference run's real `simulation.log`:
+ *
+ *     families the run produced   group_cumulated, group_duration, response_time
+ *     p95 latency <= 800 ms       not_applicable, verdict not_evaluated
+ *     message                     "No latency statistics for the run…"
+ *
+ * THE PRODUCT ALREADY KNEW, IN PROSE, IN THREE PLACES. `GatlingPlugin`
+ * declares `latency: false` ("the binary log records start/end only, not
+ * first-byte"); `api/metrics.ts` says "the latency family is explicitly NOT
+ * rendered, because Gatling 3.15.1.2 reports no latency"; and
+ * `charts/transforms/indicators.ts` says it "is explicitly not rendered
+ * anywhere in this" sub-project. Every READ surface excluded it deliberately
+ * and the AUTHORING surface offered it — which is the worse half, because a
+ * chart that is missing is visible and a gate that never fires is not.
+ *
+ * ═══ HARD-CODED HERE, AND THE CAPABILITY-DRIVEN VERSION IS A SEPARATE ARM ═══
+ *
+ * AC-PLUG-2 asks for exactly this to be "driven by the plugin's declared
+ * capabilities", and `CapabilityDescriptor` exists with `latency` on it —
+ * called by ONE test and nothing in production. Reaching it from here is not
+ * a smaller change than it looks: a capability belongs to a TOOL, a tool
+ * belongs to a RUN, and a rule is scoped to a PROJECT, which has no tool. So
+ * the browser cannot ask "does this project's tool report latency" without an
+ * endpoint that does not exist. Hard-coding matches what the three read
+ * surfaces above already do; the capability wiring is recorded as the arm not
+ * taken rather than pretended at.
  */
 const FAMILIES_FOR_SCOPE: Record<
   (typeof SLA_RULE_SCOPES)[number],
   readonly (typeof SLA_RULE_FAMILIES)[number][]
 > = {
-  run: ['response_time', 'latency'],
-  scenario: ['response_time', 'latency'],
-  request: ['response_time', 'latency'],
+  run: ['response_time'],
+  scenario: ['response_time'],
+  request: ['response_time'],
   group: ['group_cumulated', 'group_duration'],
 };
 
