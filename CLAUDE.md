@@ -146,6 +146,111 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The no-gate-on-a-measurement-we-never-produce branch added no unit FILE and
+1 case to `apps/web/test/ProjectRules.test.tsx`, from **156 / 1997 to
+156 / 1998** — one existing case was RE-POINTED rather than added to.
+Integration is UNCHANGED at **139 / 1811** (that file is a `.tsx`, which that
+config never runs) and **e2e stays 149**. **AC-PLUG-2**, and it is the
+silent-gate class this file records for the third time.
+
+**A RULE COULD BE AUTHORED ON A MEASUREMENT THIS PRODUCT NEVER PRODUCES.**
+Measured through the product's own call sequence — `parseSimulationLog` →
+`runEngineAsync` → `toEvaluableStats` → `evaluateRules` — over the reference
+run's real `simulation.log`:
+
+```
+  families the run produced   group_cumulated, group_duration, response_time
+  p95 latency <= 800 ms       not_applicable, verdict not_evaluated
+  message                     "No latency statistics for the run…"
+```
+
+`ProjectRules.tsx` offered **"Latency"** on run, scenario AND request. The
+statistics engine emits `latency` **zero times** — three literals across
+`packages/statistics/src` and none of them that one. So three clicks bought a
+gate that never fires on any run, for ever, while reading as configured
+protection.
+
+**AND IT LIVED INSIDE THE MECHANISM BUILT TO PREVENT IT.** `FAMILIES_FOR_SCOPE`
+is review M09's, and the comment directly above it argues this exact class:
+"legal, resolvable-looking, and never firing … the schema cannot refuse it —
+both fields are independently valid enums — so the FORM is the only place it
+can be prevented." M09 diagnosed it correctly, built the guard, narrowed by
+SCOPE, and left `latency` in three of the four lists. **The guard was one
+family short of its own argument.**
+
+**THE PRODUCT ALREADY KNEW, IN PROSE, IN THREE PLACES.** `GatlingPlugin`
+declares `latency: false` ("the binary log records start/end only, not
+first-byte"); `api/metrics.ts` says "the latency family is explicitly NOT
+rendered, because Gatling 3.15.1.2 reports no latency"; and
+`charts/transforms/indicators.ts` says it "is explicitly not rendered anywhere
+in this" sub-project. Every READ surface excluded it deliberately and the
+AUTHORING surface offered it — **which is the worse half, because a chart that
+is missing is visible and a gate that never fires is not.**
+
+**AND M09's OWN CASE WAS PINNING THE DEFECT.** "offers only measurements the
+chosen scope can resolve" asserted `['Response time', 'Latency']` for the run
+scope. Its NAME is the correct claim and its docstring argues the silent-gate
+class at length — and its expectation enshrined a silent gate. This file
+records the verbatim-pin trap twice for sentences that were RIGHT WHEN WRITTEN
+and became the reason a defect survived; **this one was wrong when written**,
+so the pin was not merely stale, it was protection for the thing the case
+exists to prevent. Re-pointed at the claim rather than deleted, with the
+reason written where the next reader will be.
+
+**TWO CASES, DELIBERATELY COMPLEMENTARY RATHER THAN REDUNDANT.** M09's pins
+the EXACT list at the run and group scopes, so it catches a family appearing
+at a scope that cannot resolve it. The new one reads the offered values off
+the rendered control for ALL FOUR scopes and requires each to appear as a
+family literal in `packages/statistics/src`, so it catches a family the engine
+never produces AT ALL — including at scenario and request, which M09's case
+never looks at. Pinning four arrays verbatim would pass the day somebody adds
+a fifth unproduced family, which is exactly how `latency` survived.
+
+**THREE MUTATIONS, AND THE THIRD IS THE ONE WORTH HAVING:**
+
+```
+  latency restored to all three scopes    BOTH cases fail
+  latency restored, guard matches LOOSELY  only M09's — see below
+```
+
+**THE QUOTED LITERAL IS LOAD-BEARING, AND THAT WAS MEASURED.** The join asks
+whether the engine source contains `'latency'` WITH its quotes. Relaxed to a
+bare substring, the case PASSES against the before-state — because
+`export * from './bucket-latency.js'` survives comment-stripping and contains
+the word. **A guard written to find this defect would have exonerated it**,
+which is the second time in one session: the security branch's derived guard
+credited the wrong mechanism and its probe had the same bug. The rule that
+catches both is the same one — run the loose spelling against the
+before-state and see whether it still fails.
+
+**COMMENTS ARE STRIPPED, FOR THE FIFTH TIME IN THIS FILE.** The engine's prose
+mentions latency constantly, and `ProjectRules.tsx`'s new comment quotes the
+word while explaining why it is gone. Either would exonerate a family that is
+only TALKED about.
+
+**AND A SOURCE-SCANNING GUARD DOES NOT CROSS THE `.ts`/`.tsx` BOUNDARY, WHICH
+IS NEW.** The first version used `fileURLToPath(new URL(…, import.meta.url))`,
+copied from `tokens.test.ts`, which does exactly that and works. It threw
+`TypeError: The URL must be of scheme file`, and **vitest reported it as
+`Tests no tests`** rather than as a failing assertion. The reason is the
+two-project split this file already records: `paths.test.ts` and
+`tokens.test.ts` are `.ts` and run in the `node` project; a `.tsx` runs in
+`jsdom`, where `import.meta.url` is not a `file:` URL. `process.cwd()` is the
+workspace root under both. **The established idiom for reading source is
+extension-dependent**, and the failure mode is the silent one this file
+already warns about for a JSX syntax error.
+
+**WHAT IS NOT DONE, AND IS AN ARM RATHER THAN AN OMISSION.** AC-PLUG-2 asks
+for this to be "driven by the plugin's declared capabilities", and
+`CapabilityDescriptor` exists with `latency` on it — **called by ONE test and
+nothing in production.** Reaching it from this form is not the small change it
+looks: a capability belongs to a TOOL, a tool belongs to a RUN, and a rule is
+scoped to a PROJECT, which has no tool. The browser cannot ask "does this
+project's tool report latency" without an endpoint that does not exist.
+Hard-coding matches what the three read surfaces already do; the capability
+wiring is recorded here rather than pretended at, and it is the same shape as
+`histogram_kind` — a declaration written and read by nothing.
+
 The cardinality-samples-show-the-culprits branch added no unit FILE and 1 case
 to `packages/statistics/test/scopes.test.ts`, from **156 / 1996 to
 156 / 1997**. Integration moves with it (that file is a `.ts` integration runs
