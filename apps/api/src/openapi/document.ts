@@ -880,6 +880,7 @@ const paths: Record<string, PathItemObject> = {
           description: 'This run\'s cohort, newest first.',
           content: json(schemaRef('TrendsResponse')),
         },
+        '400': ref('BadRequest'),
         '404': ref('NotFound'),
         ...authFailureResponses,
       },

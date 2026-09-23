@@ -412,4 +412,57 @@ describe('OpenAPI document', () => {
     expect(props['project']).toBeDefined();
     for (const f of ['environment', 'branch', 'commitSha']) expect(props[f], f).toBeDefined();
   });
+
+  /**
+   * Every documented GET with a path parameter, probed with a malformed one —
+   * and the status it really answers has to be a status it DECLARES.
+   *
+   * ═══ WHY THIS IS DERIVED RATHER THAN A CASE PER OPERATION ═══
+   *
+   * `GET /v1/runs/{id}/trends` shipped declaring [200, 401, 403, 404] while
+   * answering 400 INVALID_ID for a malformed uuid — through `uuidParam('id')`,
+   * the identical pipe its eight siblings on `/v1/runs/{id}` use, every one of
+   * which documented the 400. A hand-maintained response map, one member short.
+   * A case naming trends would close that one hole and leave the next operation
+   * to somebody remembering; this collects the operations FROM THE DOCUMENT, so
+   * a new path-param GET joins the check by existing.
+   *
+   * ═══ THE ASSERTION IS "OBSERVED ⊆ DECLARED", NOT "MUST 400" ═══
+   *
+   * A `{slug}` is any string, so those operations correctly answer 404 (no such
+   * project) or 403 — and they document both. Requiring a 400 everywhere would
+   * be false for every slug-scoped route in the product.
+   *
+   * ═══ TWO VACUITY GUARDS, AND THE SECOND IS THE ONE THAT BITES ═══
+   *
+   * A probe sent with NO credential answers 401 everywhere, and 401 is declared
+   * on every one of these — so an unauthenticated version of this test passes
+   * against any document at all, including the defect it was written for. It
+   * sends the read token and requires that at least one probe got past auth.
+   */
+  it('answers no path-param GET with a status its own OpenAPI operation does not declare', async () => {
+    const doc = await fetchDoc();
+    const auth = { Authorization: `Bearer ${ctx.readToken}` };
+
+    const probes = operations(doc).filter((o) => o.method === 'get' && o.path.includes('{'));
+    expect(probes.length, 'collected no path-param GETs — the filter has rotted').toBeGreaterThan(5);
+
+    const undocumented: string[] = [];
+    const observed: number[] = [];
+    for (const { path, op } of probes) {
+      const declared = Object.keys(op.responses ?? {});
+      const url = path.replace(/\{[^}]+\}/g, 'not-a-uuid');
+      const res = await request(ctx.app.getHttpServer()).get(url).set(auth);
+      observed.push(res.status);
+      if (!declared.includes(String(res.status))) {
+        undocumented.push(`GET ${path} answered ${res.status} ${String(res.body?.code ?? '')} — declares [${declared.sort().join(',')}]`);
+      }
+    }
+
+    expect(
+      observed.some((s) => s !== 401),
+      'every probe answered 401, so this proves nothing — the credential did not work',
+    ).toBe(true);
+    expect(undocumented, undocumented.join('; ')).toEqual([]);
+  }, 120_000);
 });

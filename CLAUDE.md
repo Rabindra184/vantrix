@@ -146,11 +146,154 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The trends-documents-its-400 branch added no unit FILE and no unit case — unit
+stays **156 / 1999**, because the one file it touches is an
+`.integration.test.ts`, which the unit config excludes — and 1 case to
+`apps/api/test/openapi.integration.test.ts`, at **139 / 1813**. **e2e stays 149**:
+the diff is the OpenAPI document, one docstring and that test, so no `.tsx` and
+no spec. It is a defect in the published CONTRACT rather than in behaviour, and
+it is the one-member-short shape this file records more than any other.
+
+**ONE OPERATION ANSWERED A STATUS ITS OWN CONTRACT EXCLUDED.** Measured against
+a real API by probing every documented path-param GET with a malformed value:
+
+```
+   ok           400 INVALID_ID   /v1/runs/{id}          doc=[200,202,400,401,403,404,413,422]
+   ok           400 INVALID_ID   /v1/runs/{id}/stats    doc=[200,400,401,403,404]
+   ok           400 INVALID_ID   /v1/runs/{id}/users    doc=[200,400,401,403,404]
+   …distribution, errors, scatter, series, telemetry, all the same…
+!! UNDOCUMENTED 400 INVALID_ID   /v1/runs/{id}/trends   doc=[200,401,403,404]
+```
+
+`trends` takes `@Param('id', uuidParam('id'))` — the identical pipe as its eight
+siblings — so it raises the identical `400 INVALID_ID`. `document.ts` is written
+by hand, one response map per operation, and this one was missing the line its
+neighbours all carry.
+
+**EXACTLY ONE, ACROSS FOURTEEN OPERATIONS, AND THAT IS WHAT MAKES IT A DEFECT
+RATHER THAN A CONVENTION.** Every `{slug}` route correctly answers 403 or 404
+and documents both — a slug is any string, so no 400 is reachable there. Had
+several operations omitted a 400 this would have been a documentation STYLE and
+the fix a discussion; one omission inside a family of nine is a line somebody
+missed.
+
+**THE BLAST RADIUS IS THE CONTRACT, NOT THE BROWSER, AND SAYING SO IS THE
+POINT.** `apiFetch` branches on STATUS rather than on the document, so nothing
+in `apps/web` behaves differently either way. What is wrong is what a generated
+client gets: no 400 branch on an operation that returns one. Recorded plainly
+because a reader meeting this entry should not go hunting for a UI symptom.
+
+**`BadRequest` RATHER THAN `StatsBadRequest`, AND THE DIFFERENCE IS A CLAIM.**
+Its description is "a path or query parameter was malformed (e.g. \"id\" … is
+not a UUID)", which covers BOTH of trends' 400s — `uuidParam('id')` and
+`parseLimit`, whose `LimitSchema.parse` throws on a malformed `limit`. `/stats`
+has its own ref because it ALSO answers `PROJECT_SETTINGS_INVALID`, and trends
+computes no indicator bands, so reusing that one would have documented a
+failure this operation cannot produce. Checked rather than copied from the
+nearest neighbour.
+
+**THE GUARD COLLECTS ITS SUBJECTS FROM THE DOCUMENT, SO THE NEXT OPERATION
+JOINS BY EXISTING.** A case naming `trends` closes this hole and leaves the next
+one to somebody remembering — which is how this one got in. It reads every GET
+whose path carries a parameter, probes it, and requires the observed status to
+be DECLARED. That is `fk-free-tables.sql`'s shape and the enumerate-every-run-route
+shape: compute the set from the system rather than restate it.
+
+**"OBSERVED ⊆ DECLARED", NEVER "MUST 400".** The tempting assertion is that a
+malformed path parameter produces a 400, and it is false for every slug-scoped
+route in the product. The weaker-looking form is the correct one and it still
+catches the defect, because the defect is a status the document omits.
+
+**AND THE VACUITY GUARD IS LOAD-BEARING — MEASURED, NOT ASSERTED.** A probe sent
+with NO credential answers 401 everywhere, and 401 is declared on every one of
+these, so the undocumented list comes back EMPTY and the case passes against any
+document at all. Verified rather than reasoned about: with the defect restored,
+the credential dropped and that one assertion deleted, the file reports
+**24 passed**. This file records guards that match nothing passing as quietly as
+guards that work; here the quiet pass was two lines away and only running it
+proved which two.
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  the trends 400 removed (the before-state)   names the operation, status and declared set
+  the credential dropped                      "every probe answered 401, so this proves nothing"
+  that guard ALSO deleted, defect restored    24 PASSED — the vacuity proof above
+  the collector matches nothing               "collected no path-param GETs — the filter has rotted"
+```
+
+**AND A STALE NOT-DONE NOTE RIDES WITH IT, BECAUSE IT DESCRIBES THE SAME
+FAMILY.** `window.ts` carried "NOT DONE, AND RECORDED RATHER THAN MISSED:
+`bandsFrom` reaches `Histogram#countBelow`, which throws on the same bin" — true
+when written and fixed three branches later by `bandsOrRefuse`, which both
+callers now reach. A reader arriving at that docstring was told a live 500 was
+still there. **Fifth time this file records a docstring asserting a behaviour
+the product does not have**, and the first where the false sentence describes
+work this same session completed. Corrected in place with the lesson its own
+fix branch drew: a deferral explaining why a TEST cannot reach something has not
+established that the PRODUCT survives it.
+
+**FOUND BY SWEEPING THE DOCUMENT AGAINST BEHAVIOUR, WHICH IS A METHOD RATHER
+THAN a reading.** Four other sweeps that day came back clean and are worth
+recording so the next reader re-checks rather than re-investigates: the Go agent
+gate (`go vet && go test -race`, exit 0) and the Gradle plugin gate
+(`./gradlew build`, exit 0), neither of which any `pnpm` command runs; the
+captured `reference-run.json` every `apps/web` test asserts against, complete
+against all eight current response schemas despite being five weeks old; and a
+full-extent window against unwindowed across **all 14 rows and every column**,
+zero divergence. Knobs whose default is written in two places: none.
+
+**WHAT WAS RUN, AND WHY ONE FAILURE IS NOT THIS BRANCH'S.** `typecheck` and
+`lint` green by their own exit codes; `test:unit` **156 / 1999** — UNCHANGED,
+which is the prediction for a branch whose only test file is an
+`.integration.test.ts` the unit config excludes — with ZERO failures and zero
+`Errors` lines. `test:integration` COLLECTED **139 / 1813**, the predicted
+number exactly, so nothing was silently skipped; 1812 passed and one failed:
+
+```
+  × resolves for a multi-megabyte body delivered across many chunks   36,189ms
+    Error: Test timed out in 30000ms
+```
+
+**A WALL-CLOCK BUDGET, NOT AN ASSERTION ABOUT A VALUE**, in
+`packages/storage/test/blobs.integration.test.ts` — a 6 MB multipart upload to
+MinIO across 384 chunks, built by six million JS loop iterations. This branch's
+diff is an OpenAPI paths object, a docstring and one API test file; it cannot
+reach the blob store. Isolated it failed again at **46,762ms**, and that run is
+worth no more than the first, because the machine had got worse between them:
+
+```
+  suite run   load 33   free pages 40,411   36.2s
+  isolated    load 67   free pages  3,885   46.8s
+```
+
+**THE NEIGHBOURS WERE NAMED RATHER THAN GUESSED AT.** `ps -r` showed the same
+unrelated `~/claude-certification/remotion` chrome-headless-shell this file
+already records three times — FIVE processes at 145%, 119%, 119%, 67% and 38%
+CPU — **and a SECOND Claude session running `npx vitest` plus `npx tsc` in a
+different repository** (`~/Workspace/XAenon/xenon/web`). `sysctl vm.swapusage`
+said **16,444 MB of 17,408 used, 94%**. That is the thrashing state this file
+says produces flakes with the product unchanged.
+
+**AND THE LOAD GATE DID NOT SAVE IT, WHICH IS THE NEW HALF.** The suite was
+started behind a loop waiting for 1-min < 8 AND 5-min < 10 — the gate this file
+prescribes. It never settled: the loop ran its full twenty minutes and started
+anyway at **load 33.02**. A gate with a timeout is a DELAY, not a gate, and the
+honest options when it expires are to wait longer or to say the machine cannot
+answer — not to start and quote the result. Recorded because the loop looked
+like compliance and produced a run this entry then had to disclaim.
+
+So **no clean local integration run is claimed here**, and CI's containers are
+the arbiter — which is the controlled comparison, holding the commit fixed and
+varying the machine. **e2e was not run**: every file in the diff is a `.ts` or a
+docstring, no spec and no `.tsx`, so no browser case can reach the change.
+
 The remediations-name-a-real-lever branch added no unit FILE and 1 case to
 `packages/core/test/errors.test.ts`, from **156 / 1998 to 156 / 1999**.
-Integration moves with it (that file is a `.ts` integration runs too),
-expected at **139 / 1812** — ARITHMETIC at the time of writing, with the run
-still going; see the closing paragraph. **e2e stays 149.** It corrects FOUR error messages, one of
+Integration moves with it (that file is a `.ts` integration runs too), at
+**139 / 1812** — first recorded as ARITHMETIC with the run still going, and
+MEASURED at exactly that afterwards; see the closing paragraph, corrected in
+place. **e2e stays 149.** It corrects FOUR error messages, one of
 which this session shipped three branches earlier.
 
 **FOUR REMEDIATIONS SENT AN OPERATOR TO A SURFACE THAT DOES NOT EXIST.**
@@ -255,11 +398,21 @@ case, ZERO failures — and for once on a machine worth believing: the
 unrelated `remotion` ffmpeg that had held 618% CPU through the previous branch
 was gone, and load had fallen from 169 to 22. `test:integration` was still
 running at push time against a SCRATCH DATABASE (`perfportal_rem`) and a
-scratch Redis INDEX (db 15), so **139 / 1812 is arithmetic and is labelled as
-such** rather than quoted as a measurement — which is the habit this very
-entry criticises one section up, and the floor this session already had to
-correct for exactly that reason. CI's `build` job prints all three and is the
-arbiter.
+scratch Redis INDEX (db 15), so this entry first said **139 / 1812 is
+arithmetic and is labelled as such** rather than quoting it as a measurement.
+
+**IT CAME BACK AT EXACTLY THAT, AND IS CORRECTED HERE RATHER THAN LEFT.**
+`Test Files 139 | Tests 1812`, the predicted number — so the floor is a
+measurement now, which is the going-back-and-DOING-it the abandoned-runs entry
+already prescribes rather than only citing. It carried ONE failure,
+`window.integration.test.ts`'s "a full-extent window reproduces the unwindowed
+row", which passes **18/18 alone**: the body was a Problem parsed as a
+`StatsResponse` (every field `undefined`, which is what a 500 looks like to
+`StatsResponseSchema`), at **4,238 free pages** against the 4,390 this file
+calls untrustworthy. The branch's production diff is three remediation strings
+and a `slice`, none of which can blank a response. Pressure, not a defect —
+and worth recording that an all-fields-undefined ZodError is the pressure
+shape's signature on any endpoint whose suite parses its body.
 
 The no-gate-on-a-measurement-we-never-produce branch added no unit FILE and
 1 case to `apps/web/test/ProjectRules.test.tsx`, from **156 / 1997 to
