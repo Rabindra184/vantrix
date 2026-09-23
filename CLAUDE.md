@@ -283,10 +283,25 @@ honest options when it expires are to wait longer or to say the machine cannot
 answer — not to start and quote the result. Recorded because the loop looked
 like compliance and produced a run this entry then had to disclaim.
 
-So **no clean local integration run is claimed here**, and CI's containers are
-the arbiter — which is the controlled comparison, holding the commit fixed and
-varying the machine. **e2e was not run**: every file in the diff is a `.ts` or a
-docstring, no spec and no `.tsx`, so no browser case can reach the change.
+So no clean local integration run was claimed here, and CI's containers were
+named as the arbiter — the controlled comparison, holding the commit fixed and
+varying the machine. **e2e was not run locally**: every file in the diff is a
+`.ts` or a docstring, no spec and no `.tsx`, so no browser case can reach it.
+
+**AND CI ANSWERED, SO THESE FLOORS ARE MEASUREMENTS RATHER THAN A DEFERRAL.**
+The `build` job passed on clean containers and printed all three:
+
+```
+  pnpm test:unit         Test Files 156 passed (156)   Tests 1999 passed (1999)
+  pnpm test:integration  Test Files 139 passed (139)   Tests 1813 passed (1813)
+  pnpm test:e2e          Running 149 tests using 2 workers
+```
+
+Every one matches the prediction, and **integration is CLEAN there** — so the
+`blobs.integration.test.ts` timeout was this machine and nothing else, which is
+the verdict the local run could not reach on its own. Going back and DOING that
+read rather than only citing it is what the abandoned-runs entry asks for, and
+it is two minutes.
 
 The remediations-name-a-real-lever branch added no unit FILE and 1 case to
 `packages/core/test/errors.test.ts`, from **156 / 1998 to 156 / 1999**.
