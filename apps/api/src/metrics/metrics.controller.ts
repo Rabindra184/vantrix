@@ -703,7 +703,9 @@ function bandsOrRefuse(
     throw badRequest(
       'PROJECT_SETTINGS_INVALID',
       `The project's "indicators.higherMs" (${indicators.higherMs}) cannot be applied to this run: ${message(err)}`,
-      'Lower the project\'s "indicators.higherMs" setting to at most 120000 (the histogram overflow cap) and retry.',
+      'This project\'s "indicators.higherMs" exceeds the 120000ms histogram cap, so the bands '
+        + 'cannot be counted. Lower it to at most 120000 — it is a stored project setting with no '
+        + 'editing surface yet, so this needs a direct settings update.',
     );
   }
 }

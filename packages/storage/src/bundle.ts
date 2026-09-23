@@ -42,7 +42,7 @@ function tooLarge(limitBytes: number) {
   return ingestError('BUNDLE_TOO_LARGE', {
     message: `The archive's decompressed contents exceed the ${limitBytes}-byte limit.`,
     remediation:
-      'Archive only the Gatling results directory, without extraneous or oversized files, or raise the decompressed-size limit in project settings.',
+      'Archive only the Gatling results directory, without extraneous or oversized files, or raise MAX_DECOMPRESSED_BUNDLE_BYTES on the deployment.',
     detail: { maxBytes: limitBytes },
   });
 }

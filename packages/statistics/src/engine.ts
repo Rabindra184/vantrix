@@ -324,7 +324,7 @@ export class LiveEngine {
     if (this.#endpoints.size > this.#maxEndpoints) {
       throw ingestError('ENDPOINT_CARDINALITY_EXCEEDED', {
         message: `Run exceeds the endpoint cardinality cap: more than ${this.#maxEndpoints} distinct request paths.`,
-        remediation: 'Request names appear to contain dynamic values such as IDs. Parameterize them in the simulation, or raise the limit in project settings.',
+        remediation: 'Request names appear to contain dynamic values such as IDs — parameterize them in the simulation. Raising the cap means editing this project\'s stored "maxEndpoints" setting, which has no editing surface yet.',
         // THE LAST FIVE, NOT THE FIRST, AND THE REMEDIATION ABOVE IS WHY.
         //
         // `#endpoints` is a Set, so it is insertion-ordered, and this throw

@@ -212,7 +212,7 @@ export class BlobStore {
             ingestError('BUNDLE_TOO_LARGE', {
               message: `Bundle exceeds the ${maxBytes}-byte limit for this project.`,
               remediation:
-                'Archive only the Gatling results directory, without the bundled js/ and style/ vendor assets, or raise the limit in project settings.',
+                'Archive only the Gatling results directory, without the bundled js/ and style/ vendor assets, or raise MAX_BUNDLE_BYTES on the deployment.',
               detail: { maxBytes },
             }),
           );
