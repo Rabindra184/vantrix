@@ -122,11 +122,20 @@ export function rollupFromHistograms(
  * figures. The reader loses the estimated columns and keeps the measured ones,
  * which is the right half to lose.
  *
- * NOT DONE, AND RECORDED RATHER THAN MISSED: `bandsFrom` reaches
- * `Histogram#countBelow`, which throws on the same bin. It needs an indicator
- * bound ABOVE the cap as well as an overflow observation — `higherMs` is
- * `z.number().int().positive()` with no ceiling, so it is configurable — where
- * this path needs only the overflow, and trips on the DEFAULT percentile set.
+ * THE SIBLING DEFECT IS DONE, AND THIS NOTE USED TO SAY OTHERWISE. It read
+ * "NOT DONE, AND RECORDED RATHER THAN MISSED: `bandsFrom` reaches
+ * `Histogram#countBelow`, which throws on the same bin" — true when written and
+ * fixed since: `bandsOrRefuse` in `metrics.controller.ts` converts that refusal
+ * into a 400 naming `indicators.higherMs`, and BOTH the windowed and unwindowed
+ * callers reach it, so `bandsFrom` has exactly one call site in the app.
+ *
+ * The reason that note gave for leaving it — that the band call needs an
+ * indicator bound ABOVE the cap as well as an overflow observation, where this
+ * path needs only the overflow — was correct, and it explained why no FIXTURE
+ * reached it rather than whether the PRODUCT handled it. It did not: the
+ * unwindowed path was already guarded and the windowed one was not, so this was
+ * a fix that had landed on one of two callers. A deferral explaining why a test
+ * cannot reach something has not established that the code survives it.
  */
 function recoverablePercentiles(
   all: Histogram,
