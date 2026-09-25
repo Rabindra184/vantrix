@@ -73,11 +73,12 @@ test('the project rail stays usable at twenty projects', async ({ page }) => {
 /**
  * ═══ A 120-CHARACTER PROJECT NAME, WHICH THE CONTRACT ALLOWS ═══
  *
- * `ProjectSchema` caps the name at 120 characters. The rail truncates and has
- * been measured since a real defect at FOURTEEN — but no other surface that
- * draws a project name has either a truncate rule or a test, and there is no
- * global `overflow-wrap`. Two shapes matter and only one is obvious: a name
- * WITH spaces wraps (ugly, harmless); a name WITHOUT them cannot break at all.
+ * `CreateProjectRequestSchema` caps the name at 120 characters. The rail
+ * truncates and has been measured since a real defect at FOURTEEN — but no
+ * other surface that draws a project name has either a truncate rule or a
+ * test, and there is no global `overflow-wrap`. Two shapes matter and only
+ * one is obvious: a name WITH spaces wraps (ugly, harmless); a name WITHOUT
+ * them cannot break at all.
  *
  * Asserted as the document not scrolling sideways rather than as a pixel
  * bound, because that is the failure a reader meets — every page acquiring a

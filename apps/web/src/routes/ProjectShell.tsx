@@ -201,9 +201,10 @@ export default function ProjectShell({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* `break-all`, the same rule `RunHeader`'s `<h1>` uses for a
             fully-qualified class. A project name is free text up to 120
-            characters (`ProjectSchema`) and may contain no space at all, and
-            `min-w-0` alone only lets the box shrink — it does not give the
-            TEXT permission to break, so an unbreakable name overflowed it.
+            characters (`CreateProjectRequestSchema`) and may contain no
+            space at all, and `min-w-0` alone only lets the box shrink — it
+            does not give the TEXT permission to break, so an unbreakable
+            name overflowed it.
             MEASURED at 320px: /projects/:slug scrolled sideways with a
             120-character name, and this heading is on all five sections. */}
         <h1 className="min-w-0 text-xl font-semibold tracking-tight break-all">{name}</h1>
