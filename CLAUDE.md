@@ -182,13 +182,29 @@ partition fails loudly rather than silently landing somewhere wrong." That
 reasoning is RIGHT and is untouched here — a catch-all partition would accept
 2027 rows into a bag retention cannot drop, which is worse than an error.
 
-**WHAT WAS MISSING IS THAT NOTHING MEASURED THE DISTANCE.** A deferral with no
-date is a decision; a deferral whose date arrives unannounced is a cliff. Four
-months out, no test, health check or document mentioned partitions at all —
-`DEPLOYMENT.md`, both READMEs and the pre-exposure checklist were silent, so
-an operator had no way to learn that their platform stops accepting runs on a
-date nothing in their own change log predicts. **THE DEFECT IS THE ABSENCE OF
-A MEASUREMENT, NOT THE DEFERRAL**, and that distinction is the whole entry.
+**AND THIS ENTRY'S FIRST VERSION SAID "NOTHING MEASURED THE DISTANCE", WHICH
+IS FALSE — CORRECTED HERE BECAUSE THE SUITE CAUGHT IT.**
+`migrations.integration.test.ts` has had a tripwire all along, and its
+docstring describes this exact cliff: "it stays green today and goes red in
+January, forcing the rollover work migration 0001's hand-edited partitions
+defer." It was found the only honest way — by running the full suite and
+having it fail.
+
+**WHAT WAS MISSING IS THE WARNING PERIOD, NOT THE DETECTION.** That case
+asserts a partition exists for `CURRENT_DATE`, so it fires on the morning of
+the outage, when every ingest is already failing. A test that goes red the
+day the product breaks has told you nothing you would not learn from the
+alerts. The runway case asks the other question — how far away the end is —
+and goes red 180 days ahead. **Both are kept**: the existing one proves a real
+INSERT works today, which no bound calculation can, and this one is the only
+thing that arrives in time to act on.
+
+**THE OPERATOR HALF OF THE CLAIM SURVIVES INTACT.** `DEPLOYMENT.md`, both
+READMEs and the pre-exposure checklist said nothing about partitions, so a
+green CI on the maintainers' machine told a deployed instance's operator
+nothing at all. **THE DEFECT IS THE ABSENCE OF A USABLE WARNING, NOT OF A
+MEASUREMENT** — and getting that wrong the first time is exactly why the
+distinction is worth writing down.
 
 **AND IT WOULD HAVE BEEN ILLEGIBLE WHEN IT LANDED.** A Prisma "no partition of
 relation found" reaches the caller through the generic 500 path as "Retry the
@@ -235,6 +251,19 @@ Extending without it would only move the cliff and lose the one thing this
 discovery produced. Verified after applying it: `2027-01-01` and `2027-12-31`
 insert, `2028-01-01` still fails — correctly — and the guard now goes red on
 **2027-07-05**, 180 days before that one.
+
+**AND THE MIGRATION ROTTED AN EXISTING TEST BY BEING CORRECT, WHICH IS THE
+BEST THING IN THIS BRANCH.** The fuse case — "a write dated past the last
+partition is rejected", whose whole subject is that the partition set is
+FINITE — proved it by hard-coding `'2027-06-15'`. Twelve new partitions made
+that an ordinary working day, and **the case failed for being right**, on a
+tree where nothing was wrong. It derives the date from `pg_get_expr` plus a
+day now, so every future extension moves it automatically and the claim
+survives the migration it is about. **Fifth time this file records a
+hand-written list or literal that a legitimate change invalidates** — after
+`SCHEMA_TABLES`, `allColumns`, the cross-org endpoint list and the four
+hard-coded rule scopes — and the first where the invalidating change is in
+the same commit.
 
 **AUTOMATIC ROLLOVER IS STILL NOT DONE, AND IS STILL THE RIGHT MILESTONE.**
 `0001_init` names it and this branch does not build it: a job that creates
