@@ -149,9 +149,9 @@ see the eighth lesson below.
 The every-problem-states-a-real-fix branch added ONE unit file —
 `apps/api/test/remediation-coverage.test.ts` (2) — from **158 / 2009 to
 159 / 2011**. Integration moves with it (that file is a `.ts` integration runs
-too) plus 1 case in `apps/api/test/read.integration.test.ts`, which is
-**142 / 1828 as ARITHMETIC** at the time of writing; see the closing
-paragraph. **e2e stays 149.** It is **AC-ING-3**, and it was found by sweeping
+too) plus 1 case in `apps/api/test/read.integration.test.ts`, at
+**142 / 1828** — first recorded as arithmetic and MEASURED at exactly that,
+CLEAN. **e2e stays 149.** It is **AC-ING-3**, and it was found by sweeping
 the acceptance criteria the code never names.
 
 **TWENTY-ONE ERROR PATHS TOLD THE CALLER TO GO AND READ THE API SPEC.**
@@ -275,6 +275,34 @@ which is the only reason the recovery was clean rather than a merge.
 `git log --oneline origin/main..HEAD` after every `-b`, and — the half that
 caught it here — before every commit, because the trap is not only branching
 from the wrong place but never branching at all.
+
+**AND THE BRANCH LEFT A STALE CROSS-REFERENCE IT HAD JUST CREATED.**
+`run-detail.spec.ts` explains its assertion by naming the construction it is
+about — "RunsController.get throws `new NotFoundException('No run <id> in
+this project.')`" — which this change replaced. The DETAIL is byte-identical
+so the assertion holds, and the comment was corrected rather than left.
+**Fourth time this file records a cross-reference going stale**, and the first
+where the branch that staled it is the branch that fixed it: the rule is to
+grep for whoever NAMES what you are renaming, in the same commit.
+
+**THAT SPEC IS ALSO THE CLEAREST STATEMENT OF WHY THIS BRANCH EXISTS**, written
+long before it: "Every `/v1` error carries a remediation and the page must
+show it. Its presence is the requirement; its wording belongs to the API, so
+this asserts the element is rendered and non-empty rather than pinning copy
+this repo would then have to keep in two places." It was right to leave the
+wording to the API — and the wording the API supplied was "Check the request
+against the OpenAPI description", which is the generic copy that same
+paragraph refuses to invent. **A test can be correct about where a decision
+belongs and still be asserting that nothing was decided.**
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **159 / 2011** and `test:integration` **142 / 1828**, both exactly
+the predicted floor plus this branch's cases, both CLEAN, and the integration
+run behind the gate that refuses to start rather than expire (it passed at
+load 6.85). `pnpm test:e2e` **149 passed, exit 0** — run rather than reasoned
+about, because this branch changes what every 404 and both guard 403s put on
+the wire and `run-detail.spec.ts` drives a real one. Scratch database
+`perfportal_trim`, scratch Redis index db 12.
 
 The ingest-trims-like-every-other-schema branch added ONE unit file —
 `packages/contracts/test/trimmed-input.test.ts` (6) — from **157 / 2003 to
