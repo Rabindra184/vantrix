@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { validate } from '@readme/openapi-parser';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,7 +14,18 @@ afterEach(async () => {
 interface AnyDoc {
   openapi?: string;
   security?: unknown[];
-  paths?: Record<string, Record<string, { responses?: Record<string, unknown>; security?: unknown[] }>>;
+  paths?: Record<
+    string,
+    Record<
+      string,
+      {
+        responses?: Record<string, unknown>;
+        security?: unknown[];
+        /** Widened for the run-scoped route guard below, which reads parameter names. */
+        parameters?: { name?: string }[];
+      }
+    >
+  >;
   components?: {
     schemas?: Record<string, { required?: string[] }>;
   };
@@ -465,4 +478,113 @@ describe('OpenAPI document', () => {
     ).toBe(true);
     expect(undocumented, undocumented.join('; ')).toEqual([]);
   }, 120_000);
+});
+
+/**
+ * THE DOCUMENT'S RUN-SCOPED ROUTES ARE DERIVED FROM THE REGISTERED ONES.
+ *
+ * `GET /v1/runs/{id}/errors/series` was registered, answered 200, honoured
+ * "from"/"to" — and appeared nowhere in this document, so a generated client
+ * could not draw the errors chart at all. It is the ONLY two-segment
+ * run-scoped route, which is why it keeps being the one that is missed:
+ * everything else under `/v1/runs/{id}` is a single segment, so any list
+ * assembled by eye drops it. `session-auth.integration.test.ts` records the
+ * same endpoint missing from its cross-org array — a different hand-written
+ * list, the identical omission.
+ *
+ * AND THE ROUTES LIVE IN TWO CONTROLLERS, which is the other half of why this
+ * survived. `metrics.controller.ts` serves six and `parity.controller.ts`
+ * serves distribution, users and scatter; a check that opens "the metrics
+ * controller" sees two thirds of them. This collector keeps every
+ * `*.controller.ts` whose `@Controller` prefix is `/v1/runs/:id`, which is the
+ * collector `session-auth.integration.test.ts` already uses and the reason it
+ * would have found this had it been pointed here.
+ */
+describe('the document describes every run-scoped route that exists', () => {
+  const PREFIX = "@Controller('/v1/runs/:id')";
+
+  /** Comments stripped, so prose quoting a decorator is never a route. */
+  const strip = (src: string): string =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  function controllerSources(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!['node_modules', 'dist'].includes(e.name)) walk(full);
+        } else if (e.name.endsWith('.controller.ts')) out.push(full);
+      }
+    };
+    walk(join(process.cwd(), 'apps/api/src'));
+    return out;
+  }
+
+  interface Route {
+    readonly path: string;
+    readonly file: string;
+    readonly window: boolean;
+  }
+
+  function registeredRunRoutes(): { routes: Route[]; controllers: number } {
+    const routes: Route[] = [];
+    let controllers = 0;
+    for (const file of controllerSources()) {
+      const src = strip(readFileSync(file, 'utf8'));
+      if (!src.includes(PREFIX)) continue;
+      controllers += 1;
+      // Each @Get(...) owns the text up to the next @Get or end of file, which
+      // is where its own @Query parameters live.
+      const parts = src.split(/@Get\(/).slice(1);
+      for (const part of parts) {
+        const m = /^'([^']*)'/.exec(part);
+        if (!m) continue;
+        const body = part.split(/@(?:Get|Post|Patch|Delete)\(/)[0] ?? '';
+        routes.push({
+          path: m[1] === '' ? '/v1/runs/{id}' : `/v1/runs/{id}/${m[1]}`,
+          file: file.replace(`${process.cwd()}/`, ''),
+          window: body.includes("@Query('from')") && body.includes("@Query('to')"),
+        });
+      }
+    }
+    return { routes, controllers };
+  }
+
+  it('has a path for every registered run-scoped GET', async () => {
+    const { routes, controllers } = registeredRunRoutes();
+
+    // VACUITY, both halves: a collector that finds no controller, or one that
+    // finds a controller and no route, passes as quietly as one that works.
+    expect(controllers, 'collected no run-scoped controllers — the prefix has changed').toBeGreaterThan(1);
+    expect(routes.length, 'collected no run-scoped GETs — the @Get scan has rotted').toBeGreaterThan(5);
+
+    const doc = await fetchDoc();
+    const documented = new Set(Object.keys(doc.paths ?? {}));
+    const missing = routes.filter((r) => !documented.has(r.path)).map((r) => `${r.path}  (${r.file})`);
+
+    expect(missing, `registered but undocumented: ${missing.join('; ')}`).toEqual([]);
+  }, 60_000);
+
+  it('declares the window on every route whose handler reads one', async () => {
+    const { routes } = registeredRunRoutes();
+    const windowed = routes.filter((r) => r.window);
+
+    // The same vacuity question one axis over: if nothing reads a window, this
+    // case is comparing two empty sets and would pass against any document.
+    expect(windowed.length, 'no handler reads from/to — the @Query scan has rotted').toBeGreaterThan(4);
+
+    const doc = await fetchDoc();
+    const undeclared: string[] = [];
+    for (const r of windowed) {
+      const op = (doc.paths ?? {})[r.path]?.get;
+      const names = new Set((op?.parameters ?? []).map((p) => p.name));
+      if (!names.has('from') || !names.has('to')) undeclared.push(r.path);
+    }
+
+    expect(
+      undeclared,
+      `handlers read "from"/"to" and the document does not declare them: ${undeclared.join('; ')}`,
+    ).toEqual([]);
+  }, 60_000);
 });

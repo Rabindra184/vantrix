@@ -146,6 +146,121 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The the-window-is-in-the-contract branch added no unit FILE and no unit case —
+unit stays **161 / 2019**, because its only test file is an
+`.integration.test.ts`, which that config excludes — and 2 cases to
+`apps/api/test/openapi.integration.test.ts`, at ****145 / 1838****. **e2e stays 150**:
+no `.tsx`, no spec, and nothing the browser renders reads this document. Two
+defects in the published CONTRACT, both found by probing a real API rather than
+by reading it.
+
+**AN ENTIRE OPERATION WAS MISSING.** `GET /v1/runs/{id}/errors/series` is
+registered, answers 200, honours the analysis window — and appeared nowhere in
+the document, with no `ErrorSeriesResponse` schema either. A generated client
+could not draw the errors-over-time chart at all.
+
+**IT IS THE ONLY TWO-SEGMENT RUN-SCOPED ROUTE, AND THAT IS THE REASON RATHER
+THAN BAD LUCK.** Everything else under `/v1/runs/{id}` is a single segment, so
+a list assembled by eye drops this one. `session-auth.integration.test.ts`
+records the SAME endpoint missing from its cross-org array — a different
+hand-written list, the identical omission, and this file already draws the
+lesson there ("a comment asking for diligence is not a check"). **Second list
+to miss it; the first was fixed by deriving, and this one is fixed the same
+way.**
+
+**AND SEVEN READS HONOUR A TIME WINDOW WHILE ONE DECLARED IT.** Measured
+against a real run through a real API:
+
+```
+  /stats    895 requests unwindowed   ->  82 for from=0&to=10000   p95 658.63 -> 663
+  /series   62 buckets                ->  9
+```
+
+```
+  HONOURED, not declared   stats · series · errors/series · distribution · users · scatter
+  HONOURED and declared    telemetry
+  ignored, correctly       errors      <- its handler takes no window, deliberately
+```
+
+**THIS IS NOT A DOCUMENTATION STYLE, AND THE TWO ENDS OF THAT TABLE ARE WHY.**
+`telemetry` proves the document can express the window; `errors` proves the
+omission is not blanket, because that endpoint genuinely ignores `from`/`to` —
+its own handler comment says so and `ErrorsTable` carries a notice about it. So
+the document distinguishes correctly in one place and omits in six. The whole
+windowed-analysis feature, which is what the run page's time brush drives, was
+invisible to any generated client.
+
+**AND `/users` DID NOT MERELY OMIT IT — IT ASSERTED THE OPPOSITE.** Its
+description read "Requires the read scope. **No query parameters**: always
+returns every scenario in the run." The handler reads `from` and `to`. That is
+the class this file records six times — a docstring asserting a behaviour the
+product does not have — reached this time in the PUBLISHED contract rather than
+in a comment, where a reader has no source to check it against.
+
+**THE ROUTES LIVE IN TWO CONTROLLERS, WHICH IS THE OTHER HALF OF WHY THIS
+SURVIVED.** `metrics.controller.ts` serves six and `parity.controller.ts` serves
+distribution, users and scatter, both at `@Controller('/v1/runs/:id')`. **My own
+first pass opened the metrics controller, found three windowed handlers, and
+was wrong by two.** The behavioural sweep — probe the live endpoint with and
+without a window, compare the bytes — found five, and then the full table found
+seven. **A source parse scoped to one file is a claim about that file**, and the
+guard therefore keeps EVERY `*.controller.ts` whose prefix matches, which is the
+collector `session-auth.integration.test.ts` already uses and the reason it
+would have found this had it been pointed at the document.
+
+**FOUR MUTATIONS, AND TWO OF THEM LAND ON BOTH CASES HONESTLY:**
+
+```
+  the operation removed (the before-state)   BOTH — the first names file AND path
+  users stops declaring the window           case 2 ALONE
+  the @Controller prefix changed             BOTH — "collected no run-scoped controllers"
+  the @Query scan rotted                     case 2 ALONE — "the @Query scan has rotted"
+```
+
+The first and third fail two cases because a route that is absent, or a
+collector that finds nothing, genuinely breaks both claims — and each message
+names a real problem, which is the test this file applies to a bundled failure.
+
+**AND THE COUNT ASSERTION EARNED ITS KEEP AGAIN.** The first attempt at
+mutation two anchored on `parameters: [RunId, WindowFrom, WindowTo]` and matched
+TWICE, because telemetry now spells it identically — the generalisation this
+branch performs is what created the second match. Asserting the replacement
+count before running turned that into an error rather than a run against an
+unmutated tree, which would have reported 26 passed and read exactly like a
+guard that does not work.
+
+**AND ONE OF MY OWN SWEEPS THIS SESSION WAS VACUOUS, WHICH IS WORTH MORE THAN
+THE DEFECT IT MISSED.** Earlier I swept the document for response headers,
+reported "no operation declares any response header — uniform, so style", and
+moved on. That is false: FOUR operations declare `Retry-After`, and all four
+declare it **behind a `$ref`**, which my walker did not follow. The document was
+right and the probe was broken. **A sweep that reports zero is making a claim
+about its own collector first and about the system second** — this file records
+that for guards, and it is just as true of a throwaway probe used to reach a
+conclusion.
+
+**AND A CLAIM IN THIS FILE IS CORRECTED IN PLACE.** The trends-documents-its-400
+entry justifies reusing `BadRequest` by naming two 400s: `uuidParam('id')` and
+"`parseLimit`, whose `LimitSchema.parse` throws on a malformed `limit`".
+`LimitSchema` ends `.catch(LIMIT_DEFAULT)` and therefore CANNOT throw — measured,
+`limit=not-a-number` answers **200** on all three endpoints that take one, and
+`parseLimit`'s own docstring argues that deliberately ("defaulting to 25 for
+missing or non-numeric input … Clamping instead of rejecting keeps pagination
+usable"). The CONCLUSION survives — trends does answer 400 for a malformed `id`,
+so the shared ref is right — and the second reason given for it describes
+something the code refuses to do.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **161 / 2019**, UNCHANGED, which is the prediction for a branch whose
+only test file the unit config excludes. `test:integration` **145 / 1838, exit 0, zero failures** against a
+SCRATCH DATABASE (`perfportal_win`) and a scratch Redis INDEX (db 8). Every
+hand-started process was stopped FIRST — the probe API and worker from the
+investigation were killed and their scratch database dropped before any suite
+ran, which is this file's own rule and the reason it is worth restating: the
+investigation that finds a defect leaves a stack behind that will fail the suite
+proving the fix. **e2e was not run and cannot be reached**: the diff is the
+OpenAPI document, its schema registry and one integration test.
+
 The compare-tick-keeps-the-question branch added no unit FILE and 1 case to
 `apps/web/test/RunCompare.test.tsx`, from **161 / 2018 to 161 / 2019**.
 Integration is UNCHANGED at **145 / 1836** — every other file it touches is a
@@ -1580,8 +1695,15 @@ because a reader meeting this entry should not go hunting for a UI symptom.
 
 **`BadRequest` RATHER THAN `StatsBadRequest`, AND THE DIFFERENCE IS A CLAIM.**
 Its description is "a path or query parameter was malformed (e.g. \"id\" … is
-not a UUID)", which covers BOTH of trends' 400s — `uuidParam('id')` and
-`parseLimit`, whose `LimitSchema.parse` throws on a malformed `limit`. `/stats`
+not a UUID)", which covers trends' 400 — `uuidParam('id')`. **AND THE SECOND
+REASON THIS ENTRY FIRST GAVE IS FALSE, CORRECTED HERE RATHER THAN LEFT:** it
+said `parseLimit`'s "`LimitSchema.parse` throws on a malformed `limit`".
+`LimitSchema` ends `.catch(LIMIT_DEFAULT)` and therefore cannot throw —
+measured against a real API, `limit=not-a-number` answers **200** on all three
+endpoints that take one, and `parseLimit`'s own docstring argues that
+deliberately ("defaulting to 25 for missing or non-numeric input … Clamping
+instead of rejecting keeps pagination usable"). The conclusion survives and one
+of its two reasons described something the code refuses to do. `/stats`
 has its own ref because it ALSO answers `PROJECT_SETTINGS_INVALID`, and trends
 computes no indicator bands, so reusing that one would have documented a
 failure this operation cannot produce. Checked rather than copied from the
