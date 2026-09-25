@@ -32,10 +32,31 @@ export const DeclaredTestSlugSchema = z
 export const IngestMetadataSchema = z.object({
   tool: z.enum(TOOL_IDS),
   /** Scopes idempotency to the project. Bounded so the unique index stays sane. */
-  idempotencyKey: z.string().min(1).max(200).optional(),
-  environment: z.string().min(1).max(100).optional(),
-  branch: z.string().min(1).max(200).optional(),
-  commitSha: z.string().min(7).max(64).optional(),
+  /**
+   * TRIMMED, like every other typed input in this package — and these four
+   * were the last that were not. They read `z.string().min(1).max(100)` and
+   * so on, which stores what the client sent: measured against a real API, a
+   * run posted with `environment: "staging "` stored `[staging ]`.
+   *
+   * THAT IS NOT COSMETIC, because `comparabilityBreaks` compares these axes
+   * with `a === b`. Two runs of one environment broke the trend line, with a
+   * spacer labelled `staging → staging` and a sentence claiming they "were
+   * not measured under the same conditions" — a false claim whose cause the
+   * reader cannot see. `idempotencyKey` fails differently and just as
+   * quietly: it is half of a unique index, so a whitespace-mangled key does
+   * not collide with its twin and the re-submit it was meant to dedupe
+   * becomes a second run.
+   *
+   * THE SERVER IS THE ONLY PLACE THIS CAN BE FIXED. Four submit paths in
+   * three languages reach these fields, and no client trims — the Kotlin
+   * plugin forwards `env["VANTRIX_ENVIRONMENT"]` as it finds it and the Go
+   * agent sends `--host-label` verbatim. `RunnerJobRequest` trimmed from the
+   * start, which is what made this a drift rather than a decision.
+   */
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  environment: z.string().trim().min(1).max(100).optional(),
+  branch: z.string().trim().min(1).max(200).optional(),
+  commitSha: z.string().trim().min(7).max(64).optional(),
   /**
    * WHICH TEST THIS RUN IS OF, when the caller wants to say.
    *

@@ -146,6 +146,137 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The ingest-trims-like-every-other-schema branch added ONE unit file —
+`packages/contracts/test/trimmed-input.test.ts` (6) — from **157 / 2003 to
+158 / 2009**. Integration moves with it (that file is a `.ts` integration runs
+too) plus 2 cases in `apps/api/test/ingest.integration.test.ts`, which is
+**141 / 1825 as ARITHMETIC** at the time of writing; see the closing
+paragraph. **e2e stays 149.** It is a LIVE defect, and it was found by
+sweeping a seam no `pnpm` gate covers rather than by reading any one file.
+
+**TWO REQUEST SCHEMAS DID NOT TRIM AND EVERY OTHER ONE IN THE REPOSITORY
+DID.** Swept mechanically — every `z.string()` carrying a `.min(`/`.max(`
+bound in `packages/contracts/src`, which is the signal that a human types the
+value:
+
+```
+  TRIM   project.ts · rules.ts · runner.ts · test.ts · tokens.ts
+  raw    ingest.ts   idempotencyKey · environment · branch · commitSha
+  raw    live.ts     idempotencyKey · environment · branch · commitSha
+  raw    metrics.ts  host          (TelemetryBatchSchema — a REQUEST)
+  raw    problem.ts  title · code · detail · remediation   <- server-produced
+```
+
+Nine fields, two schemas, against a repository that trims everywhere else —
+including `DeclaredTestSlugSchema`, whose docstring says it is SHARED "so the
+four submit paths cannot drift into disagreeing about what a valid test slug
+looks like". **The slug could not drift and the three fields beside it
+could.**
+
+**MEASURED AGAINST A REAL API BEFORE ANYTHING CHANGED.** One POST, one read of
+the row:
+
+```
+  sent    environment:"staging "  branch:" main"  commitSha:"abc1234  "
+  stored  environment=[staging ]  branch=[ main]  commit_sha=[abc1234  ]
+```
+
+**AND THE CONSEQUENCE WAS DRIVEN THROUGH THE REAL FUNCTION, NOT INFERRED.**
+`comparabilityBreaks` compares its axes with `a === b`, so two runs of one
+environment:
+
+```
+  breaks    1
+  detail    "staging → staging "
+  sentence  "The line is broken at a gap: environment changed between runs,
+             so the points either side were not measured under the same conditions."
+```
+
+**A FALSE CLAIM WHOSE CAUSE THE READER CANNOT SEE**, because the spacer's own
+label names the same word twice. That is the false-positive the known-to-known
+rule was built to prevent — the trends-break-on-changed-conditions entry argues
+at length that a break must be a POSITIVE claim that two runs sit on different
+footing — reached by whitespace instead of by a null.
+
+**AND THE SWEEP FOUND TWO MORE CONSEQUENCES THAT ARE NOT THE SAME FAILURE.**
+`idempotencyKey` is half of the unique index `(projectId, idempotencyKey)`, so
+an untrimmed key does not collide with its own twin: **the re-post that dedupe
+exists to absorb becomes a SECOND run**, silently. And
+`TelemetryBatchSchema.host` — a REQUEST field despite sitting among the metrics
+responses, whose own docstring calls it "the dimension every telemetry chart
+groups by" — makes a padded label **a second generator in every figure**. Three
+distinct symptoms, one cause; fixing only the one that was measured first would
+have been the one-caller-short shape this file records eight times.
+
+**THE SERVER IS THE ONLY PLACE THIS CAN BE FIXED, AND THAT WAS CHECKED RATHER
+THAN ASSUMED.** Four submit paths in three languages reach these fields and
+none of the clients trims: `grep TrimSpace agent/` is EMPTY, so the Go agent
+sends `--host-label` verbatim, and `ResolvedConfig.kt` forwards
+`env["VANTRIX_ENVIRONMENT"]` as it finds it. A fix in one client leaves the
+other three, and a future client starts broken.
+
+**`RunnerJobRequest` TRIMMED FROM THE START, WHICH IS WHAT MAKES THIS A DRIFT
+RATHER THAN A DECISION.** Three of the four provenance paths agreed; the
+fourth and fifth did not. Nothing in the repository argues for the untrimmed
+form anywhere.
+
+**FIVE MUTATIONS, AND THE LANDINGS SEPARATE THE THREE SYMPTOMS:**
+
+```
+  ingest.ts environment untrimmed    the upload case + the whitespace case + the guard
+  metrics.ts host untrimmed          the telemetry case + the whitespace case + the guard
+  live.ts branch untrimmed           the live case + the guard ALONE
+  the collector's regex matches none "matched no bounded strings" — the vacuity guard
+  the comment stripper defanged      the guard — see below
+```
+
+**AND THE FIFTH PASSED THE FIRST TIME, FOR THE SECOND BRANCH RUNNING.** The
+guard's docstring claimed comment-stripping was load-bearing; with `strip`
+replaced by the identity on a correct tree, **6 passed**. The reason is
+narrower than last time and worth recording: the guard scans
+`packages/contracts/src`, and the fix had changed only the schema LINES, so
+there was no prose in the scanned directory quoting `z.string().min(`. The
+repair was to explain the trim AT EACH SITE — which this repository's style
+wants regardless — after which the defanged stripper fails naming the exact
+comment lines it trips on.
+
+**SEVENTH TIME THIS FILE RECORDS A COMMENT CREDITING A MECHANISM THAT IS DOING
+NOTHING, AND THE SECOND IN ONE SESSION.** The transferable half is the check,
+not the lesson: run the loose spelling against a CORRECT tree and see whether
+it still passes. Both times the claim was plausible, both times it was false,
+and both times one command settled it.
+
+**THE EXEMPTION IS NAMED AND ARGUED RATHER THAN IMPLIED.** `problem.ts`'s four
+fields are written by THIS server for an error document and are never received,
+so there is no client whitespace to absorb. The guard says to delete the
+exemption the day a Problem field becomes an input.
+
+**AND A BOUND IS THE SIGNAL, NOT THE TYPE.** A blanket rule over every
+`z.string()` would sweep `uuid()`, `datetime()`, record keys and every response
+field — 30-odd machine-produced strings that no human types. The `.min(`/`.max(`
+bound is what marks a field somebody fills in, which is why the guard keys on
+it; stated because the obvious wider rule would have to ship with exemptions,
+and exemptions are how a rule becomes decoration.
+
+**`.trim()` CHANGES WHAT IS ACCEPTED AT THE BOUNDARY, AND THAT IS THE POINT.**
+`commitSha` is `.min(7)`, so `" abc123 "` — six real characters — was accepted
+and stored with its padding and is now REFUSED. The refusal is correct:
+`min(7)` means seven characters of sha. The paired case asserts whitespace
+ALONE is refused rather than stored as `''`, because `comparability` already
+treats `''` as unknown, and an emptied environment would trade a false break
+for a silently missing fact.
+
+**AND A GREEN BUILD EMITTED NOTHING, FOR THE THIRD TIME IN THIS FILE.**
+`pnpm --filter @perfportal/contracts build` exited 0 with
+`dist/src/ingest.js` still reading `z.string().min(1).max(100)` — a stale
+`.tsbuildinfo`. `apps/api` resolves `@perfportal/contracts` through `dist`, so
+the integration suite would have run the OLD schema and failed the two new
+cases, and the obvious reading of that is "the fix is wrong". Caught by
+grepping the EMITTED file rather than the exit code;
+`find -name '*.tsbuildinfo' -delete` then `tsc -b --force`. This file already
+records the rule twice and it is worth the third: **grep the emitted output
+for the change before believing either a red result or a green one.**
+
 The one-definition-of-every-metrics-url branch added ONE unit file —
 `apps/web/test/metricPaths.test.ts` (4) — from **156 / 1999 to 157 / 2003**.
 Integration moves with it (that file is a `.ts` integration runs too) at

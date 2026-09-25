@@ -301,4 +301,61 @@ describe('POST /v1/runs', () => {
     // pipeline and re-run it will expect otherwise.
     expect(row?.branch).toBe('main');
   });
+
+  /**
+   * THE SEAM NO UNIT CASE REACHES. `packages/contracts/test/trimmed-input.test.ts`
+   * proves the schema trims; this proves the trimmed value is what reaches the
+   * COLUMN, across the parse, the service and the write. Measured before the
+   * fix against a real API, `environment: "staging "` stored `[staging ]`, and
+   * `comparabilityBreaks` compares that axis with `===` — so the trend line
+   * broke between two runs of one environment.
+   *
+   * `waitMs: 0` because this case needs the ROW, not a verdict: the handler
+   * otherwise waits out INGEST_WAIT_MS with no worker in this process to
+   * satisfy it, which is 25 seconds for an assertion about a write that has
+   * already happened.
+   */
+  it('stores the provenance a client padded, trimmed', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      .field('metadata', JSON.stringify({
+        tool: 'gatling',
+        waitMs: 0,
+        environment: '  staging\t',
+        branch: ' main ',
+        commitSha: ' abc1234  ',
+      }))
+      .attach('bundle', bundle, 'bundle.tgz');
+
+    const row = await ctx.prisma.run.findUnique({ where: { id: res.body.id } });
+    expect({ environment: row?.environment, branch: row?.branch, commitSha: row?.commitSha })
+      .toEqual({ environment: 'staging', branch: 'main', commitSha: 'abc1234' });
+  });
+
+  /**
+   * AND THE IDEMPOTENCY KEY, WHOSE FAILURE IS QUIETER. It is half of the
+   * unique index `(projectId, idempotencyKey)`, so an untrimmed key does not
+   * collide with its own twin: the re-post that dedupe exists to absorb
+   * becomes a SECOND run, and nothing anywhere reports it. Asserted as one
+   * run rather than as a string, because the id is the claim.
+   */
+  it('dedupes a re-post whose idempotency key differs only by whitespace', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+
+    const post = (key: string) =>
+      request(ctx.app.getHttpServer())
+        .post('/v1/runs')
+        .set('Authorization', `Bearer ${ctx.ingestToken}`)
+        .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, idempotencyKey: key }))
+        .attach('bundle', bundle, 'bundle.tgz');
+
+    const first = await post('build-99');
+    const second = await post('  build-99 ');
+    expect(second.body.id).toBe(first.body.id);
+  });
 });

@@ -496,7 +496,14 @@ export const TelemetryBatchSchema = z
      * and change on ephemeral generators, which is why the agent takes
      * `--host-label`. It is the dimension every telemetry chart groups by.
      */
-    host: z.string().min(1).max(255),
+    /**
+     * TRIMMED, and here the consequence is the chart rather than the trend:
+     * this read `z.string().min(1).max(255)`, and a label the operator padded
+     * is a SECOND generator in every figure that groups by it. The agent does
+     * not trim — there is no `TrimSpace` in `agent/` — so this is the only
+     * place it can be absorbed.
+     */
+    host: z.string().trim().min(1).max(255),
     /**
      * Bounded so one request cannot pin the event loop. The agent batches at
      * 30; 500 leaves generous headroom for a backlog flush after an outage
