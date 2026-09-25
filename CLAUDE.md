@@ -146,6 +146,150 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The partitions-do-not-run-out-silently branch added ONE integration file —
+`packages/persistence/test/partition-runway.integration.test.ts` (1) — so
+unit stays **160 / 2014** (that config excludes `*.integration.test.ts`) and
+integration is **144 / 1832** — first recorded as arithmetic and MEASURED at
+exactly that COLLECTION twice, which is the number that matters. **Both runs
+carried one failure and they were different failures**: the first was this
+branch rotting an existing test (a real defect, fixed — see below); the second
+was `project-ingest.integration.test.ts` on `Error: socket hang up`, a
+TRANSPORT failure this file already records by signature, which passes **8/8
+in isolation** and which a diff of one migration, two test files and two
+documents cannot reach — the reference run is dated 2026, so the new
+partitions are not even in its path. **No test failed twice**, which is the
+tell that separates the flake from a defect. RE-MEASURED after merging `main`
+(#220), which added no case. **e2e stays 149.** It is the first DATED defect this file
+records: the product was 98 days from refusing every new run, and nothing
+anywhere measured the distance.
+
+**ON 1 JANUARY 2027 EVERY RUN WOULD HAVE FAILED TO INGEST.** The four metrics
+tables are partitioned by month on the run's own start date, and every
+partition stopped at the same place:
+
+```
+  run_series_bucket   key=(run_started_on)  last = ['2026-12-01' -> '2027-01-01')
+  run_error_bucket    key=(run_started_on)  last = ['2026-12-01' -> '2027-01-01')
+  run_user_bucket     key=(run_started_on)  last = ['2026-12-01' -> '2027-01-01')
+  telemetry_sample    key=(sampled_on)      last = ['2026-12-01' -> '2027-01-01')
+```
+
+No DEFAULT partition and no runtime creation — partitions come only from
+static migrations. Proven with a real insert on 2026-09-25, 98 days out:
+
+```
+  2026-12-31 -> INSERT 0 1
+  2027-01-01 -> ERROR: no partition of relation "run_series_bucket" found for row
+                DETAIL: Partition key of the failing row contains
+                        (run_started_on) = (2027-01-01).
+```
+
+**AND THE AUTHOR KNEW, WHICH IS WHAT MAKES THIS WORTH RECORDING RATHER THAN
+JUST FIXING.** `0001_init` says it plainly: "Twelve months from 2026-01.
+**Automatic rollover is a later milestone**; until then a write past the last
+partition fails loudly rather than silently landing somewhere wrong." That
+reasoning is RIGHT and is untouched here — a catch-all partition would accept
+2027 rows into a bag retention cannot drop, which is worse than an error.
+
+**AND THIS ENTRY'S FIRST VERSION SAID "NOTHING MEASURED THE DISTANCE", WHICH
+IS FALSE — CORRECTED HERE BECAUSE THE SUITE CAUGHT IT.**
+`migrations.integration.test.ts` has had a tripwire all along, and its
+docstring describes this exact cliff: "it stays green today and goes red in
+January, forcing the rollover work migration 0001's hand-edited partitions
+defer." It was found the only honest way — by running the full suite and
+having it fail.
+
+**WHAT WAS MISSING IS THE WARNING PERIOD, NOT THE DETECTION.** That case
+asserts a partition exists for `CURRENT_DATE`, so it fires on the morning of
+the outage, when every ingest is already failing. A test that goes red the
+day the product breaks has told you nothing you would not learn from the
+alerts. The runway case asks the other question — how far away the end is —
+and goes red 180 days ahead. **Both are kept**: the existing one proves a real
+INSERT works today, which no bound calculation can, and this one is the only
+thing that arrives in time to act on.
+
+**THE OPERATOR HALF OF THE CLAIM SURVIVES INTACT.** `DEPLOYMENT.md`, both
+READMEs and the pre-exposure checklist said nothing about partitions, so a
+green CI on the maintainers' machine told a deployed instance's operator
+nothing at all. **THE DEFECT IS THE ABSENCE OF A USABLE WARNING, NOT OF A
+MEASUREMENT** — and getting that wrong the first time is exactly why the
+distinction is worth writing down.
+
+**AND IT WOULD HAVE BEEN ILLEGIBLE WHEN IT LANDED.** A Prisma "no partition of
+relation found" reaches the caller through the generic 500 path as "Retry the
+request" — the remediation-that-cannot-work class the every-problem-states-a-
+real-fix branch spent a whole branch removing, two branches ago. Retrying
+re-sends a run whose date has not changed. An operator would have met a 500
+telling them to do the one thing that cannot help, on every run, with nothing
+naming partitions.
+
+**THE GUARD FAILS ON THE CALENDAR, AND THAT IS THE DESIGN RATHER THAN A
+DEFECT IN IT.** Every other test in this repository fails because somebody
+changed something; this one fails because time passed. It is the only shape
+that can warn about a dated cliff — the product genuinely stops working on a
+date no commit mentions — and a red build 180 days early is the cheapest
+possible notice. Its docstring says, in as many words, **do not "fix" a
+failure here by lowering the floor: the floor is the warning period, not a
+threshold to be tuned until the build is green.**
+
+**IT RED-VERIFIED ITSELF FOR FREE.** Run against the database BEFORE the
+migration it produced exactly the message it exists for, naming each table
+and its own remaining days:
+
+```
+  run_series_bucket ends 2027-01-01 (97 days left)
+  run_user_bucket   ends 2027-01-01 (97 days left)
+```
+
+That is the difference between a guard and an alarm, and here it cost
+nothing: the before-state was simply the tree an hour earlier.
+
+**AND ITS OWN VACUITY ASSERTION CAUGHT A BUG IN ITS FIRST DRAFT.** That draft
+extracted the upper bound with a POSIX regex inside the SQL, threaded through
+a template literal, and the escaping did not survive: `max()` over no matches
+is NULL, and **a null bound would have read as infinite runway** — the guard
+passing for ever on the defect it was written for. The assertion that every
+partitioned parent must yield a readable bound is what said so. Parsing moved
+into TypeScript, where the expression is a literal this file can read
+directly. **Second branch running where a vacuity guard caught a defect in
+the guard itself**, after the exclusiveMinimum counter that counted the
+verdict instead of the construct.
+
+**THE MIGRATION BUYS TWELVE MONTHS AND THE GUARD IS WHAT MAKES THAT HONEST.**
+Extending without it would only move the cliff and lose the one thing this
+discovery produced. Verified after applying it: `2027-01-01` and `2027-12-31`
+insert, `2028-01-01` still fails — correctly — and the guard now goes red on
+**2027-07-05**, 180 days before that one.
+
+**AND THE MIGRATION ROTTED AN EXISTING TEST BY BEING CORRECT, WHICH IS THE
+BEST THING IN THIS BRANCH.** The fuse case — "a write dated past the last
+partition is rejected", whose whole subject is that the partition set is
+FINITE — proved it by hard-coding `'2027-06-15'`. Twelve new partitions made
+that an ordinary working day, and **the case failed for being right**, on a
+tree where nothing was wrong. It derives the date from `pg_get_expr` plus a
+day now, so every future extension moves it automatically and the claim
+survives the migration it is about. **Fifth time this file records a
+hand-written list or literal that a legitimate change invalidates** — after
+`SCHEMA_TABLES`, `allColumns`, the cross-org endpoint list and the four
+hard-coded rule scopes — and the first where the invalidating change is in
+the same commit.
+
+**AUTOMATIC ROLLOVER IS STILL NOT DONE, AND IS STILL THE RIGHT MILESTONE.**
+`0001_init` names it and this branch does not build it: a job that creates
+partitions ahead of the clock is a feature with its own failure modes — who
+runs it, what happens when it does not, and how anybody finds out. Recorded
+as the arm not taken rather than pretended at, which is the same discipline
+as `histogram_kind` and the plugin capability wiring.
+
+**THE OPERATOR NOTE'S QUERY WAS RUN BEFORE IT WAS WRITTEN DOWN.**
+`DEPLOYMENT.md` now explains the partitioning, says an instance that stops
+taking upgrades stops accepting runs, and gives a one-line `psql` that prints
+each table's first refusing date. It returns `2028-01-01` four times on a
+migrated database. **The remediations-name-a-real-lever branch is the
+precedent**: four messages sent an operator to a page that does not exist,
+and the fix there was to check reachability rather than truth. A documented
+command is the same claim.
+
 The no-scope-the-engine-never-files branch added no unit FILE and no unit
 case — unit stays **160 / 2014**, because the one case it touches was RENAMED
 and EXTENDED rather than added to. Integration is UNCHANGED at **143 / 1831**

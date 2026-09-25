@@ -245,6 +245,41 @@ docker compose -f infra/docker-compose.yml --profile onprem up -d --build
 Migrations run automatically; `bootstrap` re-runs and changes nothing that
 exists. Your data lives in named volumes and is not touched by a rebuild.
 
+### Keep upgrading at least once a year — the metrics tables are partitioned
+
+The four tables holding time-series metrics (`run_series_bucket`,
+`run_error_bucket`, `run_user_bucket`, `telemetry_sample`) are partitioned by
+month on the run's own start date, which is what makes retention a cheap
+partition drop rather than a mass delete. Partitions are created by
+migrations, **a year at a time**, and there is deliberately no catch-all
+partition: a row with no home fails the write rather than landing somewhere
+retention cannot reach.
+
+**So an instance that stops taking upgrades will stop accepting runs** on the
+1st of January after its last partition — not gradually, and not only for new
+features. Every run dated past the end fails to ingest, on all four tables at
+once, and the error a client sees is the generic 500.
+
+You are unlikely to meet this: the project's own test suite fails **180 days
+before** any deployment would, so a release always exists in time. It is
+documented because the failure is dated rather than caused, so nothing in
+your own change log would predict it.
+
+To see how much runway a running instance has:
+
+```bash
+docker compose -f infra/docker-compose.yml exec postgres \
+  psql -U perfportal -d perfportal -tAc \
+  "select p.relname, max(substring(pg_get_expr(c.relpartbound, c.oid) from 'TO ..([0-9-]+)')) \
+     from pg_inherits i join pg_class c on c.oid=i.inhrelid join pg_class p on p.oid=i.inhparent \
+    where p.relkind='p' group by 1 order by 1;"
+```
+
+Each row's date is the first day that table will refuse. If one is close and
+you cannot upgrade, the remedy is one migration's worth of
+`CREATE TABLE ... PARTITION OF ...` statements — see
+`packages/persistence/prisma/migrations/20260925120000_partitions_2027`.
+
 ---
 
 ## Backup and restore
