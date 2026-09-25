@@ -75,7 +75,7 @@ describe('resolveMetric', () => {
    * A gate on a percentile the project does not store — `p90` where the project
    * configures p50/75/95/99 — never reads `stat.percentiles` at all; it asks the
    * sketch. So a clamp installed where the STORED percentiles are projected
-   * (`StatRollupBuilder.finish`) would have left exactly this path judging a value
+   * (`RollupBuilder.finish`) would have left exactly this path judging a value
    * the product refuses to display. It lives in `Sketch.quantile` for that reason,
    * and this case is what tells the two apart.
    *
