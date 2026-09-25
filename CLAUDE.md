@@ -146,6 +146,212 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The one-definition-of-every-metrics-url branch added ONE unit file —
+`apps/web/test/metricPaths.test.ts` (4) — from **156 / 1999 to 157 / 2003**.
+Integration moves with it (that file is a `.ts` integration runs too) at
+**140 / 1817** — first recorded as ARITHMETIC with the run still going, and
+MEASURED at exactly that afterwards; see the closing paragraph, corrected in
+place. **e2e stays 149**: no spec changed. It is a LATENT defect
+rather than a live one, and it was found by taking a follow-up note in this
+repository literally and measuring it.
+
+**A FIXTURE EVERY BROWSER TEST ASSERTS AGAINST WAS CAPTURED FROM A REQUEST THE
+APP DOES NOT MAKE.** `scripts/capture-chart-fixture.mjs` writes
+`apps/web/test/fixtures/reference-run.json` by spelling each metrics URL
+itself, and `apps/web/src/api/metrics.ts` spells them again for the browser.
+Measured by running both sides against one run id — eight captures, seven
+identical:
+
+```
+  ok  stats · users · distribution · errors · scatter · scatterWithFailures · groupSeries
+  !!  series   capture /v1/runs/{id}/series?scope=run&name=
+                browser /v1/runs/{id}/series?scope=run&name=&family=response_time
+```
+
+**BENIGN ONLY BECAUSE A DEFAULT ON THE FAR SIDE OF THE WIRE HAPPENS TO MATCH.**
+`MetricsController.series` declares `@Query('family') family =
+'response_time'`, which is the browser's default too, so the bytes agree.
+Neither file controls that default. It is the defaulted-parameter-standing-in-
+for-an-omitted-one shape this file already records for `listEnabled`'s
+`testId` and `buildCompareMatrix`'s `currentRunId`, arriving this time across
+a process boundary.
+
+**THE NOTE SAYING SO WAS ALREADY IN THE TREE, AND WAS A CLAIM LIKE ANY OTHER.**
+`errorsQuery`'s docstring said the duplication was "six URLs wide across the
+five endpoints", that "no suite in the repo notices" if the two drift, and
+recorded it as follow-up. Every clause was true except the count — it was
+eight by then — and the drift it warned about had already happened. **Second
+time this session a deferral turned out to describe a defect rather than a
+risk**, after `window.ts`'s `bandsFrom` note; the branch is one paragraph of
+this file, taken literally and then measured.
+
+**THE DUPLICATION IS GONE RATHER THAN GUARDED.** `apps/web/src/api/metricPaths.ts`
+holds one definition of every URL and both callers import it. The capture
+script keeps its ARGUMENTS — which request to scatter, which group to series,
+each argued in place — because those are genuinely its choice; it owns none of
+the URL SHAPE. A guard comparing the two would have been vacuous the moment
+they shared a function, which is why the guard that ships bans the
+re-introduction of a literal instead.
+
+**AND IT CLOSES A SECOND HAZARD BY CONSTRUCTION.** `rangeSuffix` takes its join
+character as an argument — `?` for a bare path, `&` for one already carrying a
+query string — so every call site used to restate a fact about a URL written
+elsewhere. `seriesQuery`'s own comment argued the point ("a `?` here would
+produce two query strings and the server would see neither bound"). The
+builders choose it now, beside the query string they wrote, so a path that
+gains a parameter cannot leave a caller joining with the wrong character.
+
+**NODE'S ESM LOADER NEEDS AN EXPLICIT EXTENSION AND VITE DOES NOT, WHICH IS
+WHAT DECIDED THE MODULE'S SHAPE.** The first version imported `rangeSuffix`
+from `../routes/window`, which `tsc` (`moduleResolution: bundler`), vitest and
+Vite all resolve — and `node --experimental-strip-types` does not:
+`ERR_MODULE_NOT_FOUND ... /apps/web/src/routes/window`. Writing `.ts` in the
+specifier needs `allowImportingTsExtensions`, a project-wide compiler option
+turned on for one import. So `rangeSuffix` MOVED into `metricPaths.ts`, which
+now imports only `import type { Window }` — erased by strip-types, so the
+module has no runtime dependency at all and the `.mjs` can import it.
+**Verified by importing it from an `.mjs` and printing the URLs**, not by
+reasoning about resolution.
+
+**AND THE MOVE IS RIGHT ON ITS OWN MERITS, WHICH IS WHAT MAKES IT A DESIGN
+RATHER THAN A WORKAROUND.** `rangeSuffix` builds a fragment of the API's query
+string; `parseWindow` and `serialiseWindow`, which stay, read and write the
+ROUTER's. Two URLs that happen to carry the same two numbers. It had exactly
+one consumer outside its own file (`window.test.ts`), so the move cost one
+import line and no re-export — a second NAME for one definition is the thing
+this file keeps warning about.
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  seriesPath joins with '?' again        the join case ALONE
+  the script hand-writes one URL         the no-literal case ALONE
+  a new exported builder is added        the completeness case ALONE
+  the comment stripper is defanged       the no-literal case — see below
+```
+
+**AND THE FOURTH PASSED THE FIRST TIME, AGAINST A DOCSTRING SAYING IT COULD
+NOT.** The guard's comment claimed stripping was "load-bearing rather than
+defensive: this file, `metrics.ts` and the capture script all QUOTE the
+offending URLs". Measured, with `strip` replaced by the identity on a correct
+tree: **4 passed**. The explanations had, by accident of how they were worded,
+named no URL at all — `grep -c '/v1/'` was 0 in both scanned files.
+
+**SIXTH TIME THIS FILE RECORDS A COMMENT CREDITING A MECHANISM THAT IS DOING
+NOTHING**, and the check that caught it is the one already prescribed: run the
+loose spelling against the correct tree and see whether it still passes. The
+fix was to make the prose name the two URLs — which is the better explanation
+anyway — after which the defanged stripper fails with
+`expected [ '/v1/', '/v1/' ] to deeply equal []`. **A guard's docstring is a
+claim about the guard, and it is as checkable as the guard itself.**
+
+**THE COVERAGE IS DERIVED AND ONLY THE INVOCATION IS EXPLICIT.** The builders
+take different arguments in different positions, so no generic caller can know
+where the window goes — but the first case asserts the set of exported `*Path`
+functions equals the set the probe table covers, so a builder added later
+fails until somebody probes it. That is `fk-free-tables.sql`'s shape with the
+one part that cannot be derived left written down, and it carries the usual
+vacuity guard (more than five collected, or the filter has rotted).
+
+**THE COMMITTED FIXTURE NEEDS NO RE-CAPTURE, AND THAT WAS MEASURED AGAINST A
+REAL API RATHER THAN READ OFF THE CONTROLLER.** Both spellings of the `series`
+URL, same run, 59,624 bytes each:
+
+```
+  old URL (no family)   HTTP 200   59624 bytes
+  new URL (+family)     HTTP 200   59624 bytes
+  cmp                   BYTE-IDENTICAL
+```
+
+All eight corrected URLs then answered 200 against that instance, including
+the two data-dependent scatter names and the group series — so what the script
+will issue on its next run is known to work, rather than assumed. Only
+`_capture.endpoints.series`, the provenance string, will change.
+
+**THE LOCAL STACK COULD NOT ANSWER UNTIL IT WAS MIGRATED, AND THE SYMPTOM
+NAMED SOMETHING ELSE.** Every `/series` read returned **500**, both spellings,
+differing only in trace id — which reads as an endpoint defect and is not one:
+`The column run.stream_abandoned_at does not exist in the current database`,
+one migration behind (`20260920120000`). The 500's own remediation says
+"Retry the request", which cannot help. **`prisma migrate status` before
+believing a 500 on a developer database**, the same reflex as `docker ps` and
+`vm_stat`; it is one command and it distinguishes a stale schema from a
+product defect. The migration is a nullable `ADD COLUMN`, read before it was
+applied, and the nine real Gatling runs were confirmed intact afterwards.
+
+**AND `git checkout HEAD --` DESTROYED AN UNCOMMITTED EDIT, FOR THE SEVENTH
+TIME.** The checkpoint was committed before the first mutation, as prescribed
+— and then the docstring correction above was made, and the NEXT red-verify's
+restore rewound it. The tell was the count: `git status --short` reported 2
+modified files where 3 edits had been made. This file's own rule already
+covers it ("a checkpoint is only a checkpoint if it holds the shape you are
+verifying — commit again after any material change"), and the material change
+here was to the guard's own comment, which is exactly the kind that does not
+feel like one.
+
+**WHAT WAS RUN, AND WHAT IS NOT CLAIMED.** `typecheck` and `lint` green by
+their own exit codes; `test:unit` **157 / 2003**, the recorded floor plus
+exactly this branch's one file and four cases, ZERO failures and zero `Errors`
+lines — so the jsdom project really loaded, which is the half that matters for
+a branch whose every product file is under `apps/web/src`.
+
+**IT COLLECTED EXACTLY THE PREDICTED 140 / 1817, WHICH IS THE PART THAT MAKES
+THE FLOOR WORTH WRITING DOWN** — nothing was silently skipped — and 1816
+passed with ONE failure:
+
+```
+  × rejects a stream chunk with no X-Stream-Offset header ...   350ms
+    Error: socket hang up
+```
+
+**A TRANSPORT FAILURE, NOT AN ASSERTION ABOUT A VALUE**, in
+`apps/api/test/live.integration.test.ts`. This branch's diff is `apps/web/src`,
+`apps/web/test`, one `scripts/` file and this document — nothing under
+`apps/api`, `apps/worker` or `packages/` — so it cannot reach a raw-body guard
+in the live protocol. Isolated, that file is **33 passed, exit 0**.
+
+**AND `socket hang up` IS THE SIGNATURE THIS FILE ALREADY NAMES ONE CODE
+OVER.** It records `Parse Error: Expected HTTP/, RTSP/ or ICE/` as a shape that
+"cannot be produced by any application-level diff"; a hang-up is the same seam
+reached from the other side — the connection died rather than delivering
+something unparseable. It landed on the one case in that file whose defect is a
+HANG rather than a wrong value, and which therefore carries a request DEADLINE
+of its own (the refusals-nobody-asserts entry above records why). **A
+deadline-bounded case is the first thing a contended machine loses**, which is
+worth stating as a positive prediction rather than only as an excuse: if this
+suite flakes again under load, that is the case to expect.
+
+**AND THE LOAD GATE WAS NOT HONOURED, WHICH IS MINE.** The suite was started at
+a 1-minute load average of **11.30**, above the `< 8` this file prescribes,
+because the unit run before it had not finished decaying. It settled to ~5-7
+during the run. The previous branch in this file recorded starting a suite
+after a gate EXPIRED and quoting the result anyway; this is the same error
+without even the loop — the honest options are to wait or to say the machine
+cannot answer, and the second is what this paragraph does.
+
+**AND e2e WAS RUN, WHICH FOR THIS BRANCH IS THE GATE THAT MATTERS MOST.**
+`pnpm test:e2e --workers=2` at **149 passed, exit 0** — the whole browser suite
+against rebuilt URLs. The reasoning said it was safe (no spec changed, every
+`stall`/`failWith` glob is `**/v1/runs**`, i.e. the run LIST and unaffected by
+a query string on `/series`, and no spec asserts the app's OUTGOING url), and
+the reasoning is exactly what a refactor of every URL the browser issues should
+not be trusted on. A suite that drives the real app end to end is the only
+thing that can say a path builder still builds the path.
+
+All three local suites ran against a SCRATCH DATABASE (`perfportal_paths`) and
+a scratch Redis INDEX (db 11) — `test:e2e` seeds through the real API and does
+NOT truncate, and the developer database holds the nine real Gatling runs.
+Confirmed intact afterwards.
+
+**AND THE e2e SUITE HOLDS A THIRD COPY OF THESE URLS, DELIBERATELY LEFT.**
+`run-charts.spec.ts` fetches `/series?scope=run&name=` at one line and
+`/series?scope=run&name=&family=response_time` at another — the same
+inconsistency, inside one file. It is NOT rewired here and should not be: those
+calls are an independent ORACLE, asking the API directly to compute what the
+page should have drawn. A spec that built its expectation with the app's own
+builder would be checking the app against itself. Recorded as an arm not taken,
+with its reason, rather than swept up for tidiness.
+
 The trends-documents-its-400 branch added no unit FILE and no unit case — unit
 stays **156 / 1999**, because the one file it touches is an
 `.integration.test.ts`, which the unit config excludes — and 1 case to

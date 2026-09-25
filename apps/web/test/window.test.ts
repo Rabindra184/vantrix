@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseWindow, rangeSuffix, serialiseWindow } from '../src/routes/window';
+import { parseWindow, serialiseWindow } from '../src/routes/window';
+// `rangeSuffix` moved to the module that builds the API URLs consuming it.
+import { rangeSuffix } from '../src/api/metricPaths';
 import { statsQuery, statsQueryKey, seriesQuery } from '../src/api/metrics';
 
 const RUN_MS = 60_000;
