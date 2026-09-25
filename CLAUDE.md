@@ -149,8 +149,9 @@ see the eighth lesson below.
 The partitions-do-not-run-out-silently branch added ONE integration file —
 `packages/persistence/test/partition-runway.integration.test.ts` (1) — so
 unit stays **160 / 2014** (that config excludes `*.integration.test.ts`) and
-integration is **144 / 1832 as ARITHMETIC** at the time of writing; see the
-closing paragraph. **e2e stays 149.** It is the first DATED defect this file
+integration is **144 / 1832** — first recorded as arithmetic and MEASURED at
+exactly that (one failure, which was this branch rotting an existing test; see
+below). RE-MEASURED after merging `main` (#220), which added no case. **e2e stays 149.** It is the first DATED defect this file
 records: the product was 98 days from refusing every new run, and nothing
 anywhere measured the distance.
 
@@ -281,6 +282,161 @@ precedent**: four messages sent an operator to a page that does not exist,
 and the fix there was to check reachability rather than truth. A documented
 command is the same claim.
 
+The no-scope-the-engine-never-files branch added no unit FILE and no unit
+case — unit stays **160 / 2014**, because the one case it touches was RENAMED
+and EXTENDED rather than added to. Integration is UNCHANGED at **143 / 1831**
+(both files are `.tsx`, which that config never runs) and **e2e stays 149**.
+RE-MEASURED after merging `main`: this was cut at 159 / 2011 and
+document-is-valid-for-its-own-version landed underneath it, so the floors it
+first recorded described a tree that no longer exists. **A FLOOR IS A
+PROPERTY OF A TREE, NOT OF A BRANCH** — and the arithmetic that survives is
+"no case, onto whatever it sits on".
+It is the silent-gate class for the fourth time, and the first where the
+guard built for the previous one is what missed it.
+
+**A RULE COULD BE AUTHORED ON A SCOPE THIS ENGINE HAS NEVER FILED A ROW
+UNDER.** `ProjectRules` offered **Scenario**, with `response_time` as its
+family. Measured two ways. Across the nine real runs in a developer database:
+
+```
+  request  52 rows   9 runs
+  group    48 rows   8 runs
+  run       9 rows   9 runs
+  scenario  0
+```
+
+And through the product's own call sequence over the reference
+`simulation.log` — `parseSimulationLog` → `runEngineAsync` →
+`toEvaluableStats` → `evaluateRules`:
+
+```
+  scopes the engine produced   group, request, run
+  the run's own scenarios      Browse, Checkout
+  scenario-scoped p95 rule     not_applicable
+  its message                  "No response_time statistics for Browse in this
+                                run, so p95 of Browse (response_time) ≤ 100000
+                                was not checked."
+```
+
+**WORSE THAN `latency`, BECAUSE A NAME EXISTS TO TYPE.** That defect offered a
+family with nothing to name; this one offers a scope whose values the product
+DISPLAYS — the concurrent-users chart is drawn per scenario, so a reader picks
+Scenario, types `Browse`, and saves a gate that reads as configured protection
+and judges nothing, for ever. The more the form looks right, the longer it
+survives.
+
+**THE ENGINE USES `scenario` FOR THE USERS SERIES ONLY, WHICH IS WHY THE WORD
+IS EVERYWHERE AND THE SCOPE IS NOT.** `#userEvents`, `users.scenarios()` and a
+dozen field names carry it; no `#rollupFor`, `#seriesFor` or `#errorsFor` call
+passes it. `MetricScopeSchema` and `SLA_RULE_SCOPES` both declare four scopes
+and the producer writes three.
+
+**AND THE GUARD FROM THE `latency` BRANCH IS WHAT MISSED IT.** That case reads
+the offered FAMILIES off the rendered control and joins them against the
+engine's own literals — and then iterated a HARD-CODED
+`['run', 'scenario', 'request', 'group']`, trusting the scopes into the check.
+Its docstring says M09 "narrowed these lists by SCOPE and left `latency` on
+three of the four ... one family further on". **It then made the same mistake
+one axis over, in the sentence after diagnosing it.** Both axes are read off
+the control now.
+
+**FOURTH TIME THIS FILE RECORDS A GUARD ONE MEMBER SHORT OF ITS OWN
+ARGUMENT** — M09's families, AC-PLUG-2's `latency`, #215's OpenAPI statuses,
+and now this. The transferable form is narrow: **whenever a check iterates a
+list to validate something, ask what validates the list.**
+
+**FOUR MUTATIONS, AND THE THIRD IS THE ONE THAT EARNS ITS PLACE:**
+
+```
+  scenario restored to the offered scopes   the SCOPE assertion
+  latency restored to a family list         the FAMILY assertion + M09's case
+  the loose spelling vs the before-state     NOTHING — exit 0
+  the engine collector finds nothing         "no engine source collected"
+```
+
+**THE QUOTED LITERAL IS LOAD-BEARING, RE-MEASURED ON THE NEW AXIS.** The
+`latency` entry records that relaxing the join to a bare substring passes
+against the before-state, because `export * from './bucket-latency.js'`
+survives comment-stripping. `scenario` is the same trap with far more
+surface: with `engineSrc.includes(v)` and the defect restored, the case
+**passes, exit 0**. A guard written the obvious way would have exonerated the
+thing it was written to find — for the second time in this file, on the
+second axis, which is what makes it a rule rather than an anecdote.
+
+**NO CONTRACT CHANGE, AND THE REASON IS NOT THE `latency` ONE.** There the
+entry says "the schema cannot refuse it — both fields are independently valid
+enums". A scope is ONE field, so the server COULD refuse `scenario` outright.
+It is left declared because the product intends scenario statistics — the
+contract declares the scope, AC-PARITY-1 names a Scenario Detail page — and
+refusing it in the API would have to be reversed the day they are built.
+Narrowing the FORM removes the reachable defect and costs nothing when they
+arrive: the guard joins against the engine, so the day a
+`#rollupFor('scenario', …)` exists the list may grow again and the check
+permits it. **A form that offers less than the contract is a product
+decision; an API that refuses what the contract declares is a breaking
+change.**
+
+**AND THE MISSING PAGE IS THE SAME FINDING, NOT A SECOND ONE.** AC-PARITY-1
+names Run, Request, Group and **Scenario** detail pages compared element by
+element against Gatling's report; `App.tsx` declares `runs/:runId/requests/:name`
+and `runs/:runId/groups/:name` and no scenario route. Both the missing page
+and the unfireable rule are one absent capability — scenario-scope statistics
+— and recording them together is what stops the next reader fixing the route
+and leaving the gate.
+
+**AND NOTHING WAS LOST: zero scenario-scoped rules exist and zero assertions
+have ever been recorded for one.** Checked before narrowing, because removing
+an option a reader is already using would be a different change needing a
+migration note.
+
+**WHAT ELSE THE CROSS-LANGUAGE SWEEP CHECKED, AND ONE THING IT FOUND AND
+LEFT.** The same method — give a client's payload to the schema that receives
+it — was run against both non-`pnpm` toolchains, field by field:
+
+```
+  Go agent -> TelemetryBatchSchema      16 declared, 16 sent, zero drift
+  Kotlin plugin -> IngestMetadataSchema  tool waitMs environment branch commitSha test
+  Kotlin plugin -> OpenLiveRunRequest    tool environment branch commitSha test idempotencyKey
+```
+
+Both clean, and worth recording because **zod STRIPS unknown keys**, so a field
+a client computes and sends that the schema does not declare is discarded in
+silence — this file already records that trap costing the live banner its
+`rule` field.
+
+**AND THE PLUGIN'S `idempotencyKey` IS DECORATIVE — MEASURED, AND
+DELIBERATELY NOT FIXED HERE.** `RunTailer` calls
+`api.open(UUID.randomUUID().toString())` at both of its call sites, and
+`LiveClient.open` sends once and returns null on any failure without ever
+retrying. So the key is fresh on every request and can never match a previous
+run. `BundleUploader` sends none at all, and its metadata docstring lists
+every field it does send while never mentioning idempotency.
+
+**THE SERVER FEATURE WORKS; THE CLIENT CANNOT REACH IT.** `createLive` is
+idempotent under the key and the upload path's dedupe is pinned by
+`ingest.integration.test.ts`. What is unreachable is the dedupe itself: a
+retried Gradle task creates two runs, which is exactly what it would do with
+no key at all.
+
+**IT IS THE SAME CLASS AS THE SCOPE ABOVE AND MUCH THINNER, WHICH IS WHY IT IS
+A NOTE RATHER THAN A BRANCH.** A feature wired end to end that cannot fire —
+but nothing behaves wrongly today, so the defect is a misleading interface
+(`open(idempotencyKey: String)` is a parameter whose every caller passes a
+fresh UUID, which is a line inside the function wearing a contract) plus an
+unreachable capability. Making it real needs a DECISION this note cannot
+make: what identifies one Gatling run across a retry — a CI build id, the
+log's own identity, a configured value — and that is a small feature rather
+than a correction. Recorded the way `histogram_kind` and the capability
+wiring are: so the next reader meets it as a decision, not as a bug.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **160 / 2014** on the merged tree — the recorded floor UNCHANGED
+by this branch, which is the prediction for one that renames a case rather
+than adding one, re-measured after `main` moved underneath it.
+`test:integration` was NOT run and is unchanged by construction: both files in
+the diff are `.tsx`, which `vitest.integration.config.ts` never includes.
+`pnpm test:e2e` **149 passed, exit 0** — run rather than reasoned about,
+because the diff removes an option from a form the browser suite drives.
 The document-is-valid-for-its-own-version branch added ONE unit file —
 `apps/api/test/openapi-dialect.test.ts` (3) — from **159 / 2011 to
 160 / 2014**. Integration moves with it (that file is a `.ts` integration runs
