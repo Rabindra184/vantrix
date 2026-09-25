@@ -146,6 +146,137 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The document-is-valid-for-its-own-version branch added ONE unit file —
+`apps/api/test/openapi-dialect.test.ts` (3) — from **159 / 2011 to
+160 / 2014**. Integration moves with it (that file is a `.ts` integration runs
+too) at **143 / 1831** — first recorded as arithmetic and MEASURED at exactly
+that, CLEAN. **e2e stays 149.** It is a defect in the published
+CONTRACT rather than in behaviour, and it was found by pointing a standards
+validator at the document — which nothing in this repository had ever done.
+
+**THE DOCUMENT DECLARES 3.1 AND SPEAKS 3.0.** OpenAPI 3.1 uses JSON Schema
+2020-12, where `exclusiveMinimum` CARRIES the bound. The boolean spelling
+beside a separate `minimum` is draft-04, i.e. OpenAPI 3.0, and against 2020-12
+it is a type error. Fourteen occurrences across six response schemas:
+
+```
+  "toMs": { "type": "integer", "exclusiveMinimum": true, "minimum": 0 }
+```
+
+**A VALIDATOR REFUSED THE WHOLE DOCUMENT BEFORE IT COULD PROBE ONE
+ENDPOINT.** ajv, compiling `components.schemas`:
+
+```
+  schema is invalid: data/properties/window/anyOf/0/properties/toMs/
+                     exclusiveMinimum must be number
+```
+
+That is the entire finding, and it took one command. **The document had never
+been given to a validator** — `openapi.integration.test.ts` asserts what the
+document SAYS (24 cases, and #215 added the status sweep), and nothing asked
+whether it is well-formed for the version it claims.
+
+**THE BLAST RADIUS IS THE CONTRACT, NOT THE BROWSER, AND SAYING SO IS THE
+POINT.** `apiFetch` parses with zod, so nothing in `apps/web` behaves
+differently. What is broken is what a CONSUMER of the document gets: a
+generated client, a contract test, a gateway that validates against the spec —
+all of which reject it outright. Third time this file records that shape,
+after the trends 400 and the `INVALID_ID` sweep.
+
+**AND THE SEMANTICS WERE ALSO WRONG, WHICH IS THE QUIETER HALF.** A lenient
+parser that ignores the malformed keyword reads `{exclusiveMinimum: true,
+minimum: 0}` as `minimum: 0`, i.e. **`>= 0` where the schema means `> 0`** —
+a constraint silently widened rather than rejected. A strict one refuses; a
+forgiving one is wrong. Neither is the intent.
+
+**THE CAUSE IS THE LIBRARY, NOT THE CONFIGURATION, AND THAT WAS MEASURED.**
+`schemas.ts` sets `target: 'jsonSchema2019-09'` and argues the choice at
+length and correctly. 2019-09 inherits draft-06's numeric form, so that
+target should already emit it. It does not:
+
+```
+  jsonSchema2019-09  {"exclusiveMinimum": true, "minimum": 0}   <- wrong for its own dialect
+  jsonSchema7        {"exclusiveMinimum": 0}                    <- the form 3.1 wants
+  openApi3           {"exclusiveMinimum": true, "minimum": 0}   <- correct for 3.0
+```
+
+`zod-to-json-schema@3.25.2` disagrees with the dialect it was asked for.
+**Reading the config would have exonerated it**; only running the converter
+against each target separated a misconfiguration from a library bug.
+
+**THE ONE-WORD FIX WAS MEASURED AND REFUSED, WHICH IS THE DECISION WORTH
+RECORDING.** `target: 'jsonSchema7'` produces byte-identical output for every
+other construct the document uses — nullability, enums, records, formats, all
+probed side by side — so it would work today. It is refused because the NAME
+would claim draft-07 for a document declaring 3.1, leaving the next reader to
+rediscover that the two targets differ in exactly one keyword. A rewrite in
+`toJsonSchema` says out loud what is wrong and degrades to a no-op the day
+the library emits the right form. **A fix that works and misdescribes itself
+is how the next reader is set up to fail**, which is the same argument this
+file makes about comments crediting the wrong mechanism.
+
+**THE REWRITE TOUCHES ONLY THE DRAFT-04 PAIRING.** `exclusiveMinimum: true`
+with a numeric `minimum` becomes `exclusiveMinimum: <that number>`; a numeric
+one is already right and is left alone; an explicit `false` is dropped,
+because the bound alone already says "not exclusive". Verified on the emitted
+document: `toMs` stays `> 0` and `fromMs` — which has no exclusive flag —
+stays `>= 0`, untouched.
+
+**AND THE FIX WAS PROVEN END TO END RATHER THAN BY COUNTING.** With the
+corrected document, ajv compiles every schema AND **all 14 live GET responses
+deep-validate against the schema their operation declares** — probed against
+a real API on a real run. That second half is a sweep nothing in this
+repository had run: it would have caught an operation naming the WRONG
+schema, and it comes back clean, which is worth recording so the next reader
+re-checks rather than re-investigates.
+
+**THREE MUTATIONS, THREE DISTINCT LANDINGS:**
+
+```
+  the rewrite removed (the before-state)   names the offending paths
+  target switched to openApi3              names the `nullable` paths
+  the walk stops recursing                 the vacuity guard, on both cases
+```
+
+**AND THE RED-VERIFY CAUGHT A REAL FLAW IN THE GUARD ITSELF, WHICH IS THE
+MOST TRANSFERABLE THING HERE.** The first version's vacuity counter counted
+the CORRECT spelling. So with the fix reverted — every bound boolean — the
+counter read ZERO and the vacuity assertion fired first, reporting **"no
+exclusive bound anywhere — this case has stopped inspecting anything"** about
+a document carrying fourteen of the defect. The case failed, which looks like
+success, and its message described the opposite of what was wrong.
+
+**A VACUITY COUNTER MUST COUNT THE CONSTRUCT, NEVER THE VERDICT.** Counting
+what is RIGHT makes the guard's own diagnosis invert exactly when the defect
+is total — which is the case a reader most needs it to be truthful about.
+This file already says to read WHICH assertion failed; the sharper form is
+that a mutation failing the wrong assertion is a defect in the TEST, not a
+pass. Both counters now count every occurrence and then assert none is the
+bad spelling.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **160 / 2014** and `test:integration` **143 / 1831**, both exactly
+the predicted floor plus this branch's three cases, both CLEAN, and the
+integration run behind the gate that refuses to start rather than expire (it
+passed at load 7.74). Scratch database `perfportal_trim`, scratch Redis index
+db 12. **e2e was NOT run**: the diff is the document generator, its guard and
+this file — no spec, no `.tsx`, and nothing the browser renders.
+
+**AND A DOCUMENT-INTEGRITY SWEEP RODE ALONG AND CAME BACK CLEAN**, recorded so
+the next reader re-checks rather than re-investigates. Over the built
+document: **182 `$ref`s, zero dangling**; **31 operations, every one with an
+`operationId`, none duplicated**; and **zero path-parameter mismatches** —
+no `{param}` undeclared and no declared path parameter absent from its path.
+Each of those is fatal to a generator and invisible to every test here, and
+each is one traversal of a pure function.
+
+**THE NULLABILITY CASE IS NOT PADDING.** `schemas.ts` argues that
+`nullable: true` is "meaningless — and therefore a lie — once the document
+claims to be 3.1", and that argument lived only in a comment while the
+`target:` it depends on is one word from being changed. The `openApi3`
+mutation is exactly that change, and it is the realistic regression: somebody
+reading "OpenAPI" in the target name and thinking it the obvious choice.
+
 The every-problem-states-a-real-fix branch added ONE unit file —
 `apps/api/test/remediation-coverage.test.ts` (2) — from **158 / 2009 to
 159 / 2011**. Integration moves with it (that file is a `.ts` integration runs

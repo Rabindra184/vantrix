@@ -119,7 +119,63 @@ function toJsonSchema(schema: ZodTypeAny): JsonSchema {
     $refStrategy: 'none',
   }) as JsonSchema;
   delete out['$schema'];
-  return out;
+  return numericExclusiveBounds(out);
+}
+
+/**
+ * ═══ `exclusiveMinimum` IS A NUMBER IN THIS DOCUMENT'S OWN DIALECT ═══
+ *
+ * OpenAPI 3.1 — which `document.ts` declares — uses JSON Schema 2020-12,
+ * where `exclusiveMinimum`/`exclusiveMaximum` carry the BOUND. The boolean
+ * spelling beside a separate `minimum`/`maximum` is draft-04, i.e. OpenAPI
+ * 3.0, and it is a TYPE ERROR against 2020-12.
+ *
+ * `zod-to-json-schema@3.25.2` emits the draft-04 form regardless of the
+ * target — measured, and the reason this function exists rather than a
+ * different `target:` string:
+ *
+ *     jsonSchema2019-09  {"exclusiveMinimum": true, "minimum": 0}   <- wrong
+ *     jsonSchema7        {"exclusiveMinimum": 0}                    <- right
+ *     openApi3           {"exclusiveMinimum": true, "minimum": 0}   <- right for 3.0
+ *
+ * 2019-09 inherits draft-06's numeric form, so the middle row is what this
+ * target should already produce; the library disagrees with its own dialect.
+ *
+ * THE ONE-WORD FIX WAS MEASURED AND REJECTED. Switching to `jsonSchema7`
+ * produces byte-identical output for every other construct this document
+ * uses — nullability, enums, records, formats — so it would work today. It
+ * is refused because the NAME would then claim draft-07 for a document that
+ * declares 3.1, leaving the next reader to rediscover that the two targets
+ * differ in exactly one keyword. Rewriting the keyword says so out loud, and
+ * it degrades to a no-op the day the library emits the right form.
+ *
+ * BEFORE: 14 occurrences across six response schemas, and a standards
+ * validator refused to compile the document at all.
+ */
+function numericExclusiveBounds<T>(node: T): T {
+  if (Array.isArray(node)) return node.map(numericExclusiveBounds) as unknown as T;
+  if (node === null || typeof node !== 'object') return node;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    out[key] = numericExclusiveBounds(value);
+  }
+  for (const [flag, bound] of [
+    ['exclusiveMinimum', 'minimum'],
+    ['exclusiveMaximum', 'maximum'],
+  ] as const) {
+    // Only the draft-04 pairing is rewritten: `exclusiveMinimum: true` is
+    // meaningless without the `minimum` it qualifies, and a numeric one is
+    // already correct and must be left alone.
+    if (out[flag] === true && typeof out[bound] === 'number') {
+      out[flag] = out[bound];
+      delete out[bound];
+    } else if (out[flag] === false) {
+      // draft-04's explicit "not exclusive" — the bound alone says that.
+      delete out[flag];
+    }
+  }
+  return out as T;
 }
 
 /** `components.schemas`, built once at module load. */
