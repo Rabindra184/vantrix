@@ -253,6 +253,46 @@ have ever been recorded for one.** Checked before narrowing, because removing
 an option a reader is already using would be a different change needing a
 migration note.
 
+**WHAT ELSE THE CROSS-LANGUAGE SWEEP CHECKED, AND ONE THING IT FOUND AND
+LEFT.** The same method — give a client's payload to the schema that receives
+it — was run against both non-`pnpm` toolchains, field by field:
+
+```
+  Go agent -> TelemetryBatchSchema      16 declared, 16 sent, zero drift
+  Kotlin plugin -> IngestMetadataSchema  tool waitMs environment branch commitSha test
+  Kotlin plugin -> OpenLiveRunRequest    tool environment branch commitSha test idempotencyKey
+```
+
+Both clean, and worth recording because **zod STRIPS unknown keys**, so a field
+a client computes and sends that the schema does not declare is discarded in
+silence — this file already records that trap costing the live banner its
+`rule` field.
+
+**AND THE PLUGIN'S `idempotencyKey` IS DECORATIVE — MEASURED, AND
+DELIBERATELY NOT FIXED HERE.** `RunTailer` calls
+`api.open(UUID.randomUUID().toString())` at both of its call sites, and
+`LiveClient.open` sends once and returns null on any failure without ever
+retrying. So the key is fresh on every request and can never match a previous
+run. `BundleUploader` sends none at all, and its metadata docstring lists
+every field it does send while never mentioning idempotency.
+
+**THE SERVER FEATURE WORKS; THE CLIENT CANNOT REACH IT.** `createLive` is
+idempotent under the key and the upload path's dedupe is pinned by
+`ingest.integration.test.ts`. What is unreachable is the dedupe itself: a
+retried Gradle task creates two runs, which is exactly what it would do with
+no key at all.
+
+**IT IS THE SAME CLASS AS THE SCOPE ABOVE AND MUCH THINNER, WHICH IS WHY IT IS
+A NOTE RATHER THAN A BRANCH.** A feature wired end to end that cannot fire —
+but nothing behaves wrongly today, so the defect is a misleading interface
+(`open(idempotencyKey: String)` is a parameter whose every caller passes a
+fresh UUID, which is a line inside the function wearing a contract) plus an
+unreachable capability. Making it real needs a DECISION this note cannot
+make: what identifies one Gatling run across a retry — a CI build id, the
+log's own identity, a configured value — and that is a small feature rather
+than a correction. Recorded the way `histogram_kind` and the capability
+wiring are: so the next reader meets it as a decision, not as a bug.
+
 **WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
 `test:unit` **160 / 2014** on the merged tree — the recorded floor UNCHANGED
 by this branch, which is the prediction for one that renames a case rather
