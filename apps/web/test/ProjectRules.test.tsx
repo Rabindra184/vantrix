@@ -909,7 +909,27 @@ describe('ProjectRules — the target is picked, not remembered', () => {
   });
 
   /**
-   * NO SCOPE MAY OFFER A MEASUREMENT THE ENGINE NEVER PRODUCES.
+   * NO SCOPE, AND NO MEASUREMENT, THE ENGINE NEVER PRODUCES.
+   *
+   * ═══ THE SECOND HALF WAS ADDED AFTER THIS GUARD MISSED ONE ═══
+   *
+   * The version below iterated `['run', 'scenario', 'request', 'group']` — it
+   * checked which FAMILIES each scope offered and took the SCOPES themselves
+   * on trust. `scenario` is a stat scope the contract declares and the engine
+   * has never filed a row under: 52 `request` rows, 48 `group`, 9 `run` and
+   * ZERO `scenario` across nine real runs, and through the real pipeline a
+   * scenario-scoped p95 rule comes back `not_applicable` with "No
+   * response_time statistics for Browse in this run".
+   *
+   * THAT IS THIS GUARD'S OWN ARGUMENT, ONE AXIS OVER. Its note already said
+   * M09 "narrowed these lists by SCOPE and left `latency` on three of the
+   * four ... one family further on" — and then hard-coded the four scopes.
+   * Both axes are read off the rendered control now, so neither can be
+   * trusted into the check.
+   *
+   * WORSE THAN `latency`, BECAUSE A NAME EXISTS TO TYPE. The users chart is
+   * drawn per scenario, so the product shows a reader `Browse` and `Checkout`
+   * and then accepts a rule naming one that can never fire.
    *
    * M09 narrowed these lists by SCOPE and left `latency` on three of the four,
    * so "Latency" authored a gate the evaluator reports `not_applicable` for on
@@ -931,7 +951,7 @@ describe('ProjectRules — the target is picked, not remembered', () => {
    * `ProjectRules.tsx`'s new comment quotes the word while explaining why it
    * is gone. Either would exonerate a family that is only TALKED about.
    */
-  it('offers no measurement the statistics engine never files a row under', async () => {
+  it('offers no scope or measurement the statistics engine never files a row under', async () => {
     const engineSrc = readdirSync(ENGINE_DIR)
       .filter((f) => f.endsWith('.ts'))
       .map((f) => readFileSync(join(ENGINE_DIR, f), 'utf8'))
@@ -944,23 +964,51 @@ describe('ProjectRules — the target is picked, not remembered', () => {
     const user = userEvent.setup();
     renderRules();
 
-    const offered = new Set<string>();
-    for (const scope of ['run', 'scenario', 'request', 'group']) {
-      await user.selectOptions(await screen.findByLabelText(/scope/i), scope);
+    /**
+     * THE SCOPES ARE READ OFF THE CONTROL, not listed here — which is the
+     * whole repair. A hard-coded list is a second opinion about what the form
+     * offers, and it was wrong.
+     */
+    const scopeSelect = await screen.findByLabelText(/scope/i);
+    const offeredScopes = within(scopeSelect)
+      .getAllByRole('option')
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(offeredScopes.length, 'no scopes offered').toBeGreaterThan(1);
+    expect(offeredScopes, 'the whole-run scope is still offered').toContain('run');
+
+    const offeredFamilies = new Set<string>();
+    for (const scope of offeredScopes) {
+      await user.selectOptions(scopeSelect, scope);
       const measurement = await screen.findByLabelText(/measurement/i);
       for (const o of within(measurement).getAllByRole('option')) {
-        offered.add((o as HTMLOptionElement).value);
+        offeredFamilies.add((o as HTMLOptionElement).value);
       }
     }
 
     // Vacuity: a form that rendered no options at all would satisfy the
     // subset check perfectly.
-    expect(offered.size, 'no measurements offered').toBeGreaterThan(1);
-    expect(offered.has('response_time'), 'response_time is still offered').toBe(true);
+    expect(offeredFamilies.size, 'no measurements offered').toBeGreaterThan(1);
+    expect(offeredFamilies.has('response_time'), 'response_time is still offered').toBe(true);
 
-    const neverProduced = [...offered].filter((f) => !engineSrc.includes(`'${f}'`)).sort();
+    /**
+     * THE QUOTED LITERAL IS LOAD-BEARING ON BOTH AXES, and this entry already
+     * records measuring that for families: relaxed to a bare substring the
+     * check passes against the before-state, because `export * from
+     * './bucket-latency.js'` contains the word. `scenario` is the same trap
+     * and worse — the engine groups the USERS series by scenario, so
+     * `#userEvents`, `users.scenarios()` and a dozen field names contain it
+     * while no `#rollupFor('scenario', ...)` call exists.
+     */
+    const produced = (v: string): boolean => engineSrc.includes(`'${v}'`);
+
     expect(
-      neverProduced,
+      offeredScopes.filter((v) => !produced(v)).sort(),
+      'scopes the form offers that the engine never files a row under — ' +
+        'a rule using one is not_applicable on every run, for ever',
+    ).toEqual([]);
+
+    expect(
+      [...offeredFamilies].filter((v) => !produced(v)).sort(),
       'measurements the form offers that the engine never files a row under — ' +
         'a rule using one is not_applicable on every run, for ever',
     ).toEqual([]);

@@ -5,7 +5,6 @@ import {
   SLA_METRIC_SCALARS,
   SLA_RULE_COMPARATORS,
   SLA_RULE_FAMILIES,
-  SLA_RULE_SCOPES,
   slaMetricUnit,
   describeSlaMeasurement,
   describeSlaRule,
@@ -56,9 +55,44 @@ import {
  * appear beside the field that is wrong.
  */
 
-const SCOPE_LABELS: Record<(typeof SLA_RULE_SCOPES)[number], string> = {
+/**
+ * ═══ THE SCOPES THIS ENGINE ACTUALLY FILES A ROW UNDER ═══
+ *
+ * `SLA_RULE_SCOPES` has FOUR members and the statistics engine produces
+ * THREE. `scenario` is a stat scope the contract declares, `MetricScopeSchema`
+ * declares, this form offered — and that nothing has ever written. Measured
+ * across the nine real runs in a developer database: `request` 52 rows,
+ * `group` 48, `run` 9, **`scenario` 0**. And through the product's own
+ * pipeline over the reference `simulation.log`:
+ *
+ *     scopes the engine produced   group, request, run
+ *     the run's own scenarios      Browse, Checkout
+ *     a scenario-scoped p95 rule   not_applicable
+ *     its message                  "No response_time statistics for Browse in
+ *                                   this run, so ... was not checked."
+ *
+ * SO IT IS THE `latency` DEFECT ONE AXIS OVER, AND WORSE. There, no name
+ * existed to type. Here the product DISPLAYS the scenario names — the
+ * concurrent-users chart is drawn per scenario — so a reader picks Scenario,
+ * types `Browse`, and saves a gate that reads as configured protection and
+ * judges nothing, for ever.
+ *
+ * THE ENGINE USES `scenario` FOR THE USERS SERIES ONLY. `#userEvents` and
+ * `users.scenarios()` group arrivals and concurrency by scenario; no
+ * `#rollupFor`, `#seriesFor` or `#errorsFor` call passes it. That is why the
+ * word is all over the engine and the SCOPE is not.
+ *
+ * IT COMES BACK BY BEING PRODUCED, NOT BY BEING REMEMBERED. The guard in
+ * `ProjectRules.test.tsx` requires every offered scope to appear as a quoted
+ * literal in `packages/statistics/src`, so the day scenario rollups are filed
+ * this list may grow again and the check permits it. AC-PARITY-1 names a
+ * Scenario Detail page among its four, and no such route exists either —
+ * recorded as the same missing capability rather than two findings.
+ */
+const AUTHORABLE_SCOPES = ['run', 'group', 'request'] as const;
+
+const SCOPE_LABELS: Record<(typeof AUTHORABLE_SCOPES)[number], string> = {
   run: 'Whole run',
-  scenario: 'Scenario',
   group: 'Group',
   request: 'Request',
 };
@@ -121,11 +155,10 @@ const FAMILY_LABELS: Record<(typeof SLA_RULE_FAMILIES)[number], string> = {
  * taken rather than pretended at.
  */
 const FAMILIES_FOR_SCOPE: Record<
-  (typeof SLA_RULE_SCOPES)[number],
+  (typeof AUTHORABLE_SCOPES)[number],
   readonly (typeof SLA_RULE_FAMILIES)[number][]
 > = {
   run: ['response_time'],
-  scenario: ['response_time'],
   request: ['response_time'],
   group: ['group_cumulated', 'group_duration'],
 };
@@ -491,7 +524,7 @@ export default function ProjectRules({
    */
   const [appliesTo, setAppliesTo] = useState('');
   const [name, setName] = useState('');
-  const [scope, setScope] = useState<(typeof SLA_RULE_SCOPES)[number]>('run');
+  const [scope, setScope] = useState<(typeof AUTHORABLE_SCOPES)[number]>('run');
   const [targetName, setTargetName] = useState('');
   const [family, setFamily] = useState<(typeof SLA_RULE_FAMILIES)[number]>('response_time');
   const [metric, setMetric] = useState('p95');
@@ -931,7 +964,7 @@ export default function ProjectRules({
                   if (!allowed.includes(family)) setFamily(allowed[0]!);
                 }}
               >
-                {SLA_RULE_SCOPES.map((value) => (
+                {AUTHORABLE_SCOPES.map((value) => (
                   <option key={value} value={value}>
                     {SCOPE_LABELS[value]}
                   </option>
