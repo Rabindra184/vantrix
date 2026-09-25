@@ -283,19 +283,37 @@ const parameters: Record<string, ParameterObject> = {
       'Restrict the list to one SLA verdict. "none" means the run has no verdict yet.',
     schema: { type: 'string', enum: ['passed', 'failed', 'not_evaluated', 'none'] },
   },
-  TelemetryFrom: {
+  /**
+   * THE ANALYSIS WINDOW, SHARED BY EVERY READ THAT HONOURS ONE.
+   *
+   * These were `TelemetryFrom`/`TelemetryTo` and referenced by that one
+   * operation, while SIX others honoured the same two parameters and declared
+   * neither — so the whole windowed-analysis feature, which is what the run
+   * page's time brush drives, was invisible to any generated client. Measured
+   * against a real run: "/stats" answers 895 requests unwindowed and 82 for
+   * "from=0&to=10000", and "/series" 62 buckets against 9.
+   *
+   * ONE DEFINITION, REFERENCED BY EVERY OPERATION THAT TAKES IT, so the next
+   * windowed read cannot declare half of it or word it differently. The
+   * telemetry-specific clause moved to that operation's own description, where
+   * it belongs; everything here is true of every caller.
+   *
+   * "/v1/runs/{id}/errors" deliberately takes NO window and must not reference
+   * these — its handler ignores "from"/"to" on purpose and "ErrorsTable"
+   * carries a notice saying its totals are whole-run.
+   */
+  WindowFrom: {
     name: 'from',
     in: 'query',
     description:
       'Elapsed ms from this run\'s own "toolStartedAt" (inclusive) — the same axis "series" ' +
       'buckets are on. Independently meaningful from "to": "from" alone narrows to "the rest ' +
       'of the run", never silently ignored. Omitting both "from" and "to" returns the whole ' +
-      'run with "window: null". Rejected with 400 WINDOW_UNAVAILABLE for a run ingested before ' +
-      'per-bucket histograms existed — unreachable in practice for telemetry, since a run old ' +
-      'enough to predate that migration predates this feature too.',
+      'run with "window: null". A malformed bound is rejected with 400 RANGE_INVALID, and a ' +
+      'run ingested before per-bucket histograms existed with 400 WINDOW_UNAVAILABLE.',
     schema: { type: 'integer', minimum: 0 },
   },
-  TelemetryTo: {
+  WindowTo: {
     name: 'to',
     in: 'query',
     description:
@@ -852,6 +870,8 @@ const paths: Record<string, PathItemObject> = {
         parameters['StatsScope']!,
         parameters['StatsName']!,
         parameters['StatsFamily']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
       ],
       responses: {
         '200': { description: 'Statistics for this run, optionally filtered.', content: json(schemaRef('StatsResponse')) },
@@ -898,6 +918,8 @@ const paths: Record<string, PathItemObject> = {
         parameters['SeriesScope']!,
         parameters['SeriesName']!,
         parameters['SeriesFamily']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
       ],
       responses: {
         '200': { description: 'Time-series buckets.', content: json(schemaRef('SeriesResponse')) },
@@ -924,6 +946,48 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  /**
+   * REGISTERED, LIVE, AND ABSENT FROM THIS DOCUMENT UNTIL NOW.
+   *
+   * `@Get('errors/series')` has served 200 for as long as the errors chart has
+   * existed, and no path here described it — so a generated client had no way
+   * to draw that chart at all.
+   *
+   * IT IS THE ONLY TWO-SEGMENT RUN-SCOPED ROUTE, and that is why it keeps being
+   * missed rather than bad luck: everything else under `/v1/runs/{id}` is one
+   * segment, so any list assembled by eye or by pattern drops this one.
+   * `session-auth.integration.test.ts` records the same endpoint missing from
+   * its cross-org array, which is a DIFFERENT hand-written list making the
+   * identical omission. `openapi.integration.test.ts` now derives the set from
+   * the registered routes instead.
+   */
+  '/v1/runs/{id}/errors/series': {
+    get: {
+      operationId: 'getRunErrorSeries',
+      summary: 'Failed-request counts over time for a run',
+      tags: ['metrics'],
+      description:
+        'Requires the "read" scope. Buckets are on the same elapsed-ms axis as ' +
+        'GET /v1/runs/{id}/series, so the two line up point for point. Unlike ' +
+        'GET /v1/runs/{id}/errors — which aggregates the whole run and takes no window — ' +
+        'this series honours "from"/"to".',
+      parameters: [
+        parameters['RunId']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
+      ],
+      responses: {
+        '200': {
+          description: 'Error counts per time bucket.',
+          content: json(schemaRef('ErrorSeriesResponse')),
+        },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
   '/v1/runs/{id}/distribution': {
     get: {
       operationId: 'getRunDistribution',
@@ -939,6 +1003,8 @@ const paths: Record<string, PathItemObject> = {
         parameters['DistributionScope']!,
         parameters['DistributionName']!,
         parameters['DistributionFamily']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
       ],
       responses: {
         '200': { description: 'Bucketed OK/KO distribution.', content: json(schemaRef('DistributionResponse')) },
@@ -955,10 +1021,11 @@ const paths: Record<string, PathItemObject> = {
       summary: 'Active-users-over-time series, per scenario and summed across scenarios',
       tags: ['metrics'],
       description:
-        'Requires the "read" scope. No query parameters: always returns every scenario in the ' +
-        'run. "total" is the per-scenario SUM at each offset (not a true max-of-sums) — this ' +
-        'is what Gatling\'s own "All users" series is, verified against its fixture output.',
-      parameters: [parameters['RunId']!],
+        'Requires the "read" scope. Returns every scenario in the run; "from"/"to" narrow ' +
+        'the offsets, they never drop a scenario. "total" is the per-scenario SUM at each ' +
+        'offset (not a true max-of-sums) — this is what Gatling\'s own "All users" series is, ' +
+        'verified against its fixture output.',
+      parameters: [parameters['RunId']!, parameters['WindowFrom']!, parameters['WindowTo']!],
       responses: {
         '200': { description: 'Per-scenario and total user-concurrency buckets.', content: json(schemaRef('UsersResponse')) },
         '400': ref('BadRequest'),
@@ -978,7 +1045,12 @@ const paths: Record<string, PathItemObject> = {
         'for the named request, plots that (truncated, not rounded) p95 against the run-level ' +
         'requests/sec rate in the same bucket — one point per status per bucket, so a bucket ' +
         'with both successes and failures contributes to both "ok" and "ko".',
-      parameters: [parameters['RunId']!, parameters['ScatterName']!],
+      parameters: [
+        parameters['RunId']!,
+        parameters['ScatterName']!,
+        parameters['WindowFrom']!,
+        parameters['WindowTo']!,
+      ],
       responses: {
         '200': { description: 'OK and KO (x=throughput, y=p95) point series.', content: json(schemaRef('ScatterResponse')) },
         '400': ref('BadRequest'),
@@ -1005,7 +1077,7 @@ const paths: Record<string, PathItemObject> = {
         'BEFORE "from"/"to" narrows the response, so a window over a quiet stretch of a run ' +
         'that WAS recorded still reports "available": true with an empty "hosts" for that ' +
         'slice — never "this run was never recorded".',
-      parameters: [parameters['RunId']!, parameters['TelemetryFrom']!, parameters['TelemetryTo']!],
+      parameters: [parameters['RunId']!, parameters['WindowFrom']!, parameters['WindowTo']!],
       responses: {
         '200': {
           description: 'Per-host telemetry series, or "available: false" with an empty "hosts".',

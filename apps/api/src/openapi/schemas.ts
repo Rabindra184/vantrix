@@ -2,6 +2,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodTypeAny } from 'zod';
 import {
   DistributionResponseSchema,
+  ErrorSeriesResponseSchema,
   ErrorsResponseSchema,
   IndicatorBandsSchema,
   CreateProjectRequestSchema,
@@ -69,6 +70,7 @@ const SOURCE: Record<string, ZodTypeAny> = {
   StatRow: StatRowSchema,
   SeriesResponse: SeriesResponseSchema,
   ErrorsResponse: ErrorsResponseSchema,
+  ErrorSeriesResponse: ErrorSeriesResponseSchema,
   DistributionResponse: DistributionResponseSchema,
   UsersResponse: UsersResponseSchema,
   ScatterResponse: ScatterResponseSchema,
