@@ -146,6 +146,117 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The derive-the-clamp-caller-list branch added ONE unit file —
+`packages/statistics/test/clamped-quantiles.test.ts` (2) — from **160 / 2016 to
+161 / 2018**. Integration moves with it (that file is a `.ts` integration runs
+too) at ****145 / 1836****, and **e2e stays 149**: every file in the diff is a `.ts`,
+two of the three changes are comment-only, and no spec or `.tsx` is touched. It
+adds no product code — and the drift it closes is one I created in the branch
+directly above, which is the whole reason it is worth a branch.
+
+**THE CLAMP'S CALLER LIST WAS PROSE, AND IT WENT STALE THE FIRST TIME IT WAS
+TESTED.** `percentile.ts` states the rule a reader checks — "a percentile is
+clamped against the same min and max reported beside it" — and then NAMED its
+call sites: `RollupBuilder.finish`, `bucketLatency`, `resolveMetric` and the
+metrics controller. The branch above added `tool-assertions.ts` as a fifth and
+did not touch that paragraph.
+
+**SO THE G-05 ENTRY ABOVE CLOSES WITH THE SENTENCE THAT WOULD HAVE HIDDEN IT
+NEXT TIME.** That entry's own argument is that the clamp branch "named its call
+sites, and `tool-assertions.ts` is on none of them" — and the fix left the list
+one caller short again, in the very docstring whose staleness it had just
+diagnosed. **A list a human maintains is a list that drifts**, which this file
+records for `SCHEMA_TABLES` ("DERIVED … NEVER HAND-MAINTAINED. This was a
+literal list, and it had already drifted"), for `allColumns` ("A NAME IS NOT A
+CHECK"), for the cross-org endpoint array and for the four hard-coded rule
+scopes. Five occurrences, and this is the first where the drift was introduced
+by the branch citing the previous four.
+
+**SO THE SET IS COMPUTED FROM THE SOURCE.** The guard reads every `.quantile(`
+call under production `packages` and `apps` and requires each to be wrapped in
+`clampPercentile` or named in `EXEMPT` with a reason. A sixth caller joins the
+check by EXISTING — `fk-free-tables.sql`'s shape, and the
+enumerate-every-run-route shape. The names stay in the docstring because they
+orient a reader; the docstring now says out loud that they are not what keeps
+the rule true.
+
+**ONE EXEMPTION, AND IT IS ABOUT A TYPE RATHER THAN A FILE.** `window.ts` takes
+its quantile off a `Histogram`, not a `Sketch`: exact, nearest-rank over
+observed values, min/max ARE observed values, so the answer is inside its own
+range by construction. Re-measured rather than inherited — five shapes including
+ranges narrower than a bin, seven ranks each, **worst escape 0.000000 ms**. The
+exemption says in place that it is narrowed to that receiver and must be
+re-checked the day the file takes a `Sketch` quantile.
+
+**FOUR MUTATIONS, AND THE THIRD FAILS BOTH CASES — STATED RATHER THAN DRESSED
+UP:**
+
+```
+  the clamp removed (the before-state)   case 1 ALONE — names file:line
+  the comment stripper defanged          case 1 ALONE — the three prose callers
+  the collector matches nothing          BOTH — see below
+  an exemption naming no caller          case 2 ALONE — "delete them"
+```
+
+The third is correct behaviour rather than a blunt mutation: a collector that
+matches nothing trips the vacuity floor AND makes every exemption look stale,
+because the file it names no longer appears to call anything. Both messages
+name a real problem, which is the test this file applies to a bundled failure.
+
+**AND COMMENT-STRIPPING IS LOAD-BEARING HERE, MEASURED, WHICH MATTERS BECAUSE
+THE LAST THREE BRANCHES GOT THIS WRONG.** Each of those claimed the strip was
+load-bearing, measured it, found it was not, and repaired the CLAIM by adding
+prose that quoted the banned shape — writing documentation to make a test fail.
+Here the measurement went the other way:
+
+```
+  stripped   7 calls
+  raw       10 calls
+      packages/statistics/src/percentile.ts:67    the clamp's OWN docstring
+      packages/statistics/src/tool-assertions.ts  the comment explaining its clamp
+      apps/web/src/routes/RunDetail.tsx           the docstring correcting Sketch
+```
+
+**THE FIRST EXTRA IS THE ONE WORTH SEEING.** `percentile.ts` explains this
+guard, and the sentence in which it does so contains `.quantile(` — so without
+the strip the RULE'S OWN DOCUMENTATION is reported as a caller breaking the
+rule. The other two were written in the branch that fixed this defect class.
+Seventh time this file records the trap, and the first where the guard's own
+explanation is among the false positives.
+
+**AND `*/` INSIDE A BLOCK COMMENT ENDS IT, WHICH A GLOB CONTAINS.** The
+docstring said scanning covers `packages/` + `*` + `/src`, and that `*/`
+TERMINATED the comment: everything after it parsed as code and oxc reported
+`[PARSE_ERROR] Expected a semicolon` pointing at prose. **vitest reported it as
+`Test Files 1 failed | Tests no tests`** — the silent shape this file already
+warns about for a JSX syntax error, met from a new direction. The globs are
+written `packages/<pkg>/src` now.
+
+This is the backtick-in-a-SQL-comment trap's cousin, and this file records that
+one three times across `TRENDS_SQL`, a `$executeRaw` and two more SQL comments.
+**The general rule is the same: a comment is a STRING WITH A TERMINATOR, and
+any notation you paste into one can contain it.** For a block comment the
+terminator is `*/`, which every glob over a directory level contains.
+
+**AND `StatRollupBuilder` NAMES NOTHING.** The class is `RollupBuilder`;
+`percentile.ts` and `packages/sla/test/evaluate.test.ts` both cited a type that
+has never existed. Corrected in both. Fourth time this file records a
+cross-reference naming something the product does not have — after the `Cnt/s`
+hint for a deleted label, "Mint one under Access" for a renamed page, and the
+`ThemeToggle` pointers — and the cheapest of them to have caught, since `grep`
+answers it in one command.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **161 / 2018**, the recorded floor plus exactly this branch's one
+file and two cases, ZERO failures and zero `Errors` lines.
+`test:integration` **145 / 1836, exit 0, zero failures** against a SCRATCH DATABASE
+(`perfportal_clampguard`) and a scratch Redis INDEX (db 14), started at a
+1-minute load of 3.56 — under the gate this file prescribes rather than past an
+expired wait. The nine real Gatling runs in the developer database were
+confirmed intact. **e2e was not run and cannot be reached**: the diff is one new
+`.ts` test file plus two comment-only edits, so nothing the browser renders
+changed.
+
 The g05-judges-an-unclamped-percentile branch added no unit FILE and 2 cases to
 `packages/statistics/test/tool-assertions.test.ts`, from **160 / 2014 to
 160 / 2016**. Integration moves with both (that file is a `.ts` integration runs
