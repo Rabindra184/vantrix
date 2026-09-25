@@ -23,6 +23,7 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest } from '../common/validation.js';
+import { notFound } from '../common/validation.js';
 
 /**
  * The tests a project runs, and the layer between a project and its runs.
@@ -205,13 +206,16 @@ export class TestsController {
   ): Promise<{ id: string }> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
     if (project === null || (credentialProjectId !== undefined && credentialProjectId !== project.id)) {
-      throw new NotFoundException(`No project "${slug}" in this organisation.`);
+      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
     }
     return project;
   }
 
   private noSuchTest(testSlug: string): NotFoundException {
-    return new NotFoundException(`No test "${testSlug}" in this project.`);
+    return notFound(
+      `No test "${testSlug}" in this project.`,
+      'Check the test slug, or list the tests in this project with GET /v1/projects/{slug}/tests.',
+    );
   }
 }
 

@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, ParseUUIDPipe } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { MAX_OFFSET_MS } from '@perfportal/persistence';
 import { z } from 'zod';
 
@@ -30,6 +36,46 @@ export function badRequest(code: string, message: string, remediation: string): 
  */
 export function conflict(code: string, message: string, remediation: string): ConflictException {
   return Object.assign(new ConflictException(message), { code, remediation });
+}
+
+/**
+ * The 404 counterpart, and the one that was missing for longest.
+ *
+ * `conflict` above argues the general case and then applies it to one status:
+ * "`ProblemFilter` falls back to 'Check the request against the OpenAPI
+ * description at /v1/openapi.json' when an exception carries no
+ * `remediation`, and that is unhelpful advice ... the OpenAPI document
+ * describes it perfectly." **Every word of that is true of a 404**, and there
+ * were nineteen of them. Measured against a real API before this existed:
+ *
+ *     404 NOT_FOUND  detail: No run <uuid> in this project.
+ *                    remediation: Check the request against the OpenAPI
+ *                                 description at /v1/openapi.json.
+ *
+ * NO `code` PARAMETER, UNLIKE `badRequest` AND `conflict`, AND THAT IS
+ * DELIBERATE. `ProblemFilter` derives `NOT_FOUND` from the status today, and
+ * a per-site code would change the wire contract — `code` is what a generated
+ * client branches on, and the OpenAPI document declares it. This fixes the
+ * remediation and nothing else, so the only field that moves is the one that
+ * was wrong.
+ */
+export function notFound(message: string, remediation: string): NotFoundException {
+  return Object.assign(new NotFoundException(message), { remediation });
+}
+
+/**
+ * The 403 counterpart, for the two GUARDS.
+ *
+ * The authentication path does not need this: `AuthMiddleware` catches every
+ * `HttpException` thrown out of `authenticateRequest`/`authenticateSession`
+ * and writes its own problem document with a real remediation — measured, a
+ * missing credential answers "Provide a bearer API token in the Authorization
+ * header ... or sign in at POST /auth/sign-in/email". Middleware runs BEFORE
+ * guards, so `AuthGuard`'s scope check and `SessionOnlyGuard` are outside
+ * that catch and fell through to the generic fallback instead.
+ */
+export function forbidden(message: string, remediation: string): ForbiddenException {
+  return Object.assign(new ForbiddenException(message), { remediation });
 }
 
 /**

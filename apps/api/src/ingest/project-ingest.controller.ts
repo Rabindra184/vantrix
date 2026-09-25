@@ -1,4 +1,4 @@
-import { Controller, Inject, Param, Post, Req, Res, UseGuards, NotFoundException } from '@nestjs/common';
+import { Controller, Inject, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ProjectRepository } from '@perfportal/persistence';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
@@ -9,6 +9,7 @@ import { RunsService } from '../runs/runs.service.js';
 import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { IngestService } from './ingest.service.js';
 import { readMultipart } from './multipart.js';
+import { notFound } from '../common/validation.js';
 
 /**
  * Uploading a bundle from a BROWSER (review 09-13 M05).
@@ -69,7 +70,7 @@ export class ProjectIngestController {
     const tenant = req.tenant!;
     const project = await this.projects.findBySlugInOrg(tenant.orgId, slug);
     // 404, never 403 — see the class docstring.
-    if (!project) throw new NotFoundException(`No project "${slug}" in this organisation.`);
+    if (!project) throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
 
     /* Everything below is `IngestController.post` verbatim, with the project
        resolved from the URL instead of read off the credential. Shared through

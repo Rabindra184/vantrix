@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import {
   MintTokenRequestSchema,
   MintedTokenSchema,
@@ -13,6 +13,7 @@ import { ProjectRepository, TokenRepository, type TokenSummaryRow } from '@perfp
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest } from '../common/validation.js';
+import { notFound } from '../common/validation.js';
 
 /**
  * Mints a project API token — the one credential-issuing route on this API.
@@ -120,7 +121,7 @@ export class TokensController {
     const project = await this.resolveProject(tenant.orgId, slug);
 
     const row = await this.tokens.revokeByPrefix(tenant.orgId, project.id, prefix);
-    if (!row) throw new NotFoundException(`No token "${prefix}" in project "${slug}".`);
+    if (!row) throw notFound(`No token "${prefix}" in project "${slug}".`, 'Check the token prefix, or list the tokens in this project with GET /v1/projects/{slug}/tokens.');
     return this.toSummary(row);
   }
 
@@ -131,7 +132,7 @@ export class TokensController {
    */
   private async resolveProject(orgId: string, slug: string) {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (!project) throw new NotFoundException(`No project "${slug}" in this organisation.`);
+    if (!project) throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
     return project;
   }
 

@@ -500,6 +500,35 @@ describe('GET /v1/runs?project=', () => {
     expect(res.status).toBe(404);
   });
 
+  /**
+   * THE SEAM THE SYNTACTIC GUARD CANNOT REACH.
+   * `apps/api/test/remediation-coverage.test.ts` proves no handler
+   * constructs a bare `HttpException`; this proves what the caller actually
+   * receives, across the throw, `ProblemFilter` and the wire.
+   *
+   * Measured before the fix, every 404 in the product answered:
+   *
+   *     remediation: Check the request against the OpenAPI description at
+   *                  /v1/openapi.json.
+   *
+   * — for a request that document describes perfectly. Asserted as a PAIR,
+   * because "carries a remediation" alone is satisfied by the generic
+   * fallback, which is the before-state.
+   */
+  it('answers a 404 with a fix the caller can act on, not with the generic fallback', async () => {
+    ctx = await createTestApp();
+    const res = await request(ctx.app.getHttpServer())
+      .get('/v1/runs?project=no-such-project')
+      .set(auth());
+
+    expect(res.status).toBe(404);
+    expect(res.body.remediation).not.toContain('OpenAPI description');
+    // And it names a surface that exists — the failure this repository has
+    // already paid for is a remediation pointing at a page or route nobody
+    // can reach.
+    expect(res.body.remediation).toContain('GET /v1/projects');
+  });
+
   it('is identical to omitting the parameter when a token names its own project', async () => {
     ctx = await createTestApp();
     await ingested();

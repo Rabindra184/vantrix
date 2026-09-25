@@ -358,9 +358,13 @@ test('another org run is not readable', async ({ page }) => {
   await page.goto(runPath(otherOrgRunId));
 
   // The API's OWN words, not invented copy: RunsController.get throws
-  // `new NotFoundException('No run <id> in this project.')`, which
-  // ProblemFilter renders as a 404 problem document whose `detail` is that
-  // sentence. The brief guessed "not found"; the API does not say it.
+  // `notFound('No run <id> in this project.', ...)`, which ProblemFilter
+  // renders as a 404 problem document whose `detail` is that sentence. It
+  // read `new NotFoundException(...)` until the helper existed; the DETAIL is
+  // byte-identical either way, and what changed is the remediation asserted
+  // below — which until then was "Check the request against the OpenAPI
+  // description", i.e. exactly the generic copy the next paragraph says the
+  // page must not invent. The brief guessed "not found"; the API does not say it.
   // Asserting the real detail — id included — also proves the page is
   // reporting THIS run rather than echoing a generic failure.
   await expect(page.getByRole('alert')).toContainText(`No run ${otherOrgRunId} in this project.`);

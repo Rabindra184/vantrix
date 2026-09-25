@@ -29,6 +29,7 @@ import {
 import type { Request } from 'express';
 import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 import { badRequest, uuidParam } from '../common/validation.js';
+import { notFound } from '../common/validation.js';
 
 /**
  * Authoring the SLA rules a project's runs are judged against.
@@ -202,7 +203,8 @@ export class RulesController {
    */
   private async resolveProject(orgId: string, slug: string): Promise<{ id: string }> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
-    if (project === null) throw new NotFoundException(`No project "${slug}" in this organisation.`);
+    if (project === null)
+      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
     return project;
   }
 
@@ -213,7 +215,10 @@ export class RulesController {
    * conflate them.
    */
   private noSuchRule(ruleId: string): NotFoundException {
-    return new NotFoundException(`No SLA rule "${ruleId}" in this project.`);
+    return notFound(
+      `No SLA rule "${ruleId}" in this project.`,
+      'Check the rule id, or list the rules in this project with GET /v1/projects/{slug}/rules.',
+    );
   }
 
   /**
@@ -231,7 +236,7 @@ export class RulesController {
   ): Promise<string | null> {
     if (testSlug === null) return null;
     const found = await this.tests.findBySlug({ orgId, projectId }, testSlug);
-    if (found === null) throw new NotFoundException(`No test "${testSlug}" in this project.`);
+    if (found === null) throw notFound(`No test "${testSlug}" in this project.`, 'Check the test slug, or list the tests in this project with GET /v1/projects/{slug}/tests.');
     return found.id;
   }
 }

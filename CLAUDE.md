@@ -146,6 +146,164 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The every-problem-states-a-real-fix branch added ONE unit file —
+`apps/api/test/remediation-coverage.test.ts` (2) — from **158 / 2009 to
+159 / 2011**. Integration moves with it (that file is a `.ts` integration runs
+too) plus 1 case in `apps/api/test/read.integration.test.ts`, at
+**142 / 1828** — first recorded as arithmetic and MEASURED at exactly that,
+CLEAN. **e2e stays 149.** It is **AC-ING-3**, and it was found by sweeping
+the acceptance criteria the code never names.
+
+**TWENTY-ONE ERROR PATHS TOLD THE CALLER TO GO AND READ THE API SPEC.**
+`ProblemFilter` fills `remediation` with a fallback when an exception carries
+none, and twenty-one throw sites carried none. Measured against a real API
+before anything changed:
+
+```
+  404 NOT_FOUND  detail:      No run <uuid> in this project.
+                 remediation: Check the request against the OpenAPI
+                              description at /v1/openapi.json.
+```
+
+**THE DOCUMENT DESCRIBES THAT REQUEST PERFECTLY**, which is what makes the
+advice useless rather than merely thin. AC-ING-3 asks for "a non-empty
+remediation string"; this is non-empty and says nothing.
+
+**AND `conflict()`'s OWN DOCSTRING HAD ALREADY MADE THE ARGUMENT, IN
+GENERAL.** It reads: "`ProblemFilter` falls back to 'Check the request against
+the OpenAPI description at /v1/openapi.json' when an exception carries no
+`remediation`, and that is unhelpful advice for the one error a user hits
+routinely. A duplicate project slug is not a malformed request — the OpenAPI
+document describes it perfectly." Every word of that is true of a 404. The
+helper was written with its reasoning generalised and then applied to ONE
+status. **Ninth time this file records the one-caller-short shape, and the
+first where the argument for the other callers was already written at the
+call site that got the fix.**
+
+**PROBING CORRECTED THE FINDING TWICE, IN BOTH DIRECTIONS, AND THAT IS THE
+MOST USEFUL THING IN THIS ENTRY.** The first sweep counted 28 bare
+`throw new …Exception(` sites and called them all broken. Measured:
+
+```
+  401/403 from AUTHENTICATION   already specific — "Provide a bearer API
+                                token in the Authorization header ... or sign
+                                in at POST /auth/sign-in/email"
+  403 from the two GUARDS       generic
+  every 404                     generic
+```
+
+`AuthMiddleware` catches every `HttpException` thrown out of
+`authenticateRequest`/`authenticateSession` and writes its own problem
+document, so seven of the twenty-eight were never broken. **Middleware runs
+BEFORE guards**, which is exactly why `AuthGuard`'s scope check and
+`SessionOnlyGuard` are outside that catch and were.
+
+**AND TWO SITES THE GREP COULD NOT SEE WERE FOUND BY PROBING AFTER THE FIX
+WAS "COMPLETE".** `tests.controller.ts` and `rules.controller.ts` build their
+404s in private factories that **`return new NotFoundException(...)` rather
+than `throw`**, so a `throw new` sweep misses them entirely. The re-probe
+showed `404 test` still answering the generic string after twenty-one sites
+had been converted. **A sweep is only as wide as the verb it greps for**, and
+the thing that caught it was asking the running product rather than re-reading
+the pattern.
+
+**NO `code` PARAMETER ON `notFound`, UNLIKE `badRequest` AND `conflict`.**
+`ProblemFilter` derives `NOT_FOUND` from the status, and `code` is what a
+generated client branches on and what the OpenAPI document declares — so a
+per-site code would move the wire contract. This moves the one field that was
+wrong and nothing else. Verified: the 401 path is byte-identical before and
+after.
+
+**EVERY NAMED SURFACE WAS CHECKED AGAINST THE ROUTE TABLE BEFORE IT WAS
+WRITTEN.** The remediations-name-a-real-lever branch is the precedent: four
+messages sent an operator to a settings page that does not exist. These name
+`GET /v1/projects`, `GET /v1/projects/{slug}/tests`,
+`GET /v1/projects/{slug}/runner/runs`, `GET /v1/projects/{slug}/tokens`,
+`GET /v1/projects/{slug}/rules` and `GET /v1/runs/{id}/stats`, each confirmed
+present in the running API's own `Mapped {…}` log.
+
+**AND THE TWO RUN-LIST ROUTES ARE CREDENTIAL-SPECIFIC, WHICH ONE SENTENCE HAD
+TO ABSORB.** `GET /v1/runs` needs a session and `GET /v1/projects/{slug}/runs`
+is bearer-only — this file already records a draft e2e getting
+`400 PROJECT_REQUIRED` carrying "Use GET /v1/runs with a session". A
+remediation naming one of them is wrong for half its readers, so the run 404
+names both and says which credential each serves.
+
+**THE GUARD BANS A CONSTRUCTOR, NOT A WORDING.** `remediation` is a required
+argument of all four helpers, so `tsc` already refuses one that is absent;
+what it cannot see is a caller bypassing them with a bare `new XException(…)`,
+which is the shape that actually happened. The exemption list is three files
+and each is argued — and a SECOND case asserts every exemption still
+constructs one, so the list cannot rot into three names matching nothing while
+the guard reports green.
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  one 404 reverted to a bare exception   the ban case — names the file and line
+  an exemption that constructs nothing   the exemption case — names the file
+  the file collector matches nothing     "collected no API sources" — vacuity
+  the comment stripper defanged          NOTHING — see below
+```
+
+**AND THE FOURTH PASSED, FOR THE THIRD BRANCH RUNNING — THE INTERESTING PART
+IS WHAT WAS DONE ABOUT IT.** The docstring claimed the strip was
+load-bearing; defanged to the identity on a correct tree, the case passed,
+because no comment under `apps/api/src` happens to spell `new
+NotFoundException(`. The two branches before this one repaired the identical
+false claim by ADDING PROSE that quoted the banned shape. That works, and it
+is backwards: it is writing documentation to make a test fail, which is a test
+passing for a reason nobody would choose.
+
+**SO THE THIRD TIME THE CLAIM IS CORRECTED INSTEAD OF THE CODE.** The strip
+stays — one line, and it forecloses a false positive this file has recorded
+six times — and its docstring now says it is DEFENSIVE, with the measurement
+that proves it. **A habit that repairs the evidence rather than the claim is
+worse than the mistake it is covering**, and three occurrences is where that
+becomes visible.
+
+**AND THE BRANCH WAS NEVER CUT, WHICH IS THE FIFTH OCCURRENCE OF THAT TRAP.**
+All of this work was done on top of the previous branch — no `git checkout -b`
+at all — and sat there as two checkpoint commits. `git log --oneline
+origin/main..HEAD` reported FOUR where it must report zero. Recovered as this
+file prescribes: a branch cut from `origin/main`, the fourteen files moved
+across, and `git branch -f` putting the other branch back on its pushed head,
+verified byte-equal against `git ls-remote`. The two changes share no file,
+which is the only reason the recovery was clean rather than a merge.
+
+**THE CHECK IS THE ONE THIS FILE ALREADY PRESCRIBES AND IT KEEPS WORKING:**
+`git log --oneline origin/main..HEAD` after every `-b`, and — the half that
+caught it here — before every commit, because the trap is not only branching
+from the wrong place but never branching at all.
+
+**AND THE BRANCH LEFT A STALE CROSS-REFERENCE IT HAD JUST CREATED.**
+`run-detail.spec.ts` explains its assertion by naming the construction it is
+about — "RunsController.get throws `new NotFoundException('No run <id> in
+this project.')`" — which this change replaced. The DETAIL is byte-identical
+so the assertion holds, and the comment was corrected rather than left.
+**Fourth time this file records a cross-reference going stale**, and the first
+where the branch that staled it is the branch that fixed it: the rule is to
+grep for whoever NAMES what you are renaming, in the same commit.
+
+**THAT SPEC IS ALSO THE CLEAREST STATEMENT OF WHY THIS BRANCH EXISTS**, written
+long before it: "Every `/v1` error carries a remediation and the page must
+show it. Its presence is the requirement; its wording belongs to the API, so
+this asserts the element is rendered and non-empty rather than pinning copy
+this repo would then have to keep in two places." It was right to leave the
+wording to the API — and the wording the API supplied was "Check the request
+against the OpenAPI description", which is the generic copy that same
+paragraph refuses to invent. **A test can be correct about where a decision
+belongs and still be asserting that nothing was decided.**
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **159 / 2011** and `test:integration` **142 / 1828**, both exactly
+the predicted floor plus this branch's cases, both CLEAN, and the integration
+run behind the gate that refuses to start rather than expire (it passed at
+load 6.85). `pnpm test:e2e` **149 passed, exit 0** — run rather than reasoned
+about, because this branch changes what every 404 and both guard 403s put on
+the wire and `run-detail.spec.ts` drives a real one. Scratch database
+`perfportal_trim`, scratch Redis index db 12.
+
 The ingest-trims-like-every-other-schema branch added ONE unit file —
 `packages/contracts/test/trimmed-input.test.ts` (6) — from **157 / 2003 to
 158 / 2009**. Integration moves with it (that file is a `.ts` integration runs

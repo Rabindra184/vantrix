@@ -1,15 +1,10 @@
-import {
-  ForbiddenException,
-  Injectable,
-  UnauthorizedException,
-  type CanActivate,
-  type ExecutionContext,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { splitToken, verifyToken } from '@perfportal/core';
 import { TokenRepository } from '@perfportal/persistence';
 import type { Request } from 'express';
 import { IS_PUBLIC_KEY, SCOPES_KEY, type TokenScope } from './scopes.decorator.js';
+import { forbidden } from '../common/validation.js';
 
 export interface Tenant {
   orgId: string;
@@ -130,8 +125,10 @@ export class AuthGuard implements CanActivate {
     ]) ?? [];
     for (const scope of required) {
       if (!tenant.scopes.includes(scope)) {
-        throw new ForbiddenException(
+        throw forbidden(
           `This token lacks the "${scope}" scope. A CI credential is not automatically a read credential.`,
+          `Mint a token carrying the "${scope}" scope with POST /v1/projects/{slug}/tokens, or ` +
+            'call with a credential that already has it. A token\u2019s scopes are fixed at mint.',
         );
       }
     }
