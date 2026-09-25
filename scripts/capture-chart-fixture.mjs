@@ -76,6 +76,14 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { seedAdmin, seedRunWithData } from '../apps/web/e2e/fixtures.ts';
+import {
+  distributionPath,
+  errorsPath,
+  scatterPath,
+  seriesPath,
+  statsPath,
+  usersPath,
+} from '../apps/web/src/api/metricPaths.ts';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000';
 
@@ -84,34 +92,38 @@ const OUT = fileURLToPath(
 );
 
 /**
- * The five requests, in the exact form `apps/web/src/api/metrics.ts` issues
- * them. Kept in step with that module deliberately: a fixture captured from a
- * different scope than the app requests is a fixture the transforms are tested
- * against and the app never sees.
+ * The eight captures, each built by the SAME function the browser calls.
  *
- * `errors` is the exception, and knowingly so: `metrics.ts` has no errors
- * query yet — the errors table adds one — so this URL is the shape that
- * builder must take rather than a copy of one that exists. It carries
- * `?scope=run&name=` for the same reason `series` does: the app's builder must
- * emit this exact string, and a capture taken with a different one would stop
- * being what the browser receives.
+ * THIS LIST USED TO SPELL THE URLS ITSELF, and the note here said it was
+ * "kept in step with `apps/web/src/api/metrics.ts` deliberately". It was not:
+ * measured against that module, seven of these eight matched and `series` did
+ * not — this file asked for `/v1/runs/{id}/series?scope=run&name=` where the
+ * browser asks for `/v1/runs/{id}/series?scope=run&name=&family=response_time`.
+ * Identical bytes came back, because
+ * `MetricsController.series` defaults `family` to `response_time`, so nothing
+ * anywhere went red. A fixture captured from a different request than the app
+ * issues is a fixture the transforms are tested against and the browser never
+ * sees, and the only reason that was survivable is a default on the far side
+ * of the wire that neither file controls.
  *
- * NOT because omitting it is unsafe — measured, it is not.
- * `MetricsController.errors` sets `name` to `''` when `scope` is absent and
- * the reader's SQL is unconditionally scoped, so `/errors` and
- * `/errors?scope=run&name=` return identical rows. The real trap is the
- * inverse: `?name=X` WITHOUT `scope` is silently ignored and answers with the
- * run's totals.
+ * SO THE SHAPE OF EVERY URL NOW COMES FROM `apps/web/src/api/metricPaths.ts`,
+ * which `metrics.ts` also imports. What stays here is the ARGUMENTS — which
+ * request to scatter, which group to series — because those are genuinely this
+ * fixture's choice and are argued one by one below.
  */
 const ENDPOINTS = [
-  { key: 'stats', path: (id) => `/v1/runs/${id}/stats` },
-  { key: 'series', path: (id) => `/v1/runs/${id}/series?scope=run&name=` },
-  { key: 'users', path: (id) => `/v1/runs/${id}/users` },
-  {
-    key: 'distribution',
-    path: (id) => `/v1/runs/${id}/distribution?scope=run&name=&family=response_time`,
-  },
-  { key: 'errors', path: (id) => `/v1/runs/${id}/errors?scope=run&name=` },
+  { key: 'stats', path: (id) => statsPath(id) },
+  { key: 'series', path: (id) => seriesPath(id) },
+  { key: 'users', path: (id) => usersPath(id) },
+  { key: 'distribution', path: (id) => distributionPath(id) },
+  // `?scope=run&name=` is NOT needed for correctness and is sent anyway:
+  // measured, `MetricsController.errors` sets `name` to `''` when `scope` is
+  // absent and the reader's SQL is unconditionally scoped, so `/errors` and
+  // `/errors?scope=run&name=` return identical rows. The real trap is the
+  // inverse — `?name=X` WITHOUT `scope` is silently ignored and answers with
+  // the run's totals. What settles it here is simply that the browser sends
+  // them, and this capture is meant to be the bytes the browser receives.
+  { key: 'errors', path: (id) => errorsPath(id) },
   {
     key: 'scatter',
     // RQ-09 is inherently request-scoped, so this endpoint takes `name` and NO
@@ -120,7 +132,7 @@ const ENDPOINTS = [
     //
     // `Catalog/List Products` is the post-D-10 identity of a request Gatling
     // nests, so this capture also proves the joined name survives a URL.
-    path: (id) => `/v1/runs/${id}/scatter?name=${encodeURIComponent('Catalog/List Products')}`,
+    path: (id) => scatterPath(id, 'Catalog/List Products'),
   },
   {
     key: 'scatterWithFailures',
@@ -133,15 +145,14 @@ const ENDPOINTS = [
     // is also the request D-03 is pinned against in
     // apps/api/test/parity.e2e.test.ts, so the web and API suites reason
     // about the same request.
-    path: (id) => `/v1/runs/${id}/scatter?name=${encodeURIComponent('Cart/Add To Cart')}`,
+    path: (id) => scatterPath(id, 'Cart/Add To Cart'),
   },
   {
     key: 'groupSeries',
     // `Cart` because its two families diverge (141 ms cumulated against 225 ms
     // duration); `Catalog/Recommendations` agrees to within 1 ms and would let
     // a one-family implementation pass.
-    path: (id) =>
-      `/v1/runs/${id}/series?scope=group&name=${encodeURIComponent('Cart')}&family=group_cumulated`,
+    path: (id) => seriesPath(id, 'group', 'Cart', 'group_cumulated'),
   },
 ];
 

@@ -48,11 +48,14 @@ export function parseWindow(
 export const serialiseWindow = (w: Window | null): { from?: string; to?: string } =>
   w === null ? {} : { from: String(w.fromMs), to: String(w.toMs) };
 
-/**
- * `''` for the whole run, `?from=&to=` otherwise.
+/*
+ * `rangeSuffix` USED TO LIVE HERE AND IS NOW IN `../api/metricPaths`.
  *
- * Always BOTH bounds. Each is meaningful alone on the wire, but a client that
- * knows both and sends one is only creating a chance to send the wrong one.
+ * Not a tidy-up. It builds a fragment of the API's query string, where
+ * everything left in this file reads and writes the ROUTER's — two different
+ * URLs that happen to carry the same two numbers. Putting it beside the
+ * builders that consume it is what lets `metricPaths` import nothing at
+ * runtime, which is in turn what lets `scripts/capture-chart-fixture.mjs`
+ * import it under `node --experimental-strip-types` and stop spelling the
+ * product's URLs a second time.
  */
-export const rangeSuffix = (w: Window | null, join = '?'): string =>
-  w === null ? '' : `${join}from=${w.fromMs}&to=${w.toMs}`;

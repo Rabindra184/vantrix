@@ -11,7 +11,17 @@ import {
 } from '@perfportal/contracts';
 import type { Window } from '@perfportal/contracts';
 import { apiFetch } from './fetch';
-import { rangeSuffix } from '../routes/window';
+import {
+  distributionPath,
+  errorSeriesPath,
+  errorsPath,
+  scatterPath,
+  seriesPath,
+  statsPath,
+  telemetryPath,
+  trendsPath,
+  usersPath,
+} from './metricPaths';
 
 /**
  * The metric endpoints behind the run detail page: four for the eight overview
@@ -64,7 +74,14 @@ import { rangeSuffix } from '../routes/window';
  * `processing` on purpose, and needs the query to be refetchable.
  */
 
-const runPath = (id: string) => `/v1/runs/${encodeURIComponent(id)}`;
+/*
+ * THE URLS THEMSELVES LIVE IN `./metricPaths`, NOT HERE, and that module
+ * explains why: `scripts/capture-chart-fixture.mjs` used to build the same
+ * strings a second time by hand, and one of the eight had already drifted.
+ * Both callers import one definition now. What stays in this file is the
+ * CACHING decision for each read — the query key, and whether the answer can
+ * be `staleTime: Infinity`.
+ */
 
 /* -------------------------------------------------------------------- *
  * stats — indicator bands ③, the request-count donut ④, the statistics table ⑤
@@ -97,7 +114,7 @@ export const statsQueryKey = (id: string, window: Window | null) =>
  */
 export const statsQuery = (id: string, window: Window | null = null) => ({
   queryKey: statsQueryKey(id, window),
-  queryFn: () => apiFetch(StatsResponseSchema, `${runPath(id)}/stats${rangeSuffix(window)}`),
+  queryFn: () => apiFetch(StatsResponseSchema, statsPath(id, window)),
   staleTime: Infinity,
 });
 
@@ -124,15 +141,7 @@ export const seriesQuery = (
   window: Window | null = null,
 ) => ({
   queryKey: [...seriesQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
-  queryFn: () =>
-    apiFetch(
-      SeriesResponseSchema,
-      `${runPath(id)}/series?scope=${encodeURIComponent(scope)}` +
-        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}` +
-        // '&' — this URL already carries a query string, and a second '?'
-        // would leave the server seeing neither bound.
-        rangeSuffix(window, '&'),
-    ),
+  queryFn: () => apiFetch(SeriesResponseSchema, seriesPath(id, scope, name, family, window)),
   staleTime: Infinity,
 });
 
@@ -147,7 +156,7 @@ export const usersQueryKey = (id: string, window: Window | null = null) =>
  *  cross-scenario total, and both charts read it whole. */
 export const usersQuery = (id: string, window: Window | null = null) => ({
   queryKey: usersQueryKey(id, window),
-  queryFn: () => apiFetch(UsersResponseSchema, `${runPath(id)}/users${rangeSuffix(window)}`),
+  queryFn: () => apiFetch(UsersResponseSchema, usersPath(id, window)),
   staleTime: Infinity,
 });
 
@@ -179,12 +188,7 @@ export const distributionQuery = (
 ) => ({
   queryKey: [...distributionQueryKey(id, scope, name, family), window?.fromMs ?? null, window?.toMs ?? null] as const,
   queryFn: () =>
-    apiFetch(
-      DistributionResponseSchema,
-      `${runPath(id)}/distribution?scope=${encodeURIComponent(scope)}` +
-        `&name=${encodeURIComponent(name)}&family=${encodeURIComponent(family)}` +
-        rangeSuffix(window, '&'),
-    ),
+    apiFetch(DistributionResponseSchema, distributionPath(id, scope, name, family, window)),
   staleTime: Infinity,
 });
 
@@ -216,17 +220,26 @@ export const errorsQueryKey = (id: string, scope = 'run', name = '') =>
  * reason: the captured fixture was taken with exactly this string, so keeping
  * them identical is what makes the fixture what the browser receives.
  *
- * ═══ THE URL IS DUPLICATED, CHARACTER FOR CHARACTER, IN A SECOND PLACE ═══
+ * ═══ THE URL WAS DUPLICATED, CHARACTER FOR CHARACTER, AND IS NOT NOW ═══
  *
- * `scripts/capture-chart-fixture.mjs` re-captures
- * `apps/web/test/fixtures/reference-run.json` by issuing
- * `/v1/runs/${id}/errors?scope=run&name=` — its own literal, written before
- * this builder existed. Every unit test in this sub-project runs against that
- * capture, so if the two strings drift the fixture stops being what the browser
- * receives and no suite in the repo notices. That duplication is now six URLs
- * wide across the five endpoints and is recorded as follow-up rather than fixed
- * here; `apps/web/e2e/run-tables.spec.ts` asserts the string this builder
- * actually puts on the wire, which makes at least the app half observable.
+ * This paragraph used to end "recorded as follow-up rather than fixed here".
+ * It is fixed: `./metricPaths` holds one definition of every URL in this file
+ * and `scripts/capture-chart-fixture.mjs` imports it, so the capture and the
+ * browser cannot spell an endpoint differently.
+ *
+ * THE FOLLOW-UP WAS NOT HYPOTHETICAL BY THE TIME IT WAS TAKEN. Of the eight
+ * endpoints that script captures, seven matched this file and `series` did
+ * not:
+ *
+ *     capture  /v1/runs/{id}/series?scope=run&name=
+ *     browser  /v1/runs/{id}/series?scope=run&name=&family=response_time
+ *
+ * It was harmless only because `MetricsController.series` declares
+ * `@Query('family') family = 'response_time'` and the browser's default is
+ * the same word. Kept here because the sentence
+ * above is what a reader of this file will look for, and because the lesson
+ * belongs next to the deferral that carried it: a duplication nobody can
+ * observe is not stable, it is merely unmeasured.
  *
  * `scope`/`name` are parameters for the same reason `seriesQuery`'s are: the
  * request detail page's "Errors for this request" (RQ-11, piece 3) calls this
@@ -234,11 +247,7 @@ export const errorsQueryKey = (id: string, scope = 'run', name = '') =>
  */
 export const errorsQuery = (id: string, scope = 'run', name = '') => ({
   queryKey: errorsQueryKey(id, scope, name),
-  queryFn: () =>
-    apiFetch(
-      ErrorsResponseSchema,
-      `${runPath(id)}/errors?scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`,
-    ),
+  queryFn: () => apiFetch(ErrorsResponseSchema, errorsPath(id, scope, name)),
   staleTime: Infinity,
 });
 
@@ -259,8 +268,7 @@ export const errorSeriesQueryKey = (id: string, window: Window | null = null) =>
  */
 export const errorSeriesQuery = (id: string, window: Window | null = null) => ({
   queryKey: errorSeriesQueryKey(id, window),
-  queryFn: () =>
-    apiFetch(ErrorSeriesResponseSchema, `${runPath(id)}/errors/series${rangeSuffix(window)}`),
+  queryFn: () => apiFetch(ErrorSeriesResponseSchema, errorSeriesPath(id, window)),
   staleTime: Infinity,
 });
 
@@ -279,11 +287,7 @@ export const scatterQueryKey = (id: string, name: string) =>
  */
 export const scatterQuery = (id: string, name: string, window: Window | null = null) => ({
   queryKey: [...scatterQueryKey(id, name), window?.fromMs ?? null, window?.toMs ?? null] as const,
-  queryFn: () =>
-    apiFetch(
-      ScatterResponseSchema,
-      `${runPath(id)}/scatter?name=${encodeURIComponent(name)}` + rangeSuffix(window, '&'),
-    ),
+  queryFn: () => apiFetch(ScatterResponseSchema, scatterPath(id, name, window)),
   staleTime: Infinity,
 });
 
@@ -305,8 +309,7 @@ export const telemetryQueryKey = (id: string, window: Window | null = null) =>
  */
 export const telemetryQuery = (id: string, window: Window | null = null) => ({
   queryKey: telemetryQueryKey(id, window),
-  queryFn: () =>
-    apiFetch(TelemetryResponseSchema, `${runPath(id)}/telemetry${rangeSuffix(window)}`),
+  queryFn: () => apiFetch(TelemetryResponseSchema, telemetryPath(id, window)),
   staleTime: Infinity,
 });
 
@@ -344,6 +347,5 @@ export const trendsQueryKey = (id: string, limit: number) =>
  */
 export const trendsQuery = (id: string, limit = 20) => ({
   queryKey: trendsQueryKey(id, limit),
-  queryFn: () =>
-    apiFetch(TrendsResponseSchema, `${runPath(id)}/trends?limit=${limit}`),
+  queryFn: () => apiFetch(TrendsResponseSchema, trendsPath(id, limit)),
 });
