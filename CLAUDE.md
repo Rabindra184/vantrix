@@ -149,9 +149,9 @@ see the eighth lesson below.
 The ingest-trims-like-every-other-schema branch added ONE unit file —
 `packages/contracts/test/trimmed-input.test.ts` (6) — from **157 / 2003 to
 158 / 2009**. Integration moves with it (that file is a `.ts` integration runs
-too) plus 2 cases in `apps/api/test/ingest.integration.test.ts`, which is
-**141 / 1825 as ARITHMETIC** at the time of writing; see the closing
-paragraph. **e2e stays 149.** It is a LIVE defect, and it was found by
+too) plus 2 cases in `apps/api/test/ingest.integration.test.ts`, at
+**141 / 1825** — first recorded as arithmetic and MEASURED at exactly that,
+CLEAN, with zero failures. **e2e stays 149.** It is a LIVE defect, and it was found by
 sweeping a seam no `pnpm` gate covers rather than by reading any one file.
 
 **TWO REQUEST SCHEMAS DID NOT TRIM AND EVERY OTHER ONE IN THE REPOSITORY
@@ -265,6 +265,18 @@ and stored with its padding and is now REFUSED. The refusal is correct:
 ALONE is refused rather than stored as `''`, because `comparability` already
 treats `''` as unknown, and an emptied environment would trade a false break
 for a silently missing fact.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **158 / 2009** and `test:integration` **141 / 1825**, both exactly
+the predicted floor plus this branch's cases, both with zero failures. The
+integration run sat behind a gate that REFUSES to start rather than expire —
+the previous two branches in this file each started a suite on a loaded
+machine and then had to disclaim the result — and it passed at load 7.02
+after 20 seconds. `pnpm test:e2e` **149 passed, exit 0**: no spec changed and
+this diff is request-side only, but every package in the workspace depends on
+`@perfportal/contracts`, and the branch before this one earned the rule that
+a refactor of something everything imports is not a thing to reason about.
+Scratch database `perfportal_trim`, scratch Redis index db 12.
 
 **AND A GREEN BUILD EMITTED NOTHING, FOR THE THIRD TIME IN THIS FILE.**
 `pnpm --filter @perfportal/contracts build` exited 0 with
