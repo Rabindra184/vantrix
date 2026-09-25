@@ -310,16 +310,30 @@ export function LiveSummary({
     <section aria-label="Run totals so far">
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile
-          /* ═══ THE LIVE TWIN OF `RunStats`' TILES, AND IT MOVES WITH THEM ═══
-             Review N01 renamed the terminal row's vocabulary; this row shows
-             the SAME six quantities for a run that is still going, so leaving
-             it behind makes the live and finished views of one run disagree
-             about what its numbers are called. "So Far" stays — that is a
-             fact about this row, not drift. */
-          label="Requests so far"
-          value={formatCount(summary.count)}
-          hint={`${formatCount(summary.okCount)} successful, ${formatCount(summary.koCount)} failed`}
-          data-testid="live-stat-total-requests"
+          /* ═══ THE FOUR SHARED TILES SIT WHERE `RunStats` PUTS THEM ═══
+             This row and `RunStats`' are the same section of the same page —
+             `aria-label="Run totals so far"` becomes `"Run totals"` — so a
+             reader watching a run finish watches THIS `<dl>` become that one.
+             Four quantities appear in both (p95, error rate, requests, p99)
+             and they hold positions 1, 2, 4 and 5 in each, so the transition
+             SUBSTITUTES rather than reshuffles: position 3 swaps peak users
+             for throughput (offered load for achieved load) and position 6
+             swaps duration for mean. Peak users and duration are the two that
+             leave — they move to `RunHeader`'s chips, which can only show them
+             once they stop changing — so they are deliberately the two the
+             terminal row does not have to make room for.
+
+             THIS COMMENT USED TO CLAIM THE ROW "MOVES WITH" THE TERMINAL ONE
+             AND SHOWED "THE SAME SIX QUANTITIES". Neither was true: it shares
+             four of six, and it did NOT move when target-layout-tile-order
+             promoted p95 to first — that branch reordered `RunStats` alone and
+             left p95 fifth here, so the tile a reader triages on jumped 5 -> 1
+             the instant a run went terminal. A comment asserting a row tracks
+             another row is exactly what stops the next reader checking. */
+          label="p95"
+          value={livePercentileValue(summary, 'p95')}
+          hint="an estimate, so far"
+          data-testid="live-stat-p95"
         />
         <StatTile
           label="Error rate"
@@ -331,28 +345,34 @@ export function LiveSummary({
           data-testid="live-stat-error-rate"
         />
         <StatTile
+          /* Position 3 is `RunStats`' throughput tile. This row cannot carry
+             one: `LiveSummary` has no `throughputRps`, and deriving it here as
+             `count / durationMs` would be a SECOND definition of a number
+             `RollupBuilder` already owns — the error-rate tile above refuses
+             the same shortcut for the same reason. Peak users is the honest
+             occupant: offered load where the terminal row shows achieved. */
           label="Peak users"
           value={formatCount(summary.maxUsers)}
           hint="concurrent, so far"
           data-testid="live-stat-peak-users"
         />
         <StatTile
-          label="Duration so far"
-          value={formatDuration(summary.durationMs)}
-          hint={frozen ? 'when streaming stopped' : 'still streaming'}
-          data-testid="live-stat-duration"
-        />
-        <StatTile
-          label="p95"
-          value={livePercentileValue(summary, 'p95')}
-          hint="an estimate, so far"
-          data-testid="live-stat-p95"
+          label="Requests so far"
+          value={formatCount(summary.count)}
+          hint={`${formatCount(summary.okCount)} successful, ${formatCount(summary.koCount)} failed`}
+          data-testid="live-stat-total-requests"
         />
         <StatTile
           label="p99"
           value={livePercentileValue(summary, 'p99')}
           hint="an estimate, so far"
           data-testid="live-stat-p99"
+        />
+        <StatTile
+          label="Duration so far"
+          value={formatDuration(summary.durationMs)}
+          hint={frozen ? 'when streaming stopped' : 'still streaming'}
+          data-testid="live-stat-duration"
         />
       </dl>
     </section>
