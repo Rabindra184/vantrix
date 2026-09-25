@@ -146,6 +146,142 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The contract-covers-every-route branch added no unit FILE and no unit case —
+unit stays **162 / 2029**, because the only test file it touches is an
+`.integration.test.ts`, which that config excludes — and 2 cases to
+`apps/api/test/openapi.integration.test.ts`, at **146 / 1852**. **e2e stays
+150**: no `.tsx`, no spec, and `apiFetch` parses with zod rather than reading
+this document, so nothing the browser renders can see the change. SIX live
+routes were absent from the published contract, and one of them the document
+actively denied existed.
+
+**THE DOCUMENT SAID A SHIPPED ENDPOINT DOES NOT EXIST, AND GAVE AS ITS REASON
+THE BEHAVIOUR THAT ENDPOINT IMPLEMENTS.** `updateProjectTest`'s description
+read: "There is no delete either: it would orphan the runs the test grouped,
+which needs its own design." Measured against a real API:
+
+```
+  DELETE /v1/projects/docproj/tests/deletable-test   ->  HTTP 200
+  test rows   1 -> 0
+  run rows    1 -> 1, with test_id now NULL
+```
+
+So the delete exists, works, and does exactly the thing the document names as
+the reason it was never built. **AND IT IS DELIBERATE, WHICH IS WHAT MAKES THE
+SENTENCE A DEFECT RATHER THAN A STALE PLAN**: the handler's own docstring
+argues the design ("Its RUNS SURVIVE, un-grouped ... its own SLA rules go with
+it ... history versus configuration"), `apps/web/src/api/tests.ts` sends the
+`DELETE` behind a **Delete test** confirm in `TestRuns.tsx`, and
+`tests.integration.test.ts` has a whole `describe` for it.
+
+**SIXTH DOCSTRING THIS FILE RECORDS ASSERTING A BEHAVIOUR THE PRODUCT DOES NOT
+HAVE — AND THE FIRST IN THE PUBLISHED CONTRACT.** The other five were code
+comments, which a reader can check against the source three lines down. A
+consumer of `/v1/openapi.json` has no source. They read "there is no delete",
+believe it, and build around an endpoint that was there all along.
+
+**AND THE OTHER FIVE ARE A WHOLE FEATURE.** The on-prem runner job API —
+start, list, cancel, logs, retry — appeared nowhere, while the same document
+describes a `runner` scope in three places and tells readers tokens exist for
+"on-prem runner jobs". **A contract that advertises a credential and describes
+no endpoint it unlocks.** `POST /v1/projects/{slug}/runner/runs` is the
+product's differentiating feature; a generated client could not reach any of
+it.
+
+**SECOND MISSING-OPERATION BRANCH IN A DAY, WHICH IS WHAT MAKES IT A PATTERN
+RATHER THAN AN ANECDOTE.** #226 found `/v1/runs/{id}/errors/series` absent and
+fixed that one operation. The lesson it did not draw is the one that matters:
+a hand-written `paths` object drifts from a route table nobody joins it
+against, and fixing the instance leaves the mechanism. This branch fixes the
+mechanism.
+
+**THE GUARD READS NEST'S OWN METADATA, AND THAT IS NOT FASTIDIOUSNESS — MY
+REGEX GOT IT WRONG TWICE.** A throwaway parser over the controllers reported
+`HealthController`'s class body as a route path, invented entries from `@Get()`
+with no argument, and disagreed with itself between runs. What settled the
+finding was the framework's own startup log:
+
+```
+  Mapped {/v1/projects/:slug/runner/runs, POST}          documented: no
+  Mapped {/v1/projects/:slug/tests/:testSlug, DELETE}    documented: no
+```
+
+`PATH_METADATA` and `METHOD_METADATA` are where that log comes from, so the
+guard walks `AppModule`'s controllers through the same keys. **THIRD TIME IN
+ONE SESSION A PROBE MADE A FALSE CLAIM ABOUT ITS OWN COLLECTOR** — after the
+response-header walker that did not deref `$ref` and the `dist/src` path that
+did not exist — and the rule those three earn is the same: a sweep reporting a
+number is a claim about its collector before it is a claim about the system.
+
+**IMPORTED AS `@nestjs/common/constants.js`, WITH THE EXTENSION.** Without it
+`tsc` answers `TS2307: Cannot find module '@nestjs/common/constants'` — the
+package ships `constants.d.ts` and no `exports` map, so the bare subpath does
+not resolve under this project's module resolution. Worth the two minutes over
+inlining `'path'` and `'method'` as literals: a Nest rename is now a COMPILE
+error rather than a guard that silently walks nothing.
+
+**BOTH DIRECTIONS, BECAUSE THE SECOND FAILS WORSE.** A documented operation
+that no handler serves sends a generated client at a 404, and nothing in the
+product would ever notice — the document still builds, still validates, and
+every other assertion still passes.
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  deleteProjectTest removed (the before-state)  the coverage case ALONE, naming
+                                                'delete /v1/projects/{}/tests/{}'
+  a phantom operation added                     the phantom case, naming it
+  the PATH_METADATA key renamed                 the VACUITY FLOOR: "expected 0 to
+                                                be greater than 20"
+  req for a Nest constant that moved            TS2307 — it does not compile
+```
+
+**THE VACUITY COUNTER COUNTS THE CONSTRUCT, NOT THE VERDICT**, which is the
+rule the document-is-valid branch earned the hard way when its counter
+inverted and described the opposite of what was wrong. Here a broken walk
+reports `expected 0 to be greater than 20` — the number of routes FOUND —
+rather than reporting a clean document.
+
+**AND AN EXISTING GATE CAUGHT ME DECLARING A STATUS I HAD NOT MEASURED.** I
+gave `startRunnerRun` a `201` because Nest defaults `@Post` to 201. The
+201 allowlist in `openapi.integration.test.ts` is deliberately BIDIRECTIONAL —
+its own comment says adding an operation does not wave it through — so it
+failed until the claim was justified. Justified by building a jar with a real
+`Gatling-Simulations` manifest and posting it: **201, carrying the artifact
+and the job**. The job is complete and addressable the moment the response is
+sent, which is this list's actual standard; the RUN it will later produce is a
+different resource, created asynchronously, and that is exactly why the
+response body is a job.
+
+**AND `BundleRejected` WAS THE WRONG 400, BY ITS OWN WORDS.** Its description
+reads "the same 400 that GET /v1/runs/{id} returns once that rejection is
+persisted on the run" — and a refused runner upload has no run to persist
+anything on. The real codes are `INVALID_RUNNER_METADATA`,
+`RUNNER_ARTIFACT_NOT_A_JAR`, `SIMULATION_CLASS_NOT_IN_ARTIFACT`,
+`BUNDLE_NOT_ARCHIVE` and `BUNDLE_EMPTY`, so they get their own response rather
+than borrowing a description that contradicts them. **Reusing the
+nearest-looking `$ref` is how a document comes to describe the wrong failure**
+— the same check #215 made when it chose `BadRequest` over `StatsBadRequest`.
+
+**THE COUNTS NOW AGREE BY CONSTRUCTION: 38 registered handlers, 38
+operations.** Integrity after: 0 dangling `$ref`s, 0 duplicate operationIds,
+0 path-parameter mismatches.
+
+**AND TWO MORE ACs WERE PROBED CLEAN**, recorded so the next reader re-checks
+rather than re-investigates. **AC-SEC-2** (a resource in another org answers
+404, never 403): the enumerated cross-org guard is keyed on
+`@Controller('/v1/runs/:id')`, so the seven id-addressed routes OUTSIDE it
+were read individually — rules, runner jobs, tokens and tests all scope by
+`(orgId, projectId, id)` in the query itself, including `retry`'s hand-written
+`INSERT..SELECT`. **AC-ING-4** ("a worker killed mid-parse ... processed to
+completion exactly once and no data is lost") holds by construction: `persist`
+runs inside `BEGIN`, so a killed worker's rows vanish; all four metrics tables
+reject a duplicate (`run_stat` is unique on `(run_id, scope, name, family)`,
+the bucket tables by primary key); an advisory lock stops two workers at once;
+and the status is re-checked BOTH before and after taking that lock, so a
+BullMQ retry of an already-committed job returns silently instead of
+re-inserting.
+
 The idempotency-key-header branch added ONE unit file —
 `apps/api/test/idempotency.test.ts` (10) — from **161 / 2019 to 162 / 2029**.
 Integration moves with it (that file is a `.ts` integration runs too) plus 2

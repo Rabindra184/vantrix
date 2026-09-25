@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { validate } from '@readme/openapi-parser';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
+import { AppModule } from '../src/app.module.js';
 import { createTestApp, type TestContext } from './support/app.js';
 
 let ctx: TestContext;
@@ -111,13 +114,21 @@ describe('OpenAPI document', () => {
   // `/rules/{ruleId}` — the PATCH and DELETE beside it work on the id in
   // that very response. Nothing about the rule is deferred; what is deferred
   // is only the next RUN it will judge, which is not this resource.
-  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, and creating an SLA rule, which really do create synchronously', async () => {
+  it('never declares a 201 response on any operation except token minting, opening a live run, creating a project, creating an SLA rule, and queueing a runner job, which really do create synchronously', async () => {
     const doc = await fetchDoc();
     const CREATES_SYNCHRONOUSLY = [
       { path: '/v1/projects/{slug}/tokens', method: 'post' },
       { path: '/v1/runs/live', method: 'post' },
       { path: '/v1/projects', method: 'post' },
       { path: '/v1/projects/{slug}/rules', method: 'post' },
+      // MEASURED, not inferred from Nest's default for @Post. Probed against a
+      // real API with a real jar: 201, carrying the artifact and the job. It
+      // meets this list's standard — the JOB is the resource created, and it
+      // is complete and addressable the moment the response is sent (GET
+      // .../runner/runs lists it immediately). The RUN it will later produce
+      // is a different resource created asynchronously, which is exactly why
+      // this response is the job and not a run.
+      { path: '/v1/projects/{slug}/runner/runs', method: 'post' },
     ];
     for (const { path, method, op } of operations(doc)) {
       if (CREATES_SYNCHRONOUSLY.some((c) => c.path === path && c.method === method)) {
@@ -587,4 +598,124 @@ describe('the document describes every run-scoped route that exists', () => {
       `handlers read "from"/"to" and the document does not declare them: ${undeclared.join('; ')}`,
     ).toEqual([]);
   }, 60_000);
+});
+
+/**
+ * EVERY ROUTE NEST REGISTERED IS IN THE DOCUMENT, AND EVERY DOCUMENTED
+ * OPERATION IS A ROUTE.
+ *
+ * WHY THIS IS DERIVED RATHER THAN A LIST. Six live routes were absent from
+ * this document when it was written: the WHOLE on-prem runner job API (start,
+ * list, cancel, logs, retry) and DELETE on a test. The document meanwhile
+ * described a "runner" scope a token can hold and told readers tokens exist
+ * for "on-prem runner jobs" — advertising a capability whose every endpoint it
+ * omitted — and its `updateProjectTest` description asserted outright that
+ * "there is no delete either", about an endpoint that is registered, wired to
+ * a Delete test button in the browser, covered by its own integration
+ * describe, and which returns 200 and removes the row.
+ *
+ * `/v1/runs/{id}/errors/series` had gone missing the same way one branch
+ * earlier. Twice is a pattern, and the pattern is that a hand-written document
+ * drifts from a route table nobody joins it against.
+ *
+ * READ FROM NEST'S OWN METADATA, NOT FROM THE SOURCE. A throwaway regex over
+ * the controllers got this wrong twice while the finding was being
+ * established — it matched across decorator boundaries and invented routes out
+ * of `@Get()` with no argument. What settled it was the framework's own
+ * `Mapped {...}` log, and `PATH_METADATA`/`METHOD_METADATA` are where that log
+ * comes from. A sweep is a claim about its own collector before it is a claim
+ * about the system.
+ *
+ * NOT EVERY HTTP SURFACE IS A NEST ROUTE, which is why this compares against
+ * Nest rather than against the server: `/v1/openapi.json`, `/v1/docs` and the
+ * Better Auth routes are mounted on Express directly (see `mountOpenApi` and
+ * `app.module.ts`), so they never appear here and are not expected to.
+ */
+describe('the document covers exactly the routes Nest registers', () => {
+  interface RouteRef {
+    method: string;
+    path: string;
+  }
+
+  /** Path params are compared by POSITION, not by name: `{id}` and `{runId}`
+   *  are the same route shape, and the document is free to name them
+   *  differently from the controller. */
+  const shape = (r: RouteRef): string => `${r.method} ${r.path.replace(/\{[^}]+\}/g, '{}')}`;
+
+  function registeredRoutes(): RouteRef[] {
+    const seen = new Set<unknown>();
+    const out: RouteRef[] = [];
+    const walk = (mod: unknown): void => {
+      if (!mod || seen.has(mod)) return;
+      seen.add(mod);
+      const controllers: unknown[] = Reflect.getMetadata('controllers', mod as object) ?? [];
+      for (const c of controllers) {
+        const ctor = c as { prototype: object };
+        const prefix: string = Reflect.getMetadata(PATH_METADATA, c as object) ?? '';
+        for (const key of Object.getOwnPropertyNames(ctor.prototype)) {
+          if (key === 'constructor') continue;
+          const fn = (ctor.prototype as Record<string, unknown>)[key];
+          if (typeof fn !== 'function') continue;
+          const sub: string | undefined = Reflect.getMetadata(PATH_METADATA, fn);
+          const verb: number | undefined = Reflect.getMetadata(METHOD_METADATA, fn);
+          if (sub === undefined || verb === undefined) continue;
+          const joined = `/${[prefix, sub].filter((x) => x && x !== '/').join('/')}`
+            .replace(/\/+/g, '/')
+            .replace(/(.)\/$/, '$1');
+          out.push({
+            method: String(RequestMethod[verb]).toLowerCase(),
+            path: joined.replace(/:([A-Za-z0-9_]+)/g, '{$1}'),
+          });
+        }
+      }
+      const imports: unknown[] = Reflect.getMetadata('imports', mod as object) ?? [];
+      for (const im of imports) {
+        const inner = (im as { module?: unknown })?.module ?? im;
+        walk(inner);
+      }
+    };
+    walk(AppModule);
+    return out;
+  }
+
+  function documentedRoutes(doc: AnyDoc): RouteRef[] {
+    const out: RouteRef[] = [];
+    for (const [path, item] of Object.entries(doc.paths ?? {})) {
+      for (const [method, op] of Object.entries(item)) {
+        if (op && typeof op === 'object' && 'operationId' in op) out.push({ method, path });
+      }
+    }
+    return out;
+  }
+
+  it('documents every route Nest registers', async () => {
+    const doc = await fetchDoc();
+    const registered = registeredRoutes();
+
+    // VACUITY GUARD. A metadata walk that finds nothing passes this case
+    // perfectly, and Nest's decorator keys are exactly the kind of internal
+    // that a major version renames. The floor is deliberately well under the
+    // real count so an added route never trips it.
+    expect(registered.length).toBeGreaterThan(20);
+
+    const documented = new Set(documentedRoutes(doc).map(shape));
+    const undocumented = registered.filter((r) => !documented.has(shape(r))).map(shape).sort();
+    expect(undocumented, 'routes Nest serves that the document does not describe').toEqual([]);
+  });
+
+  /**
+   * THE OTHER DIRECTION, because it fails differently and worse. An operation
+   * describing a route nobody serves sends a generated client at a 404, and
+   * nothing in the product would ever notice: the document builds, validates,
+   * and every assertion above it still passes.
+   */
+  it('describes no operation that Nest does not serve', async () => {
+    const doc = await fetchDoc();
+    const registered = new Set(registeredRoutes().map(shape));
+    const phantom = documentedRoutes(doc)
+      .map(shape)
+      .filter((r) => !registered.has(r))
+      .sort();
+    expect(phantom, 'operations the document describes that no handler serves').toEqual([]);
+  });
 });

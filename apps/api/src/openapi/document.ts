@@ -400,6 +400,26 @@ const parameters: Record<string, ParameterObject> = {
       'the same as one that exists nowhere.',
     schema: { type: 'string', format: 'uuid' },
   },
+  RunnerProjectSlug: {
+    name: 'slug',
+    in: 'path',
+    required: true,
+    description:
+      'The project whose on-prem runner jobs these are. A slug outside the caller\'s ' +
+      'organisation answers 404, never 403 — the same rule every project-scoped route here ' +
+      'follows, so a caller cannot probe which projects exist elsewhere.',
+    schema: { type: 'string' },
+  },
+  RunnerJobId: {
+    name: 'jobId',
+    in: 'path',
+    required: true,
+    description:
+      'A runner job id. Not a UUID is a 400 (code INVALID_ID) rather than a 404, so a malformed ' +
+      'id is distinguishable from one that simply names no job. A job belonging to another ' +
+      'project or organisation answers 404, the same as one that exists nowhere.',
+    schema: { type: 'string', format: 'uuid' },
+  },
   StreamOffset: {
     name: 'X-Stream-Offset',
     in: 'header',
@@ -470,6 +490,18 @@ const responses: Record<string, ResponseObject> = {
       'token. It fires before any run row exists, so GET /v1/runs/{id} can never return it — ' +
       'there is no run to have persisted the failure on. Always application/problem+json with ' +
       'a required "remediation".',
+    content: problem(),
+  },
+  RunnerArtifactRejected: {
+    description:
+      'The upload was refused before any job was queued — code INVALID_RUNNER_METADATA (the ' +
+      '"metadata" part is missing a field or fails its schema), RUNNER_ARTIFACT_NOT_A_JAR (the ' +
+      'file could not be read as a jar), SIMULATION_CLASS_NOT_IN_ARTIFACT (the jar\'s own ' +
+      'manifest declares no such simulation — refused HERE rather than minutes later on the ' +
+      'node with no simulation.log to show for it), or BUNDLE_NOT_ARCHIVE / BUNDLE_EMPTY. ' +
+      'DELIBERATELY NOT the same response as an ingest 400: there is no run to persist the ' +
+      'rejection on, so nothing here is ever readable from GET /v1/runs/{id} afterwards. ' +
+      'Always application/problem+json with a required "remediation".',
     content: problem(),
   },
   BadRequest: {
@@ -1414,8 +1446,8 @@ const paths: Record<string, PathItemObject> = {
         'recorded stayed here, and nothing would error. The slug is fixed for a smaller reason: ' +
         'it is a URL people share. There is no create endpoint, because a test exists because a ' +
         'run of it was parsed — the simulation class belongs to the tool, not to a caller ' +
-        'inventing one. There is no delete either: it would orphan the runs the test grouped, ' +
-        'which needs its own design.',
+        'inventing one. DELETE is a different matter and DOES exist — see below; a test\'s ' +
+        'runs survive it, un-grouped.',
       parameters: [parameters['TestProjectSlug']!, parameters['TestSlug']!],
       requestBody: {
         required: true,
@@ -1432,6 +1464,178 @@ const paths: Record<string, PathItemObject> = {
         '400': ref('InvalidTestUpdate'),
         '401': ref('Unauthorized'),
         '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+    delete: {
+      operationId: 'deleteProjectTest',
+      summary: 'Delete a test, keeping its runs',
+      tags: ['tests'],
+      // SESSION-ONLY, like the PATCH above and for a stronger version of
+      // the same reason: deciding that a grouping should stop existing is
+      // a human's call, and a CI credential able to make it would make it
+      // on a typo'd slug.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes. ' +
+        'THE RUNS SURVIVE: they lose their grouping and move to the project\'s own run list, ' +
+        'and nothing measured is discarded. The test\'s own SLA rules go with it, because ' +
+        'those are configuration about a grouping that no longer exists, where the runs are ' +
+        'history — and history is not a thing a regrouping may destroy. Returns the test it ' +
+        'deleted rather than 204, so a caller that has just removed something can say WHICH.',
+      parameters: [parameters['TestProjectSlug']!, parameters['TestSlug']!],
+      responses: {
+        '200': {
+          description: 'Deleted. The test as it last stood.',
+          content: json(schemaRef('TestSummary')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  // ═══ THE ON-PREM RUNNER'S JOB API ═══
+  //
+  // Five live routes that this document described NOWHERE, while describing a
+  // "runner" scope a token can hold and telling readers that tokens exist for
+  // "on-prem runner jobs". A generated client could mint the credential and
+  // then not find one endpoint it unlocks.
+  '/v1/projects/{slug}/runner/runs': {
+    post: {
+      operationId: 'startRunnerRun',
+      summary: 'Upload a Gatling artifact and queue it on an on-prem runner',
+      tags: ['runner'],
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "runner" scope. Uploads a runnable Gatling artifact and queues a job an ' +
+        'on-prem runner node claims by polling — the platform never reaches out to the node. ' +
+        'The artifact is a thin jar from "gatlingEnterprisePackage" (the runner lends the ' +
+        'Gatling runtime) or a full bundle; "artifactKind" says which, and a jar whose manifest ' +
+        'does not name the requested "simulationClass" is refused here rather than failing ' +
+        'minutes later with no simulation.log.',
+      parameters: [parameters['RunnerProjectSlug']!],
+      requestBody: {
+        required: true,
+        description:
+          'multipart/form-data with exactly two parts, "metadata" BEFORE "artifact" (the server ' +
+          'streams "artifact" to disk as soon as it arrives, so "metadata" must already have ' +
+          'been read).',
+        content: {
+          'multipart/form-data': {
+            schema: {
+              type: 'object',
+              required: ['metadata', 'artifact'],
+              properties: {
+                metadata: schemaRef('RunnerStartMetadata'),
+                artifact: { type: 'string', format: 'binary' },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        '201': {
+          description: 'Queued. The job and the artifact it will execute.',
+          content: json(schemaRef('RunnerStartResponse')),
+        },
+        '400': ref('RunnerArtifactRejected'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+        '413': ref('BundleTooLarge'),
+      },
+    },
+    get: {
+      operationId: 'listRunnerRuns',
+      summary: 'List this project\'s on-prem runner jobs',
+      tags: ['runner'],
+      description:
+        'Requires the "read" scope. Newest first. A job carries the run it produced once it has ' +
+        'one, so a caller can follow a queued job through to the run it becomes.',
+      parameters: [parameters['RunnerProjectSlug']!],
+      responses: {
+        '200': {
+          description: 'The jobs.',
+          content: json(schemaRef('RunnerJobListResponse')),
+        },
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/runner/runs/{jobId}/cancel': {
+    post: {
+      operationId: 'cancelRunnerRun',
+      summary: 'Cancel a queued or running on-prem job',
+      tags: ['runner'],
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "runner" scope. ONLY A QUEUED OR RUNNING JOB CAN BE CANCELLED: any other ' +
+        'state answers 404 rather than a conflict, because from the caller\'s side there is no ' +
+        'cancellable job by that id — which is also the answer a job in another project gets.',
+      parameters: [parameters['RunnerProjectSlug']!, parameters['RunnerJobId']!],
+      responses: {
+        '200': {
+          description: 'Cancelled. The job as it now stands.',
+          content: json(schemaRef('RunnerJobActionResponse')),
+        },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/runner/runs/{jobId}/logs': {
+    get: {
+      operationId: 'getRunnerRunLogs',
+      summary: 'Tail an on-prem job\'s runner log',
+      tags: ['runner'],
+      description:
+        'Requires the "read" scope. The TAIL of the log the runner node wrote while executing ' +
+        'this job — bounded, so a job that logged megabytes returns its end rather than all of ' +
+        'it. This is the runner\'s own output (the JVM, Gatling\'s console), not the run\'s ' +
+        'statistics; those are the /v1/runs endpoints, reached through the job\'s "runId".',
+      parameters: [parameters['RunnerProjectSlug']!, parameters['RunnerJobId']!],
+      responses: {
+        '200': {
+          description: 'The log tail.',
+          content: json(schemaRef('RunnerJobLogsResponse')),
+        },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
+        '404': ref('NotFound'),
+      },
+    },
+  },
+
+  '/v1/projects/{slug}/runner/runs/{jobId}/retry': {
+    post: {
+      operationId: 'retryRunnerRun',
+      summary: 'Queue a failed or cancelled job again',
+      tags: ['runner'],
+      security: [{ bearerAuth: [] }],
+      description:
+        'Requires the "runner" scope. Queues a NEW job carrying everything the operator chose ' +
+        'for the original — the same artifact, environment, branch, commit sha, declared test, ' +
+        'java options and system properties — so a retry is the same job run again rather than ' +
+        'a similar one. ONLY A FAILED OR CANCELLED JOB CAN BE RETRIED; any other state answers ' +
+        '404, as does a job in another project.',
+      parameters: [parameters['RunnerProjectSlug']!, parameters['RunnerJobId']!],
+      responses: {
+        '200': {
+          description: 'Queued again. The NEW job, with its own id.',
+          content: json(schemaRef('RunnerJobActionResponse')),
+        },
+        '400': ref('BadRequest'),
+        '401': ref('Unauthorized'),
+        '403': ref('Forbidden'),
         '404': ref('NotFound'),
       },
     },
