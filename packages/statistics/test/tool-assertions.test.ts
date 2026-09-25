@@ -169,3 +169,75 @@ describe('tool assertions — the verdict is recomputed, not read', () => {
     expect(r.outcome).toBe('passed');
   });
 });
+
+describe('tool assertions — a percentile verdict is clamped like every other estimate', () => {
+  /**
+   * 95 fast requests and 5 slow ones AT THE SAME TOP VALUE, which is what makes
+   * this fixture able to tell a clamped answer from a raw one.
+   *
+   * `Sketch.quantile` returns the exactly-tracked `max` for rank `n - 1` and
+   * estimates every interior rank from the bucket store. With n = 100 the p99
+   * rank is index 98 — interior — and it falls in the maximum's own bucket,
+   * whose midpoint sits ABOVE the maximum. The block above cannot see this: its
+   * run has three requests and asks for p99.9, which IS `n - 1`, so it takes
+   * the early return and never reaches the estimating path at all.
+   *
+   * The numbers here are the reference run's, reproduced exactly (max 2503,
+   * raw p99 2515.4601126102525) — the same 12.46 ms overshoot that made
+   * `99th percentile of response time is less than 2510.0` report FAILED on a
+   * run whose slowest request was 2503 ms.
+   */
+  const stats = () => {
+    const events: CanonicalEvent[] = [
+      { type: 'meta', simulation: 'S', toolVersion: '3.15.1', startedAtMs: 0 },
+    ];
+    const push = (ms: number) =>
+      events.push({ type: 'request', name: 'r', groups: [], userId: 'u', startMs: 0, endMs: ms, ok: true });
+    for (let i = 0; i < 95; i += 1) push(100);
+    for (let i = 0; i < 5; i += 1) push(2503);
+    return runEngine(events).stats;
+  };
+
+  const runRow = () => {
+    const row = stats().find((s) => s.scope === 'run' && s.family === 'response_time');
+    if (row === undefined) throw new Error('no run-scope response_time row');
+    return row;
+  };
+
+  const percentile = (rank: number, condition: ToolAssertion['condition']) =>
+    evaluateToolAssertions(
+      [{ path: { kind: 'global' }, target: { kind: 'responseTime', stat: 'percentile', rank }, condition }],
+      stats(),
+    )[0]!;
+
+  it('agrees with the percentile the statistics table prints for the same run', () => {
+    const row = runRow();
+
+    // THE FIXTURE HAS TO BE ABLE TO DISTINGUISH THE TWO ANSWERS, and saying so
+    // is not decoration: if the sketch ever stops overshooting on this shape,
+    // every assertion below is satisfied by the unclamped product too and this
+    // case goes on passing while guarding nothing.
+    expect(row.sketch.quantile(0.99)).toBeGreaterThan(row.maxMs);
+
+    // One run, one quantity, one answer. `row.percentiles` is what the
+    // statistics table renders; this verdict re-derives from the sketch to
+    // reach arbitrary ranks, and must land in the same place.
+    const r = percentile(99, { kind: 'lt', value: 2510 });
+    expect(r.actualValue).toBe(row.percentiles.p99);
+    expect(r.actualValue).toBe(row.maxMs);
+
+    // The run's slowest request was 2503 ms, so nothing it did breached 2510.
+    expect(r.outcome).toBe('passed');
+  });
+
+  it('leaves a percentile that is already inside the range alone', () => {
+    // PAIRED WITH THE CASE ABOVE, because "clamped" quietly becoming "pinned to
+    // the maximum" would satisfy it perfectly and flatten every percentile
+    // column in the product.
+    const row = runRow();
+    const r = percentile(50, { kind: 'gte', value: 0 });
+
+    expect(r.actualValue).toBeLessThan(row.maxMs);
+    expect(r.actualValue).toBeGreaterThanOrEqual(row.minMs);
+  });
+});

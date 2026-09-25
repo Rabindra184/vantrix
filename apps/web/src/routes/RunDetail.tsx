@@ -371,11 +371,21 @@ export function LiveSummary({
  * 2515 while a run streamed read 2503 once it finished, one run, one quantity,
  * two answers split by nothing but whether the run was still going.
  *
- * `Sketch.quantile` projects an interior estimate onto the sample's own range
- * now, so `runStat.percentiles` is already inside it before `delta.ts` copies
- * it onto the wire. The value here is clamped at the source; there is nothing
+ * The conclusion survives, and the mechanism named here used to be wrong too.
+ * `Sketch.quantile` does NOT project an interior estimate onto anything: that
+ * fix was written, and reverted, because a RELOADED sketch's extremes are
+ * bucket-reconstructed rather than exact, so clamping against them clamps
+ * against the wrong range. It returns `getValueAtQuantile` unmodified for
+ * every rank but the two ends.
+ *
+ * What actually clamps is `RollupBuilder.finish`, against the row's own
+ * exactly-tracked `minMs`/`maxMs` — so `runStat.percentiles` really is inside
+ * the range before `delta.ts` copies it onto the wire, and there is nothing
  * left for this function to correct and no range on this payload to do it
- * with.
+ * with. Say the mechanism precisely: a reader who believes the projection
+ * lives in `Sketch` concludes every `sketch.quantile()` caller is safe, and
+ * that belief is exactly how `tool-assertions.ts` came to judge a Gatling
+ * assertion against an estimate 12.46 ms above the run's own maximum.
  *
  * `—`, never `0`, for a project configured with no such percentile: a gap in
  * `summary.percentiles` is not a measurement of zero.
