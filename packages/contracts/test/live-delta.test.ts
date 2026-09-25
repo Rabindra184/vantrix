@@ -147,6 +147,29 @@ describe('LiveDeltaSchema', () => {
   });
 
   /**
+   * The same argument one field over. A delta written by a worker that
+   * predates `summary.activityMs` must still parse, for the reason above —
+   * `parseFrame` drops a whole frame that fails this schema, so a required
+   * field here blanks the live page for the deploy window and permanently for
+   * a run that closed just before it.
+   *
+   * The consumer's fallback is `activityMs ?? durationMs`, which is exactly
+   * what `RunHeader` already does for a run ingested before migration
+   * 20260822090000 — one expression, two surfaces, same reason.
+   */
+  it('accepts a summary written before activityMs existed', () => {
+    const delta = validDelta();
+    delete (delta.summary as Record<string, unknown>).activityMs;
+    const parsed = LiveDeltaSchema.parse(delta);
+    expect(parsed.summary.activityMs).toBeUndefined();
+    // ...and the span the time axis needs is still required, not made optional
+    // by association: a delta with no `durationMs` is genuinely unusable.
+    const noDuration = validDelta();
+    delete (noDuration.summary as Record<string, unknown>).durationMs;
+    expect(() => LiveDeltaSchema.parse(noDuration)).toThrow();
+  });
+
+  /**
    * The same hazard one field deeper, and the reason `notJudged` and
    * `rulesUnavailable` are defaulted rather than required: a delta published
    * before those existed is a well-formed `sla` object missing two keys, and

@@ -153,6 +153,45 @@ describe('RunOverviewTab — live', () => {
   });
 
   /**
+   * ═══ THE DURATION MUST NOT SHRINK WHEN THE RUN ENDS ═══
+   *
+   * Two spans reach this page. `durationMs` is run-header start to last event
+   * — what the time axis must cover, which `RunShell` passes down as
+   * `liveDurationMs`. `activityMs` is first event to last, which is what
+   * `RunHeader`'s chip calls "Duration" for a terminal run (`activityMs ??
+   * durationMs`) and what Gatling's own report calls it.
+   *
+   * This tile rendered `durationMs`, so the same run read "63s" streaming and
+   * "62s" finished. The numbers below are that measurement, taken through the
+   * real engine over the reference fixture: 63161 ms and 62136 ms, a 1025 ms
+   * lead-in between the header timestamp and the first request.
+   * `formatDuration` stays in whole seconds below `LONG_RUN_MS`, which is why
+   * these assert "62s" rather than the "1m 2s" Gatling's own report prints.
+   *
+   * THE FIXTURE MUST DISTINGUISH THEM OR THE CASE PROVES NOTHING — on a run
+   * whose traffic starts at the header timestamp the two are one number, and
+   * an assertion written against that passes against the defect.
+   */
+  it('shows the measured span, so the tile does not shrink when the run ends', () => {
+    renderOverview({ live: liveWith({ durationMs: 63_161, activityMs: 62_136 }), status: 'running' });
+    const tile = screen.getByTestId('live-stat-duration');
+    expect(tile).toHaveTextContent('62s');
+    expect(tile).not.toHaveTextContent('63s');
+  });
+
+  /* A delta from a worker that predates `activityMs` — real during a rolling
+     deploy, and permanent for a run that closed just before one. Falls back to
+     the span it does have rather than rendering a dash, which is exactly what
+     `RunHeader` does for a run ingested before migration 20260822090000. */
+  it('falls back to the series span when a delta carries no measured one', () => {
+    renderOverview({
+      live: liveWith({ durationMs: 63_161, activityMs: undefined }),
+      status: 'running',
+    });
+    expect(screen.getByTestId('live-stat-duration')).toHaveTextContent('63s');
+  });
+
+  /**
    * TEST GAP CLOSER (whole-branch review). No per-tab fetch spy existed
    * before this fix round — the no-fetch-while-live rule was pinned only in
    * `RunShell.test.tsx` and `RunTrends.live.test.tsx`, and `RunTelemetry.tsx`
