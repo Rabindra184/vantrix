@@ -50,9 +50,24 @@
  *
  * So the rule is per ASSEMBLER instead, and it is the one a reader checks:
  * **a percentile is clamped against the same min and max reported beside it.**
- * `StatRollupBuilder.finish` and `bucketLatency` assemble that triple;
- * `resolveMetric` and the metrics controller recompute a percentile against
- * one already assembled.
+ * `RollupBuilder.finish` and `bucketLatency` assemble that triple;
+ * `resolveMetric`, the metrics controller and `tool-assertions.ts` recompute a
+ * percentile against one already assembled.
+ *
+ * ═══ AND THAT SENTENCE IS NO LONGER THE LIST ═══
+ *
+ * It was, and it drifted: the enumeration first written here named four call
+ * sites, `tool-assertions.ts` was added as a fifth without touching it, and a
+ * reader auditing this rule against that list would have concluded the G-05
+ * verdict path was covered when it was judging Gatling assertions against an
+ * estimate 12.46 ms above the run's own maximum. The names above are kept
+ * because they orient a reader; they are NOT what keeps the rule true.
+ *
+ * `packages/statistics/test/clamped-quantiles.test.ts` derives the set from the
+ * source — every `.quantile(` call in production must be wrapped in
+ * `clampPercentile` or named in that file's `EXEMPT` with its reason — so a
+ * sixth caller joins the check by EXISTING rather than by somebody remembering
+ * this paragraph.
  *
  * `window.ts` needs no call, and THE REASON FIRST WRITTEN HERE WAS WRONG. It
  * said that file "reports the merged RELOADED sketch's own extremes", which
