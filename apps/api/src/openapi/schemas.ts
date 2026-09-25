@@ -30,6 +30,11 @@ import {
   StatsResponseSchema,
   StreamAcceptedSchema,
   StreamRejectedSchema,
+  RunnerStartMetadataSchema,
+  RunnerStartResponseSchema,
+  RunnerJobListResponseSchema,
+  RunnerJobActionResponseSchema,
+  RunnerJobLogsResponseSchema,
   TelemetryBatchSchema,
   TelemetryResponseSchema,
   TokenListResponseSchema,
@@ -94,6 +99,15 @@ const SOURCE: Record<string, ZodTypeAny> = {
   OpenLiveRunResponse: OpenLiveRunResponseSchema,
   StreamAccepted: StreamAcceptedSchema,
   StreamRejected: StreamRejectedSchema,
+  // THE ON-PREM RUNNER'S OWN SCHEMAS. They existed in `contracts` from the
+  // start and were registered here by nothing, which is how five live routes
+  // came to be absent from the document while it went on describing a
+  // "runner" scope a token can hold.
+  RunnerStartMetadata: RunnerStartMetadataSchema,
+  RunnerStartResponse: RunnerStartResponseSchema,
+  RunnerJobListResponse: RunnerJobListResponseSchema,
+  RunnerJobActionResponse: RunnerJobActionResponseSchema,
+  RunnerJobLogsResponse: RunnerJobLogsResponseSchema,
 };
 
 /**
