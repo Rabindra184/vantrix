@@ -5,6 +5,7 @@ import type {
   AssertionTarget,
   ToolAssertion,
 } from '@perfportal/core';
+import { clampPercentile } from './percentile.js';
 import type { StatRollup } from './rollup.js';
 
 /**
@@ -162,7 +163,23 @@ function measure(target: AssertionTarget, row: StatRollup): number | null {
         // the four projected columns: `percentile(99.9)` is answerable even
         // though 99.9 is not one of the per-bucket bands. The sketch spans both
         // statuses, which is the same population Gatling's own assertion reads.
-        case 'percentile': return row.sketch.quantile((target.rank ?? 0) / 100);
+        //
+        // CLAMPED, like every other assembler that reports an estimate beside
+        // the extremes it was taken from. `row.percentiles` is already clamped
+        // by `RollupBuilder.finish`; this branch re-derives from the sketch to
+        // reach ranks that projection does not carry, and re-derives the raw
+        // estimate with it. Measured on the reference run, the two disagreed:
+        //
+        //   row.percentiles.p99   2503                  <- the statistics table
+        //   sketch.quantile(.99)  2515.4601126102525    <- this verdict
+        //   row.maxMs             2503                  <- `case 'max'`, 3 lines up
+        //
+        // so `99th percentile of response time is less than 2510.0` was
+        // reported FAILED on a run whose slowest request was 2503 ms and whose
+        // true p99 is 2501 — a verdict this module's own docstring says is
+        // BETTER than the tool's, disagreeing with the tool by being worse.
+        case 'percentile':
+          return clampPercentile(row.sketch.quantile((target.rank ?? 0) / 100), row);
       }
   }
 }
