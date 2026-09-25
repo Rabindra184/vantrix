@@ -148,10 +148,10 @@ see the eighth lesson below.
 
 The one-definition-of-every-metrics-url branch added ONE unit file —
 `apps/web/test/metricPaths.test.ts` (4) — from **156 / 1999 to 157 / 2003**.
-Integration moves with it (that file is a `.ts` integration runs too), which
-is **140 / 1817 as ARITHMETIC and is labelled as such** — the run was still
-going at push time; see the closing paragraph. **e2e stays 149**: no spec
-changed. It is a LATENT defect
+Integration moves with it (that file is a `.ts` integration runs too) at
+**140 / 1817** — first recorded as ARITHMETIC with the run still going, and
+MEASURED at exactly that afterwards; see the closing paragraph, corrected in
+place. **e2e stays 149**: no spec changed. It is a LATENT defect
 rather than a live one, and it was found by taking a follow-up note in this
 repository literally and measuring it.
 
@@ -295,16 +295,31 @@ exactly this branch's one file and four cases, ZERO failures and zero `Errors`
 lines — so the jsdom project really loaded, which is the half that matters for
 a branch whose every product file is under `apps/web/src`.
 
-**INTEGRATION WAS STILL RUNNING WHEN THIS WAS PUSHED, AND HAD ONE FAILURE.**
-`live.integration.test.ts`'s "rejects a stream chunk with no X-Stream-Offset
-header, before touching the run", at 350ms inside a file that took 64,393ms.
-This branch's diff is `apps/web/src`, `apps/web/test` and one `scripts/` file
-— it contains nothing under `apps/api`, `apps/worker` or `packages/`, so it
-cannot reach a raw-body guard in the live protocol. That file's cases are the
-ones this document already records as carrying a request DEADLINE precisely
-because the defect they guard is a HANG rather than a wrong value, which makes
-them the first thing a loaded machine loses. **Recorded rather than glossed,
-and not claimed as green.**
+**IT COLLECTED EXACTLY THE PREDICTED 140 / 1817, WHICH IS THE PART THAT MAKES
+THE FLOOR WORTH WRITING DOWN** — nothing was silently skipped — and 1816
+passed with ONE failure:
+
+```
+  × rejects a stream chunk with no X-Stream-Offset header ...   350ms
+    Error: socket hang up
+```
+
+**A TRANSPORT FAILURE, NOT AN ASSERTION ABOUT A VALUE**, in
+`apps/api/test/live.integration.test.ts`. This branch's diff is `apps/web/src`,
+`apps/web/test`, one `scripts/` file and this document — nothing under
+`apps/api`, `apps/worker` or `packages/` — so it cannot reach a raw-body guard
+in the live protocol. Isolated, that file is **33 passed, exit 0**.
+
+**AND `socket hang up` IS THE SIGNATURE THIS FILE ALREADY NAMES ONE CODE
+OVER.** It records `Parse Error: Expected HTTP/, RTSP/ or ICE/` as a shape that
+"cannot be produced by any application-level diff"; a hang-up is the same seam
+reached from the other side — the connection died rather than delivering
+something unparseable. It landed on the one case in that file whose defect is a
+HANG rather than a wrong value, and which therefore carries a request DEADLINE
+of its own (the refusals-nobody-asserts entry above records why). **A
+deadline-bounded case is the first thing a contended machine loses**, which is
+worth stating as a positive prediction rather than only as an excuse: if this
+suite flakes again under load, that is the case to expect.
 
 **AND THE LOAD GATE WAS NOT HONOURED, WHICH IS MINE.** The suite was started at
 a 1-minute load average of **11.30**, above the `< 8` this file prescribes,
@@ -314,12 +329,19 @@ after a gate EXPIRED and quoting the result anyway; this is the same error
 without even the loop — the honest options are to wait or to say the machine
 cannot answer, and the second is what this paragraph does.
 
-Both ran against a SCRATCH DATABASE (`perfportal_paths`) and a scratch Redis
-INDEX (db 11). **e2e was NOT run locally and CI is the arbiter**: no spec
-changed, every `stall`/`failWith` glob in that suite is `**/v1/runs**` (the run
-LIST, unaffected by a query string on `/series`), and no spec asserts the app's
-OUTGOING url — but this branch rebuilt every metrics URL the browser issues, so
-that is a reason to want the run rather than a reason to skip it.
+**AND e2e WAS RUN, WHICH FOR THIS BRANCH IS THE GATE THAT MATTERS MOST.**
+`pnpm test:e2e --workers=2` at **149 passed, exit 0** — the whole browser suite
+against rebuilt URLs. The reasoning said it was safe (no spec changed, every
+`stall`/`failWith` glob is `**/v1/runs**`, i.e. the run LIST and unaffected by
+a query string on `/series`, and no spec asserts the app's OUTGOING url), and
+the reasoning is exactly what a refactor of every URL the browser issues should
+not be trusted on. A suite that drives the real app end to end is the only
+thing that can say a path builder still builds the path.
+
+All three local suites ran against a SCRATCH DATABASE (`perfportal_paths`) and
+a scratch Redis INDEX (db 11) — `test:e2e` seeds through the real API and does
+NOT truncate, and the developer database holds the nine real Gatling runs.
+Confirmed intact afterwards.
 
 **AND THE e2e SUITE HOLDS A THIRD COPY OF THESE URLS, DELIBERATELY LEFT.**
 `run-charts.spec.ts` fetches `/series?scope=run&name=` at one line and
