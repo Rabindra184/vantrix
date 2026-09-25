@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 import type { DistributionResponse, ScatterResponse, UsersResponse } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type StoredBucket } from '@perfportal/persistence';
 import { Histogram, distribution, inferBucketWidthMs } from '@perfportal/statistics';
@@ -6,6 +6,7 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
+import { notFound } from '../common/validation.js';
 
 @Controller('/v1/runs/:id')
 export class ParityController {
@@ -17,7 +18,8 @@ export class ParityController {
   async #run(req: Request, id: string) {
     const tenant = req.tenant!;
     const run = await this.runs.findById({ orgId: tenant.orgId, projectId: tenant.projectId }, id);
-    if (!run) throw new NotFoundException(`No run ${id} in this project.`);
+    if (!run) throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
+        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
     return run;
   }
 
@@ -61,7 +63,12 @@ export class ParityController {
       h = mine.length === 0 ? null : { ok, ko };
     }
 
-    if (!h) throw new NotFoundException(`No ${family} histogram for ${scope} "${name}" in run ${id}.`);
+    if (!h)
+      throw notFound(
+        `No ${family} histogram for ${scope} "${name}" in run ${id}.`,
+        'Check the scope, name and family against GET /v1/runs/{id}/stats, which lists every '
+        + 'row this run recorded.',
+      );
     const d = distribution(h.ok, h.ko);
     return {
       runId: run.id,

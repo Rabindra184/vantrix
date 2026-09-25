@@ -1,4 +1,4 @@
-import { Controller, Inject, NotFoundException, Param, Post, Req, Res } from '@nestjs/common';
+import { Controller, Inject, Param, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ingestError } from '@perfportal/core';
 import { OpenLiveRunRequestSchema } from '@perfportal/contracts';
@@ -10,6 +10,7 @@ import { badRequest, uuidParam } from '../common/validation.js';
 import { respondWithRun } from '../runs/runs.controller.js';
 import { RunsService } from '../runs/runs.service.js';
 import { LiveService } from './live.service.js';
+import { notFound } from '../common/validation.js';
 
 /**
  * Reads the whole request body as a Buffer, the way multipart.ts reads the
@@ -214,7 +215,8 @@ export class LiveController {
     );
 
     if (outcome.kind === 'not_found') {
-      throw new NotFoundException(`No run ${id} in this project.`);
+      throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
+        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
     }
     if (outcome.kind === 'rejected') {
       res
@@ -250,7 +252,8 @@ export class LiveController {
     );
 
     if (outcome.kind === 'not_found') {
-      throw new NotFoundException(`No run ${id} in this project.`);
+      throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
+        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
     }
     if (outcome.kind === 'not_running') {
       res

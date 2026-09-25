@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { Controller, Get, Inject, NotFoundException, Param, Post, Req } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   RunnerJobActionResponseSchema,
@@ -22,6 +22,7 @@ import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, uuidParam } from '../common/validation.js';
 import type { AppConfig } from '../config.js';
 import { readRunnerMultipart } from './runner.multipart.js';
+import { notFound } from '../common/validation.js';
 
 @Controller('/v1/projects/:slug/runner')
 export class RunnerController {
@@ -158,7 +159,9 @@ export class RunnerController {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
     const row = await this.runner.cancel(tenant.orgId, project.id, jobId);
-    if (!row) throw new NotFoundException(`No cancellable runner job ${jobId} in this project.`);
+    if (!row)
+      throw notFound(`No cancellable runner job ${jobId} in this project.`, 'Only a queued or running job can be cancelled. GET /v1/projects/{slug}/runner/runs '
+        + 'lists this project\u2019s jobs with their status.');
     return RunnerJobActionResponseSchema.parse({ artifact: toArtifact(row.artifact), job: toJob(row.job) });
   }
 
@@ -172,7 +175,7 @@ export class RunnerController {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
     const row = await this.runner.find(tenant.orgId, project.id, jobId);
-    if (!row) throw new NotFoundException(`No runner job ${jobId} in this project.`);
+    if (!row) throw notFound(`No runner job ${jobId} in this project.`, 'Check the job id, or list the runner jobs in this project with GET /v1/projects/{slug}/runner/runs.');
 
     const content = row.job.logPath ? await readLogTail(row.job.logPath, 256 * 1024) : null;
     return RunnerJobLogsResponseSchema.parse({
@@ -199,7 +202,9 @@ export class RunnerController {
       sourceJobId: jobId,
       requestedBy: tenant.tokenId,
     });
-    if (!row) throw new NotFoundException(`No retryable runner job ${jobId} in this project.`);
+    if (!row)
+      throw notFound(`No retryable runner job ${jobId} in this project.`, 'Only a failed or cancelled job can be retried. GET /v1/projects/{slug}/runner/runs '
+        + 'lists this project\u2019s jobs with their status.');
     return RunnerJobActionResponseSchema.parse({ artifact: toArtifact(row.artifact), job: toJob(row.job) });
   }
 
@@ -210,7 +215,7 @@ export class RunnerController {
   ): Promise<ProjectRecord> {
     const project = await this.projects.findBySlugInOrg(orgId, slug);
     if (!project || (credentialProjectId !== undefined && credentialProjectId !== project.id)) {
-      throw new NotFoundException(`No project "${slug}" in this organisation.`);
+      throw notFound(`No project "${slug}" in this organisation.`, 'Check the slug, or list the projects this credential can reach with GET /v1/projects.');
     }
     return project;
   }

@@ -1,5 +1,6 @@
-import { ForbiddenException, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
+import { Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import type { Request } from 'express';
+import { forbidden } from '../common/validation.js';
 
 /**
  * Refuses any BEARER credential, allowing only a signed-in human's session.
@@ -31,9 +32,13 @@ export class SessionOnlyGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<Request>();
     const tokenId = req.tenant?.tokenId ?? '';
     if (!tokenId.startsWith(SESSION_TOKEN_ID_PREFIX)) {
-      throw new ForbiddenException(
-        'API tokens are minted by a signed-in user, not by a machine credential. ' +
-          'Sign in at POST /auth/sign-in/email and retry with the session cookie.',
+      // The advice moved from the MESSAGE to the remediation, which is the
+      // field a Problem document has for it — and which `ProblemFilter`
+      // otherwise fills with "Check the request against the OpenAPI
+      // description", useless for a request the document describes perfectly.
+      throw forbidden(
+        'API tokens are minted by a signed-in user, not by a machine credential.',
+        'Sign in at POST /auth/sign-in/email and retry with the session cookie.',
       );
     }
     return true;

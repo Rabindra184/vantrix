@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Param, Query, Req } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 import type {
   ErrorSeriesResponse,
   ErrorsResponse,
@@ -28,6 +28,7 @@ import type { Request } from 'express';
 import { Scopes } from '../auth/scopes.decorator.js';
 import { badRequest, parseLimit, uuidParam } from '../common/validation.js';
 import { inRange, resolveRange, snapWindow } from '../common/window.js';
+import { notFound } from '../common/validation.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -57,7 +58,8 @@ export class MetricsController {
       { orgId: tenant.orgId, projectId: tenant.projectId },
       id,
     );
-    if (!run) throw new NotFoundException(`No run ${id} in this project.`);
+    if (!run) throw notFound(`No run ${id} in this project.`, 'Check the run id. GET /v1/runs lists the runs a signed-in user can reach; '
+        + 'GET /v1/projects/{slug}/runs lists those a project token can.');
     return run;
   }
 
