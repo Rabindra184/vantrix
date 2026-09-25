@@ -149,8 +149,8 @@ see the eighth lesson below.
 The document-is-valid-for-its-own-version branch added ONE unit file —
 `apps/api/test/openapi-dialect.test.ts` (3) — from **159 / 2011 to
 160 / 2014**. Integration moves with it (that file is a `.ts` integration runs
-too), which is **143 / 1831 as ARITHMETIC** at the time of writing; see the
-closing paragraph. **e2e stays 149.** It is a defect in the published
+too) at **143 / 1831** — first recorded as arithmetic and MEASURED at exactly
+that, CLEAN. **e2e stays 149.** It is a defect in the published
 CONTRACT rather than in behaviour, and it was found by pointing a standards
 validator at the document — which nothing in this repository had ever done.
 
@@ -253,6 +253,22 @@ This file already says to read WHICH assertion failed; the sharper form is
 that a mutation failing the wrong assertion is a defect in the TEST, not a
 pass. Both counters now count every occurrence and then assert none is the
 bad spelling.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **160 / 2014** and `test:integration` **143 / 1831**, both exactly
+the predicted floor plus this branch's three cases, both CLEAN, and the
+integration run behind the gate that refuses to start rather than expire (it
+passed at load 7.74). Scratch database `perfportal_trim`, scratch Redis index
+db 12. **e2e was NOT run**: the diff is the document generator, its guard and
+this file — no spec, no `.tsx`, and nothing the browser renders.
+
+**AND A DOCUMENT-INTEGRITY SWEEP RODE ALONG AND CAME BACK CLEAN**, recorded so
+the next reader re-checks rather than re-investigates. Over the built
+document: **182 `$ref`s, zero dangling**; **31 operations, every one with an
+`operationId`, none duplicated**; and **zero path-parameter mismatches** —
+no `{param}` undeclared and no declared path parameter absent from its path.
+Each of those is fatal to a generator and invisible to every test here, and
+each is one traversal of a pure function.
 
 **THE NULLABILITY CASE IS NOT PADDING.** `schemas.ts` argues that
 `nullable: true` is "meaningless — and therefore a lie — once the document
