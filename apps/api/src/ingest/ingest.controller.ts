@@ -8,6 +8,7 @@ import { respondWithRun } from '../runs/runs.controller.js';
 import { RunsService } from '../runs/runs.service.js';
 import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { IngestService } from './ingest.service.js';
+import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { readMultipart } from './multipart.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
@@ -44,7 +45,23 @@ export class IngestController {
 
     const upload = await readMultipart(req);
     const metadata = this.ingest.parseMetadata(upload.metadataRaw);
-    const accepted = await this.ingest.accept({ ...tenant, projectId }, metadata, upload.bundle);
+
+    // FR-ING-7 specifies an `Idempotency-Key` HEADER; this package has only
+    // ever read the `idempotencyKey` metadata field. Both are accepted now and
+    // a disagreement is refused — `resolveIdempotencyKey`'s docstring carries
+    // the measurement that motivated it. NAMED into the literal rather than
+    // spread: CLAUDE.md records a conditional spread hiding a mistyped key
+    // from `tsc` and costing a field its whole journey to the repository.
+    const idempotencyKey = resolveIdempotencyKey(
+      req.headersDistinct[IDEMPOTENCY_HEADER],
+      metadata.idempotencyKey,
+    );
+
+    const accepted = await this.ingest.accept(
+      { ...tenant, projectId },
+      { ...metadata, idempotencyKey },
+      upload.bundle,
+    );
 
     const waitMs = metadata.waitMs ?? this.config.defaultWaitMs;
     await this.waiter.waitFor(accepted.id, waitMs);

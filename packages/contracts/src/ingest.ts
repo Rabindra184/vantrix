@@ -29,6 +29,29 @@ export const DeclaredTestSlugSchema = z
     message: 'must be lower-case letters, digits and single hyphens, e.g. "checkout-soak"',
   });
 
+/**
+ * A run's idempotency key, however a client spells it.
+ *
+ * SHARED, like `DeclaredTestSlugSchema` above and for the same reason: this
+ * value now arrives by TWO routes — the `Idempotency-Key` request header that
+ * FR-ING-7 specifies, and the `idempotencyKey` metadata field this package has
+ * always accepted — and they must agree about what a valid key is. Two
+ * spellings of one identity that disagreed on their bounds would be worse than
+ * one: a key accepted on one route and refused on the other makes a retry's
+ * behaviour depend on which route the client happened to pick.
+ *
+ * `live.ts` reuses it too. Its own comment already CLAIMED the bounds were
+ * "reused from `ingest.ts`, not reinvented, because the comment above claims
+ * this is the same metadata a bundle upload takes -- a claim of sameness that
+ * used different bounds would be worse than no claim at all" — and then
+ * restated them inline. This is that claim made true.
+ *
+ * `.min(1)` is the bound that matters most, and `live.ts` argues it best:
+ * `run` carries `@@unique([projectId, idempotencyKey])`, so an ungated empty
+ * string is a distinct, real key rather than "no key supplied".
+ */
+export const IdempotencyKeySchema = z.string().trim().min(1).max(200);
+
 export const IngestMetadataSchema = z.object({
   tool: z.enum(TOOL_IDS),
   /** Scopes idempotency to the project. Bounded so the unique index stays sane. */
@@ -53,7 +76,7 @@ export const IngestMetadataSchema = z.object({
    * agent sends `--host-label` verbatim. `RunnerJobRequest` trimmed from the
    * start, which is what made this a drift rather than a decision.
    */
-  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: IdempotencyKeySchema.optional(),
   environment: z.string().trim().min(1).max(100).optional(),
   branch: z.string().trim().min(1).max(200).optional(),
   commitSha: z.string().trim().min(7).max(64).optional(),

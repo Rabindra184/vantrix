@@ -8,6 +8,7 @@ import { respondWithRun } from '../runs/runs.controller.js';
 import { RunsService } from '../runs/runs.service.js';
 import { TerminalWaiter } from '../runs/terminal-waiter.js';
 import { IngestService } from './ingest.service.js';
+import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { readMultipart } from './multipart.js';
 import { notFound } from '../common/validation.js';
 
@@ -79,9 +80,21 @@ export class ProjectIngestController {
        two-decoders failure this repo already refuses one layer down. */
     const upload = await readMultipart(req);
     const metadata = this.ingest.parseMetadata(upload.metadataRaw);
+
+    // The SAME resolver IngestController.post uses, for the reason the
+    // comment above already gives about parseMetadata and accept: two ingest
+    // routes that honoured idempotency differently would be that same
+    // two-decoders failure, one field over. A browser upload is retried by a
+    // human clicking twice rather than by CI, which is if anything the case
+    // where a duplicate run is most surprising.
+    const idempotencyKey = resolveIdempotencyKey(
+      req.headersDistinct[IDEMPOTENCY_HEADER],
+      metadata.idempotencyKey,
+    );
+
     const accepted = await this.ingest.accept(
       { ...tenant, projectId: project.id },
-      metadata,
+      { ...metadata, idempotencyKey },
       upload.bundle,
     );
 

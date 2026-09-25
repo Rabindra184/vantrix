@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DeclaredTestSlugSchema, TOOL_IDS } from './ingest.js';
+import { DeclaredTestSlugSchema, IdempotencyKeySchema, TOOL_IDS } from './ingest.js';
 import { ProblemDetailsSchema } from './problem.js';
 import { TOKEN_SCOPES } from './tokens.js';
 
@@ -65,7 +65,7 @@ export const OpenLiveRunRequestSchema = z.object({
    * the run from its first ticks rather than from the finished report.
    */
   test: DeclaredTestSlugSchema.optional(),
-  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  idempotencyKey: IdempotencyKeySchema.optional(),
 });
 export type OpenLiveRunRequest = z.infer<typeof OpenLiveRunRequestSchema>;
 
