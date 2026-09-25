@@ -146,6 +146,146 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The g05-judges-an-unclamped-percentile branch added no unit FILE and 2 cases to
+`packages/statistics/test/tool-assertions.test.ts`, from **160 / 2014 to
+160 / 2016**. Integration moves with both (that file is a `.ts` integration runs
+too) at **144 / 1834**, and **e2e stays 149** — see the fixture measurement
+below, which is why. Both floors are the recorded ones plus exactly this
+branch's two cases, and both were MEASURED.
+
+**AND THE DISCREPANCY I CHASED WAS MY OWN MISREADING, WHICH IS WORTH MORE THAN
+IF IT HAD BEEN REAL.** The prediction was 156 / 2001 and the run said
+160 / 2016, so four files and fifteen tests appeared out of nowhere — the exact
+shape this file records as a four-branch-old arithmetic error. I checked
+`origin/main` out and ran the suite on it: **160 / 2014**, so the delta was
+exactly my two cases and nothing had drifted. The baseline was wrong because I
+had grepped `156 / 1999` out of an entry at line 1087 while the NEWEST entries
+— partitions, no-scope-the-engine, document-is-valid — all say 160 / 2014 at
+line 151. **THIS FILE IS APPEND-AT-THE-TOP, SO A GREP FOR A FLOOR RETURNS EVERY
+HISTORICAL VALUE AND THE FIRST MATCH IS NOT THE CURRENT ONE.** Read the most
+recent entry, or measure `main`; a grep hit is a floor some branch had, not the
+floor you are adding to. The chase was still the right reflex and cost four
+minutes — a floor ABOVE prediction is as much a discrepancy as one below, and
+the only way to tell a stale baseline from a silently-skipped run is to go and
+measure the tree.
+
+**A GATLING ASSERTION WAS JUDGED AGAINST A NUMBER THE PRODUCT REFUSES TO
+DISPLAY.** `measure()` returns `row.minMs` and `row.maxMs` as the exactly
+measured extremes and then, three lines down, returned a RAW sketch estimate
+that can exceed them. Driven through the real modules over the reference
+`simulation.log` — one `StatRollup`, one quantity, three answers:
+
+```
+  row.percentiles.p99   2503                  the statistics table prints this
+  row.sketch.quantile   2515.4601126102525    the G-05 verdict judged on this
+  row.maxMs             2503                  `case 'max'`, three lines up
+  true p99, nearest rank over 895 durations   2501
+```
+
+So `Global: 99th percentile of response time is less than 2510.0` reported
+**FAILED**, with an actual 12.46 ms above the slowest request the run ever
+made, on a run Gatling's own report passes.
+
+**AND THE MODULE'S DOCSTRING IS THE CLAIM IT BREAKS.** It says the sketch
+"answers the same question within 1%, against the true distribution", which is
+"what makes the verdict BETTER than the report rather than merely equal to it".
+It disagreed with the tool by being worse — and G-05's tolerance is exact
+wording, so a run whose Gatling report says PASSED beside a PerfPortal table
+saying FAILED is the credibility failure this whole surface exists to avoid.
+
+**NINTH ONE-CALLER-SHORT, AND THE ENUMERATION THAT MISSED IT IS IN THIS FILE.**
+The clamp branch named its call sites — `RollupBuilder.finish`, `bucketLatency`,
+`resolveMetric`, `metrics.controller`, and `window.ts` as an argued NO CALL.
+`tool-assertions.ts` is on none of them. That entry's own lesson is the one that
+found this: **read a deferral's list of who would benefit as a list of who was
+ENUMERATED, and check it against who actually calls.** Two greps —
+`grep -rn '\.quantile(' packages/*/src apps/*/src`, then whether each site
+clamps — and seven callers come back, five clamped, `window.ts` argued, and this
+one.
+
+**THE EXISTING PERCENTILE CASE WAS BLIND IN BOTH HALVES.** "answers a percentile
+rank that is not one of the stored bands" runs a THREE-request fixture and asks
+for p99.9 — which is rank `n - 1`, so `Sketch.quantile` takes its
+exactly-tracked-max early return and never reaches the estimating path at all.
+And it asserts only `actualValue > 0`. A fixture that cannot reach the branch,
+under an assertion that could not see a wrong value if it did. **A FIXTURE THAT
+CANNOT DISTINGUISH TWO ANSWERS IS WHERE THE WRONG ONE SURVIVES**, for the third
+time in this file.
+
+**THE NEW FIXTURE REPRODUCES THE REFERENCE RUN'S OVERSHOOT EXACTLY**, which is
+what makes it worth constructing rather than borrowing: 95 requests at 100 ms
+and 5 AT THE SAME TOP VALUE, so with n = 100 the p99 rank is index 98 —
+interior — and falls in the maximum's own bucket. Raw
+**2515.4601126102525 against a max of 2503**, the same 12.46 ms, from a
+hand-built run.
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  the clamp removed (the before-state)   the agreement case ALONE
+                                         "expected 2515.4601126102525 to be 2503"
+  clamped becomes pinned-to-the-max      the in-range case ALONE
+  a FLAT fixture (all 100 ms)            the in-range case — the guard still HELD
+  a tail that misses p99 (1 slow, not 5) the VACUITY GUARD ALONE
+                                         "expected 100.49 to be greater than 2503"
+```
+
+**THE THIRD IS THE ONE THAT TAUGHT SOMETHING.** It was written to make the
+fixture unable to distinguish, and it failed to: a flat run of 100 ms still
+overshoots, because the bucket midpoint for 100 is ~100.49. **THE ESCAPE IS
+PERVASIVE RATHER THAN EXOTIC** — it is not a heavy-tail pathology, it is what a
+geometric bucket store does to almost any interior rank. The mutation that
+actually defeats the fixture is a tail too short to reach p99, and the vacuity
+guard catches it by name.
+
+**AND THE OTHER UNCLAMPED CALLER IS GENUINELY SAFE, MEASURED RATHER THAN
+INHERITED.** `window.ts` is the one site the clamp branch argued as a NO CALL,
+on the grounds that it reads a `Histogram` rather than a `Sketch` — exact by
+construction, so a bin representative lies between observed bins. That premise
+has been wrong once in this exact spot (the entry that first stated it named the
+wrong structure), so it was re-measured: five shapes including ranges narrower
+than a bin, seven ranks each, **worst escape 0.000000 ms**. The argument holds.
+One real defect out of seven callers, and the other six are now each accounted
+for by a measurement rather than by a list.
+
+**AND THE REFERENCE FIXTURE'S OWN DECLARED ASSERTION DOES NOT MOVE, WHICH IS
+WHY e2e IS NOT RE-RUN AND IS STATED RATHER THAN IMPLIED.** `ParitySimulation`
+declares three, and exactly one has a percentile target:
+`Search: 95th percentile of response time is less than 100.0`. Measured, that
+row is `count=160 min=407 max=2287` and its raw p95 is **1939.53 — comfortably
+inside its own range**, so the clamp is a no-op there and the verdict is
+`failed` before and after. No seeded browser case can reach this change. The
+defect is real and the shipped fixture's own assertion happens not to touch it,
+which is precisely why a unit fixture had to be built to expose it.
+
+**AND A DOCSTRING CREDITED A FIX THAT WAS WRITTEN AND REVERTED — THE SIXTH TIME
+THIS FILE RECORDS A COMMENT NAMING THE WRONG MECHANISM, AND THE REASON THIS
+DEFECT WAS FINDABLE.** `RunDetail.tsx`'s `livePercentileValue` said
+"`Sketch.quantile` projects an interior estimate onto the sample's own range
+now". It does not, and that exact fix is recorded three entries up as tried and
+abandoned, because a RELOADED sketch's extremes are bucket-reconstructed rather
+than exact — measured again here at **min 100.494567708565, max 2465.65 against
+a true 100 and 2480**, off by 14 ms on the low side where the earlier
+measurement was 12 ms high. Which side depends on where the true max sits inside
+its bucket; that it is not the true range is the point. The CONCLUSION survived
+(the live tile needs no clamp, because `RollupBuilder.finish` already applied
+one) and the mechanism was false — **and believing it is exactly how a
+`sketch.quantile()` caller comes to look safe.** Corrected in place, with that
+consequence named where the next reader will be.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **160 / 2016**, ZERO failures and zero `Errors` lines, against a
+measured `main` of 160 / 2014 — the arithmetic closes on exactly this branch's
+two cases. `test:integration` **144 / 1834, exit 0, zero failures** against a
+SCRATCH DATABASE (`perfportal_g05`) and a scratch Redis INDEX (db 13); the nine
+real Gatling runs in the developer database were confirmed intact. That run
+STARTED at a 1-minute load of 13.03 — above the `< 8` this file prescribes,
+because my own migrate had just driven it up — so a FAILURE would have been
+disclaimed; it finished clean at 2.24, and this file's own rule is that a slow
+or loaded run which PASSES is a pass. **e2e was not run**, for the
+fixture reason measured above rather than because the diff "looks like" it
+cannot reach a browser.
+
 The partitions-do-not-run-out-silently branch added ONE integration file —
 `packages/persistence/test/partition-runway.integration.test.ts` (1) — so
 unit stays **160 / 2014** (that config excludes `*.integration.test.ts`) and
