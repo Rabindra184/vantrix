@@ -556,11 +556,30 @@ export function describeSlaRule(rule: {
  * assertion ALREADY STORED renders correctly from fields that were always on
  * the wire. Nothing about what the worker writes changes.
  *
- * The live SLA banner is genuinely a different question and is deliberately
- * left: `LiveSlaRuleSchema` carries `description: z.string()` and no
- * structured fields at all, so re-rendering it means changing what the worker
- * streams and what every delta already recorded says. That is a data change
- * with a migration question attached, and it belongs in its own branch.
+ * ═══ THE LIVE BANNER WAS LEFT HERE, AND IS DONE ═══
+ *
+ * This paragraph used to say the live SLA banner was "genuinely a different
+ * question and is deliberately left", because LiveSlaRuleSchema -- unbacktick'd
+ * here on purpose, see named-symbols-resolve.test.ts -- carried "no
+ * structured fields at all" and re-rendering it was "a data change with a
+ * migration question attached". EVERY CLAUSE IS FALSE TODAY AND THE FIRST
+ * NEVER WAS -- `git log -S` finds the name in the commit that wrote this
+ * paragraph and nowhere else, with zero declarations in the whole history.
+ * The note survived the branch that fixed the thing it describes:
+ *
+ *   LiveSlaRuleSchema     has never existed. The schema is `LiveBreachSchema`.
+ *   no structured fields  it carries `rule: AssertionRuleSchema.optional()`,
+ *                         written by `wireRule` in apps/worker/src/live/delta.ts.
+ *   a migration question  `SNAPSHOT_TTL_SECONDS` and `REPLAY_TTL_SECONDS` are
+ *                         both 3600, so no stored delta outlives the hour.
+ *
+ * `SlaBanner.tsx` imports THIS function and calls it on every breach that
+ * carries a `rule`, so the surface this paragraph called unreachable is the
+ * caller one import away. Corrected in place rather than deleted: a note
+ * saying something is unfixed is read as an instruction not to look, and this
+ * repo has three times found a live defect by taking such a note literally.
+ * This one is the other shape, which `window.ts`'s `bandsFrom` note hit first:
+ * a deferral that outlived the branch satisfying it.
  *
  * ═══ NULL RATHER THAN A SENTENCE WITH A HOLE IN IT ═══
  *

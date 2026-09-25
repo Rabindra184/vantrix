@@ -19,9 +19,9 @@ import type { ReactNode } from 'react';
  * multi-select (bands), a pick-one (outcome) and a binary toggle (scale) were
  * indistinguishable until operated. Each now looks like what it is:
  *
- *   `ChipGroup`      many-of-N — separate chips, each independently pressed
- *   `SegmentedGroup` one-of-N  — joined segments in a single track
- *   `SwitchControl`  on/off    — a track and a knob
+ *   `Chip`      many-of-N — separate chips, each independently pressed
+ *   `Segmented` one-of-N  — joined segments in a single track
+ *   `Switch`    on/off    — a track and a knob
  *
  * ═══ AND THEY SAY WHICH IS SELECTED ═══
  *

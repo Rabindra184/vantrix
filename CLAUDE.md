@@ -146,6 +146,155 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The named-symbols-resolve branch added ONE unit file —
+`packages/core/test/named-symbols-resolve.test.ts` (2) — from **162 / 2029 to
+163 / 2031**. Integration moves with it (that file is a `.ts` integration runs
+too) at **147 / 1854**, and **e2e stays 150**: its one e2e touch is a reflowed
+docstring, no spec and no case. It ships NO product code — the diff is four
+comments and a guard — and what it closes is a NOT-DONE NOTE that outlived the
+branch which did the work.
+
+**A DEFERRAL EXPLAINED ITSELF WITH A SCHEMA THAT HAS NEVER EXISTED.**
+`describeSlaOutcome`'s own docstring in `packages/contracts/src/rules.ts` read:
+
+```
+  The live SLA banner is genuinely a different question and is deliberately
+  left: LiveSlaRuleSchema carries `description: z.string()` and no structured
+  fields at all ... a data change with a migration question attached
+```
+
+Every clause is false today and the FIRST NEVER WAS. Measured:
+
+```
+  git log -S LiveSlaRuleSchema --all   2 commits — the one that WROTE the note,
+                                       and this branch. ZERO declarations, ever.
+  LiveBreachSchema                     rule: AssertionRuleSchema.optional()
+  the worker        delta.ts:357       rule: wireRule(a.ruleSnapshot)
+  SlaBanner.tsx:1                      imports describeSlaOutcome
+  SlaBanner.tsx:47                     calls it, passing rule: breach.rule
+  SNAPSHOT_TTL / REPLAY_TTL            both 3600 — no delta outlives the hour
+```
+
+**THE SURFACE THE DOCSTRING CALLS UNREACHABLE IS ITS OWN CALLER.** A reader
+arriving at the shared renderer is told the live banner cannot use it, and
+that banner imports it on line 1 of its own file. The work was done by
+live-banner-reads-its-schema; the note saying it was not, survived.
+
+**SECOND TIME A NOT-DONE NOTE HERE SURVIVED THE BRANCH THAT SATISFIED IT.**
+trends-documents-its-400 records the first: `window.ts` said `bandsFrom`
+"reaches `Histogram#countBelow`, which throws on the same bin" — true when
+written, fixed three branches later by `bandsOrRefuse`, so "a reader arriving
+at that docstring was told a live 500 was still there". Mine is that shape with
+the sign flipped: there the stale note advertised a DEFECT that no longer
+existed, here it advertises WORK that no longer needed doing. The second is the
+more expensive, because a note saying something is broken invites a reader to
+look and a note saying it is deliberately left tells them not to.
+
+**AND THREE BRANCHES WERE FOUND BY TAKING SUCH A NOTE LITERALLY** —
+windowed-bands-refuse-not-500, one-definition-of-every-metrics-url and
+compare-tick-keeps-the-question, each finding a LIVE defect behind a deferral.
+With this one that is five occurrences of "an entry recording something as
+deliberately left is a claim", which is where it stops being an anecdote and
+becomes the argument for a guard rather than a sixth careful reading.
+
+**AND THE review-copy-rows ENTRY ALREADY CORRECTED THE OTHER HALF OF THIS SAME
+SENTENCE.** It records that the rule-language-human deferral "files this surface
+under 'a data change with a migration question attached'. That is true of the
+LIVE banner and only of it" — fixing the BATCH half and leaving the live half
+standing on a reason that was already wrong. **Two branches have now read this
+one paragraph and each fixed a different piece of it**, which is the argument
+for the guard rather than a third careful reading.
+
+**THREE MORE STALE POINTERS RIDE WITH IT, ALL PRESENT TENSE:**
+
+```
+  ChartControls.tsx   a table mapping three shapes to ChipGroup /
+                      SegmentedGroup / SwitchControl. The module exports
+                      Chip / Segmented / Switch. None of the three has existed.
+  ProjectShell.tsx    the 120-character name cap credited to ProjectSchema
+  acceptance.spec.ts  the same, in the docstring justifying the test
+                      -> the cap belongs to CreateProjectRequestSchema
+```
+
+`ChartControls.tsx` is also a 237-line component NO test names, which is how a
+three-row table naming three non-existent exports survived.
+
+**FOUR OF THE EIGHT HITS WERE LEGITIMATE AND ARE LEFT, WHICH IS THE
+DISTINCTION THE GUARD HAS TO ENCODE.** `ProjectConfigPage` is past-tense
+history — the page `ProjectShell` replaced, named to explain what the shell
+does differently — and `RangesContainerId` / `UserStartRateContainerId` are
+GATLING's own report identifiers rather than ours. The stale-accountmenu-crossref
+entry already draws that line: **a comment saying X ONCE did something is a
+record and stays; one saying "the same way X does it" is a pointer, and it
+points at nothing.** A regex cannot read tense, so the one survivor is an
+EXEMPT entry with its argument attached, and a second case fails if an
+exemption stops being named anywhere.
+
+**THE GUARD READS COMMENTS, WHICH INVERTS THE TRAP THIS FILE RECORDS SEVEN
+TIMES.** Every other source-scanning guard here strips comments first, because
+prose about a rule is not a violation of it. This one's subject IS the prose,
+so it extracts comments and ignores code — and the consequence is that a dead
+name in backticks anywhere, the guard's own explanation included, is a finding.
+
+**IT CAUGHT MY OWN CORRECTION ON ITS FIRST RUN, WHICH IS THE BEST RED-VERIFY
+IN THE BRANCH.** The rewritten `rules.ts` paragraph quoted the dead name in
+backticks while explaining that it had never existed, and the guard failed on
+it. That is the `percentile.ts` shape — the rule's own documentation reported
+as a caller breaking the rule — met on the branch that ADDS the rule, and it
+proves the check bites on live prose rather than only on a planted fixture.
+Dead names are unbacktick'd now, in both files, each with a line saying not to
+tidy them back.
+
+**THE SUFFIX FILTER IS SCOPE, NOT COVERAGE, AND THE MEASUREMENT IS WHY THE
+RULE IS NOT DECORATION:**
+
+```
+  every capitalised backticked word   102 unresolved — AbortSignal, Promise,
+                                      GetObjectCommand, SELECT, PUBLISH,
+                                      Errors, Status, Bands ...
+  restricted to this repo's own
+  naming suffixes                       6 unresolved — 5 real, 1 argued
+```
+
+A rule shipping with 102 exemptions is decoration, which is this file's own
+verdict on the `setParams` lint rule it designed and REFUSED ("two exemptions
+against one catch"). Five catches against one exemption is that ratio
+inverted. The honest limit is stated at the constant: a suffix absent from the
+list buys less coverage and can never make a checked symbol pass.
+
+**SIX MUTATIONS, AND THE FIRST THREE LAND ON THE MAIN CASE ALONE, EACH NAMING
+ITS OWN FILE:**
+
+```
+  ChartControls' trio restored     1 dangling, names ChartControls.tsx
+  ProjectSchema restored           1 dangling, names ProjectShell.tsx
+  the rules.ts deferral restored   1 dangling, names rules.ts
+  the source walk matches nothing  "collected no sources" + the exemption case
+  the backtick pattern rots        "matched no ... symbol at all" + the same
+  an exemption naming nothing      "exempted but named nowhere" + 2 dangling
+```
+
+The last three fail two cases each, honestly: a walk that finds nothing and a
+pattern that matches nothing genuinely break both claims, and un-exempting a
+live name genuinely makes it dangling. Each message names a real problem, which
+is the test this file applies to a bundled failure.
+
+**AND THE VACUITY COUNTERS COUNT THE CONSTRUCT.** Files collected, declarations
+parsed, and backticked symbols FOUND — never how many resolved. A counter over
+what is RIGHT reads zero exactly when every name is broken, which is the
+inversion the `exclusiveMinimum` guard shipped once and this file already
+records as the sharper form of the rule.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **163 / 2031, exit 0**, zero failures and zero `Errors` lines — the
+recorded floor plus exactly this branch's one file and two cases.
+`test:integration` **147 / 1854, exit 0** against a SCRATCH DATABASE
+(`perfportal_named`) and a scratch Redis INDEX (db 6), started at a 1-minute
+load of 4.05 with 12,832 free pages — under the gate this file prescribes
+rather than past an expired wait. **e2e was not run and cannot be reached**:
+the diff is four comments and one `.ts` test file, and the single e2e file it
+touches gained no case and no selector.
+
 The contract-covers-every-route branch added no unit FILE and no unit case —
 unit stays **162 / 2029**, because the only test file it touches is an
 `.integration.test.ts`, which that config excludes — and 2 cases to
