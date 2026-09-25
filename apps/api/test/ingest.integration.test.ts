@@ -358,4 +358,72 @@ describe('POST /v1/runs', () => {
     const second = await post('  build-99 ');
     expect(second.body.id).toBe(first.body.id);
   });
+
+  /**
+   * THE SEAM NO UNIT CASE REACHES, and the defect this branch exists for.
+   * FR-ING-7 is a P0 requirement and specifies an `Idempotency-Key` HEADER;
+   * the server read only the metadata field, so the header was not merely
+   * ignored for dedupe — it never reached the column. Measured against a real
+   * API before the fix:
+   *
+   *     header   Idempotency-Key: k  x2  ->  TWO runs, both idempotency_key NULL
+   *     metadata idempotencyKey: k    x2  ->  one run, the second returns 422
+   *
+   * `idempotency.test.ts` pins the resolver's rules from values it hands
+   * itself, which says nothing about whether a request's headers ever reach
+   * it — three layers sit between the wire and that function, and the one
+   * that was missing is precisely a controller reading them. This drives a
+   * real request.
+   *
+   * ASSERTED AS THE ROW COUNT AS WELL AS THE ID. Equal ids alone would pass
+   * against a server that answered from a cache while still writing a second
+   * row, and "exactly one run exists" is what AC-ING-5 actually says.
+   */
+  it('dedupes a re-post that carries its key in the Idempotency-Key header', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+
+    const post = () =>
+      request(ctx.app.getHttpServer())
+        .post('/v1/runs')
+        .set('Authorization', `Bearer ${ctx.ingestToken}`)
+        .set('Idempotency-Key', 'header-build-7')
+        .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0 }))
+        .attach('bundle', bundle, 'bundle.tgz');
+
+    const first = await post();
+    const second = await post();
+    expect(second.body.id).toBe(first.body.id);
+
+    const rows = await ctx.prisma.run.count({ where: { idempotencyKey: 'header-build-7' } });
+    expect(rows).toBe(1);
+  });
+
+  /**
+   * A header and a metadata field naming DIFFERENT keys is refused rather
+   * than resolved by precedence: either choice silently discards one spelling
+   * of the request's own identity, and the likeliest cause is middleware
+   * minting a header key underneath an application that already set its own —
+   * a bug precedence would disguise as working dedupe.
+   */
+  it('refuses a request whose header and metadata idempotency keys disagree', async () => {
+    await drainQueue();
+    ctx = await createTestApp();
+
+    const res = await request(ctx.app.getHttpServer())
+      .post('/v1/runs')
+      .set('Authorization', `Bearer ${ctx.ingestToken}`)
+      .set('Idempotency-Key', 'from-header')
+      .field('metadata', JSON.stringify({ tool: 'gatling', waitMs: 0, idempotencyKey: 'from-body' }))
+      .attach('bundle', bundle, 'bundle.tgz');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('IDEMPOTENCY_KEY_CONFLICT');
+    expect(res.body.remediation).toBeTruthy();
+    // Neither key may have produced a run.
+    const rows = await ctx.prisma.run.count({
+      where: { idempotencyKey: { in: ['from-header', 'from-body'] } },
+    });
+    expect(rows).toBe(0);
+  });
 });

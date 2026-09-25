@@ -9,6 +9,7 @@ import { problem } from '../common/problem.js';
 import { badRequest, uuidParam } from '../common/validation.js';
 import { respondWithRun } from '../runs/runs.controller.js';
 import { RunsService } from '../runs/runs.service.js';
+import { IDEMPOTENCY_HEADER, resolveIdempotencyKey } from './idempotency.js';
 import { LiveService } from './live.service.js';
 import { notFound } from '../common/validation.js';
 
@@ -184,7 +185,20 @@ export class LiveController {
       );
     }
 
-    const result = await this.live.open({ ...tenant, projectId }, parsed.data);
+    // FR-ING-7 applies to every unsafe ingest operation, not only the bundle
+    // upload — opening a live run mints a run, so a retried open is exactly
+    // the duplicate this key exists to absorb. Same resolver as
+    // IngestController.post, so the two paths cannot disagree about what a
+    // valid key is or about what a conflict means.
+    const idempotencyKey = resolveIdempotencyKey(
+      req.headersDistinct[IDEMPOTENCY_HEADER],
+      parsed.data.idempotencyKey,
+    );
+
+    const result = await this.live.open(
+      { ...tenant, projectId },
+      { ...parsed.data, idempotencyKey },
+    );
     res.status(201).json(result);
   }
 

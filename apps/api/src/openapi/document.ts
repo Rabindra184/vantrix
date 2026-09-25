@@ -411,6 +411,19 @@ const parameters: Record<string, ParameterObject> = {
       'recent POST /v1/runs/live or POST /v1/runs/{id}/stream response for this run.',
     schema: { type: 'integer', minimum: 0 },
   },
+  IdempotencyKey: {
+    name: 'Idempotency-Key',
+    in: 'header',
+    required: false,
+    description:
+      'Makes a repeated submit return the run the first one created instead of minting a ' +
+      'second (FR-ING-7). Unique per project: a CI build id, or a UUID minted once per ' +
+      'execution and reused across retries — never regenerated per attempt, which defeats ' +
+      'the mechanism entirely. The "idempotencyKey" metadata field carries the same value ' +
+      'and is equally supported; sending BOTH with different values is a 400, because it ' +
+      'leaves ambiguous which run the request is a retry of.',
+    schema: { type: 'string', minLength: 1, maxLength: 200 },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -701,6 +714,7 @@ const paths: Record<string, PathItemObject> = {
         'operation\'s own error taxonomy, they are that shared state machine. This operation ' +
         'never returns 201: there is no "created, pending" response distinct from 202 ' +
         '"processing" — a run that exists but has not reached a terminal state IS the 202 case.',
+      parameters: [parameters['IdempotencyKey']!],
       requestBody: {
         required: true,
         description:
@@ -774,6 +788,7 @@ const paths: Record<string, PathItemObject> = {
         'it and the run groups by the simulation class its log header declares; set it to run ' +
         'one simulation as two tests with different injection profiles. A slug naming no ' +
         'existing test creates it.',
+      parameters: [parameters['IdempotencyKey']!],
       requestBody: {
         required: true,
         description: '"tool" is required; every other field is optional, exactly as on POST /v1/runs.',
@@ -1191,7 +1206,7 @@ const paths: Record<string, PathItemObject> = {
         '404s if "slug" names no project in the caller\'s organisation — including a project ' +
         'that exists in a different organisation, which is never distinguished from one that ' +
         'does not exist at all.',
-      parameters: [parameters['ProjectSlug']!],
+      parameters: [parameters['ProjectSlug']!, parameters['IdempotencyKey']!],
       requestBody: {
         required: true,
         description:

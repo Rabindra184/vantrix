@@ -146,6 +146,167 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The idempotency-key-header branch added ONE unit file —
+`apps/api/test/idempotency.test.ts` (10) — from **161 / 2019 to 162 / 2029**.
+Integration moves with it (that file is a `.ts` integration runs too) plus 2
+cases in `apps/api/test/ingest.integration.test.ts`, at **146 / 1850**.
+**e2e stays 150.** It is a **P0 requirement** the product implements through a
+different interface than the one it specifies, and it was found by asking
+which acceptance criteria nothing anywhere references.
+
+**EIGHTEEN OF FORTY ACs ARE NAMED BY NOTHING OUTSIDE THE PRD**, which is the
+method rather than the finding. One command — every `AC-[A-Z]+-[0-9]+` in the
+PRD, joined against every `.ts/.tsx/.md/.kt/.go` in the tree — and the whole
+AC-SLA family came back untouched, in a feature this session had already found
+two silent gates in. Four of those probed clean (below); the fifth family over,
+AC-ING-5, is this branch.
+
+**FR-ING-7 SAYS "HEADER" AND NOTHING READ ONE.** Three PRD sites say it:
+
+```
+  FR-ING-7  P0   "An optional `Idempotency-Key` HEADER, unique per project,
+                  causes a repeat to return the existing run rather than
+                  create a duplicate."
+  AC-ING-5       "the same `Idempotency-Key` posted twice to one project,
+                  then exactly one run exists and both responses describe it"
+  §Idempotency   "`Idempotency-Key` on all unsafe ingest operations"
+```
+
+Measured against a real API before anything changed:
+
+```
+  header   Idempotency-Key: k  x2  ->  0bbd8cdd + cef55cd2   TWO runs
+                                       both idempotency_key NULL
+  metadata idempotencyKey: k    x2  ->  801cc7e2 + 801cc7e2   ONE run, 2nd 422
+```
+
+**THE CONTROL IS WHAT MAKES IT A DEFECT RATHER THAN AN ABSENCE.** The
+capability is built, correct, and reachable — through a JSON metadata field
+the OpenAPI document declares. The interface the specification names is
+dropped so completely that the value never reaches the column. A client using
+any off-the-shelf idempotency middleware sends the IETF-standard header, gets
+202, and creates a duplicate run with nothing saying so: the retry the dedupe
+exists to absorb becoming a second run, which is the failure this key was
+added to prevent and the phrasing this file already uses for the trim defect.
+
+**THREE UNSAFE INGEST ROUTES, NOT TWO, AND THE THIRD WAS FOUND BY AN ANCHOR
+COUNT.** The OpenAPI edit asserted its multipart anchor matched once; it
+matched TWICE, which is how `POST /v1/projects/{slug}/runs` — the browser
+upload M05 added, doing the same `parseMetadata` -> `accept` — surfaced.
+Wiring two of the three would have been the one-caller-short shape this file
+records nine times, and nothing but that assertion would have said so. All
+three call one `resolveIdempotencyKey`.
+
+**`req.headers` COMMA-JOINS A REPEATED HEADER, AND THAT BROKE THE FIRST
+DESIGN IN BOTH DIRECTIONS.** The resolver was written to take
+`string | string[]` on the documented belief that Node presents a repeated
+header as an array. It does not — measured, twice, against a bare
+`http.Server` and then against the real API's own database:
+
+```
+  two lines xxx / yyy    headers -> 'xxx, yyy'    headersDistinct -> ['xxx','yyy']
+  two lines same / same  headers -> 'same, same'  headersDistinct -> ['same','same']
+```
+
+The first makes the ambiguity undetectable, and a joined value passes
+min(1)/max(200) happily — it was observed STORED as `key='xxx, yyy'`. The
+second is worse: two IDENTICAL headers are not ambiguous at all and produced
+`key='same, same'`, a key the client never sent, which a single-header retry
+could never match. Refusing on a comma is not available, because a comma is
+legal inside a key. `headersDistinct` (Node 18.3+; this repo's floor is 22) is
+what makes the two cases separable, and the array branch was DEAD CODE until
+it was read from there.
+
+**EIGHTH TIME THIS FILE RECORDS A MECHANISM CREDITED WITH WORK IT WAS NOT
+DOING** — and the first where the false belief was about the RUNTIME rather
+than about a comment. The check is the same one already prescribed: run the
+thing and read what comes back, rather than reasoning from the type.
+
+**AND THE TYPE IS NOW THE GUARD AGAINST THE OBVIOUS SIMPLIFICATION.**
+`resolveIdempotencyKey` takes `string[] | undefined`, so a future reader who
+"tidies" a call site back to `req.headers[...]` does not get a subtle bug —
+they get `TS2345: Argument of type 'string | string[] | undefined' is not
+assignable to parameter of type 'string[] | undefined'`. Verified by making
+that edit and watching `tsc` exit 2.
+
+**A DISAGREEMENT IS REFUSED RATHER THAN RESOLVED BY PRECEDENCE.** Header and
+metadata naming different keys is a 400. Either precedence silently discards
+one spelling of the request's OWN IDENTITY, and the likeliest cause is
+middleware minting a header key underneath an application that already set its
+own — a bug precedence disguises as working dedupe until the day it does not.
+Two IDENTICAL headers are accepted, because nothing about the identity is in
+doubt.
+
+**ONE SCHEMA, BECAUSE TWO SPELLINGS OF ONE IDENTITY MUST AGREE ON WHAT IS
+VALID.** `IdempotencyKeySchema` is exported from `contracts` and used by the
+metadata field, the header path and `live.ts`. That last one is a correction
+in passing: `live.ts`'s own comment already CLAIMED its bounds were "reused
+from `ingest.ts`, not reinvented, because ... a claim of sameness that used
+different bounds would be worse than no claim at all" — and then restated them
+inline. The claim is true now. `DeclaredTestSlugSchema` is the precedent and
+makes the same argument about four submit paths.
+
+**AND A DUPLICATE `parameters:` KEY WAS ONE COMMAND FROM SHIPPING.**
+`ingestProjectRun` already carried `parameters: [parameters['ProjectSlug']!]`,
+so appending a second `parameters:` line to the same object literal would have
+let the later one WIN and silently dropped `{slug}` from the document — an
+undeclared path parameter, which this file's own document-integrity sweep
+calls fatal to a generator. Caught by a structural check over the emitted
+object rather than by reading the diff, and the sweep afterwards is clean:
+**0 dangling $refs, 32 operations, 0 duplicate operationIds, 0 path-parameter
+mismatches.**
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  the controller discards the resolved key   the header dedupe case ALONE (integration)
+  the conflict check disabled                the disagree case ALONE (unit AND integration)
+  the repeated-header refusal disabled       the repeated-header case ALONE (unit)
+  req.headers instead of headersDistinct     TS2345 — it does not compile
+```
+
+The first is the exact before-state and it leaves the conflict case GREEN,
+because the resolver still throws — the two claims are genuinely separable and
+each has a mutation that reaches only it.
+
+**THE INTEGRATION CASE ASSERTS THE ROW COUNT AS WELL AS THE ID.** Equal ids
+alone pass against a server answering from a cache while still writing a
+second row, and "exactly one run exists" is what AC-ING-5 actually says.
+
+**PURELY ADDITIVE, CHECKED RATHER THAN ASSUMED.** No client in the tree sends
+this header — `clients/`, `agent/` and `apps/web/src` match nothing — so
+nothing can break, and every existing caller keeps using the metadata field.
+**The Gradle plugin's own key stays decorative and stays recorded as such**:
+`RunTailer` still calls `api.open(UUID.randomUUID().toString())` at both call
+sites, so it cannot match a previous run whatever the server now honours. That
+is a client decision about what identifies a run across a retry, which this
+file already records as a feature rather than a correction.
+
+**WHAT ELSE THE AC SWEEP PROBED AND CLEARED**, all against a real API rather
+than read, so the next reader re-checks rather than re-investigates:
+
+```
+  AC-SLA-5  rule edited 800 -> 100 AFTER evaluation; the historical run still
+            reports 800. The snapshot is read on the batch path, field by field.
+  AC-SLA-1  breach -> verdict failed, HTTP 422, assertion records actual
+            658.6329136143916 against threshold 100.
+  AC-SLA-2  a rule matching no endpoint -> not_applicable, HTTP 200,
+            verdict not_evaluated; the run is NOT failed on that basis.
+  AC-ING-2  waitMs:0 -> 202 carrying statusUrl and Retry-After: 5; polling
+            that URL returns 422 — identical to the synchronous path.
+```
+
+AC-SLA-3 (MAD regression detection), AC-SLA-4 (commit range) and AC-SLA-6
+(digest notifications) are UNBUILT rather than broken, and are recorded here
+as the arm not taken the same way `histogram_kind` and the plugin capability
+wiring are. **"No notifications" is worth stating precisely, because the word
+appears everywhere and means something else**: every `notif` match in
+production source is either `LiveNotifier`/`live-hub`, which are Redis pub/sub
+waking the fold owner, or a comment saying the ROW is the source of truth
+"never the notification". There is no outbound channel — no Slack, no webhook,
+no email — so AC-SLA-1's "the configured channels are notified" and all of
+AC-SLA-6 have nothing to be wrong about yet.
+
 The the-window-is-in-the-contract branch added no unit FILE and no unit case —
 unit stays **161 / 2019**, because its only test file is an
 `.integration.test.ts`, which that config excludes — and 2 cases to
