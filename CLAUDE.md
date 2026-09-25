@@ -146,6 +146,144 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The compare-tick-keeps-the-question branch added no unit FILE and 1 case to
+`apps/web/test/RunCompare.test.tsx`, from **161 / 2018 to 161 / 2019**.
+Integration is UNCHANGED at **145 / 1836** — every other file it touches is a
+`.tsx` or a `.spec.ts`, neither of which `vitest.integration.config.ts`
+includes — and its **e2e rises to 150**. It is a live defect, and it was
+recorded in this file as deliberately left.
+
+**FOUND BY TAKING THIS FILE'S OWN NOT-DONE NOTE LITERALLY.** The
+share-the-sorted-filtered-table entry records it in full — two view-state
+writes, forty lines apart, one file, each arguing `replace: true` in its own
+comment — and closes "left because it is a separate finding with its own
+red-verify". Second branch in this run taken that way, after
+windowed-bands-refuse-not-500, and the lesson is the one that entry already
+draws: **an entry recording something as deliberately left is a claim, and
+claims in this file have been wrong before.** This one was right, and it was
+still there.
+
+**MEASURED THROUGH THE REAL COMPONENT RATHER THAN READ:**
+
+```
+  RunCompare.tsx:94    setMetric   new URLSearchParams(params)   preserves
+  RunCompare.tsx:143   toggle      setParams({ runs: … })        REPLACES
+
+  ticking a run, with ?from=1000&to=5000&metric=errors on the URL
+    expected null to be '1000'
+```
+
+An OBJECT passed to `setParams` IS the complete new search string. The `runs`
+assertion passed in the same run, so the interaction works and only the rest of
+the query string goes.
+
+**AND IT COSTS MORE THAN THE NOTE RECORDED, WHICH IS WHY MEASURING BEAT
+RE-READING.** That entry names `from`/`to`. It also drops **`metric`** — owned
+by THIS page, and put in the URL deliberately by the review-majors branch, whose
+own entry reads "A SHARED LINK CARRIED THE RUNS AND NOT THE QUESTION … so a link
+to an ERRORS comparison opened as p95 for whoever received it." That fix was
+undone on every tick, by the control next to it.
+
+**THE TWO LOSSES ARE VISIBLE DIFFERENTLY, AND THE QUIET ONE IS THE WINDOW.**
+A reset metric redraws the chart, so something changes on screen even if the
+reader does not know why. The brush is deliberately withheld on Compare — "a
+control over a section that ignores it is a claim about that section" — so
+nothing at all changes when the window goes, and `useWindowSuffix` builds the
+tab links FROM the current params, so it is not hidden, it is gone.
+
+**AND THE GUARD THAT SHOULD HAVE CAUGHT IT WAS THREE MEMBERS SHORT OF ITS OWN
+NAME.** `run-charts.spec.ts` has a case called "the selected window survives
+moving between run tabs", and its loop read:
+
+```
+  // Every tab keeps it — including the ones that deliberately ignore it, so
+  // the return journey is lossless.
+  for (const tab of ['Overview', 'Errors', 'Load generators']) {
+```
+
+`RunTabs` renders SIX. The three it omitted are Charts (where the case starts),
+Trends and **Compare** — and Compare is precisely one of "the ones that
+deliberately ignore it", i.e. the class the comment claims to cover. **Fifth
+time this file records a guard one member short of its own argument**, after
+M09's families, AC-PLUG-2's `latency`, #215's statuses and the four rule scopes,
+and the first where the omission and the defect are the same tab.
+
+**SO THE LIST IS READ OFF THE TAB STRIP.** `<nav aria-label="Run sections">`
+is queried for its links and every one is visited, so a seventh tab joins the
+case by EXISTING — the move the branch above this one made for the clamp's
+caller list, applied to a browser case. The brush assertion is skipped for
+Trends and Compare, which withhold the control deliberately; the URL assertion
+is not, because the window travels whether or not it is drawn.
+
+**AND THAT WIDENED LOOP DOES NOT CATCH THIS DEFECT, WHICH THE RED-VERIFY SAID
+AND THE FIRST DRAFT OF THIS ENTRY DENIED.** With the fix reverted it reports
+**1 passed**. The reason is plain once seen: the loop CLICKS tabs and never
+TICKS a run, so it never reaches `toggle` at all. **A keeper case that cannot
+reach the mutated branch is not a keeper** — this file's own rule, recorded for
+the evidence-verdict-scope notice and the residue fixture, and earned a third
+time here by a case written to prove exactly the thing it could not see.
+
+The loop is kept because its own claim is real and was unguarded: six tabs
+exist, three were checked, and the promise in its comment is "every tab". What
+it is NOT is the proof of this branch.
+
+**THE PROOF IS A SECOND BROWSER CASE THAT TICKS.** `run-compare.spec.ts` opens
+Compare at `?from=0&to=10000`, clicks the one deselectable chip, and asserts the
+window survived AND that the Overview tab link built from those params still
+carries it. Red-verified both ways against the real page:
+
+```
+  toggle reverted   Expected pattern /[?&]from=0/
+                    Received  …/compare?runs=3764bc74-…      1 failed
+  the fix           1 passed
+```
+
+That received string IS the defect: the tick landed and took the window with
+it.
+
+**ONE `refine`, TWO CALLERS, AND THE DRIFT IS UNREPRESENTABLE IN THE FILE WHERE
+IT HAPPENED.** Both writers want the same thing — change one key, keep the rest,
+add no history entry — and spelling that twice is what let them disagree. This
+file records the same move for `warmupMsOf`, `bandsOrRefuse` and `isChangeGood`:
+one definition, both callers reach it.
+
+**AND A REPO-WIDE LINT GUARD WAS DESIGNED, MEASURED AND REFUSED.** The tempting
+rule is to ban an object literal in `setParams`/`setSearchParams`. Every such
+call in `apps/web/src` was enumerated first:
+
+```
+  preserves   StatisticsTable x2 · RunList:146 · useRunWindow · RunDetail · RunCompare:94
+  REPLACES    RunList:150   setSearchParams({})              Clear filters — deliberate
+  REPLACES    RunCompare:143                                 the defect
+```
+
+So the rule would ship with two exemptions against one catch — `RunList:150`
+wipes the query string on purpose and `RunList:146` rebuilds the complete filter
+set, resetting the cursor, which is correct. **A rule written against a codebase
+that already violates it has to ship with exemptions, and exemptions are how a
+rule becomes decoration** — this file's own words, from the branch that added
+the averaged-percentile selectors. Recorded as an arm measured and not taken
+rather than skipped.
+
+**AND THE FIXTURE COULD NOT TELL THE TWO ANSWERS APART AT FIRST, CAUGHT BY ITS
+OWN SETUP ASSERTION.** The case was written against a two-run cohort and failed
+on `expected aria-pressed "false", received "true"` — because
+`parseCompareSelection` opens with the current run AND its nearest neighbour, so
+a two-run cohort has NOTHING left to tick and `toggle` would have been a no-op.
+This file already records that exact number from the compare-cap branch ("it is
+TWO, not one"). A third run makes one chip genuinely unpressed; the assertion
+that caught it is the one pinning the state the case starts from.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **161 / 2019**, the recorded floor plus exactly this branch's one
+case. `test:integration` was NOT run and is unchanged by construction: every
+file in the diff is a `.tsx` or a `.spec.ts`, and that config includes neither.
+**`pnpm test:e2e` **150 passed, exit 0**** against a SCRATCH DATABASE (`perfportal_e2ecmp`)
+and a scratch Redis INDEX (db 15) — run rather than reasoned about, because the
+diff changes a page the browser suite drives AND the proof of this defect is a
+navigation seam no unit case can reach, which is what the note that recorded it
+said in the first place.
+
 The derive-the-clamp-caller-list branch added ONE unit file —
 `packages/statistics/test/clamped-quantiles.test.ts` (2) — from **160 / 2016 to
 161 / 2018**. Integration moves with it (that file is a `.ts` integration runs
