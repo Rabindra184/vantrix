@@ -146,6 +146,116 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The no-scope-the-engine-never-files branch added no unit FILE and no unit
+case — unit stays **159 / 2011**, because the one case it touches was RENAMED
+and EXTENDED rather than added to. Integration is UNCHANGED at **142 / 1828**
+(both files are `.tsx`, which that config never runs) and **e2e stays 149**.
+It is the silent-gate class for the fourth time, and the first where the
+guard built for the previous one is what missed it.
+
+**A RULE COULD BE AUTHORED ON A SCOPE THIS ENGINE HAS NEVER FILED A ROW
+UNDER.** `ProjectRules` offered **Scenario**, with `response_time` as its
+family. Measured two ways. Across the nine real runs in a developer database:
+
+```
+  request  52 rows   9 runs
+  group    48 rows   8 runs
+  run       9 rows   9 runs
+  scenario  0
+```
+
+And through the product's own call sequence over the reference
+`simulation.log` — `parseSimulationLog` → `runEngineAsync` →
+`toEvaluableStats` → `evaluateRules`:
+
+```
+  scopes the engine produced   group, request, run
+  the run's own scenarios      Browse, Checkout
+  scenario-scoped p95 rule     not_applicable
+  its message                  "No response_time statistics for Browse in this
+                                run, so p95 of Browse (response_time) ≤ 100000
+                                was not checked."
+```
+
+**WORSE THAN `latency`, BECAUSE A NAME EXISTS TO TYPE.** That defect offered a
+family with nothing to name; this one offers a scope whose values the product
+DISPLAYS — the concurrent-users chart is drawn per scenario, so a reader picks
+Scenario, types `Browse`, and saves a gate that reads as configured protection
+and judges nothing, for ever. The more the form looks right, the longer it
+survives.
+
+**THE ENGINE USES `scenario` FOR THE USERS SERIES ONLY, WHICH IS WHY THE WORD
+IS EVERYWHERE AND THE SCOPE IS NOT.** `#userEvents`, `users.scenarios()` and a
+dozen field names carry it; no `#rollupFor`, `#seriesFor` or `#errorsFor` call
+passes it. `MetricScopeSchema` and `SLA_RULE_SCOPES` both declare four scopes
+and the producer writes three.
+
+**AND THE GUARD FROM THE `latency` BRANCH IS WHAT MISSED IT.** That case reads
+the offered FAMILIES off the rendered control and joins them against the
+engine's own literals — and then iterated a HARD-CODED
+`['run', 'scenario', 'request', 'group']`, trusting the scopes into the check.
+Its docstring says M09 "narrowed these lists by SCOPE and left `latency` on
+three of the four ... one family further on". **It then made the same mistake
+one axis over, in the sentence after diagnosing it.** Both axes are read off
+the control now.
+
+**FOURTH TIME THIS FILE RECORDS A GUARD ONE MEMBER SHORT OF ITS OWN
+ARGUMENT** — M09's families, AC-PLUG-2's `latency`, #215's OpenAPI statuses,
+and now this. The transferable form is narrow: **whenever a check iterates a
+list to validate something, ask what validates the list.**
+
+**FOUR MUTATIONS, AND THE THIRD IS THE ONE THAT EARNS ITS PLACE:**
+
+```
+  scenario restored to the offered scopes   the SCOPE assertion
+  latency restored to a family list         the FAMILY assertion + M09's case
+  the loose spelling vs the before-state     NOTHING — exit 0
+  the engine collector finds nothing         "no engine source collected"
+```
+
+**THE QUOTED LITERAL IS LOAD-BEARING, RE-MEASURED ON THE NEW AXIS.** The
+`latency` entry records that relaxing the join to a bare substring passes
+against the before-state, because `export * from './bucket-latency.js'`
+survives comment-stripping. `scenario` is the same trap with far more
+surface: with `engineSrc.includes(v)` and the defect restored, the case
+**passes, exit 0**. A guard written the obvious way would have exonerated the
+thing it was written to find — for the second time in this file, on the
+second axis, which is what makes it a rule rather than an anecdote.
+
+**NO CONTRACT CHANGE, AND THE REASON IS NOT THE `latency` ONE.** There the
+entry says "the schema cannot refuse it — both fields are independently valid
+enums". A scope is ONE field, so the server COULD refuse `scenario` outright.
+It is left declared because the product intends scenario statistics — the
+contract declares the scope, AC-PARITY-1 names a Scenario Detail page — and
+refusing it in the API would have to be reversed the day they are built.
+Narrowing the FORM removes the reachable defect and costs nothing when they
+arrive: the guard joins against the engine, so the day a
+`#rollupFor('scenario', …)` exists the list may grow again and the check
+permits it. **A form that offers less than the contract is a product
+decision; an API that refuses what the contract declares is a breaking
+change.**
+
+**AND THE MISSING PAGE IS THE SAME FINDING, NOT A SECOND ONE.** AC-PARITY-1
+names Run, Request, Group and **Scenario** detail pages compared element by
+element against Gatling's report; `App.tsx` declares `runs/:runId/requests/:name`
+and `runs/:runId/groups/:name` and no scenario route. Both the missing page
+and the unfireable rule are one absent capability — scenario-scope statistics
+— and recording them together is what stops the next reader fixing the route
+and leaving the gate.
+
+**AND NOTHING WAS LOST: zero scenario-scoped rules exist and zero assertions
+have ever been recorded for one.** Checked before narrowing, because removing
+an option a reader is already using would be a different change needing a
+migration note.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **159 / 2011**, the recorded floor UNCHANGED, which is the
+prediction for a branch that renames a case rather than adding one.
+`test:integration` was NOT run and is unchanged by construction: both files in
+the diff are `.tsx`, which `vitest.integration.config.ts` never includes.
+`pnpm test:e2e` **149 passed, exit 0** — run rather than reasoned about,
+because the diff removes an option from a form the browser suite drives.
+
 The every-problem-states-a-real-fix branch added ONE unit file —
 `apps/api/test/remediation-coverage.test.ts` (2) — from **158 / 2009 to
 159 / 2011**. Integration moves with it (that file is a `.ts` integration runs
