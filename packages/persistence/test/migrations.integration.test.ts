@@ -67,6 +67,17 @@ describe('migrations', () => {
    * CURRENT_DATE: it stays green today and goes red in January, forcing the
    * rollover work migration 0001's hand-edited partitions defer.
    *
+   * ═══ AND GOING RED IN JANUARY IS TOO LATE, WHICH IS WHY IT HAS A SIBLING
+   * NOW ═══
+   *
+   * This case fires on the day `CURRENT_DATE` stops having a partition —
+   * i.e. the morning of the outage, when every ingest is already failing.
+   * That is DETECTION with no warning period.
+   * `partition-runway.integration.test.ts` asks the other question — how far
+   * away the end is — and goes red 180 days ahead, which is the difference
+   * between being told and being told in time. Both are kept: this one
+   * proves the actual INSERT works today, which a bound calculation cannot.
+   *
    * Proven with a real INSERT (rolled back, not left behind) rather than by
    * re-deriving the answer from partition-bound metadata — an INSERT is
    * exactly the operation that fails in production when no partition
@@ -81,14 +92,42 @@ describe('migrations', () => {
     }
   });
 
+  /**
+   * THE DATE IS DERIVED, AND IT USED TO BE WRITTEN DOWN.
+   *
+   * This case asserts that the partition set is FINITE — the one thing a
+   * `count(*) > 0` assertion can never see. It did that by hard-coding
+   * `'2027-06-15'`, which was past the last partition migration 0001
+   * created... until `20260925120000_partitions_2027` created twelve more and
+   * that date became an ordinary working day. **The case then failed for
+   * being right**, on a tree where nothing was wrong.
+   *
+   * A test whose subject is "the set ends somewhere" must ASK where it ends.
+   * The date now comes from the catalogue, plus a day, so every future
+   * extension moves it automatically and the claim survives the migration it
+   * is about. Same shape as `SCHEMA_TABLES` being derived rather than listed,
+   * one file over.
+   */
   it('demonstrates the fuse: a write dated past the last partition is rejected', async () => {
-    // The last hand-edited partition (migration 0001) ends 2027-01-01
-    // exclusive. This is not a claim about "today" — it pins down that the
-    // partition set is finite and does eventually run out, which is exactly
-    // what the previous `count(*) > 0` assertion could never detect.
     const pool = createPool(URL_);
     try {
-      await expect(insertBucketRow(pool, "'2027-06-15'::date")).rejects.toThrow(
+      const { rows } = await pool.query<{ expr: string }>(
+        `SELECT pg_get_expr(c.relpartbound, c.oid) AS expr
+           FROM pg_inherits i
+           JOIN pg_class c ON c.oid = i.inhrelid
+           JOIN pg_class p ON p.oid = i.inhparent
+          WHERE p.relname = 'run_series_bucket'`,
+      );
+      const bounds = rows
+        .map((r) => /TO \('(\d{4}-\d{2}-\d{2})'\)/.exec(r.expr ?? '')?.[1])
+        .filter((b): b is string => b !== undefined)
+        .sort();
+      // Vacuity: with no readable bound the `max` below is undefined and the
+      // insert would be testing nothing at all.
+      expect(bounds.length, 'no partition bounds could be read').toBeGreaterThan(0);
+      const past = bounds[bounds.length - 1]!;
+
+      await expect(insertBucketRow(pool, `'${past}'::date + 1`)).rejects.toThrow(
         /no partition of relation/i,
       );
     } finally {
