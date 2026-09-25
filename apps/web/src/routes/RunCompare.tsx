@@ -77,6 +77,28 @@ export default function RunCompare() {
   const { runId } = useParams<{ runId: string }>();
   const [params, setParams] = useSearchParams();
 
+  /**
+   * EVERY VIEW-STATE WRITE ON THIS PAGE REFINES THE CURRENT QUERY STRING.
+   *
+   * Both writers want the same thing — change one key, keep the rest, do not
+   * push a history entry — and spelling that twice is what let them disagree:
+   * `setMetric` copied `params` first while `toggle` passed an OBJECT, which
+   * React Router reads as the COMPLETE new search string. So ticking a run
+   * silently dropped `metric` (owned by this page, and the reason the metric is
+   * in the URL at all) and `from`/`to` (the analysis window, which
+   * `useWindowSuffix` reads back out of the params to build the tab links).
+   *
+   * The window loss was the quiet one: the brush is deliberately withheld on
+   * Compare, so nothing on screen changed at the moment it went.
+   *
+   * One definition, both callers, and the drift is now unrepresentable here.
+   */
+  const refine = (mutate: (next: URLSearchParams) => void) => {
+    const updated = new URLSearchParams(params);
+    mutate(updated);
+    setParams(updated, { replace: true });
+  };
+
   /* ═══ THE METRIC IS PART OF THE QUESTION, SO IT LIVES IN THE URL ═══
    *
    * `runs=` was serialised and the metric was component state defaulting to
@@ -88,10 +110,10 @@ export default function RunCompare() {
    * one view rather than being a new destination. */
   const metric = parseCompareMetric(params.get('metric'));
   const setMetric = (next: CompareMetric) => {
-    const updated = new URLSearchParams(params);
-    if (next === DEFAULT_COMPARE_METRIC) updated.delete('metric');
-    else updated.set('metric', next);
-    setParams(updated, { replace: true });
+    refine((updated) => {
+      if (next === DEFAULT_COMPARE_METRIC) updated.delete('metric');
+      else updated.set('metric', next);
+    });
   };
 
   // MINOR 5: gated the same way every tab is — a live run has no `RunStat`
@@ -140,7 +162,7 @@ export default function RunCompare() {
     const next = selected.includes(id)
       ? selected.filter((selectedId) => selectedId !== id)
       : [...selected, id];
-    setParams({ runs: serialiseCompareSelection(next) }, { replace: true });
+    refine((updated) => updated.set('runs', serialiseCompareSelection(next)));
   }
 
   const seriesResults = useQueries({

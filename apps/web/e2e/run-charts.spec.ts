@@ -1388,14 +1388,33 @@ test('the selected window survives moving between run tabs', async ({ page }) =>
   await page.getByTestId('window-apply').click();
   await expect(page).toHaveURL(/[?&]from=0/);
 
-  // Every tab keeps it — including the ones that deliberately ignore it, so
-  // the return journey is lossless.
-  for (const tab of ['Overview', 'Errors', 'Load generators']) {
-    await page.getByRole('link', { name: new RegExp(`^${tab}`) }).click();
-    await expect(page).toHaveURL(/[?&]from=0/);
+  // EVERY tab keeps it — including the ones that deliberately ignore it, so the
+  // return journey is lossless.
+  //
+  // THE LIST IS READ OFF THE TAB STRIP RATHER THAN WRITTEN DOWN, and that is
+  // the whole point of this case. It used to enumerate three of the six tabs —
+  // Overview, Errors, Load generators — under this same comment promising
+  // "every tab". Compare was one of the three it omitted, and Compare was the
+  // one dropping the window: `toggle` wrote `setParams({ runs })`, which React
+  // Router reads as the COMPLETE new search string, so ticking a run discarded
+  // `from`/`to` and the tab links built from them. A hand-written list is how a
+  // case comes to promise "every" and check half.
+  const tabs = page.getByRole('navigation', { name: 'Run sections' }).getByRole('link');
+  const names = await tabs.allInnerTexts();
+  expect(names.length, 'the tab strip should have been collected').toBeGreaterThan(4);
+
+  for (const name of names) {
+    await page.getByRole('navigation', { name: 'Run sections' })
+      .getByRole('link', { name, exact: true })
+      .click();
+    await expect(page, `the window survived the ${name} tab`).toHaveURL(/[?&]from=0/);
     await expect(page).toHaveURL(/[?&]to=10000/);
-    // And the control is still there, showing what is selected.
-    await expect(page.getByTestId('window-from')).toHaveValue('0');
+    // And the control is still there, showing what is selected. Compare and
+    // Trends withhold the brush deliberately, so it is asserted only where the
+    // reader can actually see it.
+    if (!['Trends', 'Compare'].includes(name)) {
+      await expect(page.getByTestId('window-from')).toHaveValue('0');
+    }
   }
 
   // Trends is whole-run by construction: the control goes away, the

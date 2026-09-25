@@ -138,6 +138,49 @@ test('toggling a run rewrites the URL, so a comparison can be pasted', async ({ 
   await expect(page).toHaveURL(/[?&]runs=/);
 });
 
+/**
+ * THE TICK MUST NOT DISCARD THE ANALYSIS WINDOW, AND ONLY A BROWSER SHOWS IT.
+ *
+ * `toggle` wrote `setParams({ runs })` — an OBJECT, which React Router reads as
+ * the COMPLETE new search string — so ticking a run dropped `from`/`to` and
+ * `metric` along with them. `RunCompare.test.tsx` pins the URL write itself;
+ * what no unit case can reach is the RETURN JOURNEY, because `useWindowSuffix`
+ * builds every tab link out of the current params. That is the seam, and this
+ * is the case that crosses it.
+ *
+ * The loss was silent by construction: the brush is deliberately withheld on
+ * Compare, so nothing on screen changed at the moment the window went.
+ */
+test('ticking a run keeps the analysis window, there and back', async ({ page }) => {
+  const { admin, runId } = await cohortOfTwo();
+  await signIn(page, admin);
+
+  await page.goto(`${runComparePath(runId)}?from=0&to=10000`);
+  await drawn(page);
+
+  // The other run in the cohort — the current one is deliberately not
+  // deselectable, so this is the only chip a reader can actually toggle.
+  const others = page.locator('[data-testid^="compare-run-"]:not([disabled])');
+  await expect(others).toHaveCount(1);
+  await others.first().click();
+
+  // The tick landed, AND the window it was made under survived it. Asserting
+  // only the first is what let this ship: the existing toggle case checks
+  // `runs=` and nothing else.
+  await expect(page).toHaveURL(/[?&]runs=/);
+  await expect(page, 'the window survived the tick').toHaveURL(/[?&]from=0/);
+  await expect(page).toHaveURL(/[?&]to=10000/);
+
+  // THE RETURN JOURNEY. The tab links are built FROM these params, so a window
+  // dropped here is not hidden — it is gone from every tab that follows.
+  await page
+    .getByRole('navigation', { name: 'Run sections' })
+    .getByRole('link', { name: 'Overview', exact: true })
+    .click();
+  await expect(page).toHaveURL(/[?&]from=0/);
+  await expect(page.getByTestId('window-from')).toHaveValue('0');
+});
+
 test('the per-request matrix has a column per run and a row per request', async ({ page }) => {
   const { admin, runId } = await cohortOfTwo();
   await signIn(page, admin);

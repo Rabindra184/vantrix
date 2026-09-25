@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react';
-import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
+import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunProcessing, RunResponse } from '@perfportal/contracts';
 import { runQueryKey } from '../src/api/run';
@@ -53,9 +53,13 @@ function processing(status: RunProcessing['status']) {
   return { state: 'processing' as const, run: { id: RUN_ID, status, statusUrl: `/v1/runs/${RUN_ID}` } };
 }
 
+/** Reports the live query string, so a URL write can be asserted. */
+const Where = () => <span data-testid="where">{useLocation().search}</span>;
+
 function renderCompare(
   body: ReturnType<typeof processing> | { state: 'ready'; run: RunResponse },
   trends: unknown = EMPTY_TRENDS,
+  search = '',
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN_ID), body);
@@ -86,7 +90,7 @@ function renderCompare(
 
   const utils = render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/runs/${RUN_ID}/compare`]}>
+      <MemoryRouter initialEntries={[`/runs/${RUN_ID}/compare${search}`]}>
         <Routes>
           <Route
             path="/runs/:runId"
@@ -101,6 +105,7 @@ function renderCompare(
             <Route path="compare" element={<RunCompare />} />
           </Route>
         </Routes>
+        <Where />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -227,10 +232,59 @@ const cohortRunAt = (over: Record<string, unknown>) => ({
 });
 
 const OTHER = '00000000-0000-4000-8000-0000000000ff';
+/** A third candidate, so the picker has a chip that is NOT already pressed:
+ *  `parseCompareSelection` opens with the current run AND its nearest
+ *  neighbour, so a two-run cohort has nothing left to tick. */
+const THIRD = '00000000-0000-4000-8000-0000000000aa';
 const populated = (runs: unknown[]) => ({ ...EMPTY_TRENDS, cohortSize: runs.length, runs });
 
 
 describe('RunCompare — the picker says which run each candidate is', () => {
+  /**
+   * TICKING A RUN MUST NOT DISCARD THE REST OF THE QUERY STRING.
+   *
+   * `toggle` wrote `setParams({ runs })` — an OBJECT, which React Router reads
+   * as the COMPLETE new search string — while `setMetric` forty lines above
+   * copies `params` first. Two view-state writes in one file, each arguing
+   * `replace: true` in its own comment, disagreeing about what `replace` means.
+   *
+   * What it costs is two different things, and the second is the quiet one:
+   *
+   *   metric   owned by THIS page. Chosen so a shared link carries the QUESTION
+   *            and not just the runs, and silently reset to p95 on every tick.
+   *   from/to  the analysis window. `useWindowSuffix` builds the tab links FROM
+   *            the current params, so the window is not hidden — it is gone, and
+   *            the brush is deliberately withheld on Compare, so nothing on
+   *            screen changes at the moment it is lost.
+   */
+  it('keeps the window and the metric when a run is ticked', async () => {
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      populated([
+        cohortRunAt({}),
+        cohortRunAt({ id: OTHER, startedAt: '2026-08-15T11:00:00.000Z', toolStartedAt: '2026-08-15T11:00:00.000Z' }),
+        cohortRunAt({ id: THIRD, startedAt: '2026-08-15T10:00:00.000Z', toolStartedAt: '2026-08-15T10:00:00.000Z' }),
+      ]),
+      '?from=1000&to=5000&metric=errors',
+    );
+
+    // The fixture has to be able to tell the two answers apart: a run that is
+    // already selected would make `toggle` a no-op on the selection and the
+    // assertion would pass against a page that never wrote the URL at all.
+    const chip = await screen.findByTestId(`compare-run-${THIRD}`);
+    const before = screen.getByTestId('where').textContent ?? '';
+    expect(before).toContain('from=1000');
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(chip);
+
+    const after = new URLSearchParams(screen.getByTestId('where').textContent ?? '');
+    expect(after.get('runs'), 'the tick itself still lands').toContain(THIRD);
+    expect(after.get('from'), 'the analysis window survives a tick').toBe('1000');
+    expect(after.get('to')).toBe('5000');
+    expect(after.get('metric'), 'the question the link was sharing survives').toBe('errors');
+  });
+
   it('names the conditions a run carries, and says nothing for one that carries none', async () => {
     renderCompare(
       { state: 'ready', run: COMPLETE_RUN },
