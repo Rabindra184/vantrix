@@ -375,7 +375,12 @@ export function buildDelta(
       errorRate: runStat?.errorRate ?? 0,
       percentiles: runStat?.percentiles ?? {},
       maxUsers,
+      // BOTH, because they answer different questions and the live page asks
+      // both: `durationMs` is the time axis' domain (`RunShell` passes it as
+      // `liveDurationMs`) and `activityMs` is what the "Duration so far" tile
+      // shows, so it agrees with the chip the same run grows when it closes.
       durationMs: result.durationMs,
+      activityMs: result.activityMs,
     },
     responseTime: {
       widthMs: responseWidthMs,

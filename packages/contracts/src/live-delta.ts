@@ -26,7 +26,34 @@ export const LiveSummarySchema = z.object({
    */
   percentiles: z.record(z.string(), z.number()),
   maxUsers: z.number(),
+  /**
+   * The SERIES SPAN: run-header start to the last event. This is what a live
+   * time axis must cover, and it is NOT the number the run page labels
+   * "Duration" -- see `activityMs` below and `EngineResult.durationMs`, which
+   * says the same thing from the producing end.
+   */
   durationMs: z.number(),
+  /**
+   * The MEASURED span -- first event after warm-up to last -- which is what
+   * both the run page and Gatling's own report call the run's duration, and
+   * exactly the window every `throughputRps` divides by.
+   *
+   * IT IS HERE BECAUSE THE LIVE TILE WAS SHOWING THE OTHER ONE. `RunHeader`
+   * renders `activityMs ?? durationMs` for a terminal run; the live tile had
+   * only `durationMs` to render, so one run reported "63s" while streaming and
+   * "62s" once it finished -- measured on the reference fixture through the
+   * product's own `formatDuration`, a 1025 ms lead-in, and a DURATION THAT
+   * DECREASES when a run ends. The same
+   * reader dividing 895 requests by the 63s on screen gets 14.17 req/s where
+   * the finished page's throughput tile says 14.40, which is precisely the
+   * self-contradiction `EngineResult.activityMs` was added to remove.
+   *
+   * OPTIONAL, and that is load-bearing rather than tidy: the browser drops a
+   * whole frame that fails `safeParse`, so a required field here would blank
+   * the live page for every delta written by a worker that predates this
+   * field -- the argument `sla`'s own `.default()` makes four fields down.
+   */
+  activityMs: z.number().optional(),
 });
 export type LiveSummary = z.infer<typeof LiveSummarySchema>;
 

@@ -146,6 +146,213 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The live-duration-is-activity-span branch added no unit FILE and 4 cases — 1 to
+`apps/worker/test/live-delta.test.ts`, 1 to
+`packages/contracts/test/live-delta.test.ts` and 2 to
+`apps/web/test/RunOverviewTab.live.test.tsx` — from **163 / 2032 to 163 / 2036**.
+Integration moves with the two `.ts` files at **147 / 1856**, and **e2e stays
+150**. It is a WRONG NUMBER on the live page, and it is the live twin of a fix
+this repository already made once.
+
+**A DURATION THAT DECREASED WHEN THE RUN ENDED.** Measured through the real
+modules over the reference `simulation.log`:
+
+```
+  durationMs   live tile "Duration so far"   63161 ms  -> "63s"
+  activityMs   terminal chip "Duration"      62136 ms  -> "62s"
+  the lead-in a reader loses on completion    1025 ms
+```
+
+`EngineResult` carries both and its own docstring says which is which:
+`durationMs` is run-header start to last event — "the number a time axis must
+span or the final bucket falls outside the domain" — and is labelled **"NOT
+WHAT THE RUN PAGE CALLS 'Duration' — that is `activityMs` below"**.
+`RunIdentity` repeats it: "NOT the number the run page labels 'Duration'".
+`RunHeader` renders `activityMs ?? durationMs`. **The live wire carried only
+`durationMs`, and the live tile rendered it under the label `Duration so far`.**
+
+**AND THE SECOND HALF IS THE CONTRADICTION `activityMs` WAS CREATED TO
+REMOVE.** That field exists because "THE RUN PAGE WAS CONTRADICTING ITSELF" —
+the header showed one span while the throughput tile divided by another, so
+`throughput × duration` did not equal the count on screen. Measured on the
+same fixture:
+
+```
+  895 requests / 63161 ms   14.17 req/s   what a live reader computes
+  throughputRps             14.40 req/s   what the finished page shows
+```
+
+So the fix landed on the batch surface and the identical arithmetic stayed
+wrong one surface over, on the page a reader is watching WHILE the run
+happens.
+
+**IT IS NOT ENGINE DRIFT, AND ESTABLISHING THAT IS WHAT NARROWED IT.**
+`runEngine` constructs the same `LiveEngine` the fold owner does
+(`engine.ts:455` against `fold-owner.ts:1491`), so live and batch cannot
+disagree about any quantity the engine computes — both spans are right in
+both paths. What differs is the HAND-WRITTEN PROJECTION onto the wire:
+`delta.ts` chose one of the two fields. **When one implementation serves two
+surfaces, the defect is in whatever is hand-written between them**, and that
+is the whole search space rather than the engine.
+
+**THIRD BRANCH RUNNING WHERE A FIX REACHED THE TERMINAL SURFACE AND NOT ITS
+LIVE TWIN.** live-tiles-keep-their-places was the tile ORDER; this is the tile
+VALUE; the branch before them found a deferral about the live banner that had
+already been satisfied. The transferable form is narrow and worth a grep
+rather than a memory: **the run page has two renderings of one section, and
+this product's fixes keep stopping at the first.** `RunStats.tsx` and
+`RunDetail.tsx`'s live block, `identity.*` and `summary.*` — a change to
+either is a question about the other.
+
+**THE FIX CARRIES BOTH, BECAUSE THE TWO SPANS HAVE DIFFERENT JOBS.**
+`RunShell` already passes `summary.durationMs` down as `liveDurationMs` for
+the chart domain, which is exactly what that field is for — so repurposing it
+would have moved the defect into the time axis. `LiveSummary` gains
+`activityMs` beside it and the tile reads **`activityMs ?? durationMs`, the
+same expression `RunHeader` computes**, with the same fallback for the same
+reason. That mirrors the pipeline, which persists both and has since
+migration 20260822090000.
+
+**`.optional()` IS LOAD-BEARING RATHER THAN TIDY.** `parseFrame` drops a whole
+frame that fails `safeParse`, so a required field would blank the live page for
+every delta written by a worker that predates it — the whole deploy window, and
+permanently for a run that closed just before it. That is the argument `sla`'s
+own `.default()` makes four fields down, and the third mutation is exactly this
+change.
+
+**THE FIXTURE HAS A DELIBERATE LEAD-IN, AND THE VACUITY GUARD IS WHY THAT IS
+STATED RATHER THAN ASSUMED.** `#runStartMs` defaults to 0 and `activityMs`
+anchors on the first event, so a run whose traffic starts at the header
+timestamp makes the two spans ONE NUMBER — and a case written the obvious way
+then cannot tell which field was sent and passes against the defect. The
+worker case starts its traffic at 1000 ms and asserts the two differ BEFORE
+asserting which one arrived. **This file records four fixtures that could not
+distinguish two answers** — the errors-tally invariant, a geometry bound
+measured against a 24-character simulation name, the cardinality samples'
+uniformly-synthetic `ep-0`...`ep-11`, and G-05's three-request percentile case
+— and two entries both number themselves "third", so the priors are named here
+rather than counted. What is new is the ORDER: the guard was written before the
+fixture rather than after a false pass taught us to want one.
+
+**FOUR MUTATIONS, FOUR DISTINCT LANDINGS:**
+
+```
+  the worker sends durationMs (the before-state)  "expected 60000 to be 59000"
+  the tile reads durationMs (the before-state)    the web value case ALONE
+  activityMs made REQUIRED                        the back-compat case, invalid_type
+  the fixture's two spans coincide                "the fixture must distinguish
+                                                   the two spans: expected 60000
+                                                   not to be 60000"
+```
+
+**AND I WROTE THE WRONG RENDERING INTO FOUR FILES BEFORE A TEST CAUGHT IT.**
+The probe that measured this used its OWN formatter and printed "1m 3s" and
+"1m 2s", and that pair went into the contract's docstring, the component's
+comment, the worker test and the web test as a claim about what a reader sees.
+It is false: `formatDuration` returns `${seconds}s` below `LONG_RUN_MS`, so the
+tile reads **"63s" and "62s"**. The web case failed with
+`Expected "1m 2s" / Received "62s"` — the product correcting the measurement's
+presentation.
+
+**THE "1m 2s" IS REAL AND BELONGS TO GATLING.** `EngineResult.activityMs`'s own
+docstring quotes it ("Gatling anchors its own duration at the first event too,
+'1m 2s' where `durationMs` rounds to 63s") — that is GATLING's report
+rendering the same span, and copying it into a claim about THIS page is what
+made the error plausible. **A number measured with your own formatter is not
+what the reader sees**, which is the display-filter trap this file records
+three times for anchors, met for the first time on a CLAIM: there a `sed`
+prefix corrupted a string I was matching, here a `fmt()` helper corrupted a
+sentence I was asserting. Corrected in all five places, with the distinction
+named where the next reader will be.
+
+**AND I RACED THE INTEGRATION SUITE AGAINST ITSELF, WHICH THIS FILE FORBIDS —
+AND THE CHECK IT PRESCRIBES IS WHAT LET ME.** Two runs overlapped on one
+scratch database and reported **226 and 228 failures across 24 and 16 files**,
+different sets both times, out of a correctly COLLECTED 147 / 1856. The
+signature is the one already recorded: `Inconsistent query result: Field
+project is required to return data, got null instead` — a row read while
+another connection truncated underneath it. `run_project_id_fkey` exists, so
+that state is unreachable at rest, and the database afterwards held **0
+orphaned runs**; it was transient by construction.
+
+**`pgrep -f vitest` RETURNED ZERO WHILE THE FIRST RUN WAS STARTING.** That is
+the check this file prescribes, and it is too narrow: `pnpm test:integration`
+spends its first stretch in a VITE BUILD — `/tmp/i4.log` holds a complete
+`vite build` with 30 precompressed assets before the line `RUN v4.1.11` — and
+during it there is no process named `vitest` to find. I read a zero, concluded
+the first run had died, and started a second.
+
+**THE BROADER PATTERN IS THE FIX, AND SO IS THE QUEUE DEPTH:**
+
+```
+  ps -axo args | grep -cE '[v]itest|[v]ite build|[p]laywright|perf-dashboard.*[d]ist/main\.js'
+  redis-cli -n <index> LLEN bull:ingest:wait     <- 119 when this was diagnosed
+```
+
+A non-empty ingest queue on the scratch index says a suite is mid-flight even
+when no process matches, which is the tell this file already records for a
+leftover worker and which applies just as well to a suite that has not
+finished. **And a background task that has not reported is not a task that has
+stopped** — the first run announced `completed` twenty minutes after I had
+written it off, which is the only unambiguous evidence either way.
+
+**NEITHER RUN IS QUOTED AS A RESULT**, and the e2e that ran beside them (140
+passed, 1 failed in `mobile.spec.ts`) is discarded on the same grounds: a
+suite whose data was truncated underneath it neither passes nor fails
+anything. The database was dropped, recreated, migrated and the Redis index
+flushed before the run that IS quoted below.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **163 / 2036**, the recorded floor plus exactly this branch's four
+cases, zero failures and zero `Errors` lines. `test:integration` COLLECTED
+**147 / 1856** — the predicted floor exactly, so nothing was skipped — with
+**1855 passed and ONE failure**, and **`pnpm test:e2e` 150 passed, exit 0**,
+against a SCRATCH DATABASE (`perfportal_dur`) and a scratch Redis INDEX (db 9).
+
+**THAT ONE FAILURE IS IN THE PATH THIS BRANCH CHANGES, SO IT WAS NOT WRITTEN
+OFF.** `live.integration.test.ts`'s "a streamed run finalizes to the same
+figures as an uploaded one" is the live-versus-batch parity case — exactly the
+subject here — so "my diff cannot reach it" was never available. What settles
+it is WHICH assertion failed:
+
+```
+  count · okCount · koCount · minMs · maxMs · meanMs   ALL PASSED
+  expect(liveRun.body.status).toBe('complete')          undefined
+```
+
+Every parity assertion — the agreement this change is about — passed in the
+failing run. It died one line later reading the run back, on a body carrying
+no `status` AT ALL, which neither a 200 nor the widened 202 can produce; that
+is the transport shape this file already records for this file by signature,
+not an assertion about a value.
+
+**AND THE RATE IS THE EVIDENCE, NOT THE ONE RUN.** Isolated, the file is
+**33 passed, five times out of five**. This file's own rule is that acquitting
+needs one matching failure while convicting needs a rate, and one run per side
+is what turns a coincidence into a mechanism — so five were run rather than
+one. CI's clean containers are the controlled comparison: they hold the commit
+fixed and vary the machine, which is the one variable this session made
+suspect.
+
+**AND THE WHOLE SUITE THEN RAN CLEAN, WHICH TURNS THAT INFERENCE INTO A
+MEASUREMENT.** A SECOND full `test:integration` — same commit, a `perfportal_dur`
+dropped, recreated and migrated, Redis db 9 flushed, and nothing else touching
+the stack — reported **147 / 1856, exit 0, zero failures**. So the parity file
+passed six times out of six (five isolated, once in a clean full run) and
+failed once, in a run whose only distinguishing feature was the machine. **No
+test failed twice**, which is this file's own tell for the flake. The rule
+worth keeping is the one the percentiles-clamped entry already states: a
+result deferred to CI is a thing to go back and MEASURE, not only to cite, and
+a second local run costs eight minutes against a verdict that would otherwise
+rest on somebody else's containers.
+
+**e2e WAS RUN RATHER THAN REASONED ABOUT**, for two reasons: the diff changes
+the live page the browser suite drives, and every package in the workspace
+imports `@perfportal/contracts`. **`packages/contracts` was REBUILT and the emitted
+`dist/src/live-delta.js` grepped for the new field before any suite ran** —
+apps resolve that package through `dist`, and this file records three times
+that a green build command is not evidence the output changed.
+
 The live-tiles-keep-their-places branch added no unit FILE and 1 case to
 `apps/web/test/RunStats.test.tsx`, from **163 / 2031 to 163 / 2032**.
 Integration is UNCHANGED at **147 / 1854** — both files in the diff are `.tsx`,

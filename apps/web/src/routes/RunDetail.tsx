@@ -369,8 +369,25 @@ export function LiveSummary({
           data-testid="live-stat-p99"
         />
         <StatTile
+          /* `activityMs ?? durationMs` — the SAME expression `RunHeader`
+             computes for a terminal run, for the same reason and with the same
+             fallback. `durationMs` is the series span (header start to last
+             event) and `activityMs` is the measured one (first event to last);
+             the run page calls the second "Duration", and both `EngineResult`
+             and `RunIdentity` say so in as many words.
+
+             This tile showed `durationMs`, so one run read "63s" streaming and
+             "62s" finished — a 1025 ms lead-in on the reference fixture, and a
+             duration that DECREASED when the run ended. (63161 ms and 62136 ms;
+             `formatDuration` stays in whole seconds below `LONG_RUN_MS`, so the
+             "1m 2s" the engine's own docstring quotes is GATLING's rendering of
+             the same span, not this tile's.) The `??` is not
+             defensive tidiness either: a delta from a worker that predates
+             `activityMs` carries none, and falling back is exactly what
+             `RunHeader` does for a run ingested before migration
+             20260822090000. */
           label="Duration so far"
-          value={formatDuration(summary.durationMs)}
+          value={formatDuration(summary.activityMs ?? summary.durationMs)}
           hint={frozen ? 'when streaming stopped' : 'still streaming'}
           data-testid="live-stat-duration"
         />

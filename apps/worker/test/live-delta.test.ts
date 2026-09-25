@@ -110,6 +110,50 @@ describe('buildDelta', () => {
     expect(delta.responseTime.replaces).toBe(true);   // first delta always replaces
   });
 
+  /**
+   * ═══ THE DURATION A READER SEES MUST NOT SHRINK WHEN THE RUN ENDS ═══
+   *
+   * `EngineResult` carries two spans and says which is which: `durationMs` is
+   * run-header start to last event (what a time axis must cover) and
+   * `activityMs` is first event to last (what the run page, and Gatling's own
+   * report, call the duration). `RunHeader` renders `activityMs ?? durationMs`
+   * for a terminal run.
+   *
+   * The wire carried only `durationMs`, so the live "Duration so far" tile
+   * showed the other one: measured through the real engine over the reference
+   * fixture, 63161 ms streaming against 62136 ms finished — "63s" and "62s"
+   * through the product's own `formatDuration`, a 1025 ms lead-in, and a
+   * duration that DECREASED on completion. Dividing the 895 requests on
+   * screen by the 63s beside them also gives 14.17 req/s where the finished
+   * page's throughput tile says 14.40, which is the self-contradiction
+   * `activityMs` exists to remove, reproduced one surface over.
+   *
+   * THE FIXTURE HAS A DELIBERATE LEAD-IN, and the first assertion is why: with
+   * the first request at t=0 the two spans are the SAME NUMBER, so a case built
+   * the obvious way cannot tell which field the delta sent and passes against
+   * the defect. This file's own `engineResultFrom` anchors `runStartMs` at 0,
+   * so starting the traffic at 1000 ms is the whole trick.
+   */
+  it('sends the measured span as well, so the live tile agrees with the finished one', () => {
+    const result = engineResultFrom([
+      { startMs: 1_000, endMs: 1_010, ok: true },
+      { startMs: 59_000, endMs: 60_000, ok: true },
+    ]);
+
+    /* VACUITY: if these ever coincide the case below proves nothing about
+       WHICH field was sent, and it would report a confident pass. */
+    expect(result.durationMs, 'the fixture must distinguish the two spans').not.toBe(
+      result.activityMs,
+    );
+
+    const { delta } = buildDelta('r1', result, INITIAL_CURSOR, NO_SLA);
+
+    expect(delta.summary.activityMs).toBe(result.activityMs);
+    // And `durationMs` stays, because `RunShell` feeds it to the time axis as
+    // `liveDurationMs` — the fix adds a field rather than repurposing one.
+    expect(delta.summary.durationMs).toBe(result.durationMs);
+  });
+
   it('emits buckets at or past the cursor on the second call, upserting the frontier bucket', () => {
     const all = events();
     const half = Math.floor(all.length / 2);
