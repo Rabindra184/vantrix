@@ -173,8 +173,41 @@ export const WINDOWED_BUCKETS_SQL = `SELECT scope, family, name, start_offset_ms
  * NOT `Number.MAX_SAFE_INTEGER`. Passing that as an open-ended upper bound
  * fails the query outright with `value "9007199254740991" is out of range for
  * type integer` — a runtime error rather than an empty result, and one that
- * only appears once a caller asks for "everything from here on". About 24.8
- * days of elapsed time, well past any run this system ingests.
+ * only appears once a caller asks for "everything from here on".
+ *
+ * ═══ WHY THERE IS NO MATCHING CLAMP ON THE WRITE PATH ═══
+ *
+ * This is 24.86 days, and the obvious reading of that is a cliff: nothing
+ * caps `startOffsetMs` in the engine (`idx * widthMs`), `MetricWriter` passes
+ * it through, and a longer run would fail the INSERT with a raw
+ * `integer out of range` reaching the caller as a generic 500. Measured
+ * against the real schema, the boundary is exactly here:
+ *
+ *     start_offset_ms = 2147483647  ->  INSERT 0 1
+ *     start_offset_ms = 2147483648  ->  ERROR: integer out of range
+ *
+ * **IT IS UNREACHABLE, AND THE REASON IS THE LOG FORMAT RATHER THAN THE
+ * ODDS.** This comment used to end "well past any run this system ingests",
+ * which is a claim about USAGE and would be worth nothing the day somebody
+ * ran a month-long soak. The real bound is structural: a Gatling record
+ * stores its offset from the run header as a signed 32-bit int
+ * (`reader.ts`'s `readInt` is `readInt32BE`, and `record-decoder.ts` builds
+ * every timestamp as `base + r.readInt()`), so the LOG cannot express a span
+ * this column cannot hold. The two ceilings are the same number, which is
+ * almost certainly why this column type was chosen.
+ *
+ * So `EngineResult.durationMs` — "the run's span as the SERIES OFFSETS
+ * measure it", which dominates every offset by its own definition — is
+ * int32-bounded before it reaches any writer, and a write-side clamp would
+ * be dead code. Checked rather than assumed, and written down here because
+ * the one-sided enforcement reads like an oversight until you know why.
+ *
+ * THE DAY A SECOND TOOL ARRIVES, RE-CHECK THIS. `TOOL_IDS` has one member
+ * today and ingest refuses anything else, so "the log format" means exactly
+ * one format. A plugin whose own records carry 64-bit offsets would make the
+ * cliff real, and then the refusal belongs in the pipeline — where
+ * `MAX_OFFSET_MS` is already in scope and `durationMs` is the one value to
+ * compare, so the check is a few lines rather than a design.
  */
 export const MAX_OFFSET_MS = 2_147_483_647;
 

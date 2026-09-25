@@ -146,6 +146,72 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The refuse-a-run-longer-than-we-can-store branch shipped NO code and NO test:
+its diff is one docstring. Unit stays **160 / 2014**, integration **143 / 1831**
+and **e2e stays 149**, all UNCHANGED by construction — nothing executable moved.
+It is here because the investigation is the deliverable, and because "nothing
+to do" and "nobody checked" look identical in a month.
+
+**A CLIFF THAT LOOKED EXACTLY LIKE THE PARTITION ONE, AND IS NOT ONE.**
+`start_offset_ms`, `run.duration_ms` and `run.activity_ms` are all int4, so
+the representable span is `MAX_OFFSET_MS` — 24.86 days. Nothing caps
+`startOffsetMs` in the engine (`idx * widthMs`), `MetricWriter` passes it
+through, and `MAX_OFFSET_MS` is applied ONLY on the read path. Measured
+against the real schema, the boundary is exactly there:
+
+```
+  start_offset_ms = 2147483647  ->  INSERT 0 1
+  start_offset_ms = 2147483648  ->  ERROR: integer out of range
+```
+
+Every ingredient of a real defect: a known constraint, enforced in one
+direction, with an illegible failure waiting on the other.
+
+**IT IS UNREACHABLE, AND THE LOG FORMAT IS WHY.** A Gatling record stores its
+offset from the run header as a SIGNED 32-BIT INT — `reader.ts`'s `readInt` is
+`readInt32BE`, and `record-decoder.ts` builds every timestamp as
+`base + r.readInt()`. So the log cannot EXPRESS a span the column cannot hold:
+
+```
+  log record offset   readInt32BE     max 2,147,483,647 ms
+  durationMs          = last offset   <= 2,147,483,647 ms
+  start_offset_ms     int4            max 2,147,483,647 ms
+```
+
+**The two ceilings are the same number**, which is almost certainly why the
+column type was chosen. `EngineResult.durationMs` — "the run's span as the
+SERIES OFFSETS measure it", which dominates every offset by its own docstring
+— is int32-bounded before any writer sees it.
+
+**A `RUN_TOO_LONG` REFUSAL WAS WRITTEN AND THEN REVERTED**, which is the
+entry. It added an `IngestErrorCode`, a check in `pipeline.service.ts` and a
+remediation, it typechecked, and it was dead code. What stopped it was going
+to build the TEST: a 25-day run needs only two events far apart, so the test
+looked cheap — and `apps/worker/test/synthetic-log.ts` (which already exists,
+and which a "nothing synthesises a log" reading of the suite would have
+missed) encodes that offset with `writeInt32BE`. **The fixture builder is what
+proved the product could not receive the input.**
+
+**SO THE DEFECT WAS IN THE EXPLANATION, AND THAT IS WHAT SHIPPED.** The
+constant said "About 24.8 days of elapsed time, well past any run this system
+ingests" — a claim about USAGE, and worth nothing the day somebody runs a
+month-long soak. It now records the structural reason, the measured boundary,
+and the condition under which it stops holding: `TOOL_IDS` has one member, so
+"the log format" means exactly one format, and a plugin carrying 64-bit
+offsets would make the cliff real. **A one-sided enforcement reads as an
+oversight until the reason is written next to it** — which is the same
+complaint this file makes about comments that credit the wrong mechanism,
+inverted: here the mechanism was right and unstated.
+
+**AND IT IS THE SECOND FINDING IN TWO BRANCHES THAT MEASURING OVERTURNED.**
+The partition entry had to correct "nothing measured the distance" (a
+tripwire existed, with no warning period); this one had to abandon its fix
+outright. Both were plausible, both were argued from the code, and both were
+wrong in a way only execution could show. **The rate at which a careful
+reading is wrong is the argument for the whole method**, and it is worth
+writing down on the branch where the method cost a fix rather than produced
+one.
+
 The no-scope-the-engine-never-files branch added no unit FILE and no unit
 case — unit stays **160 / 2014**, because the one case it touches was RENAMED
 and EXTENDED rather than added to. Integration is UNCHANGED at **143 / 1831**
