@@ -44,9 +44,16 @@ export type TokenScope = z.infer<typeof TokenScopeSchema>;
  */
 export const OpenLiveRunRequestSchema = z.object({
   tool: z.enum(TOOL_IDS),
-  environment: z.string().min(1).max(100).optional(),
-  branch: z.string().min(1).max(200).optional(),
-  commitSha: z.string().min(7).max(64).optional(),
+  /**
+   * Trimmed for the reason `IngestMetadataSchema` gives at length: these
+   * read `z.string().min(1)` and stored the client's whitespace, which
+   * `comparabilityBreaks` then compared with `===`. A pointer rather than a
+   * second copy of the argument — the two schemas must not drift into
+   * explaining one rule differently.
+   */
+  environment: z.string().trim().min(1).max(100).optional(),
+  branch: z.string().trim().min(1).max(200).optional(),
+  commitSha: z.string().trim().min(7).max(64).optional(),
   /**
    * WHICH TEST THIS RUN IS OF — the same field, and the same meaning, as
    * `IngestMetadataSchema.test`. A live run needs it for one extra reason: it
@@ -58,7 +65,7 @@ export const OpenLiveRunRequestSchema = z.object({
    * the run from its first ticks rather than from the finished report.
    */
   test: DeclaredTestSlugSchema.optional(),
-  idempotencyKey: z.string().min(1).max(200).optional(),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 export type OpenLiveRunRequest = z.infer<typeof OpenLiveRunRequestSchema>;
 
