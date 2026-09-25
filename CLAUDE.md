@@ -150,8 +150,16 @@ The partitions-do-not-run-out-silently branch added ONE integration file —
 `packages/persistence/test/partition-runway.integration.test.ts` (1) — so
 unit stays **160 / 2014** (that config excludes `*.integration.test.ts`) and
 integration is **144 / 1832** — first recorded as arithmetic and MEASURED at
-exactly that (one failure, which was this branch rotting an existing test; see
-below). RE-MEASURED after merging `main` (#220), which added no case. **e2e stays 149.** It is the first DATED defect this file
+exactly that COLLECTION twice, which is the number that matters. **Both runs
+carried one failure and they were different failures**: the first was this
+branch rotting an existing test (a real defect, fixed — see below); the second
+was `project-ingest.integration.test.ts` on `Error: socket hang up`, a
+TRANSPORT failure this file already records by signature, which passes **8/8
+in isolation** and which a diff of one migration, two test files and two
+documents cannot reach — the reference run is dated 2026, so the new
+partitions are not even in its path. **No test failed twice**, which is the
+tell that separates the flake from a defect. RE-MEASURED after merging `main`
+(#220), which added no case. **e2e stays 149.** It is the first DATED defect this file
 records: the product was 98 days from refusing every new run, and nothing
 anywhere measured the distance.
 
