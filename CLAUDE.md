@@ -146,6 +146,124 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The live-tiles-keep-their-places branch added no unit FILE and 1 case to
+`apps/web/test/RunStats.test.tsx`, from **163 / 2031 to 163 / 2032**.
+Integration is UNCHANGED at **147 / 1854** — both files in the diff are `.tsx`,
+which that config never includes — and **e2e stays 150**: no spec changed. It
+is the one-caller-short shape on a surface nothing pinned, and the comment that
+hid it claimed the opposite in as many words.
+
+**THE RUN-TOTALS SECTION RESHUFFLED THE MOMENT A RUN FINISHED.** `RunDetail`
+draws six tiles into `aria-label="Run totals so far"` while a run streams, and
+that section BECOMES `RunStats`' `aria-label="Run totals"` when it goes
+terminal — one `<dl>`, same page, same reader. Measured:
+
+```
+  LIVE      total-requests · error-rate · peak-users · duration · p95 · p99
+  TERMINAL  p95 · error-rate · throughput · total-requests · p99 · mean-response
+```
+
+**ONLY `error-rate` HELD ITS PLACE.** `p95` moved from FIFTH to FIRST and
+`total-requests` from first to fourth, so the tile a reader triages on jumped
+across the row at the exact moment they were watching it.
+
+**THE TARGET-LAYOUT BRANCH IS WHERE IT CAME FROM.** That entry promoted p95 to
+first on the terminal row, arguing "a reader arrives asking whether the latency
+is acceptable, not to be walked up the distribution" — and reordered
+`RunStats.tsx` alone. `git log -S 'data-testid="live-stat-p95"'` returns ONE
+commit, the five-tab branch that wrote the live row; the reorder never touched
+it. **Tenth time this file records one-caller-short**, and the argument for the
+fix is verbatim the argument that entry already made — a reader watching a LIVE
+run is asking the same question, sooner.
+
+**AND THE COMMENT ON THAT ROW SAID IT TRACKED THE OTHER ONE.** It read: "═══
+THE LIVE TWIN OF `RunStats`' TILES, AND IT MOVES WITH THEM ═══ ... this row
+shows the SAME six quantities". Both halves false. It did not move, and it
+shares FOUR of six — live carries peak users and duration, terminal carries
+throughput and mean. **Seventh docstring this file records asserting a
+behaviour the product does not have**, and the one that mattered most: a reader
+auditing the live row met a sentence promising the check had already been done.
+
+**THE FIX IS SUBSTITUTION RATHER THAN A COPY, BECAUSE THE TWO ROWS CANNOT
+CARRY THE SAME SIX.**
+
+```
+  LIVE      p95 · error-rate · peak-users    · total-requests · p99 · duration
+  TERMINAL  p95 · error-rate · throughput    · total-requests · p99 · mean-response
+```
+
+The four shared quantities hold positions **1, 2, 4 and 5 in each**, and
+positions 3 and 6 carry the tile that cannot exist in the other state. So
+finishing a run now SWAPS two tiles instead of rearranging six.
+
+**THE PAIRINGS ARE SEMANTIC RATHER THAN LEFTOVER.** Position 3 is peak users
+against throughput — offered load against achieved load, the same question
+either side of the transition. Position 6 is duration against mean, the
+lowest-emphasis slot in both. And peak users and duration are the right two to
+lose: they MOVE TO `RunHeader`'s chips, which can only show them once they stop
+changing, so the terminal row is not dropping them, the header is taking them.
+
+**AND SYNTHESISING THROUGHPUT LIVE WAS MEASURED AND REFUSED.** `LiveSummary`
+carries `count` and `durationMs`, so `count / durationMs * 1000` would fill
+position 3 with the same quantity the terminal row shows. That is a SECOND
+definition of a number `RollupBuilder` already owns — and the error-rate tile
+four lines up refuses the identical shortcut in its own comment ("never
+`koCount / count`, a second definition of the one number a few tiles away").
+Recorded as an arm measured and not taken.
+
+**NOTHING PINNED THE LIVE ORDER, WHICH IS THE SAME BLIND SPOT THE TERMINAL ROW
+HAD.** Every assertion over these tiles — four in `RunOverviewTab.live.test.tsx`,
+four in `run-live.spec.ts` — reaches them by `data-testid` and value, which is
+order-independent by construction. The target-layout entry says exactly that
+about the row it fixed; the row it did not fix had the same gap, and that is
+why the drift was silent.
+
+**ASSERTED AS AGREEMENT, NEVER AS A SECOND LITERAL LIST.** A `toEqual` on the
+live order would pass the day somebody reorders the terminal row and updates
+only the list beside it — which is precisely the drift being fixed. The case
+compares the two rows' POSITIONS against each other, so it fails whichever side
+moves, and then pins that the tiles which do NOT agree are exactly the
+state-specific pair, so "they agree" cannot be satisfied by a row that quietly
+dropped one.
+
+**FOUR MUTATIONS, AND THE SECOND IS THE ONE THAT EARNS THE SHAPE:**
+
+```
+  the live row's before-state (p95 fifth)   "live position of p95: expected 5 to be +0"
+  the TERMINAL row reordered instead        "live position of p95: expected +0 to be 4"
+  a shared tile dropped from the live row   "live position of total-requests: expected -1 to be 3"
+  the testid scan rots                      "collected no terminal tiles -- the scan has rotted"
+```
+
+The second proves the case is not one-sided: a literal list on the live row
+would have stayed green while the terminal row drifted underneath it. It also
+fails two unrelated colour assertions, because swapping two `data-testid`s
+breaks the tone lookups keyed on them — a blunt side effect, stated rather than
+counted, and the assertion this branch is about is among the failures with the
+right message.
+
+**AND COMMENT-STRIPPING IS NOT LOAD-BEARING HERE, MEASURED RATHER THAN
+CLAIMED.** Both files spell six `data-testid`s raw and six stripped, and with
+the strip defanged to the identity on a correct tree the file reports **22
+passed**. The docstring says that, in those words. This file records three
+branches in a row that claimed the strip was load-bearing, measured it, found
+it was not, and repaired the CLAIM by adding prose quoting the banned shape —
+writing documentation to make a test fail. The strip stays as one defensive
+line with its measurement attached, which is the third correction of that habit
+and the second time it has been got right first.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **163 / 2032**, the recorded floor plus exactly this branch's one
+case, zero failures and zero `Errors` lines. `test:integration` NOT run and
+unchanged by construction: both files in the diff are `.tsx`.
+**`pnpm test:e2e` 150 passed, exit 0** against a SCRATCH DATABASE
+(`perfportal_tiles`) and a scratch Redis INDEX (db 7) — run rather than
+reasoned about, because the diff reorders a rendered row the browser suite
+drives. The reasoning said it was safe (both geometry bounds match
+`aria-label="Run totals"` EXACTLY, which does not match `"Run totals so far"`,
+and `run-live.spec.ts` asserts by testid) and that reasoning is what a reorder
+of a row on screen should not be trusted on.
+
 The named-symbols-resolve branch added ONE unit file —
 `packages/core/test/named-symbols-resolve.test.ts` (2) — from **162 / 2029 to
 163 / 2031**. Integration moves with it (that file is a `.ts` integration runs

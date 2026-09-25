@@ -631,6 +631,62 @@ describe('RunStats — the tile reading order', () => {
     expect(labels).toEqual(['p95', 'Error rate', 'Requests/s', 'Requests', 'p99', 'Mean']);
   });
 
+  /**
+   * ═══ AND THE LIVE ROW IS THE SAME SECTION, SO IT KEEPS THE SAME PLACES ═══
+   *
+   * `RunDetail` draws its own six tiles for a run that is still streaming, into
+   * `aria-label="Run totals so far"` — which BECOMES the `"Run totals"` above
+   * the moment the run goes terminal. So a reader watching a run finish watches
+   * one `<dl>` turn into the other, and the branch that reordered this row left
+   * that one alone: p95 sat FIFTH there and first here, so the triage number
+   * jumped 5 -> 1 at the transition and Error rate was the only tile that held
+   * its place.
+   *
+   * The four quantities both rows carry hold positions 1, 2, 4 and 5 in each.
+   * Positions 3 and 6 are the two that cannot exist in the other state — peak
+   * users against throughput, duration against mean — so finishing a run
+   * SUBSTITUTES two tiles rather than reshuffling six.
+   *
+   * ASSERTED AS AGREEMENT, NOT AS A SECOND LITERAL LIST. Pinning the live order
+   * verbatim here would pass the day somebody reorders this row and updates
+   * only the list above it, which is the drift being fixed. Positions compared
+   * against each other fail whichever side moves.
+   *
+   * Read from the source rather than rendered: the live row lives inside
+   * `RunDetail`, which needs a router, a run, a delta and a live socket to
+   * mount, and the claim is about the markup order of two files. Comments are
+   * stripped — MEASURED, and NOT load-bearing today, because neither file
+   * spells a `data-testid` inside one. It is one line, it forecloses the trap
+   * this file records twice, and saying it is defensive beats adding prose to
+   * make the claim true.
+   */
+  it('keeps the four shared tiles in the places the live row uses', () => {
+    const idsIn = (rel: string, prefix: string): string[] => {
+      const src = readFileSync(fromRepo(rel), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '');
+      const pattern = new RegExp(`data-testid="${prefix}([a-z0-9-]+)"`, 'g');
+      return [...src.matchAll(pattern)].map((m) => m[1] ?? '');
+    };
+
+    const terminal = idsIn('apps/web/src/routes/RunStats.tsx', 'stat-');
+    const live = idsIn('apps/web/src/routes/RunDetail.tsx', 'live-stat-');
+
+    /* VACUITY, COUNTING THE CONSTRUCT. A regex that stopped matching leaves two
+       EMPTY lists, and every position assertion below then agrees perfectly. */
+    expect(terminal, 'collected no terminal tiles -- the scan has rotted').toHaveLength(6);
+    expect(live, 'collected no live tiles -- the scan has rotted').toHaveLength(6);
+
+    for (const id of ['p95', 'error-rate', 'total-requests', 'p99']) {
+      expect(live.indexOf(id), `live position of ${id}`).toBe(terminal.indexOf(id));
+    }
+
+    /* And the tiles that do NOT agree are exactly the state-specific pair, so
+       "they agree" cannot be satisfied by a row that quietly dropped one. */
+    expect(live.filter((id) => !terminal.includes(id))).toEqual(['peak-users', 'duration']);
+    expect(terminal.filter((id) => !live.includes(id))).toEqual(['throughput', 'mean-response']);
+  });
+
   /* The DOM order is the READING order only because these are grid items in
      source order — no `order-*` utility anywhere in the row. A tile moved
      visually by CSS while the markup stayed put would satisfy the case above
