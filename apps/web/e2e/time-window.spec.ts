@@ -114,9 +114,18 @@ test('the zoom buttons step by Gatling’s fractions, and zooming out returns to
   expect(Math.abs(from - span / 4)).toBeLessThanOrEqual(resolution / 2);
   expect(Math.abs(to - (span * 3) / 4)).toBeLessThanOrEqual(resolution / 2);
 
-  // Zoom out grows the width by HALF, not double: once is still a window…
+  // Zoom out moves each edge OUT by a quarter of the width, so the width
+  // grows by half — not double, which is not zoom in's inverse either way.
+  const width = to - from;
   await zoomOut.click();
   await expect(page).toHaveURL(new RegExp(`[?&]from=(?!${from}(?!\\d))\\d+`));
+  const out = new URL(page.url()).searchParams;
+  const outFrom = Number(out.get('from'));
+  const outTo = Number(out.get('to'));
+  expect(outFrom % resolution).toBe(0);
+  expect(outTo % resolution).toBe(0);
+  expect(Math.abs(outFrom - (from - width / 4))).toBeLessThanOrEqual(resolution / 2);
+  expect(Math.abs(outTo - (to + width / 4))).toBeLessThanOrEqual(resolution / 2);
   // …and the second reaches both ends, which is no window at all.
   await zoomOut.click();
   await expect(page).not.toHaveURL(/[?&]from=/);
