@@ -274,6 +274,30 @@ export const RunIdentitySchema = z.object({
    * completes) — distinct from startedAt, which is always ingest time.
    */
   toolStartedAt: z.string().datetime().nullable().optional(),
+  /*
+   * ═══ THE RUN'S LIFECYCLE, AS POSTGRES RECORDED IT ═══
+   * (docs/superpowers/specs/2026-09-26-run-lifecycle-strip-design.md)
+   *
+   * Stamps PerfPortal has always kept and this contract never published. The
+   * run page's lifecycle strip derives its steps from them, with `startedAt`
+   * (received) and `ingestedAt` (processing ended).
+   *
+   * OPTIONAL AS WELL AS NULLABLE: the browser drops any body that fails this
+   * schema, so a required field would blank the run page for every response
+   * from an API pod that predates it — the argument `activityMs` makes.
+   */
+  /** When the LATEST processing attempt began. A stream's close
+   *  (`claimForClose`), or the sweeper taking an abandoned stream over, stamps
+   *  it first; `RunRepository.markParsing` re-stamps it every time a worker
+   *  picks the run up, a retry included — so a streamed run's value moves
+   *  from its close to the worker's pickup. */
+  parsingStartedAt: z.string().datetime().nullable().optional(),
+  /** The last chunk a live stream accepted (`advanceOffset`). Null for an
+   *  upload, and for a stream that has accepted nothing yet. */
+  streamUpdatedAt: z.string().datetime().nullable().optional(),
+  /** When the on-prem runner job that produced this run was queued. Null for
+   *  a run the runner did not produce. */
+  queuedAt: z.string().datetime().nullable().optional(),
 });
 export type RunIdentity = z.infer<typeof RunIdentitySchema>;
 

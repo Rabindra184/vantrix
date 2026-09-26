@@ -216,9 +216,9 @@ export default function RunDetail() {
   // `<Outlet/>` mounted for them at all. Rendering it here is the whole
   // reachability fix, and it needs no router change.
   const detail = run.data;
-  // Both arms of the union satisfy `Partial<RunIdentity> & { id }` — a ready
-  // run supplies every field, a processing one supplies what it knows — so
-  // this needs no branch, only the shared type.
+  // Both arms of the union satisfy the shell's `LifecycleIdentity & { id }` —
+  // a ready run supplies every field, `ingestedAt` included, a processing one
+  // supplies what it knows — so this needs no branch, only the shared type.
   const identity = detail.run;
 
   return (

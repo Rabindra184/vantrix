@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **166 files / 2135 tests**, it
+`nvm use` first, and if a run reports fewer than **169 files / 2171 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,239 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The run-lifecycle-strip branch added THREE unit files —
+`packages/contracts/test/run-lifecycle.test.ts` (4),
+`apps/web/test/lifecycle.test.ts` (17) and `apps/web/test/RunLifecycle.test.tsx`
+(12) — plus 4 cases to `RunShell.test.tsx` and one fewer in
+`RunDecisionBand.test.tsx`, from **166 / 2135 to 169 / 2171**. Integration
+moves with the two new `.ts` files plus `apps/api/test/lifecycle.integration.test.ts`
+(5), from **149 / 1900 to 152 / 1926**, and **e2e rises to 159**
+(`apps/web/e2e/run-lifecycle.spec.ts`, and one case in `mobile.spec.ts`). It is
+backlog item #2 of the Gatling Enterprise comparison: that product's
+`Build successful ❯ Deployed · 14s ❯ Assertions failed · 2m 00s` strip, with
+PerfPortal's own steps — Queued (on-prem runner), Load test, Received
+(uploads), Processing, Verdict — and a Step times disclosure holding each
+step's start and end to the second.
+
+**THE DATA EXISTED AND THE CONTRACT THREW IT AWAY — THE RUN-LIST SHAPE AGAIN.**
+The run row has always kept when processing began and ended, the stream's last
+accepted chunk, the moment the sweeper gave up on it, and (through
+`runner_job.run_id`) when an on-prem job was queued; `RunIdentity` published
+`startedAt` and `toolStartedAt` and nothing else. Three fields now —
+`parsingStartedAt`, `streamUpdatedAt`, `queuedAt` — `.nullable().optional()`
+for the rolling-deploy reason `activityMs` already argues, and BOTH identity
+builders name them from one helper, `RunsService.lifecycleOf`: `toResponse`
+and the hand-written 202 a live run is read through. Red-verified by dropping
+them from each builder in turn — the 202's three cases failed alone, then
+`toResponse`'s three — which is the `warmupMs` lesson (a field reaching only
+the terminal builder is missing exactly while a reader watches) with its guard
+written first.
+
+**`streamAbandonedAt` WAS SPECCED AND CUT, BECAUSE ITS ONLY READER WAS WRONG.**
+The first cut ended an abandoned stream's load test at the sweeper's give-up —
+which counts the silence before the give-up as load. It ends at the processed
+log's last response, else the last accepted chunk, the producer's last sign of
+life; the silence shows in Step times as the gap before Processing, which the
+sweeper starts in the same statement. With that end gone the field had no
+reader, and a field nothing reads is surface to keep correct for no one. What
+it would have said is recorded as known: while the sweeper assembles an
+abandoned stream, the run is `parsing` and reads like any stream being
+processed, until the pipeline finalizes it `incomplete`.
+
+**THE PHONE'S FOLD DECIDED THE SHAPE.** At 375x812 the run's first total sat
+at **y=802** against `mobile.spec.ts`'s 812. The band's Execution row, which
+the strip replaces, gave back 22 px (18 plus a 4 px gap); a carded strip in the
+shell's 24 px column gap would have cost ~70 (totals near 850). So a phone gets
+ONE bare line grouped 8 px under the header, never the verdict (the band's
+36 px word is directly below), and a desktop gets the card 12 px under it.
+MEASURED AFTER: **804.4 of 812** on the phone — 7.6 px of headroom, the least
+that bound has had — and at 1440x900 the first tile at **768.75** (733
+before) with the totals section's top at 725.75 (690 before, the figure
+`run-tables.spec.ts`'s own history records — both moved by the same 35.75 px),
+against 900. `compact` is a
+PROP from `useIsCompact`, never a `md:` variant: review M02's
+one-decision-one-breakpoint rule.
+
+**AND THE PHONE'S ONE LINE WAS THE WRONG STEP ON EVERY INCOMPLETE RUN, WHICH NO
+LAYER COULD SEE.** It showed "the furthest step reached", and on an incomplete
+run that is always Processing: "Nothing retained", or a green "Processed · 2s"
+over a partial log carrying a real Passed verdict — with nothing on the first
+screen saying the test had been cut short, because the band's Execution row,
+which used to, was gone. Every task tested the phone on a complete or live
+run and "stopped early" on a desktop; the whole-branch review is what put the
+two together. `phoneStep` now shows a step that did not end well first, then
+the step in progress, then the Load test once done (a phone folds the Duration
+chip away), and only then the furthest step reached. **When a sentence moves
+from one surface to another, check it survives on every viewport the old
+surface reached** — M02's rule that a fix applied at one breakpoint is not
+applied, met from the other direction.
+
+**`activityMs` IS NOT "FIRST EVENT TO LAST", AND THE SPEC SAID IT WAS.** The
+engine's own expression is `lastMs − max(firstMs, runStartMs + warmupMs)`, so
+the Duration chip excludes the lead-in AND any configured warm-up. The Load
+test was `toolStartedAt` plus that span, so its Ended time fell a lead-in — or,
+on a warmed-up run, a whole warm-up — before anything happened, and an upload's
+"Ns after the test ended" inherited it: with a 60 s warm-up the step ended more
+than a minute early. It ends at `toolStartedAt + durationMs`, the log's last
+response, and starts at that end minus the chip: Took = Ended − Started = the
+chip, both printed instants happened, and a warm-up is named beside the
+duration in Step times. The spec's first version pinned the wrong end in a test
+NAMED for the right one ("ends a processed incomplete stream where its own log
+says the test ended" asserted `toolStart + activityMs`). **Read the producer's
+expression before defining a quantity from its name.**
+
+**A LIVE LOAD TEST READS THE SOCKET, BECAUSE THE RUN'S OPEN IS NOT THE START OF
+LOAD.** An on-prem runner opens its live run before it prepares the artifact
+and starts the JVM, so a figure measured from the open counted that as load
+and then dropped when the run finished — the duration that decreased when the
+run ended, which the live-duration-is-activity-span entry records fixing once
+already, one surface over — and it disagreed with the "Duration so far" tile
+on the same screen. `LifecycleInput.liveSpanMs` is REQUIRED and `RunShell` passes
+the latest delta's `activityMs ?? durationMs`, the tile's own expression. A
+phone has no socket and keeps open-to-last-chunk.
+
+**THE PAGE'S IDENTITY TYPE HAD ERASED A FIELD ITS VALUE CARRIES.** The plan
+read `identity.ingestedAt` — processing's end — and `tsc` refused:
+`ingestedAt` is a `RunResponse` field, not a `RunIdentity` one, and `RunShell`
+typed its identity `Partial<RunIdentity> & { id }`. At runtime it was there
+all along: `RunDetail` hands the shell `detail.run` whole, and a finished
+run's body IS a `RunResponse`. `LifecycleIdentity`
+(`Partial<RunIdentity> & Partial<Pick<RunResponse, 'ingestedAt'>>`) makes the
+type say so. **A type cannot guard it, so a seam case does**: an optional
+field is satisfied by a value that lacks it, so the day somebody builds the
+identity from picked fields processing's end vanishes and typecheck stays
+green. `RunShell.test.tsx`'s "carries processing’s end from the run’s body to
+the strip" and `run-lifecycle.spec.ts`'s per-cell Step times assertion
+(Started, Ended AND Took, not a time anywhere in the row) both fail,
+red-verified, when the shell hands the derivation
+`{ ...identity, ingestedAt: undefined }`.
+
+**THE PLAN'S CODE HAD BEEN CHECKED AGAINST THE SOURCE AND NEVER COMPILED.**
+Every name in it was confirmed to exist; nobody asked `tsc` whether
+`Partial<RunIdentity>` has an `ingestedAt`. The implementer did, by running
+the plan, and stopped with three candidate reshapes rather than picking one
+the next task would build on. **A plan's code is a claim until the compiler
+has read it** — and an implementer who reports NEEDS_CONTEXT over a
+contradiction is the process working, not failing.
+
+**A TEST HELPER'S DEFAULT SWALLOWED THE ONE CASE IT EXISTED TO DISTINGUISH.**
+`input(identity, status, verdict = null, assertions = [])` — and a JavaScript
+default applies to an EXPLICIT `undefined` exactly as to an omitted argument,
+so the verdict-word case's `['not_evaluated', undefined]` (gates not reported,
+"Not evaluated") reached the derivation as `[]` ("Not configured"). It failed
+only because the expected word was computed from the loop's raw `undefined`;
+an expectation built through the same helper would have passed, testing `[]`
+twice. That case builds its input literally now. **A helper with defaults
+cannot carry a case where `undefined` means something.**
+
+**"STOPPED EARLY" KEYS ON THE STATUS, BECAUSE THE SEEDED INCOMPLETE RUN HAS NO
+STAMPS.** Only a stream can end `incomplete` (the sweeper's `running` arm, or
+a close carrying no bytes), so the status alone marks a run as streamed.
+`seedIncompleteRun` inserts a row with no stream stamps at all, and a
+derivation keyed on `streamUpdatedAt` would have called it an upload — "Load
+test · known once processed" — which is exactly what the browser showed when
+the red-verify removed the status arm. The same stamp-lessness is why a
+stream read through an API pod that predates the stamps, or a row older than
+`stream_updated_at`, still draws as an upload: recorded as known.
+
+**A FAILED RUN NEVER REACHES THE STRIP, AND THE BAND'S "could not be processed"
+HAD BEEN UNREACHABLE TOO.** `GET /v1/runs/{id}` answers a failed run with its
+ingest problem (400 or 413), and the page renders that problem instead of the
+shell. `lifecycle.ts` still maps `failed` to "Processing failed", defensively,
+and says why; the band's Execution sentence for the same state was a branch no
+page could draw.
+
+**ONE VERDICT, ONE WORD, ONE FUNCTION — BY CALL, NOT BY COPY.** The band's
+`decisionWord` moved to `decision.ts` beside `releaseWord`, and the Verdict
+step reads it. The band first kept its own copy of `releaseWord`'s expression,
+which made "one function both import" half true and the derivation's
+agreement case vacuous with respect to the band; it calls `releaseWord` now.
+`RunShell.test.tsx` checks the strip's `Verdict: <word>` against the band's
+RENDERED word, and the Load test's duration against the Duration chip's, on a
+run whose two spans differ (62,136 against 63,161 ms) so a strip reading the
+wrong one shows a different number.
+
+**`parsingStartedAt` IS THE LATEST ATTEMPT, NOT THE FIRST.** `markParsing`
+writes it on every worker pickup, a retry included, so a streamed run's value
+moves from its close to the worker's pickup one poll later. The contract's
+and `RunRecord`'s comments said "when processing began", and the spec said a
+stream's is "stamped at close"; all three say what the column holds now.
+
+**TWO RED-VERIFY PREDICTIONS UNDERCOUNTED, AND BOTH TIMES THE TESTS WERE
+RIGHT.** Swapping `activityMs ?? durationMs` failed a second case the brief had
+not named, one that pins an incomplete stream's end from the same span; and
+reverting the new `testEnd` failed its two named cases on `startMs` as well as
+`endMs`, because the start is derived from the end. This file says to read
+WHICH cases a mutation fails; the sharper form is that **an extra failure is a
+finding only when it asserts something other than the value the mutation
+broke.**
+
+**THE PLAN'S LIST OF TESTS PINNING THE EXECUTION ROW WAS TWO SHORT.** A sweep
+for the row's testid (`outcome-execution`) found two more band cases the plan
+never named: a loop over two outcome ids, and a "three outcomes" case asserting
+`/execution/i`. Grep for the testid, not the sentence; the sentence is what a
+plan remembers and the testid is what the tests hold.
+
+**THE REAL RUNS FOUND ONE MORE, AND ONLY A REAL UPLOAD COULD.** Checked on the
+developer database's real Gatling runs — a streamed run, an upload, and a fresh
+on-prem runner run executed for the purpose. The upload's bundle ran on 7
+August and was ingested on 19 September, and its Step times read **"1030h 54m
+23s after the test ended"**: `formatDuration` has no unit above hours. The case
+covering that note derived its expectation from `formatDuration(gap)` — its
+own 7-day gap was "173h 12m 45s" — so it had pinned the unreadable form as
+right. Past a day the note is whole days now ("43 days after the test ended",
+red-verified both ways, the singular included). **An expectation computed by
+the function under test cannot notice that the function's answer is bad**:
+this file's rule to compute expectations from the payload is about INPUTS;
+where the words are the claim, write the words.
+
+**AND THE RUNNER RUN CONFIRMED THE LIVE FIX END TO END.** Queued · 1s, the
+job's real wait; while it streamed, the strip's Load test and the "Duration so
+far" tile read 0s, 32s and 53s together, then 61s finished — rising, never
+dropping; and Step times shows the ~3 s of bundle extraction and JVM start-up
+as the gap between Queued's end (00:58:12) and the Load test's start
+(00:58:15), where the first cut had counted it as load.
+
+**AND A PRE-EXISTING LIE THE STRIP NOW REPEATS IS ITS OWN BRANCH.** An
+incomplete run the pipeline never processed — swept in place, a failed
+assembly, a close with no bytes — carries `assertions: []` because no rule ran,
+and both the band and the strip's Verdict step call that "Not configured",
+about a project that may well have rules. Only the sweeper's assembly path
+evaluates rules on an incomplete run, so a blanket "incomplete → Not
+evaluated" would be wrong for it; the signal is `durationMs`, which only the
+pipeline's terminal write sets. Taken as the next branch rather than widened
+into this one.
+
+**WHAT WAS RUN**, on the final tree: `typecheck` and `lint` green by their
+own exit codes; `test:unit` **169 / 2171**, zero failures and zero `Errors`
+lines, and the same under `TZ=UTC`; `test:integration` **152 / 1926, exit 0,
+zero failures**; `pnpm test:e2e` **159 passed, exit 0** (one commit earlier —
+the final commit removes one unused import from a unit test, which no browser
+case can reach) — against a SCRATCH DATABASE (`perfportal_lifecycle`),
+recreated and migrated before each run, and a scratch Redis INDEX (db 10).
+The real-run check ran against the developer database with the API, worker
+and runner on their own Redis index (db 11), so the stale jobs on db 0 were
+never touched; the runner token it minted was revoked afterwards, and the run
+it produced stays as the database's tenth real run.
+
+**AND INTEGRATION FLAKED ONCE PER RUN, ON A DIFFERENT FILE EACH TIME, NEITHER
+REACHABLE.** Four full runs. The first failed `openapi.integration.test.ts`'s
+path-param sweep on `socket hang up` — 28/28 five times alone, and the next
+full run clean. The third failed `security-headers.test.ts`'s "forbids inline
+script on the app's own policy" with a **501** from a supertest server over a
+temp directory: no database, no queue, nothing this branch touches, and it had
+passed in both unit runs of the same gate run — 18/18 five times alone, and the
+fourth full run clean. **No test failed twice.** The 501 is worth
+recognising: this file records it before from the OpenAPI document and from
+the telemetry probe, always under load, and here it came from a bare Express
+app — so it is the machine answering, not an endpoint.
+
+**AND THE LINT GATE CAUGHT A SLIP A GREEN FOCUSED RUN HID.** The real-run fix
+re-pointed the gap case and left `formatDuration` imported and unused; it was
+committed on a green focused `vitest` run, and `pnpm lint` failed on the next
+full gate. A focused run is evidence about the tests it ran, not about the
+gate.
 
 The apply-keeps-exact-window branch added no unit FILE and 8 cases to
 `apps/web/test/TimeBrush.test.tsx`, from **166 / 2127 to 166 / 2135**.

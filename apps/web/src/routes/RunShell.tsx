@@ -7,7 +7,7 @@ import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
 import { runComparePath, runTrendsPath } from './paths';
-import type { Assertion, RunIdentity, RunProcessing, RunResponse } from '@perfportal/contracts';
+import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
 import { peakConcurrentUsers } from './runUsers';
@@ -15,6 +15,8 @@ import RunTabs from './RunTabs';
 import LiveStatusStrip from './LiveStatusStrip';
 import SlaBanner from './SlaBanner';
 import RunDecisionBand from './RunDecisionBand';
+import RunLifecycle from './RunLifecycle';
+import { lifecycleSteps, type LifecycleIdentity } from './lifecycle';
 import type { LiveRunState } from '../api/live';
 import useDocumentTitle from '../useDocumentTitle';
 import useIsCompact from '../useIsCompact';
@@ -36,6 +38,15 @@ import Button from '../components/Button';
  * because a non-terminal run has no `RunResponse` to hand this component at
  * all (`GET /v1/runs/:id` answers 202 for anything short of `complete`).
  */
+
+/** The live Load test's span, off the socket's latest delta — the "Duration so
+ *  far" tile's own `activityMs ?? durationMs` (`RunDetail`), so the strip and
+ *  the tile say one number. Null without a delta. */
+function liveSpanOf(live: LiveRunState | null): number | null {
+  const summary = live?.lastDelta?.summary;
+  return summary === undefined ? null : (summary.activityMs ?? summary.durationMs);
+}
+
 export default function RunShell({
   identity,
   status,
@@ -53,8 +64,11 @@ export default function RunShell({
    * field; a non-terminal one supplies what it knows at open time; a run read
    * from an API pod that predates the widened 202 supplies only its id. Each
    * part of `RunHeader` below renders only when its field is present.
+   * A finished run's body also carries `ingestedAt` — processing's end, not
+   * an identity field — which the lifecycle strip reads; `LifecycleIdentity`
+   * says so.
    */
-  readonly identity: Partial<RunIdentity> & { readonly id: string };
+  readonly identity: LifecycleIdentity & { readonly id: string };
   readonly status: RunResponse['status'];
   /**
    * RECEIVED, NOT RE-DERIVED (IMPORTANT 3). This used to be computed here as
@@ -160,17 +174,30 @@ export default function RunShell({
     // reads the run a second time to learn when it started.
     <TimeAxisProvider anchor={identity.toolStartedAt}>
     <div className="flex flex-col gap-6">
-      <RunHeader
-        identity={identity}
-        status={status}
-        verdict={verdict}
-        peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
-        /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
-           review M02 folds the header's secondary metadata behind a
-           disclosure on a phone, and a `<details>`'s open state is the one
-           thing a media query cannot set. See `RunHeader`'s own note. */
-        compact={compact}
-      />
+      {/* THE RUN'S JOURNEY, UNDER ITS NAME, the way Gatling Enterprise sets its
+          strip directly under a run's title: the band below keeps the release
+          decision and its evidence, the strip says how the run got there
+          (docs/superpowers/specs/2026-09-26-run-lifecycle-strip-design.md).
+          Grouped with the header rather than given the shell's 24 px gap:
+          MEASURED at 375x812 the run's first total sat at y=802 of 812, and a
+          carded row in that gap would have cost ~70 px. */}
+      <div className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-3'}>
+        <RunHeader
+          identity={identity}
+          status={status}
+          verdict={verdict}
+          peakUsers={users.data ? peakConcurrentUsers(users.data) : null}
+          /* THE SAME `compact` THE BRUSH BELOW READS, spent a second time —
+             review M02 folds the header's secondary metadata behind a
+             disclosure on a phone, and a `<details>`'s open state is the one
+             thing a media query cannot set. See `RunHeader`'s own note. */
+          compact={compact}
+        />
+        <RunLifecycle
+          steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}
+          compact={compact}
+        />
+      </div>
       <RunDecisionBand
         identity={identity}
         status={status}
