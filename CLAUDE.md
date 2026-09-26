@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **151 files / 1855 tests**, it
+`nvm use` first, and if a run reports fewer than **166 files / 2114 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,129 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The time-window-gatling-style branch added THREE unit files —
+`apps/web/test/timeAxisPreference.test.ts` (4),
+`apps/web/test/TimeAxisContext.test.tsx` (6) and
+`apps/web/test/timeTicks.test.ts` (5) — and cases across `format`, `window`,
+`Chart`, `timeAxis`, `TimeBrush`, `RunShell`, `RequestDetail` and
+`GroupDetail`, from **163 / 2036 to 166 / 2114**. Integration moves with the
+`.ts` files at **149 / 1895**, and **e2e rises to 155**
+(`apps/web/e2e/time-window.spec.ts`). It is backlog item #1 of the Gatling
+Enterprise comparison: that product's time controls, copied from measurements
+of its behaviour rather than from screenshots.
+
+**EVERY STEP WAS MEASURED ON GATLING ENTERPRISE BEFORE IT WAS WRITTEN.** Zoom
+moves each edge 25% of the width, pan 20%, fast pan 100%; pans slide against
+the run's ends and keep their width, zoom is CUT at them, so zoom out is not
+zoom in's inverse (in halves the width, out grows it by half). The unit cases
+are those measured ranges written as offsets, and the e2e case that clears the
+window takes exactly two zoom outs for the same reason.
+
+**A MODULE-SCOPE `Intl.DateTimeFormat` FREEZES THE ZONE AT IMPORT, AND THIS
+MACHINE IS IN ASIA/KOLKATA.** Measured: a formatter built under TZ=UTC kept
+printing UTC after the zone was switched. So a zone-pinned test against one
+passes on this machine, whose own zone is the pin, and fails only on CI's UTC
+runners. The new formatters build per call or read the `Date`'s own fields,
+and every zone-pinned file was also run under `TZ=UTC`; the mutation that
+moved `formatInstantSeconds` to module scope PASSED here and FAILED under
+`TZ=UTC`, which is the whole trap in one pair of runs.
+
+**A STEP STARTS FROM THE URL'S WINDOW, NOT THE SERVER'S SNAPPED ONE**, a
+refinement found while planning: `snapWindow`'s end is
+`min(ceil(to / width) × width, last bucket + width)`, which lands a bucket
+short of the run's end or past it, so every "at the end" decision would be
+wrong by that bucket. The range line still states the snapped window, held to
+the run.
+
+**AN ELAPSED AXIS IS NAMED IN ONE PLACE NOW.** Thirteen `name: 'Elapsed (s)'`
+literals across seven components moved into `Chart`, which names the axis from
+the viewer's mode, and `ChartXAxis` refuses `name` beside `tickUnit` at compile
+time. `timeAxis.test.ts`'s per-file pairing guard is re-pointed to refuse a
+chart component spelling the name itself, with its vacuity counter on the
+construct (`tickUnit: 'ms-as-s'`), not on the verdict.
+
+**THE DRILL-DOWNS ARE SIBLINGS OF THE RUN ROUTE**, so a provider in `RunShell`
+alone would have left their charts elapsed in Datetime mode with nothing
+saying so. Each provides the run's own clock, and the e2e case reaches one by
+URL.
+
+**`CompareChart` WITHOUT `ElapsedOnly` WAS INVISIBLE TO THE UNIT SUITE, ONLY
+UNTIL A LATER TASK CLOSED THAT GAP.** When the mechanism first landed, nothing
+in the unit suite rendered `CompareChart` under a `TimeAxisProvider` at all —
+only the e2e case caught a version that dropped `ElapsedOnly`. `Chart.test.tsx`'s
+"keeps Compare elapsed while the reader has chosen Datetime" now mounts the
+real component under a Datetime-mode provider and asserts the axis stays named
+`Elapsed`, so both layers catch it today. Recorded because a green unit run for
+THIS branch is not, by itself, evidence that the gap the plan named still
+exists — read the test before assuming it does.
+
+**SCOPE GREW MID-PLAN, BY RULING.** ECharts steps a value axis at
+`nice(span / 5)` — 1, 2, 3, 5 × 10^k — which prints `00:01:40` on a ten-minute
+run and `00:16:40` on an hour: correct arithmetic, illegible as a clock.
+`apps/web/src/charts/timeTicks.ts`'s `clockStepMs` takes the FINEST clock step
+(1/2/5/10/15/30 s, 1/2/5/10/15/30 min, 1/2/3/6/12 h, 1/2/7 d) giving at most
+eight intervals, which reproduces Gatling Enterprise's own measured 15 s tick
+on a two-minute run (the spec's pair 00:00:15 ↔ 17:12:24). The step is taken
+from the span the axis actually DRAWS — the slider's window on a navigator,
+else the pinned domain, else the data extent — and the slider's own handle
+labels now read that clock too: they used to print raw milliseconds
+(`20412`) over `00:00:20` ticks.
+
+**FIVE TESTS THE PLAN ITSELF WROTE COULD NOT FAIL FOR WHAT THEY NAMED, AND
+EVERY ONE WAS CAUGHT BY A REVIEW OR A REQUIRED RED-VERIFY MUTATION, NONE BY A
+FALSE PASS THAT SHIPPED.** The navigator-step case brushed a 60 s window
+against a 63 s data extent — both step to 10 s, so ignoring the brush
+entirely still passed; fixed with a 15 s window, which steps to 2 s. The
+drill-down clock cases gave `startedAt === toolStartedAt`, and the axis NAME
+carries only the zone offset — the same in Asia/Kolkata for both instants —
+so distinct-looking values alone would still have passed; the cases now read
+the 15 s tick itself, `17:12:24`, which the ingest time would print as
+`17:30:15`. "Names the applied window from the outside" never checked the
+range line sits OUTSIDE the collapsible timeline (review M01's safety
+property), and "states the snapped window" used a requested and a snapped
+start that floor to the same second. The zoom-out case could not tell a
+doubled zoom-out from the measured quarter-width one, because both reach the
+whole run in two clicks once bounds snap on the reference run — the first
+zoom-out's bounds are pinned now, beside the zoom-in's. This file's own rule
+is that a fixture which cannot distinguish two answers is where the wrong one
+survives; what is new is that every one of the five was written with that
+sentence already in mind, and the mechanism that caught them anyway was
+requiring EVERY new case to be seen failing by a mutation — the brief's own
+mutation for the navigator case ran green and is what exposed it.
+
+**ESLINT LINTS `.superpowers/`, WHICH GIT IGNORES.** A throwaway `.ts` file
+left in this plan's own SDD scratch directory failed `pnpm lint`, because
+eslint's include globs are not scoped away from a directory git never tracks.
+Scratch there holds only `.txt`/`.log`/`.md`/`.sh` outputs from here on.
+
+**M01's FOLD, RE-MEASURED:** the window is 85px closed with its range line and
+mode always visible, and the run totals begin at y690 at 1440x900, inside the
+bound.
+
+**AND `test:integration` FLAKED TWICE, ON TWO DIFFERENT FILES, BOTH OUTSIDE
+THIS BRANCH'S REACH.** The first full run failed
+`rules.integration.test.ts`'s "lists every rule in the project when no test is
+named" — `expected 403 to be 201` on a session-authenticated
+`POST /v1/projects/:slug/rules` — and passed 42/42 alone. The second failed
+`openapi.integration.test.ts`'s path-param status sweep: `GET
+/v1/runs/{id}/telemetry answered 501` where the operation declares
+`[200,400,401,403,404]`, and passed 28/28 alone. This file has flaked three
+times before, always fetching `GET /v1/openapi.json` itself under contention
+(401, then 400, then 501) — this is a FOURTH occurrence and a different call
+site, the sweep's own probe against a real route rather than the document
+fetch, but the same transient-under-pressure shape. This branch touches
+nothing under `apps/api`, so neither failing file is reachable by its diff.
+**No test failed twice**, which is this file's own tell for the flake rather
+than the defect: a third full run, on a freshly re-checked machine, collected
+the identical **149 / 1895** and passed clean.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **166 / 2114**, zero failures and zero `Errors` lines, and again
+under `TZ=UTC`; `test:integration` **149 / 1895, exit 0** on its third attempt
+(the recorded floor plus exactly this branch's cases, collected identically on
+all three); `pnpm test:e2e` **155 passed, exit 0** — against a SCRATCH
+DATABASE (`perfportal_tw`) and a scratch Redis INDEX (db 10).
 
 The live-duration-is-activity-span branch added no unit FILE and 4 cases — 1 to
 `apps/worker/test/live-delta.test.ts`, 1 to
