@@ -939,7 +939,8 @@ describe('Chart — an elapsed axis steps like a clock', () => {
     columns: ['Elapsed (s)', 'All'],
     rows: [{ label: '0', values: [1] }],
   };
-  const axis = () => lastOption()['xAxis'] as { interval?: number };
+  const axis = () =>
+    lastOption()['xAxis'] as { interval?: number; axisLabel: { showMaxLabel?: boolean } };
 
   it('steps a pinned domain by the clock: two minutes every 15 seconds', () => {
     render(
@@ -949,9 +950,61 @@ describe('Chart — an elapsed axis steps like a clock', () => {
     expect(axis().interval).toBe(15_000);
   });
 
-  it('steps an unpinned axis by its data’s own extent', () => {
-    render(<Chart id="p" title="Requests per second" data={pairs} xAxis={{ type: 'value', tickUnit: 'ms-as-s' }} />);
-    expect(axis().interval).toBe(clockStepMs(63_000));
+  /**
+   * FROM ZERO, where ECharts draws an unpinned value axis from (`scale` is
+   * false). This used to be "by its data's own extent", over data starting AT
+   * zero, which cannot tell the two apart. These start at 15 s, as a
+   * request's did on a real run: measured from its first point the span
+   * stepped 10 s, and the axis ECharts drew, 0 to 100 s, had ten intervals.
+   */
+  it('steps an unpinned axis over the span ECharts draws, from zero, not from its first point', () => {
+    const late: ChartData = { ...pairs, series: [{ name: 'All', data: [[15_000, 1], [50_000, 2], [88_000, 3]] }] };
+    render(<Chart id="p" title="Response time" data={late} xAxis={{ type: 'value', tickUnit: 'ms-as-s' }} />);
+    // The two answers differ: [15 s, 88 s] steps 10 s, [0, 88 s] steps 15 s.
+    expect(clockStepMs(88_000 - 15_000)).toBe(10_000);
+    expect(axis().interval).toBe(15_000);
+  });
+
+  /**
+   * ═══ THE END IS LABELLED ONLY WHEN IT IS A GRID TICK ═══
+   *
+   * ECharts appends an axis' end as one more tick whenever it is off the
+   * step's grid, and under HH:MM:SS that label repeated or crowded the tick
+   * before it. `time-window.spec.ts` measures both in a browser; jsdom lays
+   * nothing out, so these pin the option that decides it.
+   */
+  it('drops the label ECharts appends at a pinned end off the grid', () => {
+    // The reference run's span: 63.161 s steps 10 s, and is no multiple of it.
+    render(
+      <Chart id="p" title="Requests per second" data={pairs}
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: 0, max: 63_161 }} />,
+    );
+    expect(axis().interval).toBe(10_000);
+    expect(axis().axisLabel.showMaxLabel).toBe(false);
+  });
+
+  it('keeps it where the pinned end is itself a grid tick', () => {
+    // Two minutes at 15 s: the end is the eighth tick, drawn like the rest.
+    render(
+      <Chart id="p" title="Requests per second" data={pairs}
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: 0, max: 120_000 }} />,
+    );
+    expect(axis().interval).toBe(15_000);
+    expect(axis().axisLabel.showMaxLabel).toBeUndefined();
+  });
+
+  it('drops it wherever ECharts decides the end: unpinned, or zoomed by a brush', () => {
+    // Unpinned, the end is ECharts' own rounded maximum past the data.
+    render(<Chart id="u" title="Response time" data={pairs} xAxis={{ type: 'value', tickUnit: 'ms-as-s' }} />);
+    expect(axis().axisLabel.showMaxLabel).toBe(false);
+    // Brushed, the slider can move the zoomed window's start — even over a
+    // pinned domain a whole number of steps long.
+    render(
+      <Chart id="b" title="Requests per second, whole run" data={pairs} navigator
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: 0, max: 120_000 }}
+        brush={{ value: { fromMs: 30_000, toMs: 45_000 }, onChange: () => undefined }} />,
+    );
+    expect(axis().axisLabel.showMaxLabel).toBe(false);
   });
 
   it('steps a navigator by the window its slider shows, not the whole run', () => {
@@ -966,6 +1019,8 @@ describe('Chart — an elapsed axis steps like a clock', () => {
   it('leaves every other value axis to ECharts', () => {
     render(<Chart id="s" title="Scatter" data={pairs} xAxis={{ type: 'value', name: 'Response time (ms)' }} />);
     expect(axis().interval).toBeUndefined();
+    // Its end too: a response-time axis has no clock grid to be off.
+    expect(axis().axisLabel.showMaxLabel).toBeUndefined();
   });
 
   it('labels the slider’s handles in the axis’ own clock, not raw milliseconds', () => {

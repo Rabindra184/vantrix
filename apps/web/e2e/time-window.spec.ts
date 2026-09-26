@@ -170,6 +170,103 @@ test('a request’s own page reads the clock the reader chose', async ({ page })
   await expect.poll(() => drawnText(page, 'chart-percentiles')).toContain('Time (GMT+5:30)');
 });
 
+/**
+ * The run page's five time figures, which share one pinned domain. Not the
+ * navigator: its slider handles are HH:MM:SS labels too, and they may repeat
+ * a tick's text legitimately.
+ */
+const TIME_CHARTS = [
+  'chart-concurrent-users',
+  'chart-user-start-rate',
+  'chart-requests-per-second',
+  'chart-responses-per-second',
+  'chart-percentiles',
+] as const;
+
+/** A chart's HH:MM:SS labels as drawn: the text, and the centre it sits at. */
+async function drawnTicks(page: Page, testId: string): Promise<{ text: string; centre: number }[]> {
+  return plot(page.getByTestId(testId)).locator('text').evaluateAll((nodes) =>
+    nodes
+      .map((node) => {
+        const box = node.getBoundingClientRect();
+        return { text: (node.textContent ?? '').trim(), centre: box.x + box.width / 2 };
+      })
+      .filter((tick) => /^\d{2}:\d{2}:\d{2}$/.test(tick.text)),
+  );
+}
+
+/**
+ * What is wrong with an axis' labels, or nothing: fewer than two, a repeated
+ * text, or a label whose distance from the one before is not the step.
+ *
+ * SPACING IS MEASURED ON SCREEN, NOT READ OFF THE TEXT. A crowded end reads
+ * differently from the tick before it, and on the wall clock a label floors
+ * to its second, so an end half a step on can read as a whole step. Where
+ * the label sits cannot misstate it. Three pixels absorbs rounding.
+ */
+function gridProblems(ticks: readonly { text: string; centre: number }[]): string[] {
+  const texts = ticks.map((tick) => tick.text);
+  const gaps = ticks.slice(1).map((tick, i) => Math.round(tick.centre - ticks[i]!.centre));
+  const problems = [
+    ticks.length < 2 && `${ticks.length} label(s)`,
+    new Set(texts).size !== texts.length && 'a label repeats',
+    gaps.some((gap) => Math.abs(gap - gaps[0]!) > 3) && `labels ${gaps.join(', ')} px apart`,
+  ].filter((problem): problem is string => problem !== false);
+  return problems.length === 0 ? [] : [`${problems.join('; ')}: ${texts.join(' ')}`];
+}
+
+/**
+ * ═══ AN ELAPSED AXIS LABELS ITS STEP'S GRID, AND ITS END ONLY ON IT ═══
+ *
+ * With a fixed step, ECharts ticks from the axis' start and then appends the
+ * domain's END as one more tick whenever it falls off that grid. Under
+ * whole-second notation that label repeated the tick before it, or crowded
+ * it: measured here before the fix, a window of 0 to 2.5 s drew
+ * `00:00:00 00:00:01 00:00:02 00:00:02`, and one of 7 to 61 s put `00:01:01`
+ * 60px after `00:00:57` on a 152px step. jsdom lays out nothing, so only a
+ * browser can say where ECharts put them.
+ *
+ * Both windows are TYPED, the way a reader reaches an end between two ticks.
+ */
+test('an elapsed axis never repeats or crowds its last tick, in either mode', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runChartsPath(runId));
+  await zonePinned(page);
+
+  /** Waits for each chart to draw `settled`, a string only the new stretch
+   *  or mode draws, then checks its labels. */
+  const gridded = async (settled: string): Promise<void> => {
+    for (const id of TIME_CHARTS) {
+      await expect.poll(() => drawnText(page, id), { message: id }).toContain(settled);
+      expect(gridProblems(await drawnTicks(page, id)), id).toEqual([]);
+    }
+  };
+  const typeWindow = async (from: string, to: string, toMs: number): Promise<void> => {
+    await openTimeWindow(page);
+    await page.getByTestId('window-from').fill(from);
+    await page.getByTestId('window-to').fill(to);
+    await page.getByTestId('window-apply').click();
+    await expect(page).toHaveURL(new RegExp(`[?&]to=${toMs}(?!\\d)`));
+  };
+
+  // The whole run: the reference bundle's end, 63.161 s, is off a 10 s grid.
+  await gridded('00:00:10');
+
+  // An end 4 s past a 10 s grid: distinct text, crowded.
+  await typeWindow('7', '61', 61_000);
+  await gridded('00:00:17');
+
+  // An end half a second past a 1 s grid: the same text twice.
+  await typeWindow('0', '2.5', 2_500);
+  await gridded('00:00:01');
+
+  // And on the wall clock, where that end reads as its tick's second again.
+  await page.getByTestId('time-axis-mode').selectOption('datetime');
+  await gridded('Time (GMT+5:30)');
+});
+
 test('Compare stays elapsed while the reader reads wall-clock time elsewhere', async ({ page }) => {
   const admin = await seedAdmin();
   await seedRunWithData(admin.orgId);

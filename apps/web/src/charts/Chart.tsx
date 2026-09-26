@@ -441,11 +441,24 @@ export default function Chart({
   /**
    * The span an elapsed axis DRAWS, for choosing a clock step: the window a
    * brushed navigator's slider shows, else the domain the caller pinned, else
-   * the data's own extent. `null` on any other axis, which ECharts steps.
+   * what ECharts draws for an unpinned axis. `null` on any other axis, which
+   * ECharts steps.
    *
    * Read from the brush because ECharts zooms the plot to the slider's window:
    * a step chosen for the whole run would leave a narrowed navigator with one
    * tick, or none.
+   *
+   * ═══ UNPINNED, ECHARTS DRAWS FROM ZERO, NOT FROM THE FIRST POINT ═══
+   *
+   * A value axis includes zero unless `scale` is set, and no axis in this app
+   * sets it, so an unpinned axis runs from `min(0, first point)`. Measuring
+   * from the first point instead under-counted the span: a real run's request
+   * drill-down, "Place Order", had buckets from 15 s to 88 s, stepped 10 s,
+   * and drew 0 to 100 s — ten intervals, eleven labels, over the eight
+   * `timeTicks.ts` budgets. A request active only at the end of a long soak
+   * would have drawn hundreds. The far end is still measured to the last
+   * point, and ECharts still rounds it up past the run's end: that stays
+   * ECharts' own behaviour.
    */
   const timeStepMs = useMemo((): number | null => {
     if (xAxisTickUnit !== 'ms-as-s') return null;
@@ -459,10 +472,44 @@ export default function Chart({
         }
       }
     }
-    const from = brushFrom ?? xAxisMin ?? lo;
+    const from = brushFrom ?? xAxisMin ?? Math.min(0, lo);
     const to = brushTo ?? xAxisMax ?? hi;
     return Number.isFinite(from) && Number.isFinite(to) && to > from ? clockStepMs(to - from) : null;
   }, [xAxisTickUnit, data, brushFrom, brushTo, xAxisMin, xAxisMax]);
+  /**
+   * ═══ THE AXIS' END IS LABELLED ONLY WHEN IT IS A TICK OF THE GRID ═══
+   *
+   * With a fixed `interval`, ECharts ticks from the axis' start in whole steps
+   * and then appends the axis' END as one more tick whenever it falls off
+   * that grid (`IntervalScale#getTicks`). `hideOverlap` drops that label only
+   * once the two boxes touch, so in a browser, before this: a window of 0 to
+   * 2.5 s drew `00:00:00 00:00:01 00:00:02 00:00:02`, a 2.457 s run
+   * `00:00:02` twice, and a window of 7 to 61 s put `00:01:01` 60px after
+   * `00:00:57` on a 152px step.
+   *
+   * `showMaxLabel: false` drops that label and its tick, and is set on every
+   * elapsed axis EXCEPT one whose end is known to be a grid tick: a pinned
+   * domain a whole number of steps long, whose end ECharts draws as an
+   * ordinary tick. Everywhere else the end is ECharts' to decide, not a fact
+   * this axis has to state. An unpinned axis ends where ECharts rounds its
+   * last point up to, which on a drill-down can be a time after the run ended;
+   * a brushed navigator's slider shifts its zoomed window to keep it inside
+   * the data. Dropping the label there costs at most one tick at the end of
+   * such an axis, even when ECharts' end happens to fall on the grid;
+   * predicting that end instead would copy ECharts' `nice` and `splitNumber`
+   * into this file. The range line states the window's ends to the second.
+   *
+   * A value, not a formatter that blanks the end: which tick is the end
+   * depends on where ECharts starts the grid, and it moves the navigator's
+   * start off the brush (measured: a window of 40 to 63.161 s ticked from
+   * `00:00:39`). Getting that wrong in a formatter would blank every label.
+   */
+  const timeAxisEndOnGrid =
+    timeStepMs !== null &&
+    !hasBrush &&
+    xAxisMin !== undefined &&
+    xAxisMax !== undefined &&
+    (xAxisMax - xAxisMin) % timeStepMs === 0;
   // Held in a ref so the handler stays current without being a dependency —
   // otherwise a fresh `onChange` closure per render would re-run the effect.
   const onBrush = useRef(brush?.onChange);
@@ -697,6 +744,9 @@ export default function Chart({
         // Milliseconds on the axis, clock time on the label: see
         // `ChartXAxis` and `timeLabel` above.
         ...(xAxisTickUnit === 'ms-as-s' ? { formatter: timeLabel } : {}),
+        // The end is labelled only when it is a grid tick: see
+        // `timeAxisEndOnGrid`.
+        ...(timeStepMs !== null && !timeAxisEndOnGrid ? { showMaxLabel: false } : {}),
       },
       // NEVER FINER THAN A SECOND on an elapsed axis. The zoom buttons can
       // narrow a window to one bucket, and ECharts would then tick it every
@@ -995,6 +1045,7 @@ export default function Chart({
     drawnXAxisName,
     wallAnchorMs,
     timeStepMs,
+    timeAxisEndOnGrid,
     xAxisNumeric,
     xAxisTickUnit,
     xAxisMin,
