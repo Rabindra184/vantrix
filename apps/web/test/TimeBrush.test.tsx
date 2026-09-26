@@ -419,6 +419,10 @@ describe('TimeBrush — an invalid range is refused, never widened', () => {
     expect(range).toHaveTextContent('00:00:10 → 00:00:30');
     expect(range).toHaveTextContent('20s');
     expect(screen.getByTestId('time-window-toggle').textContent ?? '').not.toMatch(/whole run/i);
+    // OUTSIDE the collapsible timeline, so a shut timeline never hides which
+    // stretch the numbers describe (review M01's safety property).
+    expect(details()).not.toContainElement(screen.getByTestId('window-range'));
+    expect(details()).not.toContainElement(screen.getByTestId('time-axis-mode'));
   });
 });
 
@@ -452,11 +456,15 @@ describe('TimeBrush — Gatling Enterprise’s time controls', () => {
 
   it('states the snapped window once a response reports one, held to the run', async () => {
     await renderBrush({
-      window: { fromMs: 10_300, toMs: 63_161 },
-      applied: { fromMs: 10_000, toMs: 64_000, bucketWidthMs: 1_000 },
+      window: { fromMs: 11_300, toMs: 63_161 },
+      applied: { fromMs: 10_000, toMs: 64_000, bucketWidthMs: 2_000 },
     });
-    // The snap reached a bucket past the run's end; the line stops at it.
+    // The SNAPPED start (10 s), not the requested one (11 s); and the snap
+    // reached a bucket past the run's end, so the line stops at the end.
     expect(screen.getByTestId('window-range')).toHaveTextContent('00:00:10 → 00:01:03');
+    expect(screen.getByTestId('window-applied')).toHaveTextContent(
+      'Showing 00:00:10 → 00:01:03, snapped to 2s buckets',
+    );
   });
 
   it('offers Gatling’s presets, and one longer than the run is the whole run', async () => {
