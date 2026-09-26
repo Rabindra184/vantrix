@@ -104,8 +104,15 @@ export function snapBound(ms: number, runMs: number, resolutionMs: number): numb
   return Math.min(runMs, Math.round(ms / resolutionMs) * resolutionMs);
 }
 
-/** A span covering the whole run is the whole run: no window at all. */
-function asWindow(fromMs: number, toMs: number, runMs: number): Window | null {
+/**
+ * A span covering the whole run is the whole run: no window at all.
+ *
+ * EXPORTED BECAUSE EVERY CONTROL HAS TO AGREE ON IT. The steps and presets
+ * here, a drag in `TimeBrush.commit`, and Apply all end in this one rule, so
+ * the whole run keeps an empty URL (spec deviation B) whichever control
+ * reached it, and a shared link follows a re-ingested run.
+ */
+export function asWindow(fromMs: number, toMs: number, runMs: number): Window | null {
   return fromMs <= 0 && toMs >= runMs ? null : { fromMs, toMs, bucketWidthMs: 0 };
 }
 
