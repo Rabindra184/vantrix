@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseWindow, serialiseWindow } from '../src/routes/window';
+import {
+  canStep,
+  parseWindow,
+  presetWindow,
+  serialiseWindow,
+  snapBound,
+  stepWindow,
+  WINDOW_PRESETS,
+  WINDOW_STEPS,
+  type Span,
+  type WindowStep,
+} from '../src/routes/window';
 // `rangeSuffix` moved to the module that builds the API URLs consuming it.
 import { rangeSuffix } from '../src/api/metricPaths';
 import { statsQuery, statsQueryKey, seriesQuery } from '../src/api/metrics';
@@ -141,5 +152,165 @@ describe('the duration argument is not decorative', () => {
     const short = parseWindow('1000', '5000', 60_000);
     const long = parseWindow('1000', '5000', Number.MAX_SAFE_INTEGER);
     expect(short).toEqual(long);
+  });
+});
+
+/* ======================================================================== *
+ * THE SIX CONTROLS, AGAINST GATLING ENTERPRISE'S OWN FIGURES
+ * ======================================================================== */
+
+/**
+ * Every expectation in the first block was measured on cloud.gatling.io
+ * against a two-minute run that began 17:12:09 (the spec's table), and is
+ * written here as the offset it is: 17:12:39 is 30 s.
+ */
+const GATLING_RUN_MS = 120_000;
+const SECOND = 1_000;
+const w = (fromMs: number, toMs: number) => ({ fromMs, toMs, bucketWidthMs: 0 });
+
+describe('stepWindow — Gatling Enterprise’s measured steps', () => {
+  it('zooms in by a quarter from each edge, keeping the centre', () => {
+    // 17:12:09–17:14:09 became 17:12:39–17:13:39.
+    expect(stepWindow({ fromMs: 0, toMs: 120_000 }, 'zoom-in', GATLING_RUN_MS, SECOND)).toEqual(
+      w(30_000, 90_000),
+    );
+  });
+
+  it('zooms out by a quarter from each edge, cut at the run’s end rather than slid', () => {
+    // 17:13:09–17:14:09 became 17:12:54–17:14:09: 60 s to 75 s.
+    expect(stepWindow({ fromMs: 60_000, toMs: 120_000 }, 'zoom-out', GATLING_RUN_MS, SECOND)).toEqual(
+      w(45_000, 120_000),
+    );
+  });
+
+  it('pans backward by a fifth of the width, keeping it', () => {
+    // 17:12:39–17:13:39 became 17:12:27–17:13:27.
+    expect(stepWindow({ fromMs: 30_000, toMs: 90_000 }, 'backward', GATLING_RUN_MS, SECOND)).toEqual(
+      w(18_000, 78_000),
+    );
+  });
+
+  it('pans forward by a fifth', () => {
+    // 17:12:09–17:13:09 became 17:12:21–17:13:21.
+    expect(stepWindow({ fromMs: 0, toMs: 60_000 }, 'forward', GATLING_RUN_MS, SECOND)).toEqual(
+      w(12_000, 72_000),
+    );
+  });
+
+  it('fast-pans by the whole width', () => {
+    // 17:12:25–17:12:44 became 17:12:44–17:13:03.
+    expect(stepWindow({ fromMs: 16_000, toMs: 35_000 }, 'fast-forward', GATLING_RUN_MS, SECOND)).toEqual(
+      w(35_000, 54_000),
+    );
+  });
+
+  it('slides a pan against the start, keeping the width', () => {
+    // 17:12:27–17:13:27, fast back, became 17:12:09–17:13:09.
+    expect(stepWindow({ fromMs: 18_000, toMs: 78_000 }, 'fast-backward', GATLING_RUN_MS, SECOND)).toEqual(
+      w(0, 60_000),
+    );
+  });
+});
+
+describe('stepWindow — the resolution and the ends', () => {
+  it('lands an interior bound on the nearest multiple of the resolution', () => {
+    // A typed window is off the grid; a fifth of 20 s is 4 s.
+    expect(stepWindow({ fromMs: 10_300, toMs: 30_300 }, 'backward', GATLING_RUN_MS, SECOND)).toEqual(
+      w(6_000, 26_000),
+    );
+  });
+
+  it('keeps the run’s own end exactly, so its last partial bucket is never dropped', () => {
+    // 63,161 ms is the reference run's span; rounded it would be 63,000.
+    expect(stepWindow({ fromMs: 40_000, toMs: 60_000 }, 'forward', 63_161, SECOND)).toEqual(
+      w(43_000, 63_161),
+    );
+  });
+
+  it('never zooms in narrower than one bucket', () => {
+    // A quarter of 1.6 s rounds both edges onto 11 s; the bucket holding the
+    // centre is what is left.
+    expect(stepWindow({ fromMs: 10_200, toMs: 11_800 }, 'zoom-in', GATLING_RUN_MS, SECOND)).toEqual(
+      w(11_000, 12_000),
+    );
+  });
+
+  it('is the whole run, no window at all, once a step covers it', () => {
+    expect(stepWindow({ fromMs: 10_000, toMs: 110_000 }, 'zoom-out', GATLING_RUN_MS, SECOND)).toBeNull();
+  });
+
+  it('snaps to a coarser resolution when the run has one', () => {
+    // A long run's buckets widen in powers of two. The same zoom at 1 s would
+    // be 25–75 s.
+    expect(stepWindow({ fromMs: 0, toMs: 100_000 }, 'zoom-in', GATLING_RUN_MS, 4_000)).toEqual(
+      w(24_000, 76_000),
+    );
+  });
+});
+
+describe('snapBound', () => {
+  it('keeps both ends of the run exactly and rounds everything between', () => {
+    expect(snapBound(-5, 63_161, SECOND)).toBe(0);
+    expect(snapBound(63_161, 63_161, SECOND)).toBe(63_161);
+    expect(snapBound(70_000, 63_161, SECOND)).toBe(63_161);
+    expect(snapBound(12_499, 63_161, SECOND)).toBe(12_000);
+    expect(snapBound(12_500, 63_161, SECOND)).toBe(13_000);
+  });
+});
+
+describe('canStep — the buttons at their limits', () => {
+  const enabled = (current: Span, step: WindowStep): boolean =>
+    canStep(current, step, GATLING_RUN_MS, SECOND);
+
+  it('offers only Zoom in while the whole run is selected', () => {
+    const whole = { fromMs: 0, toMs: GATLING_RUN_MS };
+    expect(WINDOW_STEPS.filter(({ step }) => enabled(whole, step)).map(({ step }) => step)).toEqual([
+      'zoom-in',
+    ]);
+  });
+
+  it('stops backward at the start and forward at the end', () => {
+    const atStart = { fromMs: 0, toMs: 30_000 };
+    expect(enabled(atStart, 'backward')).toBe(false);
+    expect(enabled(atStart, 'fast-backward')).toBe(false);
+    expect(enabled(atStart, 'forward')).toBe(true);
+    const atEnd = { fromMs: 90_000, toMs: GATLING_RUN_MS };
+    expect(enabled(atEnd, 'forward')).toBe(false);
+    expect(enabled(atEnd, 'fast-forward')).toBe(false);
+    expect(enabled(atEnd, 'backward')).toBe(true);
+  });
+
+  it('stops zooming in at one bucket', () => {
+    expect(enabled({ fromMs: 10_000, toMs: 11_000 }, 'zoom-in')).toBe(false);
+    expect(enabled({ fromMs: 10_000, toMs: 12_000 }, 'zoom-in')).toBe(true);
+  });
+
+  it('names the six controls in Gatling’s order and words', () => {
+    expect(WINDOW_STEPS.map(({ label }) => label)).toEqual([
+      'Fast backward', 'Backward', 'Zoom out', 'Zoom in', 'Forward', 'Fast forward',
+    ]);
+  });
+});
+
+describe('presetWindow — measured back from the run’s end', () => {
+  const FOUR_HOURS = 4 * 3_600_000;
+
+  it('takes the final stretch of a long run', () => {
+    expect(presetWindow(5 * 60_000, FOUR_HOURS, SECOND)).toEqual(w(FOUR_HOURS - 5 * 60_000, FOUR_HOURS));
+  });
+
+  it('is the whole run when the preset is at least as long as the run', () => {
+    expect(presetWindow(5 * 60_000, 63_161, SECOND)).toBeNull();
+    expect(presetWindow(63_161, 63_161, SECOND)).toBeNull();
+  });
+
+  it('is the whole run for Everything', () => {
+    expect(presetWindow(null, FOUR_HOURS, SECOND)).toBeNull();
+  });
+
+  it('offers Gatling’s six presets, in its words', () => {
+    expect(WINDOW_PRESETS.map((preset) => preset.label)).toEqual([
+      'Last 5 Minutes', 'Last 15 Minutes', 'Last 30 Minutes', 'Last 1 hour', 'Last 1 day', 'Everything',
+    ]);
   });
 });
