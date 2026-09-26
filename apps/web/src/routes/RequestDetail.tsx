@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { useRunTerminal, useWindowSuffix } from './useRunWindow';
 import { formatInstant } from './format';
+import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { projectPath, projectTestPath } from './paths';
 import {
   distributionQuery,
@@ -121,6 +122,9 @@ export default function RequestDetail() {
   }
 
   return (
+    // A SIBLING OF THE RUN ROUTE, so `RunShell`'s clock never reaches this
+    // page: it provides the run's own, from the run it already read.
+    <TimeAxisProvider anchor={run?.toolStartedAt}>
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-3">
         {/* The back link ABOVE the heading, not below it. It was below, which
@@ -251,5 +255,6 @@ export default function RequestDetail() {
         {(data) => <ScatterChart scatter={data} />}
       </Payload>
     </div>
+    </TimeAxisProvider>
   );
 }
