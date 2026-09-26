@@ -34,8 +34,8 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 type TelemetryHost = TelemetryResponse['hosts'][number];
 type TelemetryPoint = TelemetryHost['points'][number];
 
-/** Heads the label column of every table here, and names the shared category
- *  axis `TelemetryCharts.tsx` draws it on. */
+/** Heads the label column of every table here. It names no axis: the drawn
+ *  one is a value axis `Chart` names itself, from the viewer's time mode. */
 const TIME_COLUMN = 'Elapsed (ms)';
 
 const BYTES_PER_MB = 1024 * 1024;

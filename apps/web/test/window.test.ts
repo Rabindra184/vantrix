@@ -262,9 +262,12 @@ describe('stepWindow — the resolution and the ends', () => {
  * inert. A window narrower than a bucket stepped to an EMPTY one, which
  * `TimeBrush` committed and `parseWindow` reads back as the whole run.
  *
- * Nothing above could see it: every measured case starts from a window at
- * least twenty seconds wide, and nothing stepped from the one-bucket floor
- * that Zoom in — the only control enabled on arrival — leads straight to.
+ * Nothing above could see it: the one existing case that starts within two
+ * and a half buckets — the zoom-in clamp above, at 1.6 s — only proves the
+ * RESULT lands on a single bucket; every other case starts wider, from the
+ * fast pan's nineteen seconds up. And nothing stepped from the one-bucket
+ * floor that Zoom in — the only control enabled on arrival — leads
+ * straight to.
  */
 describe('stepWindow — a narrow window still moves', () => {
   const REFERENCE_MS = 63_161;
