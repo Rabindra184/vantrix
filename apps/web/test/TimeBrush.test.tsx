@@ -332,8 +332,8 @@ describe('TimeBrush — an invalid range is refused, never widened', () => {
    * Measured at 1440x900 it ran 332px, which put the run's own totals at y937
    * and their VALUES at y980 — eighty pixels below the fold, on the page a
    * reader opens to read four numbers. M01 asks for failure, p95, error rate
-   * and throughput inside that first screen. Closed it is 44px and the totals
-   * begin at y649.
+   * and throughput inside that first screen. Closed it is 85px, range line and
+   * mode included, and the totals begin at y690.
    *
    * ═══ AND WHY CLOSING IT IS ONLY SAFE BECAUSE OF THE CASES BELOW ═══
    *

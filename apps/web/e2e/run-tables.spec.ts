@@ -815,6 +815,7 @@ test('the run totals come before the assertions, and near the top', async ({ pag
    *     1001  after the reorder shortened the brush to a navigator
    *      937  after C01 took the decision band from 316px to 246px
    *      649  after M01 collapsed the time window (332px -> 44px)
+   *      690  after the window's range line and mode became always visible (44px -> 85px)
    *
    * It was 1100 for three branches — deliberately the MEASUREMENT rather than
    * the goal, because a threshold set to an unmet bar is a failing test
