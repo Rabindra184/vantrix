@@ -166,7 +166,7 @@ export default function PercentilesChart({
       // Log by default. A log axis cannot render a zero or a null as a
       // point, which is correct here: an unmeasured second is a gap.
       yAxis={{ type: scale, name: 'Response time (ms)' }}
-      // A VALUE AXIS IN MILLISECONDS, labelled in seconds — see `RatesChart`.
+      // A VALUE AXIS IN MILLISECONDS, labelled as clock time — see `RatesChart`.
       // A connected pointer on a category axis syncs by INDEX, and the run
       // page's payloads do not share a bucket count.
       // Its x is an INSTANT, not a measurement — the tooltip title names it.

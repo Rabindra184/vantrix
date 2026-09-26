@@ -53,7 +53,7 @@ function RateChart({ id, title, yName, data, domainMs, warmupMs, compact }: {
       // they mean on the donut ④ and the distribution ⑧.
       roles={RATE_ROLES}
       yAxis={{ name: yName }}
-      // A VALUE AXIS IN MILLISECONDS, labelled in seconds. The connected
+      // A VALUE AXIS IN MILLISECONDS, labelled as clock time. The connected
       // pointer on a CATEGORY axis syncs by index, and `/series` is sparse —
       // a second with no request produces no bucket — so index 40 here was a
       // different instant from index 40 on the users chart. Value axes sync by

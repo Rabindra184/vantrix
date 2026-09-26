@@ -59,7 +59,7 @@ export function ConcurrentUsersChart({ users, group, domainMs, warmupMs }: Users
       // labels on two lines of similar shape is how a reader ends up believing
       // they are the same measurement.
       yAxis={{ name: 'Users' }}
-      // A VALUE AXIS IN MILLISECONDS, labelled in seconds. This chart shares
+      // A VALUE AXIS IN MILLISECONDS, labelled as clock time. This chart shares
       // `run-time` with requests/s, and a connected pointer on a CATEGORY axis
       // syncs by INDEX — which is wrong here by construction: `/users` and
       // `/series` do not carry the same bucket count (see `timeAxis.test.ts`).
@@ -91,7 +91,7 @@ export function UserStartRateChart({ users, group, domainMs, warmupMs }: UsersCh
       data={data}
       group={group}
       yAxis={{ name: 'Users/s' }}
-      // A VALUE AXIS IN MILLISECONDS, labelled in seconds. This chart shares
+      // A VALUE AXIS IN MILLISECONDS, labelled as clock time. This chart shares
       // `run-time` with requests/s, and a connected pointer on a CATEGORY axis
       // syncs by INDEX — which is wrong here by construction: `/users` and
       // `/series` do not carry the same bucket count (see `timeAxis.test.ts`).

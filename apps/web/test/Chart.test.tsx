@@ -2,10 +2,13 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Chart from '../src/charts/Chart.js';
+import CompareChart from '../src/charts/CompareChart.js';
 import { CATEGORICAL } from '../src/charts/theme.js';
+import { clockStepMs } from '../src/charts/timeTicks.js';
 import type { ChartData } from '../src/charts/types.js';
 import { ElapsedOnly, TimeAxisProvider, useTimeAxis } from '../src/charts/TimeAxisContext.js';
 import { TIME_AXIS_STORAGE_KEY } from '../src/timeAxisPreference.js';
+import fixture from './fixtures/reference-run.json';
 
 /**
  * `Chart`'s behaviour that never reaches ECharts.
@@ -888,5 +891,100 @@ describe('Chart — the time axis follows the viewer’s mode', () => {
       act(() => handle.setMode!('datetime'));
       expect(timeAxis().name).toBe('Time (GMT+5:30)');
     });
+  });
+
+  it('labels a Datetime axis for the run’s own season, not today’s', () => {
+    // New York is GMT-4 in July and GMT-5 in January. "Today" is pinned to
+    // January, so an offset taken now rather than at the run's start reads -5.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-15T12:00:00Z'));
+      inZone('America/New_York', () => {
+        expect(new Date('2026-07-01T12:00:00Z').getHours()).toBe(8);
+        localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+        render(<TimeAxisProvider anchor="2026-07-01T16:00:00.000Z">{elapsedChart}</TimeAxisProvider>);
+        expect(timeAxis().name).toBe('Time (GMT-4)');
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps Compare elapsed while the reader has chosen Datetime', () => {
+    // Five runs have five wall clocks; `CompareChart` pins elapsed time with
+    // `ElapsedOnly` whatever the page around it provides.
+    localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+    render(
+      <TimeAxisProvider anchor={ANCHOR}>
+        <CompareChart
+          runs={[{ id: 'a', label: 'Run a', series: fixture.series as never }]}
+          metric="p95"
+          onMetricChange={() => undefined}
+        />
+      </TimeAxisProvider>,
+    );
+    expect(timeAxis().name).toBe('Elapsed');
+  });
+});
+
+/* ======================================================================== *
+ * AN ELAPSED AXIS STEPS LIKE A CLOCK, AND SO DOES ITS SLIDER
+ * ======================================================================== */
+
+describe('Chart — an elapsed axis steps like a clock', () => {
+  /** Pair-shaped series spanning 0–63 s, as every elapsed chart plots. */
+  const pairs: ChartData = {
+    series: [{ name: 'All', data: [[0, 1], [30_000, 2], [63_000, 3]] }],
+    axisLabels: [],
+    columns: ['Elapsed (s)', 'All'],
+    rows: [{ label: '0', values: [1] }],
+  };
+  const axis = () => lastOption()['xAxis'] as { interval?: number };
+
+  it('steps a pinned domain by the clock: two minutes every 15 seconds', () => {
+    render(
+      <Chart id="p" title="Requests per second" data={pairs}
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: 0, max: 120_000 }} />,
+    );
+    expect(axis().interval).toBe(15_000);
+  });
+
+  it('steps an unpinned axis by its data’s own extent', () => {
+    render(<Chart id="p" title="Requests per second" data={pairs} xAxis={{ type: 'value', tickUnit: 'ms-as-s' }} />);
+    expect(axis().interval).toBe(clockStepMs(63_000));
+  });
+
+  it('steps a navigator by the window its slider shows, not the whole run', () => {
+    render(
+      <Chart id="n" title="Requests per second, whole run" data={pairs} navigator
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
+        brush={{ value: { fromMs: 30_000, toMs: 90_000 }, onChange: () => undefined }} />,
+    );
+    expect(axis().interval).toBe(clockStepMs(60_000));
+  });
+
+  it('leaves every other value axis to ECharts', () => {
+    render(<Chart id="s" title="Scatter" data={pairs} xAxis={{ type: 'value', name: 'Response time (ms)' }} />);
+    expect(axis().interval).toBeUndefined();
+  });
+
+  it('labels the slider’s handles in the axis’ own clock, not raw milliseconds', () => {
+    render(
+      <Chart id="n" title="Requests per second, whole run" data={pairs} navigator
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
+        brush={{ value: null, onChange: () => undefined }} />,
+    );
+    const [zoom] = lastOption()['dataZoom'] as { labelFormatter?: (value: number) => string }[];
+    expect(zoom!.labelFormatter?.(15_000)).toBe('00:00:15');
+  });
+
+  it('leaves a slider on any other axis as ECharts draws it', () => {
+    render(
+      <Chart id="s" title="Scatter" data={pairs}
+        xAxis={{ type: 'value', name: 'Response time (ms)' }}
+        brush={{ value: null, onChange: () => undefined }} />,
+    );
+    const [zoom] = lastOption()['dataZoom'] as { labelFormatter?: unknown }[];
+    expect(zoom!.labelFormatter).toBeUndefined();
   });
 });

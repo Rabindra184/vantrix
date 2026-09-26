@@ -6,6 +6,7 @@ import DataTable from './DataTable';
 import { echarts } from './echarts';
 import { tooltipFormatter, type PairValue } from './tooltip';
 import { useTimeAxis } from './TimeAxisContext';
+import { clockStepMs } from './timeTicks';
 import { formatClockTime, formatElapsedClock, formatZoneOffset } from '../routes/format';
 import {
   assignPalette,
@@ -27,27 +28,7 @@ export interface ChartYAxis {
   readonly name?: string;
 }
 
-/**
- * Names the CATEGORY axis — `axisLabels` — which is what `xAxis` has always
- * meant here in the same way `yAxis` has always meant the value axis: a
- * `horizontal` chart swaps which of x/y each one is placed on, and
- * `IndicatorsChart` already passes `yAxis={{ name: 'Requests' }}` for an axis
- * that ends up drawn along the bottom.
- *
- * No `type`: a category axis has no scale to choose.
- *
- * Unused by the six time-axis charts, whose labels are elapsed seconds and say
- * so in the title. It exists for the distribution ⑧, the first chart whose
- * category labels are ambiguous on their own — a bare `28` under a bar is
- * either the midpoint of a 25 ms bin or a response time some request actually
- * took, depending on `exactValues`, and the reader has no other way to tell.
- * `DistributionChart` passes `data.columns[0]`, so the drawn axis and the data
- * table's label column are one string and cannot drift.
- *
- * A `scatter` has no categories: its x is a measured quantity and its series
- * carry explicit [x, y] pairs, so this names the numeric horizontal axis
- * instead. Same prop, same position on screen, different axis type underneath.
- */
+/** The x axis fields every chart may set; `name` and `tickUnit` are the exclusive pair in `ChartXAxis` below. */
 interface ChartXAxisBase {
   /**
    * `'value'` when the horizontal axis is a MEASURED QUANTITY rather than a
@@ -113,7 +94,34 @@ interface ChartXAxisBase {
  */
 export type ChartXAxis = ChartXAxisBase &
   (
-    | { readonly name?: string; readonly tickUnit?: undefined }
+    | {
+        /**
+         * Names the CATEGORY axis — `axisLabels` — which is what `xAxis` has
+         * always meant here in the same way `yAxis` has always meant the
+         * value axis: a `horizontal` chart swaps which of x/y each one is
+         * placed on, and `IndicatorsChart` already passes
+         * `yAxis={{ name: 'Requests' }}` for an axis that ends up drawn along
+         * the bottom.
+         *
+         * No `type`: a category axis has no scale to choose.
+         *
+         * Unused on an elapsed-time axis, which `Chart` names itself from the
+         * time mode (the second branch). It exists for the distribution ⑧,
+         * the first chart whose category labels are ambiguous on their own —
+         * a bare `28` under a bar is either the midpoint of a 25 ms bin or a
+         * response time some request actually took, depending on
+         * `exactValues`, and the reader has no other way to tell.
+         * `DistributionChart` passes `data.columns[0]`, so the drawn axis and
+         * the data table's label column are one string and cannot drift.
+         *
+         * A `scatter` has no categories: its x is a measured quantity and its
+         * series carry explicit [x, y] pairs, so this names the numeric
+         * horizontal axis instead. Same prop, same position on screen,
+         * different axis type underneath.
+         */
+        readonly name?: string;
+        readonly tickUnit?: undefined;
+      }
     | {
         /**
          * Draws a MILLISECOND value axis as clock time: `HH:MM:SS` elapsed
@@ -408,8 +416,9 @@ export default function Chart({
    * CATEGORY axis those are category INDICES — so a millisecond count handed
    * to a distribution chart would shade the first N bins and look deliberate.
    * `tickUnit: 'ms-as-s'` is this codebase's one marker for "x is elapsed
-   * milliseconds" (`timeAxis.test.ts` guards that it and the axis name move
-   * together), so it is the honest test for whether the band means anything.
+   * milliseconds" (`ChartXAxis` makes it the only thing a caller declares
+   * about such an axis; `Chart` derives the name), so it is the honest test
+   * for whether the band means anything.
    *
    * A primitive, like the axis fields above it, so the option effect's
    * dependency array stays comparable by value.
@@ -423,12 +432,37 @@ export default function Chart({
   // option effect's closing comment about identity-compared object props.
   const xAxisNumeric = kind === 'scatter' || xAxis?.type === 'value';
 
-  // PRIMITIVES, for the same reason `yAxisType`/`xAxisName` are: `brush` is an
+  // PRIMITIVES, for the same reason `yAxisType`/`drawnXAxisName` are: `brush` is an
   // object a call site rebuilds on every render, and listing it in the option
   // effect's dependencies would re-run that effect continuously.
   const brushFrom = brush?.value?.fromMs ?? null;
   const brushTo = brush?.value?.toMs ?? null;
   const hasBrush = brush !== undefined;
+  /**
+   * The span an elapsed axis DRAWS, for choosing a clock step: the window a
+   * brushed navigator's slider shows, else the domain the caller pinned, else
+   * the data's own extent. `null` on any other axis, which ECharts steps.
+   *
+   * Read from the brush because ECharts zooms the plot to the slider's window:
+   * a step chosen for the whole run would leave a narrowed navigator with one
+   * tick, or none.
+   */
+  const timeStepMs = useMemo((): number | null => {
+    if (xAxisTickUnit !== 'ms-as-s') return null;
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = Number.NEGATIVE_INFINITY;
+    for (const series of data.series) {
+      for (const point of series.data) {
+        if (point !== null && typeof point === 'object') {
+          lo = Math.min(lo, point[0]);
+          hi = Math.max(hi, point[0]);
+        }
+      }
+    }
+    const from = brushFrom ?? xAxisMin ?? lo;
+    const to = brushTo ?? xAxisMax ?? hi;
+    return Number.isFinite(from) && Number.isFinite(to) && to > from ? clockStepMs(to - from) : null;
+  }, [xAxisTickUnit, data, brushFrom, brushTo, xAxisMin, xAxisMax]);
   // Held in a ref so the handler stays current without being a dependency —
   // otherwise a fresh `onChange` closure per render would re-run the effect.
   const onBrush = useRef(brush?.onChange);
@@ -668,13 +702,17 @@ export default function Chart({
       // narrow a window to one bucket, and ECharts would then tick it every
       // 200 ms: five labels reading the same HH:MM:SS.
       ...(xAxisTickUnit === 'ms-as-s' ? { minInterval: 1000 } : {}),
+      // A CLOCK'S STEP, not ECharts' decimal one: see `timeTicks.ts`.
+      // `minInterval` above stays as the floor when there is no span to
+      // measure.
+      ...(timeStepMs === null ? {} : { interval: timeStepMs }),
       axisLine: { lineStyle: { color: theme.gridline } },
       splitLine: { show: false },
       // THE POINTER'S LABEL IS THE TOOLTIP'S TITLE, so it has to speak the same
       // units as the ticks under it. Without this the percentile chart's ticks
       // read 0..100 in seconds while the tooltip above them announced
       // "49,000.00" — the raw millisecond value, to two decimals, for an axis
-      // labelled in seconds.
+      // labelled as clock time.
       ...(xAxisTickUnit === 'ms-as-s'
         ? {
             axisPointer: {
@@ -772,6 +810,10 @@ export default function Chart({
                   fillerColor: 'transparent',
                   handleStyle: { color: theme.ink },
                   textStyle: { color: theme.inkMuted },
+                  // THE HANDLES SPEAK THE AXIS' CLOCK. Unformatted, ECharts
+                  // prints the raw value, so the navigator's handles read
+                  // `20412` over ticks reading `00:00:20`.
+                  ...(xAxisTickUnit === 'ms-as-s' ? { labelFormatter: timeLabel } : {}),
                   // The slider is the control; wheel-zooming the plot above it
                   // would give the same window two gestures that disagree.
                   zoomLock: false,
@@ -952,6 +994,7 @@ export default function Chart({
     yAxisName,
     drawnXAxisName,
     wallAnchorMs,
+    timeStepMs,
     xAxisNumeric,
     xAxisTickUnit,
     xAxisMin,

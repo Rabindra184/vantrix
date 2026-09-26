@@ -67,7 +67,7 @@ export default function CompareChart({
           // meet at real elapsed times rather than being indexed against each
           // other by bucket position — see `toCompare`'s docstring for why this
           // replaces the resampling the spec originally called for.
-          /* ═══ SECONDS, LIKE ITS OWN TABLE AND EVERY OTHER TIME CHART ═══
+          /* ═══ ELAPSED, LIKE EVERY OTHER TIME CHART; ITS TABLE STAYS IN SECONDS ═══
            *
            * `toCompare` plots `[bucket.startOffsetMs, value]` — raw
            * milliseconds, because a value axis carries x per point — and the
