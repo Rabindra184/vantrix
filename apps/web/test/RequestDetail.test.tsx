@@ -44,6 +44,13 @@ const timeAxisNames = (): string[] =>
     .map(([option]) => (option as { xAxis?: { name?: string } }).xAxis?.name)
     .filter((name): name is string => name === 'Elapsed' || (name?.startsWith('Time (') ?? false));
 
+/** What every elapsed-time axis on the page labels 15 s into the run. */
+const timeAxisTicksAt15s = (): string[] =>
+  setOptionSpy.mock.calls
+    .map(([option]) => (option as { xAxis?: { name?: string; axisLabel?: { formatter?: (value: number) => string } } }).xAxis)
+    .filter((axis) => axis?.name === 'Elapsed' || (axis?.name?.startsWith('Time (') ?? false))
+    .map((axis) => axis!.axisLabel!.formatter!(15_000));
+
 // ═══ WITHOUT THIS THE FILE LEAKS DOM BETWEEN CASES ═══
 //
 // `vitest.config.ts` does not set `globals`, so Testing Library's automatic
@@ -278,7 +285,11 @@ describe('RequestDetail — its charts read the viewer’s clock', () => {
     simulation: 'example.ParitySimulation',
     description: null,
     durationMs: 63161,
-    startedAt: '2026-08-15T11:42:09.000Z',
+    // WHEN THE PLATFORM RECEIVED THE RUN, distinct from `toolStartedAt`
+    // below (when Gatling itself started it) so a case that anchored on the
+    // wrong field would draw a different clock tick, not merely a different
+    // instant carrying the identical zone offset.
+    startedAt: '2026-08-15T12:00:00.000Z',
     toolStartedAt: '2026-08-15T11:42:09.000Z',
     assertions: [],
   };
@@ -319,6 +330,9 @@ describe('RequestDetail — its charts read the viewer’s clock', () => {
 
       await waitFor(() => expect(timeAxisNames().length).toBeGreaterThan(0));
       expect(new Set(timeAxisNames())).toEqual(new Set(['Time (GMT+5:30)']));
+      // The run's OWN start, 17:12:09 in Asia/Kolkata, plus 15 s — not the
+      // time the platform received it, which would read 17:30:15.
+      expect(new Set(timeAxisTicksAt15s())).toEqual(new Set(['17:12:24']));
     });
   });
 });
