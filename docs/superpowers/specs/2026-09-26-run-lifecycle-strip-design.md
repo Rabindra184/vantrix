@@ -7,6 +7,10 @@ incomplete run with nothing retained; where Received's gap is stated; the
 Verdict step's exact words; the phone variant, which the measured fold
 budget forced (one line, no verdict); and three wire fields rather than four,
 because the fourth lost its only reader. Each is stated in place below.
+The whole-branch review then corrected three things, also in place: where
+the Load test starts and ends (`activityMs` excludes the lead-in AND any
+warm-up), which step the phone's one line shows (an incomplete run's early
+stop first), and how a live run's Load test is timed.
 Backlog item #2 of the Gatling Enterprise comparison. Contract-widening
 (three optional `RunIdentity` fields) plus one new run-page component; no
 migration.
@@ -62,16 +66,31 @@ incomplete run. Otherwise it was UPLOADED.
 - **Queued** — the runner job's `created_at` until the runner opened the run
   (`startedAt`). Runner runs only, and always done by the time a run page
   exists: the run is created at the moment the runner opens it.
-- **Load test** — the test's own start (`toolStartedAt`) plus
-  `activityMs ?? durationMs`, the expression `RunHeader`'s Duration chip
-  computes, so the page shows one number under one word.
-  - Streaming: the active step, "streaming · 42s", measured from the run's
-    open (`startedAt`) to its last accepted chunk (`streamUpdatedAt`) —
-    advancing with each identity refresh (every 5 s), never by a client clock.
+- **Load test** — lasts `activityMs ?? durationMs`, the expression
+  `RunHeader`'s Duration chip computes, so the page shows one number under
+  one word. It ENDS at the log's last response, `toolStartedAt + durationMs`
+  (`durationMs` runs from the log header to the last event), and STARTS at
+  that end minus the chip's span — the first COUNTED request. `activityMs`
+  is `last event − max(first event, header + warmupMs)` (engine.ts), so it
+  excludes the lead-in before the first request AND any configured warm-up:
+  the first cut started the step at `toolStartedAt` and ended it at
+  `toolStartedAt + activityMs`, an instant a lead-in — or a whole warm-up —
+  before anything happened. Took = Ended − Started = the chip, and both
+  printed instants happened. A run whose chip excludes a warm-up says so in
+  Step times ("after a 60s warm-up").
+  - Streaming: the active step, "streaming · 42s", started at the run's open
+    (`startedAt`, the only stamp a live run has). On a desktop its duration
+    is the live socket's own `activityMs ?? durationMs` — the "Duration so
+    far" tile's number, so the two agree. A phone has no socket and
+    measures the open to the last accepted chunk (`streamUpdatedAt`),
+    advancing with each identity refresh (every 5 s), never by a client
+    clock. The open is not the start of load: an on-prem runner opens its
+    live run before it prepares the artifact and starts the JVM, which is
+    why the desktop reads the socket.
   - An `incomplete` run's load test reads "stopped early". It ENDS where the
-    test did: the processed partial log's own span when there is one, else
-    the last accepted chunk — the producer's last sign of life. Never at the
-    moment the sweeper gave up on it (`stream_abandoned_at`), which would
+    test did: the processed partial log's last response when there is one,
+    else the last accepted chunk — the producer's last sign of life. Never at
+    the moment the sweeper gave up on it (`stream_abandoned_at`), which would
     count the silence before the give-up as load; that silence shows in Step
     times as the gap before Processing, which the sweeper starts in the same
     statement.
@@ -97,8 +116,11 @@ incomplete run. Otherwise it was UPLOADED.
     `parsingStartedAt`) reads "waiting for a worker since 22:10" — the
     "stuck at pending and nothing on screen says why" state
     `running-perfportal-locally` warns about.
-  - For a streamed run, `parsingStartedAt` is stamped at close
-    (`claimForClose`), so the step starts when the stream ended.
+  - `parsingStartedAt` is the LATEST processing attempt's start: a stream's
+    close (`claimForClose`) or the sweeper taking an abandoned stream over
+    stamps it first, and `markParsing` re-stamps it every time a worker
+    picks the run up, a retry included — so a streamed run's Processing
+    starts at the worker's pickup, a poll after its close.
 - **Verdict** — `Verdict: <word>`, the word being the band's own big word
   verbatim (Passed, Failed, Not configured, Not evaluated), from one function
   both import, so the strip and the band can never describe one verdict in
@@ -171,22 +193,32 @@ rather than earning a column and a migration.
   strip rather than disappearing: "the stream stopped early" becomes the Load
   test's outcome, and "could not be processed" the pure function's defensive
   failed branch (unreachable on the page today, as above).
-- **Compact viewports** (below 768 px) show ONE line under the header: the
-  furthest step reached — `Processed · 2s`, `Load test · streaming · 42s`,
-  `Waiting for a worker since 22:10` — with "Step times" beside it and every
-  step inside. No card, and no verdict step. MEASURED, not chosen: at
-  375x812 the run's first total starts at y=802 against `mobile.spec.ts`'s
-  812 bound, and removing the band's Execution row gives back 22 px. A
-  carded row in the shell's 24 px column gap would cost ~70 px (totals near
-  850); one 16 px line grouped 8 px under the header costs 24 (804). The
+- **Compact viewports** (below 768 px) show ONE line under the header, with
+  "Step times" beside it and every step inside. No card, and no verdict
+  step. The line is the step a phone reader most needs: a step that did not
+  end well (an incomplete run's `Load test stopped early · 36s`), else the
+  step in progress (`Load test · streaming · 42s`, `Waiting for a worker
+  since 22:10`), else the Load test once done (`Load test · 62s` — a phone
+  folds the Duration chip away), else the furthest step reached. The first
+  rule was the furthest step reached alone, and the whole-branch review
+  found it wrong: an incomplete run's Processing step always outranks its
+  Load test, so a phone read "Nothing retained", or a green "Processed ·
+  2s" over a partial log with a real Passed verdict, and nothing on the
+  first screen said the test had been cut short — the band's Execution
+  row, which used to, is gone. One line and no card is MEASURED, not
+  chosen: at 375x812 the run's first total started at y=802 against
+  `mobile.spec.ts`'s 812 bound, and removing the band's Execution row gave
+  back 22 px. A carded row in the shell's 24 px column gap would cost
+  ~70 px (totals near 850); one 16 px line grouped 8 px under the header
+  costs 24 — measured at 804.4 after. The
   verdict is the band's 36 px word directly below the line, and M02 already
   removed exactly that kind of restatement from the phone.
 - **Placement.** `RunShell` groups the header and the strip in one block —
   12 px apart on a desktop, 8 on a phone — so the strip reads as part of the
   run's identity, the way Gatling Enterprise sets its strip directly under
   the run's title. The shell's 24 px gap then separates that block from the
-  decision band. Desktop measured at 1440x900: the first total at y=733
-  today, ~769 with the strip, against `run-tables.spec.ts`'s 900.
+  decision band. Desktop at 1440x900: the first total at y=733 before,
+  768.75 with the strip, against `run-tables.spec.ts`'s 900.
 
 ## Edge cases
 
@@ -199,6 +231,15 @@ rather than earning a column and a migration.
   times rather than a guessed value.
 - **A runner job that failed before opening a run** has no run page, so the
   strip never has to draw a Queued step with no run after it.
+- **An abandoned stream being assembled** by the sweeper reads, while it is
+  `parsing`, like any stream being processed: nothing on the identity says
+  it was abandoned until the pipeline finalizes it `incomplete`. That
+  window is the one reader `streamAbandonedAt` would have had — not enough
+  to keep the field.
+- **A stream read through an API pod that predates these stamps**, or a row
+  older than `stream_updated_at`, carries no stream stamp and draws as an
+  upload (Received after the Load test) — transient during a rolling
+  deploy, and a negligible set of legacy rows.
 
 ## Testing
 
@@ -212,7 +253,9 @@ Unit, every case red-verified before it is trusted:
   for each verdict, and the Load test's duration equals the Duration chip's
   number.
 - `RunLifecycle`: list semantics, no heading, outcome as text and mark, Step
-  times outside the `<summary>`, the compact variant.
+  times outside the `<summary>`, a warm-up named beside the Load test's
+  duration, and the compact variant — including an incomplete run's early
+  stop ahead of its processing.
 - The band's two Execution tests re-pointed at the strip, not deleted.
 - The contract: an identity without the new fields still parses.
 
@@ -224,8 +267,11 @@ Red-verified by dropping them from each builder in turn.
 End to end: a seeded run shows the strip and its Step times, and the band has
 no Execution row; `run-list.spec.ts`'s incomplete-run case re-pointed to the
 strip's "stopped early"; the fold bounds re-measured — the first run total
-above 900 px at 1440x900 (`run-tables.spec.ts`, y=733 today) and within
-812 px at 375x812 (`mobile.spec.ts`, 802 today, 804 expected);
+above 900 px at 1440x900 (`run-tables.spec.ts`, y=733 before, 768.75
+after) and within
+812 px at 375x812 (`mobile.spec.ts`, 802 before, 804.4 after), plus an
+incomplete run at phone width saying "stopped early" — the case no layer
+had until the whole-branch review;
 `run-detail.spec.ts`'s pending-run case, which asserts the page draws no
 table, still passes with the strip's Step times table closed.
 
