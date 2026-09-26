@@ -38,6 +38,15 @@ import Button from '../components/Button';
  * because a non-terminal run has no `RunResponse` to hand this component at
  * all (`GET /v1/runs/:id` answers 202 for anything short of `complete`).
  */
+
+/** The live Load test's span, off the socket's latest delta — the "Duration so
+ *  far" tile's own `activityMs ?? durationMs` (`RunDetail`), so the strip and
+ *  the tile say one number. Null without a delta. */
+function liveSpanOf(live: LiveRunState | null): number | null {
+  const summary = live?.lastDelta?.summary;
+  return summary === undefined ? null : (summary.activityMs ?? summary.durationMs);
+}
+
 export default function RunShell({
   identity,
   status,
@@ -184,7 +193,10 @@ export default function RunShell({
              thing a media query cannot set. See `RunHeader`'s own note. */
           compact={compact}
         />
-        <RunLifecycle steps={lifecycleSteps({ identity, status, verdict, assertions })} compact={compact} />
+        <RunLifecycle
+          steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}
+          compact={compact}
+        />
       </div>
       <RunDecisionBand
         identity={identity}

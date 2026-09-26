@@ -186,6 +186,17 @@ describe('RunShell', () => {
     expect(screen.getByTestId('lifecycle-processing')).toHaveTextContent('Processed · 2s');
   });
 
+  /** The strip's live Load test says the "Duration so far" tile's number: the
+   *  same `activityMs ?? durationMs`, off the same delta. */
+  it('reads a live load test off the socket’s latest delta', () => {
+    const live = {
+      connected: true, unauthorized: false, partial: false,
+      lastDelta: { summary: { durationMs: 43_000, activityMs: 42_000 }, sla: NO_SLA },
+    } as LiveRunState;
+    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined, live });
+    expect(screen.getByTestId('lifecycle-load-test')).toHaveTextContent('Load test · streaming · 42s');
+  });
+
   it('renders a bare Errors tab before the errors payload has resolved, not Errors (0)', () => {
     vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
 

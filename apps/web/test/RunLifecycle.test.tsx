@@ -28,6 +28,7 @@ const UPLOAD = lifecycleSteps({
   status: 'complete',
   verdict: 'failed',
   assertions: [],
+  liveSpanMs: null,
 });
 
 const STREAMING = lifecycleSteps({
@@ -35,6 +36,7 @@ const STREAMING = lifecycleSteps({
   status: 'running',
   verdict: undefined,
   assertions: undefined,
+  liveSpanMs: null,
 });
 
 function region() {
@@ -98,6 +100,7 @@ describe('RunLifecycle', () => {
       status: 'complete',
       verdict: 'passed',
       assertions: [],
+      liveSpanMs: null,
     });
     render(<RunLifecycle steps={steps} compact={false} />);
     expect(screen.getByTestId('lifecycle-times-load-test')).toHaveTextContent('240s · after a 60s warm-up');
@@ -146,6 +149,7 @@ describe('RunLifecycle', () => {
       status: 'parsing',
       verdict: undefined,
       assertions: undefined,
+      liveSpanMs: null,
     });
     render(<RunLifecycle steps={steps} compact />);
     expect(items()).toHaveLength(1);
@@ -160,6 +164,7 @@ describe('RunLifecycle', () => {
       status: 'incomplete',
       verdict: 'not_evaluated',
       assertions: undefined,
+      liveSpanMs: null,
     });
     render(<RunLifecycle steps={steps} compact />);
     expect(items()).toHaveLength(1);
@@ -181,6 +186,7 @@ describe('RunLifecycle', () => {
       status: 'incomplete',
       verdict: 'passed',
       assertions: [],
+      liveSpanMs: null,
     });
     render(<RunLifecycle steps={steps} compact />);
     expect(items()).toHaveLength(1);
@@ -195,6 +201,7 @@ describe('RunLifecycle', () => {
       status: 'incomplete',
       verdict: 'not_evaluated',
       assertions: undefined,
+      liveSpanMs: null,
     });
     render(<RunLifecycle steps={steps} compact={false} />);
     expect(region()).toHaveTextContent(/stopped early/i);
@@ -209,6 +216,7 @@ describe('RunLifecycle', () => {
       status: 'failed',
       verdict: null,
       assertions: undefined,
+      liveSpanMs: null,
     });
     render(<RunLifecycle steps={steps} compact={false} />);
     expect(region()).toHaveTextContent(/processing failed/i);

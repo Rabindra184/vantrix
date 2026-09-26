@@ -56,6 +56,15 @@ export interface LifecycleInput {
   readonly status: RunResponse['status'];
   readonly verdict: RunResponse['verdict'] | undefined;
   readonly assertions: readonly Assertion[] | undefined;
+  /**
+   * The live Load test's duration when the page has a socket delta: its
+   * summary's `activityMs ?? durationMs`, the "Duration so far" tile's own
+   * expression. Null when there is none — a phone (no socket, §22.6), a
+   * finished run, or before the first delta. REQUIRED, not optional: an
+   * omitted one would silently fall back to the stamp-based figure, which
+   * counts a runner's preparation as load.
+   */
+  readonly liveSpanMs: number | null;
 }
 
 function at(iso: string | null | undefined): number | null {
@@ -75,7 +84,7 @@ function withDuration(text: string, durationMs: number | null): string {
 }
 
 export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
-  const { identity, status, verdict, assertions } = input;
+  const { identity, status, verdict, assertions, liveSpanMs } = input;
   const received = at(identity.startedAt);
   const toolStart = at(identity.toolStartedAt);
   // THE RUN'S OWN SPAN, the Duration chip's expression: one number under one word.
@@ -129,12 +138,20 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
 
   if (streamed) {
     if (status === 'running') {
-      const durationMs = between(received, lastChunk);
+      // FROM THE RUN'S OPEN, the only stamp a live run has: nothing writes
+      // `toolStartedAt` until the pipeline's terminal UPDATE, which also ends
+      // `running`. The DURATION is the live span when the page has one — the
+      // "Duration so far" tile's own `activityMs ?? durationMs`, so the two
+      // agree, and so a runner's artifact preparation and JVM start-up, which
+      // follow the moment it opens its live run, are neither counted as load
+      // nor dropped when the run finishes. A phone has no socket and measures
+      // open to last chunk.
+      const durationMs = liveSpanMs ?? between(received, lastChunk);
       steps.push({
         name: 'load-test',
         text: withDuration('Load test · streaming', durationMs),
         state: 'active',
-        startMs: toolStart ?? received,
+        startMs: received,
         endMs: null,
         durationMs,
         note: null,

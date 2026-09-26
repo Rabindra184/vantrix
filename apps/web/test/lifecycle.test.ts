@@ -21,7 +21,7 @@ function input(
   verdict: LifecycleInput['verdict'] = null,
   assertions: LifecycleInput['assertions'] = [],
 ): LifecycleInput {
-  return { identity, status, verdict, assertions };
+  return { identity, status, verdict, assertions, liveSpanMs: null };
 }
 const names = (i: LifecycleInput): StepName[] => lifecycleSteps(i).map((s) => s.name);
 const step = (i: LifecycleInput, name: StepName) => lifecycleSteps(i).find((s) => s.name === name)!;
@@ -90,6 +90,21 @@ describe('lifecycleSteps — each state says what it is', () => {
     });
     expect(step(streaming, 'processing').state).toBe('pending');
     expect(step(streaming, 'verdict')).toMatchObject({ state: 'pending', text: 'Verdict' });
+  });
+
+  /** The "Duration so far" tile's number, not the stamps': a runner opens its
+   *  live run before it prepares the artifact and starts the JVM. */
+  it('measures a live load test by the live span when the page has one', () => {
+    const live: LifecycleInput = {
+      ...input({ startedAt: iso(T), streamUpdatedAt: iso(T + 42_000) }, 'running', undefined, undefined),
+      liveSpanMs: 38_500,
+    };
+    expect(step(live, 'load-test')).toMatchObject({
+      state: 'active',
+      text: 'Load test · streaming · 39s',
+      startMs: T,
+      durationMs: 38_500,
+    });
   });
 
   /** The load test stopped at the producer's last sign of life. The sweeper
@@ -249,6 +264,7 @@ describe('lifecycleSteps — agreement with the rest of the page', () => {
         status: 'complete',
         verdict,
         assertions,
+        liveSpanMs: null,
       };
       expect(step(judged, 'verdict')).toMatchObject({
         state: 'done',
