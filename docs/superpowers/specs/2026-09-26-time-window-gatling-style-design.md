@@ -1,7 +1,8 @@
 # Time window, Gatling-style
 
-**Status:** design approved in chat 2026-09-26; this written spec awaits
-review. Backlog item #1 of the Gatling Enterprise comparison. Client-side
+**Status:** approved 2026-09-26. Two mechanisms were refined while writing
+the plan, the provider's anchor and where a step starts from, and both are
+stated in place below. Backlog item #1 of the Gatling Enterprise comparison. Client-side
 only: no backend, contract or migration change.
 
 ## The change
@@ -90,7 +91,9 @@ the design; F was found while writing this spec and is new.
   export surface; only the axis notation changes.
 - **E. No anchor, no Datetime.** `RunIdentity.toolStartedAt` is
   `nullable().optional()`. When it is absent the Datetime option is shown
-  disabled with its reason in visible text, and axes stay elapsed.
+  disabled with its reason in visible text, axes stay elapsed, and the range
+  line writes its ends as elapsed `HH:MM:SS`, there being no absolute time to
+  write.
 - **F. Durations use this app's `formatDuration`, not Gatling's `2m 00s`.**
   The app deliberately has two duration notations, `formatDuration` for a
   length and `formatOffset` for an offset into a run; a third on one page is
@@ -127,11 +130,12 @@ which would make the range line disagree with its own endpoints.
   preset), each taking a window, the run's span and the resolution and
   returning a window, or `null` for the whole run. That file already owns
   parsing the window; stepping it is the same domain.
-- **A time-axis context** carries `{ mode, anchorMs }`, provided by one
-  component keyed on the run id. It reads the run's identity through the same
-  query key the run page already uses, so the run page pays nothing and a
-  drill-down pays at most one cached read. Until the anchor arrives, axes
-  read elapsed. The default is `{ mode: 'offset', anchorMs: null }`.
+- **A time-axis context** carries `{ mode, anchorMs, setMode }`. Its
+  provider takes the run's `toolStartedAt` as a prop, from the run read each
+  page already holds (`RunShell`'s `identity`, a drill-down's
+  `useRunTerminal`), so it adds no query and no observer. Until the anchor
+  arrives, axes read elapsed. Outside any provider the value is
+  `{ mode: 'offset', anchorMs: null }`.
 - **Where it is provided.** `RunShell`, and both drill-downs, because
   `/runs/:runId/requests/:name` and `/runs/:runId/groups/:name` are siblings
   of the run route rather than children of it: a provider in `RunShell`
@@ -169,9 +173,16 @@ which would make the range line disagree with its own endpoints.
 - **A run crossing midnight**: wall-clock ticks wrap (`23:59:50`,
   `00:00:10`), and the range line carries both dates, so the wrap is never
   ambiguous.
-- **Which window a step starts from**: the server's snapped window
-  (`applied`) once one has arrived, otherwise the requested window, otherwise
-  the whole run. A step never starts from a window the page is not showing.
+- **Which window a step starts from**: the requested window, the URL's,
+  otherwise the whole run. Not the server's snapped window (`applied`): its
+  end is `min(ceil(to / width) × width, last bucket + width)`, which can land
+  a bucket short of the run's end or past it, so every "at the end" decision
+  (is Forward live, where a pan slides to) would be wrong by that bucket. The
+  range line still states the snapped window, as the window's header always
+  has, held to the run's own span.
+- **An elapsed axis never ticks finer than one second.** Zoomed to one
+  bucket, ECharts would otherwise tick every 200 ms and print one `HH:MM:SS`
+  five times.
 - **A step that lands on the whole run** clears the URL, through the same
   rule `commit` already applies to a drag covering the whole extent.
 
