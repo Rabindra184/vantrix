@@ -90,6 +90,12 @@ function timeCell(epochMs: number | null, anchorMs: number | null): string {
   return anchorMs !== null && formatDay(epochMs) !== formatDay(anchorMs) ? `${formatDay(epochMs)} ${time}` : time;
 }
 
+/** A step's Took cell: its duration, its note, both, or a dash. */
+function tookCell(step: LifecycleStep): string {
+  const parts = [step.durationMs !== null ? formatDuration(step.durationMs) : null, step.note];
+  return parts.filter((part): part is string => part !== null).join(' · ') || '—';
+}
+
 export default function RunLifecycle({
   steps,
   compact,
@@ -147,7 +153,7 @@ export default function RunLifecycle({
                 <th scope="row" className="pr-4 font-sans font-normal">{STEP_LABEL[step.name]}</th>
                 <td className="pr-4">{timeCell(step.startMs, anchorMs)}</td>
                 <td className="pr-4">{timeCell(step.endMs, anchorMs)}</td>
-                <td>{step.durationMs !== null ? formatDuration(step.durationMs) : (step.note ?? '—')}</td>
+                <td>{tookCell(step)}</td>
               </tr>
             ))}
           </tbody>

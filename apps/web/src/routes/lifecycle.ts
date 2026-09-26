@@ -80,7 +80,28 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
   const toolStart = at(identity.toolStartedAt);
   // THE RUN'S OWN SPAN, the Duration chip's expression: one number under one word.
   const testSpan = identity.activityMs ?? identity.durationMs ?? null;
-  const testEnd = toolStart !== null && testSpan !== null ? toolStart + testSpan : null;
+  // WHERE THE TEST ENDED: its log's last response. `durationMs` runs from the
+  // log header (`toolStartedAt`) to the last event, so their sum is a real
+  // instant. `toolStart + testSpan` is not: `activityMs` starts at the FIRST
+  // COUNTED event — `max(first event, header + warmupMs)` (engine.ts) — so that
+  // sum lands a lead-in, or a whole warm-up, before the test actually ended.
+  const testEnd =
+    toolStart !== null && identity.durationMs != null
+      ? toolStart + identity.durationMs
+      : toolStart !== null && testSpan !== null
+        ? toolStart + testSpan
+        : null;
+  // …and the counted span STARTS at that end minus the chip: the first request,
+  // or the warm-up's end. Took = Ended − Started = the Duration chip, and both
+  // printed instants happened.
+  const testStart = testEnd !== null && testSpan !== null ? testEnd - testSpan : toolStart;
+  // Why Started sits after the test's own start, said where it shows — and
+  // only when the chip excludes the warm-up: a run with no `activityMs` falls
+  // back to `durationMs`, which includes it.
+  const warmupNote =
+    identity.activityMs != null && identity.warmupMs != null && identity.warmupMs > 0
+      ? `after a ${formatDuration(identity.warmupMs)} warm-up`
+      : null;
   const parsing = at(identity.parsingStartedAt);
   const ingested = at(identity.ingestedAt);
   const lastChunk = at(identity.streamUpdatedAt);
@@ -107,22 +128,23 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
   }
 
   if (streamed) {
-    const startMs = toolStart ?? received;
     if (status === 'running') {
       const durationMs = between(received, lastChunk);
       steps.push({
         name: 'load-test',
         text: withDuration('Load test · streaming', durationMs),
         state: 'active',
-        startMs,
+        startMs: toolStart ?? received,
         endMs: null,
         durationMs,
         note: null,
       });
     } else {
-      // WHERE THE TEST ENDED: the processed log's own span when there is one,
-      // else the last accepted chunk — the producer's last sign of life. Never
-      // the sweeper's give-up, which would count the silence before it as load.
+      const startMs = testStart ?? received;
+      // WHERE THE TEST ENDED: the processed log's own last response when there
+      // is one, else the last accepted chunk — the producer's last sign of
+      // life. Never the sweeper's give-up, which would count the silence
+      // before it as load.
       const endMs = testEnd ?? lastChunk;
       const durationMs = testSpan ?? between(startMs, endMs);
       const stopped = status === 'incomplete';
@@ -133,7 +155,7 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
         startMs,
         endMs,
         durationMs,
-        note: null,
+        note: warmupNote,
       });
     }
   } else {
@@ -152,10 +174,10 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
             name: 'load-test',
             text: withDuration('Load test', testSpan),
             state: 'done',
-            startMs: toolStart,
+            startMs: testStart,
             endMs: testEnd,
             durationMs: testSpan,
-            note: null,
+            note: warmupNote,
           },
     );
     const gap = between(testEnd, received);

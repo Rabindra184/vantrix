@@ -126,11 +126,36 @@ describe('lifecycleSteps — each state says what it is', () => {
     );
     expect(step(processed, 'load-test')).toMatchObject({
       state: 'stopped',
-      endMs: T + 1_000 + 36_028,
+      startMs: T + 1_000 + 36_500 - 36_028,
+      endMs: T + 1_000 + 36_500,
       durationMs: 36_028,
       text: 'Load test stopped early · 36s',
     });
     expect(step(processed, 'processing')).toMatchObject({ state: 'done', text: 'Processed · 2s' });
+  });
+
+  /** The whole-branch review's finding: `activityMs` excludes a configured
+   *  warm-up, so `toolStart + activityMs` ended this test a minute early. */
+  it('ends a warmed-up run’s load test at its log’s last response, and says why it starts late', () => {
+    const upload = input(
+      {
+        startedAt: iso(T + 400_000),
+        toolStartedAt: iso(T),
+        durationMs: 300_000,
+        activityMs: 240_000,
+        warmupMs: 60_000,
+      },
+      'complete',
+    );
+    expect(step(upload, 'load-test')).toMatchObject({
+      state: 'done',
+      text: 'Load test · 240s',
+      startMs: T + 60_000,
+      endMs: T + 300_000,
+      durationMs: 240_000,
+      note: 'after a 60s warm-up',
+    });
+    expect(step(upload, 'received').note).toBe('100s after the test ended');
   });
 
   /** The sweeper began processing, and its assembly found nothing decodable:

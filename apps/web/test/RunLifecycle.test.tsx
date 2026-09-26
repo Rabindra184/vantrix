@@ -86,6 +86,23 @@ describe('RunLifecycle', () => {
     expect(details.contains(list)).toBe(false);
   });
 
+  it('shows a warm-up beside the load test’s duration in Step times', () => {
+    const steps = lifecycleSteps({
+      identity: {
+        startedAt: '2026-08-14T10:43:49.546Z',
+        toolStartedAt: '2026-08-14T10:30:00.000Z',
+        durationMs: 300_000,
+        activityMs: 240_000,
+        warmupMs: 60_000,
+      },
+      status: 'complete',
+      verdict: 'passed',
+      assertions: [],
+    });
+    render(<RunLifecycle steps={steps} compact={false} />);
+    expect(screen.getByTestId('lifecycle-times-load-test')).toHaveTextContent('240s · after a 60s warm-up');
+  });
+
   it('times every step to the second, with the zone once in the caption', async () => {
     await inKolkata(() => {
       render(<RunLifecycle steps={UPLOAD} compact={false} />);
