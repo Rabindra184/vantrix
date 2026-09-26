@@ -280,53 +280,48 @@ describe('the time axis is named once', () => {
 });
 
 /**
- * ═══ AN ELAPSED AXIS IN SECONDS ALWAYS CONVERTS ═══
+ * ═══ AN ELAPSED AXIS IS NAMED ONCE, BY `Chart` ═══
  *
- * Every time series in this product plots raw `startOffsetMs` — a value axis
- * carries x per point — and every one of them names that axis `Elapsed (s)`
- * and passes `tickUnit: 'ms-as-s'`, so the ticks, and the axis POINTER's
- * label, read in seconds. The two are a pair: a name without the conversion
- * draws `42000` under a heading that says seconds, while the data table
- * beneath the same chart writes `42`.
+ * Every time series in this product plots raw `startOffsetMs` (a value axis
+ * carries x per point) and passes `tickUnit: 'ms-as-s'`, which is what makes
+ * `Chart` draw its ticks and its pointer as clock time. Until the time mode
+ * arrived, each chart ALSO named that axis `Elapsed (s)`: thirteen literals
+ * across seven files, kept in step with `tickUnit` by this guard's previous
+ * form, which counted the two per file.
  *
- * `CompareChart` was the one exception. It named its axis `Elapsed (ms)`,
- * which made it honest about its own ticks and silent about the table directly
- * below it listing the identical buckets in seconds — one screen, one
- * quantity, two units, and an axis pointer reading `42000`.
- *
- * COUNTED PER FILE, not globally: a file could otherwise gain an unconverted
- * axis while a sibling gained a spare `tickUnit`, and the totals would still
- * agree. And `Elapsed (ms)` is refused outright on a chart axis, because the
- * plotted value is always milliseconds — a chart that wants to say so is a
- * chart that forgot to convert.
+ * The name now follows the viewer's mode, `Elapsed` or `Time (GMT+5:30)`, so
+ * it can only be decided in one place. `ChartXAxis` refuses a `name` beside
+ * `tickUnit` at compile time; this refuses the other way back to the drift, a
+ * chart component spelling an elapsed axis name itself on an axis that then
+ * does not convert. `Elapsed (ms)` is covered by the same pattern: the plotted
+ * value is always milliseconds, and a chart that wants to say so is a chart
+ * that forgot to convert.
  */
-describe('every elapsed axis converts its own ticks', () => {
-  it('pairs each “Elapsed (s)” axis with a tickUnit, in every chart file', () => {
+describe('every elapsed axis is named by Chart alone', () => {
+  it('leaves the elapsed-axis name to Chart, in every chart component', () => {
     const dir = fromRepo('apps/web/src/charts');
     const files = (
       readdirSync(dir, { recursive: true, encoding: 'utf8' }) as unknown as string[]
     ).filter((f) => typeof f === 'string' && f.endsWith('.tsx'));
 
-    const mismatched: string[] = [];
-    let namedAxes = 0;
+    const offenders: string[] = [];
+    let convertingAxes = 0;
     for (const f of files) {
-      // Comments stripped — the comment explaining this rule quotes both
-      // spellings, and a scan that counts prose as product reads the
-      // documentation instead of the thing documented. Third time in this
-      // review; see `RunGlossary.test.tsx`.
+      // Comments stripped: the comment explaining this rule quotes the
+      // spelling it forbids.
       const src = readFileSync(join(dir, f), 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/\/\/[^\n]*/g, '');
-      const names = src.match(/name: 'Elapsed \(s\)'/g)?.length ?? 0;
-      const units = src.match(/tickUnit: 'ms-as-s'/g)?.length ?? 0;
-      namedAxes += names;
-      if (names !== units) mismatched.push(`${f}: ${names} axes, ${units} tickUnit`);
-      if (/name: 'Elapsed \(ms\)'/.test(src)) mismatched.push(`${f}: names an axis in milliseconds`);
+      // COUNTED IN EVERY FILE, `Chart.tsx` included: the construct that must
+      // exist for the absence below to mean anything.
+      convertingAxes += src.match(/tickUnit: 'ms-as-s'/g)?.length ?? 0;
+      if (f === 'Chart.tsx') continue;
+      for (const m of src.matchAll(/name: ['"`]Elapsed[^'"`]*['"`]/g)) offenders.push(`${f}: ${m[0]}`);
     }
 
-    expect(mismatched).toEqual([]);
-    // A positive beside the absence: an empty chart directory would satisfy
-    // the check above and prove nothing at all.
-    expect(namedAxes).toBeGreaterThan(10);
+    expect(offenders).toEqual([]);
+    // A positive beside the absence, counting the construct rather than the
+    // verdict: an empty chart directory would satisfy the check above.
+    expect(convertingAxes).toBeGreaterThan(10);
   });
 });

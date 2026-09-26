@@ -9,6 +9,7 @@ import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
 import useIsCompact from '../src/useIsCompact';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
+import { useTimeAxis } from '../src/charts/TimeAxisContext';
 
 /* NOT compact by default, which is what every case above this file's last
    describe assumes and what `useIsCompact` itself falls back to where
@@ -474,6 +475,22 @@ describe('RunShell — the window control only appears where it applies', () => 
 });
 
 /**
+ * ═══ ONE NUMBER UNDER "DURATION" (the time-window spec's deviation F) ═══
+ *
+ * `RunHeader`'s chip reads the run's activity span, and the navigator's own
+ * header has to read the same, not the series span a second longer.
+ * `TimeBrush` falls back to the series span when the shell passes nothing, so
+ * dropping the prop would put 63s under the navigator beside a 62s chip with
+ * every other case here still green.
+ */
+describe('RunShell — the navigator’s Duration', () => {
+  it('reads the activity span the header calls Duration, not the series span', async () => {
+    renderShellWith({ identity: { ...RUN, activityMs: 62_136 }, windowable: true });
+    expect(await screen.findByTestId('window-duration')).toHaveTextContent('Duration: 62s');
+  });
+});
+
+/**
  * ═══ REVIEW M18 — THE BRUSH IS NOT A PHONE CONTROL ═══
  *
  * Measured in Chromium at 375x812: the brush was 394px tall and sat between
@@ -546,5 +563,57 @@ describe('RunShell — the time brush on a narrow viewport', () => {
     renderShellWith({ windowable: true }, windowed);
     expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
     expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * THE RUN'S CLOCK REACHES EVERY TAB. `RunShell` provides the anchor its
+ * charts read wall-clock time from, off the identity it already holds, so no
+ * tab reads the run a second time to learn when it started.
+ */
+describe('RunShell — the run’s time axis reaches every tab', () => {
+  function AxisProbe() {
+    return <div data-testid="axis-probe">{String(useTimeAxis().anchorMs)}</div>;
+  }
+
+  function renderWithProbe(identity: ComponentProps<typeof RunShell>['identity']) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${RUN.id}`]}>
+          <Routes>
+            <Route
+              path="/runs/:runId"
+              element={
+                <RunShell
+                  identity={identity}
+                  status="complete"
+                  terminal
+                  verdict={RUN.verdict}
+                  windowable={RUN.windowable}
+                  live={null}
+                  capReached={false}
+                  onRetry={() => {}}
+                />
+              }
+            >
+              <Route index element={<AxisProbe />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('anchors every chart beneath it to the run’s own start', async () => {
+    renderWithProbe(RUN);
+    expect(await screen.findByTestId('axis-probe')).toHaveTextContent(
+      String(Date.parse(RUN.toolStartedAt!)),
+    );
+  });
+
+  it('has no anchor for a run that recorded no start', async () => {
+    renderWithProbe({ ...RUN, toolStartedAt: null });
+    expect(await screen.findByTestId('axis-probe')).toHaveTextContent('null');
   });
 });

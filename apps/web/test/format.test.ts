@@ -1,5 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration, formatInstant, formatOffset } from '../src/routes/format';
+import {
+  formatClockTime,
+  formatDuration,
+  formatElapsedClock,
+  formatInstant,
+  formatInstantSeconds,
+  formatOffset,
+  formatZoneName,
+  formatZoneOffset,
+} from '../src/routes/format';
+
+/**
+ * Pins the process zone for one case and restores it afterwards.
+ *
+ * THIS MACHINE'S OWN ZONE IS Asia/Kolkata, so a pin that silently failed to
+ * take would still pass here and fail only on CI's UTC runners. Every case
+ * asserts the flip landed before asserting anything else, and this file is
+ * also run under `TZ=UTC` before it is trusted.
+ */
+function inZone(zone: string, body: () => void): void {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = zone;
+    body();
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
+}
+
+/** Asia/Kolkata is +05:30, so UTC midnight reads 05. */
+const kolkataTook = (): void => {
+  expect(new Date('2026-08-15T00:00:00Z').getHours()).toBe(5);
+};
 
 describe('formatDuration', () => {
   /**
@@ -123,5 +156,111 @@ describe('formatDuration — long runs read as h/m/s', () => {
   it('still reports an unmeasured duration as a dash, never as zero', () => {
     expect(formatDuration(null)).toBe('—');
     expect(formatDuration(undefined)).toBe('—');
+  });
+});
+
+/* ======================================================================== *
+ * THE TIME WINDOW'S CLOCKS — Gatling Enterprise's Offset and Datetime
+ * ======================================================================== */
+
+describe('formatElapsedClock — Offset mode’s tick notation', () => {
+  it('writes an offset into the run as HH:MM:SS', () => {
+    expect(formatElapsedClock(0)).toBe('00:00:00');
+    expect(formatElapsedClock(15_000)).toBe('00:00:15');
+    expect(formatElapsedClock(75_000)).toBe('00:01:15');
+  });
+
+  it('floors, like a clock', () => {
+    expect(formatElapsedClock(42_999)).toBe('00:00:42');
+  });
+
+  it('lets the hours run past 24 for a long soak', () => {
+    expect(formatElapsedClock(26 * 3_600_000 + 61_000)).toBe('26:01:01');
+  });
+});
+
+describe('formatClockTime — Datetime mode’s tick notation', () => {
+  it('reads the reader’s own 24-hour clock', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      // Gatling Enterprise's own measured pair: elapsed 00:00:15 on a run
+      // that began 17:12:09 (11:42:09Z) is 17:12:24.
+      expect(formatClockTime(Date.UTC(2026, 7, 15, 11, 42, 9) + 15_000)).toBe('17:12:24');
+    });
+  });
+
+  it('wraps at midnight', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      const lateEvening = Date.UTC(2026, 7, 15, 18, 29, 50); // 23:59:50 IST
+      expect(formatClockTime(lateEvening)).toBe('23:59:50');
+      expect(formatClockTime(lateEvening + 20_000)).toBe('00:00:10');
+    });
+  });
+});
+
+describe('formatZoneOffset — what a wall-clock axis is labelled with', () => {
+  /** What Intl itself prints for the same instant, so this is not a second opinion. */
+  const intlShortOffset = (epochMs: number): string =>
+    new Intl.DateTimeFormat('en-US', { timeZoneName: 'shortOffset' })
+      .formatToParts(epochMs)
+      .find((part) => part.type === 'timeZoneName')!.value;
+
+  it('agrees with Intl, including a half-hour zone and zero', () => {
+    for (const zone of ['Asia/Kolkata', 'UTC', 'America/New_York']) {
+      inZone(zone, () => {
+        const at = Date.UTC(2026, 6, 1, 12, 0, 0);
+        expect(formatZoneOffset(at)).toBe(intlShortOffset(at));
+      });
+    }
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      expect(formatZoneOffset(Date.UTC(2026, 7, 15))).toBe('GMT+5:30');
+    });
+  });
+
+  it('takes the offset at the instant it is given, not today’s', () => {
+    inZone('America/New_York', () => {
+      expect(new Date('2026-07-01T12:00:00Z').getHours()).toBe(8);
+      expect(formatZoneOffset(Date.UTC(2026, 6, 1, 12))).toBe('GMT-4');
+      expect(formatZoneOffset(Date.UTC(2026, 0, 15, 12))).toBe('GMT-5');
+    });
+  });
+});
+
+describe('formatZoneName', () => {
+  it('names the zone the page is in', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      // Derived, not written down: ICU spells this zone Asia/Calcutta or
+      // Asia/Kolkata depending on its version.
+      expect(formatZoneName()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+      expect(formatZoneName()).toMatch(/^Asia\/(Calcutta|Kolkata)$/);
+    });
+  });
+});
+
+describe('formatInstantSeconds — both ends of a window', () => {
+  it('tells apart two instants inside one minute, which formatInstant cannot', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      const start = Date.UTC(2026, 7, 15, 11, 42, 9);
+      const end = start + 30_000;
+      expect(formatInstant(new Date(start).toISOString())).toBe(
+        formatInstant(new Date(end).toISOString()),
+      );
+      expect(formatInstantSeconds(start)).not.toBe(formatInstantSeconds(end));
+    });
+  });
+
+  it('names the zone and carries the seconds', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      const out = formatInstantSeconds(Date.UTC(2026, 7, 15, 11, 42, 9));
+      expect(out).toContain('GMT+5:30');
+      // `17:12:09` in a 24-hour locale, `5:12:09 PM` in a 12-hour one.
+      expect(out).toMatch(/\b(17|5):12:09\b/);
+      expect(out).toMatch(/2026/);
+    });
   });
 });

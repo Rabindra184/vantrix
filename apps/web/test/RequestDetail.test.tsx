@@ -1,10 +1,55 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import RequestDetail, { requestRow } from '../src/routes/RequestDetail';
 import fixture from './fixtures/reference-run.json';
+import type { RunResponse } from '@perfportal/contracts';
+import { runQueryKey } from '../src/api/run';
+import { TIME_AXIS_STORAGE_KEY } from '../src/timeAxisPreference';
+
+/* ECharts is replaced so a case can read what each chart HANDS the renderer;
+   no existing case here draws a chart, so none of them notices. */
+const { setOptionSpy } = vi.hoisted(() => ({ setOptionSpy: vi.fn() }));
+vi.mock('../src/charts/echarts.js', () => ({
+  echarts: {
+    init: vi.fn(() => ({
+      group: undefined as string | undefined,
+      setOption: setOptionSpy,
+      dispose: vi.fn(),
+      resize: vi.fn(),
+      on: vi.fn(),
+      getOption: vi.fn(),
+    })),
+    connect: vi.fn(),
+  },
+}));
+
+/** Pins the process zone; see `format.test.ts` for why the flip is asserted. */
+async function inZone(zone: string, body: () => Promise<void>): Promise<void> {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = zone;
+    await body();
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
+}
+
+/** Every elapsed-time axis name any chart on the page handed the renderer. */
+const timeAxisNames = (): string[] =>
+  setOptionSpy.mock.calls
+    .map(([option]) => (option as { xAxis?: { name?: string } }).xAxis?.name)
+    .filter((name): name is string => name === 'Elapsed' || (name?.startsWith('Time (') ?? false));
+
+/** What every elapsed-time axis on the page labels 15 s into the run. */
+const timeAxisTicksAt15s = (): string[] =>
+  setOptionSpy.mock.calls
+    .map(([option]) => (option as { xAxis?: { name?: string; axisLabel?: { formatter?: (value: number) => string } } }).xAxis)
+    .filter((axis) => axis?.name === 'Elapsed' || (axis?.name?.startsWith('Time (') ?? false))
+    .map((axis) => axis!.axisLabel!.formatter!(15_000));
 
 // ═══ WITHOUT THIS THE FILE LEAKS DOM BETWEEN CASES ═══
 //
@@ -225,5 +270,69 @@ describe('RequestDetail — it says which experiment this is', () => {
       'href',
       '/projects/checkout',
     );
+  });
+});
+
+describe('RequestDetail — its charts read the viewer’s clock', () => {
+  const RUN_ID = '00000000-0000-4000-8000-00000000000a';
+  const RUN: RunResponse = {
+    id: RUN_ID,
+    project: { id: '11111111-1111-4111-8111-111111111111', slug: 'checkout', name: 'Checkout' },
+    status: 'complete',
+    verdict: 'not_evaluated',
+    tool: 'gatling',
+    toolVersion: '3.15.1',
+    simulation: 'example.ParitySimulation',
+    description: null,
+    durationMs: 63161,
+    // WHEN THE PLATFORM RECEIVED THE RUN, distinct from `toolStartedAt`
+    // below (when Gatling itself started it) so a case that anchored on the
+    // wrong field would draw a different clock tick, not merely a different
+    // instant carrying the identical zone offset.
+    startedAt: '2026-08-15T12:00:00.000Z',
+    toolStartedAt: '2026-08-15T11:42:09.000Z',
+    assertions: [],
+  };
+
+  afterEach(() => {
+    localStorage.removeItem(TIME_AXIS_STORAGE_KEY);
+    vi.unstubAllGlobals();
+    setOptionSpy.mockReset();
+  });
+
+  /**
+   * THE DRILL-DOWN IS A SIBLING OF THE RUN ROUTE, not a child of `RunShell`,
+   * so the shell's provider never reaches it. Without its own, a reader who
+   * chose Datetime on the run page would open a request and read elapsed
+   * time with nothing saying so.
+   */
+  it('follows Datetime, anchored to the run’s start, like the run page', async () => {
+    await inZone('Asia/Kolkata', async () => {
+      expect(new Date('2026-08-15T00:00:00Z').getHours()).toBe(5);
+      localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+      vi.stubGlobal('fetch', (input: RequestInfo) =>
+        String(input).includes('/series')
+          ? Promise.resolve(new Response(JSON.stringify(fixture.series), { status: 200 }))
+          : Promise.resolve(new Response('{}', { status: 500 })),
+      );
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run: RUN });
+
+      render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={[`/runs/${RUN_ID}/requests/Search`]}>
+            <Routes>
+              <Route path="/runs/:runId/requests/:name" element={<RequestDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => expect(timeAxisNames().length).toBeGreaterThan(0));
+      expect(new Set(timeAxisNames())).toEqual(new Set(['Time (GMT+5:30)']));
+      // The run's OWN start, 17:12:09 in Asia/Kolkata, plus 15 s — not the
+      // time the platform received it, which would read 17:30:15.
+      expect(new Set(timeAxisTicksAt15s())).toEqual(new Set(['17:12:24']));
+    });
   });
 });

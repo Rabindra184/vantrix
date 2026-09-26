@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { useRunTerminal, useWindowSuffix } from './useRunWindow';
 import { formatInstant } from './format';
+import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { projectPath, projectTestPath } from './paths';
 import { distributionQuery, seriesQuery, statsQuery } from '../api/metrics';
 import { linkButtonClasses } from '../components/Button';
@@ -156,6 +157,8 @@ export default function GroupDetail() {
   }
 
   return (
+    // A SIBLING OF THE RUN ROUTE; see `RequestDetail`.
+    <TimeAxisProvider anchor={run?.toolStartedAt}>
     <div className="flex flex-col gap-8">
       {/* Back link above the heading — see `RequestDetail`'s matching comment
           on why it moved: below the `<h1>` it sat between the page's title and
@@ -268,5 +271,6 @@ export default function GroupDetail() {
         </Fragment>
       ))}
     </div>
+    </TimeAxisProvider>
   );
 }

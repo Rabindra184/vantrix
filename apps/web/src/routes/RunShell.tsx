@@ -4,6 +4,7 @@ import RouteFallback from '../components/RouteFallback';
 import RouteErrorBoundary from '../components/RouteErrorBoundary';
 import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
+import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
 import { runComparePath, runTrendsPath } from './paths';
 import type { Assertion, RunIdentity, RunProcessing, RunResponse } from '@perfportal/contracts';
@@ -154,6 +155,10 @@ export default function RunShell({
   const users = useQuery({ ...usersQuery(identity.id, window), enabled: terminal });
 
   return (
+    // THE RUN'S CLOCK, for every tab and for the time window above them: the
+    // anchor comes off the identity this shell already holds, so nothing
+    // reads the run a second time to learn when it started.
+    <TimeAxisProvider anchor={identity.toolStartedAt}>
     <div className="flex flex-col gap-6">
       <RunHeader
         identity={identity}
@@ -272,6 +277,7 @@ export default function RunShell({
           <TimeBrush
             runId={identity.id}
             runDurationMs={identity.durationMs}
+            runActivityMs={identity.activityMs}
             window={window}
             // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
             // typed. Taken from `/users`, which this shell already fetches for
@@ -312,6 +318,7 @@ export default function RunShell({
       </Suspense>
       </RouteErrorBoundary>
     </div>
+    </TimeAxisProvider>
   );
 }
 

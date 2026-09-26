@@ -4,8 +4,11 @@ import {
   Box,
   ChartSpline,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CircleAlert,
   Clipboard,
   Download,
@@ -37,6 +40,8 @@ import {
   TriangleAlert,
   type LucideIcon,
   Upload,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 
 /**
@@ -119,6 +124,14 @@ export const MonitorIcon = icon(Monitor);
 export const SignOutIcon = icon(LogOut);
 export const ChevronRightIcon = icon(ChevronRight);
 export const ChevronLeftIcon = icon(ChevronLeft);
+
+// The time window: its range menu and Gatling Enterprise's six navigator
+// controls.
+export const ChevronDownIcon = icon(ChevronDown);
+export const FastBackwardIcon = icon(ChevronsLeft);
+export const FastForwardIcon = icon(ChevronsRight);
+export const ZoomInIcon = icon(ZoomIn);
+export const ZoomOutIcon = icon(ZoomOut);
 
 /** A retry / re-check action. */
 export const RefreshIcon = icon(RefreshCw);

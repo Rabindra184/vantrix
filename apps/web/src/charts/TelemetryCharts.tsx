@@ -81,7 +81,6 @@ export default function TelemetryCharts({
         pairValue="y"
         xAxis={{
           type: 'value',
-          name: 'Elapsed (s)',
           tickUnit: 'ms-as-s',
           min: domainMs?.[0],
           max: domainMs?.[1],
@@ -99,7 +98,6 @@ export default function TelemetryCharts({
         pairValue="y"
         xAxis={{
           type: 'value',
-          name: 'Elapsed (s)',
           tickUnit: 'ms-as-s',
           min: domainMs?.[0],
           max: domainMs?.[1],
@@ -117,7 +115,6 @@ export default function TelemetryCharts({
         pairValue="y"
         xAxis={{
           type: 'value',
-          name: 'Elapsed (s)',
           tickUnit: 'ms-as-s',
           min: domainMs?.[0],
           max: domainMs?.[1],
@@ -135,7 +132,6 @@ export default function TelemetryCharts({
         pairValue="y"
         xAxis={{
           type: 'value',
-          name: 'Elapsed (s)',
           tickUnit: 'ms-as-s',
           min: domainMs?.[0],
           max: domainMs?.[1],
@@ -153,7 +149,6 @@ export default function TelemetryCharts({
         pairValue="y"
         xAxis={{
           type: 'value',
-          name: 'Elapsed (s)',
           tickUnit: 'ms-as-s',
           min: domainMs?.[0],
           max: domainMs?.[1],
@@ -171,7 +166,6 @@ export default function TelemetryCharts({
         pairValue="y"
         xAxis={{
           type: 'value',
-          name: 'Elapsed (s)',
           tickUnit: 'ms-as-s',
           min: domainMs?.[0],
           max: domainMs?.[1],
