@@ -248,6 +248,159 @@ describe('stepWindow — the resolution and the ends', () => {
   });
 });
 
+/* ======================================================================== *
+ * NARROW WINDOWS, WHERE GATLING WAS NEVER MEASURED
+ * ======================================================================== */
+
+/**
+ * ═══ SNAPPING EACH BOUND ON ITS OWN CANCELLED THE STEP ═══
+ *
+ * Below about two and a half buckets, a fifth or a quarter of the width
+ * rounds back to the bound it started from, so a button `canStep` enabled
+ * changed nothing — reproduced on a real 108.5 s run, where six Zoom ins
+ * reach one bucket and Zoom out, Backward and Forward then sat live and
+ * inert. A window narrower than a bucket stepped to an EMPTY one, which
+ * `TimeBrush` committed and `parseWindow` reads back as the whole run.
+ *
+ * Nothing above could see it: every measured case starts from a window at
+ * least twenty seconds wide, and nothing stepped from the one-bucket floor
+ * that Zoom in — the only control enabled on arrival — leads straight to.
+ */
+describe('stepWindow — a narrow window still moves', () => {
+  const REFERENCE_MS = 63_161;
+
+  it('moves a one-bucket window on every live control', () => {
+    const bucket = { fromMs: 31_000, toMs: 32_000 };
+    const at = (step: WindowStep) => stepWindow(bucket, step, REFERENCE_MS, SECOND);
+    expect(at('zoom-out')).toEqual(w(30_000, 33_000));
+    expect(at('backward')).toEqual(w(30_000, 31_000));
+    expect(at('forward')).toEqual(w(32_000, 33_000));
+    expect(at('fast-backward')).toEqual(w(30_000, 31_000));
+    expect(at('fast-forward')).toEqual(w(32_000, 33_000));
+  });
+
+  it('pans a two-bucket window by a bucket, where a fifth of it rounded to nothing', () => {
+    const two = { fromMs: 30_000, toMs: 32_000 };
+    expect(stepWindow(two, 'backward', REFERENCE_MS, SECOND)).toEqual(w(29_000, 31_000));
+    expect(stepWindow(two, 'forward', REFERENCE_MS, SECOND)).toEqual(w(31_000, 33_000));
+  });
+
+  it('never steps a window narrower than a bucket to an empty one', () => {
+    // From 30.1 To 30.4, typed. Four of these five used to land on
+    // [30000, 30000], which the URL reads as the whole run.
+    const typed = { fromMs: 30_100, toMs: 30_400 };
+    const at = (step: WindowStep) => stepWindow(typed, step, REFERENCE_MS, SECOND);
+    expect(at('zoom-out')).toEqual(w(29_000, 31_000));
+    expect(at('backward')).toEqual(w(29_000, 30_000));
+    expect(at('fast-backward')).toEqual(w(29_000, 30_000));
+    expect(at('forward')).toEqual(w(31_000, 32_000));
+    expect(at('fast-forward')).toEqual(w(31_000, 32_000));
+  });
+
+  it('keeps the run’s last, partial bucket as one bucket, so Forward never moves back', () => {
+    // A 2.457 s run's last bucket is 457 ms. Reading every result under one
+    // resolution wide as "narrower than a bucket" swapped it for the bucket
+    // before it: [1000, 2000], Forward moving BACK.
+    expect(stepWindow({ fromMs: 1_365, toMs: 2_289 }, 'forward', 2_457, SECOND)).toEqual(w(2_000, 2_457));
+    // And from inside that bucket the live steps still leave it.
+    const last = { fromMs: 63_000, toMs: REFERENCE_MS };
+    expect(stepWindow(last, 'backward', REFERENCE_MS, SECOND)).toEqual(w(62_000, 63_000));
+    expect(stepWindow(last, 'zoom-out', REFERENCE_MS, SECOND)).toEqual(w(62_000, REFERENCE_MS));
+  });
+
+  /**
+   * ═══ THE INVARIANTS, OVER EVERY SHAPE A WINDOW TAKES ═══
+   *
+   * Grid-aligned and off-grid windows, ones narrower than a bucket, ones
+   * against either end and reproducible pseudo-random ones, on runs from
+   * 2.457 s to an hour at three resolutions. For every step `canStep`
+   * enables:
+   *
+   *   - the result is a DIFFERENT window: a live button moves something;
+   *   - a non-null result is never empty;
+   *   - a pan's leading edge moves the way it points — the emptiness rule's
+   *     reason for being, where a width test moved Forward back;
+   *   - zoom out contains the window it grew from, and zoom in narrows it.
+   *
+   * THE VACUITY COUNTERS COUNT THE CONSTRUCTS — steps checked, and the
+   * narrow and off-grid windows among them — never how many passed.
+   */
+  it('holds for every enabled step over windows, runs and resolutions', () => {
+    const failures: string[] = [];
+    let checked = 0;
+    let narrow = 0;
+    let offGrid = 0;
+    for (const runMs of [2_457, 63_161, 63_700, 108_532, 120_000, 3_600_000]) {
+      for (const resolutionMs of [1_000, 2_000, 16_000]) {
+        for (const current of windowsFor(runMs, resolutionMs)) {
+          if (current.toMs - current.fromMs < resolutionMs) narrow += 1;
+          if (current.fromMs % resolutionMs !== 0 || (current.toMs % resolutionMs !== 0 && current.toMs !== runMs)) {
+            offGrid += 1;
+          }
+          for (const { step } of WINDOW_STEPS) {
+            if (!canStep(current, step, runMs, resolutionMs)) continue;
+            checked += 1;
+            const next = stepWindow(current, step, runMs, resolutionMs);
+            const from = next?.fromMs ?? 0;
+            const to = next?.toMs ?? runMs;
+            const problems = [
+              from === current.fromMs && to === current.toMs && 'moved nothing',
+              next !== null && !(next.fromMs < next.toMs) && 'is empty',
+              (step === 'backward' || step === 'fast-backward') && !(from < current.fromMs) && 'kept its start',
+              (step === 'forward' || step === 'fast-forward') && !(to > current.toMs) && 'kept its end',
+              step === 'zoom-out' && !(from <= current.fromMs && to >= current.toMs) && 'lost part of the window',
+              step === 'zoom-in' && !(to - from < current.toMs - current.fromMs) && 'is not narrower',
+            ].filter((problem): problem is string => problem !== false);
+            for (const problem of problems) {
+              failures.push(
+                `${step} from [${current.fromMs}, ${current.toMs}] (run ${runMs}, ${resolutionMs} ms) ${problem}: ${JSON.stringify(next)}`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(50_000);
+    expect(narrow).toBeGreaterThan(3_000);
+    expect(offGrid).toBeGreaterThan(10_000);
+    expect({ failures: failures.length, first: failures.slice(0, 5) }).toEqual({ failures: 0, first: [] });
+  });
+});
+
+/**
+ * The windows the sweep steps from: every one satisfies `stepWindow`'s
+ * precondition, `0 <= fromMs < toMs <= runMs`, as `parseWindow` guarantees.
+ */
+function windowsFor(runMs: number, resolutionMs: number): Span[] {
+  const spans: Span[] = [{ fromMs: 0, toMs: runMs }];
+  const add = (fromMs: number, toMs: number): void => {
+    const from = Math.round(fromMs);
+    const to = Math.round(toMs);
+    if (from >= 0 && from < to && to <= runMs) spans.push({ fromMs: from, toMs: to });
+  };
+  const r = resolutionMs;
+  const widths = [1, 300, r / 2, r - 1, r, r + 1, 1.5 * r, 2 * r, 2.5 * r, 3 * r, 10 * r, runMs / 3, runMs / 2, runMs - 1];
+  const starts = [0, 1, r / 2, r, 1.3 * r, 31 * r, runMs / 4, runMs / 2];
+  for (const width of widths) {
+    for (const start of starts) {
+      add(start, start + width);
+      add(runMs - start - width, runMs - start); // the same, against the end
+    }
+  }
+  // Pseudo-random, reproducibly: MINSTD with a fixed seed, exact in doubles,
+  // so a failure names the same window on every run.
+  let seed = 7;
+  const next = (): number => (seed = (seed * 48_271) % 2_147_483_647) / 2_147_483_647;
+  for (let i = 0; i < 300; i += 1) {
+    const a = Math.floor(next() * runMs);
+    const b = Math.floor(next() * runMs);
+    add(Math.min(a, b), Math.max(a, b));
+    const at = Math.floor(next() * runMs);
+    add(at, at + 1 + Math.floor(next() * 3 * r));
+  }
+  return spans;
+}
+
 describe('snapBound', () => {
   it('keeps both ends of the run exactly and rounds everything between', () => {
     expect(snapBound(-5, 63_161, SECOND)).toBe(0);

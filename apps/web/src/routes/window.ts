@@ -123,6 +123,39 @@ function asWindow(fromMs: number, toMs: number, runMs: number): Window | null {
  * a zoom that would leave it is cut. So zoom out is not zoom in's inverse:
  * in halves the width, out grows it by half. A result covering the whole run
  * is `null`, the rule `TimeBrush.commit` already applies to a drag.
+ *
+ * ═══ A NARROW WINDOW STILL MOVES: AT LEAST ONE BUCKET PER STEP ═══
+ *
+ * Gatling was measured at a two-minute width only. Each bound is snapped to
+ * the resolution on its own, so below about two and a half buckets a 20% pan
+ * or a 25% zoom out rounds back to where it began. Measured on a real 108.5 s
+ * run at 1 s buckets: six Zoom ins reached `[54000, 55000]`, and Zoom out,
+ * Backward and Forward then stayed enabled and changed nothing. So a pan
+ * moves by the larger of its fraction of the width and one resolution, and
+ * zoom out grows each edge by the larger of a quarter of the width and one
+ * resolution. Wherever Gatling was measured the fraction is the larger, and
+ * its figures are unchanged.
+ *
+ * ═══ AND NO STEP LANDS ON AN EMPTY WINDOW ═══
+ *
+ * After snapping, every bound is a bucket boundary — a multiple of the
+ * resolution, or an end of the run — so a result holds at least one bucket
+ * unless both bounds landed on the SAME boundary. A window narrower than a
+ * bucket (typed decimals, a narrow drag, the run's last partial bucket) used
+ * to do exactly that: From 30.1 To 30.4 stepped to `[30000, 30000]`, which
+ * `TimeBrush` committed and `parseWindow` reads back as the WHOLE RUN, so a
+ * step silently widened the view. An empty result becomes the bucket holding
+ * its centre — zoom in's rule, now shared by all six — with the centre taken
+ * BEFORE snapping, so a pan lands on the side it moved to.
+ *
+ * EMPTINESS, NOT A WIDTH BELOW THE RESOLUTION, is the test, because the run's
+ * last bucket may be partial and is still one bucket. Replacing every result
+ * under one resolution wide would swap that partial bucket for the one before
+ * it, and Forward would move BACK: measured, `[1365, 2289]` on a 2,457 ms run
+ * went to `[1000, 2000]` that way, where this rule gives `[2000, 2457]`.
+ *
+ * Expects `0 <= current.fromMs < current.toMs <= runMs`, which `parseWindow`
+ * guarantees for every window it returns and the whole run satisfies.
  */
 export function stepWindow(
   current: Span,
@@ -133,26 +166,29 @@ export function stepWindow(
   const from = Math.max(0, current.fromMs);
   const to = Math.min(runMs, current.toMs);
   const width = to - from;
-  const snap = (ms: number): number => snapBound(ms, runMs, resolutionMs);
 
-  if (step === 'zoom-in') {
-    const a = snap(from + width / 4);
-    const b = snap(to - width / 4);
-    if (b - a >= resolutionMs) return asWindow(a, b, runMs);
-    // NEVER NARROWER THAN ONE BUCKET, the finest thing stored: the bucket
-    // holding the centre. The run's last bucket may be partial, and that is
-    // still one bucket.
-    const bucket = Math.floor((from + to) / 2 / resolutionMs) * resolutionMs;
+  /** Snaps both bounds; a stretch that snaps to nothing is the bucket
+   *  holding its centre (see above). The run's last bucket may be partial,
+   *  and that is still one bucket. */
+  const settle = (a: number, b: number): Window | null => {
+    const fromMs = snapBound(a, runMs, resolutionMs);
+    const toMs = snapBound(b, runMs, resolutionMs);
+    if (fromMs < toMs) return asWindow(fromMs, toMs, runMs);
+    const bucket = Math.floor((a + b) / 2 / resolutionMs) * resolutionMs;
     return asWindow(bucket, Math.min(runMs, bucket + resolutionMs), runMs);
-  }
+  };
+
+  if (step === 'zoom-in') return settle(from + width / 4, to - width / 4);
   if (step === 'zoom-out') {
-    return asWindow(snap(from - width / 4), snap(to + width / 4), runMs);
+    const grow = Math.max(width / 4, resolutionMs);
+    return settle(from - grow, to + grow);
   }
 
   const fraction = step === 'fast-backward' || step === 'fast-forward' ? 1 : 0.2;
   const direction = step === 'fast-backward' || step === 'backward' ? -1 : 1;
-  let a = from + direction * fraction * width;
-  let b = to + direction * fraction * width;
+  const shift = direction * Math.max(fraction * width, resolutionMs);
+  let a = from + shift;
+  let b = to + shift;
   if (a < 0) {
     a = 0;
     b = width;
@@ -161,7 +197,7 @@ export function stepWindow(
     b = runMs;
     a = runMs - width;
   }
-  return asWindow(snap(a), snap(b), runMs);
+  return settle(a, b);
 }
 
 /**
@@ -173,6 +209,12 @@ export function stepWindow(
  * TYPED is off the resolution grid, and a step that is otherwise a no-op
  * would still nudge it by a snap, leaving a button that looks live and moves
  * a bound by 300 ms.
+ *
+ * AND EVERY STEP THESE RULES ALLOW MOVES THE WINDOW, because `stepWindow`
+ * pans by at least one bucket and grows each edge by at least one: without
+ * that floor, a window two buckets wide kept Backward and Forward live while
+ * both snapped back to where they began. `window.test.ts` sweeps it over
+ * windows, runs and resolutions.
  */
 export function canStep(current: Span, step: WindowStep, runMs: number, resolutionMs: number): boolean {
   const from = Math.max(0, current.fromMs);
