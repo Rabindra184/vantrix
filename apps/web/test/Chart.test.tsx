@@ -958,9 +958,9 @@ describe('Chart — an elapsed axis steps like a clock', () => {
     render(
       <Chart id="n" title="Requests per second, whole run" data={pairs} navigator
         xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
-        brush={{ value: { fromMs: 30_000, toMs: 90_000 }, onChange: () => undefined }} />,
+        brush={{ value: { fromMs: 30_000, toMs: 45_000 }, onChange: () => undefined }} />,
     );
-    expect(axis().interval).toBe(clockStepMs(60_000));
+    expect(axis().interval).toBe(clockStepMs(15_000));
   });
 
   it('leaves every other value axis to ECharts', () => {
