@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **166 files / 2127 tests**, it
+`nvm use` first, and if a run reports fewer than **166 files / 2135 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,63 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The apply-keeps-exact-window branch added no unit FILE and 8 cases to
+`apps/web/test/TimeBrush.test.tsx`, from **166 / 2127 to 166 / 2135**.
+Integration is UNCHANGED at **149 / 1900** (that file is a `.tsx`, and no
+`.ts` test moved) and **e2e stays 156**. It closes the two Apply behaviours
+the time-window branch's final review recorded as predating it.
+
+**APPLY WAS THE ONE CONTROL THAT COULD PUT THE WHOLE RUN IN THE URL.** A
+typed From 0 with a To at, past or missing the run's end — or an untouched
+Apply on a run nobody had narrowed — committed `?from=0&to=63161`. Every
+other way to the whole run already committed `null`: a drag covering the
+extent (`TimeBrush.commit`), every step and every preset (`window.ts`), and
+the spec says so in as many words (deviation B, "the whole run keeps an empty
+URL", so a shared link follows a re-ingested run). `asWindow` held that rule
+privately inside `window.ts`; it is exported now and `commit` and `apply`
+both end in it: the steps, the presets, a drag and Apply now share one
+definition, where the drag carried a hand copy and Apply had none.
+
+**AND AN UNTOUCHED APPLY MOVED BOTH EDGES OF A DRAGGED WINDOW.** The fields
+show whole seconds (`Math.round(ms / 1000)`), so a dragged 27,412–51,250 ms
+reads 27 and 51, and Apply committed 27,000–51,000: a button that changed
+nothing on screen rewrote the selection. The time-window branch fixed only
+the run's-end case. A field the reader has not TYPED IN since the URL last
+set it now keeps the URL's exact bound; a field they typed in parses as
+typed. The flag resets whenever the URL moves the window, because an edit
+made before a back button describes a window no longer selected.
+
+**"EDITED" MEANS TYPED IN, NOT "READS DIFFERENTLY", AND A MUTATION PINS
+THE DIFFERENCE.** The tempting shortcut compares the field's text with the
+rounded bound and keeps the exact one when they match. It passes every case
+but one: a reader who clears From and retypes `27` is asking for that whole
+second — the precision path the fields exist for — and the shortcut hands
+them 27,412 instead. Implementing the shortcut as a mutation fails exactly
+that case and nothing else.
+
+**SIX MUTATIONS, AND ONE FIRST CAME BACK AS `Tests no tests`.** Its perl
+replacement left a parenthesis unbalanced, so the file never transformed and
+vitest reported no tests rather than a failure — the silent shape this file
+already records for a JSX syntax error and a glob inside a block comment. A
+mutation that stops the file loading proves nothing about the case it aims
+at; re-applied well-formed, it failed the four cases where To is untouched.
+The others landed as predicted: From's flag ignored (2 cases), the
+reads-differently shortcut (1), the edit surviving a URL move (1), Apply
+without `asWindow` (the 4 whole-run cases), and typing that never marks From
+edited (5 — the three whole-run cases among them, because a typed `0` left
+unmarked keeps the exact 27,412 and the span is then not the whole run).
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **166 / 2135**, the recorded floor plus exactly this branch's
+eight cases, zero failures and zero `Errors` lines, and the same under
+`TZ=UTC`; `test:integration` **149 / 1900, exit 0**; `pnpm test:e2e`
+**156 passed, exit 0** — against a SCRATCH DATABASE (`perfportal_apply`)
+and a scratch Redis INDEX (db 10). Integration STARTED at a 1-minute load of
+15.5, past the `< 8` this file prescribes, because the two unit runs just
+before it had driven it up; it passed, and a loaded run that passes is a
+pass — one that failed would have been isolated and re-run before it was
+believed.
 
 The time-window-gatling-style branch added THREE unit files —
 `apps/web/test/timeAxisPreference.test.ts` (4),

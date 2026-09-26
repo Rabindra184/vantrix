@@ -15,6 +15,7 @@ import {
 import {
   WINDOW_PRESETS,
   WINDOW_STEPS,
+  asWindow,
   canStep,
   presetWindow,
   stepWindow,
@@ -172,12 +173,23 @@ export default function TimeBrush({
   const asSeconds = (ms: number): string => String(Math.round(ms / 1000));
   const [from, setFrom] = useState(() => (window ? asSeconds(window.fromMs) : ''));
   const [to, setTo] = useState(() => (window ? asSeconds(window.toMs) : ''));
+  /* WHETHER THE READER HAS TYPED IN EACH FIELD since the URL last set it. The
+     fields SHOW whole seconds, so a dragged 27,412 ms reads `27`; Apply keeps
+     the exact bound for a field nobody touched rather than committing what it
+     happens to display. Typing is the edit, not "reads differently":
+     retyping the number already shown is how a reader asks for that whole
+     second. */
+  const [fromEdited, setFromEdited] = useState(false);
+  const [toEdited, setToEdited] = useState(false);
 
   // The URL is the source of truth, so a back button or a pasted link moves the
-  // fields rather than leaving them describing a window no longer selected.
+  // fields rather than leaving them describing a window no longer selected —
+  // and an edit made before it describes that old window too, so it goes.
   useEffect(() => {
     setFrom(window ? asSeconds(window.fromMs) : '');
     setTo(window ? asSeconds(window.toMs) : '');
+    setFromEdited(false);
+    setToEdited(false);
     setRangeError(null);
   }, [window]);
 
@@ -196,8 +208,7 @@ export default function TimeBrush({
       // A drag covering the whole extent is a request for the whole run, not a
       // window that happens to match it, so the URL loses its parameters
       // rather than pinning a range that would then not follow a re-ingest.
-      if (fromMs <= 0 && toMs >= runDurationMs) onChange(null);
-      else onChange({ fromMs, toMs: Math.min(toMs, runDurationMs), bucketWidthMs: 0 });
+      onChange(asWindow(fromMs, Math.min(toMs, runDurationMs), runDurationMs));
     }, SETTLE_MS);
   };
 
@@ -227,6 +238,12 @@ export default function TimeBrush({
    * numbers and throw the drag away; left alone, the drag lands a moment
    * later, as the reader made it. A step, a preset and Whole run read no
    * fields, which is why they can cancel and this cannot.
+   *
+   * ═══ IT COMMITS WHAT THE READER CHANGED, AND NOTHING ELSE ═══
+   *
+   * A field the reader has not typed in keeps the URL's exact bound (see
+   * `fromEdited`), and a span covering the whole run commits no window at all
+   * through `asWindow`, the rule a drag and every step already follow.
    */
   const apply = (): void => {
     const parse = (raw: string, fallback: number): number | null => {
@@ -234,14 +251,19 @@ export default function TimeBrush({
       const n = Number(raw);
       return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) : null;
     };
-    const fromMs = parse(from, 0);
+    const fromMs = window !== null && !fromEdited ? window.fromMs : parse(from, 0);
     /* THE RUN'S END, SHOWN ROUNDED, IS STILL THE RUN'S END. The fields show
        whole seconds, so a window ending at the run's 63,161 ms reads `63`,
        and applying it untouched committed 63,000: the run's last partial
        bucket, which `snapBound` keeps exactly and the steps now reach often,
        dropped by a button that changed nothing on screen. A To reading
        exactly what the run's end reads is the run's end. */
-    const toMs = to.trim() === asSeconds(runDurationMs) ? runDurationMs : parse(to, runDurationMs);
+    const toMs =
+      window !== null && !toEdited
+        ? window.toMs
+        : to.trim() === asSeconds(runDurationMs)
+          ? runDurationMs
+          : parse(to, runDurationMs);
 
     /* ═══ AN INVALID RANGE IS REFUSED, NEVER WIDENED ═══
      *
@@ -262,7 +284,7 @@ export default function TimeBrush({
     }
 
     setRangeError(null);
-    onChange({ fromMs, toMs: Math.min(toMs, runDurationMs), bucketWidthMs: 0 });
+    onChange(asWindow(fromMs, Math.min(toMs, runDurationMs), runDurationMs));
   };
 
   // Requests/s: the densest, most continuous view of a run's shape, which is
@@ -435,7 +457,10 @@ export default function TimeBrush({
                 aria-invalid={rangeError === null ? undefined : true}
                 aria-describedby={rangeError === null ? undefined : errorId}
                 value={from}
-                onChange={(e) => setFrom(e.target.value)}
+                onChange={(e) => {
+                  setFrom(e.target.value);
+                  setFromEdited(true);
+                }}
                 placeholder="0"
                 className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
               />
@@ -452,7 +477,10 @@ export default function TimeBrush({
                 aria-invalid={rangeError === null ? undefined : true}
                 aria-describedby={rangeError === null ? undefined : errorId}
                 value={to}
-                onChange={(e) => setTo(e.target.value)}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setToEdited(true);
+                }}
                 placeholder={asSeconds(runDurationMs)}
                 className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
               />

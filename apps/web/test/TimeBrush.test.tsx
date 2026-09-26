@@ -707,3 +707,114 @@ describe('TimeBrush — Gatling Enterprise’s time controls', () => {
     });
   });
 });
+
+/**
+ * ═══ APPLY COMMITS WHAT THE READER CHANGED, AND NOTHING ELSE ═══
+ *
+ * The fields show whole seconds (`Math.round(ms / 1000)`), so a window the
+ * reader DRAGGED — 27,412 to 51,250 ms — reads 27 and 51, and an untouched
+ * Apply committed 27,000 to 51,000: a button that changed nothing on screen
+ * moved both edges. A field the reader has not typed in since the URL last set
+ * it keeps its exact bound; a field they typed in parses as typed, even when
+ * what they typed is the number already shown.
+ *
+ * AND THE WHOLE RUN IS NO WINDOW AT ALL (spec deviation B). A drag covering
+ * the whole extent already commits null, so a shared link follows a
+ * re-ingested run; Apply wrote `?from=0&to=<run end>` for the same span.
+ */
+describe('TimeBrush — Apply commits what the reader changed', () => {
+  const DRAGGED = { fromMs: 27_412, toMs: 51_250, bucketWidthMs: 0 };
+
+  it('keeps a dragged window exactly when neither field was edited', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: DRAGGED });
+    expect(screen.getByTestId('window-from')).toHaveValue('27');
+    expect(screen.getByTestId('window-to')).toHaveValue('51');
+
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenLastCalledWith(DRAGGED);
+  });
+
+  it('parses an edited field as typed and keeps the untouched one exact', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: DRAGGED });
+
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '30');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenLastCalledWith({ fromMs: 30_000, toMs: 51_250, bucketWidthMs: 0 });
+  });
+
+  /** "Edited" means typed in, not "reads differently": retyping the shown
+   *  number is a request for that whole second, which is the precision path. */
+  it('treats retyping the number already shown as an edit', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: DRAGGED });
+
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '27');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenLastCalledWith({ fromMs: 27_000, toMs: 51_250, bucketWidthMs: 0 });
+  });
+
+  /** A back button or a pasted link moves the fields; an edit made before it
+   *  describes a window no longer selected, and must not outlive it. */
+  it('forgets an edit once the URL moves the window', async () => {
+    const NEXT = { fromMs: 12_345, toMs: 45_678, bucketWidthMs: 0 };
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <TimeBrush runId={RUN} runDurationMs={63_161} window={DRAGGED} onChange={onChange} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(setOptionSpy).toHaveBeenCalled());
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '30');
+
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <TimeBrush runId={RUN} runDurationMs={63_161} window={NEXT} onChange={onChange} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('window-from')).toHaveValue('12');
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenLastCalledWith(NEXT);
+  });
+
+  it.each([
+    ['To at the run’s end as shown', '63'],
+    ['To past the run’s end', '100'],
+    ['To left empty', ''],
+  ])('commits no window for From 0 with %s', async (_label, typedTo) => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: DRAGGED });
+
+    await user.clear(screen.getByTestId('window-from'));
+    await user.type(screen.getByTestId('window-from'), '0');
+    await user.clear(screen.getByTestId('window-to'));
+    if (typedTo !== '') await user.type(screen.getByTestId('window-to'), typedTo);
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('commits no window for an untouched Apply on the whole run', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange });
+
+    await user.click(screen.getByTestId('window-apply'));
+
+    expect(onChange).toHaveBeenLastCalledWith(null);
+  });
+});
