@@ -549,6 +549,23 @@ describe('TimeBrush — Gatling Enterprise’s time controls', () => {
     expect(screen.getByTestId('time-axis-no-anchor')).toBeVisible();
   });
 
+  /**
+   * THE REASON IS THE CONTROL'S DESCRIPTION, so a screen reader meets it on
+   * the select it explains rather than as a stray paragraph after it — and
+   * only while it is rendered, so the reference never points at nothing.
+   */
+  it('describes the mode control by that reason, and only while there is one', async () => {
+    await renderBrush({ anchor: null });
+    expect(screen.getByTestId('time-axis-mode')).toHaveAccessibleDescription(
+      'Datetime needs the time this run started, which it did not record.',
+    );
+    cleanup();
+
+    await renderBrush({ anchor: ANCHOR });
+    expect(screen.getByTestId('time-axis-mode')).not.toHaveAttribute('aria-describedby');
+    expect(screen.getByTestId('time-axis-mode')).not.toHaveAccessibleDescription();
+  });
+
   it('heads the navigator with its resolution and the run’s Duration', async () => {
     await renderBrush({ runActivityMs: 62_136 });
     expect(screen.getByTestId('window-resolution')).toHaveTextContent(
@@ -598,6 +615,27 @@ describe('TimeBrush — Gatling Enterprise’s time controls', () => {
     expect(screen.getByTestId('window-step-backward')).toBeEnabled();
   });
 
+  /**
+   * THE RUN'S END, SHOWN ROUNDED, IS STILL ITS END. The fields read whole
+   * seconds, so a window the steps carried to 63,161 ms reads `63`, and
+   * applying it untouched committed 63,000 — the last partial bucket dropped
+   * by a button that changed nothing on screen.
+   */
+  it('applies a To reading the run’s end as the run’s end, and any other as typed', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: { fromMs: 40_000, toMs: 63_161 } });
+    expect(screen.getByTestId('window-to')).toHaveValue('63');
+
+    await user.click(screen.getByTestId('window-apply'));
+    expect(onChange).toHaveBeenLastCalledWith({ fromMs: 40_000, toMs: 63_161, bucketWidthMs: 0 });
+
+    await user.clear(screen.getByTestId('window-to'));
+    await user.type(screen.getByTestId('window-to'), '62');
+    await user.click(screen.getByTestId('window-apply'));
+    expect(onChange).toHaveBeenLastCalledWith({ fromMs: 40_000, toMs: 62_000, bucketWidthMs: 0 });
+  });
+
   it('offers no step until the navigator’s resolution is known', async () => {
     const fetchSpy = vi.fn(() => Promise.resolve(new Response('{}', { status: 500 })));
     vi.stubGlobal('fetch', fetchSpy);
@@ -607,11 +645,65 @@ describe('TimeBrush — Gatling Enterprise’s time controls', () => {
         <TimeBrush runId={RUN} runDurationMs={63_161} window={null} onChange={() => undefined} />
       </QueryClientProvider>,
     );
-    // Asserted AFTER the series request has answered, with an error: still no
-    // resolution, so still no step — not merely a first paint before the fetch.
+    // Asserted once the series request has been MADE, not merely at a first
+    // paint before any fetch: while it is outstanding there is no
+    // resolution, so no step. (The case waits for the call, not for an
+    // answer; that the stub's 500 would keep the steps off too is not what
+    // it shows.)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     for (const { step } of WINDOW_STEPS) {
       expect(screen.getByTestId(`window-step-${step}`)).toBeDisabled();
     }
+  });
+
+  /**
+   * ═══ THE SERIES' OWN RESOLUTION, NOT A SECOND ANYBODY WROTE DOWN ═══
+   *
+   * The reference fixture's buckets are 1 s wide, which a component
+   * hard-coding 1000 satisfies just as well. A long run's buckets coalesce
+   * in powers of two, so these stub the series at 2 s, and each picks a run
+   * and a control whose result differs at the two resolutions.
+   */
+  describe('on a series coarser than a second', () => {
+    const COARSE = 2_000;
+
+    beforeEach(() => {
+      vi.stubGlobal('fetch', (input: RequestInfo) =>
+        String(input).includes('/series')
+          ? Promise.resolve(
+              new Response(JSON.stringify({ ...fixture.series, bucketWidthMs: COARSE }), { status: 200 }),
+            )
+          : Promise.resolve(new Response('{}', { status: 500 })),
+      );
+    });
+
+    it('steps on the series’ buckets', async () => {
+      // 16–48 s at 2 s; a second's buckets would give 16–47 s.
+      expect(stepWindow(WHOLE, 'zoom-in', WHOLE.toMs, COARSE)).not.toEqual(
+        stepWindow(WHOLE, 'zoom-in', WHOLE.toMs, RESOLUTION),
+      );
+      const onChange = vi.fn();
+      const user = userEvent.setup();
+      await renderBrush({ onChange });
+
+      await user.click(screen.getByTestId('window-step-zoom-in'));
+      expect(onChange).toHaveBeenLastCalledWith(stepWindow(WHOLE, 'zoom-in', WHOLE.toMs, COARSE));
+      expect(screen.getByTestId('window-resolution')).toHaveTextContent('Resolution: 2s');
+    });
+
+    it('snaps a preset on the series’ buckets', async () => {
+      // An hour and 1.3 s: its last 15 minutes start at 2,701.3 s, which 2 s
+      // buckets round to 2,702 s and 1 s buckets to 2,701 s.
+      const RUN_MS = 3_601_300;
+      const LAST_15 = 15 * 60_000;
+      expect(presetWindow(LAST_15, RUN_MS, COARSE)).not.toEqual(presetWindow(LAST_15, RUN_MS, RESOLUTION));
+      const onChange = vi.fn();
+      const user = userEvent.setup();
+      await renderBrush({ onChange, runDurationMs: RUN_MS });
+
+      await user.click(screen.getByTestId('window-range'));
+      await user.click(await screen.findByRole('menuitem', { name: 'Last 15 Minutes' }));
+      expect(onChange).toHaveBeenLastCalledWith(presetWindow(LAST_15, RUN_MS, COARSE));
+    });
   });
 });

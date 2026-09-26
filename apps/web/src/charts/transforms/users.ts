@@ -28,11 +28,13 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 const ALL_USERS = 'All users';
 
 /** Heads the label column of both data tables. See `ChartTableRow`. */
-/* "Elapsed (s)", not "Time (s)" — review N01. Every other time series in the
-   product names this axis `Elapsed (s)`, and they all share one crosshair
-   group and one `[0, durationMs]` domain: two names for the identical axis is
-   the drift the finding is about, and here it sat on the one chart a reader
-   correlates the others against. */
+/* "Elapsed (s)", not "Time (s)" — review N01. Every time series' data table
+   heads its label column `Elapsed (s)`, and the charts share one crosshair
+   group and one `[0, durationMs]` domain: two names for one quantity is the
+   drift the finding is about, and here it sat on the one chart a reader
+   correlates the others against. It names a COLUMN only. The drawn axis is
+   named by `Chart` alone, from the viewer's time mode (`Elapsed`, or
+   `Time (GMT+5:30)` over wall-clock ticks). */
 const TIME_COLUMN = 'Elapsed (s)';
 
 /** One bucket of either the per-scenario or the total array — the same shape. */

@@ -64,8 +64,9 @@ import {
  *
  * `datazoom` fires on every frame of a drag. Committing each frame would mean
  * a URL entry and six refetches per pixel; the range is held and written once
- * the drag settles. A button or a preset is one navigation too, and cancels a
- * drag still settling so the drag cannot land after it and undo it.
+ * the drag settles. A step, a preset or Whole run is one navigation too, and
+ * cancels a drag still settling so the drag cannot land after it and undo it.
+ * Apply deliberately does not; `apply` says why.
  */
 const SETTLE_MS = 250;
 
@@ -116,6 +117,7 @@ export default function TimeBrush({
   const fromId = useId();
   const toId = useId();
   const errorId = useId();
+  const noAnchorId = useId();
   const { mode, anchorMs, setMode } = useTimeAxis();
 
   /** Set when `apply` refuses; cleared by a valid apply, and by any change to
@@ -215,6 +217,17 @@ export default function TimeBrush({
     }
   };
 
+  /**
+   * Commits the From/To fields.
+   *
+   * ═══ IT DOES NOT CANCEL A SETTLING DRAG, DELIBERATELY ═══
+   *
+   * The fields follow the URL, so in the 250 ms a drag takes to settle they
+   * still hold the window from BEFORE it. Cancelling here would commit those
+   * numbers and throw the drag away; left alone, the drag lands a moment
+   * later, as the reader made it. A step, a preset and Whole run read no
+   * fields, which is why they can cancel and this cannot.
+   */
   const apply = (): void => {
     const parse = (raw: string, fallback: number): number | null => {
       if (raw.trim() === '') return fallback;
@@ -222,7 +235,13 @@ export default function TimeBrush({
       return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) : null;
     };
     const fromMs = parse(from, 0);
-    const toMs = parse(to, runDurationMs);
+    /* THE RUN'S END, SHOWN ROUNDED, IS STILL THE RUN'S END. The fields show
+       whole seconds, so a window ending at the run's 63,161 ms reads `63`,
+       and applying it untouched committed 63,000: the run's last partial
+       bucket, which `snapBound` keeps exactly and the steps now reach often,
+       dropped by a button that changed nothing on screen. A To reading
+       exactly what the run's end reads is the run's end. */
+    const toMs = to.trim() === asSeconds(runDurationMs) ? runDurationMs : parse(to, runDurationMs);
 
     /* ═══ AN INVALID RANGE IS REFUSED, NEVER WIDENED ═══
      *
@@ -287,7 +306,7 @@ export default function TimeBrush({
               <ChevronDownIcon className="h-3.5 w-3.5 shrink-0" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-[12rem]">
+          <DropdownMenuContent align="start">
             {WINDOW_PRESETS.map((preset) => (
               <DropdownMenuItem
                 key={preset.label}
@@ -303,6 +322,11 @@ export default function TimeBrush({
         <select
           data-testid="time-axis-mode"
           aria-label="Time axis"
+          // THE REASON DATETIME IS OFF IS THE CONTROL'S DESCRIPTION, so a
+          // screen reader meets it on the select rather than as a stray
+          // paragraph after it. Present only while the reason is rendered,
+          // so it never points at nothing.
+          aria-describedby={anchorMs === null ? noAnchorId : undefined}
           // A run with no anchor reads elapsed whatever was chosen, so the
           // control says so rather than showing a choice it cannot honour.
           value={anchorMs === null ? 'offset' : mode}
@@ -316,7 +340,7 @@ export default function TimeBrush({
         </select>
 
         {anchorMs === null && (
-          <p data-testid="time-axis-no-anchor" className="text-[0.75rem] text-muted">
+          <p id={noAnchorId} data-testid="time-axis-no-anchor" className="text-[0.75rem] text-muted">
             Datetime needs the time this run started, which it did not record.
           </p>
         )}

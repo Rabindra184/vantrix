@@ -46,7 +46,8 @@ const ALL = 'All';
 const OK = 'OK';
 const KO = 'KO';
 
-/** Heads the label column, and names the shared category axis. */
+/** Heads the data table's label column. It names no axis: the drawn one is a
+ *  value axis `Chart` names itself, from the viewer's time mode. */
 const TIME_COLUMN = 'Elapsed (s)';
 
 type Bucket = SeriesResponse['buckets'][number];

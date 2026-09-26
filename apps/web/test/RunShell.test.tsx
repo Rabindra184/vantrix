@@ -475,6 +475,22 @@ describe('RunShell — the window control only appears where it applies', () => 
 });
 
 /**
+ * ═══ ONE NUMBER UNDER "DURATION" (the time-window spec's deviation F) ═══
+ *
+ * `RunHeader`'s chip reads the run's activity span, and the navigator's own
+ * header has to read the same, not the series span a second longer.
+ * `TimeBrush` falls back to the series span when the shell passes nothing, so
+ * dropping the prop would put 63s under the navigator beside a 62s chip with
+ * every other case here still green.
+ */
+describe('RunShell — the navigator’s Duration', () => {
+  it('reads the activity span the header calls Duration, not the series span', async () => {
+    renderShellWith({ identity: { ...RUN, activityMs: 62_136 }, windowable: true });
+    expect(await screen.findByTestId('window-duration')).toHaveTextContent('Duration: 62s');
+  });
+});
+
+/**
  * ═══ REVIEW M18 — THE BRUSH IS NOT A PHONE CONTROL ═══
  *
  * Measured in Chromium at 375x812: the brush was 394px tall and sat between
