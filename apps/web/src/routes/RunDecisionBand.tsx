@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 import { describeSlaOutcome } from '@perfportal/contracts';
-import type { Assertion, RunIdentity, RunResponse, RunVerdict } from '@perfportal/contracts';
+import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
 import { ASSERTION_OUTCOME, STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
+import { decisionOf, decisionWord, type Decision } from './decision';
 import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 
@@ -24,7 +25,6 @@ import { downloadRunSummary, runSummaryJson } from './runExport';
  *
  * So `unevaluated` has no `Mark`: there is nothing honest to stamp.
  */
-type Decision = RunVerdict | 'none' | 'unevaluated';
 
 const DECISION: Record<Exclude<Decision, 'unevaluated'>, Mark> = {
   passed: VERDICT.passed,
@@ -105,7 +105,7 @@ export default function RunDecisionBand({
         ? 'not configured — no SLA rule judged this run'
         : `${counts.passed} passed · ${counts.failed} failed`;
   const failed = firstFailedAssertion(assertions ?? []);
-  const decision: Decision = verdict === undefined ? 'unevaluated' : (verdict ?? 'none');
+  const decision: Decision = decisionOf(verdict);
   /* ═══ "Not configured" IS NOT "Not evaluated" (review 09-13 copy table) ═══
    *
    * The row is "Repeated Not evaluated block" -> "`SLA: Not configured`". The
@@ -442,27 +442,6 @@ function DecisionCount({ label, value, mark }: { readonly label: string; readonl
       <p className="font-mono text-base font-semibold leading-none tabular-nums text-primary">{value}</p>
     </div>
   );
-}
-
-/**
- * The big word, and the sentence it replaced. "Release gate failed" carried
- * subject and verdict in one string; the redesign splits them — the verdict
- * as the word, the subject as the constant overline beneath it — so the
- * mapping here is the old `decisionTitle` minus the words the overline now
- * owns. Same branches, same order, same honesty rules.
- */
-function decisionWord(
-  decision: Decision,
-  counts: AssertionCounts,
-  /** The run was judged by NOTHING — an empty assertion list, not an absent
-      one. See the call site for why the two cannot share a word. */
-  unconfigured: boolean,
-): string {
-  if (decision === 'failed') return 'Failed';
-  if (decision === 'passed') return 'Passed';
-  if (decision === 'not_evaluated') return unconfigured ? 'Not configured' : 'Not evaluated';
-  if (counts.failed > 0) return 'Needs attention';
-  return 'Pending';
 }
 
 /**
