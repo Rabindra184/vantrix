@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { lifecycleSteps, type LifecycleInput, type StepName } from '../src/routes/lifecycle';
 import { releaseWord } from '../src/routes/decision';
-import { formatDuration } from '../src/routes/format';
 
 /**
  * ═══ THE RUN'S JOURNEY, DERIVED ═══
