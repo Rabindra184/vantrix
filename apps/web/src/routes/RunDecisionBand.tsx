@@ -283,9 +283,9 @@ export default function RunDecisionBand({
            *
            * M02 asks the mobile band to "replace stacked repeated status prose
            * with short labeled rows". The rows are the `<dl>` directly below,
-           * which C02 built — Platform gates and Simulation assertions now, Execution
-           * having moved to the lifecycle strip — each
-           * naming the system that answered. This paragraph is the PROSE half,
+           * which C02 built — Platform gates and Simulation assertions now,
+           * Execution having moved to the lifecycle strip — each naming the
+           * system that answered. This paragraph is the PROSE half,
            * and on this run it reads "This run completed, but no SLA rule
            * produced a release verdict" while the row beneath says "Platform
            * gates — not configured". One fact, twice, in the screen a phone
