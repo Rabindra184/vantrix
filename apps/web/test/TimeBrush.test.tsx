@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TimeBrush from '../src/charts/TimeBrush';
 import { RATE_ROLES } from '../src/charts/transforms/rates';
 import { CATEGORICAL } from '../src/charts/theme';
+import { TimeAxisProvider } from '../src/charts/TimeAxisContext';
+import { formatDuration } from '../src/routes/format';
+import { presetWindow, stepWindow, WINDOW_PRESETS, WINDOW_STEPS } from '../src/routes/window';
+import { TIME_AXIS_STORAGE_KEY } from '../src/timeAxisPreference';
 import fixture from './fixtures/reference-run.json';
 
 /**
@@ -69,20 +73,45 @@ afterEach(() => {
 });
 
 async function renderBrush(
-  props: { onChange?: (next: unknown) => void; window?: unknown } = {},
+  props: {
+    onChange?: (next: unknown) => void;
+    window?: unknown;
+    applied?: unknown;
+    /** Present to render under a run's clock; absent renders outside any provider. */
+    anchor?: string | null;
+    runDurationMs?: number;
+    runActivityMs?: number | null;
+  } = {},
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const brush = (
+    <TimeBrush
+      runId={RUN}
+      runDurationMs={props.runDurationMs ?? 63_161}
+      runActivityMs={props.runActivityMs}
+      window={(props.window ?? null) as never}
+      applied={(props.applied ?? null) as never}
+      onChange={(props.onChange ?? (() => undefined)) as never}
+    />
+  );
   render(
     <QueryClientProvider client={client}>
-      <TimeBrush
-        runId={RUN}
-        runDurationMs={63_161}
-        window={(props.window ?? null) as never}
-        onChange={(props.onChange ?? (() => undefined)) as never}
-      />
+      {props.anchor === undefined ? brush : <TimeAxisProvider anchor={props.anchor}>{brush}</TimeAxisProvider>}
     </QueryClientProvider>,
   );
   await waitFor(() => expect(setOptionSpy).toHaveBeenCalled());
+}
+
+/** Pins the process zone; see `format.test.ts` for why the flip is asserted. */
+async function inZone(zone: string, body: () => Promise<void>): Promise<void> {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = zone;
+    await body();
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
 }
 
 describe('TimeBrush — the strip the window is dragged on', () => {
@@ -382,10 +411,199 @@ describe('TimeBrush — an invalid range is refused, never widened', () => {
     await waitFor(() => expect(details().open).toBe(true));
   });
 
-  /** Shut, it still says which stretch the numbers below describe. */
+  /** Shut, the always-visible range line still says which stretch the numbers describe. */
   it('names the applied window from the outside', async () => {
     await renderBrush({ window: { fromMs: 10_000, toMs: 30_000 } });
-    expect(screen.getByTestId('time-window-toggle')).toHaveTextContent('10s–30s');
+    const range = screen.getByTestId('window-range');
+    // No provider, so no anchor: the ends are elapsed clock time.
+    expect(range).toHaveTextContent('00:00:10 → 00:00:30');
+    expect(range).toHaveTextContent('20s');
     expect(screen.getByTestId('time-window-toggle').textContent ?? '').not.toMatch(/whole run/i);
+  });
+});
+
+/* ====================================================================== *
+ * GATLING ENTERPRISE'S TIME CONTROLS (docs/superpowers/specs/2026-09-26-…)
+ * ====================================================================== */
+
+describe('TimeBrush — Gatling Enterprise’s time controls', () => {
+  // 17:12:09 in Asia/Kolkata: the start of the run Gatling was measured on.
+  const ANCHOR = '2026-08-15T11:42:09.000Z';
+  const WHOLE = { fromMs: 0, toMs: 63_161 };
+  const RESOLUTION = fixture.series.bucketWidthMs;
+  const kolkataTook = () => expect(new Date('2026-08-15T00:00:00Z').getHours()).toBe(5);
+
+  afterEach(() => {
+    localStorage.removeItem(TIME_AXIS_STORAGE_KEY);
+  });
+
+  it('states the window as a range to the second, in the reader’s zone', async () => {
+    await inZone('Asia/Kolkata', async () => {
+      kolkataTook();
+      await renderBrush({ anchor: ANCHOR, window: { fromMs: 30_000, toMs: 90_000 }, runDurationMs: 120_000 });
+      const range = screen.getByTestId('window-range');
+      // Gatling's 17:12:39 → 17:13:39, in whichever hour cycle the locale uses.
+      expect(range).toHaveTextContent(/:12:39/);
+      expect(range).toHaveTextContent(/:13:39/);
+      expect(range).toHaveTextContent('GMT+5:30');
+      expect(range).toHaveTextContent('60s');
+    });
+  });
+
+  it('states the snapped window once a response reports one, held to the run', async () => {
+    await renderBrush({
+      window: { fromMs: 10_300, toMs: 63_161 },
+      applied: { fromMs: 10_000, toMs: 64_000, bucketWidthMs: 1_000 },
+    });
+    // The snap reached a bucket past the run's end; the line stops at it.
+    expect(screen.getByTestId('window-range')).toHaveTextContent('00:00:10 → 00:01:03');
+  });
+
+  it('offers Gatling’s presets, and one longer than the run is the whole run', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, window: { fromMs: 10_000, toMs: 30_000 } });
+
+    await user.click(screen.getByTestId('window-range'));
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((item) => item.textContent)).toEqual(WINDOW_PRESETS.map((p) => p.label));
+
+    await user.click(screen.getByRole('menuitem', { name: 'Last 5 Minutes' }));
+    expect(onChange).toHaveBeenCalledWith(null);
+  });
+
+  it('measures a preset back from the end of a long run', async () => {
+    const FOUR_HOURS = 4 * 3_600_000;
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange, runDurationMs: FOUR_HOURS });
+
+    await user.click(screen.getByTestId('window-range'));
+    await user.click(await screen.findByRole('menuitem', { name: 'Last 15 Minutes' }));
+
+    expect(onChange).toHaveBeenCalledWith(presetWindow(15 * 60_000, FOUR_HOURS, RESOLUTION));
+    expect(onChange.mock.calls[0]![0]).not.toBeNull();
+  });
+
+  it('names the reader’s zone in the Datetime option, taken at the run’s start', async () => {
+    await inZone('Asia/Kolkata', async () => {
+      kolkataTook();
+      await renderBrush({ anchor: ANCHOR });
+      const select = screen.getByTestId('time-axis-mode') as HTMLSelectElement;
+      expect([...select.options].map((option) => option.textContent)).toEqual([
+        'Offset',
+        `Datetime (${Intl.DateTimeFormat().resolvedOptions().timeZone} - GMT+5:30)`,
+      ]);
+      expect(select.value).toBe('offset');
+    });
+  });
+
+  it('labels the Datetime option for the run’s own season, not today’s', async () => {
+    // New York is GMT-4 in July and GMT-5 in January. "Today" is pinned to
+    // January, so an offset taken now rather than at the run's start reads -5.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-15T12:00:00Z'));
+      await inZone('America/New_York', async () => {
+        expect(new Date('2026-07-01T12:00:00Z').getHours()).toBe(8);
+        await renderBrush({ anchor: '2026-07-01T16:00:00.000Z' });
+        const select = screen.getByTestId('time-axis-mode') as HTMLSelectElement;
+        expect(select.options[1]!.textContent).toBe(
+          `Datetime (${Intl.DateTimeFormat().resolvedOptions().timeZone} - GMT-4)`,
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('switches every axis beneath it to the wall clock, and remembers', async () => {
+    await inZone('Asia/Kolkata', async () => {
+      kolkataTook();
+      const user = userEvent.setup();
+      await renderBrush({ anchor: ANCHOR });
+
+      await user.selectOptions(screen.getByTestId('time-axis-mode'), 'datetime');
+
+      await waitFor(() =>
+        expect((lastOption()['xAxis'] as { name: string }).name).toBe('Time (GMT+5:30)'),
+      );
+      expect(localStorage.getItem(TIME_AXIS_STORAGE_KEY)).toBe('datetime');
+    });
+  });
+
+  it('offers Datetime only to a run that recorded its start, and says why not', async () => {
+    await renderBrush({ anchor: null });
+    const datetime = [...(screen.getByTestId('time-axis-mode') as HTMLSelectElement).options].find(
+      (option) => option.value === 'datetime',
+    )!;
+    expect(datetime.disabled).toBe(true);
+    expect(screen.getByTestId('time-axis-no-anchor')).toBeVisible();
+  });
+
+  it('heads the navigator with its resolution and the run’s Duration', async () => {
+    await renderBrush({ runActivityMs: 62_136 });
+    expect(screen.getByTestId('window-resolution')).toHaveTextContent(
+      `Resolution: ${formatDuration(RESOLUTION)}`,
+    );
+    // `activityMs`, the number the run header calls Duration, never the
+    // series span, which is a second longer on this run.
+    expect(screen.getByTestId('window-duration')).toHaveTextContent('Duration: 62s');
+  });
+
+  it('offers only Zoom in while the whole run is shown, each control named in Gatling’s words', async () => {
+    await renderBrush();
+    const live = WINDOW_STEPS.filter(
+      ({ step }) => !(screen.getByTestId(`window-step-${step}`) as HTMLButtonElement).disabled,
+    );
+    expect(live.map(({ step }) => step)).toEqual(['zoom-in']);
+    for (const { step, label } of WINDOW_STEPS) {
+      expect(screen.getByTestId(`window-step-${step}`)).toHaveAccessibleName(label);
+      expect(screen.getByTestId(`window-step-${step}`)).toHaveAttribute('title', label);
+    }
+  });
+
+  it('commits the window a control moves to, on the navigator’s buckets', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    await renderBrush({ onChange });
+    await user.click(screen.getByTestId('window-step-zoom-in'));
+    expect(onChange).toHaveBeenLastCalledWith(stepWindow(WHOLE, 'zoom-in', WHOLE.toMs, RESOLUTION));
+  });
+
+  it('steps from the window in the URL, not the snapped one', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const requested = { fromMs: 20_000, toMs: 40_000, bucketWidthMs: 0 };
+    await renderBrush({
+      onChange,
+      window: requested,
+      applied: { fromMs: 20_000, toMs: 41_000, bucketWidthMs: 1_000 },
+    });
+    await user.click(screen.getByTestId('window-step-forward'));
+    expect(onChange).toHaveBeenLastCalledWith(stepWindow(requested, 'forward', WHOLE.toMs, RESOLUTION));
+  });
+
+  it('stops Forward at the run’s end', async () => {
+    await renderBrush({ window: { fromMs: 40_000, toMs: 63_161 } });
+    expect(screen.getByTestId('window-step-forward')).toBeDisabled();
+    expect(screen.getByTestId('window-step-backward')).toBeEnabled();
+  });
+
+  it('offers no step until the navigator’s resolution is known', async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response('{}', { status: 500 })));
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <TimeBrush runId={RUN} runDurationMs={63_161} window={null} onChange={() => undefined} />
+      </QueryClientProvider>,
+    );
+    // Asserted AFTER the series request has answered, with an error: still no
+    // resolution, so still no step — not merely a first paint before the fetch.
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    for (const { step } of WINDOW_STEPS) {
+      expect(screen.getByTestId(`window-step-${step}`)).toBeDisabled();
+    }
   });
 });

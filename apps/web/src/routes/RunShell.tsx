@@ -277,6 +277,7 @@ export default function RunShell({
           <TimeBrush
             runId={identity.id}
             runDurationMs={identity.durationMs}
+            runActivityMs={identity.activityMs}
             window={window}
             // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
             // typed. Taken from `/users`, which this shell already fetches for
