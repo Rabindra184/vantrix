@@ -62,7 +62,6 @@ function RateChart({ id, title, yName, data, domainMs, warmupMs, compact }: {
       pairValue="y"
       xAxis={{
         type: 'value',
-        name: 'Elapsed (s)',
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],

@@ -1,9 +1,11 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Chart from '../src/charts/Chart.js';
 import { CATEGORICAL } from '../src/charts/theme.js';
 import type { ChartData } from '../src/charts/types.js';
+import { ElapsedOnly, TimeAxisProvider, useTimeAxis } from '../src/charts/TimeAxisContext.js';
+import { TIME_AXIS_STORAGE_KEY } from '../src/timeAxisPreference.js';
 
 /**
  * `Chart`'s behaviour that never reaches ECharts.
@@ -595,22 +597,26 @@ describe('Chart — the shared time axis', () => {
     expect(axis.max).toBeUndefined();
   });
 
-  it('labels the POINTER in the same units as the ticks', () => {
+  it('labels the POINTER in the same clock as the ticks', () => {
     // The pointer's label is the tooltip's title. Without this the percentile
-    // chart's ticks read 0..100 in seconds while the tooltip above them
-    // announced "49,000.00" — the raw millisecond value, to two decimals.
+    // chart's ticks read elapsed time while the tooltip above them announced
+    // "49,000.00", the raw millisecond value to two decimals.
     render(
       <Chart
         id="a"
         title="Requests per second"
         data={seriesData(['All'])}
-        xAxis={{ type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' }}
+        xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
       />,
     );
     const axis = lastOption()['xAxis'] as {
+      axisLabel: { formatter?: (value: number) => string };
       axisPointer?: { label?: { formatter?: (p: { value: number }) => string } };
     };
-    expect(axis.axisPointer?.label?.formatter?.({ value: 49_000 })).toBe('49 s');
+    expect(axis.axisPointer?.label?.formatter?.({ value: 49_000 })).toBe('00:00:49');
+    expect(axis.axisPointer?.label?.formatter?.({ value: 49_000 })).toBe(
+      axis.axisLabel.formatter?.(49_000),
+    );
   });
 });
 
@@ -723,7 +729,7 @@ describe('Chart — a navigator reserves no room for the legend it does not draw
  */
 describe('Chart — the warm-up band', () => {
   const twoSeries: ChartData = seriesData(['p50', 'p95']);
-  const msAxis = { type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' } as const;
+  const msAxis = { type: 'value', tickUnit: 'ms-as-s' } as const;
   const areaOf = (n: number) =>
     (lastOption()['series'] as { markArea?: { data?: unknown[] } }[])[n]?.markArea;
 
@@ -755,5 +761,132 @@ describe('Chart — the warm-up band', () => {
   it('draws nothing when the run had no warm-up, which is the common case', () => {
     render(<Chart id="p" title="Response time" data={twoSeries} xAxis={msAxis} />);
     expect(areaOf(0)).toBeUndefined();
+  });
+});
+
+/* ======================================================================== *
+ * THE TIME MODE: Gatling Enterprise's Offset and Datetime
+ * ======================================================================== */
+
+/**
+ * Pins the process zone for one case. THIS MACHINE'S OWN ZONE IS
+ * Asia/Kolkata, so a pin that silently failed would pass here and fail only
+ * on CI's UTC runners: every case asserts the flip landed first, and the file
+ * is also run under `TZ=UTC`.
+ */
+function inZone(zone: string, body: () => void): void {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = zone;
+    body();
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
+}
+
+describe('Chart — the time axis follows the viewer’s mode', () => {
+  // 17:12:09 in Asia/Kolkata: the start of the run Gatling was measured on.
+  const ANCHOR = '2026-08-15T11:42:09.000Z';
+  const kolkataTook = () => expect(new Date('2026-08-15T00:00:00Z').getHours()).toBe(5);
+
+  afterEach(() => {
+    localStorage.removeItem(TIME_AXIS_STORAGE_KEY);
+  });
+
+  const timeAxis = () =>
+    lastOption()['xAxis'] as {
+      name?: string;
+      minInterval?: number;
+      axisLabel: { formatter?: (value: number) => string };
+      axisPointer?: { label?: { formatter?: (p: { value: number }) => string } };
+    };
+
+  const elapsedChart = (
+    <Chart
+      id="t"
+      title="Requests per second"
+      data={seriesData(['All'])}
+      xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
+    />
+  );
+
+  it('reads elapsed HH:MM:SS under an axis named Elapsed, by default', () => {
+    render(elapsedChart);
+    expect(timeAxis().name).toBe('Elapsed');
+    expect(timeAxis().axisLabel.formatter?.(75_000)).toBe('00:01:15');
+  });
+
+  it('reads the wall clock in Datetime, named for the zone at the run’s start', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+      render(<TimeAxisProvider anchor={ANCHOR}>{elapsedChart}</TimeAxisProvider>);
+      expect(timeAxis().name).toBe('Time (GMT+5:30)');
+      // Gatling's own measured pair: elapsed 00:00:15 on this run is 17:12:24.
+      expect(timeAxis().axisLabel.formatter?.(15_000)).toBe('17:12:24');
+      expect(timeAxis().axisPointer?.label?.formatter?.({ value: 15_000 })).toBe('17:12:24');
+    });
+  });
+
+  it('stays elapsed in Datetime when the run recorded no start', () => {
+    localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+    render(<TimeAxisProvider anchor={null}>{elapsedChart}</TimeAxisProvider>);
+    expect(timeAxis().name).toBe('Elapsed');
+    expect(timeAxis().axisLabel.formatter?.(15_000)).toBe('00:00:15');
+  });
+
+  it('stays elapsed under ElapsedOnly, whatever the viewer chose', () => {
+    localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+    render(
+      <TimeAxisProvider anchor={ANCHOR}>
+        <ElapsedOnly>{elapsedChart}</ElapsedOnly>
+      </TimeAxisProvider>,
+    );
+    expect(timeAxis().name).toBe('Elapsed');
+  });
+
+  it('leaves every other axis alone', () => {
+    localStorage.setItem(TIME_AXIS_STORAGE_KEY, 'datetime');
+    render(
+      <TimeAxisProvider anchor={ANCHOR}>
+        <Chart
+          id="s"
+          title="Scatter"
+          data={seriesData(['All'])}
+          xAxis={{ type: 'value', name: 'Response time (ms)' }}
+        />
+      </TimeAxisProvider>,
+    );
+    expect(timeAxis().name).toBe('Response time (ms)');
+    expect(timeAxis().axisLabel.formatter).toBeUndefined();
+    expect(timeAxis().minInterval).toBeUndefined();
+  });
+
+  it('never ticks an elapsed axis finer than a second', () => {
+    // Zoomed to one bucket, ECharts would tick every 200 ms and print one
+    // HH:MM:SS five times.
+    render(elapsedChart);
+    expect(timeAxis().minInterval).toBe(1000);
+  });
+
+  it('redraws when the mode changes, not only when the data does', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      const handle: { setMode?: (mode: 'offset' | 'datetime') => void } = {};
+      function Switch() {
+        handle.setMode = useTimeAxis().setMode;
+        return null;
+      }
+      render(
+        <TimeAxisProvider anchor={ANCHOR}>
+          <Switch />
+          {elapsedChart}
+        </TimeAxisProvider>,
+      );
+      expect(timeAxis().name).toBe('Elapsed');
+      act(() => handle.setMode!('datetime'));
+      expect(timeAxis().name).toBe('Time (GMT+5:30)');
+    });
   });
 });

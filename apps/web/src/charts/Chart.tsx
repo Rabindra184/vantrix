@@ -5,6 +5,8 @@ import ChartActions from './ChartActions';
 import DataTable from './DataTable';
 import { echarts } from './echarts';
 import { tooltipFormatter, type PairValue } from './tooltip';
+import { useTimeAxis } from './TimeAxisContext';
+import { formatClockTime, formatElapsedClock, formatZoneOffset } from '../routes/format';
 import {
   assignPalette,
   chartTheme,
@@ -46,8 +48,7 @@ export interface ChartYAxis {
  * carry explicit [x, y] pairs, so this names the numeric horizontal axis
  * instead. Same prop, same position on screen, different axis type underneath.
  */
-export interface ChartXAxis {
-  readonly name?: string;
+interface ChartXAxisBase {
   /**
    * `'value'` when the horizontal axis is a MEASURED QUANTITY rather than a
    * category, so the series carry explicit `[x, y]` pairs.
@@ -61,29 +62,6 @@ export interface ChartXAxis {
    * curvature the chart exists to show.
    */
   readonly type?: 'category' | 'value';
-  /**
-   * Renders a MILLISECOND value axis with SECOND tick labels.
-   *
-   * ═══ IT CHANGES THE LABELS AND NOTHING ELSE ═══
-   *
-   * The axis stays in milliseconds, because on the time-window strip the axis'
-   * units ARE the contract: the `dataZoom` slider reports its handles in them
-   * and `TimeBrush` writes those numbers straight to the URL. Converting the
-   * axis itself to seconds would silently re-denominate every committed window
-   * — the same class of bug as drawing the scalar form on a value axis, which
-   * once turned a drag over a third of a 63 s run into `?from=0&to=7`.
-   *
-   * So this is a display concern only, and deliberately a STRING rather than a
-   * formatter function: this prop lands in the option effect's dependency list,
-   * and a caller-built closure would be a fresh identity every render and
-   * re-run that effect continuously.
-   *
-   * Why it exists: unformatted, the strip's ticks read `20,000` `40,000`
-   * `60,000` while every other chart on the same page is labelled in elapsed
-   * seconds, and the strip's own From/To fields are in seconds too. One page
-   * was showing a reader two different time units for one run.
-   */
-  readonly tickUnit?: 'ms-as-s';
   /**
    * An EXPLICIT domain for a value axis, in the axis' own units.
    *
@@ -122,6 +100,45 @@ export interface ChartXAxis {
    */
   readonly warmupMs?: number;
 }
+
+/**
+ * `name` and `tickUnit` are EXCLUSIVE, and the type says so.
+ *
+ * An elapsed-millisecond axis is named by `Chart` itself, from the viewer's
+ * time mode (`Elapsed`, or `Time (GMT+5:30)` over wall-clock ticks), so a
+ * caller that also named it would put a second, stale answer on the page. It
+ * used to be thirteen hand-written `name: 'Elapsed (s)'` literals kept in step
+ * with `tickUnit` only by `timeAxis.test.ts`; now passing both does not
+ * compile.
+ */
+export type ChartXAxis = ChartXAxisBase &
+  (
+    | { readonly name?: string; readonly tickUnit?: undefined }
+    | {
+        /**
+         * Draws a MILLISECOND value axis as clock time: `HH:MM:SS` elapsed
+         * from the run's start, or the reader's own wall clock in Datetime
+         * mode (`TimeAxisProvider`). The axis pointer's label, which is the
+         * tooltip's title, follows the ticks.
+         *
+         * ═══ IT CHANGES THE LABELS AND NOTHING ELSE ═══
+         *
+         * The axis stays in milliseconds, because on the time-window strip
+         * the axis' units ARE the contract: the `dataZoom` slider reports its
+         * handles in them and `TimeBrush` writes those numbers straight to
+         * the URL. Converting the axis itself would silently re-denominate
+         * every committed window, the same class of bug as drawing the scalar
+         * form on a value axis, which once turned a drag over a third of a
+         * 63 s run into `?from=0&to=7`.
+         *
+         * A STRING, not a formatter function: it lands in the option effect's
+         * dependency list, and a caller-built closure would be a fresh
+         * identity every render and re-run that effect continuously.
+         */
+        readonly tickUnit: 'ms-as-s';
+        readonly name?: never;
+      }
+  );
 
 export interface ChartProps {
   /** Stable per chart. Names the data table (`chart-data-<id>`) and the figure. */
@@ -361,6 +378,29 @@ export default function Chart({
   const xAxisMin = xAxis?.min;
   const xAxisMax = xAxis?.max;
   /**
+   * THE CLOCK THIS AXIS READS, from the nearest `TimeAxisProvider`.
+   *
+   * Only an elapsed-millisecond axis can be relabelled, and only to the wall
+   * clock when the viewer chose it AND the run has an anchor: `null` means
+   * elapsed. A primitive, like every axis field here, because the option
+   * effect lists it.
+   */
+  const timeAxis = useTimeAxis();
+  const wallAnchorMs =
+    xAxisTickUnit === 'ms-as-s' && timeAxis.mode === 'datetime' ? timeAxis.anchorMs : null;
+  /**
+   * The x axis' name as drawn. An elapsed-millisecond axis is named here and
+   * nowhere else (`ChartXAxis`): `Elapsed` over elapsed ticks, or the zone over
+   * wall-clock ones, taken at the run's START so a run recorded in July is
+   * labelled for July whenever it is read.
+   */
+  const drawnXAxisName =
+    xAxisTickUnit === 'ms-as-s'
+      ? wallAnchorMs === null
+        ? 'Elapsed'
+        : `Time (${formatZoneOffset(wallAnchorMs)})`
+      : xAxisName;
+  /**
    * The warm-up band, or null when there is nothing to shade.
    *
    * GATED ON `tickUnit`, not merely on the value being set. A `markArea`
@@ -565,7 +605,7 @@ export default function Chart({
     const categoryAxis = {
       type: 'category',
       data: [...data.axisLabels],
-      name: xAxisName,
+      name: drawnXAxisName,
       // Centred under the axis rather than at its end, which is ECharts'
       // default: the one caller's name is a phrase ("Response time (ms, bin
       // midpoint)"), and at `end` it is drawn past the last tick and clipped
@@ -591,6 +631,13 @@ export default function Chart({
       splitLine: { lineStyle: { color: theme.gridline, width: 1 } },
     };
     /**
+     * One clock for the ticks and the pointer: elapsed `HH:MM:SS`, or the
+     * reader's wall clock when the time mode and the run's anchor allow it.
+     */
+    const timeLabel = (value: number): string =>
+      wallAnchorMs === null ? formatElapsedClock(value) : formatClockTime(wallAnchorMs + value);
+
+    /**
      * FOR A CHART WHOSE X IS A MEASURED QUANTITY, not a category — its series
      * carry explicit [x, y] pairs rather than one value per label, so a category
      * axis would index them by position and draw the run's throughput as 0, 1, 2…
@@ -601,7 +648,7 @@ export default function Chart({
      */
     const numericAxis = {
       type: 'value' as const,
-      name: xAxisName,
+      name: drawnXAxisName,
       nameLocation: 'middle' as const,
       nameGap: 28,
       nameTextStyle: axisText,
@@ -613,14 +660,14 @@ export default function Chart({
       axisLabel: {
         ...axisText,
         hideOverlap: true,
-        // Milliseconds on the axis, seconds on the label — see
-        // `ChartXAxis.tickUnit`. `Math.round`, not a fixed precision: the
-        // strip's ticks land on whole seconds and `20` reads as a time where
-        // `20.0` reads as a measurement.
-        ...(xAxisTickUnit === 'ms-as-s'
-          ? { formatter: (value: number) => String(Math.round(value / 1000)) }
-          : {}),
+        // Milliseconds on the axis, clock time on the label: see
+        // `ChartXAxis` and `timeLabel` above.
+        ...(xAxisTickUnit === 'ms-as-s' ? { formatter: timeLabel } : {}),
       },
+      // NEVER FINER THAN A SECOND on an elapsed axis. The zoom buttons can
+      // narrow a window to one bucket, and ECharts would then tick it every
+      // 200 ms: five labels reading the same HH:MM:SS.
+      ...(xAxisTickUnit === 'ms-as-s' ? { minInterval: 1000 } : {}),
       axisLine: { lineStyle: { color: theme.gridline } },
       splitLine: { show: false },
       // THE POINTER'S LABEL IS THE TOOLTIP'S TITLE, so it has to speak the same
@@ -632,8 +679,7 @@ export default function Chart({
         ? {
             axisPointer: {
               label: {
-                formatter: (params: { value: number | string }) =>
-                  `${Math.round(Number(params.value) / 1000)} s`,
+                formatter: (params: { value: number | string }) => timeLabel(Number(params.value)),
               },
             },
           }
@@ -807,7 +853,7 @@ export default function Chart({
                 // y-axis tick labels 14px tall drawn 4-5px apart, i.e. a
                 // smear. One name now, read by both.
                 bottom:
-                  (xAxisName === undefined ? 32 : 56) +
+                  (drawnXAxisName === undefined ? 32 : 56) +
                   (hasBrush ? BRUSH_BAND : 0) +
                   (showLegend ? LEGEND_BAND : 0),
               },
@@ -889,8 +935,8 @@ export default function Chart({
       true,
     );
     // `yAxis` and `xAxis` are spread into PRIMITIVES above (`yAxisType`,
-    // `yAxisName`, `xAxisName`) rather than listed here as objects: they are
-    // compared by identity, and the documented call site
+    // `yAxisName`, `drawnXAxisName`) rather than listed here as objects: they
+    // are compared by identity, and the documented call site
     // `<Chart yAxis={{ type: 'log' }} …/>` builds a new one every render.
   }, [
     data,
@@ -904,7 +950,8 @@ export default function Chart({
     navigator,
     yAxisType,
     yAxisName,
-    xAxisName,
+    drawnXAxisName,
+    wallAnchorMs,
     xAxisNumeric,
     xAxisTickUnit,
     xAxisMin,

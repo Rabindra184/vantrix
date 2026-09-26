@@ -245,7 +245,7 @@ export default function TimeBrush({
           // ticks in seconds WITHOUT touching the units underneath, so the
           // strip agrees with its own From/To fields and with every other
           // chart on the page.
-          xAxis={{ type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' }}
+          xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
           unit="/s"
           brush={{
             value: window,

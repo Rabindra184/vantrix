@@ -117,19 +117,19 @@ describe('TimeBrush — the strip the window is dragged on', () => {
   /**
    * ═══ THE NAME DESCRIBES WHAT THE READER SEES, THE DATA STAYS IN ms ═══
    *
-   * This replaces an assertion that the name read `(ms)`, which was right while
-   * the axis was labelled in raw milliseconds and is now wrong: the ticks are
-   * relabelled in seconds so the strip agrees with its own From/To fields and
-   * with the six charts under it, all of which are in elapsed seconds.
+   * This replaces an assertion that the name read `(s)`, which was right while
+   * the ticks were bare seconds and is wrong now: they read `HH:MM:SS`,
+   * Gatling Enterprise's Offset notation, under a name `Chart` decides from
+   * the viewer's time mode.
    *
-   * The protection that assertion gave — the name must not lie about the axis —
-   * is kept, and widened, by pinning the whole chain in one place: the plotted
-   * x is still milliseconds (the brush contract), the formatter is what turns
-   * those into seconds, and the name is in seconds because that is what ends up
-   * under the ticks. A change to any one of the three without the others fails
-   * here.
+   * The protection that assertion gave, that the name must not lie about the
+   * axis, is kept by pinning the whole chain in one place: the plotted x is
+   * still milliseconds (the brush contract), the formatter is what turns
+   * those into clock time, and the name says elapsed because that is what ends
+   * up under the ticks. A change to any one of the three without the others
+   * fails here.
    */
-  it('labels that axis in seconds while still plotting milliseconds', async () => {
+  it('labels that axis as elapsed clock time while still plotting milliseconds', async () => {
     await renderBrush();
 
     const axis = lastOption()['xAxis'] as {
@@ -138,13 +138,12 @@ describe('TimeBrush — the strip the window is dragged on', () => {
     };
 
     // The name the reader sees, and the units the ticks are in.
-    expect(axis.name).toMatch(/\(s\)/);
-    expect(axis.name).not.toMatch(/\(ms\)/);
+    expect(axis.name).toBe('Elapsed');
 
     // The formatter is what makes that true, so it has to exist and convert.
     expect(axis.axisLabel.formatter).toBeTypeOf('function');
-    expect(axis.axisLabel.formatter!(20_000)).toBe('20');
-    expect(axis.axisLabel.formatter!(63_161)).toBe('63');
+    expect(axis.axisLabel.formatter!(20_000)).toBe('00:00:20');
+    expect(axis.axisLabel.formatter!(63_161)).toBe('00:01:03');
 
     // And the DATA underneath is untouched — milliseconds, which is what the
     // slider reports and what `commit` writes to the URL.

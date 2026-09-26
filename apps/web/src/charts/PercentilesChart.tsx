@@ -173,7 +173,6 @@ export default function PercentilesChart({
       pairValue="y"
       xAxis={{
         type: 'value',
-        name: 'Elapsed (s)',
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],

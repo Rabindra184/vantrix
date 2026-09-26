@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import Chart from './Chart';
+import { ElapsedOnly } from './TimeAxisContext';
 import {
   COMPARE_METRICS,
   compareUnit,
@@ -53,37 +54,43 @@ export default function CompareChart({
         </select>
       </div>
 
-      <Chart
-        id="compare-overlay"
-        // The metric is in the TITLE, not only in the selector: the figure's
-        // accessible name has to say what it is showing, and a heading reading
-        // "Comparison" over a p99 chart tells a screen-reader user nothing.
-        title={`${label} across runs`}
-        data={data}
-        kind="line"
-        // A VALUE X-AXIS. Runs differ in duration and in bucket width, so they
-        // meet at real elapsed times rather than being indexed against each
-        // other by bucket position — see `toCompare`'s docstring for why this
-        // replaces the resampling the spec originally called for.
-        /* ═══ SECONDS, LIKE ITS OWN TABLE AND EVERY OTHER TIME CHART ═══
-         *
-         * `toCompare` plots `[bucket.startOffsetMs, value]` — raw
-         * milliseconds, because a value axis carries x per point — and the
-         * TABLE beneath this chart writes `offset / 1000` under a column
-         * headed `Elapsed (s)`. So one screen showed one quantity in two
-         * units: a bucket at 42 s was drawn at 42000 and tabulated at 42,
-         * and the axis pointer's label said 42000 too.
-         *
-         * `tickUnit: 'ms-as-s'` is how every other time chart in this product
-         * reconciles the two (`RatesChart`, `UsersChart`, `ErrorsChart`,
-         * `PercentilesChart`, `TelemetryCharts`, `TimeBrush` — twelve axes,
-         * twelve declarations). This one was the only exception, and it named
-         * its axis `Elapsed (ms)` rather than converting, which made the
-         * mismatch honest about the ticks and silent about the table. */
-        xAxis={{ type: 'value', name: 'Elapsed (s)', tickUnit: 'ms-as-s' }}
-        yAxis={{ name: label }}
-        unit={compareUnit(metric)}
-      />
+      <ElapsedOnly>
+        <Chart
+          id="compare-overlay"
+          // The metric is in the TITLE, not only in the selector: the figure's
+          // accessible name has to say what it is showing, and a heading reading
+          // "Comparison" over a p99 chart tells a screen-reader user nothing.
+          title={`${label} across runs`}
+          data={data}
+          kind="line"
+          // A VALUE X-AXIS. Runs differ in duration and in bucket width, so they
+          // meet at real elapsed times rather than being indexed against each
+          // other by bucket position — see `toCompare`'s docstring for why this
+          // replaces the resampling the spec originally called for.
+          /* ═══ SECONDS, LIKE ITS OWN TABLE AND EVERY OTHER TIME CHART ═══
+           *
+           * `toCompare` plots `[bucket.startOffsetMs, value]` — raw
+           * milliseconds, because a value axis carries x per point — and the
+           * TABLE beneath this chart writes `offset / 1000` under a column
+           * headed `Elapsed (s)`. So one screen showed one quantity in two
+           * units: a bucket at 42 s was drawn at 42000 and tabulated at 42,
+           * and the axis pointer's label said 42000 too.
+           *
+           * `tickUnit: 'ms-as-s'` is how every other time chart in this product
+           * reconciles the two (`RatesChart`, `UsersChart`, `ErrorsChart`,
+           * `PercentilesChart`, `TelemetryCharts`, `TimeBrush` — twelve axes,
+           * twelve declarations). This one was the only exception, and it named
+           * its axis `Elapsed (ms)` rather than converting, which made the
+           * mismatch honest about the ticks and silent about the table.
+           *
+           * ELAPSED ALWAYS, wrapped in `ElapsedOnly`: five runs have five wall
+           * clocks and no single anchor, so this axis never takes the viewer's
+           * Datetime mode. Gatling Enterprise's comparison does the same. */
+          xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
+          yAxis={{ name: label }}
+          unit={compareUnit(metric)}
+        />
+      </ElapsedOnly>
     </div>
   );
 }

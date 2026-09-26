@@ -67,7 +67,6 @@ export function ConcurrentUsersChart({ users, group, domainMs, warmupMs }: Users
       pairValue="y"
       xAxis={{
         type: 'value',
-        name: 'Elapsed (s)',
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
@@ -100,7 +99,6 @@ export function UserStartRateChart({ users, group, domainMs, warmupMs }: UsersCh
       pairValue="y"
       xAxis={{
         type: 'value',
-        name: 'Elapsed (s)',
         tickUnit: 'ms-as-s',
         min: domainMs?.[0],
         max: domainMs?.[1],
