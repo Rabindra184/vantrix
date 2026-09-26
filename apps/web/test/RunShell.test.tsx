@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LiveDelta, RunResponse } from '@perfportal/contracts';
 import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
+import { formatDuration } from '../src/routes/format';
 import useIsCompact from '../src/useIsCompact';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 import { useTimeAxis } from '../src/charts/TimeAxisContext';
@@ -152,6 +153,39 @@ function renderProbeWith(
  * known" and "genuinely none" into the same `Errors (0)`.
  */
 describe('RunShell', () => {
+  it('mounts the lifecycle strip between the header and the release decision', () => {
+    renderShell();
+    const heading = screen.getByRole('heading', { level: 1 });
+    const strip = screen.getByRole('region', { name: 'Run lifecycle' });
+    const band = screen.getByRole('region', { name: 'Release decision' });
+    expect(heading.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.compareDocumentPosition(band) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /** One number under one word, one verdict in one vocabulary: the strip must
+   *  agree with the header's Duration chip and the band's big word. The two
+   *  spans differ here, so an expression reading the wrong one shows a
+   *  different number. */
+  it('says the Duration chip’s number and the band’s word', () => {
+    expect(formatDuration(62_136)).not.toBe(formatDuration(RUN.durationMs));
+    renderShellWith({ identity: { ...RUN, activityMs: 62_136 }, verdict: 'failed', assertions: [] });
+    expect(screen.getByTestId('run-duration')).toHaveTextContent(formatDuration(62_136));
+    expect(screen.getByTestId('lifecycle-load-test')).toHaveTextContent(formatDuration(62_136));
+    const word = screen.getByTestId('decision-word').textContent ?? '';
+    expect(word).not.toBe('');
+    expect(screen.getByTestId('lifecycle-verdict')).toHaveTextContent(`Verdict: ${word}`);
+  });
+
+  /** Processing's END reaches the strip through the shell. `ingestedAt` is a
+   *  `RunResponse` field, not an identity one, and the shell's own prop type
+   *  once erased it — so this proves the value is carried, not just typed. */
+  it('carries processing’s end from the run’s body to the strip', () => {
+    renderShellWith({
+      identity: { ...RUN, parsingStartedAt: '2026-08-14T10:44:00.000Z', ingestedAt: '2026-08-14T10:44:02.000Z' },
+    });
+    expect(screen.getByTestId('lifecycle-processing')).toHaveTextContent('Processed · 2s');
+  });
+
   it('renders a bare Errors tab before the errors payload has resolved, not Errors (0)', () => {
     vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
 

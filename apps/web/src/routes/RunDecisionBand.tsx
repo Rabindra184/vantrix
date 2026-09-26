@@ -12,8 +12,8 @@ import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 
 /**
- * `unevaluated` IS NOT `none`, AND COLLAPSING THEM IS THE BUG THIS TYPE
- * EXISTS TO PREVENT.
+ * `unevaluated` IS NOT `none`, AND COLLAPSING THEM IS THE BUG `Decision`
+ * (`decision.ts`) EXISTS TO PREVENT.
  *
  * `RunShell`'s `verdict` prop states the rule: "`undefined` means NOT
  * EVALUATED YET and omits the badge; `null` means evaluated with no
@@ -309,11 +309,12 @@ export default function RunDecisionBand({
             {detail}
           </p>
 
-          {/* THREE OUTCOMES, NAMED. Each row says which system answered, so no
+          {/* TWO OUTCOMES, NAMED. Each row says which system answered, so no
               reader has to infer that "0 failed" meant one system's rules and
-              not the test's own checks. */}
+              not the test's own checks. What the RUN itself did was a third
+              row here, "Execution"; the lifecycle strip above now says it,
+              with timings. */}
           <dl data-testid="run-outcomes" className="flex flex-col gap-1 text-[0.75rem]">
-            <Outcome testId="outcome-execution" label="Execution" value={executionText(status)} />
             <Outcome
               testId="outcome-gates"
               label="Platform gates"
@@ -466,14 +467,6 @@ function decisionDetail(decision: Decision, counts: AssertionCounts): string {
   return 'The run has not finished evaluation yet.';
 }
 
-
-/** What the RUN did, as distinct from what any gate concluded about it. */
-function executionText(status: RunResponse['status']): string {
-  if (status === 'complete') return 'completed';
-  if (status === 'failed') return 'could not be processed';
-  if (status === 'incomplete') return 'incomplete — the stream stopped early';
-  return 'in progress';
-}
 
 /**
  * The simulation's own checks, reduced to one sentence and a target.
