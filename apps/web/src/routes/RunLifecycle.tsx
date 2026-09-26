@@ -48,12 +48,33 @@ function markFor(step: LifecycleStep): Mark {
   return { ...STATE_MARK[step.state], label: step.text };
 }
 
-/** On a phone, the furthest step reached — never the verdict, which is the
- *  decision band's 36 px word directly below. */
-function furthestReached(steps: readonly LifecycleStep[]): LifecycleStep[] {
-  const reached = steps.filter((s) => s.name !== 'verdict' && s.state !== 'pending');
-  const furthest = reached[reached.length - 1] ?? steps[0];
-  return furthest === undefined ? [] : [furthest];
+/**
+ * THE ONE STEP A PHONE SHOWS, in the order a reader needs it:
+ *   1. a step that did not end well — on an incomplete run "Load test stopped
+ *      early" is the news, and since the decision band gave up its Execution
+ *      row this line is the only place a phone can still say it;
+ *   2. the step in progress — where the run is now;
+ *   3. the Load test, once done — what the run did, whose Duration chip a
+ *      phone folds behind "Run details" (review M02);
+ *   4. otherwise the furthest step reached.
+ * Never the verdict: that is the decision band's 36 px word directly below.
+ *
+ * "The furthest step reached" alone was the first rule, and the whole-branch
+ * review measured it wrong twice: an incomplete run's Processing step always
+ * outranks its Load test, so a phone read "Nothing retained", or a green
+ * "Processed · 2s" over a run whose partial log carried a real Passed verdict,
+ * and nothing on the first screen said the test had been cut short.
+ */
+function phoneStep(steps: readonly LifecycleStep[]): LifecycleStep[] {
+  const candidates = steps.filter((s) => s.name !== 'verdict');
+  const reached = candidates.filter((s) => s.state !== 'pending');
+  const chosen =
+    candidates.find((s) => s.state === 'stopped' || s.state === 'failed') ??
+    candidates.find((s) => s.state === 'active') ??
+    candidates.find((s) => s.name === 'load-test' && s.state === 'done') ??
+    reached[reached.length - 1] ??
+    steps[0];
+  return chosen === undefined ? [] : [chosen];
 }
 
 /** A calendar day in the reader's zone. Built per call: a module-scope
@@ -76,7 +97,7 @@ export default function RunLifecycle({
   readonly steps: readonly LifecycleStep[];
   readonly compact: boolean;
 }) {
-  const shown = compact ? furthestReached(steps) : steps;
+  const shown = compact ? phoneStep(steps) : steps;
   const anchorMs = steps.find((s) => s.startMs !== null)?.startMs ?? null;
 
   return (

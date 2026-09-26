@@ -103,11 +103,12 @@ describe('RunLifecycle', () => {
 
   /** One line on a phone, and not the verdict: the decision band's 36 px word
    *  sits directly below it, and review M02 removed exactly that kind of
-   *  restatement from the phone. The fold had 10 px to spare. */
-  it('shows only the furthest step reached on a phone', () => {
+   *  restatement from the phone. The fold had 10 px to spare, and has 7.6 now. */
+  it('shows a finished run’s load test on a phone, not its processing', () => {
     render(<RunLifecycle steps={UPLOAD} compact />);
     expect(items()).toHaveLength(1);
-    expect(items()[0]).toHaveTextContent('Processed · 2s');
+    expect(items()[0]).toHaveTextContent('Load test · 62s');
+    expect(within(region()).getByRole('list')).not.toHaveTextContent('Processed');
     expect(within(region()).getByRole('list')).not.toHaveTextContent('Verdict:');
     expect(screen.getByTestId('lifecycle-times')).toBeInTheDocument();
   });
@@ -116,6 +117,58 @@ describe('RunLifecycle', () => {
     render(<RunLifecycle steps={STREAMING} compact />);
     expect(items()).toHaveLength(1);
     expect(items()[0]).toHaveTextContent('Load test · streaming · 42s');
+  });
+
+  it('shows the step in progress on a phone, ahead of a finished load test', () => {
+    const steps = lifecycleSteps({
+      identity: {
+        startedAt: '2026-09-19T16:39:56.406Z',
+        streamUpdatedAt: '2026-09-19T16:40:26.406Z',
+        parsingStartedAt: '2026-09-19T16:40:27.406Z',
+      },
+      status: 'parsing',
+      verdict: undefined,
+      assertions: undefined,
+    });
+    render(<RunLifecycle steps={steps} compact />);
+    expect(items()).toHaveLength(1);
+    expect(items()[0]).toHaveTextContent(/Processing since \d{2}:\d{2}:\d{2}/);
+  });
+
+  /** The whole-branch review's finding: the band's Execution row is gone, so
+   *  on a phone this line is the only place left to say a test was cut short. */
+  it('says an incomplete run’s load test stopped early on a phone', () => {
+    const steps = lifecycleSteps({
+      identity: { startedAt: '2026-09-19T16:39:56.406Z' },
+      status: 'incomplete',
+      verdict: 'not_evaluated',
+      assertions: undefined,
+    });
+    render(<RunLifecycle steps={steps} compact />);
+    expect(items()).toHaveLength(1);
+    expect(items()[0]).toHaveTextContent(/stopped early/i);
+    expect(items()[0]).not.toHaveTextContent(/nothing retained/i);
+  });
+
+  it('puts a processed incomplete run’s early stop ahead of its processing on a phone', () => {
+    const steps = lifecycleSteps({
+      identity: {
+        startedAt: '2026-09-19T16:39:56.406Z',
+        toolStartedAt: '2026-09-19T16:39:57.406Z',
+        activityMs: 36_028,
+        durationMs: 36_500,
+        streamUpdatedAt: '2026-09-19T16:40:33.906Z',
+        parsingStartedAt: '2026-09-19T16:45:33.906Z',
+        ingestedAt: '2026-09-19T16:45:35.906Z',
+      },
+      status: 'incomplete',
+      verdict: 'passed',
+      assertions: [],
+    });
+    render(<RunLifecycle steps={steps} compact />);
+    expect(items()).toHaveLength(1);
+    expect(items()[0]).toHaveTextContent('Load test stopped early · 36s');
+    expect(items()[0]).not.toHaveTextContent('Processed');
   });
 
   /** Was the decision band's Execution sentence; the strip says it now. */
