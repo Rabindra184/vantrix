@@ -243,7 +243,8 @@ Scratch there holds only `.txt`/`.log`/`.md`/`.sh` outputs from here on.
 
 **M01's FOLD, RE-MEASURED:** the window is 85px closed with its range line and
 mode always visible, and the run totals begin at y690 at 1440x900, inside the
-bound.
+bound (the collapsed window before this branch was 44px, with totals at
+y649).
 
 **AND `test:integration` FLAKED TWICE, ON TWO DIFFERENT FILES, BOTH OUTSIDE
 THIS BRANCH'S REACH.** The first full run failed
