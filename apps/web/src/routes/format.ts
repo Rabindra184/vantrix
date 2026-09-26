@@ -38,17 +38,92 @@
  * enough to say which clock it is. `timeStyle: 'short'` cannot carry a zone
  * name, so the parts are spelled out — the output is the same otherwise.
  */
-const INSTANT_FORMAT = new Intl.DateTimeFormat(undefined, {
+const INSTANT_OPTIONS: Intl.DateTimeFormatOptions = {
   day: 'numeric',
   month: 'short',
   year: 'numeric',
   hour: 'numeric',
   minute: '2-digit',
   timeZoneName: 'short',
-});
+};
+
+const INSTANT_FORMAT = new Intl.DateTimeFormat(undefined, INSTANT_OPTIONS);
 
 export function formatInstant(iso: string): string {
   return INSTANT_FORMAT.format(new Date(iso));
+}
+
+/**
+ * `formatInstant` to the SECOND, for the ends of a time window.
+ *
+ * `formatInstant` stops at the minute, so both ends of a 30-second window
+ * would read identically. Same locale, same zone name, same date style, so
+ * the run header and the window's range line never write one instant two
+ * ways.
+ *
+ * BUILT PER CALL, NOT AT MODULE SCOPE, and that is a measurement: a
+ * module-scope `Intl.DateTimeFormat` resolves the zone once, at import, and
+ * one built under TZ=UTC kept printing UTC after the zone was switched to
+ * Asia/Kolkata. A zone-pinned test could not be written against it. The range
+ * line calls this twice per render.
+ */
+export function formatInstantSeconds(epochMs: number): string {
+  return new Intl.DateTimeFormat(undefined, { ...INSTANT_OPTIONS, second: '2-digit' }).format(
+    epochMs,
+  );
+}
+
+const two = (n: number): string => String(n).padStart(2, '0');
+
+/**
+ * An offset into a run as `HH:MM:SS`, the notation Gatling Enterprise's Offset
+ * mode ticks an axis in.
+ *
+ * FLOORED, like a clock: `00:00:42` until the 43rd second has begun. The
+ * wall-clock twin below floors too, reading the date's own fields, so the two
+ * modes never disagree about which second a point is in.
+ *
+ * THE HOURS ARE NOT WRAPPED. A 26-hour soak reads `26:00:00`, not `02:00:00`.
+ */
+export function formatElapsedClock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${two(Math.floor(total / 3600))}:${two(Math.floor((total % 3600) / 60))}:${two(total % 60)}`;
+}
+
+/**
+ * An instant as `HH:MM:SS` on the reader's own 24-hour clock, Datetime mode's
+ * tick notation. The date is not repeated per tick; the range line above the
+ * charts carries it.
+ *
+ * FROM THE DATE'S OWN FIELDS, not `Intl`: they follow the zone the page is in
+ * at the moment of the call, and cost nothing in an axis formatter that
+ * ECharts calls once per tick per redraw.
+ */
+export function formatClockTime(epochMs: number): string {
+  const at = new Date(epochMs);
+  return `${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())}`;
+}
+
+/**
+ * The reader's UTC offset AT A GIVEN INSTANT, spelled as `Intl` spells a short
+ * offset: `GMT+5:30`, `GMT-4`, `GMT`.
+ *
+ * AT AN INSTANT, NOT NOW. A run recorded in New York in July is GMT-4 when it
+ * is read in January, and labelling its axis GMT-5 would put every tick an
+ * hour out. Callers pass the run's own start.
+ */
+export function formatZoneOffset(epochMs: number): string {
+  const minutes = -new Date(epochMs).getTimezoneOffset();
+  if (minutes === 0) return 'GMT';
+  const sign = minutes > 0 ? '+' : '-';
+  const h = Math.floor(Math.abs(minutes) / 60);
+  const m = Math.abs(minutes) % 60;
+  return `GMT${sign}${h}${m === 0 ? '' : `:${two(m)}`}`;
+}
+
+/** The reader's IANA zone as the browser names it, e.g. `Asia/Calcutta`. */
+export function formatZoneName(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
 /**
