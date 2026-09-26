@@ -170,6 +170,16 @@ which would make the range line disagree with its own endpoints.
 - **Buttons at their limits** are disabled: zoom in at one bucket's width;
   zoom out and every pan while the whole run is selected; backward at the
   start; forward at the end.
+- **A narrow window still moves** (added after the final review): a pan moves
+  by the larger of its fraction of the width and one bucket, zoom out grows
+  each edge by the larger of a quarter of the width and one bucket, and a
+  result that snaps to nothing becomes the bucket holding its centre, zoom
+  in's rule. Gatling was measured at two-minute widths only; below about two
+  and a half buckets, snapping each bound to the resolution cancels the 20%
+  and 25% moves, which left enabled buttons that did nothing and stepped a
+  window narrower than a bucket to an empty one, which the URL reads as the
+  whole run — while the bullet above already requires zoom out and the pans
+  to be live at one bucket's width.
 - **A run crossing midnight**: wall-clock ticks wrap (`23:59:50`,
   `00:00:10`), and the range line carries both dates, so the wrap is never
   ambiguous.

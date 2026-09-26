@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **166 files / 2114 tests**, it
+`nvm use` first, and if a run reports fewer than **166 files / 2127 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -151,8 +151,8 @@ The time-window-gatling-style branch added THREE unit files —
 `apps/web/test/TimeAxisContext.test.tsx` (6) and
 `apps/web/test/timeTicks.test.ts` (5) — and cases across `format`, `window`,
 `Chart`, `timeAxis`, `TimeBrush`, `RunShell`, `RequestDetail` and
-`GroupDetail`, from **163 / 2036 to 166 / 2114**. Integration moves with the
-`.ts` files at **149 / 1895**, and **e2e rises to 155**
+`GroupDetail`, from **163 / 2036 to 166 / 2127**. Integration moves with the
+`.ts` files at **149 / 1900**, and **e2e rises to 156**
 (`apps/web/e2e/time-window.spec.ts`). It is backlog item #1 of the Gatling
 Enterprise comparison: that product's time controls, copied from measurements
 of its behaviour rather than from screenshots.
@@ -261,14 +261,36 @@ fetch, but the same transient-under-pressure shape. This branch touches
 nothing under `apps/api`, so neither failing file is reachable by its diff.
 **No test failed twice**, which is this file's own tell for the flake rather
 than the defect: a third full run, on a freshly re-checked machine, collected
-the identical **149 / 1895** and passed clean.
+the identical **149 / 1895** (the floor before the final fix wave below) and
+passed clean.
 
-**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
-`test:unit` **166 / 2114**, zero failures and zero `Errors` lines, and again
-under `TZ=UTC`; `test:integration` **149 / 1895, exit 0** on its third attempt
-(the recorded floor plus exactly this branch's cases, collected identically on
-all three); `pnpm test:e2e` **155 passed, exit 0** — against a SCRATCH
-DATABASE (`perfportal_tw`) and a scratch Redis INDEX (db 10).
+**ITS FINAL FIX WAVE FOUND ONE MISSING CASE AND TWO DEFECTS ONLY A BROWSER
+SHOWS.** The inert steps were not a fixture that could not tell two answers
+apart: nothing had ever stepped from the one-bucket floor, and Zoom in, the
+only button enabled on arrival, leads straight there. Each bound snapped back
+on its own, so Zoom out, Backward and Forward sat enabled and did nothing, and
+a window narrower than a bucket stepped to `[30000, 30000]`, which
+`parseWindow` reads as the whole run; a pan now moves at least one bucket,
+zoom out grows each edge by at least one, and `window.test.ts` sweeps every
+enabled step over 12,904 windows. **R1 and R2 needed real runs in a
+browser**: jsdom lays nothing out, and the seeded reference run hides both.
+Its requests all start within six seconds, so stepping an unpinned axis from
+its first point rather than from zero, where ECharts draws it, changed no
+step there, while a real drill-down starting at 15 s drew eleven labels; and
+its whole-run end, 3.161 s past the last tick, overlaps that label at the
+suite's 1280px and is hidden, so only a TYPED window reproduced the end
+ECharts 6.1 appends off a fixed `interval`'s grid: 0 to 2.5 s drew
+`00:00:02` twice.
+
+**WHAT WAS RUN**, after that wave, on a scratch stack dropped, recreated and
+migrated first: `typecheck` and `lint` green by their own exit codes;
+`test:unit` **166 / 2127**, zero failures and zero `Errors` lines, and again
+under `TZ=UTC`; `test:integration` **149 / 1900, exit 0** on its first
+attempt; `pnpm test:e2e` **156 passed, exit 0** — against a SCRATCH DATABASE
+(`perfportal_tw`) and a scratch Redis INDEX (db 10). All three totals matched
+predictions counted from the source before any was read: the wave added 13
+unit cases (5 of them in `window.test.ts`, the one `.ts` file, which is all
+integration gained) and one e2e case.
 
 The live-duration-is-activity-span branch added no unit FILE and 4 cases — 1 to
 `apps/worker/test/live-delta.test.ts`, 1 to
