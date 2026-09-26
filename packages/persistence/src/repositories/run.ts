@@ -57,6 +57,11 @@ export interface RunRecord {
    *  never reaches 'complete'. */
   toolStartedAt: Date | null;
   ingestedAt: Date | null;
+  /** When processing began: `markParsing` for an upload, `claimForClose` for
+   *  a stream, or the sweeper taking over an abandoned one. */
+  parsingStartedAt: Date | null;
+  /** The last chunk a stream accepted (`advanceOffset`). Null for an upload. */
+  streamUpdatedAt: Date | null;
   engineOptions: Record<string, unknown>;
   error: { code: string; message: string; remediation: string } | null;
   /**
@@ -147,6 +152,8 @@ interface RunRow {
   startedOn: Date;
   toolStartedAt: Date | null;
   ingestedAt: Date | null;
+  parsingStartedAt: Date | null;
+  streamUpdatedAt: Date | null;
   engineOptions: unknown;
   error: unknown;
   toolAssertions: unknown;
@@ -182,6 +189,8 @@ function toRecord(row: RunRow): RunRecord {
     startedOn: row.startedOn,
     toolStartedAt: row.toolStartedAt,
     ingestedAt: row.ingestedAt,
+    parsingStartedAt: row.parsingStartedAt,
+    streamUpdatedAt: row.streamUpdatedAt,
     engineOptions: (row.engineOptions ?? {}) as Record<string, unknown>,
     error: (row.error ?? null) as RunRecord['error'],
     toolAssertions: (row.toolAssertions ?? null) as RunRecord['toolAssertions'],
@@ -594,11 +603,11 @@ export class RunRepository {
   }
 
   /**
-   * A live run's status and byte cursor, read together -- not part of
-   * RunRecord (no existing reader needs stream_offset, so it was never
-   * added to that shape; see toRecord()/RunRow above). stream() reads both
-   * to tell a gap from a replay from a not-running run BEFORE it writes
-   * anything; close() reads the cursor (after claimForClose below has
+   * A live run's status and byte cursor, read together -- stream_offset is
+   * not part of RunRecord (no reader outside this pair needs it;
+   * stream_updated_at is, for the run page's lifecycle strip). stream()
+   * reads both to tell a gap from a replay from a not-running run BEFORE it
+   * writes anything; close() reads the cursor (after claimForClose below has
    * already made it safe to) to decide zero-byte-vs-real-data. Read in
    * ONE query rather than two separate ones: status and streamOffset are
    * two columns on the same row, and reading them apart would let one
@@ -930,6 +939,7 @@ export class RunRepository {
         r.idempotency_key AS "idempotencyKey", r.started_at AS "startedAt",
         r.started_on AS "startedOn", r.tool_started_at AS "toolStartedAt",
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
+        r.parsing_started_at AS "parsingStartedAt", r.stream_updated_at AS "streamUpdatedAt",
         r.tool_assertions AS "toolAssertions",
         p.slug AS "projectSlug", p.name AS "projectName",
         t.id AS "testId", t.slug AS "testSlug", t.name AS "testName",
