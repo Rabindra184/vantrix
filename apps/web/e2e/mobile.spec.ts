@@ -167,8 +167,9 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
 /**
  * ═══ REVIEW M02 — THE PROSE THAT REPEATED THE ROWS ═══
  *
- * The band states three outcomes as labelled rows (Execution, Platform gates,
- * Simulation checks) and then restates them in a sentence: on a run with no
+ * The band stated its outcomes as labelled rows (then Execution, Platform
+ * gates and Simulation checks — the lifecycle strip has since taken
+ * Execution) and then restates them in a sentence: on a run with no
  * rules it read "This run completed, but no SLA rule produced a release
  * verdict" directly above a row saying "Platform gates — not configured". One
  * fact twice, in 42px of the 424px that WAS the whole first screen on a phone.
@@ -203,7 +204,9 @@ test('the phone keeps the failing gate’s own message, and drops only the summa
   // The rows it restates are still there, which is the half that makes
   // dropping it honest rather than lossy.
   await expect(band).toContainText('Platform gates');
-  await expect(band).toContainText('Execution');
+  await expect(band).toContainText('Simulation assertions');
+  // What the run itself did is the lifecycle strip's now, one line on a phone.
+  await expect(page.getByRole('region', { name: 'Run lifecycle' })).toBeVisible();
 });
 
 /**
