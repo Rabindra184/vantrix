@@ -55,7 +55,10 @@ export class RunsService {
     queuedAt: string | null;
   }> {
     const job = await this.prisma.runnerJob.findFirst({
-      where: { runId: run.id },
+      // The run's own project as well: the runner writes `run_id` only for a
+      // run it opened in the job's own project, so this never narrows a real
+      // answer — it only refuses one that could not be the run's own.
+      where: { runId: run.id, projectId: run.projectId },
       orderBy: { createdAt: 'asc' },
       select: { createdAt: true },
     });

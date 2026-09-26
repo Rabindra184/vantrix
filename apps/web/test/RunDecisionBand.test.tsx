@@ -211,7 +211,7 @@ describe('RunDecisionBand', () => {
    * reads "Simulation checks: 1 failed — …" in order; and colour is never the
    * only signal, which is why the word "failed" has to be in the text too.
    */
-  it('marks the simulation row when a check failed, and leaves the others plain', () => {
+  it('marks the simulation row when a check failed, and leaves the platform gates row plain', () => {
     renderBand({
       verdict: 'not_evaluated',
       assertions: [],
@@ -228,10 +228,8 @@ describe('RunDecisionBand', () => {
     // The other row is not competing for the same attention. (Execution has
     // its own row no longer — it moved to the lifecycle strip above the band;
     // see "has no Execution row" above — so only Platform gates remains here.)
-    for (const id of ['outcome-gates']) {
-      const other = screen.getByTestId(id).querySelector('dd')!;
-      expect(other.getAttribute('style') ?? '').not.toContain('--color-status-failed');
-    }
+    const gates = screen.getByTestId('outcome-gates').querySelector('dd')!;
+    expect(gates.getAttribute('style') ?? '').not.toContain('--color-status-failed');
   });
 
   /**

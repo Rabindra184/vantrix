@@ -7,7 +7,7 @@ import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
 import { ASSERTION_OUTCOME, STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
-import { decisionOf, decisionWord, type Decision } from './decision';
+import { decisionOf, releaseWord, type Decision } from './decision';
 import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 
@@ -62,7 +62,9 @@ export default function RunDecisionBand({
    * test health, and an engineer deciding ship/no-ship read zero failures over
    * a run with one.
    *
-   * So the band states three facts separately rather than making one word
+   * So the band states its facts separately — platform gates and simulation
+   * assertions, each in its own row; what the run itself did is now the
+   * lifecycle strip's — rather than making one word
    * carry them. It deliberately does NOT fold these into the release verdict:
    * a platform gate is the organisation's policy and a simulation assertion is
    * the test author's, and merging them would make the gate mean something
@@ -124,8 +126,10 @@ export default function RunDecisionBand({
    * list and an absent one, and an absent one is a run whose assertions have
    * not been reported yet — "Not configured" would be a claim about a project
    * we have not heard from. */
-  const unconfigured = assertions !== undefined && assertions.length === 0;
-  const word = decisionWord(decision, counts, unconfigured);
+  // The expression this comment argues lives in `releaseWord` (`decision.ts`)
+  // now, so the lifecycle strip's Verdict step reads the same word by calling
+  // the same function, rather than by agreeing with a copy of it.
+  const word = releaseWord(verdict, assertions);
   /* RENDERED FROM THE FIELDS, NOT THE STORED MESSAGE. `failed.message` is
      written by `packages/sla`'s own `describe` as the stored schema read
      aloud — `error_rate of the run (response_time) ≤ 0.01 — actual
@@ -279,7 +283,8 @@ export default function RunDecisionBand({
            *
            * M02 asks the mobile band to "replace stacked repeated status prose
            * with short labeled rows". The rows are the `<dl>` directly below,
-           * which C02 built: Execution, Platform gates, Simulation assertions, each
+           * which C02 built — Platform gates and Simulation assertions now, Execution
+           * having moved to the lifecycle strip — each
            * naming the system that answered. This paragraph is the PROSE half,
            * and on this run it reads "This run completed, but no SLA rule
            * produced a release verdict" while the row beneath says "Platform

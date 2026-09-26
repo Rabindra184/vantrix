@@ -57,8 +57,9 @@ export interface RunRecord {
    *  never reaches 'complete'. */
   toolStartedAt: Date | null;
   ingestedAt: Date | null;
-  /** When processing began: `markParsing` for an upload, `claimForClose` for
-   *  a stream, or the sweeper taking over an abandoned one. */
+  /** When the latest processing attempt began: `claimForClose` or the sweeper
+   *  stamps it first for a stream, and `markParsing` re-stamps it on every
+   *  worker pickup, a retry included. */
   parsingStartedAt: Date | null;
   /** The last chunk a stream accepted (`advanceOffset`). Null for an upload. */
   streamUpdatedAt: Date | null;

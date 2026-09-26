@@ -286,9 +286,11 @@ export const RunIdentitySchema = z.object({
    * schema, so a required field would blank the run page for every response
    * from an API pod that predates it — the argument `activityMs` makes.
    */
-  /** When processing began: a worker picking up an upload
-   *  (`RunRepository.markParsing`), a stream closing (`claimForClose`), or the
-   *  sweeper taking over an abandoned stream. */
+  /** When the LATEST processing attempt began. A stream's close
+   *  (`claimForClose`), or the sweeper taking an abandoned stream over, stamps
+   *  it first; `RunRepository.markParsing` re-stamps it every time a worker
+   *  picks the run up, a retry included — so a streamed run's value moves
+   *  from its close to the worker's pickup. */
   parsingStartedAt: z.string().datetime().nullable().optional(),
   /** The last chunk a live stream accepted (`advanceOffset`). Null for an
    *  upload, and for a stream that has accepted nothing yet. */
