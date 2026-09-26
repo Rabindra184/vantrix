@@ -16,17 +16,25 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
  * the states the kernel actually reported and omits the ones at zero. So the
  * state chart zero-fills, and only the state chart.
  *
- * ═══ A CATEGORY AXIS, LIKE `transforms/rates.ts` AND UNLIKE `errorSeries.ts` ═══
+ * ═══ A VALUE AXIS IN MILLISECONDS, WITH EVERY SAMPLE KEPT AS A PAIR ═══
  *
- * Telemetry is DENSE — one sample per interval, the opposite of the sparse
- * failures `errorSeries.ts` draws on a value axis with `[x, y]` pairs. A pair
- * cannot express `null`: there is no coordinate for "no point here", only a
- * coordinate to omit, and omitting one silently drops the gap that is the
- * entire point of `packages/statistics/src/telemetry.ts`'s reset handling. So
- * every chart here is `axisLabels` (this host's own offsets, in the same
- * order for all six charts, because they are all read off the same
- * `host.points`) plus one plain `(number | null)[]` per series, index-aligned
- * with it — exactly `rates.ts`'s shape, not `errorSeries.ts`'s.
+ * Every chart here is drawn on the run page's shared time axis:
+ * `TelemetryCharts.tsx` gives each one `type: 'value'`, `tickUnit: 'ms-as-s'`
+ * and the run's own `[min, max]`, and joins them all to one crosshair
+ * (`group`). A crosshair joined across CATEGORY axes syncs by index, so two
+ * charts sampled at different moments would point at different instants; a
+ * value axis syncs by time. So every series is `[startOffsetMs, y]` pairs,
+ * the shape `errorSeries.ts` and `rates.ts`'s pair form emit.
+ *
+ * Telemetry is DENSE — one sample per interval — and the gap that
+ * `packages/statistics/src/telemetry.ts`'s reset handling exists to produce
+ * survives as a pair: a rate that could not be measured is `[offset, null]`,
+ * which ECharts parses to NaN and breaks the line at (nothing in this app
+ * sets `connectNulls`). What would lose it is OMITTING the sample: a value
+ * axis has no slot for a missing point, so its neighbours would be joined
+ * straight across the reset. `axisLabels` still carries this host's offsets,
+ * but `Chart` reads it only for a category axis or a pie, so these charts
+ * never draw it.
  */
 
 /** One host's telemetry, restated from the contract so this file says what it
@@ -88,8 +96,10 @@ function telemetryChart(
     values: measured.map((s) => s.data[i] ?? '—'),
   }));
 
-  // PAIRS, always: these charts share the run page's crosshair, and a
-  // connected pointer on a category axis syncs by index. See `ChartXAxis.min`.
+  // PAIRS, always: these charts share the run page's crosshair on a value
+  // axis, which syncs by TIME; a category axis would sync by index and point
+  // at different instants. A null y stays in its pair — it IS the gap, and
+  // dropping the pair would draw a line across it. See `ChartXAxis.min`.
   const series: ChartSeries[] = measured.map((m) => ({
     name: m.name,
     data: host.points.map((p, i) => [p.startOffsetMs, m.data[i] ?? null] as [number, number | null]),
