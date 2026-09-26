@@ -79,6 +79,18 @@ function between(start: number | null, end: number | null): number | null {
   return start !== null && end !== null && end >= start ? end - start : null;
 }
 
+const DAY_MS = 86_400_000;
+
+/** How long after the test an upload arrived. `formatDuration` has no unit
+ *  above hours, so a bundle re-ingested weeks after its test read "1030h 54m
+ *  23s after the test ended" on a real run — arithmetic, not an answer. Past a
+ *  day the answer is whole days. */
+function formatGap(ms: number): string {
+  if (ms < DAY_MS) return formatDuration(ms);
+  const days = Math.round(ms / DAY_MS);
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
 function withDuration(text: string, durationMs: number | null): string {
   return durationMs === null ? text : `${text} · ${formatDuration(durationMs)}`;
 }
@@ -205,7 +217,7 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
       startMs: received,
       endMs: received,
       durationMs: null,
-      note: gap === null ? null : `${formatDuration(gap)} after the test ended`,
+      note: gap === null ? null : `${formatGap(gap)} after the test ended`,
     });
   }
 

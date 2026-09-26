@@ -213,7 +213,12 @@ describe('lifecycleSteps — each state says what it is', () => {
     });
   });
 
-  it('notes how long after the test an upload arrived', () => {
+  /** In whole days once it is days. `formatDuration` has no unit above hours,
+   *  and a real upload re-ingested six weeks after its test read "1030h 54m
+   *  23s after the test ended" — arithmetic, not an answer. This case used to
+   *  derive its expectation from `formatDuration(gap)`, which pinned exactly
+   *  that as right. */
+  it('notes how long after the test an upload arrived, in days once it is days', () => {
     const upload = input(
       {
         startedAt: '2026-08-14T10:43:49.546Z',
@@ -222,11 +227,12 @@ describe('lifecycleSteps — each state says what it is', () => {
       },
       'complete',
     );
-    const gap = Date.parse('2026-08-14T10:43:49.546Z') - (Date.parse('2026-08-07T05:30:02.171Z') + 62_136);
     expect(step(upload, 'received')).toMatchObject({
       text: 'Received',
-      note: `${formatDuration(gap)} after the test ended`,
+      note: '7 days after the test ended',
     });
+    const nextDay = input({ startedAt: iso(T + 26 * 3_600_000), toolStartedAt: iso(T), activityMs: 60_000 }, 'complete');
+    expect(step(nextDay, 'received').note).toBe('1 day after the test ended');
   });
 
   it('shows no duration for a skewed pair rather than a negative one', () => {
