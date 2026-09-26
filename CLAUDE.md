@@ -193,7 +193,9 @@ ONE bare line grouped 8 px under the header, never the verdict (the band's
 36 px word is directly below), and a desktop gets the card 12 px under it.
 MEASURED AFTER: **804.4 of 812** on the phone — 7.6 px of headroom, the least
 that bound has had — and at 1440x900 the first tile at **768.75** (733
-before) with the totals section's top at 725.75, against 900. `compact` is a
+before) with the totals section's top at 725.75 (690 before, the figure
+`run-tables.spec.ts`'s own history records — both moved by the same 35.75 px),
+against 900. `compact` is a
 PROP from `useIsCompact`, never a `md:` variant: review M02's
 one-decision-one-breakpoint rule.
 
@@ -214,24 +216,24 @@ applied, met from the other direction.
 **`activityMs` IS NOT "FIRST EVENT TO LAST", AND THE SPEC SAID IT WAS.** The
 engine's own expression is `lastMs − max(firstMs, runStartMs + warmupMs)`, so
 the Duration chip excludes the lead-in AND any configured warm-up. The Load
-test was `toolStartedAt` plus that span, so its Ended time fell a lead-in —
-or, on a warmed-up run, a whole warm-up — before anything happened, and an
-upload's "Ns after the test ended" inherited it: with a 60 s warm-up the step
-ended 61 s early. It ends at `toolStartedAt + durationMs`, the log's last
+test was `toolStartedAt` plus that span, so its Ended time fell a lead-in — or,
+on a warmed-up run, a whole warm-up — before anything happened, and an upload's
+"Ns after the test ended" inherited it: with a 60 s warm-up the step ended more
+than a minute early. It ends at `toolStartedAt + durationMs`, the log's last
 response, and starts at that end minus the chip: Took = Ended − Started = the
 chip, both printed instants happened, and a warm-up is named beside the
-duration in Step times. The spec's first version pinned the wrong end in a
-test NAMED for the right one ("ends a processed incomplete stream where its
-own log says the test ended" asserted `toolStart + activityMs`). **Read the
-producer's expression before defining a quantity from its name.**
+duration in Step times. The spec's first version pinned the wrong end in a test
+NAMED for the right one ("ends a processed incomplete stream where its own log
+says the test ended" asserted `toolStart + activityMs`). **Read the producer's
+expression before defining a quantity from its name.**
 
 **A LIVE LOAD TEST READS THE SOCKET, BECAUSE THE RUN'S OPEN IS NOT THE START OF
 LOAD.** An on-prem runner opens its live run before it prepares the artifact
-and starts the JVM, so "streaming · 75s" measured from the open became
-"Load test · 60s" at completion — the duration that decreased when the run
-ended, which the live-duration-is-activity-span entry records fixing once
-already, one surface over — and disagreed with the "Duration so far" tile on
-the same screen. `LifecycleInput.liveSpanMs` is REQUIRED and `RunShell` passes
+and starts the JVM, so a figure measured from the open counted that as load
+and then dropped when the run finished — the duration that decreased when the
+run ended, which the live-duration-is-activity-span entry records fixing once
+already, one surface over — and it disagreed with the "Duration so far" tile
+on the same screen. `LifecycleInput.liveSpanMs` is REQUIRED and `RunShell` passes
 the latest delta's `activityMs ?? durationMs`, the tile's own expression. A
 phone has no socket and keeps open-to-last-chunk.
 
@@ -298,17 +300,18 @@ wrong one shows a different number.
 
 **`parsingStartedAt` IS THE LATEST ATTEMPT, NOT THE FIRST.** `markParsing`
 writes it on every worker pickup, a retry included, so a streamed run's value
-moves from its close to the worker's pickup one poll later. Three comments —
-the contract, `RunRecord` and the spec — said "when processing began"; they
-say what the column holds now.
+moves from its close to the worker's pickup one poll later. The contract's
+and `RunRecord`'s comments said "when processing began", and the spec said a
+stream's is "stamped at close"; all three say what the column holds now.
 
-**TWO RED-VERIFY PREDICTIONS WERE ONE CASE SHORT, AND BOTH WERE RIGHT.**
-Swapping `activityMs ?? durationMs` failed a second case that pins an
-incomplete stream's end from the same span, and dropping the new `testStart`
-failed its two cases on `startMs` and `endMs` together, because the start is
-derived from the end. This file says to read WHICH cases a mutation fails;
-the sharper form is that **an extra failure is a finding only when it asserts
-something other than the value the mutation broke.**
+**TWO RED-VERIFY PREDICTIONS UNDERCOUNTED, AND BOTH TIMES THE TESTS WERE
+RIGHT.** Swapping `activityMs ?? durationMs` failed a second case the brief had
+not named, one that pins an incomplete stream's end from the same span; and
+reverting the new `testEnd` failed its two named cases on `startMs` as well as
+`endMs`, because the start is derived from the end. This file says to read
+WHICH cases a mutation fails; the sharper form is that **an extra failure is a
+finding only when it asserts something other than the value the mutation
+broke.**
 
 **THE PLAN'S LIST OF TESTS PINNING THE EXECUTION ROW WAS TWO SHORT.** A sweep
 for the row's testid (`outcome-execution`) found two more band cases the plan
@@ -334,8 +337,7 @@ job's real wait; while it streamed, the strip's Load test and the "Duration so
 far" tile read 0s, 32s and 53s together, then 61s finished — rising, never
 dropping; and Step times shows the ~3 s of bundle extraction and JVM start-up
 as the gap between Queued's end (00:58:12) and the Load test's start
-(00:58:15), where the first cut had counted it as load. Measured from the
-run's open, the live figure would have read about 62s at the 53s sample.
+(00:58:15), where the first cut had counted it as load.
 
 **AND A PRE-EXISTING LIE THE STRIP NOW REPEATS IS ITS OWN BRANCH.** An
 incomplete run the pipeline never processed — swept in place, a failed
