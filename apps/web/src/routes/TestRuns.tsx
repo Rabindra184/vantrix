@@ -183,7 +183,19 @@ export default function TestRuns() {
               <p className="max-w-2xl text-[0.8125rem] leading-relaxed text-muted">{row.description}</p>
             )}
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* ═══ THE ACTIONS WRAP INSIDE THE VIEWPORT, NEVER PAST IT ═══
+
+              This cluster was `shrink-0`, which pinned it at its one-line
+              width — about 492px with all four actions — so a phone's whole
+              document scrolled sideways to reach "Project runs". Dropping it
+              lets the cluster narrow to its line and wrap its own buttons.
+              A desktop is unchanged: the row above already wraps, and a flex
+              line is chosen from each item's max-content width, which
+              `flex-shrink` does not touch — shrinking only ever applies once
+              the cluster is wider than a line of its own, which is the phone
+              case alone. `acceptance.spec.ts` measures this page at 320 and
+              414. */}
+          <div className="flex flex-wrap items-center gap-2">
             {/* ═══ THE PAYOFF OF GROUPING RUNS AT ALL ═══
 
                 Compare has always been reachable only from INSIDE a run, so

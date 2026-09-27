@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { seedAdmin, seedProjectWithRuns, seedRunWithData } from './fixtures.js';
+import { seedAdmin, seedProjectWithRuns, seedRunWithData, seedTestWithRuns } from './fixtures.js';
 import { signIn } from './helpers.js';
 import { runPath } from '../src/routes/paths.js';
 
@@ -117,11 +117,27 @@ test('a 120-character project name does not push any page sideways', async ({ pa
  * The claim is the same one `mobile.spec.ts` makes at 375 and the review makes
  * for all six: table-local scroll is fine, a document that scrolls sideways is
  * not.
+ *
+ * ═══ AND A TEST'S OWN PAGE, WHICH WAS 492px WIDE ON A 375px PHONE ═══
+ *
+ * Its header's action cluster was `shrink-0`, so all four actions sat on one
+ * unbreakable line. The page is measured only once "Compare latest 2" is on
+ * screen: that link renders only with two complete runs to compare, and a
+ * cluster measured without it is a narrower cluster than a real test carries —
+ * the fixture-cannot-distinguish shape CLAUDE.md records many times.
  */
 for (const width of [320, 414]) {
-  test(`neither the run list nor a run page scrolls sideways at ${width}px`, async ({ page }) => {
+  test(`neither the run list, a run page nor a test's page scrolls sideways at ${width}px`, async ({
+    page,
+  }) => {
     const admin = await seedAdmin();
     const runId = await seedRunWithData(admin.orgId);
+    await seedTestWithRuns(admin.orgId, {
+      slug: 'payments-sweep',
+      name: 'Payments sweep',
+      simulationClass: 'shop.PaymentsSimulation',
+      runs: 2,
+    });
     await signIn(page, admin);
     await page.setViewportSize({ width, height: 800 });
 
@@ -136,6 +152,14 @@ for (const width of [320, 414]) {
         false,
       );
     }
+
+    await page.goto('/projects/checkout/tests/payments-sweep');
+    await expect(page.getByRole('link', { name: 'Compare latest 2', exact: true })).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+      `a test's page scrolls sideways at ${width}px`,
+    ).toBeLessThanOrEqual(width);
   });
 }
 
