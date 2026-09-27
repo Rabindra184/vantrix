@@ -419,6 +419,15 @@ running (35 of 35), and a full `pnpm test:e2e` on the same tree came back
 because it cannot move: every commit after the measured one touches a `.tsx`
 alone.
 
+**AND AFTER THE FINAL REVIEW'S FIX ROUND, ALL FIVE AGAIN ON THE FINAL TREE**,
+every total the one counted from the source first: `typecheck` and `lint`
+exit 0; `test:unit` **171 / 2209** under the local zone and `TZ=UTC`, zero
+`Errors` lines; `test:integration` **154 / 1958, exit 0, zero failures** —
+unchanged, as it had to be, since the round touched only `.tsx` files and one
+spec; `pnpm test:e2e` **163 passed, exit 0**, the two new `run-note.spec.ts`
+cases among them. Same scratch database and Redis index, every gate green on
+its first run.
+
 **THE REAL RUN FOUND ONE MORE, AND ONLY A PHONE COULD.** The developer
 database's ten real Gatling runs, migrated (`partitions_2027` and this
 branch's `run_note`), with the API on its own Redis index (db 11) and no
