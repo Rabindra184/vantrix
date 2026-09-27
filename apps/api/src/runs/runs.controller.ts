@@ -1,18 +1,22 @@
-import { Controller, Get, Param, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { problemFromIngestError } from '../common/problem.js';
 import { badRequest, parseCursor, parseLimit, uuidParam } from '../common/validation.js';
 import { IngestError, type IngestErrorCode } from '@perfportal/core';
 import {
+  NOTE_MAX_LENGTH,
+  RunNoteRequestSchema,
   RunStatusSchema,
   RunVerdictSchema,
   type RunListResponse,
+  type RunNoteResponse,
   type RunStatus,
 } from '@perfportal/contracts';
 import { ProjectRepository, TestRepository, type RunListItem, type RunRecord, type RunVerdictFilter } from '@perfportal/persistence';
 import { Scopes } from '../auth/scopes.decorator.js';
-import { RunsService, warmupMsOf } from './runs.service.js';
+import { noteOf, RunsService, warmupMsOf } from './runs.service.js';
 import { notFound } from '../common/validation.js';
+import { SessionOnlyGuard } from '../auth/session-only.guard.js';
 
 // AuthGuard is registered globally via APP_GUARD (see auth.module.ts), so
 // every route authenticates by default — @UseGuards(AuthGuard) here would be
@@ -132,6 +136,57 @@ export class RunsController {
 
     await respondWithRun(this.runs, run, res);
   }
+
+  /**
+   * Write, replace or remove the note a PERSON keeps on a run (spec
+   * 2026-09-27-run-note-design.md).
+   *
+   * SESSION-ONLY and with no @Scopes, exactly as the tests PATCH is guarded:
+   * a note is a human's words, and a machine credential names nobody to
+   * attribute them to. A bearer token answers 403 whatever it can read.
+   *
+   * Allowed in EVERY run status — a note is about the run, not about its
+   * processing, and "this one is flaky" is often written while it streams.
+   */
+  @Put(':id/note')
+  @UseGuards(SessionOnlyGuard)
+  async putNote(
+    @Param('id', uuidParam('id')) id: string,
+    @Req() req: Request,
+    @Body() body: unknown,
+  ): Promise<RunNoteResponse> {
+    const tenant = req.tenant!;
+    const parsed = RunNoteRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw badRequest(
+        'INVALID_RUN_NOTE',
+        `The note is not valid: ${issue?.message ?? 'unknown'}`,
+        `Send {"note": "<text>"} with 1 to ${NOTE_MAX_LENGTH} characters after trimming, or ` +
+          '{"note": null} to remove the note. No other field is accepted: the time and the ' +
+          'author are stamped by the server.',
+      );
+    }
+    // SessionOnlyGuard admits sessions alone, and authenticateSession sets
+    // userId on every one. Refusing here rather than writing an unattributed
+    // note keeps a future change to either from failing silently.
+    if (tenant.userId === undefined) {
+      throw new Error('A signed-in session reached the note route without a user id.');
+    }
+    const run = await this.runs
+      .runs()
+      .setNote({ orgId: tenant.orgId, projectId: tenant.projectId }, id, {
+        text: parsed.data.note,
+        userId: tenant.userId,
+      });
+    if (run === null) {
+      throw notFound(
+        `No run ${id} in this organisation.`,
+        'Check the run id. GET /v1/runs lists the runs a signed-in user can reach.',
+      );
+    }
+    return { note: noteOf(run) };
+  }
 }
 
 /**
@@ -160,6 +215,8 @@ function toListItem(r: RunListItem): RunListResponse['items'][number] {
     test: r.test,
     checks: checkTally(r.toolAssertions),
     metrics: r.metrics,
+    // The TEXT alone: the author and time belong to the run's own page.
+    note: r.note,
   };
 }
 
@@ -243,6 +300,10 @@ export async function respondWithRun(
         parsingStartedAt: lifecycle.parsingStartedAt,
         streamUpdatedAt: lifecycle.streamUpdatedAt,
         queuedAt: lifecycle.queuedAt,
+        // THE LIVE HALF of the run note, for the reason the lifecycle stamps
+        // above give: a note written while a run streams is read through THIS
+        // body, and one sent only by toResponse would vanish until it ended.
+        note: noteOf(run),
       });
     return;
   }

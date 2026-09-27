@@ -16,6 +16,15 @@ export interface Tenant {
    * always converted into at a repository boundary.
    */
   projectId?: string;
+  /**
+   * The signed-in person: PRESENT for a user session (Better Auth's
+   * `session.user.id`, set by AuthMiddleware's authenticateSession), ABSENT
+   * for a bearer token, which is a machine credential and names nobody —
+   * projectId's presence rule, inverted. Read by the one write that records
+   * WHO did it: a run note's author. `tokenId` is not a substitute: a
+   * session's token id names the session, which ends, not the person.
+   */
+  userId?: string;
   tokenId: string;
   scopes: string[];
 }
