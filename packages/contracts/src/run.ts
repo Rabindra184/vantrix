@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RunNoteSchema } from './run-note.js';
+import { RunNumberSchema } from './run-number.js';
 
 export const RunStatusSchema = z.enum([
   'pending', 'parsing',
@@ -239,6 +240,12 @@ export const RunIdentitySchema = z.object({
    * cohorts on `test_id` for exactly this reason.
    */
   test: TestRefSchema.nullable().optional(),
+  /**
+   * This run's number within `test` — "Run 12" — or null when the run has no
+   * test. Taken on JOINING the test and never renumbered (run-number.ts).
+   * Optional as well as nullable, for the rolling-deploy reason `test` gives.
+   */
+  runNumber: RunNumberSchema.nullable().optional(),
   /** The tool's own simulation identity and run description (G-01, G-02). */
   simulation: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -414,6 +421,8 @@ export const RunListResponseSchema = z.object({
       commitSha: z.string().nullable().optional(),
       durationMs: z.number().int().nullable().optional(),
       test: TestRefSchema.nullable().optional(),
+      /** The run's number within its test, or null for none (run-number.ts). */
+      runNumber: RunNumberSchema.nullable().optional(),
       /**
        * The simulation's OWN checks, reduced to a tally.
        *
