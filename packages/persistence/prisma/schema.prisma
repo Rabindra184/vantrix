@@ -126,8 +126,17 @@ model Test {
   @@map("test")
 }
 
+/// The runner tables were written as hand-authored SQL
+/// (`20260820190000_onprem_runner_jobs`), so their constraint and index names,
+/// their `ON UPDATE NO ACTION` foreign keys and their `gen_random_uuid()`
+/// defaults are the migration's, not Prisma's conventions. Every `map:`,
+/// `onUpdate: NoAction` and `dbgenerated` below states what that migration
+/// actually built; without them `prisma migrate diff` reports drift against
+/// every freshly migrated database and `migrate dev` would generate a
+/// migration renaming live constraints. CI's `test-residue` job diffs the
+/// two and fails on any difference.
 model RunnerArtifact {
-  id              String   @id @default(uuid()) @db.Uuid
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orgId           String   @map("org_id") @db.Uuid
   projectId       String   @map("project_id") @db.Uuid
   name            String
@@ -140,16 +149,16 @@ model RunnerArtifact {
   storagePath     String   @map("storage_path")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  project Project     @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
+  project Project     @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade, onUpdate: NoAction, map: "runner_artifact_project_tenant_fk")
   jobs    RunnerJob[]
 
-  @@unique([id, orgId, projectId])
-  @@index([projectId, createdAt(sort: Desc)])
+  @@unique([id, orgId, projectId], map: "runner_artifact_id_org_project_key")
+  @@index([projectId, createdAt(sort: Desc)], map: "runner_artifact_project_created_at_idx")
   @@map("runner_artifact")
 }
 
 model RunnerJob {
-  id               String   @id @default(uuid()) @db.Uuid
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orgId            String   @map("org_id") @db.Uuid
   projectId        String   @map("project_id") @db.Uuid
   artifactId       String   @map("artifact_id") @db.Uuid
@@ -178,14 +187,21 @@ model RunnerJob {
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
 
-  project  Project        @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade)
-  artifact RunnerArtifact @relation(fields: [artifactId, orgId, projectId], references: [id, orgId, projectId], onDelete: Restrict)
-  run      Run?           @relation(fields: [runId], references: [id], onDelete: SetNull)
+  project  Project        @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade, onUpdate: NoAction, map: "runner_job_project_tenant_fk")
+  artifact RunnerArtifact @relation(fields: [artifactId, orgId, projectId], references: [id, orgId, projectId], onDelete: Restrict, onUpdate: NoAction, map: "runner_job_artifact_tenant_fk")
+  run      Run?           @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
-  @@index([projectId, createdAt(sort: Desc)])
+  @@index([projectId, createdAt(sort: Desc)], map: "runner_job_project_created_at_idx")
   @@index([status, createdAt])
   @@index([artifactId])
-  @@index([runId])
+  // NO `@@index([runId])`, AND THE INDEX EXISTS. The migration built
+  // `runner_job_run_id_idx ON runner_job(run_id) WHERE run_id IS NOT NULL` —
+  // a PARTIAL index, which Prisma 6 cannot express (`where:` needs the v7
+  // `partialIndexes` preview) and does not introspect. Declaring the plain
+  // form made `migrate diff` propose a CREATE of a name that already exists,
+  // which would fail on every database. `RunsService.lifecycleOf` looks a
+  // run's job up by `run_id` and the partial index serves it, since
+  // `run_id = $1` implies `run_id IS NOT NULL`.
   @@map("runner_job")
 }
 
@@ -553,7 +569,12 @@ model SlaRule {
   /// Prisma too, until one raw-pool read reported a start time 5h30m out on
   /// an Asia/Kolkata machine and stayed invisible in UTC. See CLAUDE.md.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// `@default(now())` beside `@updatedAt` because the column HAS a database
+  /// default: `20260822160000_sla_rule_authoring` added it `NOT NULL DEFAULT
+  /// CURRENT_TIMESTAMP` to backfill the rows that already existed. Prisma
+  /// still stamps it on every write; the default only states what the table
+  /// carries, so `migrate diff` stops proposing to drop it.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
