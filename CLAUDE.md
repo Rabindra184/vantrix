@@ -146,6 +146,93 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The schema-matches-migrations branch added no unit FILE, no unit case and no
+spec — unit stays **169 / 2177**, integration **152 / 1927** and **e2e stays
+159** — and two CI steps in `test-residue` plus
+`infra/test/schema-matches-migrations.sh`. Its product diff is
+`schema.prisma` alone, and it changes NO TABLE.
+
+**A DATABASE MIGRATED FROM SCRATCH DISAGREED WITH `schema.prisma` IN ELEVEN
+PLACES, AND THE MIGRATIONS WERE RIGHT IN EVERY ONE.** Found while adding the
+run note's columns: `prisma migrate diff --exit-code` exited 2 on a branch
+that touched none of the tables it named, and the same diff against a
+database carrying only `main`'s migrations was byte-identical. The runner
+tables were HAND-AUTHORED SQL (`20260820190000_onprem_runner_jobs`), so their
+foreign keys carry their own names and `ON UPDATE NO ACTION`, their unique
+and created-at indexes their own names, and their ids a `gen_random_uuid()`
+default; `sla_rule.updated_at` got `DEFAULT CURRENT_TIMESTAMP` to backfill.
+The schema says so now with `map:`, `onUpdate: NoAction` and `dbgenerated`,
+because production databases carry what the migrations built — making the
+schema describe them changes nothing that exists, where a migration renaming
+live constraints would.
+
+**THE INDEX THE DIFF SAID WAS MISSING EXISTS.** The migration built
+`runner_job_run_id_idx … WHERE run_id IS NOT NULL` — PARTIAL, which Prisma 6
+cannot express (`where:` is a v7 preview) and does not introspect. So the
+schema's plain `@@index([runId])` made `migrate diff` propose a CREATE of a
+name already taken, a migration that fails on every database it meets. The
+task that asked for this said the index "may be genuinely missing"; read out
+of `pg_indexes`, it is not, and `RunsService.lifecycleOf`'s `run_id` lookup
+is served by it (`run_id = $1` implies `run_id IS NOT NULL`). The
+declaration is gone and a comment in the model says why. **A diff tool's
+proposal is a claim about what it can SEE**, and Prisma cannot see a partial
+index.
+
+**`dbgenerated` IS BEHAVIOUR-NEUTRAL, CHECKED RATHER THAN ASSUMED.** Every raw
+insert into the runner tables (`createQueued`, `retry`) supplies its own id,
+and a Prisma `create` without one now lets the database generate it and
+reads it back through `RETURNING`. The only Prisma-API creates on those two
+tables are in `lifecycle.integration.test.ts`, which passed.
+
+**`pnpm --filter <pkg> exec` ERASES A CHILD'S EXIT CODE, MEASURED.**
+`prisma migrate diff --exit-code` answers 2 for a difference and 1 for
+failing to compare at all; through `pnpm --filter @perfportal/persistence
+exec` the drifted schema came back **1**, the same code as a dead
+connection. A guard that cannot tell "they differ" from "I compared nothing"
+is the vacuous-guard shape this file records many times, so the script
+`cd`s into the package and runs a plain `pnpm exec`, which passed **2**
+through. Worth knowing well beyond this script: any CI step that branches on
+a tool's exit code must not run it through `--filter`.
+
+**THREE MUTATIONS, THREE DISTINCT FAILURES OF THE RED-VERIFY STEP**, each
+replayed locally under GitHub's own `bash -eo pipefail`:
+
+```
+  the guard always exits 0          "expected … to exit 2 …, got 0"
+  the guard via pnpm --filter exec  "expected … to exit 2 …, got 1"
+  the awk anchor misses             "the drift mutation did not apply"
+```
+
+and `main`'s own schema exits 2 through the real script, so the guard fails
+on the before-state it was written for.
+
+**`prisma format` REALIGNS MODELS YOU DID NOT TOUCH.** It re-padded twenty
+unrelated lines of `Run`, which would have conflicted with a concurrent
+branch adding columns there; those were put back and only the three edited
+models changed. Do not run it over this file as part of a narrow change.
+
+**AND A WORKTREE UNDER `.claude/` MAKES THE SPA 500, WHICH IS A LATENT
+PRODUCT DEFECT RATHER THAN A HARNESS QUIRK.** Integration collected exactly
+152 / 1927 and failed two `spa.integration.test.ts` cases with a 500 on `/`:
+`spa.ts` answers the fallback with `res.sendFile(join(distDir,
+'index.html'))`, an ABSOLUTE path with no `root`, and `send`'s default
+`dotfiles: 'ignore'` then refuses it because a segment starts with a dot.
+Probed directly (`send` on the dotted path → 404, which Nest turns into the
+500), and the same file passes 6/6 once the worktree is moved to a path with
+no dot. A deployment installed under `~/.local/…` or `.cache/` would serve a
+500 for every page while its assets load; recorded here and taken as its
+own branch. **A fresh worktree also has no `dist`**, so `pnpm typecheck`
+fails TS2307 on `apps/worker/dist` until `pnpm build` runs — which is the
+order CI already uses.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes (after
+`pnpm build`, as CI orders them); `test:unit` **169 / 2177**, zero `Errors`
+lines; `test:integration` **152 / 1927, exit 1 on exactly the two
+dotted-path SPA cases**, which then passed 6/6 on the same tree from an
+undotted path; `pnpm test:e2e` **159 passed, exit 0** — against a SCRATCH DATABASE
+(`perfportal_drift`, migrated from scratch) and a scratch Redis INDEX (db 13),
+on port 3200.
+
 The live-state-follows-its-run branch added no unit FILE and 3 cases to
 `apps/web/test/useLiveRun.test.tsx`, from **169 / 2174 to 169 / 2177**.
 Integration is UNCHANGED at **152 / 1927** (that file is a `.tsx`) and **e2e
