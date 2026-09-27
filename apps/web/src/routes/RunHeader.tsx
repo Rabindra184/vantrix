@@ -534,7 +534,11 @@ export default function RunHeader({
             <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
               {versionChip}
               {restChips}
-              {noteInDetails ? <div className="col-span-2">{note}</div> : null}
+              {/* `font-sans`, as on the summary above: the box is `font-mono`
+                  because every chip is a VALUE, and the note is prose and an
+                  action — inherited mono made "Add a note" and the editor it
+                  opens read like data. Seen on a real run at 375 px. */}
+              {noteInDetails ? <div className="col-span-2 font-sans">{note}</div> : null}
             </div>
           </details>
         </div>
