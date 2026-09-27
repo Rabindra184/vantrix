@@ -371,6 +371,27 @@ export function useLiveRun(runId: string, enabled: boolean): LiveRunState {
   const [unauthorized, setUnauthorized] = useState(false);
   const [partial, setPartial] = useState(false);
 
+  // ═══ A CHANGE OF RUN LEAVES NOTHING OF THE LAST ONE BEHIND ═══
+  //
+  // The `/runs/:runId` route is not keyed, so this state outlives a change of
+  // run (`RunDetail` says the same of its own). The effect's resets below run
+  // only when it runs ENABLED, and its cleanup deliberately keeps `lastDelta`
+  // for the frozen view — so a run that opens no socket (a pending upload is
+  // still handed `live`) kept the previous run's delta, tiles and charts
+  // under its own header, and another live run kept it until its own first
+  // frame. Reset DURING RENDER, React's pattern for state that belongs to a
+  // prop: no frame ever paints one run's figures under another's name. The
+  // same run's socket turning off changes no run id, so the frozen view keeps
+  // what it showed.
+  const [stateRunId, setStateRunId] = useState(runId);
+  if (stateRunId !== runId) {
+    setStateRunId(runId);
+    setConnected(false);
+    setLastDelta(null);
+    setUnauthorized(false);
+    setPartial(false);
+  }
+
   useEffect(() => {
     if (!enabled) return;
     // A fresh effect run (a new runId, or re-enabling after the caller
