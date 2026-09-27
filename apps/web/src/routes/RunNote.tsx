@@ -92,7 +92,18 @@ export default function RunNote({
           maxLength={NOTE_MAX_LENGTH}
           aria-describedby={countId}
           onChange={(event) => setDraft(event.currentTarget.value)}
+          // LOCKED while a save is in flight, rather than aborted: a PUT
+          // already sent is committed server-side the moment it lands, so
+          // `save.reset()` on Cancel or Escape cannot un-send it — it can
+          // only make the editor lie about having cancelled while the write
+          // still completes underneath it (onSuccess would then write the
+          // cache and pull focus back to the toggle after the reader
+          // believed they had backed out). `readOnly`, not `disabled`:
+          // disabling a focused textarea blurs it, and focus should stay put
+          // until the save resolves and returnFocus moves it deliberately.
+          readOnly={save.isPending}
           onKeyDown={(event) => {
+            if (save.isPending) return;
             if (event.key === 'Escape') {
               event.preventDefault();
               cancel();
@@ -111,10 +122,12 @@ export default function RunNote({
         <div className="flex gap-2">
           {/* SECONDARY, not primary: Button's rule is one primary per screen,
               and this editor is opened on a page that already has its own. */}
-          <Button size="sm" onClick={submit} disabled={!canSubmit}>
+          <Button size="sm" onClick={submit} disabled={!canSubmit} loading={save.isPending}>
             {removing ? 'Remove note' : 'Save'}
           </Button>
-          <Button size="sm" variant="ghost" onClick={cancel}>
+          {/* Locked with the textarea while a save is in flight — see the
+              readOnly comment above. */}
+          <Button size="sm" variant="ghost" onClick={cancel} disabled={save.isPending}>
             Cancel
           </Button>
         </div>

@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -56,6 +56,25 @@ function stubPut(respond: (body: { note: string | null }) => Response) {
 /** The server's answer to a successful write: the note it stored. */
 const stored = (body: { note: string | null }) =>
   json({ note: body.note === null ? null : { ...NOTE, text: body.note } });
+
+/**
+ * Stubs `PUT /v1/runs/{id}/note` with a promise the CALLER resolves by hand —
+ * for asserting what the editor looks like while a save is still in flight,
+ * which `stubPut`'s instantly-resolving stub cannot show.
+ */
+function stubPendingPut(): (body: { note: string | null }) => void {
+  let resolve: (res: Response) => void = () => {};
+  vi.stubGlobal('fetch', (input: RequestInfo, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost');
+    if (url.pathname === `/v1/runs/${RUN_ID}/note` && init?.method === 'PUT') {
+      return new Promise<Response>((res) => {
+        resolve = res;
+      });
+    }
+    return Promise.reject(new Error(`unexpected fetch ${url.pathname}`));
+  });
+  return (body) => resolve(stored(body));
+}
 
 /**
  * THE NOTE COMES FROM THE CACHED RUN, as it does on the page. The harness
@@ -127,6 +146,27 @@ describe('RunNote — writing', () => {
     expect(screen.queryByRole('textbox', { name: 'Run note' })).not.toBeInTheDocument();
     expect(screen.getByTestId('run-note-text')).toHaveTextContent(/^baseline after the cache change$/);
     expect(sent).toEqual([]);
+  });
+
+  it('locks the editor while a save is in flight, and unlocks once it resolves', async () => {
+    const resolvePut = stubPendingPut();
+    mount(NOTE);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Run note' }), '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    // Sent, and not yet answered: the textarea and Cancel are locked, and an
+    // Escape aimed straight at the textarea — sidestepping which control the
+    // click above left focused — does nothing rather than closing an editor
+    // whose write cannot be taken back.
+    expect(screen.getByRole('textbox', { name: 'Run note' })).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Run note' }), { key: 'Escape' });
+    expect(screen.getByRole('textbox', { name: 'Run note' })).toHaveValue(`${NOTE.text}!`);
+
+    resolvePut({ note: `${NOTE.text}!` });
+    expect(await screen.findByTestId('run-note-text')).toHaveTextContent(`${NOTE.text}!`);
+    expect(screen.queryByRole('textbox', { name: 'Run note' })).not.toBeInTheDocument();
   });
 
   it('saves the trimmed text, shows it at once, and gives focus back to the button that opened the editor', async () => {
