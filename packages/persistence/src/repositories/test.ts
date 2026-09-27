@@ -169,14 +169,42 @@ export class TestRepository {
    * that returns nothing leaves a UI unable to name what it just lost — and
    * `deleteMany` carries the tenant in its `where` for the same
    * no-TOCTOU reason `update` above does.
+   *
+   * ═══ AND ITS RUNS LOSE THEIR NUMBERS ═══
+   *
+   * A run's number counts within its test (spec 2026-09-27-run-number), and
+   * `ON DELETE SET NULL` can clear `test_id` but not a second column. So the
+   * numbers are cleared here, in the same transaction, and a run never
+   * reports a number with no test to count it in. A test later recreated under
+   * the same slug is a new row and starts at 1.
    */
   async remove(scope: ProjectScope, slug: string): Promise<TestRow | null> {
     const existing = await this.findBySlug(scope, slug);
     if (existing === null) return null;
 
-    const { count } = await this.prisma.test.deleteMany({
-      where: { orgId: scope.orgId, projectId: scope.projectId, slug },
-    });
+    const [, { count }] = await this.prisma.$transaction([
+      // Numbers first, RUN rows before the TEST row — the lock order every
+      // writer of a run number uses, so this cannot deadlock one.
+      this.prisma.run.updateMany({
+        where: { orgId: scope.orgId, projectId: scope.projectId, testId: existing.id },
+        data: { runNumber: null },
+      }),
+      this.prisma.test.deleteMany({
+        where: { orgId: scope.orgId, projectId: scope.projectId, slug },
+      }),
+      // A run that joined this test between the first statement and the
+      // delete took a number the first statement never saw; SET NULL has now
+      // ungrouped it, so clear what it is left holding.
+      this.prisma.run.updateMany({
+        where: {
+          orgId: scope.orgId,
+          projectId: scope.projectId,
+          testId: null,
+          runNumber: { not: null },
+        },
+        data: { runNumber: null },
+      }),
+    ]);
     return count === 0 ? null : existing;
   }
 }

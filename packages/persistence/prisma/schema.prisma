@@ -90,6 +90,12 @@ model Test {
   simulationClass String  @map("simulation_class")
   description     String?
 
+  /// The number the NEXT run to join this test will take — "Run 12"
+  /// (docs/superpowers/specs/2026-09-27-run-number-design.md). Bumped in the
+  /// same statement that sets a run's testId (apps/worker/src/pipeline/
+  /// run-number.ts), so numbers follow ARRIVAL and are never reused.
+  nextRunNumber   Int     @default(1) @map("next_run_number")
+
   /// TIMESTAMPTZ, not a bare timestamp — the rule CLAUDE.md records after a
   /// raw-pool read reported a start time 5h30m out on an Asia/Kolkata machine
   /// and stayed invisible in UTC. `test` is read through the raw pool by
@@ -243,6 +249,11 @@ model Run {
   /// than a live foreign key — history has to survive the thing that organised
   /// it.
   testId           String?   @map("test_id") @db.Uuid
+  /// This run's number within its test, or null exactly when testId is null.
+  /// Assigned when the run JOINS its test and never renumbered; cleared when
+  /// the test is deleted (TestRepository.remove), because SET NULL on the
+  /// foreign key cannot reach a second column.
+  runNumber        Int?      @map("run_number")
   status           String
   verdict          String?
   tool             String
@@ -429,6 +440,7 @@ model Run {
   noteAuthor User?          @relation(fields: [noteUpdatedBy], references: [id], onDelete: SetNull)
 
   @@unique([projectId, idempotencyKey])
+  @@unique([testId, runNumber])
   /// Serves the test's own run history, and TRENDS_SQL's cohort once it
   /// stops matching on the simulation string.
   @@index([testId, createdAt(sort: Desc)])
