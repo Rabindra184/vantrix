@@ -618,7 +618,7 @@ function RunListControls({
             className={INPUT}
             value={q}
             onChange={(event) => setQ(event.currentTarget.value)}
-            placeholder="Simulation, project, branch"
+            placeholder="Simulation, project, branch, note"
           />
         </label>
 
@@ -1204,6 +1204,60 @@ function RunCards({
   );
 }
 
+/**
+ * The run's note, as one muted line under its simulation — the TEXT alone,
+ * since a list answers "is this one to ignore" and the author and time belong
+ * to the run's page.
+ *
+ * `max-w-[32ch]` and `line-clamp-2` are NOT what keeps the Simulation column
+ * narrow — MEASURED, with both removed: p95/Errors still land at 500/565 of
+ * 726 px visible at 768, 500/565 of 694 at 1024, and 612/678 of 1110 at
+ * 1440. What actually holds the column is that the note WRAPS: prose breaks
+ * between words (`[word-break:normal]`, because the simulation cell above it
+ * is `break-all` and `word-break` is inherited — a class name has no break
+ * opportunity, but prose should break between words), inside a cell
+ * (`run-simulation`, above) that is already `min-w-0 break-all` — so this
+ * cell's min-content is tiny, and the table's automatic layout shrinks the
+ * column and wraps the note to fit rather than growing the table.
+ *
+ * AN UNBROKEN TOKEN — A URL, A STACK-TRACE FRAGMENT, A PATH — IS THE HAZARD,
+ * AND IT WAS REAL, MEASURED IN A BROWSER RATHER THAN ASSUMED. A 300-character
+ * token with no spaces has no break opportunity for `overflow-wrap:
+ * break-word` (`break-words`) to use: that property adds none to a box's
+ * MIN-CONTENT width, only `overflow-wrap: anywhere` does. `run-note.spec.ts`'s
+ * unbroken-token case caught it exactly where the docstring here used to
+ * (wrongly) call it "untouched": Errors reached 737px of 726px visible at
+ * 768, and 737px of 694px at 1024 — p95 stayed inside bounds at both. It is
+ * `wrap-anywhere` now (Tailwind's name for `overflow-wrap: anywhere`), which
+ * only takes effect once every other break opportunity is exhausted, so it
+ * changes nothing about how a note of ordinary words wraps.
+ *
+ * So `max-w-[32ch]` and `line-clamp-2` are the DESIGN, not the guard: a
+ * readable measure and at most two lines, so a noted row stays compact next
+ * to one without a note. `run-note.spec.ts` pins exactly that — the note's
+ * own height and width, alongside the reach both the long-sentence and the
+ * unbroken-token cases measure.
+ *
+ * WHERE EACH ONE BINDS, measured, because "the design" is not "decoration":
+ * the clamp binds everywhere (a 500-character note is 954 px tall at 768
+ * without it). The measure does NOT bind in the table today — the note is
+ * 70-183 px wide there against 32ch's 242 — and DOES on a phone's card
+ * (`RunCard`, block layout), where an uncapped note runs 317 px, the card's
+ * full width. That phone case is the spec's proof the measure can fail.
+ */
+function NoteLine({ note }: { readonly note: string | null | undefined }) {
+  if (note == null) return null;
+  return (
+    <p
+      data-testid="run-note-line"
+      className="mt-0.5 line-clamp-2 max-w-[32ch] text-[0.75rem] font-normal text-muted [word-break:normal] wrap-anywhere"
+    >
+      <span className="sr-only">Note: </span>
+      {note}
+    </p>
+  );
+}
+
 function RunCard({
   run,
   showProject,
@@ -1238,6 +1292,7 @@ function RunCard({
           >
             {label}
           </Link>
+          <NoteLine note={run.note} />
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <Badge mark={STATUS[run.status]} />
@@ -1402,6 +1457,7 @@ function RunRow({
             run.simulation
           )}
         </Link>
+        <NoteLine note={run.note} />
       </td>
       <td className={TD}>
         <Badge mark={STATUS[run.status]} />

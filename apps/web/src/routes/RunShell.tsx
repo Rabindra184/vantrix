@@ -10,6 +10,7 @@ import { runComparePath, runTrendsPath } from './paths';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
+import RunNote from './RunNote';
 import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
 import LiveStatusStrip from './LiveStatusStrip';
@@ -192,6 +193,17 @@ export default function RunShell({
              disclosure on a phone, and a `<details>`'s open state is the one
              thing a media query cannot set. See `RunHeader`'s own note. */
           compact={compact}
+          /* `key={identity.id}`, NOT a reset-during-render inside RunNote:
+             the `/runs/:runId` route is not keyed and this shell does not
+             remount between runs, so without it a still-open editor's
+             `editing`/`draft` state — AND an in-flight save's `useMutation`
+             closure, still pointed at the OLD run id's `onSuccess` — would
+             survive navigating from one run to another (Back, or the
+             baseline note's "vs previous" link). A same-instance reset can
+             clear the draft but cannot re-point a save already in flight;
+             the key forces a fresh instance instead, so a stale save's
+             `onSuccess` writes into a component that is no longer mounted. */
+          note={<RunNote key={identity.id} runId={identity.id} note={identity.note} />}
         />
         <RunLifecycle
           steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}

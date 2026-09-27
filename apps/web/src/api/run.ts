@@ -1,10 +1,12 @@
 import {
+  RunNoteResponseSchema,
   RunProcessingSchema,
   RunResponseSchema,
+  type RunNoteResponse,
   type RunProcessing,
   type RunResponse,
 } from '@perfportal/contracts';
-import { problemFrom } from './fetch';
+import { apiFetch, problemFrom } from './fetch';
 
 /**
  * One run, in whichever of its two READABLE shapes the API answered with.
@@ -157,4 +159,16 @@ export async function fetchRun(id: string): Promise<RunDetail> {
   // a run in another org, a 400 for a bundle the ingest rejected, a 502 that
   // never reached the API at all.
   throw await problemFrom(res);
+}
+
+/**
+ * `PUT /v1/runs/{id}/note` — write, replace or remove the note on a run.
+ * `null` removes it. Session-only on the server; the browser always has one.
+ */
+export function putRunNote(runId: string, note: string | null): Promise<RunNoteResponse> {
+  return apiFetch(RunNoteResponseSchema, `/v1/runs/${encodeURIComponent(runId)}/note`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
 }

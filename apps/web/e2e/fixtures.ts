@@ -379,6 +379,16 @@ export async function renameSimulation(runId: string, simulation: string): Promi
 }
 
 /**
+ * Write a run's note directly, for the GEOMETRY case — the browser case
+ * writes one through the real form, which is the path that proves the
+ * feature. No author: note_updated_by is a user id, and nothing that uses
+ * this measures attribution.
+ */
+export async function writeNote(runId: string, text: string): Promise<void> {
+  await prisma.run.update({ where: { id: runId }, data: { note: text, noteUpdatedAt: new Date() } });
+}
+
+/**
  * One telemetry sample, `n` steps into its host's own climb — every cumulative
  * counter and the memory gauge scaled by a distinct multiplier (mirrors
  * packages/persistence/test/telemetry.integration.test.ts's own `sampleAt`, so

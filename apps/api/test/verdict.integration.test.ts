@@ -241,6 +241,8 @@ describe('the adaptive verdict', () => {
       startedAt: new Date(), startedOn: new Date(), toolStartedAt: null,
       ingestedAt: new Date(), engineOptions: {}, toolAssertions: null,
       parsingStartedAt: null, streamUpdatedAt: null,
+      // A failed ingest has no note; nobody has written one.
+      note: null, noteUpdatedAt: null, noteAuthorName: null,
       error: { code: 'BUNDLE_TOO_LARGE', message: 'too big', remediation: 'shrink it' },
     };
 

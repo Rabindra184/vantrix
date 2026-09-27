@@ -444,3 +444,30 @@ describe('RunList — a row carries enough to triage on', () => {
     expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('0');
   });
 });
+
+/**
+ * ═══ THE NOTE LINE ═══ (docs/superpowers/specs/2026-09-27-run-note-design.md)
+ *
+ * The text alone, under the simulation, so "ignore this run" is read before
+ * anyone opens it. `max-w-[32ch]` and `line-clamp-2` are a readable measure
+ * and at most two lines — not what keeps the Simulation column narrow, which
+ * is the table's own automatic layout wrapping the note between words.
+ * `run-note.spec.ts` measures how far that reach actually goes, in a browser,
+ * because jsdom lays nothing out: a long sentence stays within p95 and
+ * Errors at every width, and a 300-character unbroken token (a URL, with no
+ * break opportunity at all) did push Errors off screen before `NoteLine`
+ * wrapped anywhere rather than only between words.
+ */
+describe('RunList — a run’s note is read without opening it', () => {
+  it('shows the note under the simulation, and nothing for a run without one', async () => {
+    renderList([
+      { ...ROWS[0]!, note: 'flaky environment, ignore' },
+      { ...ROWS[1]!, note: null },
+    ]);
+    const lines = await screen.findAllByTestId('run-note-line');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent('Note: flaky environment, ignore');
+    const cell = lines[0]!.closest('td');
+    expect(cell).toHaveAttribute('data-testid', 'run-simulation');
+  });
+});

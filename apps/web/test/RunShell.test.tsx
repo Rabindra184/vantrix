@@ -2,9 +2,10 @@ import '@testing-library/jest-dom/vitest';
 import type { ComponentProps } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useOutletContext } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LiveDelta, RunResponse } from '@perfportal/contracts';
+import type { LiveDelta, RunNote as RunNoteValue, RunResponse } from '@perfportal/contracts';
 import type { LiveRunState } from '../src/api/live';
 import RunShell from '../src/routes/RunShell';
 import { formatDuration } from '../src/routes/format';
@@ -660,5 +661,64 @@ describe('RunShell — the run’s time axis reaches every tab', () => {
   it('has no anchor for a run that recorded no start', async () => {
     renderWithProbe({ ...RUN, toolStartedAt: null });
     expect(await screen.findByTestId('axis-probe')).toHaveTextContent('null');
+  });
+});
+
+/**
+ * ═══ ITEM 1 — AN OPEN EDITOR DOES NOT SURVIVE A CHANGE OF RUN ═══
+ *
+ * The `/runs/:runId` route is not keyed and `RunShell` does not remount
+ * between runs (CLAUDE.md's live-state entry records the identical shape for
+ * `useLiveRun`), so without `key={identity.id}` on `<RunNote>`, its
+ * `editing`/`draft` state would survive a REPLACED identity — Back, or the
+ * baseline note's "vs previous" link, landing on the same route shape with a
+ * different run. `rerender`, not a second `render`: the defect is in the
+ * TRANSITION between two mounts of one tree, which a fresh `render` per run
+ * cannot exercise at all.
+ */
+describe('RunShell — an open note editor does not survive a change of run', () => {
+  const NOTE_A: RunNoteValue = { text: 'note for run A', updatedAt: null, updatedBy: null };
+  const NOTE_B: RunNoteValue = { text: 'note for run B', updatedAt: null, updatedBy: null };
+  const RUN_A: RunResponse = { ...RUN, id: 'a1111111-1111-4111-8111-111111111111', note: NOTE_A };
+  const RUN_B: RunResponse = { ...RUN, id: 'b2222222-2222-4222-8222-222222222222', note: NOTE_B };
+
+  /** The same shape `renderShellWith` builds, but as an ELEMENT rather than a
+   *  render call, so the same one can be handed to `rerender` — reusing one
+   *  `QueryClient` across both, as the app does across a real navigation. */
+  function shellTree(identity: RunResponse, client: QueryClient) {
+    const status = identity.status;
+    const props = {
+      identity, status, verdict: identity.verdict, windowable: identity.windowable,
+      terminal: TERMINAL_STATUSES.has(status),
+      live: null, capReached: false, onRetry: () => {},
+    };
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/runs/${identity.id}`]}>
+          <Routes>
+            <Route path="/runs/:runId" element={<RunShell {...props} />}>
+              <Route index element={<div />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+  }
+
+  it('shows the new run’s own note, with no leftover editor or draft from the old one', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(shellTree(RUN_A, client));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit note' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Run note' }), ' — a draft for A, never saved');
+
+    // Same tree, a different run — a real navigation between two run pages,
+    // not a second `render` of a fresh tree.
+    rerender(shellTree(RUN_B, client));
+
+    expect(await screen.findByTestId('run-note-text')).toHaveTextContent(NOTE_B.text);
+    expect(screen.queryByRole('textbox', { name: 'Run note' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/draft for A/)).not.toBeInTheDocument();
+    expect(screen.queryByText(NOTE_A.text)).not.toBeInTheDocument();
   });
 });

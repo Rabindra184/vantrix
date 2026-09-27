@@ -321,3 +321,12 @@ describe('RunList — the tally keeps both caveats', () => {
     }
   });
 });
+
+describe('RunList — a card carries the run’s note too', () => {
+  it('shows the note under the simulation on a phone', async () => {
+    renderList([{ ...ROWS[0]!, note: 'baseline after the cache change' }, ROWS[1]!] as unknown as RunListResponse['items']);
+    const line = await screen.findByTestId('run-note-line');
+    expect(line).toHaveTextContent('baseline after the cache change');
+    expect(line.closest('[data-testid="run-row"]')).not.toBeNull();
+  });
+});

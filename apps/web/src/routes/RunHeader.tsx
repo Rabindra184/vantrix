@@ -86,6 +86,7 @@ export default function RunHeader({
   verdict,
   peakUsers,
   compact,
+  note,
 }: {
   /**
    * PARTIAL, and the partiality is the point. A terminal run supplies every
@@ -121,6 +122,13 @@ export default function RunHeader({
    * class of SLA gate. `DesktopOnly` requires it for the same reason.
    */
   readonly compact: boolean;
+  /**
+   * The run's note (RunNote), rendered where THIS component decides — the
+   * component that already owns the phone/desktop split. REQUIRED, with no
+   * default, for the reason `compact` is: an optional slot lets a future
+   * caller forget it and the page silently loses the note.
+   */
+  readonly note: ReactNode;
 }) {
   // See the Duration chip below for why this is `activityMs` first.
   const runDurationMs = identity.activityMs ?? identity.durationMs;
@@ -133,6 +141,14 @@ export default function RunHeader({
   // dash — see the Started/Received chip below.
   const startedAt = identity.toolStartedAt ?? identity.startedAt ?? null;
   const isIngestTime = identity.toolStartedAt == null;
+
+  // A person's note goes under the tool's own description — except on a
+  // phone with NO note, where the only thing to show is "Add a note", and it
+  // goes inside the Run details disclosure below: the phone's first screen had
+  // 7.6 px of headroom (mobile.spec.ts), and a run nobody has annotated must
+  // not spend it. A NOTED run does spend a line of it, deliberately — "ignore
+  // this run" is the one thing worth one.
+  const noteInDetails = compact && identity.note == null;
 
   /* ═══ ONE SET OF CHIPS, PLACED BY EXACTLY ONE OF TWO STRIPS — review M02 ═══
    *
@@ -399,6 +415,7 @@ export default function RunHeader({
               {identity.description}
             </p>
           )}
+          {noteInDetails ? null : note}
         </div>
 
         {/* The verdict is what the reader came for, so on a wide screen it
@@ -517,6 +534,11 @@ export default function RunHeader({
             <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
               {versionChip}
               {restChips}
+              {/* `font-sans`, as on the summary above: the box is `font-mono`
+                  because every chip is a VALUE, and the note is prose and an
+                  action — inherited mono made "Add a note" and the editor it
+                  opens read like data. Seen on a real run at 375 px. */}
+              {noteInDetails ? <div className="col-span-2 font-sans">{note}</div> : null}
             </div>
           </details>
         </div>
