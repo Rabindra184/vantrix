@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import type { RunListResponse } from '@perfportal/contracts';
 import Badge from '../components/Badge';
 import Button, { linkButtonClasses } from '../components/Button';
+import CopyIdButton from '../components/CopyIdButton';
 import { ChevronLeftIcon, ChevronRightIcon, FilterIcon, PlusIcon } from '../components/icons';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
@@ -1292,6 +1293,9 @@ function RunCard({
           >
             {label}
           </Link>
+          {/* A finger has to hit it on a phone, so the card takes the touch
+              size; the value is the WHOLE id either way (backlog #4). */}
+          <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="touch" />
           <NoteLine note={run.note} />
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -1457,6 +1461,11 @@ function RunRow({
             run.simulation
           )}
         </Link>
+        {/* The FULL id, whatever the link shows: a test's list displays an
+            8-character prefix, and nothing that takes a run id accepts one
+            (backlog #4). Beside the link rather than inside it, so a click
+            meant for the button never navigates. */}
+        <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="row" />
         <NoteLine note={run.note} />
       </td>
       <td className={TD}>

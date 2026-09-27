@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { TestSummary } from '@perfportal/contracts';
 import Badge from '../components/Badge';
+import CopyIdButton from '../components/CopyIdButton';
 import { SkeletonTable } from '../components/Skeleton';
 import { EmptyState, ErrorState, LoadingState } from '../components/States';
 import TableFrame from '../components/TableFrame';
@@ -166,6 +167,20 @@ function TestRow({
         >
           {test.name}
         </Link>
+        {/* ═══ THE SLUG, VISIBLE AND COPYABLE (backlog #4) ═══
+            It is what an upload's or a runner job's `test` field takes, and
+            what this test's own URL is built from — and until now the only
+            way to learn it was to open the test and read the address bar.
+            Shown rather than only copied: a reader checking which test their
+            pipeline declares has to be able to READ it, and the name above
+            stops matching it the moment anybody renames the test. */}
+        <p className="mt-0.5 text-[0.75rem] text-muted">
+          <span className="sr-only">Slug: </span>
+          <code data-testid="test-slug" className="break-all">
+            {test.slug}
+          </code>
+          <CopyIdButton value={test.slug} label={`Copy test slug ${test.slug}`} size="row" />
+        </p>
         {test.description !== null && test.description !== '' && (
           <p className="mt-1 max-w-md text-[0.75rem] leading-snug text-muted">{test.description}</p>
         )}
