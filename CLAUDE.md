@@ -146,6 +146,71 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The test-page-phone-overflow branch added no unit FILE, no unit case and no
+spec — it WIDENED one existing e2e case — so it moves no floor. Cut at
+171 / 2209, integration 154 / 1959 and e2e 163, it sits on copyable-ids,
+which merged underneath it: unit **172 / 2217**, integration **154 / 1959**
+and **e2e 165**. It is the defect the copyable-ids branch's probe found and
+recorded as taken separately.
+
+**A TEST'S OWN PAGE WAS 492px WIDE ON A 375px PHONE.** The header's action
+cluster on `/projects/:slug/tests/:testSlug` — Compare latest 2, Rename,
+Delete test, Project runs — was `shrink-0`, which pinned it at its one-line
+width, so the whole document scrolled sideways to reach the last button.
+Dropping `shrink-0` lets the cluster narrow to its line and wrap its own
+buttons.
+
+**AND A DESKTOP DID NOT MOVE A PIXEL, MEASURED RATHER THAN ARGUED.** The row
+above the cluster already wraps, and a flex line is chosen from each item's
+MAX-CONTENT width, which `flex-shrink` does not touch — shrinking only ever
+applies once the cluster is wider than a line of its own, which is the phone
+case alone. A throwaway probe measured the cluster, the `<h1>` and all four
+buttons at 768, 1024, 1280 and 1440, on the fixed tree and again with
+`shrink-0` restored: **byte-identical**, the cluster 476px on one line at every
+width and level with the heading.
+
+**THE GUARD IS THE ACCEPTANCE LIST'S OWN 320/414 CASE, ONE PAGE WIDER.**
+`acceptance.spec.ts` already walked the run list, a run page and the tests
+table at both widths; it now seeds `seedTestWithRuns` with two runs — so
+"Compare latest 2" really renders, which is the widest the cluster gets —
+and measures the test's page after them. Red-verified by restoring
+`shrink-0`: both widths failed at that assertion with **Received: 492**, and
+only AFTER the other three pages had passed, so the new coverage is the only
+thing that sees it.
+
+**AND THE FIRST RED-VERIFY REFUSED ITSELF, WHICH IS THE COUNT ASSERTION
+WORKING.** The class string `flex flex-wrap items-center gap-2` occurs three
+times in `TestRuns.tsx`, so an anchor on the text alone would have mutated the
+wrong cluster or several; the replacement-count guard refused it, and the
+mutation was aimed by LINE instead.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **171 / 2209**, zero `Errors` lines; `test:integration`
+**154 / 1959, exit 0, zero failures**; `pnpm test:e2e` **163 passed, exit 0**,
+on its first run with no retries — every total the floor this branch cannot
+move, against a SCRATCH DATABASE (`perfportal_phone`), a scratch Redis INDEX
+(db 5) and e2e port 3200.
+
+**RE-MEASURED AFTER MERGING `main`**, where copyable-ids had just landed:
+`typecheck` and `lint` exit 0; `test:unit` **172 / 2217**, zero `Errors`
+lines; `test:integration` **154 / 1959, exit 0**; `pnpm test:e2e`
+**165 passed, exit 0** — the two branches' arithmetic exactly. The merged
+tree is also the only one where the widened 320/414 case can check the
+COMBINATION: a test's page at those widths draws its runs as cards, and
+each card now carries copyable-ids' 36px copy button.
+
+**THAT e2e FIGURE IS THE SECOND RUN, AND THE FIRST IS RECORDED RATHER THAN
+DROPPED.** It collected 165 and failed ONE: `run-charts.spec.ts`'s "a chart
+can fill the screen", zero of nine plots drawn. The error context shows
+why, and it is not a chart: the page was `AuthGate`'s "PerfPortal is not
+answering" over `Failed to fetch` — the browser's request never reached the
+API at all, at **3,626 free pages** (under the 4,390 this file already calls
+untrustworthy) and a load that ended at 31.8. Neither branch touches a chart
+or the API. **Read the error context's page snapshot before the assertion**:
+"expected 9, received 0" names a chart; the snapshot names the outage.
+That file then passed **26 / 26 three times alone**, and the whole suite
+passed on the re-run above. No test failed twice.
+
 The copyable-ids branch added ONE unit file —
 `apps/web/test/CopyIdButton.test.tsx` (4) — plus 2 cases to `RunList.test.tsx`
 and 1 each to `RunList.compact.test.tsx` and `ProjectTests.test.tsx`, from
