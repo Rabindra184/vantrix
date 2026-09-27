@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { lifecycleSteps, type LifecycleInput, type StepName } from '../src/routes/lifecycle';
-import { releaseWord } from '../src/routes/decision';
+import { releaseWord, rulesRan } from '../src/routes/decision';
 
 /**
  * ═══ THE RUN'S JOURNEY, DERIVED ═══
@@ -273,10 +273,32 @@ describe('lifecycleSteps — agreement with the rest of the page', () => {
       };
       expect(step(judged, 'verdict')).toMatchObject({
         state: 'done',
-        text: `Verdict: ${releaseWord(verdict, assertions)}`,
+        text: `Verdict: ${releaseWord(verdict, assertions, rulesRan('complete', null))}`,
         verdict,
       });
     }
+  });
+
+  /** The band's word for an incomplete run nothing processed is "Not
+   *  evaluated" — its rules never ran — while one whose partial log was
+   *  processed had them evaluated, so its empty list still reads "Not
+   *  configured". The strip reads the same function, so it says the same. */
+  it('says an unprocessed incomplete run was not evaluated, and a processed one not configured', () => {
+    const unprocessed: LifecycleInput = {
+      identity: { startedAt: iso(T) },
+      status: 'incomplete',
+      verdict: 'not_evaluated',
+      assertions: [],
+      liveSpanMs: null,
+    };
+    expect(step(unprocessed, 'verdict').text).toBe('Verdict: Not evaluated');
+    const processed = input(
+      { startedAt: iso(T), toolStartedAt: iso(T), durationMs: 30_000, activityMs: 29_000, streamUpdatedAt: iso(T + 30_000) },
+      'incomplete',
+      'not_evaluated',
+      [],
+    );
+    expect(step(processed, 'verdict').text).toBe('Verdict: Not configured');
   });
 
   it('carries the run’s own span, the Duration chip’s `activityMs ?? durationMs`', () => {

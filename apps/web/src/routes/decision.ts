@@ -1,4 +1,4 @@
-import type { Assertion, RunVerdict } from '@perfportal/contracts';
+import type { Assertion, RunResponse, RunVerdict } from '@perfportal/contracts';
 import { countAssertions, type AssertionCounts } from './assertions';
 
 /**
@@ -41,15 +41,39 @@ export function decisionWord(
 }
 
 /**
+ * ═══ WHETHER THE RUN'S SLA RULES EVER RAN AGAINST IT ═══
+ *
+ * An empty assertion list means "no rule applies" only if the rules ran. An
+ * `incomplete` run the pipeline never processed — swept in place, a failed
+ * assembly, a close carrying no bytes — comes back with `assertions: []`
+ * because nothing was ever judged, and calling that "Not configured" is a
+ * false statement about a project that may well have rules. Only the
+ * pipeline's terminal write sets `durationMs`, so it is the signal; an
+ * incomplete run whose partial log WAS processed (the sweeper's assembly
+ * path) had its rules evaluated, so "incomplete" alone would be the wrong
+ * test. A complete run always went through the pipeline.
+ */
+export function rulesRan(
+  status: RunResponse['status'],
+  durationMs: number | null | undefined,
+): boolean {
+  return status !== 'incomplete' || durationMs != null;
+}
+
+/**
  * The word for a run, from what the band itself reads. `unconfigured` is keyed
  * on the ARRAY, not on "judged": an absent list is a run whose assertions have
  * not been reported, and "Not configured" would be a claim about a project we
- * have not heard from (the band's own reasoning, moved with it).
+ * have not heard from (the band's own reasoning, moved with it) — and, since
+ * `ran` is required, never about a run no rule ran against.
  */
 export function releaseWord(
   verdict: RunVerdict | null | undefined,
   assertions: readonly Assertion[] | undefined,
+  /** `rulesRan(status, durationMs)`. Required: an omitted one would read
+      "Not configured" off every unprocessed incomplete run, silently. */
+  ran: boolean,
 ): string {
-  const unconfigured = assertions !== undefined && assertions.length === 0;
+  const unconfigured = ran && assertions !== undefined && assertions.length === 0;
   return decisionWord(decisionOf(verdict), countAssertions(assertions ?? []), unconfigured);
 }

@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Assertion, RunResponse } from '@perfportal/contracts';
+import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
 import RunDecisionBand from '../src/routes/RunDecisionBand';
 import { runSummaryJson } from '../src/routes/runExport';
 
@@ -42,6 +42,7 @@ const ASSERTIONS: readonly Assertion[] = [
 
 function renderBand(
   over: Partial<{
+    identity: Partial<RunIdentity> & { readonly id: string };
     status: RunResponse['status'];
     verdict: RunResponse['verdict'] | undefined;
     assertions: readonly Assertion[] | undefined;
@@ -49,6 +50,7 @@ function renderBand(
   }> = {},
 ) {
   const props = {
+    identity: RUN as Partial<RunIdentity> & { readonly id: string },
     status: RUN.status,
     verdict: RUN.verdict as RunResponse['verdict'] | undefined,
     assertions: ASSERTIONS as readonly Assertion[] | undefined,
@@ -58,7 +60,7 @@ function renderBand(
   return render(
     <MemoryRouter>
       <RunDecisionBand
-        identity={RUN}
+        identity={props.identity}
         status={props.status}
         verdict={props.verdict}
         assertions={props.assertions}
@@ -459,6 +461,39 @@ describe('RunDecisionBand — what the verdict word says when nothing failed', (
     // read before its assertions resolved. Neither word is true of it.
     renderBand({ verdict: undefined, assertions: undefined, toolAssertions: undefined });
     expect(word()).not.toHaveTextContent(/not configured/i);
+  });
+
+  /**
+   * ═══ AN INCOMPLETE RUN NOTHING PROCESSED WAS NEVER JUDGED ═══
+   *
+   * Swept in place, a failed assembly, or a close carrying no bytes: such a
+   * run comes back with `assertions: []` because no rule ever RAN, not because
+   * the project has none, and "Not configured" was a false statement about a
+   * project that may well have rules. Only the pipeline's terminal write sets
+   * `durationMs`, so it is the signal. An incomplete run whose partial log WAS
+   * processed (the sweeper's assembly path) had its rules evaluated, and its
+   * `[]` does mean no rule applies — so the fix is not "incomplete means Not
+   * evaluated", and the pair below is what says so.
+   */
+  const UNPROCESSED = { ...RUN, status: 'incomplete' as const, durationMs: null };
+
+  it('says Not evaluated for an incomplete run nothing processed, and why', () => {
+    renderBand({ identity: UNPROCESSED, status: 'incomplete', verdict: 'not_evaluated', assertions: [] });
+    expect(word()).toHaveTextContent(/^not evaluated$/i);
+    const gates = screen.getByTestId('outcome-gates');
+    expect(gates).toHaveTextContent(/not evaluated — the run left nothing to judge/i);
+    expect(gates).not.toHaveTextContent(/not configured/i);
+    const detail = screen.getByTestId('decision-detail');
+    expect(detail).not.toHaveTextContent(/completed/i);
+    expect(detail).toHaveTextContent(/no SLA rule ran/i);
+  });
+
+  it('still says Not configured for an incomplete run whose partial log was processed', () => {
+    renderBand({ status: 'incomplete', verdict: 'not_evaluated', assertions: [] });
+    expect(word()).toHaveTextContent(/^not configured$/i);
+    expect(screen.getByTestId('outcome-gates')).toHaveTextContent(/not configured — no SLA rule judged this run/i);
+    // Stopped early, not "completed": the sentence tells the truth about the run too.
+    expect(screen.getByTestId('decision-detail')).not.toHaveTextContent(/completed/i);
   });
 });
 

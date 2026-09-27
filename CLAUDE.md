@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **169 files / 2171 tests**, it
+`nvm use` first, and if a run reports fewer than **169 files / 2174 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,87 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The rules-ran-before-not-configured branch added no unit FILE and 3 cases — 2
+to `apps/web/test/RunDecisionBand.test.tsx` and 1 to
+`apps/web/test/lifecycle.test.ts` — from **169 / 2171 to 169 / 2174**.
+Integration moves with the `.ts` one, from **152 / 1926 to 152 / 1927**, and
+**e2e stays 159**: the browser proof went into `run-lifecycle.spec.ts`'s
+existing incomplete-run case. It is a false sentence about a PROJECT, noticed
+while building the lifecycle strip that now repeats the band's word.
+
+**AN INCOMPLETE RUN NOTHING PROCESSED WAS CALLED "NOT CONFIGURED".** Such a run
+comes back from `GET /v1/runs/{id}` with `assertions: []` because no rule ever
+ran against it, and three surfaces read that empty list as "this project has
+no rules": the band's 36 px word, its Platform gates row ("not configured — no
+SLA rule judged this run") and the strip's "Verdict: Not configured". The
+band's sentence under the word also said "This run completed" of every
+incomplete run.
+
+**FOUR WAYS A RUN ENDS `incomplete`, AND ONLY ONE OF THEM RUNS THE RULES** —
+read out of the code before a test was written:
+
+```
+  Sweeper#finalizeIncomplete     in place, under the sweep's lock   no pipeline
+  the sweeper's assembly path    re-enqueued -> PipelineService     rules EVALUATED
+  #finalizeIncompleteOnPool      the assembly failed                no pipeline
+  LiveService.close, no bytes    RunRepository.markIncomplete       no pipeline
+```
+
+The second is the abandoned-runs-keep-their-data path: the pipeline parses the
+partial log, evaluates the enabled rules, writes their rows, and its terminal
+`UPDATE`'s `CASE WHEN stream_abandoned_at` makes the run `incomplete`. Its
+empty list really does mean no rule applies.
+
+**SO THE OBVIOUS FIX WAS WRONG, AND A MUTATION SAYS SO.** "An incomplete run
+reads Not evaluated" — the rule the task itself proposed as likely — would have
+hidden a true "Not configured" on every processed partial log. Implemented as
+a mutation (`rulesRan` returning `status !== 'incomplete'`), it fails exactly
+the two processed-partial cases and nothing else. **A proposed fix is a claim
+about the code paths it covers; enumerate the paths before accepting it.**
+
+**`durationMs` IS THE SIGNAL, BECAUSE ONLY THE PIPELINE WRITES IT.** The
+pipeline's terminal `UPDATE` sets `duration_ms` in the same transaction as the
+statistics and the assertions; `markIncomplete` and both sweeper
+finalizations write status, verdict and `ingested_at` and nothing else — the
+same fact the strip's "Nothing retained" already keys on. `rulesRan(status,
+durationMs)` lives in `decision.ts`, and `releaseWord` REQUIRES it: a default
+would read "Not configured" off every unprocessed run in silence, which is this
+file's rule for a parameter whose wrong value is silent.
+
+**AND "not reported yet" WOULD HAVE BEEN FALSE TOO.** The gates row already
+distinguished an absent list ("not reported yet") from an empty one ("not
+configured"). An unprocessed incomplete run is neither — its list is present,
+empty, and final — so it gets its own words: "not evaluated — the run left
+nothing to judge". And the sentence says "The stream stopped before anything
+could be processed, so no SLA rule ran", or "The stream stopped early" for a
+processed one, never "This run completed".
+
+**FIVE MUTATIONS, EACH LANDING ON ITS OWN CASES:**
+
+```
+  rulesRan always true (the before-state)        the two unprocessed cases
+  rulesRan = status !== 'incomplete'             the two processed-partial cases
+  releaseWord ignoring `ran`                     the two unprocessed cases
+  the gates row without its `!ran` branch        the band's unprocessed case alone
+  "This run completed" for a processed stop      the band's processed case alone
+```
+
+The last first came back 44 passed — its perl anchor carried a stray `.` and
+matched nothing, and the count assertion printed "expected 1, got" above the
+green run. A mutation that never applied proves nothing; re-applied
+well-formed it failed as predicted.
+
+**THE BROWSER REPRODUCED IT AGAINST THE REAL API.** `seedIncompleteRun` is the
+unprocessed shape — the API answers it with `assertions: []` and no
+`durationMs` — and with the fix reverted the e2e case read
+`Received string: "Not configured"` from the band's word.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **169 / 2174**, zero failures and zero `Errors` lines, and the same
+under `TZ=UTC`; `test:integration` **152 / 1927, exit 0, zero failures**; `pnpm test:e2e`
+**159 passed, exit 0** — against a SCRATCH DATABASE (`perfportal_verdict`)
+and a scratch Redis INDEX (db 12), every gate green on its first run.
 
 The run-lifecycle-strip branch added THREE unit files —
 `packages/contracts/test/run-lifecycle.test.ts` (4),
