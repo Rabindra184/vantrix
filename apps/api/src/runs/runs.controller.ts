@@ -198,13 +198,14 @@ export async function respondWithRun(
   const status = runs.statusFor(run);
 
   if (status === 202) {
-    // IDENTITY, NOT MEASUREMENTS. Every field here is already on the
-    // RunRecord this function was handed — `project` is joined (see
-    // RunRecord's own comment on why the worker pays that indexed join), so
-    // the wider body costs no additional query. That is the whole reason this
-    // is a widened 202 rather than a full `toResponse` at every status:
+    // IDENTITY, NOT MEASUREMENTS. Every field here is on the RunRecord this
+    // function was handed — `project` is joined (see RunRecord's own comment
+    // on why the worker pays that indexed join) — except `queuedAt`, which is
+    // ONE indexed runner-job lookup (`lifecycleOf`). That is the whole reason
+    // this is a widened 202 rather than a full `toResponse` at every status:
     // toResponse runs runAssertion.findMany and the isWindowable EXISTS, which
     // a poller would pay for every five seconds, per watcher, per live run.
+    const lifecycle = await runs.lifecycleOf(run);
     res
       .status(202)
       .set('Retry-After', String(retryAfterSeconds))
@@ -236,6 +237,12 @@ export async function respondWithRun(
         warmupMs: warmupMsOf(run.engineOptions),
         startedAt: run.startedAt.toISOString(),
         toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
+        // THE LIVE HALF of the lifecycle strip: a streaming run is read
+        // through THIS body, so a stamp sent only by `toResponse` would be
+        // missing exactly while a reader watches the run (CLAUDE.md, warmupMs).
+        parsingStartedAt: lifecycle.parsingStartedAt,
+        streamUpdatedAt: lifecycle.streamUpdatedAt,
+        queuedAt: lifecycle.queuedAt,
       });
     return;
   }

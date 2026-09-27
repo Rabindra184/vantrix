@@ -126,36 +126,20 @@ describe('RunDecisionBand', () => {
    * ════════════════════════════════════════════════════════════════════ */
 
   /**
-   * ═══ `incomplete` IS NOT `failed`, AND THE BAND IS WHERE THAT IS SAID ═══
+   * ═══ THE EXECUTION ROW MOVED TO THE LIFECYCLE STRIP ═══
    *
-   * `executionText` has three terminal branches and only two were ever
-   * rendered by a test. The third is reachable and load-bearing: the sweeper's
-   * `running` arm calls `RunRepository.markIncomplete` when a live run's
-   * producer stops reporting, and `RunsService.statusFor` gives it an explicit
-   * 200 -- deliberately NOT 202, because an aborted live run has no worker left
-   * to move it past one, so a poller would retry it for ever.
-   *
-   * THE TWO SENTENCES SEND A READER SOMEWHERE DIFFERENT. "could not be
-   * processed" is an ingest that rejected the bundle: nothing was measured, and
-   * the fix is to re-upload. "the stream stopped early" is a producer that died
-   * mid-run: what arrived IS real data, and the fix is to re-run the test.
-   * Collapsing them tells an engineer to do the wrong one.
-   *
-   * Asserted as an EXCLUSIVE pair, the shape this file already uses above:
-   * "says incomplete" alone is satisfied by a band that says every run is.
+   * This band used to say what the RUN did in a row of its own — "incomplete —
+   * the stream stopped early" against "could not be processed", an exclusive
+   * pair because the two send a reader to different work. The run lifecycle
+   * strip above the band says it now, with timings, and
+   * `RunLifecycle.test.tsx` carries both halves of that pair. What stays here
+   * is that the band no longer says it at all: two places stating one fact is
+   * how they come to disagree.
    */
-  it('says an incomplete run stopped early, not that it could not be processed', () => {
+  it('has no Execution row: the lifecycle strip above it says what the run did', () => {
     renderBand({ status: 'incomplete', verdict: null, assertions: undefined });
-    expect(screen.getByText(/the stream stopped early/i)).toBeInTheDocument();
-    expect(screen.queryByText(/could not be processed/i)).toBeNull();
-  });
-
-  /** The other side of the pair: a genuinely failed run keeps ITS sentence, so
-   *  the branch above cannot have been widened to cover both. */
-  it('still says a failed run could not be processed', () => {
-    renderBand({ status: 'failed', verdict: null, assertions: undefined });
-    expect(screen.getByText(/could not be processed/i)).toBeInTheDocument();
-    expect(screen.queryByText(/stream stopped early/i)).toBeNull();
+    expect(screen.queryByTestId('outcome-execution')).toBeNull();
+    expect(screen.queryByText(/stream stopped early|could not be processed/i)).toBeNull();
   });
 
   it('does render the no-verdict badge for a run that WAS evaluated', () => {
@@ -227,7 +211,7 @@ describe('RunDecisionBand', () => {
    * reads "Simulation checks: 1 failed — …" in order; and colour is never the
    * only signal, which is why the word "failed" has to be in the text too.
    */
-  it('marks the simulation row when a check failed, and leaves the others plain', () => {
+  it('marks the simulation row when a check failed, and leaves the platform gates row plain', () => {
     renderBand({
       verdict: 'not_evaluated',
       assertions: [],
@@ -241,11 +225,11 @@ describe('RunDecisionBand', () => {
     expect(value).toHaveTextContent(/1 failed/);
     expect(value.getAttribute('style') ?? '').toContain('--color-status-failed');
 
-    // The other two rows are not competing for the same attention.
-    for (const id of ['outcome-execution', 'outcome-gates']) {
-      const other = screen.getByTestId(id).querySelector('dd')!;
-      expect(other.getAttribute('style') ?? '').not.toContain('--color-status-failed');
-    }
+    // The other row is not competing for the same attention. (Execution has
+    // its own row no longer — it moved to the lifecycle strip above the band;
+    // see "has no Execution row" above — so only Platform gates remains here.)
+    const gates = screen.getByTestId('outcome-gates').querySelector('dd')!;
+    expect(gates.getAttribute('style') ?? '').not.toContain('--color-status-failed');
   });
 
   /**
@@ -341,19 +325,20 @@ describe('runSummaryJson', () => {
  * below the fold, behind a 460px time selector.
  *
  * Short labels over one system's counters read as overall test health. The fix
- * is to state the three facts SEPARATELY, so no single word has to carry them
- * all.
+ * was to state the facts SEPARATELY, so no single word has to carry them all —
+ * originally three, execution among them; the run lifecycle strip above the
+ * band now says execution, with timings (see "has no Execution row" above),
+ * so the band states the remaining two.
  *
  * The release verdict deliberately does NOT absorb simulation results: a
  * platform gate is the organisation's policy and a simulation assertion is the
  * test author's, and quietly merging them would make the gate mean something
  * nobody configured. The band reports both and conflates neither.
  */
-describe('RunDecisionBand — three outcomes, not one word', () => {
-  it('states execution, platform gates and simulation assertions separately', () => {
+describe('RunDecisionBand — two outcomes, not one word', () => {
+  it('states platform gates and simulation assertions separately', () => {
     renderBand({ verdict: 'not_evaluated', assertions: [], toolAssertions: TOOL });
     const outcomes = screen.getByTestId('run-outcomes');
-    expect(outcomes).toHaveTextContent(/execution/i);
     expect(outcomes).toHaveTextContent(/platform gates/i);
     // THE SAME NOUN THE SECTION THIS LINKS TO USES. The row said "Simulation
     // checks" while `#simulation-assertions` is headed "Simulation assertions",

@@ -42,11 +42,40 @@ export class RunsService {
     return run.verdict === 'failed' ? 422 : 200;
   }
 
+  /**
+   * The run's lifecycle stamps, for BOTH identity builders — `toResponse`
+   * below and the 202 in `respondWithRun` — so the two cannot send different
+   * sets. Two come off the RunRecord; `queuedAt` is one indexed lookup
+   * (`runner_job_run_id_idx`) for the runner job that produced the run, if
+   * any. A run has at most one: a retry makes a new job AND a new run.
+   */
+  async lifecycleOf(run: RunRecord): Promise<{
+    parsingStartedAt: string | null;
+    streamUpdatedAt: string | null;
+    queuedAt: string | null;
+  }> {
+    const job = await this.prisma.runnerJob.findFirst({
+      // The run's own project as well: the runner writes `run_id` only for a
+      // run it opened in the job's own project, so this never narrows a real
+      // answer — it only refuses one that could not be the run's own.
+      where: { runId: run.id, projectId: run.projectId },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    const iso = (at: Date | null): string | null => (at === null ? null : at.toISOString());
+    return {
+      parsingStartedAt: iso(run.parsingStartedAt),
+      streamUpdatedAt: iso(run.streamUpdatedAt),
+      queuedAt: iso(job?.createdAt ?? null),
+    };
+  }
+
   async toResponse(run: RunRecord): Promise<RunResponse> {
     const assertions = await this.prisma.runAssertion.findMany({
       where: { runId: run.id },
       orderBy: { outcome: 'asc' },   // 'failed' sorts before 'not_applicable' and 'passed'
     }) as RunAssertionRow[];
+    const lifecycle = await this.lifecycleOf(run);
 
     return {
       id: run.id,
@@ -81,6 +110,9 @@ export class RunsService {
       startedAt: run.startedAt.toISOString(),
       toolStartedAt: run.toolStartedAt ? run.toolStartedAt.toISOString() : null,
       ingestedAt: run.ingestedAt ? run.ingestedAt.toISOString() : null,
+      parsingStartedAt: lifecycle.parsingStartedAt,
+      streamUpdatedAt: lifecycle.streamUpdatedAt,
+      queuedAt: lifecycle.queuedAt,
       // Appendix A G-05. Already evaluated at ingest against the rollups the
       // engine had in hand, so this is a projection, not a computation — and
       // `null` is preserved rather than defaulted to `[]`, because "this run

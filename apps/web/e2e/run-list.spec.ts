@@ -497,5 +497,6 @@ test('an incomplete run is reachable by its own filter and counted as needing at
   // this is a finished run rather than one the page keeps polling.
   await page.getByRole('row').nth(1).getByRole('link').first().click();
   await expect(page).toHaveURL(new RegExp(incompleteId));
-  await expect(page.getByText(/the stream stopped early/i)).toBeVisible();
+  // The decision band's Execution sentence moved into the lifecycle strip.
+  await expect(page.getByRole('region', { name: 'Run lifecycle' })).toContainText(/stopped early/i);
 });

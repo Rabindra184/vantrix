@@ -1,18 +1,19 @@
 import type { ReactNode } from 'react';
 import { describeSlaOutcome } from '@perfportal/contracts';
-import type { Assertion, RunIdentity, RunResponse, RunVerdict } from '@perfportal/contracts';
+import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
 import { Link } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
 import { ASSERTION_OUTCOME, STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
+import { decisionOf, releaseWord, type Decision } from './decision';
 import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 
 /**
- * `unevaluated` IS NOT `none`, AND COLLAPSING THEM IS THE BUG THIS TYPE
- * EXISTS TO PREVENT.
+ * `unevaluated` IS NOT `none`, AND COLLAPSING THEM IS THE BUG `Decision`
+ * (`decision.ts`) EXISTS TO PREVENT.
  *
  * `RunShell`'s `verdict` prop states the rule: "`undefined` means NOT
  * EVALUATED YET and omits the badge; `null` means evaluated with no
@@ -24,7 +25,6 @@ import { downloadRunSummary, runSummaryJson } from './runExport';
  *
  * So `unevaluated` has no `Mark`: there is nothing honest to stamp.
  */
-type Decision = RunVerdict | 'none' | 'unevaluated';
 
 const DECISION: Record<Exclude<Decision, 'unevaluated'>, Mark> = {
   passed: VERDICT.passed,
@@ -62,7 +62,9 @@ export default function RunDecisionBand({
    * test health, and an engineer deciding ship/no-ship read zero failures over
    * a run with one.
    *
-   * So the band states three facts separately rather than making one word
+   * So the band states its facts separately — platform gates and simulation
+   * assertions, each in its own row; what the run itself did is now the
+   * lifecycle strip's — rather than making one word
    * carry them. It deliberately does NOT fold these into the release verdict:
    * a platform gate is the organisation's policy and a simulation assertion is
    * the test author's, and merging them would make the gate mean something
@@ -105,7 +107,7 @@ export default function RunDecisionBand({
         ? 'not configured — no SLA rule judged this run'
         : `${counts.passed} passed · ${counts.failed} failed`;
   const failed = firstFailedAssertion(assertions ?? []);
-  const decision: Decision = verdict === undefined ? 'unevaluated' : (verdict ?? 'none');
+  const decision: Decision = decisionOf(verdict);
   /* ═══ "Not configured" IS NOT "Not evaluated" (review 09-13 copy table) ═══
    *
    * The row is "Repeated Not evaluated block" -> "`SLA: Not configured`". The
@@ -124,8 +126,10 @@ export default function RunDecisionBand({
    * list and an absent one, and an absent one is a run whose assertions have
    * not been reported yet — "Not configured" would be a claim about a project
    * we have not heard from. */
-  const unconfigured = assertions !== undefined && assertions.length === 0;
-  const word = decisionWord(decision, counts, unconfigured);
+  // The expression this comment argues lives in `releaseWord` (`decision.ts`)
+  // now, so the lifecycle strip's Verdict step reads the same word by calling
+  // the same function, rather than by agreeing with a copy of it.
+  const word = releaseWord(verdict, assertions);
   /* RENDERED FROM THE FIELDS, NOT THE STORED MESSAGE. `failed.message` is
      written by `packages/sla`'s own `describe` as the stored schema read
      aloud — `error_rate of the run (response_time) ≤ 0.01 — actual
@@ -279,8 +283,9 @@ export default function RunDecisionBand({
            *
            * M02 asks the mobile band to "replace stacked repeated status prose
            * with short labeled rows". The rows are the `<dl>` directly below,
-           * which C02 built: Execution, Platform gates, Simulation assertions, each
-           * naming the system that answered. This paragraph is the PROSE half,
+           * which C02 built — Platform gates and Simulation assertions now,
+           * Execution having moved to the lifecycle strip — each naming the
+           * system that answered. This paragraph is the PROSE half,
            * and on this run it reads "This run completed, but no SLA rule
            * produced a release verdict" while the row beneath says "Platform
            * gates — not configured". One fact, twice, in the screen a phone
@@ -309,11 +314,12 @@ export default function RunDecisionBand({
             {detail}
           </p>
 
-          {/* THREE OUTCOMES, NAMED. Each row says which system answered, so no
+          {/* TWO OUTCOMES, NAMED. Each row says which system answered, so no
               reader has to infer that "0 failed" meant one system's rules and
-              not the test's own checks. */}
+              not the test's own checks. What the RUN itself did was a third
+              row here, "Execution"; the lifecycle strip above now says it,
+              with timings. */}
           <dl data-testid="run-outcomes" className="flex flex-col gap-1 text-[0.75rem]">
-            <Outcome testId="outcome-execution" label="Execution" value={executionText(status)} />
             <Outcome
               testId="outcome-gates"
               label="Platform gates"
@@ -445,27 +451,6 @@ function DecisionCount({ label, value, mark }: { readonly label: string; readonl
 }
 
 /**
- * The big word, and the sentence it replaced. "Release gate failed" carried
- * subject and verdict in one string; the redesign splits them — the verdict
- * as the word, the subject as the constant overline beneath it — so the
- * mapping here is the old `decisionTitle` minus the words the overline now
- * owns. Same branches, same order, same honesty rules.
- */
-function decisionWord(
-  decision: Decision,
-  counts: AssertionCounts,
-  /** The run was judged by NOTHING — an empty assertion list, not an absent
-      one. See the call site for why the two cannot share a word. */
-  unconfigured: boolean,
-): string {
-  if (decision === 'failed') return 'Failed';
-  if (decision === 'passed') return 'Passed';
-  if (decision === 'not_evaluated') return unconfigured ? 'Not configured' : 'Not evaluated';
-  if (counts.failed > 0) return 'Needs attention';
-  return 'Pending';
-}
-
-/**
  * The word's colour, from mark DATA like every status colour in this app —
  * the text palette, gated at 4.5:1 against the card. `unevaluated` and the
  * needs-attention state borrow `STATUS.pending`'s amber: both are
@@ -487,14 +472,6 @@ function decisionDetail(decision: Decision, counts: AssertionCounts): string {
   return 'The run has not finished evaluation yet.';
 }
 
-
-/** What the RUN did, as distinct from what any gate concluded about it. */
-function executionText(status: RunResponse['status']): string {
-  if (status === 'complete') return 'completed';
-  if (status === 'failed') return 'could not be processed';
-  if (status === 'incomplete') return 'incomplete — the stream stopped early';
-  return 'in progress';
-}
 
 /**
  * The simulation's own checks, reduced to one sentence and a target.

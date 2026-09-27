@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { seedAdmin, seedRunWithData, seedRunWithProvenance } from './fixtures.js';
+import { seedAdmin, seedIncompleteRun, seedRunWithData, seedRunWithProvenance } from './fixtures.js';
 import { signIn } from './helpers.js';
 import { runPath } from '../src/routes/paths.js';
 
@@ -167,8 +167,9 @@ test('a run page leads with its decision and mounts no drag control', async ({ p
 /**
  * ═══ REVIEW M02 — THE PROSE THAT REPEATED THE ROWS ═══
  *
- * The band states three outcomes as labelled rows (Execution, Platform gates,
- * Simulation checks) and then restates them in a sentence: on a run with no
+ * The band stated its outcomes as labelled rows (then Execution, Platform
+ * gates and Simulation checks — the lifecycle strip has since taken
+ * Execution) and then restates them in a sentence: on a run with no
  * rules it read "This run completed, but no SLA rule produced a release
  * verdict" directly above a row saying "Platform gates — not configured". One
  * fact twice, in 42px of the 424px that WAS the whole first screen on a phone.
@@ -203,7 +204,9 @@ test('the phone keeps the failing gate’s own message, and drops only the summa
   // The rows it restates are still there, which is the half that makes
   // dropping it honest rather than lossy.
   await expect(band).toContainText('Platform gates');
-  await expect(band).toContainText('Execution');
+  await expect(band).toContainText('Simulation assertions');
+  // What the run itself did is the lifecycle strip's now, one line on a phone.
+  await expect(page.getByRole('region', { name: 'Run lifecycle' })).toBeVisible();
 });
 
 /**
@@ -284,4 +287,26 @@ test('a phone leads with the environment and folds the rest one tap away', async
   await expect(page.getByTestId('run-branch')).toBeVisible();
   await expect(page.getByTestId('run-commit')).toBeVisible();
   await expect(page.getByTestId('run-duration')).toBeVisible();
+});
+
+/**
+ * ═══ AN INCOMPLETE RUN, ON A PHONE ═══
+ * (docs/superpowers/specs/2026-09-26-run-lifecycle-strip-design.md)
+ *
+ * The decision band's Execution row used to say "the stream stopped early",
+ * and it is gone; the lifecycle strip's one phone line is the only place left
+ * to say it. Its first rule showed the furthest step reached, which on an
+ * incomplete run is always Processing — so a phone read "Nothing retained",
+ * with nothing saying the test was cut short. Found by the whole-branch
+ * review; no layer had tested a phone and an incomplete run together.
+ */
+test('an incomplete run says its load test stopped early on a phone', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedIncompleteRun(admin.orgId);
+  await signIn(page, admin);
+  await page.goto(runPath(runId));
+
+  const strip = page.getByRole('region', { name: 'Run lifecycle' });
+  await expect(strip.getByRole('listitem')).toHaveCount(1);
+  await expect(strip.getByRole('listitem')).toContainText(/stopped early/i);
 });
