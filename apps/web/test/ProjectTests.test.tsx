@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TestSummary } from '@perfportal/contracts';
@@ -160,6 +160,38 @@ describe('ProjectTests', () => {
     // resolves both — the strict-mode error that would then fail this case
     // says "found multiple", which is not what it is about.
     expect(within(row).getByRole('link', { name: 'View test Checkout smoke' })).toBeInTheDocument();
+  });
+
+  /**
+   * ═══ THE SLUG, SHOWN AND COPYABLE (backlog #4) ═══
+   *
+   * What an upload's or a runner job's `test` field takes. The fixture's name
+   * and slug DIFFER, and that is load-bearing: a row that showed or copied the
+   * NAME would otherwise satisfy every assertion below.
+   */
+  it('shows the test’s slug beside its name, and copies exactly the slug', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(CHECKOUT_SMOKE.slug).not.toBe(CHECKOUT_SMOKE.name);
+      stubFetch({ tests: { tests: [CHECKOUT_SMOKE] } });
+      renderPage();
+      const row = await screen.findByTestId('test-row');
+      expect(within(row).getByTestId('test-slug')).toHaveTextContent(CHECKOUT_SMOKE.slug);
+
+      await act(async () => {
+        fireEvent.click(
+          within(row).getByRole('button', { name: `Copy test slug ${CHECKOUT_SMOKE.slug}` }),
+        );
+      });
+      expect(writeText).toHaveBeenCalledWith(CHECKOUT_SMOKE.slug);
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
   });
 
   it('links the latest run, so a reader reaches it without opening the test', async () => {
