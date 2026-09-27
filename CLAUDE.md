@@ -146,6 +146,102 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The session-required-wording branch added no unit FILE and no unit case —
+unit stays **169 / 2181**, since every test file it touches is an
+`.integration.test.ts` — and 1 case to `apps/api/test/openapi.integration.test.ts`
+plus assertions INSIDE an existing case in `rules.integration.test.ts`, from
+**152 / 1931 to 152 / 1932**. **e2e stays 159.** It is a sentence that was true
+of three routes and was being said on eleven.
+
+**RE-MEASURED AFTER MERGING `main`**, because run-note landed underneath it
+and a floor is a property of a tree: unit **171 / 2209** measured on the
+merged tree (unchanged by this branch, as predicted), and the derived case
+passed there with run-note's `PUT /v1/runs/{id}/note` as a TWELFTH guarded
+route — which that branch had already declared `SessionRequired`. On the
+merged tree integration is **154 / 1959** and e2e **163**, the arithmetic of
+the two branches; CI's `build` log on the merge commit is what measured them
+before this merged.
+
+**A CI TOKEN POSTING AN SLA RULE WAS TOLD ABOUT MINTING TOKENS.**
+`SessionOnlyGuard` refuses every bearer credential, and its detail read "API
+tokens are minted by a signed-in user, not by a machine credential" — written
+when it guarded the token routes alone. It now guards eleven: project
+creation, the three token routes, a test's PATCH and DELETE, the four SLA-rule
+routes and the browser upload. The detail states the rule itself ("This action
+needs a signed-in person; an API token cannot perform it, whatever its
+scopes"); status 403, code `FORBIDDEN` and the remediation are byte-identical,
+because generated clients branch on the first two. `SessionRequired`'s
+description states the same general rule and keeps token minting as the
+EXAMPLE of why a scope check cannot stand in for the guard, rather than as the
+whole story.
+
+**AND ENUMERATING THE ROUTES FOUND THE ONE THE DOCUMENT GOT WRONG.** The
+browser upload (`POST /v1/projects/{slug}/runs`) is class-guarded with no
+`@Scopes`, so its only reachable 403 is the session refusal — and its own
+description said so ("the same refusal the token and SLA-rule operations
+carry") while its response map spread `authFailureResponses`, whose 403 is the
+SCOPE refusal. Ten operations had been joined to `SessionRequired` by hand and
+the eleventh was missed: the one-caller-short shape, in the published
+contract.
+
+**SO THE PAIRING IS DERIVED, BOTH WAYS.** The route walker the
+contract-covers-every-route branch built now also reads `GUARDS_METADATA` off
+each controller and handler: every route carrying `SessionOnlyGuard` must
+document `403: SessionRequired`, and every operation documenting it must be
+guarded — the second direction is a document promising a refusal the server
+never sends. The vacuity floor counts guarded routes FOUND, never the verdict.
+
+```
+  the old sentence restored            the rules bearer case ALONE, on /mint/i
+  the upload's 403 back to the scope   the derived case ALONE: 'post /v1/projects/{}/runs'
+  the walk compares the wrong identity "found no SessionOnlyGuard routes": 0 > 5
+  an unguarded GET documents it        the derived case ALONE: 'get /v1/projects/{}/tests'
+```
+
+The second mutation is `main`'s own state before this branch.
+
+**NOTHING HAD ASSERTED THE REFUSAL'S BODY AT ALL**, which is how the sentence
+survived eight new routes: every bearer-refusal case in the suite checked the
+status alone. The rules case now asserts the CLAIM — `FORBIDDEN`, a
+remediation naming sign-in, a detail naming a person or session, and no
+"mint" on a route that mints nothing — so the words stay rewritable and the
+non-sequitur cannot come back.
+
+**AND IT WAS BUILT IN A SECOND WORKTREE WHILE ANOTHER BRANCH WAS MID-EDIT IN
+THE MAIN CHECKOUT.** `git checkout main` there would have pulled the tree out
+from under a running implementer. `git worktree add -b <branch> <path>
+origin/main`, at a path with no dotted segment, then `pnpm install`,
+`prisma generate` and `pnpm build` before any gate — a fresh worktree has none
+of them (the spa-dotted-path entry records what it costs to forget). Its gates
+ran on their own scratch database, Redis index and e2e port, so the two
+branches could not truncate each other.
+
+**WHAT WAS RUN.** `pnpm build`, `typecheck` and `lint` green by their own exit
+codes; `test:unit` **169 / 2181**, the prediction exactly, zero `Errors`
+lines. `test:integration` COLLECTED **152 / 1932** — the prediction exactly —
+with ONE failure: `read.integration.test.ts`'s "clamps a negative limit",
+**a 501** on a bearer `GET /v1/projects/checkout/runs`, a route this branch
+does not touch, in a run that STARTED at a 1-minute load of 19. That is the
+signature this file already records as the machine answering rather than an
+endpoint, and the file then passed **39/39 five times out of five** alone.
+`pnpm test:e2e` collected **159** with ONE failure: `acceptance.spec.ts`'s
+keyboard-and-chart-table case, the intermittent this file records twice
+already, which no bearer-side change can reach — the browser never sends a
+token. That whole file then passed **nine of ten** isolated runs; the one
+failing run's case was not captured (each run overwrote the last one's log,
+recorded rather than assumed). **No test failed twice.** All against a
+SCRATCH DATABASE (`perfportal_sessreq`), a scratch Redis INDEX (db 13) and
+e2e port 3200, from a worktree at an undotted path.
+
+**AND CI MEASURED BOTH CLEAN**, so those two were this machine and nothing
+else — the `build` job on `7c964b7`, read off its own log:
+
+```
+  pnpm test:unit         Test Files 169 passed (169)   Tests 2181 passed (2181)
+  pnpm test:integration  Test Files 152 passed (152)   Tests 1932 passed (1932)
+  pnpm test:e2e          159 passed
+```
+
 The run-note branch added TWO unit files —
 `packages/contracts/test/run-note.test.ts` (9) and
 `apps/web/test/RunNote.test.tsx` (13) — plus 3 cases to `RunHeader.test.tsx`

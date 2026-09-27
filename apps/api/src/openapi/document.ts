@@ -574,10 +574,11 @@ const responses: Record<string, ResponseObject> = {
   SessionRequired: {
     description:
       'The credential is a valid bearer API token, not a signed-in session (code FORBIDDEN). ' +
-      'Refused unconditionally, regardless of which scopes the token carries — token minting is ' +
-      'checked by SessionOnlyGuard, never by @Scopes(), because a scope check would let any ' +
-      'credential holding that scope mint itself a broader one. Sign in at ' +
-      'POST /auth/sign-in/email and retry with the session cookie.',
+      'An operation carrying this response is one a person performs, and a bearer token is ' +
+      'refused unconditionally, whatever scopes it carries. The check is SessionOnlyGuard ' +
+      'rather than @Scopes() because a scope check passes for ANY credential holding the ' +
+      'scope: on token minting, for example, it would let a read-only CI token mint itself a ' +
+      'broader one. Sign in at POST /auth/sign-in/email and retry with the session cookie.',
     content: problem(),
   },
   InvalidTokenRequest: {
@@ -1314,7 +1315,17 @@ const paths: Record<string, PathItemObject> = {
           },
         },
       },
-      responses: { ...runStateResponses(), '404': ref('NotFound'), ...authFailureResponses },
+      // NOT `...authFailureResponses`, whose 403 is the scope refusal. This
+      // controller carries SessionOnlyGuard and no @Scopes, so the only 403 it
+      // can send is SessionRequired — which its own description above already
+      // named ("the same refusal the token and SLA-rule operations carry")
+      // while this response map pointed at a different one.
+      responses: {
+        ...runStateResponses(),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
+      },
     },
   },
 
