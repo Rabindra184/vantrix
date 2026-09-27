@@ -412,8 +412,8 @@ export default function RunCompare() {
                           }`}
                           /* The whole chip named in one string rather than left
                              to the reading order of four nodes, so a screen
-                             reader hears "13 Sept 11:31, failed, Baseline,
-                             production · main" instead of a glyph. */
+                             reader hears "Run 12 · 09-13 11:31 · failed ·
+                             Baseline · production · main" instead of a glyph. */
                           aria-label={[labelFor(run.id), startedLine, mark.label, role, conditions]
                             .filter((part) => part != null && part !== '')
                             .join(' · ')}

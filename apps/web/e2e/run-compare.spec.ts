@@ -339,8 +339,10 @@ test('overlays five runs and says why it will not take a sixth', async ({ page }
 
   /* FIVE DISTINCT SERIES. `toHaveCount` alone would pass against an overlay
      that drew one line five times; distinctness is what says a reader can tell
-     them apart, and `compareLabels` disambiguates colliding timestamps
-     precisely so they can. */
+     them apart. This cohort is pipeline-seeded, so every run has a number now
+     (spec 2026-09-27-run-number) and `Run 1`..`Run 5` are what make them
+     distinct — `compareLabels`' minute-collision suffix is the fallback for a
+     run with none, which none of these are. */
   const names = await expectSeriesNames(page, 5);
   expect(new Set(names).size).toBe(5);
   await expect(runsInTable(page)).toHaveCount(6); // 5 runs + the elapsed column

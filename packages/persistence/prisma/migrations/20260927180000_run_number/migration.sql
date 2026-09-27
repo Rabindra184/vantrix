@@ -6,10 +6,13 @@
 -- exactly once, at the moment a run joins its test. See
 -- apps/worker/src/pipeline/run-number.ts for the two writers.
 --
--- Existing runs are numbered by the SAME rule applied to history: creation
--- order within each test. The two UPDATEs between the BACKFILL markers are
--- read and executed verbatim by run-number.integration.test.ts, so keep the
--- markers and keep each statement ending in a semicolon.
+-- Existing runs are numbered by creation order within each test — the closest
+-- PROXY history offers for the join-order rule above: an upload joins its
+-- test at finalize rather than at upload time, so a retried or delayed
+-- ingest can join out of the order it was created in, same as the live
+-- writers above. The two UPDATEs between the BACKFILL markers are read and
+-- executed verbatim by run-number.integration.test.ts, so keep the markers
+-- and keep each statement ending in a semicolon.
 
 ALTER TABLE "test" ADD COLUMN "next_run_number" INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE "run" ADD COLUMN "run_number" INTEGER;

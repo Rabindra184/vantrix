@@ -150,6 +150,19 @@ describe('the pipeline deciding the number at finalize', () => {
     expect(await counterOf(a.id)).toBe(2);
   });
 
+  /** An upgrade window: the OLD worker attached this run to its test (set
+   *  `test_id`) before the migration that taught it to number runs too, so
+   *  the run sits in its test with a NULL number. Finalize must not keep that
+   *  NULL for ever just because the run is "already in its resolved test". */
+  it('numbers a run it finds already in its test with no number — an older worker attached it', async () => {
+    const test = await testRow('checkout-smoke');
+    const run = await runRow('running', test.id, null);
+
+    expect(await inFinalize((c) => numberRunForTest(c, run.id, test.id))).toBe(1);
+    expect(await numberOf(run.id)).toEqual({ testId: test.id, runNumber: 1 });
+    expect(await counterOf(test.id)).toBe(2);
+  });
+
   it('clears the number when the resolver found no test', async () => {
     const test = await testRow('checkout-smoke');
     const run = await runRow('running');

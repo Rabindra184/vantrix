@@ -99,24 +99,36 @@ identify blocks on the row lock, re-reads `test_id IS NULL` as false, finds
 streams, as GE's does.
 
 **2. `PipelineService`, the terminal write.** Today its last statement writes
-`test_id = $10` unconditionally, inside the finalize transaction. It becomes a
-statement of the same shape that also decides the number:
+`test_id = $10` unconditionally, inside the finalize transaction. The number is
+decided by a NEW, separately testable function, `numberRunForTest` — its OWN
+statement, called IMMEDIATELY BEFORE the terminal UPDATE, inside the same
+transaction and therefore atomic with it, rather than folded into the terminal
+UPDATE's own `SET` clause. Two reasons: it is then a function this file's own
+suite (and `apps/worker/test/run-number.integration.test.ts`) can call and
+assert on directly, without constructing the terminal write's other nine
+parameters just to reach it; and it has to run BEFORE the terminal UPDATE
+rather than after, because it repeats that UPDATE's own status guard
+(`status NOT IN ('complete', 'failed')`) to refuse a redelivered job that has
+already gone terminal — a guard that would no longer match if the terminal
+UPDATE had already run first and set the run to `complete`.
 
 ```sql
 WITH cur AS (
-  SELECT test_id FROM run
+  SELECT test_id, run_number FROM run
    WHERE id = $1 AND status NOT IN ('complete', 'failed') FOR UPDATE
 ), allocated AS (
   UPDATE test SET next_run_number = next_run_number + 1
-   WHERE id = $10::uuid
-     AND EXISTS (SELECT 1 FROM cur WHERE cur.test_id IS DISTINCT FROM $10::uuid)
+   WHERE id = $2
+     AND EXISTS (SELECT 1 FROM cur
+                  WHERE cur.test_id IS DISTINCT FROM $2 OR cur.run_number IS NULL)
   RETURNING next_run_number - 1 AS n
 )
-UPDATE run SET status = …, …, test_id = $10,
-       run_number = CASE WHEN run.test_id IS NOT DISTINCT FROM $10::uuid
+UPDATE run
+   SET test_id = $2,
+       run_number = CASE WHEN run.test_id IS NOT DISTINCT FROM $2 AND run.run_number IS NOT NULL
                          THEN run.run_number
                          ELSE (SELECT n FROM allocated) END
- WHERE id = $1 AND status NOT IN ('complete', 'failed')
+ WHERE id = $1 AND EXISTS (SELECT 1 FROM cur)
 ```
 
 | The run arrives with | The resolver answers | Number |
@@ -124,23 +136,42 @@ UPDATE run SET status = …, …, test_id = $10,
 | no test (an upload) | a test | that test's next number |
 | test A, `#5` (a live run) | test A | `#5`, kept |
 | test A, `#5` | test B | B's next number; A keeps a gap at 5 |
+| test A, no number (an older worker attached it before this shipped) | test A | A's next number |
 | any | `null` (resolution failed) | cleared |
 
-It stays the LAST statement before `COMMIT`, so the test's row lock is held for
-that statement alone, and two runs of one test finishing together queue for
-milliseconds rather than for a whole finalize.
+The terminal UPDATE that follows, unchanged in shape, then writes the run's
+status, verdict and metrics with `test_id = $2` again — the same value, so the
+two statements can never disagree about which test the row belongs to. Because
+`numberRunForTest` is the LAST statement before that terminal UPDATE and both
+run inside one transaction before `COMMIT`, the test's row lock is held for two
+short statements rather than for the whole finalize, and two runs of one test
+finishing together queue for milliseconds, not for a full finalize each.
 
-**Lock order is run, then test, in both writers** — and in test deletion below —
-so none of the three can deadlock another.
+**Neither writer above can deadlock `TestRepository.remove` below, and it is
+not because of a shared lock order** — `remove`'s delete locks the TEST row
+FIRST and its cascade then locks RUN rows, the reverse of both writers' RUN
+then TEST. What rules out a cycle is the PREDICATES each side waits under: a
+numbering statement only waits on a test while holding a run whose COMMITTED
+`test_id` is NOT it, and `remove`, once it holds the test, only waits on runs
+whose committed `test_id` IS it (the cascade) or that are already
+ungrouped-but-numbered — never a run either writer is currently holding,
+because the invariant (`run_number` non-null exactly when `test_id` is) makes
+an ungrouped run unnumbered. No run can be the thing both sides are waiting
+for at once. Widening `remove`'s clearing predicate, or either writer's
+`target`/`cur` filter, would need this argument re-made.
 
 ## Deleting a test
 
 `TestRepository`'s delete reads the test, then `deleteMany`s it; `run.test_id`
 is `ON DELETE SET NULL`, which cannot clear a second column. The delete becomes
-one transaction: clear `run_number` on that test's runs, then delete the test.
-A run therefore never reports a number without the test it counts within. A
-test later recreated under the same slug is a NEW row and starts at `#1`; the
-ungrouped runs of the old one carry no number, so nothing collides.
+one transaction: delete the test, then clear the numbers left on its
+now-ungrouped runs — one clearing statement, matching every ungrouped-but-
+numbered run in the project, which is exactly the runs the cascade just
+ungrouped plus any run that reached that state some other way (a run that
+joined the test between an earlier read and the delete, say). A run therefore
+never reports a number without the test it counts within. A test later
+recreated under the same slug is a NEW row and starts at `#1`; the ungrouped
+runs of the old one carry no number, so nothing collides.
 
 ## Contract (`packages/contracts`)
 

@@ -1493,16 +1493,15 @@ function RunRow({
             className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
           >
             {/* On a test's list the simulation is the page's own heading, so
-                repeating it down every row says nothing; the short id is what
-                distinguishes these runs from each other. Elsewhere the
-                simulation is what a reader is scanning for, falling back to the
-                short id for a run the worker has not parsed. Either way the
-                accessible name above carries the WHOLE id, because a column of
-                eight-character prefixes names nothing on its own.
-
-                On a test's list a NUMBERED run is named by its number —
-                `Run 12`, spec 2026-09-27-run-number — which is what tells runs
-                of one test apart once they have one. */}
+                repeating it down every row says nothing; what distinguishes
+                these runs from each other is its number — `Run 12`, spec
+                2026-09-27-run-number — once it has one, else the short id, the
+                same fallback this column showed before numbering existed.
+                Elsewhere the simulation is what a reader is scanning for,
+                falling back to the short id for a run the worker has not
+                parsed. Either way the accessible name above carries the WHOLE
+                id, because a column of numbers or eight-character prefixes
+                names nothing on its own. */}
             {identifyByRunId && run.runNumber !== null && run.runNumber !== undefined ? (
               runName(run.runNumber)
             ) : identifyByRunId || run.simulation === null || run.simulation === undefined ? (
@@ -1511,10 +1510,10 @@ function RunRow({
               run.simulation
             )}
           </Link>
-          {/* The FULL id, whatever the link shows: a test's list displays an
-              8-character prefix, and nothing that takes a run id accepts one
-              (backlog #4). Beside the link rather than inside it, so a click
-              meant for the button never navigates. */}
+          {/* The FULL id, whatever the link shows: a test's list displays its
+              number, or its short id when it has none, and nothing that takes
+              a run id accepts either (backlog #4). Beside the link rather than
+              inside it, so a click meant for the button never navigates. */}
           <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="row" />
         </IdentityCell>
         <NoteLine note={run.note} />

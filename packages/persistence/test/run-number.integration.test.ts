@@ -133,4 +133,23 @@ describe('deleting a test', () => {
     expect(byId.get(r2.id)).toMatchObject({ testId: null, runNumber: null });
     expect(byId.get(survivor.id)).toMatchObject({ testId: kept.id, runNumber: 1 });
   });
+
+  /** The single clearing statement (AFTER the delete, on `testId: null,
+   *  runNumber: { not: null }`) has to catch two things at once: a run that
+   *  was ALREADY sitting ungrouped-but-numbered before remove() was even
+   *  called — the state a run that joined mid-delete is left in — and the
+   *  run the delete's own cascade just ungrouped. One statement, both cases. */
+  it('clears a number left on a run that is already ungrouped', async () => {
+    const stray = await runRow({ testId: null, runNumber: 5, createdAt: '2026-09-01T10:00:00Z', startedAt: '2026-09-01T10:00:00Z' });
+    const doomed = await testRow('checkout-soak');
+    const grouped = await runRow({ testId: doomed.id, runNumber: 1, createdAt: '2026-09-02T10:00:00Z', startedAt: '2026-09-02T10:00:00Z' });
+
+    const removed = await new TestRepository(prisma).remove({ orgId, projectId }, 'checkout-soak');
+    expect(removed?.slug).toBe('checkout-soak');
+
+    const rows = await prisma.run.findMany({ select: { id: true, testId: true, runNumber: true } });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(stray.id)).toMatchObject({ testId: null, runNumber: null });
+    expect(byId.get(grouped.id)).toMatchObject({ testId: null, runNumber: null });
+  });
 });

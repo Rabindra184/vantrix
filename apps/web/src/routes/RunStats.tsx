@@ -426,7 +426,7 @@ function BaselineNote({
             ? `${runName(previous.runNumber)} (started ${formatInstant(previous.toolStartedAt ?? previous.startedAt)})`
             : `the run of ${formatInstant(previous.toolStartedAt ?? previous.startedAt)}`}
         </Link>
-        {' — the one immediately before this in this test.'}
+        {' — the one that started immediately before this in this test.'}
       </p>
       {notable.length > 0 && (
         <details className="group" data-testid="baseline-differences">

@@ -179,27 +179,50 @@ export class TestRepository {
    *
    * A run's number counts within its test (spec 2026-09-27-run-number), and
    * `ON DELETE SET NULL` can clear `test_id` but not a second column. So the
-   * numbers are cleared here, in the same transaction, and a run never
-   * reports a number with no test to count it in. A test later recreated under
-   * the same slug is a new row and starts at 1.
+   * delete is followed, in the SAME transaction, by one statement that clears
+   * `run_number` on every ungrouped-but-numbered run in the project — which is
+   * exactly the runs the cascade just ungrouped, plus any run that reached
+   * that state some other way, at no extra cost to catch in the same
+   * predicate. A run therefore never reports a number with no test to count
+   * it in. A test later recreated under the same slug is a new row and
+   * starts at 1.
+   *
+   * An EARLIER version cleared `run_number` on the test's own runs BEFORE the
+   * delete too, in a first statement. That was redundant: once the delete has
+   * run, the cascade has ungrouped exactly this test's runs, and the clearing
+   * statement below already matches every ungrouped-but-numbered row in the
+   * project — this test's former runs included, along with any that joined
+   * mid-delete and were never in the first statement's snapshot. One
+   * statement, not two disagreeing about which runs need clearing.
+   *
+   * ═══ WHY THIS CANNOT DEADLOCK A NUMBERING STATEMENT ═══
+   *
+   * `attachLiveRunToTest` and `numberRunForTest` (`apps/worker`) lock RUN then
+   * TEST; this method's delete locks TEST first and its cascade then locks
+   * RUN. Lock order therefore does NOT rule out a cycle here — what does is
+   * the predicates: a numbering statement only waits on this test while
+   * holding a run whose committed `test_id` is NOT it, and this method, once
+   * it holds the test, only waits on runs whose committed `test_id` IS it (the
+   * cascade) or that are already ungrouped-but-numbered — never a run either
+   * writer is currently holding, because the invariant makes an ungrouped run
+   * unnumbered. No run can be the thing both sides are waiting for at once.
+   * Widening either clearing predicate below needs this argument re-made.
    */
   async remove(scope: ProjectScope, slug: string): Promise<TestRow | null> {
     const existing = await this.findBySlug(scope, slug);
     if (existing === null) return null;
 
-    const [, { count }] = await this.prisma.$transaction([
-      // Numbers first, RUN rows before the TEST row — the lock order every
-      // writer of a run number uses, so this cannot deadlock one.
-      this.prisma.run.updateMany({
-        where: { orgId: scope.orgId, projectId: scope.projectId, testId: existing.id },
-        data: { runNumber: null },
-      }),
+    const [{ count }] = await this.prisma.$transaction([
       this.prisma.test.deleteMany({
         where: { orgId: scope.orgId, projectId: scope.projectId, slug },
       }),
-      // A run that joined this test between the first statement and the
-      // delete took a number the first statement never saw; SET NULL has now
-      // ungrouped it, so clear what it is left holding.
+      // The cascade (`run.test_id ON DELETE SET NULL`) has just ungrouped
+      // this test's runs, leaving their old numbers behind; this clears
+      // `run_number` on every ungrouped-but-numbered run in the project,
+      // which is exactly those runs plus any that arrived at that state some
+      // other way (see the docstring above for why one statement covers
+      // both). Nothing else in the project is touched: a numbered run still
+      // in a live test does not match `testId: null`.
       this.prisma.run.updateMany({
         where: {
           orgId: scope.orgId,
