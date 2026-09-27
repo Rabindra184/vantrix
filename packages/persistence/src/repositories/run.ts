@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { clampPercentile } from '@perfportal/statistics';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import type { RunStatus, RunVerdict } from '@perfportal/contracts';
 import type { ProjectScope, TenantScope } from './tenant.js';
 
@@ -63,6 +63,16 @@ export interface RunRecord {
   parsingStartedAt: Date | null;
   /** The last chunk a stream accepted (`advanceOffset`). Null for an upload. */
   streamUpdatedAt: Date | null;
+  /**
+   * The note a PERSON wrote on this run (docs/superpowers/specs/
+   * 2026-09-27-run-note-design.md), or null for none. NOT `description`,
+   * which is the tool's own claim.
+   */
+  note: string | null;
+  noteUpdatedAt: Date | null;
+  /** The note's author's display name. Null when there is no note, or when
+   *  the author's account has since been deleted (ON DELETE SET NULL). */
+  noteAuthorName: string | null;
   engineOptions: Record<string, unknown>;
   error: { code: string; message: string; remediation: string } | null;
   /**
@@ -155,10 +165,27 @@ interface RunRow {
   ingestedAt: Date | null;
   parsingStartedAt: Date | null;
   streamUpdatedAt: Date | null;
+  note: string | null;
+  noteUpdatedAt: Date | null;
+  noteUpdatedBy: string | null;
+  /** REQUIRED, so every Prisma read has to name it — see RUN_INCLUDE. */
+  noteAuthor: { name: string } | null;
   engineOptions: unknown;
   error: unknown;
   toolAssertions: unknown;
 }
+
+/**
+ * What every Prisma read of a run joins, in ONE place. `RunRow.noteAuthor` is
+ * required, so a read that forgets the author does not compile — without
+ * that, a run read through the forgotten path would carry a note with a null
+ * author beside a real one, and nothing would say which.
+ */
+const RUN_INCLUDE = {
+  project: true,
+  test: true,
+  noteAuthor: { select: { name: true } },
+} satisfies Prisma.RunInclude;
 
 function toRecord(row: RunRow): RunRecord {
   return {
@@ -192,6 +219,9 @@ function toRecord(row: RunRow): RunRecord {
     ingestedAt: row.ingestedAt,
     parsingStartedAt: row.parsingStartedAt,
     streamUpdatedAt: row.streamUpdatedAt,
+    note: row.note,
+    noteUpdatedAt: row.noteUpdatedAt,
+    noteAuthorName: row.noteAuthor?.name ?? null,
     engineOptions: (row.engineOptions ?? {}) as Record<string, unknown>,
     error: (row.error ?? null) as RunRecord['error'],
     toolAssertions: (row.toolAssertions ?? null) as RunRecord['toolAssertions'],
@@ -203,7 +233,9 @@ function toRecord(row: RunRow): RunRecord {
  * nested object, because a SQL result set has no nesting — fromSqlRow below
  * is the one place that difference is reconciled.
  */
-interface RunSqlRow extends Omit<RunRow, 'project' | 'test'> {
+interface RunSqlRow extends Omit<RunRow, 'project' | 'test' | 'noteAuthor'> {
+  /** The note author's display name, off the LEFT JOIN on "user". */
+  noteAuthorName: string | null;
   projectSlug: string;
   projectName: string;
   /**
@@ -334,7 +366,7 @@ function metricsFrom(row: RunSqlRow): RunListMetrics | null {
 
 function fromSqlRow(row: RunSqlRow): RunRecord {
   const {
-    projectSlug, projectName, testId, testSlug, testName,
+    projectSlug, projectName, testId, testSlug, testName, noteAuthorName,
     statCount, statErrorRate, statThroughputRps, statPercentiles, statMinMs, statMaxMs,
     ...rest
   } = row;
@@ -350,6 +382,7 @@ function fromSqlRow(row: RunSqlRow): RunRecord {
       testId === null || testSlug === null || testName === null
         ? null
         : { id: testId, slug: testSlug, name: testName },
+    noteAuthor: noteAuthorName === null ? null : { name: noteAuthorName },
   });
 }
 
@@ -417,6 +450,22 @@ function asUuid(hex32: string): string {
   );
 }
 
+/**
+ * The run columns the run list's search matches, in ONE place: list() builds
+ * its OR from this, and the search-plan test builds its EXPLAIN from it and
+ * requires a run_<column>_trgm index for every entry. Adding a column here
+ * without its index fails that test naming the index — the predicate used to
+ * be restated by hand there, so the real query could drift unwatched.
+ */
+export const RUN_SEARCH_COLUMNS = [
+  'simulation',
+  'description',
+  'environment',
+  'branch',
+  'commit_sha',
+  'note',
+] as const;
+
 export class RunRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -440,7 +489,7 @@ export class RunRepository {
         startedOn: startedOnFrom(input.startedAt),
         engineOptions: input.engineOptions as object,
       },
-      include: { project: true, test: true },
+      include: RUN_INCLUDE,
     });
     return toRecord(row);
   }
@@ -523,7 +572,7 @@ export class RunRepository {
           startedOn: startedOnFrom(input.startedAt),
           engineOptions: input.engineOptions as object,
         },
-        include: { project: true, test: true },
+        include: RUN_INCLUDE,
       });
       return toRecord(row);
     } catch (err) {
@@ -720,23 +769,48 @@ export class RunRepository {
         orgId: scope.orgId,
         projectId: scope.projectId ? scope.projectId : undefined,
       },
-      include: { project: true, test: true },
+      include: RUN_INCLUDE,
     });
     return row ? toRecord(row) : null;
   }
 
   /** Unscoped by design: the worker holds a job, not a caller's credential. */
   async findByIdUnscoped(id: string): Promise<RunRecord | null> {
-    const row = await this.prisma.run.findUnique({ where: { id }, include: { project: true, test: true } });
+    const row = await this.prisma.run.findUnique({ where: { id }, include: RUN_INCLUDE });
     return row ? toRecord(row) : null;
   }
 
   async findByIdempotencyKey(scope: ProjectScope, key: string): Promise<RunRecord | null> {
     const row = await this.prisma.run.findFirst({
       where: { orgId: scope.orgId, projectId: scope.projectId, idempotencyKey: key },
-      include: { project: true, test: true },
+      include: RUN_INCLUDE,
     });
     return row ? toRecord(row) : null;
+  }
+
+  /**
+   * Write, replace or remove a run's note (spec 2026-09-27-run-note-design.md).
+   * The text, the time and the author move TOGETHER — a removal clears all
+   * three, so no row can carry an author for a note that is gone.
+   *
+   * Scoped like findById: by org always, and by project when the scope names
+   * one. Returns null when no run with that id is in scope, which the caller
+   * answers as 404 — never 403, which would confirm the run exists elsewhere.
+   */
+  async setNote(
+    scope: TenantScope,
+    id: string,
+    input: { readonly text: string | null; readonly userId: string },
+  ): Promise<RunRecord | null> {
+    const written = await this.prisma.run.updateMany({
+      where: { id, orgId: scope.orgId, projectId: scope.projectId ? scope.projectId : undefined },
+      data:
+        input.text === null
+          ? { note: null, noteUpdatedAt: null, noteUpdatedBy: null }
+          : { note: input.text, noteUpdatedAt: new Date(), noteUpdatedBy: input.userId },
+    });
+    if (written.count === 0) return null;
+    return this.findById(scope, id);
   }
 
   /**
@@ -904,13 +978,7 @@ export class RunRepository {
       const like = `%${escapeLike(opts.q)}%`;
       params.push(like);
       const at = `$${params.length}`;
-      const clauses = [
-        `r.simulation ILIKE ${at} ESCAPE '\\'`,
-        `r.description ILIKE ${at} ESCAPE '\\'`,
-        `r.environment ILIKE ${at} ESCAPE '\\'`,
-        `r.branch ILIKE ${at} ESCAPE '\\'`,
-        `r.commit_sha ILIKE ${at} ESCAPE '\\'`,
-      ];
+      const clauses: string[] = RUN_SEARCH_COLUMNS.map((c) => `r.${c} ILIKE ${at} ESCAPE '\\'`);
 
       const matched = await this.projectIdsMatching(scope.orgId, like);
       if (matched.length > 0) {
@@ -942,6 +1010,8 @@ export class RunRepository {
         r.ingested_at AS "ingestedAt", r.engine_options AS "engineOptions", r.error,
         r.parsing_started_at AS "parsingStartedAt", r.stream_updated_at AS "streamUpdatedAt",
         r.tool_assertions AS "toolAssertions",
+        r.note, r.note_updated_at AS "noteUpdatedAt", r.note_updated_by AS "noteUpdatedBy",
+        nu.name AS "noteAuthorName",
         p.slug AS "projectSlug", p.name AS "projectName",
         t.id AS "testId", t.slug AS "testSlug", t.name AS "testName",
         -- THE TRIAGE NUMBERS. Without them a reader had to OPEN every run to
@@ -978,6 +1048,11 @@ export class RunRepository {
       -- run — still pending, or a bundle that never parsed — and an inner join
       -- would drop it out of the list it belongs in.
       LEFT JOIN test t ON t.id = r.test_id
+      -- LEFT, and on the primary key: most runs have no note, and a run whose
+      -- author was deleted keeps its note with no one to name. The WIRE row
+      -- carries the text alone; the author is read here so a RunRecord has
+      -- one shape whichever path built it.
+      LEFT JOIN "user" nu ON nu.id = r.note_updated_by
       WHERE ${filters.join(' AND ')}
       ORDER BY COALESCE(r.tool_started_at, r.started_at) DESC, r.id DESC
       LIMIT $${params.length}

@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import type { RunResponse } from '@perfportal/contracts';
 import RunHeader from '../src/routes/RunHeader';
 
@@ -36,7 +37,12 @@ const RUN: RunResponse = {
 // identity/status/verdict/peakUsers — so the existing terminal-run cases
 // below stay expressed the way they always were: a full run in, an assertion
 // on the render out.
-function renderHeader(run: RunResponse, peakUsers: number | null = null, compact = false) {
+function renderHeader(
+  run: RunResponse,
+  peakUsers: number | null = null,
+  compact = false,
+  note: ReactNode = null,
+) {
   return render(
     <MemoryRouter>
       <RunHeader
@@ -45,6 +51,7 @@ function renderHeader(run: RunResponse, peakUsers: number | null = null, compact
         verdict={run.verdict}
         peakUsers={peakUsers}
         compact={compact}
+        note={note}
       />
     </MemoryRouter>,
   );
@@ -235,7 +242,7 @@ describe('RunHeader', () => {
     render(
       <MemoryRouter>
         <RunHeader identity={{ id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8' }}
-                   status="running" verdict={undefined} peakUsers={null} compact={false} />
+                   status="running" verdict={undefined} peakUsers={null} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Run a66548b7');
@@ -254,7 +261,7 @@ describe('RunHeader', () => {
                                project: { id: '11111111-1111-4111-8111-111111111111',
                                           slug: 'checkout', name: 'Checkout' },
                                tool: 'gatling', startedAt: '2026-08-20T10:43:49.546Z' }}
-                   status="running" verdict={undefined} peakUsers={null} compact={false} />
+                   status="running" verdict={undefined} peakUsers={null} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.queryByTestId('run-verdict')).toBeNull();
@@ -264,7 +271,7 @@ describe('RunHeader', () => {
   it('still renders the verdict badge for a terminal run', () => {
     render(
       <MemoryRouter>
-        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} peakUsers={8} compact={false} />
+        <RunHeader identity={FULL_IDENTITY} status="complete" verdict={null} peakUsers={8} compact={false} note={null} />
       </MemoryRouter>,
     );
     expect(screen.getByTestId('run-verdict')).toBeInTheDocument();
@@ -348,5 +355,41 @@ describe('RunHeader — the metadata a phone leads with', () => {
     renderHeader({ ...RUN, environment: 'staging' }, null, true);
     expect(screen.getByText('Run details')).toBeInTheDocument();
     expect(screen.getByText('Hide run details')).toBeInTheDocument();
+  });
+});
+
+/**
+ * ═══ WHERE THE NOTE GOES ═══
+ * (docs/superpowers/specs/2026-09-27-run-note-design.md)
+ *
+ * Under the heading, after the tool's own description — except on a phone
+ * with no note, where the only thing to show is "Add a note", and it goes
+ * inside the Run details disclosure: the phone's first screen had 7.6 px of
+ * headroom and an un-annotated run must not spend it. A NOTED run on a phone
+ * keeps its note in view, deliberately.
+ */
+describe('RunHeader — the note slot', () => {
+  const SLOT = <p data-testid="note-slot">slot</p>;
+  const NOTED = {
+    ...RUN,
+    description: 'Gatling’s own description',
+    note: { text: 'flaky environment, ignore', updatedAt: null, updatedBy: null },
+  };
+
+  it('puts the note under the heading, after the tool’s own description', () => {
+    renderHeader({ ...RUN, description: 'Gatling’s own description' }, null, false, SLOT);
+    const description = screen.getByText('Gatling’s own description');
+    const slot = screen.getByTestId('note-slot');
+    expect(description.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('on a phone with no note, keeps the slot inside Run details and off the first screen', () => {
+    renderHeader({ ...RUN, note: null }, null, true, SLOT);
+    expect(screen.getByTestId('run-metadata')).toContainElement(screen.getByTestId('note-slot'));
+  });
+
+  it('on a phone with a note, shows it where a reader sees it, not inside Run details', () => {
+    renderHeader(NOTED, null, true, SLOT);
+    expect(screen.getByTestId('run-metadata')).not.toContainElement(screen.getByTestId('note-slot'));
   });
 });

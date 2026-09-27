@@ -70,6 +70,7 @@ interface OperationObject {
 interface PathItemObject {
   get?: OperationObject;
   post?: OperationObject;
+  put?: OperationObject;
   patch?: OperationObject;
   delete?: OperationObject;
 }
@@ -601,6 +602,15 @@ const responses: Record<string, ResponseObject> = {
       'clear a description; omitting the field leaves it alone.',
     content: problem(),
   },
+  InvalidRunNote: {
+    description:
+      'Refused before anything was written. Code INVALID_ID when "id" is not a UUID; code ' +
+      'INVALID_RUN_NOTE when the body failed RunNoteRequestSchema — "note" missing, whitespace ' +
+      'alone, longer than 500 characters after trimming, or the body named another field (the ' +
+      'schema is `.strict()`: the server stamps the time and the author itself). Send ' +
+      '"note": null to remove a note.',
+    content: problem(),
+  },
   InvalidSlaRule: {
     description:
       'The request body failed CreateSlaRuleRequestSchema (code INVALID_SLA_RULE), or the ' +
@@ -899,6 +909,41 @@ const paths: Record<string, PathItemObject> = {
         '404': ref('NotFound'),
         '409': ref('RunNotRunning'),
         ...authFailureResponses,
+      },
+    },
+  },
+
+  '/v1/runs/{id}/note': {
+    put: {
+      operationId: 'putRunNote',
+      summary: 'Write, replace or remove the note on a run',
+      tags: ['runs'],
+      // SESSION-ONLY: a note is a person's words, and a machine credential
+      // names nobody to attribute them to.
+      security: [{ cookieAuth: [] }],
+      description:
+        'Requires a signed-in session — refused for ANY bearer token regardless of scopes (see ' +
+        'SessionOnlyGuard and the 403 below). A note is a short text a person keeps on a run ' +
+        '("baseline after the cache change"); it is NOT the run\'s "description", which is the ' +
+        'tool\'s own run description and is never written here. One note per run: a PUT ' +
+        'replaces it, "note": null removes it, and the last write wins. Allowed in every run ' +
+        'status. The run is found within the caller\'s organisation — a run in another answers ' +
+        'the same 404 as no run at all.',
+      parameters: [parameters['RunId']!],
+      requestBody: {
+        required: true,
+        description: '"note": 1 to 500 characters after trimming, or null to remove the note.',
+        content: json(schemaRef('RunNoteRequest')),
+      },
+      responses: {
+        '200': {
+          description: 'The note as it now stands — null after a removal.',
+          content: json(schemaRef('RunNoteResponse')),
+        },
+        '400': ref('InvalidRunNote'),
+        '401': ref('Unauthorized'),
+        '403': ref('SessionRequired'),
+        '404': ref('NotFound'),
       },
     },
   },

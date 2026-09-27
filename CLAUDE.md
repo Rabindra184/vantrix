@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **169 files / 2181 tests**, it
+`nvm use` first, and if a run reports fewer than **171 files / 2209 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,310 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The run-note branch added TWO unit files —
+`packages/contracts/test/run-note.test.ts` (9) and
+`apps/web/test/RunNote.test.tsx` (13) — plus 3 cases to `RunHeader.test.tsx`
+and 1 each to `RunList.test.tsx`, `RunList.compact.test.tsx` and
+`RunShell.test.tsx`, from **169 / 2181 to 171 / 2209**. Integration moves with
+the contracts file (a `.ts`), `apps/api/test/run-note.integration.test.ts` (12)
+and 6 cases in `repositories.integration.test.ts`, from **152 / 1931 to
+154 / 1958**, and **e2e rises to 163** (`apps/web/e2e/run-note.spec.ts`, 4).
+It is backlog item
+#3 of the Gatling Enterprise comparison: a person's note on a run — "baseline
+after the cache change", "flaky environment, ignore" — on the run page, in
+every run list, and found by run search.
+
+**ONE NOTE PER RUN, WRITTEN BY A PERSON, AND IT IS NOT `run.description`.**
+That field is GATLING's run description, decoded from the log header and bound
+by PRD G-02 as an EXACT string — the tool's claim about the run, frozen at
+parse. Editing it would break G-02; appending to it would make it two things.
+The note is three columns on `run` (`note`, `note_updated_at`,
+`note_updated_by` → `user.id ON DELETE SET NULL`) plus `run_note_trgm`, one
+`PUT /v1/runs/:id/note`, session-only, last write wins. Declined, with the
+reason each one keeps: a thread or a history (not what "why is this run odd"
+needs); API tokens writing it (CI already has Gatling's description, and a
+pipeline re-run must not overwrite a person's words); a `run_note` table (a
+search branch on a joined table costs every other branch its index — the
+BitmapOr rule this file records for the run search); a general
+`PATCH /v1/runs/:id` (it makes a run look editable in general, the door
+`UpdateTestRequestSchema` was written to keep narrow); and `If-Match` (two
+people editing one note in one minute is rare, and recorded so nobody reads
+its absence as an oversight).
+
+**A SESSION'S `tokenId` NAMES A SESSION, NOT A PERSON.** It is
+`session:<id>` and dies with the session, which is also what runner jobs'
+`requestedBy` records today. `Tenant` gains `userId?` — PRESENT for a session,
+ABSENT for a bearer, stated beside `projectId`'s rule of the same shape — and
+the note records the user, so "Edited by Asha" survives their signing out and
+the WORDS survive their account being deleted (the name goes, the text stays).
+A handler reaching the write without a user answers 500 rather than writing
+an unattributed note; the red-verify that removed `SessionOnlyGuard` landed
+there exactly — the bearer case read `expected 500 to be 403`, the invariant
+catching what the guard no longer did.
+
+**BOTH BUILDERS, GUARD WRITTEN FIRST.** `GET /v1/runs/:id` answers a live run
+from the hand-written 202 and a finished one from `toResponse`; a note written
+on a streaming run must not vanish until it finishes, which is the `warmupMs`
+and lifecycle-stamps lesson. One `noteOf(run)` feeds both, and the mutations
+split cleanly: dropping it from the 202 failed the running-run case ALONE,
+from `toResponse` the three finished-run cases.
+
+**THE SEARCH-PLAN TEST RESTATED THE PREDICATE BY HAND**, so the real query
+could drift under a green plan assertion. The column list is one exported
+constant, `RUN_SEARCH_COLUMNS`, that `list()` and the plan test both build
+from, and the test now requires `run_note_trgm` beside the other five.
+Dropping that index measured the rule this file already records rather than a
+local one: the WHOLE OR fell to `Seq Scan on run`, not just the note branch,
+and the failure named `run_simulation_trgm` — the first column the loop
+checks — rather than the note's index. **An unindexable branch costs every
+branch its index, and the first message you read names the victim, not the
+cause.**
+
+**THE PHONE KEEPS ITS FOLD; A DESKTOP SPENDS ONE LINE.** `RunHeader` owns the
+slot: under the tool's description on a desktop, and on a phone with NO note
+inside the `run-metadata` disclosure, because `mobile.spec.ts`'s fold has
+7.6 px of headroom and an un-noted run must not lose it. A NOTED run on a
+phone does show its note on the first screen — deliberately, "ignore this
+run" being the one thing worth a line of that fold — which also means a
+phone's FIRST save moves the note from the disclosure into the header and
+remounts `RunNote`, so focus returns by `data-testid` rather than by ref.
+Every desktop run now carries "Add a note" under its heading, so
+`run-tables.spec.ts`'s 900 px bound was re-measured — on a REAL run at
+1440x900, since the e2e fixture carries no note:
+
+```
+                                totals top   first tile
+  no note ("Add a note" only)      748          791
+  a one-line note                  770          813
+  a 500-character note (5 lines)   854          897     <- 3 px inside 900
+```
+
+**THE LAST ROW WAS LEFT AS AN OPEN QUESTION AND THE FINAL REVIEW CLOSED IT.**
+The page drew a note whole, and `whitespace-pre-line` keeps a person's line
+breaks — so the worst case is not five wrapped lines but a 500-character note
+of short ones, which the whole-branch review put near 5000 px on either
+viewport. The page's note is now `line-clamp-3` with a "Show all"/"Show less"
+control that exists ONLY when the clamped text overflows (a
+`useLayoutEffect` measure plus a `ResizeObserver`), so a one-line note
+carries no button. Measured at 1440x900 with twenty short lines:
+
+```
+  clamped            first tile at y = 860
+  expanded           first tile at y = 1008     past the 900 bound
+```
+
+The spec's "shown on every viewport" still holds: the whole text is one
+click away. **`run-tables.spec.ts` could not see any of this, because its
+fixture run has no note** — the same fixture-cannot-distinguish shape this
+file keeps recording — so `run-note.spec.ts` seeds one and pins the bound.
+
+**A SAVE IN FLIGHT CANNOT BE CANCELLED, SO THE EDITOR LOCKS.** The task
+review found Cancel and Escape closing the editor while the PUT still landed —
+then writing the cache and pulling focus back to a reader who believed they
+had backed out. A request already sent is committed server-side; an abort
+would only hide the write. So the textarea goes `readOnly` (not `disabled`,
+which would blur it), Cancel disables and Escape is ignored until the save
+resolves — each half red-verified alone.
+
+**THE SPEC SAID THE LIST LINE'S WIDTH CAP HELD THE TABLE, AND IT DOES NOT.**
+"`max-w` and `line-clamp-2` are LOAD-BEARING … an unwrapped note would widen
+the Simulation column" — the spec and `NoteLine`'s first docstring both.
+Measured with BOTH classes removed, p95 and Errors stayed on screen:
+
+```
+   768   p95 500  Errors 565  of 726 visible
+  1024   p95 500  Errors 565  of 694
+  1440   p95 612  Errors 678  of 1110
+```
+
+The note WRAPS, between words, inside a cell that is already
+`min-w-0 break-all`, so the table's automatic layout narrows the column rather
+than growing the table. What does widen it is an UNWRAPPABLE note — the
+hazard the spec's own sentence names, credited to the wrong mechanism — and
+`whitespace-nowrap` in place of the two classes pushed p95 to **3215 px of
+726**. So the classes are the DESIGN (a reading measure, at most two lines),
+and the browser case pins what each actually does, where it actually binds:
+
+```
+  line-clamp-2 dropped      954 px tall at 768 against a two-line bound of 37
+  max-w-[32ch] dropped      GREEN in the table (note 70-183 px vs 242) —
+                            FAILS on a 375 px card: 317 px against 243
+  whitespace-nowrap         p95 at 3215 of 726
+```
+
+**THE SECOND ROW IS THE ONE THAT TOOK TWO ROUNDS.** Its first red-verify
+passed, and a bound that cannot fail at any width a case measures is not a
+keeper — so the case grew a phone check, inside the same `test(`, that first
+proves the list rendered CARDS (no `<table>`, the row not a `<tr>`) before
+measuring. **A cap that binds in one layout and not another has to be proven
+in the one where it binds.** Both probes append, measure and remove BEFORE the
+element's own box is read, so neither perturbs what it measures.
+
+**AND THE UNWRAPPABLE NOTE WAS REAL — IT WAS A URL, NOT `whitespace-nowrap`.**
+The whole-branch review asked what nobody had measured: a note that is ONE
+unbroken token, a dashboard link or a path. Measured on the tree before any
+fix, a 300-character URL put Errors at **737 px of 726 visible at 768 and of
+694 at 1024** (p95 held at 671). `break-words` is `overflow-wrap:
+break-word`, which breaks an overlong word only when it paints — it never
+lowers the box's MIN-CONTENT width, and min-content is what the table's
+automatic layout sizes a column from. `wrap-anywhere` (`overflow-wrap:
+anywhere`) does lower it, and ordinary prose still breaks between words
+because a break "anywhere" is only taken once those run out. The run page's
+own note text measured green (block layout, no column to size), so only
+`NoteLine` changed. **So the first docstring's hazard existed and was
+credited to the wrong mechanism, and the correction of it named a mechanism
+nobody types**: `whitespace-nowrap` proved a wrap was load-bearing; a URL is
+what a person actually pastes.
+
+**RED-VERIFIED LAYER BY LAYER, EVERY MUTATION ON ITS OWN CASE:**
+
+```
+  contracts   .trim() removed           the trim, padding and whitespace cases
+              .strict() removed         the extra-field case alone
+              .max(501)                 the 500/501 case alone
+              identity .optional() gone the rolling-deploy case alone
+  persistence where without orgId       the cross-org write case alone
+              clear keeps the time      the clear-all-three case alone
+              list SELECT without note  the list case alone
+              'note' out of the columns the plan guard + the search case
+              run_note_trgm dropped     the plan case (see above)
+              RUN_INCLUDE w/o author    TS2345 at all five call sites
+  api         202 without noteOf        the running-run case alone
+              toResponse without it     the three finished-run cases
+              SessionOnlyGuard removed  the bearer case: 500, not 403
+              404 turned into a write   the other-org case alone
+              list item without note    the list-and-search case alone
+  web         draft sent untrimmed      the trimmed-save case alone
+              setQueryData removed      trimmed-save AND remove-note
+              Escape handler removed    the Escape case alone
+              Remove sends ''           the remove case alone
+              returnFocus removed       the save case, on focus
+              unchanged note savable    the count case alone
+              phone slot never folded   the un-noted-phone case alone
+              phone slot always folded  the noted-phone case alone
+              slot above description    the placement case alone
+              NoteLine off the row      the table case alone
+              NoteLine off the card     the card case alone
+              null note renders         the table case, on its count
+              RunNote unkeyed           the change-of-run case: A's draft in B
+              toggle always rendered    the no-toggle case alone
+              toggle click a no-op      the Show-less case alone
+              summary branch removed    the phone-removal focus case alone
+              onError removed           the failed-save focus case alone
+  browser     cache write + refetches   the written note never appears
+              'note' out of the search  toHaveCount(1) received 0
+              break-words restored      Errors at 737 of 726, byte-for-byte
+              line-clamp-3 dropped      211 px against a three-line bound of 64
+```
+
+**`setQueryData` REMOVED FAILED TWO CASES WHERE THE PLAN PREDICTED ONE, AND
+BOTH ASSERT THE SAME THING.** The harness's query never refetches, so the
+local cache write is the only path to the screen for saving AND for removing.
+That is this file's own rule: an extra failure is a finding only when it
+asserts something other than the value the mutation broke.
+
+**AND THE BRANCH FOUND THE SCHEMA DRIFT THAT BECAME ITS OWN.** Task 2's
+`prisma migrate diff` exited 2 on tables this branch never touched; measured
+byte-identical on a database carrying only `main`'s migrations, it was taken
+separately as the schema-matches-migrations branch, whose guard then read
+"agree" against this branch's own migration.
+
+**THE WHOLE-BRANCH REVIEW FOUND WHAT EVERY TASK REVIEW COULD NOT, BECAUSE
+BOTH OF ITS DEFECTS LIVE BETWEEN TWO COMPONENTS.** The URL above is one; the
+other is that **an open editor survived a change of run.** `RunShell` rendered
+`RunNote` unkeyed and `/runs/:runId` is not keyed either, so `editing` and
+`draft` outlived their run — Back, or the baseline note's "vs previous" link,
+left run A's half-typed note in run B's editor, and Save wrote it onto B. The
+live-state-follows-its-run entry records the same shape for `useLiveRun` and
+answers it with a reset during render; **this one is `key={identity.id}`, and
+the in-flight save is why.** A remount leaves the old instance's `useMutation`
+options closed over run A, so a save landing after the change writes A's
+cache; a same-instance reset would re-point `onSuccess` at B and write A's
+saved note into B's cache. The case re-renders ONE tree from A to B, because
+the defect is in the transition and two separate renders cannot see it.
+
+**TWO FOCUS DROPS, AND jsdom WOULD HAVE PASSED THE OBVIOUS ASSERTION FOR
+BOTH.** Removing a note on a phone moves `RunNote` INTO the closed Run details
+disclosure, so `returnFocus` found an Add-a-note button no reader can reach
+and focus fell to `<body>`; it focuses that disclosure's `<summary>` now. A
+failed save left focus on a button the pending state had disabled; `onError`
+puts it back in the textarea, where the reader corrects and retries. **jsdom
+does not refuse focus inside a closed `<details>`** — measured with a
+throwaway probe — so a case asserting "focus did not land on the hidden
+button" passes without the fix; both cases assert WHERE focus is, the
+summary and the textarea, which only the fix produces.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - Expand a long note, edit it short and save ON THE SAME RUN, and "Show
+    less" sits beside a note that no longer overflows until the next click:
+    the overflow effect returns early while expanded. Self-correcting, hides
+    no text; the fix is two lines (collapse in `open()`, add `editing` to the
+    effect's dependencies) if it ever matters.
+  - A FAILED run cannot be annotated in the product: `GET /v1/runs/{id}`
+    answers it with its ingest problem and the page renders that instead of
+    the shell, so `RunNote` never mounts — while `PUT …/note` accepts it, and
+    a note written through the API shows in the lists.
+  - A READ-scoped bearer token sees `note.updatedBy.name` on
+    `GET /v1/runs/{id}`: a person's display name, visible to a machine
+    credential in the same org. Both of the last two are decisions about who
+    a note is for.
+  - `SessionOnlyGuard`'s refusal said "API tokens are minted by a signed-in
+    user" on every session-only route, this branch's `PUT …/note` included.
+    Pre-existing, and taken as its own branch rather than widened into this
+    one.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **171 / 2204**, zero failures and zero `Errors` lines, and the
+same under `TZ=UTC`; `test:integration` **154 / 1958, exit 0, zero
+failures**; `pnpm test:e2e` **161 passed, exit 0** — against a SCRATCH
+DATABASE (`perfportal_note`) and a scratch Redis INDEX (db 14), every gate
+green on its first run and every total the one counted from the source before
+any suite ran. Integration started at a 1-minute load of 22 and passed, which
+this file's rule counts as a pass. After the phone-font fix below,
+`typecheck`, `lint`, `test:unit` (both zones) and e2e ran again on the final
+tree — the same totals, with ONE e2e failure: `acceptance.spec.ts`'s
+keyboard-and-chart-table case, `toBeFocused` "Received: inactive", at a
+1-minute load of 24. That is the exact intermittent the live-banner entry
+records (one in four whole-file runs, green alone), and the diff it sat on was
+one `font-sans` class in the run header, which cannot reach a chart menu's
+focus. **Measured rather than argued**: the whole file then passed five times
+running (35 of 35), and a full `pnpm test:e2e` on the same tree came back
+**161 passed, exit 0**. No test failed twice. Integration was not re-run,
+because it cannot move: every commit after the measured one touches a `.tsx`
+alone.
+
+**AND AFTER THE FINAL REVIEW'S FIX ROUND, ALL FIVE AGAIN ON THE FINAL TREE**,
+every total the one counted from the source first: `typecheck` and `lint`
+exit 0; `test:unit` **171 / 2209** under the local zone and `TZ=UTC`, zero
+`Errors` lines; `test:integration` **154 / 1958, exit 0, zero failures** —
+unchanged, as it had to be, since the round touched only `.tsx` files and one
+spec; `pnpm test:e2e` **163 passed, exit 0**, the two new `run-note.spec.ts`
+cases among them. Same scratch database and Redis index, every gate green on
+its first run.
+
+**THE REAL RUN FOUND ONE MORE, AND ONLY A PHONE COULD.** The developer
+database's ten real Gatling runs, migrated (`partitions_2027` and this
+branch's `run_note`), with the API on its own Redis index (db 11) and no
+worker. A note written through the form on the on-prem runner's run saved,
+read "Edited by <the signed-in user> · <time>", put focus back on Edit note
+and survived a reload; the list drew it as two clamped lines 165 px wide with
+p95 and Errors at 609 and 682 of 1099; searching a word only the note held
+narrowed ten runs to one; the textarea's `maxLength` stops typing at 500
+("500 / 500") rather than letting the server refuse it; and Remove note
+cleared the text, the time AND the author together — all ten rows empty
+again afterwards, as found.
+
+**AND ON A PHONE, "Add a note" WAS DRAWN IN THE VALUE CHIPS' MONOSPACE.** The
+run-details disclosure is `font-mono` because every chip in it is a VALUE, and
+the note cell inherited it, so the action — and the editor it opens — read
+like one more data field. No layer could see it: jsdom computes no font, and
+no browser case opens that disclosure on an un-noted run. The disclosure's
+own `<summary>` already set `font-sans` for exactly this reason; the note cell
+does now (Inter against the chips' JetBrains Mono, measured after). **A
+container that styles its children as data styles whatever else is put in
+it** — check what a new child inherits before calling it placed.
 
 The spa-dotted-path branch added no unit FILE and 4 cases to
 `apps/api/test/security-headers.test.ts` — an `it.each` over `/` and a deep

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RunNoteSchema } from './run-note.js';
 
 export const RunStatusSchema = z.enum([
   'pending', 'parsing',
@@ -298,6 +299,11 @@ export const RunIdentitySchema = z.object({
   /** When the on-prem runner job that produced this run was queued. Null for
    *  a run the runner did not produce. */
   queuedAt: z.string().datetime().nullable().optional(),
+  /** The note a person wrote on this run (run-note.ts), or null for none.
+   *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle
+   *  stamps above give: a required field blanks the run page against an API
+   *  pod that predates it. */
+  note: RunNoteSchema.nullable().optional(),
 });
 export type RunIdentity = z.infer<typeof RunIdentitySchema>;
 
@@ -435,6 +441,12 @@ export const RunListResponseSchema = z.object({
         })
         .nullable()
         .optional(),
+      /**
+       * The note a person wrote on the run — the TEXT alone. Its author and
+       * time belong to the run's own page; a list row answers "is this run
+       * one to ignore" and nothing more.
+       */
+      note: z.string().nullable().optional(),
     }),
   ),
   nextCursor: z.string().nullable(),

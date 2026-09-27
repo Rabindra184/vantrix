@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { RunResponse, ToolAssertionOutcome } from '@perfportal/contracts';
+import type { RunNote, RunResponse, ToolAssertionOutcome } from '@perfportal/contracts';
 import { MetricReader, RunRepository, type RunRecord } from '@perfportal/persistence';
 import { PrismaClient } from '@prisma/client';
 import { statusForCode } from '../common/problem.js';
@@ -113,6 +113,7 @@ export class RunsService {
       parsingStartedAt: lifecycle.parsingStartedAt,
       streamUpdatedAt: lifecycle.streamUpdatedAt,
       queuedAt: lifecycle.queuedAt,
+      note: noteOf(run),
       // Appendix A G-05. Already evaluated at ingest against the rollups the
       // engine had in hand, so this is a projection, not a computation — and
       // `null` is preserved rather than defaulted to `[]`, because "this run
@@ -178,4 +179,20 @@ export function warmupMsOf(engineOptions: unknown): number | null {
   const raw = (engineOptions as Record<string, unknown>)['warmupMs'];
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) return null;
   return raw;
+}
+
+/**
+ * The run's note on the wire, or null for none — ONE helper for BOTH identity
+ * builders, `toResponse` and `respondWithRun`'s hand-written 202. A note
+ * written while a run streams is read through the 202, so a field sent only
+ * by `toResponse` would vanish until the run finished: the warmupMs lesson,
+ * with its guard written first.
+ */
+export function noteOf(run: RunRecord): RunNote | null {
+  if (run.note === null) return null;
+  return {
+    text: run.note,
+    updatedAt: run.noteUpdatedAt === null ? null : run.noteUpdatedAt.toISOString(),
+    updatedBy: run.noteAuthorName === null ? null : { name: run.noteAuthorName },
+  };
 }
