@@ -1,7 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readFileSync, copyFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Readable } from 'node:stream';
 import { createPool, createPrisma, SCHEMA_TABLES } from '@perfportal/persistence';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { BlobStore } from '@perfportal/storage';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
+import { PipelineService } from '../src/pipeline/pipeline.service.js';
 import { attachLiveRunToTest, numberRunForTest } from '../src/pipeline/run-number.js';
 
 /**
@@ -178,5 +186,57 @@ describe('the pipeline deciding the number at finalize', () => {
 
     expect([...numbers].sort((x, y) => x! - y!)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(await counterOf(test.id)).toBe(9);
+  });
+});
+
+const FIXTURE_LOG = fileURLToPath(
+  new URL('../../../fixtures/gatling-3.15.1.2/reference-report/simulation.log', import.meta.url),
+);
+const blobs = new BlobStore(config.blob);
+let bundle: Buffer;
+
+beforeAll(async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'runno-'));
+  mkdirSync(join(dir, 'run-1'), { recursive: true });
+  copyFileSync(FIXTURE_LOG, join(dir, 'run-1', 'simulation.log'));
+  execFileSync('tar', ['-czf', join(dir, 'bundle.tgz'), '-C', dir, 'run-1']);
+  bundle = readFileSync(join(dir, 'bundle.tgz'));
+  await blobs.ensureBucket();
+});
+
+/** A pending upload of the reference bundle, the shape POST /v1/runs leaves. */
+async function pendingUpload(): Promise<string> {
+  const key = `runs/${projectId}/${randomUUID()}.tgz`;
+  await blobs.putStream(key, Readable.from([bundle]), 100_000_000);
+  const run = await prisma.run.create({
+    data: {
+      orgId, projectId, status: 'pending', tool: 'gatling',
+      bundleKey: key,
+      bundleSha256: createHash('sha256').update(bundle).digest('hex'),
+      bundleBytes: BigInt(bundle.length),
+      startedAt: new Date('2026-08-07T10:00:00Z'),
+      startedOn: new Date('2026-08-07T00:00:00Z'),
+      engineOptions: {},
+    },
+  });
+  return run.id;
+}
+
+describe('the pipeline, end to end', () => {
+  /** THE WIRING, not the statement: two real uploads of one simulation,
+   *  processed by the real PipelineService, land in one auto-created test as
+   *  Run 1 and Run 2. Removing the call from the pipeline fails this alone. */
+  it('numbers two uploads of one simulation 1 then 2', async () => {
+    const pipeline = new PipelineService(config, prisma, pool, blobs);
+    const first = await pendingUpload();
+    await pipeline.process(first);
+    const second = await pendingUpload();
+    await pipeline.process(second);
+
+    const a = await numberOf(first);
+    const b = await numberOf(second);
+    expect(a.testId).not.toBeNull();
+    expect(b.testId).toBe(a.testId);
+    expect([a.runNumber, b.runNumber]).toEqual([1, 2]);
   });
 });
