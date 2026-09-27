@@ -68,7 +68,11 @@ const ROWS: RunListResponse['items'] = [
   },
 ] as unknown as RunListResponse['items'];
 
-function renderList(items = ROWS, initialEntry = '/runs') {
+function renderList(
+  items = ROWS,
+  initialEntry = '/runs',
+  props: { projectSlug?: string; testSlug?: string } = {},
+) {
   vi.stubGlobal(
     'fetch',
     vi.fn(() =>
@@ -84,7 +88,7 @@ function renderList(items = ROWS, initialEntry = '/runs') {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
-        <RunList />
+        <RunList {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -351,5 +355,18 @@ describe('RunList — a run’s id is copyable from its card', () => {
       const button = within(card).getByRole('button', { name: `Copy run id ${id}` });
       expect(button).toHaveClass('h-9', 'w-9');
     }
+  });
+});
+
+describe('RunList — a card names a numbered run by its number too', () => {
+  it('names a test’s numbered run "Run n" on its card too', async () => {
+    renderList(
+      [{ ...ROWS[0]!, runNumber: 12 }, ROWS[1]!] as unknown as RunListResponse['items'],
+      '/projects/checkout/tests/parity',
+      { projectSlug: 'checkout', testSlug: 'parity' },
+    );
+    expect(
+      await screen.findByRole('link', { name: 'View run 11111111-1111-4111-8111-111111111111' }),
+    ).toHaveTextContent(/^Run 12$/);
   });
 });

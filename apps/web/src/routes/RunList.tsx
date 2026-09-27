@@ -31,6 +31,7 @@ import { formatInstant } from './format';
 import { STATUS, VERDICT } from './marks';
 import { NEW_PROJECT_ROUTE, runPath } from './paths';
 import useDocumentTitle from '../useDocumentTitle';
+import { runName } from '../runNumber';
 
 type RunListItem = RunListResponse['items'][number];
 
@@ -1312,9 +1313,11 @@ function RunCard({
   const startedAt = run.toolStartedAt ?? run.startedAt;
   const isIngestTime = run.toolStartedAt == null;
   const label =
-    identifyByRunId || run.simulation === null || run.simulation === undefined
-      ? run.id.slice(0, 8)
-      : run.simulation;
+    identifyByRunId && run.runNumber !== null && run.runNumber !== undefined
+      ? runName(run.runNumber)
+      : identifyByRunId || run.simulation === null || run.simulation === undefined
+        ? run.id.slice(0, 8)
+        : run.simulation;
 
   return (
     <li
@@ -1495,8 +1498,14 @@ function RunRow({
                 simulation is what a reader is scanning for, falling back to the
                 short id for a run the worker has not parsed. Either way the
                 accessible name above carries the WHOLE id, because a column of
-                eight-character prefixes names nothing on its own. */}
-            {identifyByRunId || run.simulation === null || run.simulation === undefined ? (
+                eight-character prefixes names nothing on its own.
+
+                On a test's list a NUMBERED run is named by its number —
+                `Run 12`, spec 2026-09-27-run-number — which is what tells runs
+                of one test apart once they have one. */}
+            {identifyByRunId && run.runNumber !== null && run.runNumber !== undefined ? (
+              runName(run.runNumber)
+            ) : identifyByRunId || run.simulation === null || run.simulation === undefined ? (
               <code className="text-[0.75rem]">{run.id.slice(0, 8)}</code>
             ) : (
               run.simulation
