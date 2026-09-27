@@ -504,6 +504,58 @@ describe('useLiveRun', () => {
  * with a short lookback that simply loses those buckets for the rest of the
  * run.
  */
+/**
+ * ═══ A CHANGE OF RUN LEAVES NOTHING OF THE LAST ONE BEHIND ═══
+ *
+ * The `/runs/:runId` route is not keyed, so one `RunDetail` — and this hook's
+ * state — outlives a change of run. The effect's own resets run only when it
+ * runs ENABLED, and its cleanup deliberately keeps `lastDelta` for the frozen
+ * view ("freeze, do not blank", design §4.4). So a change to a run that opens
+ * no socket (a pending upload is passed `live` but never streams) kept the
+ * previous run's delta — tiles, charts, the strip's live span — under the new
+ * run's header, and a change to another live run kept it until that run's
+ * first frame.
+ *
+ * The frozen view is the other half, and the pair is the point: a fix that
+ * blanks on every disable would satisfy the first two cases and break it.
+ */
+describe('useLiveRun — a change of run', () => {
+  const OTHER_RUN_ID = '00000000-0000-4000-8000-000000000002';
+
+  async function liveOn(runId: string) {
+    const client = new QueryClient();
+    const hook = renderHook(({ id, on }: { id: string; on: boolean }) => useLiveRun(id, on), {
+      wrapper: wrapperFor(client),
+      initialProps: { id: runId, on: true },
+    });
+    await send({ type: 'snapshot', delta: deltaFixture(), partial: true, lastSeq: 0 });
+    expect(hook.result.current.lastDelta?.runId).toBe(RUN_ID);
+    expect(hook.result.current.partial).toBe(true);
+    return hook;
+  }
+
+  it('drops the last run’s delta the moment a run that never streams replaces it', async () => {
+    const { result, rerender } = await liveOn(RUN_ID);
+    rerender({ id: OTHER_RUN_ID, on: false });
+    expect(result.current.lastDelta).toBeNull();
+    expect(result.current.partial).toBe(false);
+  });
+
+  it('drops it before any frame of the next live run arrives', async () => {
+    const { result, rerender } = await liveOn(RUN_ID);
+    rerender({ id: OTHER_RUN_ID, on: true });
+    expect(result.current.lastDelta).toBeNull();
+    expect(result.current.partial).toBe(false);
+    expect(result.current.connected).toBe(false);
+  });
+
+  it('keeps the same run’s delta when its socket is turned off — the frozen view', async () => {
+    const { result, rerender } = await liveOn(RUN_ID);
+    rerender({ id: RUN_ID, on: false });
+    expect(result.current.lastDelta?.runId).toBe(RUN_ID);
+  });
+});
+
 describe('useLiveRun — a dropped delta', () => {
   it('reconnects from the last delta it applied when a seq is skipped', async () => {
     const client = new QueryClient();
