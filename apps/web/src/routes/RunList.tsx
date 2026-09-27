@@ -1227,6 +1227,13 @@ function RunCards({
  * to one without a note. `run-note.spec.ts` pins exactly that — the note's
  * own height and width, alongside the reach the earlier (false) claim here
  * was actually describing.
+ *
+ * WHERE EACH ONE BINDS, measured, because "the design" is not "decoration":
+ * the clamp binds everywhere (a 500-character note is 954 px tall at 768
+ * without it). The measure does NOT bind in the table today — the note is
+ * 70-183 px wide there against 32ch's 242 — and DOES on a phone's card
+ * (`RunCard`, block layout), where an uncapped note runs 317 px, the card's
+ * full width. That phone case is the spec's proof the measure can fail.
  */
 function NoteLine({ note }: { readonly note: string | null | undefined }) {
   if (note == null) return null;
