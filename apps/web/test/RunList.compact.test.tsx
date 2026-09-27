@@ -330,3 +330,26 @@ describe('RunList — a card carries the run’s note too', () => {
     expect(line.closest('[data-testid="run-row"]')).not.toBeNull();
   });
 });
+
+/**
+ * ═══ THE CARD CARRIES THE COPY BUTTON TOO, AT A SIZE A FINGER CAN HIT ═══
+ * (backlog #4)
+ *
+ * A phone is where a reader is least able to open a run and read its id off
+ * the address bar, so dropping the button from the card would put the
+ * feature exactly where it is needed least. The SIZE is asserted as the
+ * classes because jsdom lays nothing out: `size` is a required prop precisely
+ * because the table's 24 px target would pass every test that does not tap it.
+ */
+describe('RunList — a run’s id is copyable from its card', () => {
+  it('names the button after the run and sizes it for touch', async () => {
+    renderList();
+    const cards = await screen.findAllByTestId('run-row');
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) {
+      const id = card.getAttribute('data-run-id')!;
+      const button = within(card).getByRole('button', { name: `Copy run id ${id}` });
+      expect(button).toHaveClass('h-9', 'w-9');
+    }
+  });
+});

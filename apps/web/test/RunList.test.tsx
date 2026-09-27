@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunListResponse } from '@perfportal/contracts';
@@ -469,5 +469,68 @@ describe('RunList — a run’s note is read without opening it', () => {
     expect(lines[0]).toHaveTextContent('Note: flaky environment, ignore');
     const cell = lines[0]!.closest('td');
     expect(cell).toHaveAttribute('data-testid', 'run-simulation');
+  });
+});
+
+/**
+ * ═══ A RUN'S ID, ONE CLICK FROM ITS ROW ═══ (backlog #4)
+ *
+ * The case that earns its place is a TEST'S list, where the row shows an
+ * 8-character prefix: a button that copied what the row DISPLAYS would copy
+ * something no endpoint takes, and on the org-wide list — where the row shows
+ * the simulation — the same mistake would copy a class name. So the list
+ * under test is the one whose display and id disagree most, and the copied
+ * value is compared with the row's own `data-run-id`, not a literal.
+ */
+describe('RunList — a run’s id is copyable from its row', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'clipboard');
+  });
+
+  it('copies the FULL run id from each row, even where the row shows only its prefix', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+    renderList(ROWS, '/projects/checkout/tests/parity', {
+      projectSlug: 'checkout',
+      testSlug: 'parity',
+    });
+
+    const rows = await screen.findAllByTestId('run-row');
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      const id = row.getAttribute('data-run-id')!;
+      const link = within(row).getByRole('link', { name: `View run ${id}` });
+      // The fixture has to show LESS than the id, or this case cannot tell a
+      // button that copies the id from one that copies the display.
+      expect(link.textContent!.length).toBeGreaterThan(0);
+      expect(link.textContent!.length).toBeLessThan(id.length);
+
+      const button = within(row).getByRole('button', { name: `Copy run id ${id}` });
+      // Beside the link, never inside it: a click on the button must not also
+      // be a click on the link.
+      expect(link).not.toContainElement(button);
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      expect(writeText).toHaveBeenLastCalledWith(id);
+    }
+    expect(writeText).toHaveBeenCalledTimes(rows.length);
+  });
+
+  /**
+   * One button per row, so a page of twenty-five runs holds twenty-five — and
+   * a status region each would be twenty-five permanently-empty live regions,
+   * the trap `ChartActions` records. Asserted over the whole LIST, because the
+   * component's own test cannot see what N copies of it add up to.
+   */
+  it('adds no live region to the list until a copy is made', async () => {
+    renderList(ROWS);
+    const rows = await screen.findAllByTestId('run-row');
+    expect(screen.getAllByTestId('copy-id')).toHaveLength(rows.length);
+    expect(screen.queryAllByRole('status')).toHaveLength(0);
   });
 });

@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **171 files / 2209 tests**, it
+`nvm use` first, and if a run reports fewer than **172 files / 2217 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -188,6 +188,122 @@ mutation was aimed by LINE instead.
 on its first run with no retries — every total the floor this branch cannot
 move, against a SCRATCH DATABASE (`perfportal_phone`), a scratch Redis INDEX
 (db 5) and e2e port 3200.
+
+The copyable-ids branch added ONE unit file —
+`apps/web/test/CopyIdButton.test.tsx` (4) — plus 2 cases to `RunList.test.tsx`
+and 1 each to `RunList.compact.test.tsx` and `ProjectTests.test.tsx`, from
+**171 / 2209 to 172 / 2217**. Integration is UNCHANGED at **154 / 1959** (every
+new test is a `.tsx`, which that config never runs — measured, not assumed)
+and **e2e rises to 165** (`apps/web/e2e/copy-ids.spec.ts`, 2). It is backlog
+item #4 of the Gatling Enterprise comparison: a run's id and a test's slug,
+one click from the list row that names them.
+
+**THE ROW COPIES WHAT AN ENDPOINT TAKES, NOT WHAT THE ROW SHOWS.** A test's
+run list shows an 8-character prefix and the org-wide list shows the
+simulation class; nothing that takes a run id accepts either. The button
+copies `run.id` whole, and its unit case runs on a TEST's list — the one whose
+display and id disagree most — comparing against each row's own `data-run-id`
+after first checking the link really shows less than the id. The tests
+catalogue now SHOWS each test's slug (what an upload's or a runner job's
+`test` field takes, and until now readable only from the address bar) and
+copies it; the fixture's name and slug differ, so copying the name fails.
+
+**ONE COMPONENT, AND IT NEVER CLAIMS A COPY THAT DID NOT HAPPEN.**
+`CopyIdButton` is named after its row ("Copy run id <uuid>" — twenty-five
+buttons called "Copy" is the duplicate-name defect this file records three
+times), always visible and muted (a hover-only control does not exist on
+touch), and holds a `role="status"` only while there is one — twenty-five
+permanently-empty live regions is the `ChartActions` trap, asserted over the
+whole LIST because the component's own test cannot see what N copies add up
+to. A plain-http page has no Clipboard API at all — the ordinary on-prem case
+`ALLOW_INSECURE_COOKIES` exists for — and a secure page can refuse the write;
+both show the value selectable instead. Optional-chaining `navigator.clipboard`
+would `await undefined` and report success.
+
+**EVERY EXISTING LAYOUT GUARD PASSED AGAINST THE FIRST VERSION, WHICH MADE
+EVERY ROW 19–24 PX TALLER.** With the button inline after the link, p95 and
+Errors — what `run-list.spec.ts` measures — did not move a pixel at any width.
+A throwaway probe measuring ROW HEIGHT found 75 -> 99 px at 768 and 41 -> 60
+at 1440. The cause is how an auto table sizes a column: below ~1400px this
+table is wider than its box, every column sits at its min-content, and the
+Simulation column's minimum is its HEADER WORD — "Simulation", 61px,
+`whitespace-nowrap` — because a `break-all` name can shrink to one character.
+An inline button adds to the column's max-content only, so the column did not
+grow and the button fell onto a line of its own.
+
+**THE SECOND ATTEMPT WAS WORSE, AND THE FIX NEEDED BOTH HALVES.** A grid giving
+the button its own track kept it on the name's first line — and took its 24px
+out of the name's 61, so rows at 768 went 75 -> 134. The column's MINIMUM had
+to move: the header reserves the button (`pr-9`) and the grid keeps the name
+the width it had. Measured after, "before" being the same tree with the button
+hidden and the header's padding restored by injected CSS, on a page carrying
+the 56-character class beside short ones:
+
+```
+                 before                   after
+  768 / 1024     rows 75/76/76/153        rows unchanged; p95 490 -> 514,
+                 p95 490, Errors 556      Errors 556 -> 580 (of 726 / 694)
+  1440           rows 41/41/41/75         41/56/56/75
+  375, cards     155 each                 170 where the name wraps once more
+```
+
+**AT 1440 AND ON A PHONE IT STILL COSTS A LINE, RECORDED RATHER THAN DENIED.**
+At 1440 the table fits its box with every other column at full width, so
+Simulation gets the leftover and a name within 24px of its edge gains a line;
+on a card the name shares its line with the badges. Both are inherent to
+putting the button beside the name. `IdentityCell`'s docstring carries the
+same numbers where the next reader will be.
+
+**THE BROWSER CASE PINS EACH HALF WITH ITS OWN ASSERTION**, at 768 and 1024:
+
+```
+  the header reserves nothing   "the name has 37px beside the button, under the header's 61px"
+  the button inline, no track   "the button fell onto a line of its own"
+```
+
+**AND A CLICK THAT COPIES AND NAVIGATES SATISFIES EVERY CLIPBOARD ASSERTION.**
+With the button moved inside the link, the browser case read the right id back
+off the clipboard — and was on `/runs/<id>`. Only the URL assertion after the
+read caught it, which is why that line is there.
+
+**`npx prettier` IS NOT THIS REPO'S FORMATTER — THERE IS NONE.** Reached for to
+tidy an indentation, it fetched a foreign Prettier 3.9.9 and rewrote 432 lines
+of `RunList.tsx` this change never touched. Restored from the checkpoint and
+re-applied with the indentation set by hand. `eslint` is the only style gate,
+and a `git diff --stat` ten times the size of the change is the tell.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE:**
+
+```
+  unit     RunRow copies the displayed prefix   the full-id case alone
+           the button moved inside the link     the same case, on not.toContainElement
+           the card takes the row size          the card case alone
+           the test row copies the name         the slug case alone
+           the test row shows no slug           the slug case alone
+           a status mounted while idle          the component's quiet case AND the list's
+           optional-chained clipboard           the no-clipboard case alone
+           the acknowledgement never lapses     the component's quiet case alone
+  browser  the row copies the prefix            Expected "<uuid>", Received its first 8 chars
+           the test row copies the name         Expected "payments-sweep", Received "Payments sweep"
+           the button moved inside the link     the URL assertion, AFTER a clipboard read that passed
+```
+
+The status mutation fails two cases because both assert the one claim — no
+live region until a copy — at two scales.
+
+**AND THE PROBE FOUND A PRE-EXISTING DEFECT, TAKEN AS ITS OWN TASK.** At 375px
+a TEST's own page is 492px wide: its header's action cluster (Compare latest 2 /
+Rename / Delete test / Project runs) is `shrink-0`, so the whole document
+scrolls sideways. Measured with this branch's changes neutralised, so it is not
+this branch's.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **172 / 2217**, the prediction exactly, zero `Errors` lines, on the
+final tree; `test:integration` **154 / 1959, exit 0, zero failures** — on the
+tree before the layout fix, and it cannot move: every commit after touches a
+`.tsx` or a spec alone; `pnpm test:e2e` **165 passed, exit 0**, on its first
+run with no retries. All against a SCRATCH DATABASE
+(`perfportal_copyid`) and a scratch Redis INDEX (db 9).
 
 The session-required-wording branch added no unit FILE and no unit case —
 unit stays **169 / 2181**, since every test file it touches is an
