@@ -10,6 +10,7 @@ import { runComparePath, runTrendsPath } from './paths';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
+import RunNote from './RunNote';
 import { peakConcurrentUsers } from './runUsers';
 import RunTabs from './RunTabs';
 import LiveStatusStrip from './LiveStatusStrip';
@@ -192,6 +193,7 @@ export default function RunShell({
              disclosure on a phone, and a `<details>`'s open state is the one
              thing a media query cannot set. See `RunHeader`'s own note. */
           compact={compact}
+          note={<RunNote runId={identity.id} note={identity.note} />}
         />
         <RunLifecycle
           steps={lifecycleSteps({ identity, status, verdict, assertions, liveSpanMs: liveSpanOf(live) })}
