@@ -147,9 +147,11 @@ on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
 The test-page-phone-overflow branch added no unit FILE, no unit case and no
-spec — it WIDENED one existing e2e case — so unit stays **171 / 2209**,
-integration **154 / 1959** and **e2e stays 163**. It is the defect the
-copyable-ids branch's probe found and recorded as taken separately.
+spec — it WIDENED one existing e2e case — so it moves no floor. Cut at
+171 / 2209, integration 154 / 1959 and e2e 163, it sits on copyable-ids,
+which merged underneath it: unit **172 / 2217**, integration **154 / 1959**
+and **e2e 165**. It is the defect the copyable-ids branch's probe found and
+recorded as taken separately.
 
 **A TEST'S OWN PAGE WAS 492px WIDE ON A 375px PHONE.** The header's action
 cluster on `/projects/:slug/tests/:testSlug` — Compare latest 2, Rename,
@@ -188,6 +190,26 @@ mutation was aimed by LINE instead.
 on its first run with no retries — every total the floor this branch cannot
 move, against a SCRATCH DATABASE (`perfportal_phone`), a scratch Redis INDEX
 (db 5) and e2e port 3200.
+
+**RE-MEASURED AFTER MERGING `main`**, where copyable-ids had just landed:
+`typecheck` and `lint` exit 0; `test:unit` **172 / 2217**, zero `Errors`
+lines; `test:integration` **154 / 1959, exit 0**; `pnpm test:e2e`
+**165 passed, exit 0** — the two branches' arithmetic exactly. The merged
+tree is also the only one where the widened 320/414 case can check the
+COMBINATION: a test's page at those widths draws its runs as cards, and
+each card now carries copyable-ids' 36px copy button.
+
+**THAT e2e FIGURE IS THE SECOND RUN, AND THE FIRST IS RECORDED RATHER THAN
+DROPPED.** It collected 165 and failed ONE: `run-charts.spec.ts`'s "a chart
+can fill the screen", zero of nine plots drawn. The error context shows
+why, and it is not a chart: the page was `AuthGate`'s "PerfPortal is not
+answering" over `Failed to fetch` — the browser's request never reached the
+API at all, at **3,626 free pages** (under the 4,390 this file already calls
+untrustworthy) and a load that ended at 31.8. Neither branch touches a chart
+or the API. **Read the error context's page snapshot before the assertion**:
+"expected 9, received 0" names a chart; the snapshot names the outage.
+That file then passed **26 / 26 three times alone**, and the whole suite
+passed on the re-run above. No test failed twice.
 
 The copyable-ids branch added ONE unit file —
 `apps/web/test/CopyIdButton.test.tsx` (4) — plus 2 cases to `RunList.test.tsx`
