@@ -37,6 +37,11 @@ import { CheckIcon, CopyIcon } from './icons';
  * success, which is the bug the token screen shipped once. Both failures end
  * in one honest state: the value is on screen, selectable, with nothing
  * claimed about WHY — the reader's next step is the same either way.
+ *
+ * `col-span-full` on that message is for the run list, which lays the button
+ * out as a second grid track beside the name (`IdentityCell` there): the
+ * message then takes a row of its own under both instead of being squeezed
+ * into the button's 24 px track. Outside a grid it does nothing.
  */
 type CopyState = 'idle' | 'copied' | 'failed';
 
@@ -95,7 +100,7 @@ export default function CopyIdButton({
         aria-label={label}
         title={label}
         data-testid="copy-id"
-        className={`transition-ui ml-1 inline-flex ${box} shrink-0 items-center justify-center rounded-md align-middle text-muted hover:bg-sunken hover:text-primary`}
+        className={`transition-ui inline-flex ${box} shrink-0 items-center justify-center rounded-md align-middle text-muted hover:bg-sunken hover:text-primary`}
       >
         {state === 'copied' ? <CheckIcon className={glyph} /> : <CopyIcon className={glyph} />}
       </button>
@@ -105,7 +110,7 @@ export default function CopyIdButton({
         </span>
       )}
       {state === 'failed' && (
-        <span role="status" className="ml-1 text-[0.6875rem] font-normal text-muted">
+        <span role="status" className="col-span-full ml-1 text-[0.6875rem] font-normal text-muted">
           Not copied — select it here:{' '}
           <code className="select-all break-all text-primary">{value}</code>
         </span>

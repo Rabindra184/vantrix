@@ -346,7 +346,11 @@ export default function RunList({
                         Project
                       </th>
                     )}
-                    <th scope="col" className={TH}>
+                    {/* `pr-9` RESERVES THE COPY BUTTON'S TRACK (backlog #4):
+                        the header's own 0.75rem plus the button's 24px. See
+                        `IdentityCell` for why the header is where it has to
+                        go. */}
+                    <th scope="col" className={`${TH} pr-9`}>
                       {testSlug === null ? 'Simulation' : 'Run'}
                     </th>
                     <th scope="col" className={TH}>
@@ -1259,6 +1263,40 @@ function NoteLine({ note }: { readonly note: string | null | undefined }) {
   );
 }
 
+/**
+ * ═══ THE NAME AND ITS COPY BUTTON, AS TWO TRACKS ═══ (backlog #4)
+ *
+ * MEASURED, the obvious markup — the button inline after the link — made rows
+ * 19 to 24 px taller at every width from 768 to 1440 while p95 and Errors did
+ * not move: the button fell onto a line of its own. Below ~1400px this table
+ * is wider than its box, so every column sits at its MINIMUM, and the
+ * Simulation column's minimum is its header word ("Simulation", 61px,
+ * `whitespace-nowrap`) — a `break-all` name can shrink to one character. The
+ * column never grew for the button, so the button took its width out of the
+ * name's.
+ *
+ * THE FIX HAS TWO HALVES AND NEEDS BOTH. The header reserves the button's
+ * 24px (`pr-9` on it, in the table head above), which moves the column's
+ * minimum; this grid gives the button a track the name cannot flow under, so
+ * the name keeps exactly the width it had. The grid ALONE measured worse: the
+ * name lost 28 of its 61px and rows at 768 went from 75 to 134px.
+ * `minmax(0, 1fr)` is what still lets a long class break.
+ *
+ * WHAT IT STILL COSTS, measured with the 56-character class beside short ones:
+ *
+ *   768 / 1024   rows unchanged; p95 490 -> 514, Errors 556 -> 580 (of 726 / 694)
+ *   1440         the table fits its box and this column gets the leftover, so
+ *                a name within 24px of its edge gains a line (41 -> 56px)
+ *   375, cards   the name shares a line with the badges; a card whose name
+ *                wraps once more grows 15px (155 -> 170)
+ *
+ * Inherent to putting the button beside the name, which is where a reader
+ * looks for the id of the thing they are reading.
+ */
+function IdentityCell({ children }: { readonly children: ReactNode }) {
+  return <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start">{children}</div>;
+}
+
 function RunCard({
   run,
   showProject,
@@ -1286,16 +1324,18 @@ function RunCard({
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div data-testid="run-simulation" className="min-w-0">
-          <Link
-            to={runPath(run.id)}
-            aria-label={`View run ${run.id}`}
-            className="transition-ui font-medium break-all text-accent hover:underline hover:underline-offset-2"
-          >
-            {label}
-          </Link>
-          {/* A finger has to hit it on a phone, so the card takes the touch
-              size; the value is the WHOLE id either way (backlog #4). */}
-          <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="touch" />
+          <IdentityCell>
+            <Link
+              to={runPath(run.id)}
+              aria-label={`View run ${run.id}`}
+              className="transition-ui font-medium break-all text-accent hover:underline hover:underline-offset-2"
+            >
+              {label}
+            </Link>
+            {/* A finger has to hit it on a phone, so the card takes the touch
+                size; the value is the WHOLE id either way (backlog #4). */}
+            <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="touch" />
+          </IdentityCell>
           <NoteLine note={run.note} />
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -1443,29 +1483,31 @@ function RunRow({
             the row borders; the colour still distinguishes it from the plain
             text beside it, and `underline-offset` keeps the rule off the
             descenders when it does appear. */}
-        <Link
-          to={runPath(run.id)}
-          aria-label={`View run ${run.id}`}
-          className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
-        >
-          {/* On a test's list the simulation is the page's own heading, so
-              repeating it down every row says nothing; the short id is what
-              distinguishes these runs from each other. Elsewhere the
-              simulation is what a reader is scanning for, falling back to the
-              short id for a run the worker has not parsed. Either way the
-              accessible name above carries the WHOLE id, because a column of
-              eight-character prefixes names nothing on its own. */}
-          {identifyByRunId || run.simulation === null || run.simulation === undefined ? (
-            <code className="text-[0.75rem]">{run.id.slice(0, 8)}</code>
-          ) : (
-            run.simulation
-          )}
-        </Link>
-        {/* The FULL id, whatever the link shows: a test's list displays an
-            8-character prefix, and nothing that takes a run id accepts one
-            (backlog #4). Beside the link rather than inside it, so a click
-            meant for the button never navigates. */}
-        <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="row" />
+        <IdentityCell>
+          <Link
+            to={runPath(run.id)}
+            aria-label={`View run ${run.id}`}
+            className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
+          >
+            {/* On a test's list the simulation is the page's own heading, so
+                repeating it down every row says nothing; the short id is what
+                distinguishes these runs from each other. Elsewhere the
+                simulation is what a reader is scanning for, falling back to the
+                short id for a run the worker has not parsed. Either way the
+                accessible name above carries the WHOLE id, because a column of
+                eight-character prefixes names nothing on its own. */}
+            {identifyByRunId || run.simulation === null || run.simulation === undefined ? (
+              <code className="text-[0.75rem]">{run.id.slice(0, 8)}</code>
+            ) : (
+              run.simulation
+            )}
+          </Link>
+          {/* The FULL id, whatever the link shows: a test's list displays an
+              8-character prefix, and nothing that takes a run id accepts one
+              (backlog #4). Beside the link rather than inside it, so a click
+              meant for the button never navigates. */}
+          <CopyIdButton value={run.id} label={`Copy run id ${run.id}`} size="row" />
+        </IdentityCell>
         <NoteLine note={run.note} />
       </td>
       <td className={TD}>
