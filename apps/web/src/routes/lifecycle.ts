@@ -1,5 +1,5 @@
 import type { Assertion, RunIdentity, RunResponse, RunVerdict } from '@perfportal/contracts';
-import { releaseWord } from './decision';
+import { releaseWord, rulesRan } from './decision';
 import { formatClockTime, formatDuration } from './format';
 
 /**
@@ -228,7 +228,7 @@ export function lifecycleSteps(input: LifecycleInput): LifecycleStep[] {
     judged
       ? {
           name: 'verdict',
-          text: `Verdict: ${releaseWord(verdict, assertions)}`,
+          text: `Verdict: ${releaseWord(verdict, assertions, rulesRan(status, identity.durationMs))}`,
           state: 'done',
           startMs: ingested,
           endMs: ingested,

@@ -49,4 +49,12 @@ test('an incomplete run says its load test stopped early', async ({ page }) => {
   await page.goto(runPath(runId));
 
   await expect(page.getByRole('region', { name: 'Run lifecycle' })).toContainText(/stopped early/i);
+
+  // AND IT WAS NEVER JUDGED. This seeded run is the unprocessed shape — the
+  // real API answers it with `assertions: []` and no `durationMs` — so the
+  // band and the strip must say "Not evaluated", never "Not configured", a
+  // claim about a project whose rules simply never ran (`rulesRan`).
+  await expect(page.getByTestId('decision-word')).toHaveText(/^not evaluated$/i);
+  await expect(page.getByTestId('outcome-gates')).toContainText(/left nothing to judge/i);
+  await expect(page.getByTestId('lifecycle-verdict')).toContainText('Verdict: Not evaluated');
 });

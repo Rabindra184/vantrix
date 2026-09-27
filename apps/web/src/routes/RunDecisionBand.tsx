@@ -7,7 +7,7 @@ import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
 import { ASSERTION_OUTCOME, STATUS, VERDICT, type Mark } from './marks';
 import { countAssertions, firstFailedAssertion, type AssertionCounts } from './assertions';
-import { decisionOf, releaseWord, type Decision } from './decision';
+import { decisionOf, releaseWord, rulesRan, type Decision } from './decision';
 import { runComparePath, runPath } from './paths';
 import { downloadRunSummary, runSummaryJson } from './runExport';
 
@@ -99,13 +99,22 @@ export default function RunDecisionBand({
   /* `evaluated` treats `[]` as evaluated, which is what produced "0 passed ·
      0 failed" over a project with no rules at all — three zeros that read as
      health. For THIS row the distinction is the whole point: an empty list
-     means nothing judged the run, which is not the same as nothing failing. */
+     means nothing judged the run, which is not the same as nothing failing.
+
+     AND AN EMPTY LIST IS "NOT CONFIGURED" ONLY IF THE RULES RAN. An incomplete
+     run nothing processed carries `[]` because no rule ever ran against it
+     (`rulesRan`, `decision.ts`), and "not configured" was a false claim about
+     its project; "not reported yet" would be false too, since it never will
+     be. It gets its own words. */
+  const ran = rulesRan(status, identity.durationMs);
   const gatesText =
     assertions === undefined
       ? 'not reported yet'
-      : assertions.length === 0
-        ? 'not configured — no SLA rule judged this run'
-        : `${counts.passed} passed · ${counts.failed} failed`;
+      : !ran
+        ? 'not evaluated — the run left nothing to judge'
+        : assertions.length === 0
+          ? 'not configured — no SLA rule judged this run'
+          : `${counts.passed} passed · ${counts.failed} failed`;
   const failed = firstFailedAssertion(assertions ?? []);
   const decision: Decision = decisionOf(verdict);
   /* ═══ "Not configured" IS NOT "Not evaluated" (review 09-13 copy table) ═══
@@ -129,7 +138,7 @@ export default function RunDecisionBand({
   // The expression this comment argues lives in `releaseWord` (`decision.ts`)
   // now, so the lifecycle strip's Verdict step reads the same word by calling
   // the same function, rather than by agreeing with a copy of it.
-  const word = releaseWord(verdict, assertions);
+  const word = releaseWord(verdict, assertions, ran);
   /* RENDERED FROM THE FIELDS, NOT THE STORED MESSAGE. `failed.message` is
      written by `packages/sla`'s own `describe` as the stored schema read
      aloud — `error_rate of the run (response_time) ≤ 0.01 — actual
@@ -144,7 +153,7 @@ export default function RunDecisionBand({
      answers null and the evaluator's own words say why nothing was checked. */
   const detail =
     (failed ? (describeSlaOutcome(failed) ?? failed.message) : null) ??
-    decisionDetail(decision, counts);
+    decisionDetail(decision, counts, status, ran);
   const runId = identity.id;
   const exportRun = () =>
     downloadRunSummary(
@@ -463,10 +472,23 @@ function decisionColour(decision: Decision, counts: AssertionCounts): string {
   return DECISION[decision].colour;
 }
 
-function decisionDetail(decision: Decision, counts: AssertionCounts): string {
+function decisionDetail(
+  decision: Decision,
+  counts: AssertionCounts,
+  status: RunResponse['status'],
+  /** `rulesRan` — see `gatesText`. */
+  ran: boolean,
+): string {
   if (decision === 'failed') return 'One or more SLA rules failed. Start with the failed gates below.';
   if (decision === 'passed') return 'All evaluated SLA rules passed for this run.';
-  if (decision === 'not_evaluated') return 'This run completed, but no SLA rule produced a release verdict.';
+  if (decision === 'not_evaluated') {
+    // "This run completed" was said of incomplete runs too, and "no SLA rule
+    // produced a release verdict" of runs no rule ever ran against.
+    if (!ran) return 'The stream stopped before anything could be processed, so no SLA rule ran.';
+    return status === 'incomplete'
+      ? 'The stream stopped early, and no SLA rule produced a release verdict.'
+      : 'This run completed, but no SLA rule produced a release verdict.';
+  }
   if (counts.failed > 0) return 'Gate results are available, but the run verdict is still resolving.';
   if (decision === 'none') return 'This run carries no release verdict yet.';
   return 'The run has not finished evaluation yet.';
