@@ -449,9 +449,14 @@ describe('RunList — a row carries enough to triage on', () => {
  * ═══ THE NOTE LINE ═══ (docs/superpowers/specs/2026-09-27-run-note-design.md)
  *
  * The text alone, under the simulation, so "ignore this run" is read before
- * anyone opens it. Width-capped and clamped: an unwrapped note would widen
- * the Simulation column and push p95 and Errors off screen — which
- * run-note.spec.ts measures in a browser, because jsdom lays nothing out.
+ * anyone opens it. `max-w-[32ch]` and `line-clamp-2` are a readable measure
+ * and at most two lines — not what keeps the Simulation column narrow, which
+ * is the table's own automatic layout wrapping the note between words.
+ * `run-note.spec.ts` measures how far that reach actually goes, in a browser,
+ * because jsdom lays nothing out: a long sentence stays within p95 and
+ * Errors at every width, and a 300-character unbroken token (a URL, with no
+ * break opportunity at all) did push Errors off screen before `NoteLine`
+ * wrapped anywhere rather than only between words.
  */
 describe('RunList — a run’s note is read without opening it', () => {
   it('shows the note under the simulation, and nothing for a run without one', async () => {
