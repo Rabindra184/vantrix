@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   createPool,
   createPrisma,
   ProjectRepository,
+  RUN_SEARCH_COLUMNS,
   RunRepository,
   TokenRepository,
 } from '../src/index.js';
@@ -282,17 +284,19 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
     // for whichever unrelated test drew that connection next — a leak of
     // exactly the shape `TZ` already caused in the trends suite. `SET LOCAL`
     // reverts at commit.
+    // BUILT FROM THE SAME CONSTANT list() builds from. This used to restate
+    // the predicate by hand, so a column added to the real query stayed green
+    // here while nothing checked it was indexed. Now a column added to
+    // RUN_SEARCH_COLUMNS without its run_<column>_trgm index fails below,
+    // naming the index.
+    const predicate = RUN_SEARCH_COLUMNS.map((c) => `r.${c} ILIKE $2 ESCAPE '\\'`).join(' OR ');
     const plan = await prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
       return tx.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
         `EXPLAIN (COSTS OFF)
        SELECT r.id FROM run r
         WHERE r.org_id = $1::uuid
-          AND (r.simulation ILIKE $2 ESCAPE '\\'
-            OR r.description ILIKE $2 ESCAPE '\\'
-            OR r.environment ILIKE $2 ESCAPE '\\'
-            OR r.branch ILIKE $2 ESCAPE '\\'
-            OR r.commit_sha ILIKE $2 ESCAPE '\\')`,
+          AND (${predicate})`,
         orgId,
         '%search-plan%',
       );
@@ -302,13 +306,8 @@ describe('RunRepository.list — optional projectId (session vs token scope)', (
     // Guard first: EXPLAIN really did return a plan, so the assertions below
     // are about its contents and not about an empty string.
     expect(text.length).toBeGreaterThan(0);
-    for (const index of [
-      'run_simulation_trgm',
-      'run_description_trgm',
-      'run_environment_trgm',
-      'run_branch_trgm',
-      'run_commit_sha_trgm',
-    ]) {
+    expect(RUN_SEARCH_COLUMNS).toContain('note');
+    for (const index of RUN_SEARCH_COLUMNS.map((c) => `run_${c}_trgm`)) {
       expect(text, `${index} is not reachable by the search predicate`).toContain(index);
     }
     expect(text).toContain('BitmapOr');
@@ -366,5 +365,113 @@ describe('TokenRepository', () => {
     expect(t?.scopes).toEqual(['ingest']);
     expect(t?.revokedAt).toBeNull();
     expect(await repo.findByPrefix('pp_live_missing')).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE RUN NOTE ═══
+ * (docs/superpowers/specs/2026-09-27-run-note-design.md)
+ *
+ * Three columns written together by setNote and nothing else: the text, when,
+ * and who. The author is a Better Auth user id, ON DELETE SET NULL, so a
+ * deleted account keeps its words and loses only the attribution.
+ */
+describe('RunRepository — the note', () => {
+  async function person(name = 'Asha') {
+    return prisma.user.create({
+      data: { id: randomUUID(), name, email: `${randomUUID()}@example.test` },
+    });
+  }
+
+  it('writes the text with its time and author, and reads all three back', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    const run = await repo.create(runInput(orgId, a));
+    const asha = await person();
+
+    const before = Date.now();
+    const written = await repo.setNote({ orgId }, run.id, { text: 'flaky environment, ignore', userId: asha.id });
+
+    expect(written?.note).toBe('flaky environment, ignore');
+    expect(written?.noteAuthorName).toBe('Asha');
+    expect(written?.noteUpdatedAt?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    const again = await repo.findById({ orgId }, run.id);
+    expect(again?.note).toBe('flaky environment, ignore');
+    expect(again?.noteAuthorName).toBe('Asha');
+  });
+
+  it('clears the text, the time and the author together', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    const run = await repo.create(runInput(orgId, a));
+    const asha = await person();
+    await repo.setNote({ orgId }, run.id, { text: 'temporary', userId: asha.id });
+
+    const cleared = await repo.setNote({ orgId }, run.id, { text: null, userId: asha.id });
+
+    expect(cleared?.note).toBeNull();
+    expect(cleared?.noteUpdatedAt).toBeNull();
+    expect(cleared?.noteAuthorName).toBeNull();
+    const [row] = await prisma.$queryRawUnsafe<{ note_updated_by: string | null }[]>(
+      'SELECT note_updated_by FROM run WHERE id = $1::uuid',
+      run.id,
+    );
+    expect(row?.note_updated_by).toBeNull();
+  });
+
+  it('refuses to write a run in another org, and leaves it untouched', async () => {
+    const { orgId, a } = await seed();
+    const other = await prisma.org.create({ data: { slug: 'other', name: 'Other' } });
+    const repo = new RunRepository(prisma);
+    const run = await repo.create(runInput(orgId, a));
+    const asha = await person();
+
+    await expect(
+      repo.setNote({ orgId: other.id }, run.id, { text: 'not yours', userId: asha.id }),
+    ).resolves.toBeNull();
+    expect((await repo.findById({ orgId }, run.id))?.note).toBeNull();
+  });
+
+  it('carries the note and its author through the run list', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    const noted = await repo.create(runInput(orgId, a));
+    const plain = await repo.create(runInput(orgId, a, { startedAt: new Date('2026-08-07T11:00:00Z') }));
+    const asha = await person();
+    await repo.setNote({ orgId }, noted.id, { text: 'baseline after the cache change', userId: asha.id });
+
+    const page = await repo.list({ orgId }, { limit: 10 });
+    const byId = new Map(page.items.map((r) => [r.id, r]));
+    expect(byId.get(noted.id)?.note).toBe('baseline after the cache change');
+    expect(byId.get(noted.id)?.noteAuthorName).toBe('Asha');
+    expect(byId.get(plain.id)?.note).toBeNull();
+    expect(byId.get(plain.id)?.noteAuthorName).toBeNull();
+  });
+
+  it('finds a run by a word only its note contains', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    const noted = await repo.create(runInput(orgId, a));
+    await repo.create(runInput(orgId, a, { startedAt: new Date('2026-08-07T11:00:00Z') }));
+    const asha = await person();
+    await repo.setNote({ orgId }, noted.id, { text: 'regression after the zeppelin upgrade', userId: asha.id });
+
+    const page = await repo.list({ orgId }, { limit: 10, q: 'zeppelin' });
+    expect(page.items.map((r) => r.id)).toEqual([noted.id]);
+  });
+
+  it('keeps the words and drops the name when the author is deleted', async () => {
+    const { orgId, a } = await seed();
+    const repo = new RunRepository(prisma);
+    const run = await repo.create(runInput(orgId, a));
+    const asha = await person();
+    await repo.setNote({ orgId }, run.id, { text: 'kept after Asha left', userId: asha.id });
+
+    await prisma.user.delete({ where: { id: asha.id } });
+
+    const after = await repo.findById({ orgId }, run.id);
+    expect(after?.note).toBe('kept after Asha left');
+    expect(after?.noteAuthorName).toBeNull();
+    expect(after?.noteUpdatedAt).not.toBeNull();
   });
 });

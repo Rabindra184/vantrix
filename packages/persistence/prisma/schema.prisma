@@ -257,6 +257,12 @@ model Run {
   /// header. Null until the worker parses, and forever for a failed run.
   simulation       String?
   description      String?
+  /// A note a PERSON wrote on this run after the fact — NOT `description`
+  /// above, which is the tool's own claim, frozen at parse. The three are
+  /// written together by RunRepository.setNote and by nothing else.
+  note             String?
+  noteUpdatedAt    DateTime? @map("note_updated_at") @db.Timestamptz(3)
+  noteUpdatedBy    String?   @map("note_updated_by")
   /// The span the SERIES OFFSETS live in: run-header start to last event.
   /// Every bucket `startOffsetMs` is relative to the header start, so a time
   /// axis must span this or the final bucket falls outside the domain.
@@ -402,6 +408,9 @@ model Run {
   test       Test?          @relation(fields: [testId], references: [id], onDelete: SetNull)
   assertions RunAssertion[]
   runnerJobs RunnerJob[]
+  /// SET NULL, not CASCADE: a deleted account keeps its words on the run and
+  /// loses only the attribution.
+  noteAuthor User?          @relation(fields: [noteUpdatedBy], references: [id], onDelete: SetNull)
 
   @@unique([projectId, idempotencyKey])
   /// Serves the test's own run history, and TRENDS_SQL's cohort once it
@@ -416,6 +425,7 @@ model Run {
   @@index([environment(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_environment_trgm")
   @@index([branch(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_branch_trgm")
   @@index([commitSha(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_commit_sha_trgm")
+  @@index([note(ops: raw("gin_trgm_ops"))], type: Gin, map: "run_note_trgm")
   @@map("run")
 }
 
@@ -689,6 +699,7 @@ model User {
   sessions      Session[]
   accounts      Account[]
   orgMembers    OrgMember[]
+  notedRuns     Run[]
 
   @@unique([email])
   @@map("user")
