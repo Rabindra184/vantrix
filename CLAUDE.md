@@ -222,8 +222,16 @@ token. That whole file then passed **nine of ten** isolated runs; the one
 failing run's case was not captured (each run overwrote the last one's log,
 recorded rather than assumed). **No test failed twice.** All against a
 SCRATCH DATABASE (`perfportal_sessreq`), a scratch Redis INDEX (db 13) and
-e2e port 3200, from a worktree at an undotted path; CI's clean containers
-are the arbiter for the two full suites.
+e2e port 3200, from a worktree at an undotted path.
+
+**AND CI MEASURED BOTH CLEAN**, so those two were this machine and nothing
+else — the `build` job on `7c964b7`, read off its own log:
+
+```
+  pnpm test:unit         Test Files 169 passed (169)   Tests 2181 passed (2181)
+  pnpm test:integration  Test Files 152 passed (152)   Tests 1932 passed (1932)
+  pnpm test:e2e          159 passed
+```
 
 The spa-dotted-path branch added no unit FILE and 4 cases to
 `apps/api/test/security-headers.test.ts` — an `it.each` over `/` and a deep
