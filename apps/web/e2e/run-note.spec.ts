@@ -1,7 +1,39 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData, writeNote } from './fixtures.js';
 import { signIn } from './helpers.js';
 import { runPath } from '../src/routes/paths.js';
+
+/**
+ * The run list's column edges, against the scroller's own visible width —
+ * shared between the long-sentence case below and the unbroken-token one,
+ * which need the identical `rightOf`/scroller arithmetic and differ only in
+ * what they write into the note.
+ */
+async function listColumns(page: Page): Promise<{ visible: number; p95: number | null; errors: number | null }> {
+  return page.evaluate(() => {
+    const table = document.querySelector('table');
+    if (table === null) return { visible: 0, p95: null, errors: null };
+    const scroller = table.parentElement!;
+    const ths = Array.from(table.querySelectorAll('thead th'));
+    const rightOf = (name: string): number | null => {
+      const th = ths.find((h) => h.textContent?.trim() === name);
+      return th === undefined
+        ? null
+        : Math.round(th.getBoundingClientRect().right - scroller.getBoundingClientRect().left);
+    };
+    return {
+      visible: Math.round(scroller.clientWidth),
+      p95: rightOf('p95'),
+      errors: rightOf('Errors'),
+    };
+  });
+}
+
+/** Whether the DOCUMENT itself — not a table's own internal scroller — has
+ *  been forced wider than the viewport. */
+async function scrollsSideways(page: Page): Promise<boolean> {
+  return page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+}
 
 /**
  * ═══ THE RUN NOTE, IN A BROWSER ═══
@@ -194,4 +226,71 @@ test('a long note stays two lines, no wider than its measure, and does not push 
     phoneWidth,
     `at 375px the note is ${phoneWidth}px wide against its own 32ch measure of ${phoneMeasure}px — past the bound of ${phoneWidthBound}px`,
   ).toBeLessThanOrEqual(phoneWidthBound);
+});
+
+/**
+ * ═══ A NOTE WITH NO BREAK OPPORTUNITY AT ALL ═══
+ *
+ * The case above writes real words, which wrap between them
+ * (`[word-break:normal] break-words`, i.e. `overflow-wrap: break-word`) — but
+ * that property adds no break opportunity to a box's MIN-CONTENT width; only
+ * `overflow-wrap: anywhere` does. A note that is a URL, a stack-trace
+ * fragment or a path has no space anywhere in it, so this is the hazard
+ * `NoteLine`'s own docstring used to say was "untouched by this pair of
+ * classes" — measured here rather than assumed.
+ */
+test('a note that is one unbroken token does not widen the list or the page', async ({ page }) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  // A single ~300-character token with NO SPACES — a URL is the realistic
+  // shape, and it is 300 characters wide with nowhere in it to break.
+  const base = 'https://grafana.internal.example/d/abc123/storage-migration?orgId=1&var-env=staging&from=';
+  const token = (base + '1234567890abcdefghij'.repeat(15)).slice(0, 300);
+  await writeNote(runId, token);
+  await signIn(page, admin);
+
+  for (const width of [768, 1024]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/runs');
+    await expect(page.getByTestId('run-note-line').first()).toBeVisible();
+
+    const { visible, p95, errors } = await listColumns(page);
+    expect(p95, `a p95 column exists at ${width}`).not.toBeNull();
+    expect(errors, `an Errors column exists at ${width}`).not.toBeNull();
+    expect(
+      p95!,
+      `at ${width}px an unbroken note pushed p95 to ${p95}px of ${visible}px visible`,
+    ).toBeLessThanOrEqual(visible);
+    expect(
+      errors!,
+      `at ${width}px an unbroken note pushed Errors to ${errors}px of ${visible}px visible`,
+    ).toBeLessThanOrEqual(visible);
+
+    expect(
+      await scrollsSideways(page),
+      `at ${width}px the run list's own page scrolled sideways`,
+    ).toBe(false);
+  }
+
+  // ═══ THE PHONE, TWO BOXES ═══
+  //
+  // The cards below 768px, where the note runs in block layout with no
+  // column to shrink it (see the long-sentence case's own phone check) — and
+  // the run's own page, where RunNote draws the note whole
+  // (`whitespace-pre-line break-words`, `RunNote.tsx`), an unbroken token
+  // being the same hazard in a different box.
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/runs');
+  await expect(page.getByTestId('run-note-line').first()).toBeVisible();
+  expect(
+    await scrollsSideways(page),
+    'at 375px the run list card scrolled the page sideways',
+  ).toBe(false);
+
+  await page.goto(runPath(runId));
+  await expect(page.getByTestId('run-note-text')).toBeVisible();
+  expect(
+    await scrollsSideways(page),
+    'at 375px the run page scrolled sideways with an unbroken note',
+  ).toBe(false);
 });
