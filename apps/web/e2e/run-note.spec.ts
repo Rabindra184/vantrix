@@ -114,10 +114,84 @@ test('a long note stays two lines, no wider than its measure, and does not push 
       `at ${width}px the note is ${noteHeight}px tall against a one-line height of ${oneLineHeight}px — past the two-line bound of ${twoLineBound}px`,
     ).toBeLessThanOrEqual(twoLineBound);
 
+    // This bound does NOT bind at 768/1024/1440 — measured at 70-183px
+    // against a 242.25px 32ch measure, because the table's automatic layout
+    // already shrinks this column well below that width (see NoteLine's
+    // docstring). Kept anyway: it still proves `max-w-[32ch]` really
+    // emitted CSS, which jsdom cannot see at all. The proof this bound CAN
+    // fail comes from the phone check below, where the note sits in block
+    // layout with no column to shrink it.
     const widthBound = measure32ch + 1;
     expect(
       noteWidth,
       `at ${width}px the note is ${noteWidth}px wide against its own 32ch measure of ${measure32ch}px — past the bound of ${widthBound}px`,
     ).toBeLessThanOrEqual(widthBound);
   }
+
+  // ═══ THE PHONE, WHERE THE 32ch BOUND CAN ACTUALLY BIND ═══
+  //
+  // Below 768px (`useIsCompact`) this list is CARDS (`RunCards`/`RunCard`),
+  // not the table above — block layout, with none of the table's
+  // automatic-shrink to hold the note narrow regardless of its own classes.
+  // Confirmed below (no `<table>`, and the row is not a `<tr>`) so this
+  // check cannot silently end up measuring the table again.
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/runs');
+  await expect(page.getByTestId('run-note-line').first()).toBeVisible();
+
+  const phone = await page.evaluate(() => {
+    const noteLine = document.querySelector<HTMLElement>('[data-testid="run-note-line"]');
+    const row = noteLine?.closest('[data-testid="run-row"]') ?? null;
+    if (noteLine === null || row === null) return null;
+
+    const lineProbe = noteLine.cloneNode(false) as HTMLElement;
+    lineProbe.textContent = 'x';
+    noteLine.parentElement!.appendChild(lineProbe);
+    const oneLineHeight = lineProbe.getBoundingClientRect().height;
+    lineProbe.remove();
+
+    const widthProbe = document.createElement('span');
+    widthProbe.style.display = 'inline-block';
+    widthProbe.style.width = '32ch';
+    noteLine.appendChild(widthProbe);
+    const measure32ch = widthProbe.getBoundingClientRect().width;
+    widthProbe.remove();
+
+    return {
+      hasTable: document.querySelector('table') !== null,
+      rowTag: row.tagName,
+      noteHeight: noteLine.getBoundingClientRect().height,
+      noteWidth: noteLine.getBoundingClientRect().width,
+      oneLineHeight,
+      measure32ch,
+    };
+  });
+
+  expect(phone, 'a card row and its note line render at 375px').not.toBeNull();
+  const {
+    hasTable,
+    rowTag,
+    noteHeight: phoneHeight,
+    noteWidth: phoneWidth,
+    oneLineHeight: phoneOneLine,
+    measure32ch: phoneMeasure,
+  } = phone!;
+
+  expect(hasTable, 'at 375px the runs list must be cards, not the table this case already measures above').toBe(false);
+  expect(
+    rowTag,
+    `at 375px a card row must not be a <tr> (was ${rowTag}) — this check would then silently be measuring the table again`,
+  ).not.toBe('TR');
+
+  const phoneTwoLineBound = 2 * phoneOneLine + 1;
+  expect(
+    phoneHeight,
+    `at 375px the note is ${phoneHeight}px tall against a one-line height of ${phoneOneLine}px — past the two-line bound of ${phoneTwoLineBound}px`,
+  ).toBeLessThanOrEqual(phoneTwoLineBound);
+
+  const phoneWidthBound = phoneMeasure + 1;
+  expect(
+    phoneWidth,
+    `at 375px the note is ${phoneWidth}px wide against its own 32ch measure of ${phoneMeasure}px — past the bound of ${phoneWidthBound}px`,
+  ).toBeLessThanOrEqual(phoneWidthBound);
 });
