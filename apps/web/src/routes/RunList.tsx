@@ -1209,12 +1209,24 @@ function RunCards({
  * since a list answers "is this one to ignore" and the author and time belong
  * to the run's page.
  *
- * `max-w` and `line-clamp-2` are LOAD-BEARING. A table column is as wide as
- * its widest cell's content, so an unwrapped note would widen the Simulation
- * column and push p95 and Errors off screen at 1024 px — undoing the column
- * order run-list.spec.ts measures. `[word-break:normal]` because the
- * simulation cell is `break-all` (a class name has no break opportunity) and
- * prose should break between words.
+ * `max-w-[32ch]` and `line-clamp-2` are NOT what keeps the Simulation column
+ * narrow — MEASURED, with both removed: p95/Errors still land at 500/565 of
+ * 726 px visible at 768, 500/565 of 694 at 1024, and 612/678 of 1110 at
+ * 1440. What actually holds the column is that the note WRAPS: prose breaks
+ * between words (`[word-break:normal]`, because the simulation cell above it
+ * is `break-all` — a class name has no break opportunity, but prose should
+ * break between words), inside a cell (`run-simulation`, above) that is
+ * already `min-w-0 break-all` — so this cell's min-content is tiny, and the
+ * table's automatic layout shrinks the column and wraps the note to fit
+ * rather than growing the table. An UNWRAPPABLE note (`whitespace-nowrap`)
+ * is what would widen the column and push p95 and Errors off screen — that
+ * hazard is real and untouched by this pair of classes.
+ *
+ * So `max-w-[32ch]` and `line-clamp-2` are the DESIGN, not the guard: a
+ * readable measure and at most two lines, so a noted row stays compact next
+ * to one without a note. `run-note.spec.ts` pins exactly that — the note's
+ * own height and width, alongside the reach the earlier (false) claim here
+ * was actually describing.
  */
 function NoteLine({ note }: { readonly note: string | null | undefined }) {
   if (note == null) return null;

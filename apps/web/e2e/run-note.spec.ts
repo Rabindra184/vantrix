@@ -44,7 +44,7 @@ test('a person writes a note on a run, and it stays, named, listed and searchabl
   await expect(notedRow).toBeVisible();
 });
 
-test('a long note does not push p95 and Errors off screen', async ({ page }) => {
+test('a long note stays two lines, no wider than its measure, and does not push p95 and Errors off screen', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   // Real words at the full limit — the widest note a reader can write.
@@ -58,9 +58,10 @@ test('a long note does not push p95 and Errors off screen', async ({ page }) => 
     // The fixture reached the render, or this case measures nothing.
     await expect(page.getByTestId('run-note-line').first()).toBeVisible();
 
-    const reach = await page.evaluate(() => {
+    const measured = await page.evaluate(() => {
       const table = document.querySelector('table');
-      if (table === null) return null;
+      const noteLine = document.querySelector<HTMLElement>('[data-testid="run-note-line"]');
+      if (table === null || noteLine === null) return null;
       const scroller = table.parentElement!;
       const ths = Array.from(table.querySelectorAll('thead th'));
       const rightOf = (name: string): number | null => {
@@ -69,14 +70,54 @@ test('a long note does not push p95 and Errors off screen', async ({ page }) => 
           ? null
           : Math.round(th.getBoundingClientRect().right - scroller.getBoundingClientRect().left);
       };
-      return { visible: Math.round(scroller.clientWidth), p95: rightOf('p95'), errors: rightOf('Errors') };
+
+      // One line's own height, measured on a sibling carrying the identical
+      // classes — never parsed from `line-height`, which the arbitrary
+      // `text-[0.75rem]` may leave at `normal`.
+      const lineProbe = noteLine.cloneNode(false) as HTMLElement;
+      lineProbe.textContent = 'x';
+      noteLine.parentElement!.appendChild(lineProbe);
+      const oneLineHeight = lineProbe.getBoundingClientRect().height;
+      lineProbe.remove();
+
+      // 32ch in the note's own font, measured rather than assumed — this
+      // also proves the arbitrary `max-w-[32ch]` utility really emitted
+      // CSS, which jsdom cannot see at all.
+      const widthProbe = document.createElement('span');
+      widthProbe.style.display = 'inline-block';
+      widthProbe.style.width = '32ch';
+      noteLine.appendChild(widthProbe);
+      const measure32ch = widthProbe.getBoundingClientRect().width;
+      widthProbe.remove();
+
+      return {
+        visible: Math.round(scroller.clientWidth),
+        p95: rightOf('p95'),
+        errors: rightOf('Errors'),
+        noteHeight: noteLine.getBoundingClientRect().height,
+        noteWidth: noteLine.getBoundingClientRect().width,
+        oneLineHeight,
+        measure32ch,
+      };
     });
 
-    expect(reach, `a table renders at ${width}`).not.toBeNull();
-    const { visible, p95, errors } = reach!;
+    expect(measured, `a table and its note line render at ${width}`).not.toBeNull();
+    const { visible, p95, errors, noteHeight, noteWidth, oneLineHeight, measure32ch } = measured!;
     expect(p95, `a p95 column exists at ${width}`).not.toBeNull();
     expect(errors, `an Errors column exists at ${width}`).not.toBeNull();
     expect(p95!, `at ${width}px a long note pushed p95 to ${p95}px of ${visible}px visible`).toBeLessThanOrEqual(visible);
     expect(errors!, `at ${width}px a long note pushed Errors to ${errors}px of ${visible}px visible`).toBeLessThanOrEqual(visible);
+
+    const twoLineBound = 2 * oneLineHeight + 1;
+    expect(
+      noteHeight,
+      `at ${width}px the note is ${noteHeight}px tall against a one-line height of ${oneLineHeight}px — past the two-line bound of ${twoLineBound}px`,
+    ).toBeLessThanOrEqual(twoLineBound);
+
+    const widthBound = measure32ch + 1;
+    expect(
+      noteWidth,
+      `at ${width}px the note is ${noteWidth}px wide against its own 32ch measure of ${measure32ch}px — past the bound of ${widthBound}px`,
+    ).toBeLessThanOrEqual(widthBound);
   }
 });
