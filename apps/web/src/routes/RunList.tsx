@@ -618,7 +618,7 @@ function RunListControls({
             className={INPUT}
             value={q}
             onChange={(event) => setQ(event.currentTarget.value)}
-            placeholder="Simulation, project, branch"
+            placeholder="Simulation, project, branch, note"
           />
         </label>
 
@@ -1204,6 +1204,31 @@ function RunCards({
   );
 }
 
+/**
+ * The run's note, as one muted line under its simulation — the TEXT alone,
+ * since a list answers "is this one to ignore" and the author and time belong
+ * to the run's page.
+ *
+ * `max-w` and `line-clamp-2` are LOAD-BEARING. A table column is as wide as
+ * its widest cell's content, so an unwrapped note would widen the Simulation
+ * column and push p95 and Errors off screen at 1024 px — undoing the column
+ * order run-list.spec.ts measures. `[word-break:normal]` because the
+ * simulation cell is `break-all` (a class name has no break opportunity) and
+ * prose should break between words.
+ */
+function NoteLine({ note }: { readonly note: string | null | undefined }) {
+  if (note == null) return null;
+  return (
+    <p
+      data-testid="run-note-line"
+      className="mt-0.5 line-clamp-2 max-w-[32ch] text-[0.75rem] font-normal text-muted [word-break:normal] break-words"
+    >
+      <span className="sr-only">Note: </span>
+      {note}
+    </p>
+  );
+}
+
 function RunCard({
   run,
   showProject,
@@ -1238,6 +1263,7 @@ function RunCard({
           >
             {label}
           </Link>
+          <NoteLine note={run.note} />
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <Badge mark={STATUS[run.status]} />
@@ -1402,6 +1428,7 @@ function RunRow({
             run.simulation
           )}
         </Link>
+        <NoteLine note={run.note} />
       </td>
       <td className={TD}>
         <Badge mark={STATUS[run.status]} />

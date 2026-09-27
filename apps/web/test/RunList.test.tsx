@@ -444,3 +444,25 @@ describe('RunList — a row carries enough to triage on', () => {
     expect(within(health).getByText('Needs attention').closest('div')).toHaveTextContent('0');
   });
 });
+
+/**
+ * ═══ THE NOTE LINE ═══ (docs/superpowers/specs/2026-09-27-run-note-design.md)
+ *
+ * The text alone, under the simulation, so "ignore this run" is read before
+ * anyone opens it. Width-capped and clamped: an unwrapped note would widen
+ * the Simulation column and push p95 and Errors off screen — which
+ * run-note.spec.ts measures in a browser, because jsdom lays nothing out.
+ */
+describe('RunList — a run’s note is read without opening it', () => {
+  it('shows the note under the simulation, and nothing for a run without one', async () => {
+    renderList([
+      { ...ROWS[0]!, note: 'flaky environment, ignore' },
+      { ...ROWS[1]!, note: null },
+    ]);
+    const lines = await screen.findAllByTestId('run-note-line');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent('Note: flaky environment, ignore');
+    const cell = lines[0]!.closest('td');
+    expect(cell).toHaveAttribute('data-testid', 'run-simulation');
+  });
+});
