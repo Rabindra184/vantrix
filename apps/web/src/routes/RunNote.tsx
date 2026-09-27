@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { NOTE_MAX_LENGTH, type RunNote as RunNoteValue } from '@perfportal/contracts';
 import Button from '../components/Button';
@@ -24,6 +24,10 @@ import { formatInstant } from './format';
  * ref — see returnFocus.
  */
 const TOGGLE_TEST_ID = 'run-note-toggle';
+/** The "Show all"/"Show less" toggle — its OWN test id, distinct from
+ *  TOGGLE_TEST_ID above: returnFocus finds the EDIT toggle by that one, and
+ *  sharing it would return focus to whichever button happened to render last. */
+const EXPAND_TEST_ID = 'run-note-expand';
 
 export default function RunNote({
   runId,
@@ -40,6 +44,14 @@ export default function RunNote({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fieldId = useId();
   const countId = useId();
+
+  // ═══ ITEM 3 — CLAMPED TO THREE LINES UNTIL ASKED ═══
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const textId = useId();
+  const [expanded, setExpanded] = useState(false);
+  /** Whether the CLAMPED text actually overflows three lines — the toggle
+   *  renders only then, so a one-line note never carries a useless button. */
+  const [overflowing, setOverflowing] = useState(false);
 
   const existing = note?.text ?? null;
   const trimmed = draft.trim();
@@ -59,11 +71,41 @@ export default function RunNote({
       setEditing(false);
       returnFocus();
     },
+    // ═══ ITEM 5 — A FAILED SAVE DOES NOT DROP FOCUS ═══
+    // `Button`'s `loading` prop disables the Save button while a save is in
+    // flight (`disabled={disabled === true || loading}`), and a focused
+    // control that becomes disabled loses focus — so on failure the alert
+    // that appears next to it would land with focus on `<body>`. The textarea
+    // is `readOnly` (never `disabled`) during the save and editable again the
+    // moment it resolves, so it is still on screen and still a sensible place
+    // for focus to land: a reader who sees the alert can correct the text and
+    // retry from right where their cursor was.
+    onError: () => inputRef.current?.focus(),
   });
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
+
+  useLayoutEffect(() => {
+    // Once expanded, this effect does nothing — `overflowing` keeps whatever
+    // it last measured WHILE CLAMPED, which is what keeps the toggle showing
+    // once a reader has asked to see the whole note (it would otherwise
+    // measure the UNCLAMPED box, find nothing overflowing it, and pull the
+    // toggle out from under them).
+    if (expanded) return;
+    const el = textRef.current;
+    if (el == null) return;
+    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    // ResizeObserver, not a one-off measurement: a note's clamped height can
+    // still change after this first paint (a web font swapping in). Guarded
+    // the same way Chart.tsx guards its own resize observer, so a note
+    // mounted in jsdom — which has none — measures once and never throws.
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(el);
+    return () => observer?.disconnect();
+  }, [note?.text, expanded]);
 
   const open = () => {
     save.reset();
@@ -154,11 +196,35 @@ export default function RunNote({
          metadata. */
       className="flex max-w-2xl flex-col gap-1 border-l-2 border-accent pl-3"
     >
-      <p data-testid="run-note-text" className="text-[0.8125rem] leading-relaxed whitespace-pre-line break-words text-primary">
+      <p
+        ref={textRef}
+        id={textId}
+        data-testid="run-note-text"
+        // `line-clamp` works with `whitespace-pre-line` — a person's own line
+        // breaks are part of the note, and stay part of it whether clamped or
+        // not; the clamp just stops counting past the third rendered line.
+        className={
+          expanded
+            ? 'text-[0.8125rem] leading-relaxed whitespace-pre-line break-words text-primary'
+            : 'line-clamp-3 text-[0.8125rem] leading-relaxed whitespace-pre-line break-words text-primary'
+        }
+      >
         {note.text}
       </p>
       <p className="flex flex-wrap items-center gap-x-2 text-[0.75rem] text-muted">
         <span data-testid="run-note-attribution">{attribution(note)}</span>
+        {overflowing ? (
+          <button
+            type="button"
+            data-testid={EXPAND_TEST_ID}
+            aria-expanded={expanded}
+            aria-controls={textId}
+            onClick={() => setExpanded((was) => !was)}
+            className={LINK_BUTTON}
+          >
+            {expanded ? 'Show less' : 'Show all'}
+          </button>
+        ) : null}
         <button type="button" data-testid={TOGGLE_TEST_ID} onClick={open} className={LINK_BUTTON}>
           Edit note
         </button>
@@ -191,9 +257,24 @@ function withNote(old: RunDetail | undefined, note: RunNoteValue | null): RunDet
  * component out of the Run details disclosure (RunHeader places it by whether
  * a note exists), which remounts it: a ref would point at a button that no
  * longer exists.
+ *
+ * A phone's REMOVE does the same move in the other direction: the run now
+ * has no note, so `noteInDetails` (`RunHeader`) becomes true and this
+ * component's "Add a note" toggle renders INSIDE the closed "Run details"
+ * `<details>` — content a closed disclosure does not render, so `.focus()`
+ * on it is a no-op and focus falls to `<body>`. When the found toggle has a
+ * closed `<details>` ancestor, focus that disclosure's own `<summary>`
+ * instead: the nearest thing still on screen, and one tap from reopening it.
  */
 function returnFocus(): void {
   window.setTimeout(() => {
-    document.querySelector<HTMLElement>(`[data-testid="${TOGGLE_TEST_ID}"]`)?.focus();
+    const toggle = document.querySelector<HTMLElement>(`[data-testid="${TOGGLE_TEST_ID}"]`);
+    if (toggle === null) return;
+    const closedDetails = toggle.closest<HTMLDetailsElement>('details:not([open])');
+    if (closedDetails !== null) {
+      closedDetails.querySelector<HTMLElement>('summary')?.focus();
+      return;
+    }
+    toggle.focus();
   }, 0);
 }

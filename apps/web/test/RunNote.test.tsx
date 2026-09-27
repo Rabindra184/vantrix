@@ -215,4 +215,146 @@ describe('RunNote — writing', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The note is not valid');
     expect(screen.getByRole('textbox', { name: 'Run note' })).toHaveValue('too long, the server says');
   });
+
+  /**
+   * ITEM 5 — A FAILED SAVE DOES NOT DROP FOCUS.
+   *
+   * `Button`'s `loading` prop disables the Save button while a save is in
+   * flight, and a focused control that becomes disabled loses focus — so
+   * without `onError`, the alert above would appear with focus on `<body>`.
+   * The textarea stays `readOnly` (never `disabled`) throughout, so it is
+   * still on screen and still the sensible place for focus to land: a reader
+   * who sees the alert can correct the text and retry right where their
+   * cursor was.
+   */
+  it('focuses the textarea again once a rejected save’s alert appears', async () => {
+    stubPut(() =>
+      json(
+        {
+          type: 'about:blank',
+          title: 'Bad Request',
+          status: 400,
+          detail: 'The note is not valid: String must contain at most 500 character(s)',
+          code: 'INVALID_RUN_NOTE',
+          remediation: 'Send {"note": "<text>"} with 1 to 500 characters after trimming.',
+        },
+        400,
+      ),
+    );
+    mount(NOTE);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Run note' }), '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('alert');
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Run note' }));
+  });
+});
+
+/**
+ * ITEM 4 — A CLOSED DISCLOSURE GETS FOCUS INSTEAD OF A BUTTON IT HIDES.
+ *
+ * On a phone a NOTED run shows RunNote under the heading; removing the note
+ * moves it INTO the closed "Run details" `<details>` (`RunHeader` decides by
+ * whether the run still has a note). `returnFocus` then finds the "Add a
+ * note" toggle by test id inside that closed disclosure — content a closed
+ * `<details>` does not render, so `.focus()` on it would be a no-op and
+ * focus would fall to `<body>` in a real browser.
+ *
+ * MEASURED: jsdom does NOT itself refuse focus on content inside a closed
+ * `<details>` — focusing an element there directly succeeds, same as a bare
+ * `<summary>` with no `tabindex`. So a case asserting only "the toggle does
+ * not have focus" would pass without the fix too (jsdom would just leave
+ * focus wherever `.focus()` was last called, which without the branch IS the
+ * toggle — itself "focused" successfully by jsdom's more permissive model).
+ * The assertion has to be the POSITIVE claim the fix produces: that
+ * `document.activeElement` is the disclosure's own `<summary>`.
+ */
+describe('RunNote — item 4: focus into a closed "Run details" disclosure', () => {
+  it('focuses the wrapping disclosure’s summary when its toggle sits inside one that is closed', async () => {
+    stubPut(stored);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    client.setQueryData<RunDetail>(runQueryKey(RUN_ID), { state: 'ready', run: { ...RUN, note: NOTE } });
+    render(
+      <QueryClientProvider client={client}>
+        <details>
+          <summary data-testid="wrapper-summary">Run details</summary>
+          <Harness />
+        </details>
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Run note' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove note' }));
+
+    await screen.findByRole('button', { name: 'Add a note' });
+    expect(document.activeElement).toBe(screen.getByTestId('wrapper-summary'));
+  });
+});
+
+/**
+ * ITEM 3 — CLAMPED TO THREE LINES UNTIL ASKED.
+ *
+ * jsdom lays nothing out, so `scrollHeight`/`clientHeight` are stubbed
+ * directly on `HTMLElement.prototype` for the span of one case and restored
+ * in that case's own cleanup — never a file-wide `afterEach`, since only
+ * these cases need it and every other case in this file relies on jsdom's
+ * real (0-by-0) layout meaning nothing overflows.
+ */
+describe('RunNote — item 3: the note clamps to three lines until asked', () => {
+  /** Stubs both geometry properties for the span of one case; returns the
+   *  function that restores jsdom's own descriptors. `ResizeObserver` needs
+   *  no stub: it is undefined in jsdom, and RunNote's guard
+   *  (`typeof ResizeObserver === 'function' ? … : null`) already skips
+   *  creating one there — the initial synchronous measurement inside
+   *  `useLayoutEffect` is what these cases exercise. */
+  function stubGeometry(scrollHeight: number, clientHeight: number): () => void {
+    // jsdom defines both as inherited getters on `Element.prototype`, so
+    // `HTMLElement.prototype` has no OWN descriptor to save — restoring has
+    // to delete the override rather than reinstate an `undefined` one.
+    const scrollDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    const clientDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => clientHeight });
+    return () => {
+      if (scrollDesc === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+      else Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollDesc);
+      if (clientDesc === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight');
+      else Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientDesc);
+    };
+  }
+
+  it('shows no toggle when the clamped text does not overflow three lines — the common case', () => {
+    const restore = stubGeometry(60, 60);
+    try {
+      mount(NOTE);
+      expect(screen.queryByTestId('run-note-expand')).not.toBeInTheDocument();
+      expect(screen.getByTestId('run-note-text')).toHaveClass('line-clamp-3');
+    } finally {
+      restore();
+    }
+  });
+
+  it('offers "Show all", then "Show less" once clicked, when the clamped text overflows', async () => {
+    const restore = stubGeometry(120, 60);
+    try {
+      mount(NOTE);
+      const text = screen.getByTestId('run-note-text');
+      const toggle = await screen.findByTestId('run-note-expand');
+
+      expect(toggle).toHaveTextContent('Show all');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(toggle).toHaveAttribute('aria-controls', text.id);
+      expect(text).toHaveClass('line-clamp-3');
+
+      await userEvent.click(toggle);
+
+      expect(toggle).toHaveTextContent('Show less');
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(text).not.toHaveClass('line-clamp-3');
+    } finally {
+      restore();
+    }
+  });
 });
