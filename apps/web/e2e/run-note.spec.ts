@@ -294,3 +294,88 @@ test('a note that is one unbroken token does not widen the list or the page', as
     'at 375px the run page scrolled sideways with an unbroken note',
   ).toBe(false);
 });
+
+/**
+ * ═══ ITEM 3 (RULING R7) — THREE LINES UNTIL ASKED ═══
+ *
+ * On the run page RunNote draws the note whole, so a 500-character note of
+ * short lines is ~5000px of page before the run's own figures — the hazard
+ * the clamp exists to close. The one place this can actually be proven is a
+ * browser: jsdom lays nothing out, so it cannot see a real three-line box or
+ * where the run's totals land on screen.
+ */
+test('a long note on the run page is three lines until asked, and the figures stay on the first screen', async ({
+  page,
+}) => {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  // A SHORT note, on its own run, unrelated to the figures this case
+  // measures — proving the toggle never appears when there is nothing to
+  // clamp (the existing first case's shape, in this file).
+  const shortRunId = await seedRunWithData(admin.orgId);
+  await writeNote(shortRunId, 'baseline after the cache change');
+
+  // Twenty short lines, joined and trimmed to the 500-character limit — a
+  // note that is tall because it has many lines, not because any one of
+  // them is long.
+  const lines = Array.from(
+    { length: 20 },
+    (_, i) => `Line ${String(i + 1).padStart(2, '0')}: a short note line of its own, about this run.`,
+  );
+  const longNote = lines.join('\n').slice(0, 500);
+  await writeNote(runId, longNote);
+
+  await signIn(page, admin);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(runPath(runId));
+
+  const text = page.getByTestId('run-note-text');
+  await expect(text).toBeVisible();
+
+  const measure = async () =>
+    page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>('[data-testid="run-note-text"]')!;
+      // One line's own height, measured on a sibling carrying the identical
+      // classes — the same clone-probe the two list cases above use, never
+      // parsed from `line-height`.
+      const lineProbe = el.cloneNode(false) as HTMLElement;
+      lineProbe.textContent = 'x';
+      el.parentElement!.appendChild(lineProbe);
+      const oneLineHeight = lineProbe.getBoundingClientRect().height;
+      lineProbe.remove();
+      return { height: el.getBoundingClientRect().height, oneLineHeight };
+    });
+
+  const clamped = await measure();
+  const threeLineBound = 3 * clamped.oneLineHeight + 1;
+  expect(
+    clamped.height,
+    `clamped, the note is ${clamped.height}px tall against a one-line height of ${clamped.oneLineHeight}px — past the three-line bound of ${threeLineBound}px`,
+  ).toBeLessThanOrEqual(threeLineBound);
+
+  const toggle = page.getByTestId('run-note-expand');
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveText('Show all');
+
+  // THE FIGURES STAY ON THE FIRST SCREEN — the same selector `mobile.spec.ts`
+  // uses for the run's own totals: `dd[...]`, not `[data-testid^="stat-"]`
+  // alone, because the empty-window branch names its own section
+  // `stats-empty-window`, which that prefix also matches.
+  const firstTile = 'section[aria-label="Run totals"] dd[data-testid^="stat-"]';
+  const box = await page.locator(firstTile).first().boundingBox();
+  expect(box, 'the run’s own totals render').not.toBeNull();
+  expect(box!.y, `the run’s totals start at ${box!.y}px, past the first screen`).toBeLessThan(900);
+
+  await toggle.click();
+  await expect(toggle).toHaveText('Show less');
+  const expanded = await measure();
+  expect(
+    expanded.height,
+    `expanded, the note is ${expanded.height}px tall — no taller than the three-line bound of ${threeLineBound}px it was clamped to`,
+  ).toBeGreaterThan(threeLineBound);
+
+  // A SHORT NOTE SHOWS NO TOGGLE AT ALL.
+  await page.goto(runPath(shortRunId));
+  await expect(page.getByTestId('run-note-text')).toBeVisible();
+  await expect(page.getByTestId('run-note-expand')).toHaveCount(0);
+});
