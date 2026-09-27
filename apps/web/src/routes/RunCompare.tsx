@@ -6,10 +6,11 @@ import CompareChart from '../charts/CompareChart';
 import {
   COMPARE_METRICS,
   compareUnit,
-  compareLabels,
+  runLabels,
   type CompareMetric,
   type CompareRun,
 } from '../charts/transforms/compare';
+import { runMinuteLabel } from '../charts/transforms/runLabel';
 import { formatCell } from '../charts/DataTable';
 import { EmptyState } from '../components/States';
 import CompareMatrix from '../tables/CompareMatrix';
@@ -177,14 +178,15 @@ export default function RunCompare() {
    *
    * Computed across every candidate so a run's label does not change when a
    * neighbour is selected or dropped — a chip that renames itself as the
-   * selection moves is one a reader cannot navigate by. `compareLabels` adds a
-   * short id suffix only where two runs would otherwise collide, which they do
-   * whenever two runs start in the same minute.
+   * selection moves is one a reader cannot navigate by. `runLabels` names a
+   * numbered run by its number; a numberless one keeps its minute label, with
+   * a short id suffix added only where two such runs would otherwise collide.
    */
   const labels = useMemo(() => {
     const runs = cohort.data?.runs ?? [];
-    const computed = compareLabels(
-      runs.map((run) => ({ id: run.id, at: run.toolStartedAt ?? run.startedAt })),
+    const computed = runLabels(
+      runs.map((run) => ({ id: run.id, at: run.toolStartedAt ?? run.startedAt, runNumber: run.runNumber })),
+      'name',
     );
     return new Map(runs.map((run, i) => [run.id, computed[i]!]));
   }, [cohort.data]);
@@ -359,6 +361,14 @@ export default function RunCompare() {
                         run.id === runId ? 'Current' : run.id === baselineId ? 'Baseline' : null;
                       const mark = VERDICT[run.verdict ?? 'none'];
                       const conditions = conditionsOf(run);
+                      // A numbered chip is NAMED by its number; the start time
+                      // it used to lead with becomes its second line, as in
+                      // Gatling Enterprise's picker. A numberless chip keeps
+                      // leading with its time, which IS its label.
+                      const startedLine =
+                        run.runNumber === null || run.runNumber === undefined
+                          ? null
+                          : runMinuteLabel(run.toolStartedAt ?? run.startedAt);
                       return (
                         <button
                           key={run.id}
@@ -390,11 +400,11 @@ export default function RunCompare() {
                              The chip was a bare timestamp — `09-13 11:31` —
                              which "distinguishes records mechanically but does
                              not tell an engineer which build or environment
-                             they are choosing". The time stays the primary
+                             they are choosing". The LABEL stays the primary
                              line, because it is what `labelFor` also names the
-                             series and the matrix columns by, and a chip that
-                             did not share that string would leave the reader
-                             matching a picker against a legend by eye. */
+                             series and the matrix columns by — the run's
+                             number once it has one (spec 2026-09-27-run-number),
+                             else its time. */
                           className={`transition-ui flex min-w-0 touch-manipulation flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-[0.8125rem] font-medium disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${
                             on
                               ? 'border-accent bg-accent/10 text-accent shadow-panel'
@@ -404,7 +414,7 @@ export default function RunCompare() {
                              to the reading order of four nodes, so a screen
                              reader hears "13 Sept 11:31, failed, Baseline,
                              production · main" instead of a glyph. */
-                          aria-label={[labelFor(run.id), mark.label, role, conditions]
+                          aria-label={[labelFor(run.id), startedLine, mark.label, role, conditions]
                             .filter((part) => part != null && part !== '')
                             .join(' · ')}
                         >
@@ -426,6 +436,11 @@ export default function RunCompare() {
                               </span>
                             )}
                           </span>
+                          {startedLine !== null && (
+                            <span className="text-[0.6875rem] font-normal tabular-nums">
+                              {startedLine}
+                            </span>
+                          )}
                           {conditions !== '' && (
                             <span className="max-w-[16rem] truncate text-[0.6875rem] font-normal">
                               {conditions}
