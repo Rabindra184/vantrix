@@ -26,6 +26,10 @@ export interface RunRecord {
    * for any row that predates the worker recording a simulation.
    */
   test: { id: string; slug: string; name: string } | null;
+  /** This run's number within `test` ("Run 12"), or null exactly when `test`
+   *  is null. Taken on joining the test, never renumbered — see
+   *  apps/worker/src/pipeline/run-number.ts. */
+  runNumber: number | null;
   status: string;
   verdict: string | null;
   tool: string;
@@ -143,6 +147,7 @@ interface RunRow {
   project: { id: string; slug: string; name: string };
   /** The joined `test`, or null — see `RunRecord.test`. */
   test?: { id: string; slug: string; name: string } | null;
+  runNumber: number | null;
   status: string;
   verdict: string | null;
   tool: string;
@@ -197,6 +202,7 @@ function toRecord(row: RunRow): RunRecord {
       row.test === null || row.test === undefined
         ? null
         : { id: row.test.id, slug: row.test.slug, name: row.test.name },
+    runNumber: row.runNumber,
     status: row.status,
     verdict: row.verdict,
     tool: row.tool,
@@ -1014,6 +1020,7 @@ export class RunRepository {
         nu.name AS "noteAuthorName",
         p.slug AS "projectSlug", p.name AS "projectName",
         t.id AS "testId", t.slug AS "testSlug", t.name AS "testName",
+        r.run_number AS "runNumber",
         -- THE TRIAGE NUMBERS. Without them a reader had to OPEN every run to
         -- learn whether it was interesting, which is what a list exists to
         -- answer. The frozen percentiles column rather than the sketch: a

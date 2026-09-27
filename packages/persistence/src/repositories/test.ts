@@ -15,7 +15,7 @@ export interface TestRow {
   createdAt: Date;
   updatedAt: Date;
   runCount: number;
-  latestRun: { id: string; status: string; verdict: string | null } | null;
+  latestRun: { id: string; status: string; verdict: string | null; runNumber: number | null } | null;
 }
 
 /** What a caller may change. See `UpdateTestRequestSchema` for what may not. */
@@ -67,17 +67,22 @@ export class TestRepository {
       }),
       this.prisma.run.findMany({
         where: { testId: { in: ids } },
-        select: { id: true, testId: true, status: true, verdict: true },
+        select: { id: true, testId: true, status: true, verdict: true, runNumber: true },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       }),
     ]);
 
     const countBy = new Map(counts.map((c) => [c.testId, c._count._all]));
     // First wins, and the ordering above is what makes that the newest.
-    const latestBy = new Map<string, { id: string; status: string; verdict: string | null }>();
+    const latestBy = new Map<
+      string,
+      { id: string; status: string; verdict: string | null; runNumber: number | null }
+    >();
     for (const run of runs) {
       if (run.testId !== null && !latestBy.has(run.testId)) {
-        latestBy.set(run.testId, { id: run.id, status: run.status, verdict: run.verdict });
+        latestBy.set(run.testId, {
+          id: run.id, status: run.status, verdict: run.verdict, runNumber: run.runNumber,
+        });
       }
     }
 
@@ -105,7 +110,7 @@ export class TestRepository {
       this.prisma.run.count({ where: { testId: test.id } }),
       this.prisma.run.findFirst({
         where: { testId: test.id },
-        select: { id: true, status: true, verdict: true },
+        select: { id: true, status: true, verdict: true, runNumber: true },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       }),
     ]);

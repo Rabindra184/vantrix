@@ -229,6 +229,7 @@ describe('the adaptive verdict', () => {
       project: { id: ctx.projectId, slug: 'checkout', name: 'Checkout' },
       // A failed ingest never parsed a header, so it never acquired a test.
       test: null,
+      runNumber: null,
       status: 'failed',
       verdict: null, tool: 'gatling', toolVersion: null,
       environment: null, branch: null, commitSha: null,
