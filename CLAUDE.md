@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **169 files / 2174 tests**, it
+`nvm use` first, and if a run reports fewer than **169 files / 2177 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,64 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The live-state-follows-its-run branch added no unit FILE and 3 cases to
+`apps/web/test/useLiveRun.test.tsx`, from **169 / 2174 to 169 / 2177**.
+Integration is UNCHANGED at **152 / 1927** (that file is a `.tsx`) and **e2e
+stays 159**. It is a LATENT defect, and the entry says so because the task
+that asked for it did not know.
+
+**A RUN'S LIVE STATE OUTLIVED THE RUN.** `useLiveRun` holds the socket's last
+delta, the seed's `partial` flag, `connected` and `unauthorized` in component
+state, and the `/runs/:runId` route is not keyed, so that state survives a
+change of run (`RunDetail` says the same of its own polling cap). The effect
+reset `unauthorized` and `partial` only when it RAN ENABLED, and its cleanup
+keeps `lastDelta` on purpose — the frozen view, "freeze, do not blank". So a
+change to a run that opens no socket kept the previous run's delta: a pending
+upload is still handed `live`, and its page drew the other run's tiles. A
+change to another live run kept it until that run's first frame.
+
+**MEASURED, NOT INFERRED.** A throwaway browser probe opened a real live run
+(`openLiveRun` plus a Redis snapshot), then moved the same page to a pending
+run by history navigation: the pending run's page, headed "Run d16da026",
+showed the live run's **"320"** requests tile. With the fix, none.
+
+**AND LATENT, WHICH A REVIEW'S "IN PRINCIPLE" DID NOT SAY.** No link in the
+product moves a mounted run page from a LIVE run to another run: the baseline
+note and the Compare and Trends tabs exist only on finished runs, which are
+never handed `live`; everything else leaves the route and unmounts the page;
+and a typed URL reloads the app. The probe needed `history.pushState` to reach
+it. **"Can this happen" and "does anything make it happen" are two questions**
+— the task was written from the first, and the answer to the second is what
+decides whether a fix is urgent. It was taken anyway: the hook is shared
+mechanism, and the next run-to-run link would have made it live.
+
+**RESET DURING RENDER, NOT IN THE EFFECT.** React's pattern for state that
+belongs to a prop: keep the run id the state belongs to, and when the prop
+differs, reset in the same render. An effect-based reset commits one frame of
+the old run's figures under the new run's header first, and a reset tied to
+the effect cannot see a disabled run at all — which was the defect.
+
+**THE FROZEN VIEW IS THE OTHER HALF OF THE PAIR.** The existing "keeps the
+last delta after the socket closes" case closes the SOCKET; nothing turned the
+hook OFF for the same run, which is what a compact viewport and a run that
+stops streaming both do. So the tempting fix — blank on every disable — passed
+every existing case. Three mutations:
+
+```
+  no reset (the before-state)        the two change-of-run cases
+  the reset forgets `partial`        the pending-run case alone
+  blank on every disable             the new frozen-view case ALONE
+```
+
+The third is why that case exists: without it, the wrong fix was green.
+
+**WHAT WAS RUN.** `typecheck` and `lint` green by their own exit codes;
+`test:unit` **169 / 2177**, zero failures and zero `Errors` lines, and the same
+under `TZ=UTC`; `test:integration` **152 / 1927, exit 0, zero failures**; `pnpm test:e2e`
+**159 passed, exit 0** — against a SCRATCH DATABASE (`perfportal_livestate`)
+and a scratch Redis INDEX (db 13), every gate green on its first run, on the
+tree rebased onto the verdict-word merge.
 
 The rules-ran-before-not-configured branch added no unit FILE and 3 cases — 2
 to `apps/web/test/RunDecisionBand.test.tsx` and 1 to
