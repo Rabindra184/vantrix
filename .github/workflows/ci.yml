@@ -415,6 +415,40 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @perfportal/persistence exec prisma migrate deploy --schema prisma/schema.prisma
 
+      # SCHEMA DRIFT. `schema.prisma` and the migrations are written by hand,
+      # separately, and nothing else compares them: the application reads
+      # through the generated client, the migrations build the tables, and
+      # both stay green while they disagree. They disagreed from the day the
+      # runner tables shipped (2026-08-20: FK names, index names, id
+      # defaults, a partial index) until this step existed. It diffs this
+      # job's freshly migrated database against
+      # the schema — exit 2 is a difference, exit 1 means it compared nothing.
+      - name: schema.prisma describes the database the migrations build
+        run: infra/test/schema-matches-migrations.sh
+
+      # RED-VERIFY. Reintroduces ONE real drift item — the plain run_id index
+      # the migration built as a PARTIAL one — and requires exit 2 exactly:
+      # an exit 1 would mean the diff never ran, which must not count as the
+      # guard catching anything.
+      - name: ...and it fails on a schema that has drifted
+        run: |
+          awk '/^  @@map\("runner_job"\)/ { print "  @@index([runId])" } { print }' \
+            packages/persistence/prisma/schema.prisma > /tmp/drifted.prisma
+          if cmp -s packages/persistence/prisma/schema.prisma /tmp/drifted.prisma; then
+            echo "::error::the drift mutation did not apply — its anchor no longer matches schema.prisma"
+            exit 1
+          fi
+          set +e
+          infra/test/schema-matches-migrations.sh /tmp/drifted.prisma > /tmp/drift-verify.txt
+          status=$?
+          set -e
+          cat /tmp/drift-verify.txt
+          if [ "$status" -ne 2 ]; then
+            echo "::error::expected the drift guard to exit 2 against a drifted schema, got $status"
+            exit 1
+          fi
+          echo "the guard correctly rejected a drifted schema"
+
       # DRIFT. The script names six FK-free tables by hand, and a migration
       # adding a seventh would leave its rows orphaned with nothing failing.
       # This asks the database which tables carrying `org_id` are NOT
