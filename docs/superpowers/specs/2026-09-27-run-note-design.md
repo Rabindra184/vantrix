@@ -67,16 +67,25 @@ without one answers 500 rather than writing an unattributed note.
   rule `trimmed-input.test.ts` guards: a bounded human-typed string trims).
   `NOTE_MAX_LENGTH = 500` is exported so the browser's counter reads the same
   number.
-- `RunNoteSchema = z.object({ note: z.string().nullable(), updatedAt:
+- `RunNoteSchema = z.object({ text: z.string(), updatedAt:
   z.string().datetime().nullable(), updatedBy: z.object({ name: z.string()
-  }).nullable() })` — the PUT's 200 body, and the shape `RunIdentity` carries.
+  }).nullable() })` — a note that EXISTS. `updatedAt` is null only for a row
+  written by hand. (Refined while planning: the first draft made `text`
+  nullable too, which put `identity.note.note` on every reader and let "no
+  note" be spelled two ways.)
+- `RunNoteResponseSchema = z.object({ note: RunNoteSchema.nullable() })` — the
+  PUT's 200 body; `null` after a clear.
 - `RunIdentitySchema` gains `note: RunNoteSchema.nullable().optional()` — ONE
   nested field, not three siblings, so it cannot arrive half-present (the
   `AssertionRuleSchema` argument). `.optional()` is load-bearing: the browser
   drops a body that fails its schema, so a required field blanks the run page
   for a whole rolling deploy.
 - `RunListResponseSchema` items gain `note: z.string().nullable().optional()`
-  — the text only. The list does not join `user`.
+  — the text only. (Refined while planning: the REPOSITORY's list query does
+  LEFT JOIN `"user"` on the primary key, so `RunRecord` has one shape whichever
+  path built it — a record from the list carrying a null author beside real
+  text would be a lie that type-checks. The WIRE item still carries the text
+  alone.)
 
 ## API
 
@@ -121,9 +130,14 @@ live run must not vanish from the page until the run finishes — the
 
 ## The run page
 
-A new `apps/web/src/routes/RunNote.tsx`, rendered through a `note` slot on
-`RunHeader` — under the heading, below Gatling's description — so `RunHeader`
-stays presentational. `RunShell` owns the mutation.
+A new `apps/web/src/routes/RunNote.tsx`, rendered through a REQUIRED `note`
+slot on `RunHeader` so `RunHeader` stays presentational. `RunNote` owns its
+own mutation, the way `ProjectRules` owns its own. `RunHeader` decides WHERE
+the slot goes, from `identity.note`: under the heading, below Gatling's
+description — except on a phone with no note, where it goes inside the
+`run-metadata` disclosure. (Refined while planning: that one placement
+decision is what keeps the phone's fold intact, and it belongs to the
+component that already owns the phone/desktop split.)
 
 - **Container:** `<section aria-label="Run note">`, no heading. Shell chrome
   must not add a heading to every tab's outline (`run-tables.spec.ts` pins it).
@@ -143,8 +157,11 @@ stays presentational. `RunShell` owns the mutation.
   the button reads **Remove note** and sends `null`; empty with no note leaves
   Save disabled. Save is disabled while unchanged or in flight. A failed save
   keeps the text and shows the API's own detail in a `role="alert"` scoped to
-  the editor. After a save, focus returns to the Edit/Add button, and
-  `runQueryKey(id)` plus the run-list keys are invalidated.
+  the editor. After a save the saved note is written straight into the cached
+  run (`runQueryKey(id)`, so the page does not flash the old state), the run
+  and the run lists are refetched, and focus returns to the Edit/Add button —
+  found by its test id rather than a ref, because a phone's FIRST note moves
+  the component out of the disclosure and remounts it.
 
 ## The lists
 
