@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **169 files / 2177 tests**, it
+`nvm use` first, and if a run reports fewer than **169 files / 2181 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,76 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The spa-dotted-path branch added no unit FILE and 4 cases to
+`apps/api/test/security-headers.test.ts` — an `it.each` over `/` and a deep
+link, an asset case, and a guard that the fixture really is dotted — from
+**169 / 2177 to 169 / 2181**. That file is a `.ts`, so integration moves by
+the same four, to **152 / 1931**, and **e2e stays 159**. It is a latent
+defect that sat in plain sight: every page 500s for any install whose path
+contains a directory starting with a dot.
+
+**`send` REFUSES A DOTTED SEGMENT, AND IT JUDGES WHATEVER PATH IT IS
+HANDED.** `spa.ts`'s fallback answered with
+`res.sendFile(join(distDir, 'index.html'))` — an ABSOLUTE path with no
+`root` — so `send`'s default `dotfiles: 'ignore'` applied to the WHOLE install
+location. `express.static(distDir, …)` a few lines up passes `distDir` as its
+root, so it only ever judged the request-relative part and assets were
+always fine. An install under `~/.local/…`, a `.cache/` CI workspace or a git
+worktree under `.claude/` therefore loaded every asset and 500'd every page —
+a half-broken site whose failing half named no cause. It is
+`res.sendFile('index.html', { root: distDir })` now, and that was the only
+`sendFile` in `apps/api/src`; the precompressed-variant branch rewrites
+`req.url` and goes through `express.static`, so it was never affected.
+
+**FOUND BECAUSE A WORKTREE LIVED UNDER `.claude/`, NOT BY ANY SUITE.** The
+schema-drift branch's integration run collected exactly its floor and failed
+two `spa.integration.test.ts` cases with a 500 on `/`; the same file passed
+6/6 once the worktree moved to a path with no dot. `FIXTURE_WEB_DIST` and CI's
+checkout contain no dotted segment, so nothing that runs the suite could ever
+have seen it. **A fixture's location is an input too**, and every location
+this repository is tested from happens to be the easy one.
+
+**THE CASE SITS ON A BARE EXPRESS APP, SO IT READS 404 WHERE NEST READ 500.**
+`security-headers.test.ts` mounts the real `mountSecurityHeaders` and
+`mountSpa` over a temp dist with no Nest and no database, and plain Express
+reports `send`'s own 404 where Nest's error handling turned it into the 500
+a reader saw. Either way it is not the 200 the case requires.
+
+**THREE MUTATIONS, AND THE THIRD IS WHY THE GUARD CASE EXISTS:**
+
+```
+  the absolute-path form restored          the two page cases ALONE (404)
+  the fixture's '.hidden' segment dropped  the dotted-path guard ALONE
+  both at once                             the guard ALONE — the page cases pass
+```
+
+The third is the one worth having: an undotted fixture over the DEFECT
+passes every page assertion, so without the guard a tidy-up that renamed the
+directory would leave a green suite proving nothing. It is the vacuity rule
+this file records many times, applied to a fixture's PATH rather than its
+contents. The asset case stands beside the page cases because the defect was
+half a site — a fix that broke assets under a dotted path would pass the page
+assertions alone.
+
+**AND A FRESH WORKTREE WITHOUT `prisma generate` RESOLVES THE CLIENT FROM ANY
+ANCESTOR `node_modules`.** The first `pnpm build` here failed with dozens of
+`Property 'sql' does not exist on type 'typeof Prisma'` — which reads like a
+broken Prisma upgrade. The generated client was simply absent from the
+worktree, so TypeScript walked up the directory tree and found a stale
+`.prisma/client` in the HOME directory's `node_modules`, belonging to
+nothing in this repository. `prisma generate`, then `pnpm build`, is the
+order CI already uses; a new worktree needs both before any gate means
+anything.
+
+**WHAT WAS RUN.** `pnpm build`, `typecheck` and `lint` green by their own
+exit codes; `test:unit` **169 / 2181**, zero `Errors` lines;
+`test:integration` **152 / 1931, exit 0, zero failures**; `pnpm test:e2e` **159 passed, exit 0** — from a worktree
+at a path with no dot, against a SCRATCH DATABASE (`perfportal_spa`) and a
+scratch Redis INDEX (db 12). Integration and e2e ran on the tree before `main`'s
+schema-drift merge came in, which touches no file this branch does; the
+merged tree was re-measured at `typecheck` exit 0 and unit **169 / 2181**,
+and CI measured the rest.
 
 The schema-matches-migrations branch added no unit FILE, no unit case and no
 spec — unit stays **169 / 2177**, integration **152 / 1927** and **e2e stays

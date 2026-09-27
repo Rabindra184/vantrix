@@ -198,3 +198,51 @@ describe('static asset delivery', () => {
     expect(res.text).not.toContain('root:');
   });
 });
+
+/**
+ * ═══ A DIST UNDER A DOTTED DIRECTORY STILL SERVES ITS PAGES ═══
+ *
+ * `send` — under both `express.static` and `res.sendFile` — refuses a path
+ * with a segment starting with `.` (`dotfiles: 'ignore'`), and it applies that
+ * rule to whatever it is handed. `express.static` hands it the path RELATIVE to
+ * its root, so assets were always fine. The fallback handed it an ABSOLUTE
+ * path, so an install under `~/.local/…`, a `.cache/` CI workspace or a git
+ * worktree under `.claude/` answered every PAGE with a refusal — a 404 here,
+ * where plain Express reports `send`'s own status, and a 500 through Nest —
+ * while its assets loaded. Measured: `spa.integration.test.ts` failed exactly
+ * those two cases from a worktree under `.claude/` and passed from elsewhere.
+ *
+ * The asset request is asserted too, because the defect was HALF a site: a
+ * fix that broke assets under a dotted path would pass the page assertions.
+ */
+describe('a dist under a dotted directory', () => {
+  let dotted: express.Express;
+  let dottedDist: string;
+
+  beforeAll(() => {
+    dottedDist = join(mkdtempSync(join(tmpdir(), 'perfportal-spa-')), '.hidden', 'dist');
+    mkdirSync(join(dottedDist, 'assets'), { recursive: true });
+    writeFileSync(join(dottedDist, 'index.html'), INDEX_HTML);
+    writeFileSync(join(dottedDist, 'assets', 'plain.js'), 'export default 1;\n');
+
+    dotted = express();
+    mountSecurityHeaders(dotted, dottedDist);
+    mountSpa(dotted, dottedDist);
+  });
+
+  it('really is dotted — or every case below proves nothing', () => {
+    expect(dottedDist.split(/[\\/]/).some((segment) => segment.startsWith('.'))).toBe(true);
+  });
+
+  it.each(['/', '/runs/abc'])('serves index.html for %s', async (path) => {
+    const res = await request(dotted).get(path).expect(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.text).toContain('<div id="root">');
+    expect(res.headers['cache-control']).toBe('no-cache');
+  });
+
+  it('serves its assets, which the absolute-path defect never reached', async () => {
+    const res = await request(dotted).get('/assets/plain.js').expect(200);
+    expect(res.text).toBe('export default 1;\n');
+  });
+});

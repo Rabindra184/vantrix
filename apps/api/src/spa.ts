@@ -184,7 +184,13 @@ export function mountSpa(instance: express.Express, distDir: string): void {
       // Never `immutable`: this URL is stable and its content names the
       // current asset fingerprints. See cacheControlFor above.
       res.setHeader('Cache-Control', REVALIDATE);
-      res.sendFile(join(distDir, 'index.html'));
+      // `root`, never `join(distDir, 'index.html')`: `send` refuses any path
+      // with a segment starting with `.`, and applies that to whatever it is
+      // handed. Given an absolute path it checked the WHOLE install location,
+      // so a dist under `~/.local/…` or a `.cache/` workspace answered every
+      // page with a refusal (a 500 through Nest) while `express.static`, which
+      // passes its root the same way this now does, served the assets fine.
+      res.sendFile('index.html', { root: distDir });
     });
   });
 }
