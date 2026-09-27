@@ -145,6 +145,16 @@ describe('POST /v1/projects/:slug/rules', () => {
       .set('Authorization', `Bearer ${ctx.readToken}`)
       .send(runRule());
     expect(res.status, JSON.stringify(res.body)).toBe(403);
+    // The refusal has to describe THIS request. SessionOnlyGuard used to answer
+    // every route it guards with "API tokens are minted by a signed-in user" —
+    // so a CI token posting a rule was told about minting tokens, a request it
+    // did not make. Asserted as the claim, not the wording: the code clients
+    // branch on, a remediation that names the fix, a detail that says a person
+    // is needed, and nothing about minting on a route that mints nothing.
+    expect(res.body.code, JSON.stringify(res.body)).toBe('FORBIDDEN');
+    expect(res.body.remediation, JSON.stringify(res.body)).toMatch(/sign in/i);
+    expect(res.body.detail, JSON.stringify(res.body)).toMatch(/signed-in|session/i);
+    expect(res.body.detail, JSON.stringify(res.body)).not.toMatch(/mint/i);
   });
 
   it('404s for a project in another organisation, never 403', async () => {

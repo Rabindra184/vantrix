@@ -4,8 +4,9 @@ import { validate } from '@readme/openapi-parser';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RequestMethod } from '@nestjs/common';
-import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
+import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
 import { AppModule } from '../src/app.module.js';
+import { SessionOnlyGuard } from '../src/auth/session-only.guard.js';
 import { createTestApp, type TestContext } from './support/app.js';
 
 let ctx: TestContext;
@@ -635,7 +636,13 @@ describe('the document covers exactly the routes Nest registers', () => {
   interface RouteRef {
     method: string;
     path: string;
+    /** Whether SessionOnlyGuard sits on this handler or its controller class
+     *  — read off Nest's own `@UseGuards` metadata, the same way the path is. */
+    sessionOnly?: boolean;
   }
+
+  const guardedBySessionOnly = (target: object): boolean =>
+    ((Reflect.getMetadata(GUARDS_METADATA, target) as unknown[] | undefined) ?? []).includes(SessionOnlyGuard);
 
   /** Path params are compared by POSITION, not by name: `{id}` and `{runId}`
    *  are the same route shape, and the document is free to name them
@@ -652,6 +659,7 @@ describe('the document covers exactly the routes Nest registers', () => {
       for (const c of controllers) {
         const ctor = c as { prototype: object };
         const prefix: string = Reflect.getMetadata(PATH_METADATA, c as object) ?? '';
+        const classSessionOnly = guardedBySessionOnly(c as object);
         for (const key of Object.getOwnPropertyNames(ctor.prototype)) {
           if (key === 'constructor') continue;
           const fn = (ctor.prototype as Record<string, unknown>)[key];
@@ -665,6 +673,7 @@ describe('the document covers exactly the routes Nest registers', () => {
           out.push({
             method: String(RequestMethod[verb]).toLowerCase(),
             path: joined.replace(/:([A-Za-z0-9_]+)/g, '{$1}'),
+            sessionOnly: classSessionOnly || guardedBySessionOnly(fn),
           });
         }
       }
@@ -717,5 +726,43 @@ describe('the document covers exactly the routes Nest registers', () => {
       .filter((r) => !registered.has(r))
       .sort();
     expect(phantom, 'operations the document describes that no handler serves').toEqual([]);
+  });
+
+  /**
+   * ═══ A SESSION-ONLY ROUTE DECLARES THE SESSION-ONLY 403, AND ONLY IT DOES ═══
+   *
+   * `SessionOnlyGuard` refuses every bearer token with its own sentence, and
+   * `SessionRequired` is the response that describes it. Those two were joined
+   * by hand, operation by operation, and the browser upload
+   * (`POST /v1/projects/{slug}/runs`) was the one that missed: its controller
+   * carries the guard, its own description said "the same refusal the token and
+   * SLA-rule operations carry", and its response map spread
+   * `authFailureResponses` — whose 403 is the SCOPE refusal, a route with no
+   * `@Scopes` at all can never send. A generated client branching on the
+   * documented 403 was told the wrong reason.
+   *
+   * So the set is DERIVED, in both directions, from the metadata `@UseGuards`
+   * writes: a guarded route that documents another 403 fails naming it, and an
+   * operation documenting `SessionRequired` that nothing guards fails too — the
+   * second is a document promising a refusal the server never sends.
+   */
+  it('gives every SessionOnlyGuard route the SessionRequired 403, and no other route', async () => {
+    const doc = await fetchDoc();
+    const guarded = new Set(registeredRoutes().filter((r) => r.sessionOnly).map(shape));
+
+    // VACUITY GUARD, counting the construct rather than the verdict: guarded
+    // routes FOUND. A guards key Nest renamed, or a guard compared by the wrong
+    // identity, finds none — and "none undeclared" would then read as clean.
+    expect(guarded.size, 'found no SessionOnlyGuard routes — the guards walk has rotted').toBeGreaterThan(5);
+
+    const declaring = new Set(
+      operations(doc)
+        .filter(({ op }) => (op.responses?.['403'] as { $ref?: string } | undefined)?.$ref === '#/components/responses/SessionRequired')
+        .map(({ path, method }) => shape({ method, path })),
+    );
+    const undeclared = [...guarded].filter((r) => !declaring.has(r)).sort();
+    const unguarded = [...declaring].filter((r) => !guarded.has(r)).sort();
+    expect(undeclared, 'SessionOnlyGuard routes whose documented 403 is not SessionRequired').toEqual([]);
+    expect(unguarded, 'operations documenting SessionRequired that no SessionOnlyGuard protects').toEqual([]);
   });
 });

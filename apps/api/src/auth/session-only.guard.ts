@@ -21,6 +21,17 @@ import { forbidden } from '../common/validation.js';
  * A GUARD rather than a line in each handler, so it reads as a policy and a
  * second credential-issuing route added later cannot quietly omit it.
  *
+ * ═══ IT GUARDS FAR MORE THAN TOKEN MINTING NOW, AND ITS SENTENCE SAYS SO ═══
+ *
+ * Token minting is the example above because it is the sharpest one, not the
+ * only one: project creation, SLA rules, a test's PATCH and DELETE, and the
+ * browser upload route carry this guard too. Its refusal used to read "API
+ * tokens are minted by a signed-in user" — true of three routes and a
+ * non-sequitur on the rest, where a CI token posting a rule was told about
+ * minting tokens. The sentence below is true of every route that carries the
+ * guard, and `openapi.integration.test.ts` derives that list from Nest's own
+ * guard metadata rather than from anybody's memory of it.
+ *
  * Ordering is safe: the global APP_GUARD (`AuthGuard`) runs before route
  * guards, so `req.tenant` is always populated by the time this runs.
  */
@@ -37,7 +48,7 @@ export class SessionOnlyGuard implements CanActivate {
       // otherwise fills with "Check the request against the OpenAPI
       // description", useless for a request the document describes perfectly.
       throw forbidden(
-        'API tokens are minted by a signed-in user, not by a machine credential.',
+        'This action needs a signed-in person; an API token cannot perform it, whatever its scopes.',
         'Sign in at POST /auth/sign-in/email and retry with the session cookie.',
       );
     }
