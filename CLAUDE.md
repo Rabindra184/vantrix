@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **172 files / 2217 tests**, it
+`nvm use` first, and if a run reports fewer than **172 files / 2218 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,147 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The worker-survives-pg-restart branch added no unit FILE and 1 case to
+`packages/persistence/test/client.test.ts`, from **172 / 2217 to 172 / 2218**,
+and TWO integration files — `packages/persistence/test/pool-errors.integration.test.ts`
+(1) and `apps/worker/test/connection-loss.integration.test.ts` (6) — so
+integration moves by those seven plus the `.ts` unit case, from **154 / 1959
+to 156 / 1967**. **e2e stays 165.** It is the third task the
+transient-ingest-retries branch named and left.
+
+**A POSTGRES RESTART KILLED THE WORKER, THREE WAYS.** A restart, a failover
+or an operator's `pg_terminate_backend` ends every session at once, and a
+node-postgres client whose connection dies EMITS `error`. An EventEmitter
+with no `error` listener THROWS, and `apps/worker/src/main.ts` has no
+process-level handler, so each of these was an uncaught exception:
+
+```
+  an IDLE pooled client    pg-pool re-emits on the POOL      createPool attached no listener
+  a CHECKED-OUT client     pg-pool REMOVES its own listener  the sweeper's transaction,
+                           at checkout, restores at release   every owned run's lock session
+```
+
+Measured with a throwaway probe (node-postgres 8.22, pg-pool 3.14.0) before
+anything changed, against the compose Postgres:
+
+```
+  held idle client, killed    client 'error' x2: 57P01, then "Connection terminated unexpectedly"
+  idle in the pool, killed    pool 'error' x1 (57P01); pg-pool swallows the second
+  either, with no listener    UNCAUGHT
+  a dead client, released     removed (total 0), no further event; the pool reopens on demand
+```
+
+**THE POOL LISTENER LIVES IN `createPool`, NOT IN `main.ts`**, because the
+exposure is the pool's and every pool this repository makes has it — the
+worker's, the API's (`auth.module.ts`) and every integration test's. There is
+nothing to recover: pg-pool has already discarded the client. So the listener
+keeps the process alive and SAYS so, one `console.warn` naming the SQLSTATE,
+because an operator whose database restarted should be able to see the
+process noticed — the same reason `packages/storage` already logs through
+`console.error`.
+
+**A CHECKOUT NEEDS A LISTENER OF ITS OWN, AND `holdClient` IS IT.** The pool's
+listener covers idle clients and nothing else. `apps/worker/src/held-client.ts`
+guards every checkout that outlives one query: it records the FIRST error (the
+second of the pair adds nothing), reports it once, and releases WITH it so the
+pool destroys the client rather than lending a session that may still be in a
+transaction or holding a lock. `pool.query` needs none — pg-pool's own `query`
+attaches `client.once('error')` for the call, read out of its source.
+
+**THE SWEEPER'S ROLLBACK HAD THE PIPELINE'S BUG.** On a dead session
+`ROLLBACK` rejects with "Connection terminated unexpectedly", NO code, and the
+catch threw that instead of the `57P01` that brought it there — a restart
+reported as a bug. It is kept only to tell the pool to destroy the client.
+Nothing else is needed: the transaction dies with the session, and the next
+sweep re-selects every row this one could not finish.
+
+**A DEAD LOCK SESSION IS A LOST LOCK, AND SURVIVING IT WAS NOT ENOUGH.** Each
+owned run holds one client for its whole stream — the longest-lived checkouts
+in the process, so the likeliest to be holding a connection when the database
+restarts — and its advisory lock lives in that SESSION. The instant it ends,
+another replica can claim the run and so can `PipelineService`. An owner that
+merely survived the event would go on folding and PUBLISHING a run it no
+longer holds: two owners, one sequence. So `held.lost` means the lock is gone:
+
+```
+  the publish pass    skips it (a loss can land after the release pass, mid-tick)
+  the next tick       releases it and re-claims it on a fresh session, with the
+                      resume a crash gets (#resumeState) — unless another replica
+                      took the lock first, in which case this one lets go
+  a claim             whose session died during its three post-lock reads is NOT
+                      inserted; every one of those reads swallows its own failure
+  #release / close()  skips the unlock: it can only fail, for a loss already reported
+```
+
+Acting on it is left to the tick, not done in the event handler: `#owned` is
+only ever changed at the points that already change it, and the handler runs
+at any point in a tick.
+
+**THE HARNESS KILLS A REAL BACKEND, BY PID.** `apps/worker/test/backends.ts`
+finds the session holding a run's lock in `pg_locks` (`classid` = the
+namespace, `objid = hashtext(runId)::oid`, `objsubid = 2` — a negative
+`hashtext` wraps into `oid`, measured), or the one parked behind a table lock
+with `pg_blocking_pids`, always from an AUTOCOMMIT observer, and ends it with
+`pg_terminate_backend`. A trigger raising `57P01` would have proven nothing:
+on a LIVE connection it emits no event at all. Two parks give the cases their
+windows — `run` in EXCLUSIVE mode stops the sweep at its `FOR UPDATE`, inside
+its transaction; `sla_rule` in ACCESS EXCLUSIVE stops a CLAIM reading its
+rules, which holds a tick between its release pass and its publish pass.
+
+**NINE MUTATIONS, THE REPLACEMENT COUNT ASSERTED BEFORE EVERY RUN, EACH
+PREDICTED BEFORE IT RAN:**
+
+```
+  main as it is (the before-state)          all 7 cases, the unit case, 12 uncaught
+  no listener on the pool                   the pool case + the unit case, 1 uncaught
+  holdClient registers no listener          the 5 fold-owner cases; the sweeper's
+                                            passes its assertions, fails on 11 uncaught
+  the sweep's ROLLBACK masks the cause      the sweeper case ALONE
+  the sweep holds nothing                   7 of 7 assertions PASS; 1 uncaught fails it
+  the release pass ignores a lost session   re-claim, replica and mid-tick cases
+  the publish pass ignores one              the mid-tick case ALONE
+  a claim inserts a lost session            the mid-claim case ALONE
+  release unlocks a lost session anyway     the shutdown case ALONE
+```
+
+**TWO OF THE NINE ARE GUARDED BY VITEST FAILING A FILE ON AN UNCAUGHT
+EXCEPTION, NOT BY AN ASSERTION** — the sweep holding a bare client, and the
+sweeper's half of `holdClient` losing its listener — which is the honest limit
+of a claim about a process that would have died. The release-pass mutation
+fails three cases because all three assert the one claim, that a lost run is
+retired on the next tick, from three directions. The shutdown case was added
+after the first mutation plan found `#release`'s early return reachable by no
+case: without it `close()` unlocks on a dead session and raises the
+AggregateError it exists to raise for a release that really failed.
+
+**KNOWN AND LEFT, EACH ITS OWN CHANGE:**
+
+  - **`PipelineService` IS NOT TOUCHED HERE.** Its two checkouts are the
+    transient-ingest-retries branch's (PR #245), which guards them with a
+    local `ignoreCheckedOutError`; this branch stays out of that file so the
+    two cannot conflict. Whichever merges second should move the pipeline onto
+    `holdClient` — one definition of "hold a client", not two.
+  - **THE API'S LISTEN CONNECTION IS ITS OWN BRANCH.** `TerminalWaiter`
+    (`apps/api/src/runs/terminal-waiter.ts`) holds a dedicated `pg.Client` for
+    `LISTEN run_terminal` with no `error` listener and no reconnect, so a
+    restart ends the API through it — a `pg.Client`, which `createPool`'s
+    listener cannot reach. Taken as `fix/api-survives-pg-restart`; the API's
+    POOL is covered here.
+  - **NO PROCESS-LEVEL HANDLER WAS ADDED, DELIBERATELY.** An
+    `uncaughtException` handler would swallow the bugs nobody has found yet;
+    a process that dies on one is restarted by its orchestrator, which is the
+    right answer to an unknown.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **172 / 2218**, zero `Errors` lines; `test:integration` **156 /
+1967, exit 0, zero failures**; `pnpm test:e2e` **165 passed, exit 0** — every
+total the one counted from the source before any suite ran, against a SCRATCH
+DATABASE (`perfportal_pgrestart`), a scratch Redis INDEX (db 4 — db 5 already
+held 356 keys of somebody else's) and e2e port 3400, from a worktree at an
+undotted path. The machine did not sleep during the run, checked with
+`pmset -g log` rather than assumed, and the host and MinIO clocks agreed when
+integration started.
 
 The test-page-phone-overflow branch added no unit FILE, no unit case and no
 spec — it WIDENED one existing e2e case — so it moves no floor. Cut at
