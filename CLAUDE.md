@@ -258,6 +258,21 @@ of five**, at a 1-minute load of 14, higher than the failing run's. Against a
 SCRATCH DATABASE (`perfportal_waiter`), a scratch Redis INDEX (db 3) and e2e
 port 3500, from a worktree at an undotted path, with no sleep during the run.
 
+**RE-MEASURED AFTER MERGING `main`**, where the run-number,
+transient-ingest-retries and worker-survives-pg-restart branches had all
+landed: unit **174 / 2233**, `pnpm test:e2e` **166 passed, exit 0**,
+typecheck and lint exit 0, and `test:integration` COLLECTED **162 / 2006** —
+the arithmetic, predicted — with ONE failure again, and a DIFFERENT one:
+`openapi.integration.test.ts`'s 201 case, on `GET /v1/openapi.json -> 501:
+{}`, the exact signature this file records for that endpoint under load.
+That file then passed **29 of 29, five times out of five**. Two full runs, a
+different failure in each, neither reachable from a waiter that no GET in
+either case ever waits on, and **no test failed twice** — this file's tell for
+the machine rather than the change. Measured on a temporary merge of the
+same heads and proven the same tree by its git tree hash (`0789e78`), the
+method the worker-survives-pg-restart entry above describes; CI measured the
+merged commit itself before it merged.
+
 The worker-survives-pg-restart branch added no unit FILE and 1 case to
 `packages/persistence/test/client.test.ts`, from **172 / 2217 to 172 / 2218**,
 and TWO integration files — `packages/persistence/test/pool-errors.integration.test.ts`
