@@ -16,6 +16,7 @@ import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { selectPlugin } from './plugins.js';
+import { isTransient } from './retry.js';
 import { numberRunForTest } from './run-number.js';
 import { resolveTestId } from './test-resolver.js';
 
@@ -85,6 +86,44 @@ export const RUN_INGEST_LOCK_NAMESPACE = 8_531_001;
  * is what tells `retry.ts` to retry it, alongside the networking/Prisma
  * codes already there.
  */
+/**
+ * ═══ WHETHER THE QUEUE WILL TRY THIS RUN AGAIN ═══
+ *
+ * A transient failure — a connection the database terminated, an object store
+ * that did not answer, a pool with no client to hand out — is worth retrying
+ * only if something WILL retry it. The consumer is the one caller that knows:
+ * BullMQ decides from the job's own `attemptsMade` and `attempts`, and
+ * `queueWillRetry` in `consumer.ts` reads the same arithmetic before the
+ * attempt instead of guessing after it.
+ *
+ * REQUIRED, with no default, because both wrong answers are silent. Telling a
+ * retrying caller "no" records a transient failure on the run for good — the
+ * retry then finds it terminal and returns, which is the defect this exists
+ * to close. Telling a non-retrying caller "yes" leaves the run at `parsing`
+ * with nothing coming back for it until the sweeper's `parsingStaleAfterMs`.
+ */
+export interface PipelineAttempt {
+  queueWillRetry: boolean;
+}
+
+/**
+ * ═══ A CHECKED-OUT CLIENT'S `error` EVENT NEEDS A LISTENER ═══
+ *
+ * pg-pool removes its own error listener while a client is checked out
+ * (pg-pool 3.14.0, `_acquireClient`) and puts it back at release. A server
+ * that ends the connection in between — a restart, a failover,
+ * `pg_terminate_backend` — makes the client emit `error`, and an EventEmitter
+ * `error` with no listener THROWS, so the worker process died mid-job.
+ * Measured: the in-flight query rejects with 57P01, and the event then arrives
+ * as an uncaught `Connection terminated unexpectedly`.
+ *
+ * This swallows the EVENT only. The error that matters reaches the caller as
+ * the rejected query, where it is classified. It is removed before release,
+ * because pg-pool re-attaches its own there and a no-op left on a healthy
+ * client would pile up one per checkout.
+ */
+function ignoreCheckedOutError(): void {}
+
 class RunLockedError extends Error {
   readonly code = 'RUN_LOCKED';
   constructor(runId: string) {
@@ -123,10 +162,12 @@ export class PipelineService {
    * `pg_try_advisory_lock` and not its blocking form: a rival should return
    * immediately, not queue up to redo work that is already being done.
    */
-  async process(runId: string): Promise<void> {
+  async process(runId: string, attempt: PipelineAttempt): Promise<void> {
     // The lock lives on ONE connection and is released on it, so it cannot be
     // taken on one pooled connection and orphaned on another.
     const client = await this.pool.connect();
+    client.on('error', ignoreCheckedOutError);
+    let broken: Error | undefined;
     try {
       const { rows } = await client.query<{ got: boolean }>(
         'SELECT pg_try_advisory_lock($1, hashtext($2)) AS got',
@@ -138,15 +179,28 @@ export class PipelineService {
       }
 
       try {
-        await this.#processHoldingLock(runId);
+        await this.#processHoldingLock(runId, attempt);
       } finally {
-        await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
-          RUN_INGEST_LOCK_NAMESPACE,
-          runId,
-        ]);
+        // An unlock that fails must not replace the error that brought this
+        // here: on a connection the server has ended it rejects with a
+        // code-less "Connection terminated unexpectedly", which `isTransient`
+        // reads as deterministic, so a retryable failure would be refused its
+        // retry. Nothing is lost by swallowing it. A session that ended took
+        // its advisory lock with it, and any other failure releases this
+        // client WITH the error, so the pool destroys it — and the lock — rather
+        // than handing a locked session to the next job.
+        try {
+          await client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+            RUN_INGEST_LOCK_NAMESPACE,
+            runId,
+          ]);
+        } catch (err) {
+          broken = err instanceof Error ? err : new Error(String(err));
+        }
       }
     } finally {
-      client.release();
+      client.removeListener('error', ignoreCheckedOutError);
+      client.release(broken);
     }
   }
 
@@ -202,7 +256,7 @@ export class PipelineService {
     // Case 1: another process() call already owns this run's outcome.
   }
 
-  async #processHoldingLock(runId: string): Promise<void> {
+  async #processHoldingLock(runId: string, attempt: PipelineAttempt): Promise<void> {
     const runs = new RunRepository(this.prisma);
     const run = await runs.findByIdUnscoped(runId);
     if (!run) return;                                   // swept away or deleted
@@ -213,6 +267,27 @@ export class PipelineService {
     try {
       await this.#ingest(run);
     } catch (err) {
+      // ═══ A TRANSIENT FAILURE THE QUEUE WILL RETRY IS NOT RECORDED ═══
+      //
+      // Classified BEFORE `fail()`, because `fail()` is final: the retry BullMQ
+      // then schedules finds the run terminal at the check above and returns,
+      // so every transient failure used to fail its run for good while the
+      // job reported success. Left at 'parsing' instead — the state the next
+      // attempt expects — and `#ingest`'s writes were all inside the
+      // transaction that just rolled back, so there is nothing to undo. The
+      // sweeper does not race it: `parsing` staleness is measured from
+      // `parsing_started_at`, fifteen minutes by default against a backoff
+      // of seconds, and `markParsing` re-stamps it on the retry.
+      //
+      // On the LAST attempt it falls through and fails like anything else,
+      // because nothing else would ever pick it up.
+      if (attempt.queueWillRetry && isTransient(err)) {
+        const code = (err as { code?: unknown }).code ?? (err as { errorCode?: unknown }).errorCode;
+        console.warn(
+          `run ${runId}: transient failure (${String(code)}); leaving it at 'parsing' for the queue's next attempt`,
+        );
+        throw err;
+      }
       const structured =
         err instanceof IngestError || (err instanceof Error && err.name === 'IngestError')
           ? (err as IngestError)
@@ -335,6 +410,8 @@ export class PipelineService {
     // Statistics, assertions, and the terminal status commit together. A run is
     // never observable with statistics but no verdict, or the reverse.
     const client = await this.pool.connect();
+    client.on('error', ignoreCheckedOutError);
+    let broken: Error | undefined;
     try {
       await client.query('BEGIN');
 
@@ -418,10 +495,24 @@ export class PipelineService {
 
       await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK');
+      // The ROLLBACK's own failure must not replace `err`. When the server has
+      // ended the connection — 57P01, the transient error a restart delivers
+      // — ROLLBACK rejects with a code-less "Connection terminated
+      // unexpectedly", and throwing THAT turned a retryable failure into one
+      // `isTransient` reads as deterministic. The server rolled the
+      // transaction back when it ended the session; a ROLLBACK that fails on
+      // a live connection releases the client WITH that error, so the pool
+      // destroys it rather than lending out a session still inside a
+      // transaction.
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        broken = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr));
+      }
       throw err;
     } finally {
-      client.release();
+      client.removeListener('error', ignoreCheckedOutError);
+      client.release(broken);
     }
   }
 

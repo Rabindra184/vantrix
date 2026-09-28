@@ -551,9 +551,9 @@ describe('the pipeline, end to end', () => {
   it('numbers two uploads of one simulation 1 then 2', async () => {
     const pipeline = new PipelineService(config, prisma, pool, blobs);
     const first = await pendingUpload();
-    await pipeline.process(first);
+    await pipeline.process(first, { queueWillRetry: false });
     const second = await pendingUpload();
-    await pipeline.process(second);
+    await pipeline.process(second, { queueWillRetry: false });
 
     const a = await numberOf(first);
     const b = await numberOf(second);
@@ -577,7 +577,7 @@ describe('the pipeline, end to end', () => {
   it('finalizes a run already numbered in its test without waiting on the test row', async () => {
     const pipeline = new PipelineService(config, prisma, pool, blobs);
     const first = await pendingUpload();
-    await pipeline.process(first);
+    await pipeline.process(first, { queueWillRetry: false });
     const testId = (await numberOf(first)).testId!;
     const second = await pendingUpload();
     expect(await attachLiveRunToTest(pool, second, testId)).toBe(2);
@@ -592,7 +592,7 @@ describe('the pipeline, end to end', () => {
       await holder.query('SELECT id FROM test WHERE id = $1 FOR UPDATE', [testId]);
 
       let settled = false;
-      processed = pipeline.process(second).then(
+      processed = pipeline.process(second, { queueWillRetry: false }).then(
         () => 'finished',
         (err: unknown) => `rejected ${codeOf(err)}`,
       );
