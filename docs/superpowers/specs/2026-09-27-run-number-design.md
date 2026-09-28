@@ -69,9 +69,14 @@ CREATE UNIQUE INDEX run_test_id_run_number_key ON run (test_id, run_number);
 what keeps the schema-matches-migrations CI step green. NULLs are distinct in a
 unique index, so every run without a test coexists.
 
-**The invariant:** `run_number` is non-null exactly when `test_id` is. Both
-writers below maintain it in the same statement, and test deletion maintains it
-explicitly (see below).
+**The invariant:** UNGROUPED ⇒ UNNUMBERED — a run never carries a number
+without a test. Both writers below set the test and the number in the same
+statement, and test deletion clears the number of every run it ungroups (see
+below). **The goal**, not an invariant, is the converse: a run in a test has a
+number. It has one known exception — a run an older, pre-numbering worker
+attached to its test during an upgrade, which carries a test and no number;
+the finalize numbers it when it meets it (the self-heal row in the table
+below).
 
 ## The two writers
 
@@ -103,10 +108,10 @@ streams, as GE's does.
 decided by a NEW, separately testable function, `numberRunForTest` — its OWN
 statement, called IMMEDIATELY BEFORE the terminal UPDATE, inside the same
 transaction and therefore atomic with it, rather than folded into the terminal
-UPDATE's own `SET` clause. Two reasons: it is then a function this file's own
-suite (and `apps/worker/test/run-number.integration.test.ts`) can call and
-assert on directly, without constructing the terminal write's other nine
-parameters just to reach it; and it has to run BEFORE the terminal UPDATE
+UPDATE's own `SET` clause. Two reasons: it is then a function
+`apps/worker/test/run-number.integration.test.ts` can call and assert on
+directly, without constructing the terminal write's other nine parameters
+just to reach it; and it has to run BEFORE the terminal UPDATE
 rather than after, because it repeats that UPDATE's own status guard
 (`status NOT IN ('complete', 'failed')`) to refuse a redelivered job that has
 already gone terminal — a guard that would no longer match if the terminal
@@ -140,38 +145,74 @@ UPDATE run
 | any | `null` (resolution failed) | cleared |
 
 The terminal UPDATE that follows, unchanged in shape, then writes the run's
-status, verdict and metrics with `test_id = $2` again — the same value, so the
-two statements can never disagree about which test the row belongs to. Because
-`numberRunForTest` is the LAST statement before that terminal UPDATE and both
-run inside one transaction before `COMMIT`, the test's row lock is held for two
-short statements rather than for the whole finalize, and two runs of one test
-finishing together queue for milliseconds, not for a full finalize each.
+status, verdict and metrics with `test_id = $10` — bound to the same test id
+`numberRunForTest` took as its `$2`, so the two statements can never disagree
+about which test the row belongs to. Because `numberRunForTest` is the LAST
+statement before that terminal UPDATE and both run inside one transaction
+before `COMMIT`, the test's row lock is held for two short statements rather
+than for the whole finalize, and two runs of one test finishing together queue
+for milliseconds, not for a full finalize each.
 
-**Neither writer above can deadlock `TestRepository.remove` below, and it is
-not because of a shared lock order** — `remove`'s delete locks the TEST row
-FIRST and its cascade then locks RUN rows, the reverse of both writers' RUN
-then TEST. What rules out a cycle is the PREDICATES each side waits under: a
-numbering statement only waits on a test while holding a run whose COMMITTED
-`test_id` is NOT it, and `remove`, once it holds the test, only waits on runs
-whose committed `test_id` IS it (the cascade) or that are already
-ungrouped-but-numbered — never a run either writer is currently holding,
-because the invariant (`run_number` non-null exactly when `test_id` is) makes
-an ungrouped run unnumbered. No run can be the thing both sides are waiting
-for at once. Widening `remove`'s clearing predicate, or either writer's
-`target`/`cur` filter, would need this argument re-made.
+**Neither writer above deadlocks `TestRepository.remove` below, with one
+residual window — and it is not because of a shared lock order.** `remove`'s
+delete locks the TEST row and its cascade then locks RUN rows, the reverse of
+both writers' RUN then TEST. What rules out a cycle is WHICH rows each side can
+be waiting for:
+
+- **A writer waits on test T only while holding its own run R**, where R is
+  either not committed in T (an attach, or a finalize moving R into T), or
+  committed in T without a number (the self-heal row, in `allocated`), or
+  committed in T with a number the finalize keeps — which waits in the
+  pipeline's terminal UPDATE: that UPDATE rewrites a row `numberRunForTest`
+  already rewrote in the same transaction, so its foreign-key check locks T
+  even though `test_id` is unchanged (measured).
+- **`remove(T)` takes the runs committed in T FIRST**, in a statement that
+  holds no lock on T (statement (1) under "Deleting a test"). It can wait on a
+  writer holding one of those runs only before it holds T, and that writer
+  can then get T and finish. Statement (1) exists for this LOCK ORDER as well
+  as for clearing; without it the self-heal arm deadlocks the delete (40P01),
+  and `apps/worker/test/run-number.integration.test.ts`'s "does not deadlock a
+  delete against a finalize that numbers a run already in the test" forces
+  that interleaving and fails on every run without it.
+- **Once `remove` holds T** it waits only on runs committed in T that (1) did
+  not lock — runs that joined T after (1) read; the writer that joined each
+  needed a lock on T's row, so it has already committed and holds nothing —
+  and on ungrouped-but-numbered runs, which by the invariant are only the ones
+  its own cascade made.
+
+**The residual:** a live run that joins T after (1) read and is then taken by
+its FINALIZE before `remove`'s cascade reaches it. That finalize waits on T —
+in `allocated` if an older worker attached the run unnumbered, in the terminal
+UPDATE's foreign-key check if the run is numbered — while `remove` holds T and
+waits on the run. Both variants were reproduced with forced interleavings; the
+numbered one is not limited to an upgrade window. Reaching either needs a live
+run's header to join T and its stream to close and be picked up by the
+pipeline, all inside one delete's window between (1) and its cascade. Postgres
+resolves it by aborting one side with `40P01`. Widening either of `remove`'s
+clearing statements, or either writer's `target`/`cur` filter, needs this
+argument re-made.
 
 ## Deleting a test
 
-`TestRepository`'s delete reads the test, then `deleteMany`s it; `run.test_id`
-is `ON DELETE SET NULL`, which cannot clear a second column. The delete becomes
-one transaction: delete the test, then clear the numbers left on its
-now-ungrouped runs — one clearing statement, matching every ungrouped-but-
-numbered run in the project, which is exactly the runs the cascade just
-ungrouped plus any run that reached that state some other way (a run that
-joined the test between an earlier read and the delete, say). A run therefore
-never reports a number without the test it counts within. A test later
-recreated under the same slug is a NEW row and starts at `#1`; the ungrouped
-runs of the old one carry no number, so nothing collides.
+`TestRepository`'s delete reads the test, then runs one transaction of three
+statements; `run.test_id` is `ON DELETE SET NULL`, which cannot clear a second
+column:
+
+1. clear `run_number` on the runs committed in the test — BEFORE the test
+   row, for the lock order above as much as for clearing;
+2. delete the test, whose cascade ungroups its runs;
+3. clear `run_number` on every ungrouped-but-numbered run in the project —
+   which, by the invariant, is exactly the runs that joined the test after (1)
+   read (a writer that committed in between) and were ungrouped by (2)'s
+   cascade still numbered.
+
+A run therefore never reports a number without the test it counts within. A
+test later recreated under the same slug is a NEW row and starts at `#1`; the
+ungrouped runs of the old one carry no number, so nothing collides. A finalize
+that queued on the deleted test's runs behind (1) finds the test gone and
+fails its foreign key (`23503`) — the outcome a finalize racing its test's
+deletion has always met, since the terminal UPDATE has always written
+`test_id`.
 
 ## Contract (`packages/contracts`)
 
@@ -265,6 +306,7 @@ count asserted before the run.
 | a re-claimed identify burns no number | the `EXISTS (target)` guard removed |
 | N runs of one test finalizing concurrently get N distinct numbers | the counter replaced by `max + 1` without a lock |
 | deleting a test clears its runs' numbers | the clearing step removed |
+| a delete does not deadlock a finalize that numbers a run already in the test | `remove`'s statement (1) removed |
 | the backfill numbers by `(created_at, id)` and sets the counter to max + 1 | ordering by `started_at`; counter left at 1 |
 
 **API (integration):** `runNumber` on the terminal builder, on the 202 builder

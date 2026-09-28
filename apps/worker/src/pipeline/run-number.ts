@@ -16,30 +16,64 @@ import type pg from 'pg';
  * bumped by an UPDATE whose row lock serialises two runs of one test; a
  * max-plus-one read would hand both the same number.
  *
- * ═══ WHY NONE OF THIS CAN DEADLOCK `TestRepository.remove` ═══
+ * ═══ THE INVARIANT, AND THE GOAL ═══
  *
- * Both statements below lock a RUN row, then (sometimes) a TEST row — but
- * `remove` does not follow that order: its delete locks the TEST row first,
- * and the FK's `ON DELETE SET NULL` cascade then locks RUN rows, and its
- * clearing statement locks RUN rows again. Lock order alone would not rule
- * out a cycle. What actually does is the PREDICATES each side waits under:
+ * UNGROUPED ⇒ UNNUMBERED: a run never carries a number without a test. Both
+ * statements below write the test and the number together, and
+ * `TestRepository.remove` clears the number of every run it ungroups. That is
+ * the invariant the argument below leans on.
  *
- *   - a numbering statement here only waits on test T while holding a run
- *     whose COMMITTED `test_id` is NOT T (otherwise `allocated`'s EXISTS is
- *     false and the test row is never touched);
- *   - `remove(T)`, once it holds T, only waits on runs whose committed
- *     `test_id` IS T (the cascade) or that are ungrouped-but-numbered
- *     (`test_id` NULL AND `run_number` NOT NULL) — and a run either writer
- *     here is holding is never ungrouped-but-numbered, because the invariant
- *     (`run_number` non-null exactly when `test_id` is) makes an ungrouped
- *     run unnumbered.
+ * "A run in a test has a number" is the GOAL, not an invariant, and it has one
+ * known exception: a run an older, pre-numbering worker attached to its test
+ * during an upgrade, which carries a test and no number. The finalize
+ * statement numbers such a run when it meets it — the self-heal row in its
+ * table below.
  *
- * So a numbering statement waiting on T is holding a run NOT in T, and
- * `remove(T)` waiting on that same run needs it to BE in T (or ungrouped and
- * numbered, which it is not) — no run can satisfy what both sides are
- * waiting for at once, so no wait cycle can form. Widening the clearing
- * statement's predicate, or `target`'s/`cur`'s filter above, would need this
- * argument re-made from scratch.
+ * ═══ WHY THESE STATEMENTS DO NOT DEADLOCK `TestRepository.remove` — AND THE
+ *     ONE WINDOW WHERE THEY CAN ═══
+ *
+ * Both statements lock a RUN row first and only then, sometimes, a TEST row.
+ * `remove(T)` cannot follow that order all the way — its delete locks T, and
+ * the foreign key's `ON DELETE SET NULL` cascade then locks runs — so lock
+ * order alone does not rule a cycle out. What does is WHICH rows each side can
+ * be waiting for:
+ *
+ *   - a writer waits on test T only while holding its own run R, where R is
+ *     either NOT committed in T (an attach, or a finalize moving R into T), or
+ *     committed in T without a number (the self-heal row, in `allocated`), or
+ *     committed in T with a number the finalize keeps — that one waits in the
+ *     pipeline's terminal UPDATE, whose foreign-key check locks T because the
+ *     finalize statement below rewrote the row earlier in the same
+ *     transaction (measured: a second UPDATE of one row in one transaction,
+ *     test_id unchanged, waits on a test row held FOR UPDATE, as a delete
+ *     holds it);
+ *   - `remove(T)` takes the runs committed in T FIRST, in a statement that
+ *     holds no lock on T. So it can wait on a writer holding one of them only
+ *     BEFORE it holds T, and that writer can then get T and finish. That first
+ *     statement exists for LOCK ORDER as much as for clearing numbers, and
+ *     the worker suite's "does not deadlock a delete against a finalize that
+ *     numbers a run already in the test" pins it: without it, that case's
+ *     interleaving deadlocks (40P01) on every run;
+ *   - once `remove` holds T, it waits only on runs committed in T that its
+ *     first statement did not lock — runs that joined T after that statement
+ *     read — and on ungrouped-but-numbered runs, which by the invariant are
+ *     only the ones its own cascade just ungrouped. A writer that JOINED a run
+ *     to T needed a lock on T's row to do it, so it has committed before
+ *     `remove` holds T, and holds nothing.
+ *
+ * THE RESIDUAL THIS DOES NOT COVER: a run that joins T after `remove`'s first
+ * statement read and is then taken by its FINALIZE before `remove`'s cascade
+ * reaches it. That finalize holds the run and waits on T — in `allocated` if an
+ * older worker attached it without a number, in the terminal UPDATE's
+ * foreign-key check if it already has one — while `remove` holds T and waits
+ * on the run. The numbered variant is NOT limited to an upgrade window; both
+ * were reproduced against this code with forced interleavings. Reaching either
+ * needs a live run's header to join T AND its stream to close and be picked up
+ * by the pipeline, all inside one delete's window between its first statement
+ * and its cascade. Postgres resolves it by aborting one side with 40P01.
+ *
+ * Widening either of `remove`'s clearing statements, or `target`'s/`cur`'s
+ * filter below, needs this argument re-made from scratch.
  *
  * No backticks anywhere in the SQL below: it sits in template literals.
  */

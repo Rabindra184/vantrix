@@ -179,50 +179,74 @@ export class TestRepository {
    *
    * A run's number counts within its test (spec 2026-09-27-run-number), and
    * `ON DELETE SET NULL` can clear `test_id` but not a second column. So the
-   * delete is followed, in the SAME transaction, by one statement that clears
-   * `run_number` on every ungrouped-but-numbered run in the project — which is
-   * exactly the runs the cascade just ungrouped, plus any run that reached
-   * that state some other way, at no extra cost to catch in the same
-   * predicate. A run therefore never reports a number with no test to count
-   * it in. A test later recreated under the same slug is a new row and
+   * delete is one transaction of THREE statements: (1) clear `run_number` on
+   * the runs committed in this test, (2) delete the test, whose cascade
+   * ungroups them, and (3) clear `run_number` on every ungrouped-but-numbered
+   * run in the project — which, by the invariant below, is exactly the runs
+   * that joined this test after (1) read it, ungrouped by (2)'s cascade still
+   * carrying their numbers. Together they keep the invariant the worker's numbering relies
+   * on — UNGROUPED ⇒ UNNUMBERED, a run never reports a number with no test to
+   * count it in. A test later recreated under the same slug is a new row and
    * starts at 1.
    *
-   * An EARLIER version cleared `run_number` on the test's own runs BEFORE the
-   * delete too, in a first statement. That was redundant: once the delete has
-   * run, the cascade has ungrouped exactly this test's runs, and the clearing
-   * statement below already matches every ungrouped-but-numbered row in the
-   * project — this test's former runs included, along with any that joined
-   * mid-delete and were never in the first statement's snapshot. One
-   * statement, not two disagreeing about which runs need clearing.
+   * ═══ (1) IS THERE FOR LOCK ORDER, NOT ONLY FOR CLEARING ═══
    *
-   * ═══ WHY THIS CANNOT DEADLOCK A NUMBERING STATEMENT ═══
+   * `attachLiveRunToTest` and `numberRunForTest` (`apps/worker`) lock a RUN
+   * row and then the TEST row; the delete in (2) locks the test first and its
+   * cascade then locks runs. (1) takes the runs committed in this test BEFORE
+   * the test row, while this transaction holds no lock on it — including a
+   * run already in the test with no number, which it rewrites unchanged. So a
+   * finalize holding one of those runs is waited for here, before (2) asks for
+   * the test, and it can get the test and finish; afterwards its statement
+   * finds the test gone and fails its foreign key (23503), the outcome a
+   * finalize racing its test's deletion has always met. Without (1), a
+   * finalize numbering a run already in this test (the self-heal arm) takes
+   * that run, queues on the test behind this delete, and the cascade then
+   * needs the run it holds: 40P01. The worker's run-number suite pins it —
+   * "does not deadlock a delete against a finalize that numbers a run already
+   * in the test" fails on every run with (1) removed.
    *
-   * `attachLiveRunToTest` and `numberRunForTest` (`apps/worker`) lock RUN then
-   * TEST; this method's delete locks TEST first and its cascade then locks
-   * RUN. Lock order therefore does NOT rule out a cycle here — what does is
-   * the predicates: a numbering statement only waits on this test while
-   * holding a run whose committed `test_id` is NOT it, and this method, once
-   * it holds the test, only waits on runs whose committed `test_id` IS it (the
-   * cascade) or that are already ungrouped-but-numbered — never a run either
-   * writer is currently holding, because the invariant makes an ungrouped run
-   * unnumbered. No run can be the thing both sides are waiting for at once.
-   * Widening either clearing predicate below needs this argument re-made.
+   * Once (2) holds the test, this transaction waits only on runs committed in
+   * the test that (1) did not lock — runs that joined it after (1) read, whose
+   * joining writer needed a lock on the test row and so has already committed
+   * — and on ungrouped-but-numbered runs, which by the invariant are only the
+   * ones its own cascade made. ONE RESIDUAL is not covered: a live run that
+   * joins the test after (1) read and is then taken by its FINALIZE before
+   * the cascade reaches it. That finalize waits on the test (in its
+   * allocation if an older worker attached the run unnumbered, or in the
+   * terminal UPDATE's foreign-key check if it is numbered) while this
+   * transaction waits on the run, and Postgres aborts one side with 40P01.
+   * The full argument is in `numberRunForTest`'s module docstring
+   * (apps/worker/src/pipeline/run-number.ts). Widening either clearing
+   * statement — (1)'s `testId` match or (3)'s ungrouped-but-numbered match —
+   * needs that argument re-made.
    */
   async remove(scope: ProjectScope, slug: string): Promise<TestRow | null> {
     const existing = await this.findBySlug(scope, slug);
     if (existing === null) return null;
 
-    const [{ count }] = await this.prisma.$transaction([
+    const [, { count }] = await this.prisma.$transaction([
+      // (1) The runs committed in this test, BEFORE the test row — for LOCK
+      // ORDER as much as for clearing. It takes their RUN rows while this
+      // transaction holds no lock on the test, so a writer holding one of
+      // them is waited for here, before (2) asks for the test, and can get
+      // the test and finish. Delete it and a finalize that self-heals a run
+      // already in this test deadlocks against the delete (see the docstring
+      // above; the worker's run-number suite pins it).
+      this.prisma.run.updateMany({
+        where: { orgId: scope.orgId, projectId: scope.projectId, testId: existing.id },
+        data: { runNumber: null },
+      }),
+      // (2) The test. Its cascade (`run.test_id ON DELETE SET NULL`)
+      // ungroups every run committed in it by now.
       this.prisma.test.deleteMany({
         where: { orgId: scope.orgId, projectId: scope.projectId, slug },
       }),
-      // The cascade (`run.test_id ON DELETE SET NULL`) has just ungrouped
-      // this test's runs, leaving their old numbers behind; this clears
-      // `run_number` on every ungrouped-but-numbered run in the project,
-      // which is exactly those runs plus any that arrived at that state some
-      // other way (see the docstring above for why one statement covers
-      // both). Nothing else in the project is touched: a numbered run still
-      // in a live test does not match `testId: null`.
+      // (3) Any run that joined the test after (1) read it — a writer that
+      // committed in between — has just been ungrouped by (2)'s cascade
+      // still carrying its number; this clears it. It matches only
+      // ungrouped-but-numbered runs, so a numbered run still in a live test
+      // is untouched.
       this.prisma.run.updateMany({
         where: {
           orgId: scope.orgId,

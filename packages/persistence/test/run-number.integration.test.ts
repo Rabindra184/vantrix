@@ -134,11 +134,14 @@ describe('deleting a test', () => {
     expect(byId.get(survivor.id)).toMatchObject({ testId: kept.id, runNumber: 1 });
   });
 
-  /** The single clearing statement (AFTER the delete, on `testId: null,
-   *  runNumber: { not: null }`) has to catch two things at once: a run that
-   *  was ALREADY sitting ungrouped-but-numbered before remove() was even
-   *  called — the state a run that joined mid-delete is left in — and the
-   *  run the delete's own cascade just ungrouped. One statement, both cases. */
+  /** remove() clears numbers in two statements: (1) before the delete, on the
+   *  runs committed in the test, and (3) after it, on every ungrouped-but-
+   *  numbered run in the project (`testId: null, runNumber: { not: null }`).
+   *  (3) is what catches a run that joined the test after (1) read it and was
+   *  then ungrouped by the cascade still numbered. Producing that needs a
+   *  concurrent writer (the worker's run-number suite forces one), so `stray`
+   *  seeds its end state directly: ungrouped, numbered. `grouped` is (1)'s.
+   *  Both must end unnumbered; drop (3) and `stray` keeps its 5. */
   it('clears a number left on a run that is already ungrouped', async () => {
     const stray = await runRow({ testId: null, runNumber: 5, createdAt: '2026-09-01T10:00:00Z', startedAt: '2026-09-01T10:00:00Z' });
     const doomed = await testRow('checkout-soak');

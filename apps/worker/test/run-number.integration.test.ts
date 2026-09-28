@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
-import { createPool, createPrisma, SCHEMA_TABLES } from '@perfportal/persistence';
+import { createPool, createPrisma, SCHEMA_TABLES, TestRepository } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { loadWorkerConfig } from '../src/config.js';
@@ -199,6 +199,121 @@ describe('the pipeline deciding the number at finalize', () => {
 
     expect([...numbers].sort((x, y) => x! - y!)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(await counterOf(test.id)).toBe(9);
+  });
+});
+
+/** A thrown error as the SQLSTATE a reader needs to see. pg puts it on `code`;
+ *  a Prisma batch transaction puts none there and carries the database's own
+ *  (`code: "40P01"`) inside its message, so that is read too. */
+function codeOf(err: unknown): string {
+  const e = err as { code?: unknown; message?: unknown };
+  const message = typeof e.message === 'string' ? e.message.trim() : '';
+  const code =
+    typeof e.code === 'string' ? e.code : (/code: "([0-9A-Z]{5})"/.exec(message)?.[1] ?? 'no code');
+  const line = message.split('\n').pop() ?? '';
+  return line === '' ? code : `${code}: ${line}`;
+}
+
+/** Waits until at least `n` backends of this database are blocked on a lock,
+ *  which is the only honest way to know a statement has QUEUED rather than
+ *  merely been sent — a fixed sleep is a guess that a loaded machine loses. */
+async function lockWaiters(n: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const { rows } = await pool.query<{ waiting: number }>(
+      `SELECT count(*)::int AS waiting FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+    );
+    const waiting = rows[0]?.waiting ?? 0;
+    if (waiting >= n) return;
+    if (Date.now() > deadline) {
+      throw new Error(`expected ${n} backend(s) waiting on a lock within 5 s; saw ${waiting}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+describe('deleting a test while its runs finish', () => {
+  /** ═══ THE CYCLE `TestRepository.remove`'s FIRST STATEMENT BREAKS ═══
+   *
+   *  Three transactions, in this exact order:
+   *
+   *    W  a finalize of another run (R0) into T, uncommitted — holds the TEST row
+   *    D  remove(T) — its delete queues behind W on T
+   *    A  a finalize of R, committed IN T with no number (an older worker
+   *       attached it): its `cur` locks RUN R, its `allocated` queues on T
+   *
+   *  Then W commits. Without `remove`'s run-first statement, D gets T and
+   *  deletes it; the FK's `ON DELETE SET NULL` cascade needs R, held by A,
+   *  while A needs T, held by D — Postgres aborts one of them with `40P01`.
+   *  WITH it, D locked R (committed in T) before it ever asked for T, so A
+   *  queues on R instead, D finishes, and A's statement then finds T deleted.
+   *
+   *  The real `remove`, the real `numberRunForTest`, and waits on
+   *  `pg_stat_activity` rather than sleeps: the interleaving is forced, not
+   *  hoped for, so against the defect the case fails with 40P01 on every run.
+   *  Which side Postgres aborts varies from run to run — the delete or the
+   *  finalize — and either one fails an assertion below. */
+  it('does not deadlock a delete against a finalize that numbers a run already in the test', async () => {
+    const test = await testRow('checkout-smoke', 6);
+    const r0 = await runRow('parsing');
+    const r = await runRow('parsing', test.id, null);
+    const repository = new TestRepository(prisma);
+
+    const w = await pool.connect();
+    const a = await pool.connect();
+    let removal: Promise<string> | undefined;
+    let finalize: Promise<string> | undefined;
+    let outcome = { remove: 'not started', finalize: 'not started' };
+    try {
+      await w.query('BEGIN');
+      expect(await numberRunForTest(w, r0.id, test.id)).toBe(6);
+
+      removal = repository.remove({ orgId, projectId }, test.slug).then(
+        (removed) => (removed === null ? 'resolved null' : 'resolved'),
+        (err: unknown) => `rejected ${codeOf(err)}`,
+      );
+      await lockWaiters(1);
+
+      await a.query('BEGIN');
+      finalize = numberRunForTest(a, r.id, test.id)
+        .then(() => a.query('COMMIT'))
+        .then(
+          () => 'committed',
+          (err: unknown) => codeOf(err).split(':')[0]!,
+        );
+      await lockWaiters(2);
+
+      await w.query('COMMIT');
+      outcome = { remove: await removal, finalize: await finalize };
+    } finally {
+      // W first: while it is open it holds T, and nothing below can settle.
+      await w.query('ROLLBACK').catch(() => undefined);
+      await removal;
+      await finalize;
+      await a.query('ROLLBACK').catch(() => undefined);
+      w.release();
+      a.release();
+    }
+
+    const seen = JSON.stringify(outcome);
+    expect(outcome.remove, seen).toBe('resolved');
+    expect(outcome.finalize, seen).not.toBe('40P01');
+    // Observed: 23503. A queued on R behind D, and by the time it ran, T was
+    // deleted — so its UPDATE's `test_id = T` failed the foreign key. That is
+    // what a finalize racing its test's deletion has always met, numbering or
+    // not: the terminal UPDATE has always written `test_id` itself. It is a
+    // refusal, not a hang, and nothing is left half-written. 'committed' is
+    // the other safe ending: had A reached T before D, it would have numbered
+    // R and D's cascade would then have ungrouped it and cleared the number.
+    expect(['committed', '23503'], seen).toContain(outcome.finalize);
+
+    expect(await prisma.test.findUnique({ where: { id: test.id } })).toBeNull();
+    expect(await numberOf(r0.id)).toEqual({ testId: null, runNumber: null });
+    expect(await numberOf(r.id)).toEqual({ testId: null, runNumber: null });
+    expect(
+      await prisma.run.count({ where: { projectId, testId: null, runNumber: { not: null } } }),
+    ).toBe(0);
   });
 });
 
