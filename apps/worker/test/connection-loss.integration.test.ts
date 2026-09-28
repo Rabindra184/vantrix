@@ -277,6 +277,30 @@ describe('LiveFoldOwner, when Postgres ends the session holding a run lock', () 
     }
   });
 
+  it('shuts down cleanly while it still holds a run whose lock session has ended', async () => {
+    // A worker stopping right after a restart -- the ordinary rolling-deploy
+    // case -- reaches `close()` before any tick has retired the lost run.
+    // The lock is already gone; there is nothing to unlock and nothing
+    // failed, so `close()` must not raise the AggregateError it exists to
+    // raise for a release that really did fail.
+    const { orgId, projectId } = await seedOrgProject();
+    const runId = await seedStreamingRun(orgId, projectId);
+    const owner = new LiveFoldOwner(config, pool, chunks, new Redis(config.redisUrl), rules);
+    let closed = false;
+    try {
+      await owner.tick();
+      const holder = await backends.lockHolder(runId);
+      expect(holder).not.toBeNull();
+      await backends.terminate(holder!);
+      await ownerReportedLoss(runId);
+
+      await expect(owner.close()).resolves.toBeUndefined();
+      closed = true;
+    } finally {
+      if (!closed) await owner.close().catch(() => {});
+    }
+  });
+
   it('does not take ownership of a run whose lock session dies while it is being claimed', async () => {
     const { orgId, projectId } = await seedOrgProject();
     const runId = await seedStreamingRun(orgId, projectId);

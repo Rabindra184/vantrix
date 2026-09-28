@@ -6,6 +6,7 @@ import type pg from 'pg';
 import { truncateToWholeRecords } from '@perfportal/plugin-gatling';
 import type { BlobStore, LiveChunkStore } from '@perfportal/storage';
 import type { WorkerConfig } from './config.js';
+import { holdClient } from './held-client.js';
 
 /**
  * Recovers the three inconsistencies the ingest/parse/stream paths can
@@ -84,7 +85,16 @@ export class Sweeper {
   }
 
   async sweep(): Promise<number> {
-    const client = await this.pool.connect();
+    // Held, not merely checked out: this client is kept across a whole
+    // transaction and the assembly after it, and a connection that dies in
+    // that time -- a database restart, a failover -- would otherwise emit an
+    // `error` nothing listens for and end the process (`held-client.ts`).
+    // Nothing more is needed here than surviving it: the transaction dies
+    // with the session, so nothing half-done is committed, and the next
+    // sweep re-selects every row this one could not finish.
+    const held = holdClient(await this.pool.connect());
+    const client = held.client;
+    let broken: Error | undefined;
     try {
       await client.query('BEGIN');
       // 'parsing' staleness is measured from parsing_started_at, NOT
@@ -178,10 +188,21 @@ export class Sweeper {
       for (const run of toAssemble) await this.#assembleAbandoned(run.id, run.bundleKey);
       return rows.length;
     } catch (err) {
-      await client.query('ROLLBACK');
+      // A ROLLBACK that fails must not REPLACE the error that brought us
+      // here. On a dead session it always fails, and with "Connection
+      // terminated unexpectedly", which carries no code: a caller reading
+      // the rejection would see a bug where there was a restart. Its own
+      // failure is kept only to tell the pool to destroy the client -- a
+      // session whose ROLLBACK did not run may still be inside the
+      // transaction.
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        broken = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr));
+      }
       throw err;
     } finally {
-      client.release();
+      held.release(broken);
     }
   }
 

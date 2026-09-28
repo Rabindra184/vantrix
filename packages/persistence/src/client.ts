@@ -95,12 +95,45 @@ export interface PoolOptions {
   connectionTimeoutMillis?: number;
 }
 
+/**
+ * ═══ EVERY POOL LISTENS FOR A FAILED IDLE CONNECTION ═══
+ *
+ * pg-pool reports an IDLE client whose connection dies -- a database restart,
+ * a failover, an operator's `pg_terminate_backend`, a network drop -- as an
+ * `error` event on the POOL, after it has already discarded that client. An
+ * EventEmitter with no `error` listener throws, so a pool nobody listens to
+ * turns a routine restart into an uncaught exception that ends whatever
+ * process holds it. Measured (node-postgres 8.22, pg-pool 3.14.0):
+ * `57P01 terminating connection due to administrator command`, uncaught.
+ *
+ * HERE, NOT IN EACH `main.ts`, because the exposure is the pool's and every
+ * pool this repository makes has it: the worker's, the API's, and every
+ * integration test's. There is nothing to recover -- pg-pool has already
+ * dropped the client and opens a new one on the next `connect()` -- so the
+ * listener's only job is to keep the process alive and SAY so, because an
+ * operator whose database restarted should be able to find out the process
+ * noticed.
+ *
+ * It covers IDLE clients only. A client that is CHECKED OUT gets no listener
+ * from pg-pool at all (it removes its own at checkout and restores it at
+ * release), so whoever holds one has to listen for its death themselves --
+ * see `apps/worker/src/held-client.ts`.
+ */
+function reportIdleConnectionLost(err: Error & { code?: string }): void {
+  console.warn(
+    `postgres: an idle pooled connection failed (${err.code ?? 'no code'}: ${err.message}); ` +
+      'it was discarded and the pool will open a new one when next needed',
+  );
+}
+
 export function createPool(url: string, options: PoolOptions = {}): pg.Pool {
-  return new pg.Pool({
+  const pool = new pg.Pool({
     connectionString: url,
     max: options.max ?? 10,
     connectionTimeoutMillis: options.connectionTimeoutMillis,
   });
+  pool.on('error', reportIdleConnectionLost);
+  return pool;
 }
 
 export const SCHEMA_TABLES = [
