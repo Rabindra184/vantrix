@@ -146,6 +146,67 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The pipeline-holds-its-client branch added no unit FILE, no unit case and no
+spec, and moves no floor: unit stays **174 / 2233**, integration **162 /
+2006** and **e2e 166**. It is a refactor with no new behaviour, and it closes
+the note both of the branches before it left for whichever merged second.
+
+**TWO DEFINITIONS OF "HOLD A CLIENT" MET ON `main`.** The
+transient-ingest-retries branch guarded `PipelineService`'s two checkouts —
+the lock-holding client in `process()` and the finalize transaction's — with
+a local no-op `ignoreCheckedOutError`, written before `holdClient` existed; the
+worker-survives-pg-restart branch built `holdClient` and deliberately stayed
+out of the pipeline's file so the two could not conflict. Both entries said
+whichever merged second should move the pipeline over. It is moved: both
+checkouts are `holdClient(...)`, and the release keeps the pipeline's own
+rule — a failed ROLLBACK or unlock is passed as `broken` and never replaces the
+error that brought it there. Nothing about the release changed in effect:
+`holdClient` passes `broken ?? lost`, but a lost session's cleanup always
+fails (so `broken` is already set), and pg-pool drops an unqueryable client
+on a plain release anyway.
+
+**A REFACTOR IS RED-VERIFIED THROUGH THE TESTS THAT ALREADY GUARD IT.** No new
+case can say anything the four pipeline-retry cases do not; what needed proving
+is that the pipeline now DEPENDS on `holdClient`, so each checkout was put back
+to a bare client, alone:
+
+```
+  the lock-holding checkout bare     the pipeline-retry file fails on 1 uncaught
+                                     (its restart case ends the lock session)
+  the finalize checkout bare         the same file fails on 3 uncaught
+                                     (every case that ends the finalize's session)
+  holdClient registers no listener   the 5 fold-owner cases by assertion, and
+                                     14 uncaught across both files
+```
+
+Both of the first two pass every ASSERTION — the retry machinery still works —
+and are caught only by vitest failing a file on an uncaught exception, the
+same honest limit the two entries before this one record.
+
+**AND IT WAS WRITTEN BEFORE EITHER PREDECESSOR MERGED, WHICH IS WHY ITS
+BRANCH IS A CHERRY-PICK.** While #245's CI ran, the refactor was built and
+red-verified on a TEMPORARY local branch holding `main` plus both PRs' pushed
+heads, then cut properly from `main` once both had merged and the commit
+cherry-picked across. That tree is the one that shipped, proven rather than
+assumed: the branch cut from `main` after the API branch
+merged, with the refactor commit cherry-picked, differs from the measured tree
+(`bcd37a1`) in `CLAUDE.md` ALONE — the API branch's re-measure paragraph,
+committed after the measurement — and nothing in the repository reads
+`CLAUDE.md` (every mention in code is a comment, checked with `git grep`). So
+the measurement carries: the bytes any suite reads are the bytes that were
+measured.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **174 / 2233**, zero `Errors` lines; `test:integration` **162 /
+2006, exit 0, zero failures**; `pnpm test:e2e` **166 passed, exit 0** —
+unchanged from the tree it sits on, as a refactor with no new case must be,
+against a SCRATCH DATABASE (`perfportal_holdclient`), a scratch Redis INDEX
+(db 6) and e2e port 3600, with no sleep during the run. That clean run is
+also the second full measurement of the api-survives-pg-restart tree
+beneath it, whose two earlier runs each carried a different one-off
+failure: the only difference between the two trees is the pipeline's own
+file.
+
 The api-survives-pg-restart branch added no unit FILE and no unit case —
 unit stays **172 / 2217** — and 3 cases to
 `apps/api/test/terminal-waiter.integration.test.ts`, from **154 / 1959 to
@@ -392,7 +453,8 @@ AggregateError it exists to raise for a release that really failed.
     transient-ingest-retries branch's (PR #245), which guards them with a
     local `ignoreCheckedOutError`; this branch stays out of that file so the
     two cannot conflict. Whichever merges second should move the pipeline onto
-    `holdClient` — one definition of "hold a client", not two.
+    `holdClient` — one definition of "hold a client", not two. Done by the
+    pipeline-holds-its-client branch, after both merged.
   - **THE API'S LISTEN CONNECTION IS ITS OWN BRANCH.** `TerminalWaiter`
     (`apps/api/src/runs/terminal-waiter.ts`) holds a dedicated `pg.Client` for
     `LISTEN run_terminal` with no `error` listener and no reconnect, so a
