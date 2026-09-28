@@ -6,6 +6,7 @@ import { z } from 'zod';
  * imports nothing but zod, so this direction cannot cycle.
  */
 import { RunVerdictSchema } from './run.js';
+import { RunNumberSchema } from './run-number.js';
 
 export const MetricScopeSchema = z.enum(['run', 'scenario', 'group', 'request']);
 export const MetricFamilySchema = z.enum([
@@ -379,6 +380,10 @@ export const TrendRunSchema = z.object({
    * Nullable AND optional for the reason the block above gives at length. */
   tool: z.string().nullable().optional(),
   simulation: z.string().nullable().optional(),
+  /** The run's number within its test — the Trends axis reads "#12" from it
+   *  (run-number.ts). Nullable and optional for the reason the blocks above
+   *  give. */
+  runNumber: RunNumberSchema.nullable().optional(),
 });
 export type TrendRun = z.infer<typeof TrendRunSchema>;
 

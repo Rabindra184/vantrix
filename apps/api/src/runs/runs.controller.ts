@@ -213,6 +213,7 @@ function toListItem(r: RunListItem): RunListResponse['items'][number] {
     commitSha: r.commitSha,
     durationMs: r.durationMs,
     test: r.test,
+    runNumber: r.runNumber,
     checks: checkTally(r.toolAssertions),
     metrics: r.metrics,
     // The TEXT alone: the author and time belong to the run's own page.
@@ -281,6 +282,10 @@ export async function respondWithRun(
         // than an omission. It stops being null the moment the parse lands,
         // which is exactly when the reader's breadcrumb should grow a rung.
         test: run.test,
+        // THE LIVE HALF of the run number: a live run is numbered at its
+        // header and read through THIS body while it streams, so a number
+        // sent only by toResponse would be missing exactly then.
+        runNumber: run.runNumber,
         simulation: run.simulation,
         description: run.description,
         durationMs: run.durationMs,

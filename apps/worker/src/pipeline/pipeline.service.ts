@@ -17,6 +17,7 @@ import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { selectPlugin } from './plugins.js';
 import { isTransient } from './retry.js';
+import { numberRunForTest } from './run-number.js';
 import { resolveTestId } from './test-resolver.js';
 
 /**
@@ -436,6 +437,15 @@ export class PipelineService {
           ],
         );
       }
+
+      // ═══ THE RUN'S NUMBER WITHIN ITS TEST ═══
+      //
+      // In this transaction, and immediately before the terminal UPDATE: it
+      // repeats that UPDATE's status guard, which a run that has already gone
+      // terminal would no longer pass. The test's row lock it takes is then
+      // held for two short statements and the COMMIT, never for the metrics
+      // write above. See run-number.ts for the four cases.
+      await numberRunForTest(client, run.id, testId);
 
       // The status guard mirrors RunRepository.fail's: a concurrently-processed
       // duplicate of this job (stalled-job redelivery, BullMQ concurrency > 1)
