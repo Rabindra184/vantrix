@@ -274,7 +274,19 @@ SCRATCH DATABASE (`perfportal_retry`, dropped, recreated and migrated first),
 a scratch Redis INDEX (db 8) and e2e port 3300, from a worktree at an
 undotted path.
 
-@@REMEASURED@@
+**RE-MEASURED AFTER MERGING `main`**, because the run-number branch landed
+underneath it and a floor is a property of a tree: unit **174 / 2232**
+(unchanged by this branch, as predicted), integration **160 / 1995, exit 0,
+zero failures** — the run-number branch's 159 / 1991 plus this branch's four —
+and `pnpm test:e2e` **166 passed, exit 0**. That was the SECOND e2e run. The
+first failed ONE case, `acceptance.spec.ts`'s keyboard-and-chart-table case,
+`toBeVisible` on the chart's data table, as the 1-minute load climbed to 32:
+the intermittent this file already records twice, which no pipeline change
+can reach. That file then passed **35 of 35 in five isolated runs** at a load
+of 22, and the full suite clean. **The run-number branch had added four
+direct `pipeline.process()` calls**, and the merge had to make each state
+`{ queueWillRetry: false }` — the required parameter doing its job, as a
+compile error at the merge rather than a silent default after it.
 
 The run-number branch added TWO unit files —
 `packages/contracts/test/run-number.test.ts` (4) and
