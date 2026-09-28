@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunProcessing, RunResponse } from '@perfportal/contracts';
 import { runQueryKey } from '../src/api/run';
 import RunCompare from '../src/routes/RunCompare';
+import { runMinuteLabel } from '../src/charts/transforms/runLabel';
 import type { RunWindowContext } from '../src/routes/useRunWindow';
 
 /**
@@ -321,6 +322,24 @@ describe('RunCompare — the picker says which run each candidate is', () => {
 
     expect(await screen.findByTestId(`compare-role-${RUN_ID}`)).toHaveTextContent('Current');
     expect(screen.getByTestId(`compare-role-${OTHER}`)).toHaveTextContent('Baseline');
+  });
+
+  /** A numbered cohort: each chip is NAMED by its number, with the start time
+   *  kept as its second line — Gatling Enterprise's picker reads the same. */
+  it('names each numbered candidate "Run n", its start time beneath', async () => {
+    renderCompare(
+      { state: 'ready', run: COMPLETE_RUN },
+      populated([
+        cohortRunAt({ id: RUN_ID, runNumber: 2 }),
+        cohortRunAt({ id: OTHER, runNumber: 1, toolStartedAt: '2026-08-14T09:30:00.000Z', startedAt: '2026-08-14T09:30:00.000Z' }),
+      ]),
+    );
+
+    const chip = await screen.findByTestId(`compare-run-${OTHER}`);
+    expect(chip).toHaveTextContent('Run 1');
+    expect(chip).toHaveTextContent(runMinuteLabel('2026-08-14T09:30:00.000Z'));
+    expect(chip.getAttribute('aria-label')).toMatch(/^Run 1 · /);
+    expect(screen.getByTestId(`compare-run-${RUN_ID}`)).toHaveTextContent('Run 2');
   });
 });
 

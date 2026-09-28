@@ -151,6 +151,25 @@ describe('RunList columns', () => {
     expect(link).toHaveTextContent('11111111');
   });
 
+  /** A numbered run on its test's list is named by its number; the link's
+   *  accessible name still carries the WHOLE id, and the copy button still
+   *  copies it. */
+  it('names a test’s numbered runs "Run n", keeping the whole id in the link’s name', async () => {
+    renderList(
+      [{ ...ROWS[0]!, runNumber: 12 }, ROWS[1]!],
+      '/projects/checkout/tests/parity',
+      { projectSlug: 'checkout', testSlug: 'parity' },
+    );
+    const numbered = await screen.findByRole('link', {
+      name: 'View run 11111111-1111-4111-8111-111111111111',
+    });
+    expect(numbered).toHaveTextContent(/^Run 12$/);
+    // The numberless row keeps today's id prefix.
+    expect(
+      screen.getByRole('link', { name: 'View run 33333333-3333-4333-8333-333333333333' }),
+    ).toHaveTextContent('33333333');
+  });
+
   it('has no Tool column — TOOL_IDS has one member, so it read "gatling" on every row', async () => {
     renderList(ROWS);
     await screen.findByRole('columnheader', { name: 'Project' });

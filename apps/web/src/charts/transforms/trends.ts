@@ -1,5 +1,5 @@
 import type { TrendRun, TrendsResponse } from '@perfportal/contracts';
-import { compareLabels } from './compare';
+import { runLabels } from './compare';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 import { clampPercentile } from '../../percentile';
 import {
@@ -59,9 +59,18 @@ function ordered(t: TrendsResponse): readonly TrendRun[] {
  * schedule, a retried pipeline, or parallel shards. The fix is the same, and
  * it costs the non-colliding case nothing — `compareLabels` suffixes ONLY the
  * labels that collide.
+ *
+ * ═══ AND NOW BY NUMBER ═══ (spec 2026-09-27-run-number)
+ *
+ * A numbered run is tagged `#12`, the way Gatling Enterprise's own trends axis
+ * reads, and needs no suffix; only numberless runs still take the minute
+ * label and its collision rule, through `runLabels`.
  */
 function axisLabels(runs: readonly TrendRun[]): string[] {
-  return compareLabels(runs.map((run) => ({ id: run.id, at: run.toolStartedAt ?? run.startedAt })));
+  return runLabels(
+    runs.map((run) => ({ id: run.id, at: run.toolStartedAt ?? run.startedAt, runNumber: run.runNumber })),
+    'tag',
+  );
 }
 
 /** The full timestamp, for the table. */

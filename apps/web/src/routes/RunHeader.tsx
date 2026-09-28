@@ -6,6 +6,7 @@ import { ChevronRightIcon } from '../components/icons';
 import { formatDuration, formatInstant } from './format';
 import { STATUS, VERDICT, type Mark } from './marks';
 import { projectPath, projectTestPath } from './paths';
+import { runName } from '../runNumber';
 
 /**
  * The bordered box the metadata sits in, at each of the two widths that draw
@@ -364,14 +365,18 @@ export default function RunHeader({
             </>
           )}
           <ChevronRightIcon className="h-3.5 w-3.5 opacity-50" />
-          {/* THE SHORT ID, and it is load-bearing rather than decorative: the
-              `<h1>` below names the TEST now, so two runs of one test are
-              distinguishable on this page by nothing else. That is the same
-              argument this rung carried when the heading was the simulation —
-              it survives review.md 6 intact, one level down. */}
-          <code aria-current="page" className="text-[0.75rem]">
-            {identity.id.slice(0, 8)}
-          </code>
+          {/* THE RUN'S NUMBER, or its short id when it has none — load-bearing
+              rather than decorative: the `<h1>` names the TEST, so two runs of
+              one test are told apart on this page by this rung alone. */}
+          {identity.runNumber !== null && identity.runNumber !== undefined ? (
+            <span data-testid="run-crumb" aria-current="page" className="text-[0.75rem] font-medium">
+              {runName(identity.runNumber)}
+            </span>
+          ) : (
+            <code data-testid="run-crumb" aria-current="page" className="text-[0.75rem]">
+              {identity.id.slice(0, 8)}
+            </code>
+          )}
         </nav>
       )}
 

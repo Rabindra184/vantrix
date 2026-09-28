@@ -12,6 +12,7 @@ import { fetchProjectTests, projectTestsQueryKey } from '../api/tests';
 import ProjectShell from './ProjectShell';
 import { STATUS, VERDICT } from './marks';
 import { projectTestPath, runPath } from './paths';
+import { runName } from '../runNumber';
 
 /**
  * A project's TESTS — the page `/projects/:slug` renders, and the rung the
@@ -235,6 +236,11 @@ function TestRow({
             aria-label={`View the latest run of ${test.name}`}
             className="transition-ui inline-flex flex-wrap items-center gap-1.5 hover:underline hover:underline-offset-2"
           >
+            {test.latestRun.runNumber !== null && test.latestRun.runNumber !== undefined && (
+              <span className="text-[0.8125rem] font-medium text-accent">
+                {runName(test.latestRun.runNumber)}
+              </span>
+            )}
             <Badge mark={STATUS[test.latestRun.status]} size="compact" />
             <Badge mark={VERDICT[test.latestRun.verdict ?? 'none']} size="compact" />
           </Link>
