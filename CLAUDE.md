@@ -146,6 +146,133 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The api-survives-pg-restart branch added no unit FILE and no unit case —
+unit stays **172 / 2217** — and 3 cases to
+`apps/api/test/terminal-waiter.integration.test.ts`, from **154 / 1959 to
+154 / 1962**. **e2e stays 165.** It is the API half of the
+worker-survives-pg-restart branch, and the one connection that branch's
+`createPool` listener cannot reach.
+
+**THE API DIED ON A POSTGRES RESTART, THROUGH ONE CONNECTION.**
+`TerminalWaiter` holds a DEDICATED `pg.Client` for `LISTEN run_terminal` —
+deliberately, since a pooled one would lose the registration — and attached a
+`notification` listener and nothing else. A restart, a failover or an
+operator's `pg_terminate_backend` ends that session, node-postgres emits
+`error` on the client (two, measured on 8.22: `57P01`, then "Connection
+terminated unexpectedly"), and an EventEmitter with no `error` listener
+THROWS. Nest installs no process-level handler, so that was the API.
+
+**AND SURVIVING WOULD HAVE BEEN THE QUIETER DEFECT.** A LISTEN registration
+lives in its session. A waiter that only caught the event would never be woken
+again, and every later `waitFor` — `POST /v1/runs`, the project upload, a live
+close — would wait out its whole window for a run that finished long ago:
+answers 25 seconds late, correct, and with nothing anywhere saying why. So the
+loss is reported with its SQLSTATE and the session is listened for again, with
+backoff (250 ms doubling to 10 s, so an hour-long outage logs a failed attempt
+every ten seconds rather than a flood). A failure at BOOT still fails the boot.
+
+**A NOTIFICATION SENT DURING THE GAP IS GONE, AND THE ROW IS WHAT ANSWERS
+FOR IT.** NOTIFY reaches the sessions listening when it is delivered. No caller
+is ever wrong for a lost one — every caller re-reads the run after the wait,
+the rule `IngestController.post` states — but it is late by its whole window.
+So once the session is back, the waiter asks the database which waited-on runs
+are no longer in progress and wakes exactly those:
+
+```
+  LISTEN first, then the re-check    a run finishing between them is caught by one or the other
+  only runs past pending/parsing/running   an in-progress run woken would answer 202 early
+  only uuid keys asked about          run.id is uuid; one malformed key must not fail the cast
+  a failed re-check                   logged; those waiters fall back to their timeouts
+```
+
+`IN_PROGRESS` is `statusFor`'s 202 set written down, because nothing in the
+codebase names "terminal" directly. Its failure direction is benign both ways:
+a new in-progress status left out wakes a caller into an early 202, a new
+terminal one is simply woken.
+
+**A DEAD CLIENT CAN BE INSTALLED THROUGH A RACE, AND THAT HALF IS ARGUED, NOT
+RED-VERIFIED.** A session can die in the same socket read that completes its
+LISTEN: the `error` fires before the reconnect installs the client, is ignored
+as belonging to no one, and a dead client would be installed silently — the
+never-woken-again defect, by another road. Every client that has raised `error`
+goes into a `WeakSet`, checked at installation. No case can reach it on demand.
+
+**THE TEST KILLS THE REAL SESSION, FOUND BY WHAT ONLY IT RUNS.**
+`pg_stat_activity` rows whose last statement is `LISTEN run_terminal`, in this
+database, read from an AUTOCOMMIT connection. The lost-notification case writes
+the run terminal and sends NO notification, BEFORE the kill, rather than racing
+an update into the gap: the waiter's view is identical — a terminal row and
+nothing on the new session — and the case cannot pass or fail on timing. It
+pairs that run with one still `parsing`, asserts the recovery woke exactly one
+(`waitingRunCount` drops synchronously, where a `.then` flag would depend on
+microtask order), and that the other's own notification then ends its wait.
+
+**AND ITS FIRST RED WAS RED FOR THE WRONG REASON.** The fixture's
+`prisma.run.create` left out `engineOptions`, a required column, so the
+lost-notification case failed in 42 ms on a `PrismaClientValidationError`
+before it reached the waiter at all. Two of three cases red on the defect and
+one red on the fixture reads exactly like three. Fixed and re-run red for the
+right reason (a 20 s wait resolving `false`) before any fix was written.
+
+**SIX MUTATIONS, THE REPLACEMENT COUNT ASSERTED BEFORE EVERY RUN, EACH
+PREDICTED BEFORE IT RAN:**
+
+```
+  no error listener                     all 3 restart cases, 6 uncaught
+  survives but never listens again      the survive-and-listen and re-check cases
+  no re-check once listening again      the re-check case ALONE
+  the re-check wakes every waiter       the re-check case ALONE: 0 waiting, not 1
+  destroy stops nothing                 the destroy case ALONE
+  every error of the pair is a loss     NOTHING — predicted wrong; see below
+```
+
+**THE LAST ONE WAS PREDICTED TO FAIL AND PASSED, AND THE PREDICTION WAS
+WRONG, NOT THE CASE.** The guard in `#onLost` was written to swallow the second
+of a dead client's two errors. Measured with a throwaway probe: `#onLost` ENDS
+the client, and an ended client reports its close as expected rather than as
+an error — one event, where an unended client raises two. So the pair never
+reaches the guard at all. What it really keeps out is a reconnect ATTEMPT's
+client dying mid-LISTEN, whose `error` fires before that attempt's own catch
+retries — acting on it too would start a second, parallel chain of attempts.
+No case reaches that on demand; the comment says so, and says what the check
+is for rather than what it was first believed to be for. **A mutation that
+passes is a claim about your model of the code before it is a claim about the
+tests.**
+
+**`destroy` HAS TWO GUARDS AGAINST A PENDING RETRY, AND EITHER ALONE HOLDS**
+(`clearTimeout`, and `#reconnect` checking `#closed`), so the mutation removes
+both. `#closed` alone also covers an attempt already CONNECTING when destroy
+runs — which no case can park, since nothing blocks a LISTEN.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **172 / 2217**, unchanged as predicted, zero `Errors` lines;
+`pnpm test:e2e` **165 passed, exit 0**; `test:integration` COLLECTED
+**154 / 1962** — the prediction exactly — with ONE failure:
+`trends.integration.test.ts`'s "follows test_id rather than the simulation
+string when they disagree", a `TrendsResponseSchema.parse` over a body with
+every field undefined, which is the non-2xx body this file already records as
+the pressure shape. It seeds rows directly and issues one GET, so it never
+waits on the waiter, whose only part in it is `createTestApp` starting it — an
+argument, so the rate was measured too: that file **20 of 20, five times out
+of five**, at a 1-minute load of 14, higher than the failing run's. Against a
+SCRATCH DATABASE (`perfportal_waiter`), a scratch Redis INDEX (db 3) and e2e
+port 3500, from a worktree at an undotted path, with no sleep during the run.
+
+**RE-MEASURED AFTER MERGING `main`**, where the run-number,
+transient-ingest-retries and worker-survives-pg-restart branches had all
+landed: unit **174 / 2233**, `pnpm test:e2e` **166 passed, exit 0**,
+typecheck and lint exit 0, and `test:integration` COLLECTED **162 / 2006** —
+the arithmetic, predicted — with ONE failure again, and a DIFFERENT one:
+`openapi.integration.test.ts`'s 201 case, on `GET /v1/openapi.json -> 501:
+{}`, the exact signature this file records for that endpoint under load.
+That file then passed **29 of 29, five times out of five**. Two full runs, a
+different failure in each, neither reachable from a waiter that no GET in
+either case ever waits on, and **no test failed twice** — this file's tell for
+the machine rather than the change. Measured on a temporary merge of the
+same heads and proven the same tree by its git tree hash (`0789e78`), the
+method the worker-survives-pg-restart entry above describes; CI measured the
+merged commit itself before it merged.
+
 The worker-survives-pg-restart branch added no unit FILE and 1 case to
 `packages/persistence/test/client.test.ts`, from **172 / 2217 to 172 / 2218**,
 and TWO integration files — `packages/persistence/test/pool-errors.integration.test.ts`
