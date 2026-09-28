@@ -22,6 +22,7 @@ import type { LiveRunState } from '../api/live';
 import useDocumentTitle from '../useDocumentTitle';
 import useIsCompact from '../useIsCompact';
 import Button from '../components/Button';
+import { runName } from '../runNumber';
 
 /**
  * The chrome around one run's identity and its run-section navigation.
@@ -107,13 +108,15 @@ export default function RunShell({
   readonly capReached: boolean;
   readonly onRetry: () => void;
 }) {
-  // The run's identity, spelled the way `RunHeader`'s `<h1>` spells it — the
-  // fully-qualified simulation, falling back to the short id for a run whose
-  // header carried none. Two runs of the same simulation are then two tabs
-  // that read alike, which is the honest rendering: the id in the breadcrumb
-  // is what tells them apart, and a title long enough to include it would be
-  // truncated to uselessness in a tab strip anyway.
-  useDocumentTitle(identity.simulation ?? `Run ${identity.id.slice(0, 8)}`);
+  // A numbered run's tab names its test and its number — two tabs on two runs
+  // of one test used to read alike, both titled with the simulation. A run
+  // with no number keeps the title it always had: the simulation, else its
+  // short id.
+  useDocumentTitle(
+    identity.runNumber !== null && identity.runNumber !== undefined && identity.test
+      ? `${identity.test.name} · ${runName(identity.runNumber)}`
+      : (identity.simulation ?? `Run ${identity.id.slice(0, 8)}`),
+  );
 
   // TERMINAL IS THE ONE GATE ON FETCHING, and it is now a PROP (see its own
   // docstring, IMPORTANT 3) rather than derived from `status` here. While a

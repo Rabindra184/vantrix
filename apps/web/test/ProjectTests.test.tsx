@@ -203,6 +203,15 @@ describe('ProjectTests', () => {
     expect(link).toHaveAttribute('href', '/runs/33333333-3333-4333-8333-333333333333');
   });
 
+  it('names the latest run by its number beside its badges', async () => {
+    stubFetch({
+      tests: { tests: [{ ...CHECKOUT_SMOKE, latestRun: { ...CHECKOUT_SMOKE.latestRun!, runNumber: 12 } }] },
+    });
+    renderPage();
+    const link = await screen.findByRole('link', { name: 'View the latest run of Checkout smoke' });
+    expect(link).toHaveTextContent('Run 12');
+  });
+
   /**
    * `ON DELETE SET NULL` keeps a test alive when its runs go, so this row is
    * reachable rather than hypothetical. An empty cell reads as a value that

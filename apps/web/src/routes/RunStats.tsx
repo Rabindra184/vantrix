@@ -6,6 +6,7 @@ import { comparability, summariseConditions } from './comparability';
 import { formatInstant } from './format';
 import { clampPercentile, type PercentileRange } from '../percentile';
 import { runPath } from './paths';
+import { runName } from '../runNumber';
 import { formatCount, formatMs, formatRate } from '../tables/StatisticsTable';
 
 /**
@@ -421,9 +422,11 @@ function BaselineNote({
           className="font-medium text-accent hover:underline hover:underline-offset-2"
           to={runPath(previous.id)}
         >
-          {`the run of ${formatInstant(previous.toolStartedAt ?? previous.startedAt)}`}
+          {previous.runNumber !== null && previous.runNumber !== undefined
+            ? `${runName(previous.runNumber)} (started ${formatInstant(previous.toolStartedAt ?? previous.startedAt)})`
+            : `the run of ${formatInstant(previous.toolStartedAt ?? previous.startedAt)}`}
         </Link>
-        {' — the one immediately before this in this test.'}
+        {' — the one that started immediately before this in this test.'}
       </p>
       {notable.length > 0 && (
         <details className="group" data-testid="baseline-differences">

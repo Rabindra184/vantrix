@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **172 files / 2217 tests**, it
+`nvm use` first, and if a run reports fewer than **174 files / 2233 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -257,6 +257,621 @@ argument, so the rate was measured too: that file **20 of 20, five times out
 of five**, at a 1-minute load of 14, higher than the failing run's. Against a
 SCRATCH DATABASE (`perfportal_waiter`), a scratch Redis INDEX (db 3) and e2e
 port 3500, from a worktree at an undotted path, with no sleep during the run.
+
+The worker-survives-pg-restart branch added no unit FILE and 1 case to
+`packages/persistence/test/client.test.ts`, from **172 / 2217 to 172 / 2218**,
+and TWO integration files — `packages/persistence/test/pool-errors.integration.test.ts`
+(1) and `apps/worker/test/connection-loss.integration.test.ts` (6) — so
+integration moves by those seven plus the `.ts` unit case, from **154 / 1959
+to 156 / 1967**. **e2e stays 165.** It is the third task the
+transient-ingest-retries branch named and left.
+
+**A POSTGRES RESTART KILLED THE WORKER, THREE WAYS.** A restart, a failover
+or an operator's `pg_terminate_backend` ends every session at once, and a
+node-postgres client whose connection dies EMITS `error`. An EventEmitter
+with no `error` listener THROWS, and `apps/worker/src/main.ts` has no
+process-level handler, so each of these was an uncaught exception:
+
+```
+  an IDLE pooled client    pg-pool re-emits on the POOL      createPool attached no listener
+  a CHECKED-OUT client     pg-pool REMOVES its own listener  the sweeper's transaction,
+                           at checkout, restores at release   every owned run's lock session
+```
+
+Measured with a throwaway probe (node-postgres 8.22, pg-pool 3.14.0) before
+anything changed, against the compose Postgres:
+
+```
+  held idle client, killed    client 'error' x2: 57P01, then "Connection terminated unexpectedly"
+  idle in the pool, killed    pool 'error' x1 (57P01); pg-pool swallows the second
+  either, with no listener    UNCAUGHT
+  a dead client, released     removed (total 0), no further event; the pool reopens on demand
+```
+
+**THE POOL LISTENER LIVES IN `createPool`, NOT IN `main.ts`**, because the
+exposure is the pool's and every pool this repository makes has it — the
+worker's, the API's (`auth.module.ts`) and every integration test's. There is
+nothing to recover: pg-pool has already discarded the client. So the listener
+keeps the process alive and SAYS so, one `console.warn` naming the SQLSTATE,
+because an operator whose database restarted should be able to see the
+process noticed — the same reason `packages/storage` already logs through
+`console.error`.
+
+**A CHECKOUT NEEDS A LISTENER OF ITS OWN, AND `holdClient` IS IT.** The pool's
+listener covers idle clients and nothing else. `apps/worker/src/held-client.ts`
+guards every checkout that outlives one query: it records the FIRST error (the
+second of the pair adds nothing), reports it once, and releases WITH it so the
+pool destroys the client rather than lending a session that may still be in a
+transaction or holding a lock. `pool.query` needs none — pg-pool's own `query`
+attaches `client.once('error')` for the call, read out of its source.
+
+**THE SWEEPER'S ROLLBACK HAD THE PIPELINE'S BUG.** On a dead session
+`ROLLBACK` rejects with "Connection terminated unexpectedly", NO code, and the
+catch threw that instead of the `57P01` that brought it there — a restart
+reported as a bug. It is kept only to tell the pool to destroy the client.
+Nothing else is needed: the transaction dies with the session, and the next
+sweep re-selects every row this one could not finish.
+
+**A DEAD LOCK SESSION IS A LOST LOCK, AND SURVIVING IT WAS NOT ENOUGH.** Each
+owned run holds one client for its whole stream — the longest-lived checkouts
+in the process, so the likeliest to be holding a connection when the database
+restarts — and its advisory lock lives in that SESSION. The instant it ends,
+another replica can claim the run and so can `PipelineService`. An owner that
+merely survived the event would go on folding and PUBLISHING a run it no
+longer holds: two owners, one sequence. So `held.lost` means the lock is gone:
+
+```
+  the publish pass    skips it (a loss can land after the release pass, mid-tick)
+  the next tick       releases it and re-claims it on a fresh session, with the
+                      resume a crash gets (#resumeState) — unless another replica
+                      took the lock first, in which case this one lets go
+  a claim             whose session died during its three post-lock reads is NOT
+                      inserted; every one of those reads swallows its own failure
+  #release / close()  skips the unlock: it can only fail, for a loss already reported
+```
+
+Acting on it is left to the tick, not done in the event handler: `#owned` is
+only ever changed at the points that already change it, and the handler runs
+at any point in a tick.
+
+**THE HARNESS KILLS A REAL BACKEND, BY PID.** `apps/worker/test/backends.ts`
+finds the session holding a run's lock in `pg_locks` (`classid` = the
+namespace, `objid = hashtext(runId)::oid`, `objsubid = 2` — a negative
+`hashtext` wraps into `oid`, measured), or the one parked behind a table lock
+with `pg_blocking_pids`, always from an AUTOCOMMIT observer, and ends it with
+`pg_terminate_backend`. A trigger raising `57P01` would have proven nothing:
+on a LIVE connection it emits no event at all. Two parks give the cases their
+windows — `run` in EXCLUSIVE mode stops the sweep at its `FOR UPDATE`, inside
+its transaction; `sla_rule` in ACCESS EXCLUSIVE stops a CLAIM reading its
+rules, which holds a tick between its release pass and its publish pass.
+
+**NINE MUTATIONS, THE REPLACEMENT COUNT ASSERTED BEFORE EVERY RUN, EACH
+PREDICTED BEFORE IT RAN:**
+
+```
+  main as it is (the before-state)          all 7 cases, the unit case, 12 uncaught
+  no listener on the pool                   the pool case + the unit case, 1 uncaught
+  holdClient registers no listener          the 5 fold-owner cases; the sweeper's
+                                            passes its assertions, fails on 11 uncaught
+  the sweep's ROLLBACK masks the cause      the sweeper case ALONE
+  the sweep holds nothing                   7 of 7 assertions PASS; 1 uncaught fails it
+  the release pass ignores a lost session   re-claim, replica and mid-tick cases
+  the publish pass ignores one              the mid-tick case ALONE
+  a claim inserts a lost session            the mid-claim case ALONE
+  release unlocks a lost session anyway     the shutdown case ALONE
+```
+
+**TWO OF THE NINE ARE GUARDED BY VITEST FAILING A FILE ON AN UNCAUGHT
+EXCEPTION, NOT BY AN ASSERTION** — the sweep holding a bare client, and the
+sweeper's half of `holdClient` losing its listener — which is the honest limit
+of a claim about a process that would have died. The release-pass mutation
+fails three cases because all three assert the one claim, that a lost run is
+retired on the next tick, from three directions. The shutdown case was added
+after the first mutation plan found `#release`'s early return reachable by no
+case: without it `close()` unlocks on a dead session and raises the
+AggregateError it exists to raise for a release that really failed.
+
+**KNOWN AND LEFT, EACH ITS OWN CHANGE:**
+
+  - **`PipelineService` IS NOT TOUCHED HERE.** Its two checkouts are the
+    transient-ingest-retries branch's (PR #245), which guards them with a
+    local `ignoreCheckedOutError`; this branch stays out of that file so the
+    two cannot conflict. Whichever merges second should move the pipeline onto
+    `holdClient` — one definition of "hold a client", not two.
+  - **THE API'S LISTEN CONNECTION IS ITS OWN BRANCH.** `TerminalWaiter`
+    (`apps/api/src/runs/terminal-waiter.ts`) holds a dedicated `pg.Client` for
+    `LISTEN run_terminal` with no `error` listener and no reconnect, so a
+    restart ends the API through it — a `pg.Client`, which `createPool`'s
+    listener cannot reach. Taken as `fix/api-survives-pg-restart`; the API's
+    POOL is covered here.
+  - **NO PROCESS-LEVEL HANDLER WAS ADDED, DELIBERATELY.** An
+    `uncaughtException` handler would swallow the bugs nobody has found yet;
+    a process that dies on one is restarted by its orchestrator, which is the
+    right answer to an unknown.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **172 / 2218**, zero `Errors` lines; `test:integration` **156 /
+1967, exit 0, zero failures**; `pnpm test:e2e` **165 passed, exit 0** — every
+total the one counted from the source before any suite ran, against a SCRATCH
+DATABASE (`perfportal_pgrestart`), a scratch Redis INDEX (db 4 — db 5 already
+held 356 keys of somebody else's) and e2e port 3400, from a worktree at an
+undotted path. The machine did not sleep during the run, checked with
+`pmset -g log` rather than assumed, and the host and MinIO clocks agreed when
+integration started.
+
+**RE-MEASURED AFTER MERGING `main`**, where the run-number and
+transient-ingest-retries branches had both landed: unit **174 / 2233**,
+integration **162 / 2003, exit 0, zero failures** and `pnpm test:e2e`
+**166 passed, exit 0**, typecheck and lint exit 0 — each the arithmetic of
+the three branches, predicted before the run. **MEASURED BEFORE THE MERGE
+COMMIT EXISTED, AND PROVEN THE SAME TREE:** the gates ran on a temporary
+local merge of `main` with both branches' pushed heads while the second one's
+CI finished, and the real merge, resolved the same way, has the identical git
+TREE hash (`7deabbe`). A floor is a property of a tree, and a tree hash is the
+one way to carry a measurement from one commit to another without re-running
+it — equal hashes mean equal bytes, everywhere.
+
+The transient-ingest-retries branch added no unit FILE and no unit case —
+unit stays **172 / 2217** — and ONE integration file,
+`apps/worker/test/pipeline-retry.integration.test.ts` (4), from
+**154 / 1959 to 155 / 1963**. **e2e stays 165**: the fixtures gained an
+argument, not a case. It is a defect this file had already named — the
+run-number branch recorded "`40P01` in `TRANSIENT_CODES` would have saved
+nothing" and took the reason as its own task.
+
+**EVERY TRANSIENT FAILURE INSIDE `#ingest` FAILED ITS RUN FOR GOOD, AND THE
+JOB REPORTED SUCCESS.** `#processHoldingLock` called `runs.fail()` on ANY
+error out of `#ingest` and only then rethrew, so the retry BullMQ scheduled
+for a transient one found the run terminal at its own status check and
+returned. An object store that timed out, a pool with no client to hand out,
+a Prisma `P1001`, a database restart: each became `failed` / `INTERNAL` /
+"Retry the upload", on the attempt whose whole purpose was to spare the
+reader that. **`RUN_LOCKED` was the one transient that worked**, because it
+is thrown in `process()` before `#processHoldingLock` is ever reached — the
+retry machinery was real, and it had exactly one caller that could use it.
+
+**CLASSIFIED BEFORE `fail()`, AND ONLY WHEN THE QUEUE WILL COME BACK.** A
+transient failure with a retry to come leaves the run at `parsing` and
+rethrows; on the LAST attempt, or for a deterministic failure, the run fails
+as before — a run left at `parsing` with nothing coming back for it waits
+fifteen minutes for the sweeper. Whether BullMQ will retry is its own
+arithmetic, `Job#shouldRetryJob`'s `attemptsMade + 1 < opts.attempts`, and
+the consumer reads it BEFORE the attempt (`queueWillRetry`). The pipeline
+takes it as a REQUIRED `{ queueWillRetry }`, this file's rule for a parameter
+whose wrong value is silent: "no" to a retrying caller is the defect, "yes"
+to a non-retrying one strands the run. The 23 tests and fixtures that call
+`process()` directly state `false`.
+
+**AND A REAL TRANSIENT ERROR NEVER REACHED THE CLASSIFIER, WHICH ONLY
+KILLING A REAL CONNECTION SHOWED.** Measured with a throwaway probe against
+the compose Postgres before any code changed: a backend terminated
+mid-transaction makes the in-flight query reject with `57P01` — transient —
+and then:
+
+```
+  ROLLBACK on the dead client     rejects: "Connection terminated unexpectedly", NO code
+  what the finalize's catch threw  that one — isTransient reads it as deterministic
+  the client's `error` event       UNHANDLED: an uncaught exception, the worker dies
+```
+
+So fixing the classification alone would have done nothing for the error a
+restart actually delivers. The finalize's `ROLLBACK` and `process()`'s
+advisory unlock no longer replace the error that brought them there, and
+release the client WITH their own error so the pool destroys it — never
+lending out a session still in a transaction or still holding the lock.
+**pg-pool removes its own error listener while a client is checked out**
+(pg-pool 3.14.0, `_acquireClient`) and re-adds it at release, so both
+checkouts carry a no-op listener while they hold the client.
+
+**A TRIGGER RAISING `57P01` WOULD HAVE BEEN THE EASY INJECTION, AND IT WOULD
+HAVE HIDDEN TWO OF THE THREE DEFECTS.** The same SQLSTATE on a LIVE
+connection lets `ROLLBACK` succeed and emits no event. The test injects the
+real thing: a holder transaction takes `run_stat` in SHARE mode — the
+finalize's first write, so nothing earlier parks — an observer finds the
+backend it blocks with `pg_blocking_pids`, and `pg_terminate_backend` ends
+it inside its transaction. **The fixture that cannot distinguish the answers
+is the one where the wrong one survives**, and here the distinguishing
+input was the dead connection itself.
+
+**AND IT IS DRIVEN THROUGH THE REAL CONSUMER, WHICH NO TEST HAD EVER DONE.**
+Every one of the 23 existing `process()` calls hands the pipeline its
+arguments; a case that supplied `queueWillRetry: true` itself would prove
+the pipeline honours it and nothing about whether the consumer computes it.
+The four cases start `startConsumer` on a real BullMQ worker and enqueue
+with the API's own `INGEST_JOB_OPTIONS`. Case 1 asserts `attemptsMade === 2`
+— one failed attempt, one completion — beside a check that the terminated
+backend was mid-`INSERT INTO "run_stat"`, so a kill that landed anywhere
+else cannot pass it.
+
+**`pg_stat_activity` READ INSIDE A TRANSACTION IS A SNAPSHOT FROZEN AT ITS
+FIRST READ, AND THE FIRST RED WAS RED FOR THAT.** The harness polled for the
+parked finalize from the SAME connection that held the table lock, inside
+its `BEGIN`. Whenever its first poll beat the finalize there, every later
+poll re-read "nothing parked" — measured as a 180-second wait on a finalize
+parked the whole time, with the run at `parsing` and the job `active`. The
+restart case passed only because its first poll happened to land after the
+park. The observer polls and kills from autocommit now. **A red test is
+evidence about the product only once you know which assertion failed and
+why** — the timeout named the harness, and instrumenting the pipeline's
+stages (`BEGIN` reached 40 ms in) is what said so.
+
+**SEVEN MUTATIONS, EACH ON ITS OWN CASE, THE REPLACEMENT COUNT ASSERTED
+BEFORE EVERY RUN:**
+
+```
+  fail() before classifying (the before-state)   the retry case + the restart case
+  leave 'parsing' on ANY error the queue retries the deterministic case alone
+  leave 'parsing' even on the last attempt       the no-attempts-left case alone
+  the consumer off by one (attemptsMade < ...)   the no-attempts-left case alone
+  the finalize ROLLBACK masks again              the retry case + the restart case
+  the advisory unlock masks again                the restart case alone
+  no listener on either checkout                 4 of 4 assertions PASS; the file
+                                                 fails on 3 unhandled errors
+```
+
+The fifth fails the same two cases as the first, on the same symptom — a run
+recorded `failed` — by a different mechanism; stated rather than counted as
+two proofs. **The seventh is guarded by vitest failing a file on an unhandled
+error, not by an assertion**, which is the honest limit of that half.
+
+**KNOWN AND LEFT, EACH ITS OWN CHANGE:**
+
+  - **A SWEPT RUN GETS ONE ATTEMPT.** `Sweeper`'s own `Queue` is the one
+    construction that does not pass `INGEST_JOB_OPTIONS` — the API and the
+    runner both do — so a run the sweeper re-enqueues carries no `attempts`,
+    `queueWillRetry` reads it as the last, and a transient failure there
+    still fails it. Correct under this change, and one line from better.
+  - **`40P01` AND `40001` ARE STILL NOT IN `TRANSIENT_CODES`.** Postgres's own
+    advice for both is to retry the transaction, and this change is what
+    makes adding them worth anything.
+  - **A POSTGRES RESTART CAN STILL CRASH THE WORKER** through the pool (no
+    `pool.on('error')` in `createPool`, so an IDLE client's death is an
+    unhandled `error` on the pool), the sweeper's checkout and the fold
+    owner's per-run checkouts. Taken as its own branch
+    (`fix/worker-survives-pg-restart`), with the harness above as its
+    starting point.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **172 / 2217**, unchanged as predicted, zero `Errors` lines;
+`test:integration` **155 / 1963, exit 0, zero failures** — the prediction
+exactly, in 663 s; `pnpm test:e2e` **165 passed, exit 0** — against a
+SCRATCH DATABASE (`perfportal_retry`, dropped, recreated and migrated first),
+a scratch Redis INDEX (db 8) and e2e port 3300, from a worktree at an
+undotted path.
+
+**RE-MEASURED AFTER MERGING `main`**, because the run-number branch landed
+underneath it and a floor is a property of a tree: unit **174 / 2232**
+(unchanged by this branch, as predicted), integration **160 / 1995, exit 0,
+zero failures** — the run-number branch's 159 / 1991 plus this branch's four —
+and `pnpm test:e2e` **166 passed, exit 0**. That was the SECOND e2e run. The
+first failed ONE case, `acceptance.spec.ts`'s keyboard-and-chart-table case,
+`toBeVisible` on the chart's data table, as the 1-minute load climbed to 32:
+the intermittent this file already records twice, which no pipeline change
+can reach. That file then passed **35 of 35 in five isolated runs** at a load
+of 22, and the full suite clean. **The run-number branch had added four
+direct `pipeline.process()` calls**, and the merge had to make each state
+`{ queueWillRetry: false }` — the required parameter doing its job, as a
+compile error at the merge rather than a silent default after it.
+
+The run-number branch added TWO unit files —
+`packages/contracts/test/run-number.test.ts` (4) and
+`apps/web/test/runNumber.test.ts` (3) — plus 1 case each to
+`transforms.trends.test.ts`, `RunCompare.test.tsx`, `RunHeader.test.tsx`,
+`RunShell.test.tsx`, `RunList.test.tsx`, `RunList.compact.test.tsx`,
+`RunStats.test.tsx` and `ProjectTests.test.tsx`, from **172 / 2217 to
+174 / 2232**. Integration moves with the three `.ts` files (8 cases) plus THREE
+integration files — `apps/api/test/run-number.integration.test.ts` (6),
+`apps/worker/test/run-number.integration.test.ts` (14) and
+`packages/persistence/test/run-number.integration.test.ts` (3) — and 1 case in
+`fold-owner.integration.test.ts`, from **154 / 1959 to 159 / 1991** (1988
+before the residual fixes below added three worker cases), and **e2e
+rises to 166** (`apps/web/e2e/run-number.spec.ts`). It is backlog item #5 of
+the Gatling Enterprise comparison: "Run 12", a run's number within its test.
+
+**GATLING ENTERPRISE WAS MEASURED BEFORE A LINE WAS WRITTEN**, in the user's
+own browser and read-only: the number counts per TEST, not per project; it is
+spelled `#12` where space is short and `Run 12` as a name; and a run's start
+time rides beside it as a second line rather than being replaced by it.
+
+**ARRIVAL ORDER, NEVER RENUMBERED.** A run takes its number the moment it JOINS
+its test and keeps it for ever. Numbering by when a test RAN would renumber
+every later run whenever an old bundle is uploaded late, and "#12" in last
+week's thread would name a different run today. The price is that a late
+upload's number can be higher than the run it preceded — which is why the
+baseline note says "the one that STARTED immediately before this in this
+test", naming the rule it follows, rather than "the one before".
+
+**A COUNTER ON THE TEST, BUMPED IN THE STATEMENT THAT SETS THE TEST.**
+`test.next_run_number` is advanced by an UPDATE whose row lock serialises two
+runs of one test; a max-plus-one read would hand both the same number. A run's
+test is set in exactly two places, and so is its number, in the SAME
+statement: `attachLiveRunToTest` at the live log's header
+(`LiveFoldOwner#identify`) and `numberRunForTest` inside the pipeline's
+finalize transaction. A unique index on `(test_id, run_number)` is the
+backstop. **UNGROUPED ⇒ UNNUMBERED is the invariant; "every run in a test has
+a number" is only the goal**, with one exception: a run an older,
+pre-numbering worker attached during an upgrade, which the finalize numbers
+when it meets it (the self-heal arm).
+
+**A NUMBER NAMES A RUN ONLY INSIDE ITS TEST, SO THE ORG-WIDE AND PROJECT LISTS
+DO NOT SHOW IT.** "Run 3" in a list drawn from twelve tests names nothing.
+Those keep the simulation. A test's own list, the run page's breadcrumb and
+title, Compare's chips, series and matrix columns, the Trends axis (`#12`), the
+baseline note and the catalogue's latest run show the number, and a run with
+none yet falls back to its short id everywhere.
+
+**THE LIVE RUN IS NUMBERED WHILE IT STREAMS, MEASURED ON REAL RUNS.** The
+developer database's ten real runs, migrated with this branch in about 1.2 s
+(Prisma's own start-up included), came back numbered in creation order within
+each test — creation order being the closest proxy history offers for join
+order. A Gradle-plugin live run then read `runNumber: null` for ten polls,
+before its log header arrived, became **Run 4 while still running** for
+nineteen more, and finished as Run 4. An on-prem runner run became **Run 5**
+sixteen seconds after it started running and finished as Run 5, counter 6.
+The 202 body a streaming run is read through carries the number, and
+`toResponse` does too — both builders, guard written first, the `warmupMs`
+lesson.
+
+**GEOMETRY, MEASURED ON ONE TREE WITH `runNumber` STRIPPED FROM EVERY RESPONSE**
+(which is `main`'s rendering) against the same tree as shipped:
+
+```
+                          stripped        numbered
+  phone run page          totals 804      804; breadcrumb 20px, scrollWidth 375
+  a test's cards at 375   116             116
+  table rows at 768/1024  75              56     the number is narrower than the id
+  p95 / Errors right edge 393 / 459       393 / 459   (of 726 / 694 visible)
+  catalogue row           62              62
+  Compare chips           34              52     the start time as a second line
+  Compare overlay top     1035            1054
+```
+
+The one cost is Compare: the chips gain a line and push the overlay 19 px
+down. That is Gatling Enterprise's own layout, taken on purpose.
+
+**THE FINAL REVIEW FOUND THE LOCK-ORDER COMMENT WRONG, AND MY FIX LIST FOR IT
+CREATED A DEADLOCK.** The first comments said both writers lock RUN then TEST
+"and so does `TestRepository.remove`, so nothing can deadlock". `remove` does
+not: its delete takes the TEST row and the `ON DELETE SET NULL` cascade then
+locks runs. My fix list (F2) dropped `remove`'s first statement — clearing the
+numbers on the test's runs BEFORE the delete — as redundant with the third,
+and (F3) added the self-heal arm to the finalize. Each was right alone.
+Together, a finalize self-healing run R (in T, no number) held R and queued on
+T behind the delete, and the cascade then needed R: the re-review reproduced
+**40P01**.
+
+**THE FIRST STATEMENT WAS NEVER REDUNDANT — IT WAS LOCK ORDER.** Its END STATE
+is subsumed by the third statement, which is what the review had measured; its
+LOCKS are not: it takes the test's runs while the delete holds no lock on the
+test, so a writer holding one is waited for BEFORE the test is. Restored, with
+a worker case that forces the interleaving deterministically — three clients,
+the real `TestRepository.remove`, and `pg_stat_activity` polled for Lock
+waiters instead of a sleep. Against the two-statement `remove` it deadlocked
+**14 times in 14**; with the statement back it is green 3 of 3 (the finalize
+ends `23503`, the outcome a finalize racing its test's deletion has always
+met); deleting the statement again was 40P01 3 of 3 — **and that case turned
+out to be a race, not a guard; see the residual fixes below.** **Two statements
+with the same end state are not interchangeable when either takes locks** —
+compare what each LOCKS, not only what each leaves behind.
+
+**AND THE RE-MADE ARGUMENT WAS WRONG ABOUT LOCK MODES, WHICH THE THIRD REVIEW
+REPRODUCED.** "remove waits on a writer holding one of those runs only before
+it holds T" is true of a writer holding the run FOR UPDATE. A finalize that
+has already inserted its `run_assertion` rows holds the run FOR KEY SHARE
+through their foreign-key checks, and the first statement, rewriting an
+unnumbered run's number NULL to NULL, changes no key column and so takes only
+FOR NO KEY UPDATE — which does not wait behind a KEY SHARE. It passes, the
+delete takes T, the cascade (changing `test_id`, a key column) needs FOR UPDATE
+and waits on the KEY SHARE, and the finalize's `SELECT … FOR UPDATE` waits on
+the first statement: 40P01, 3 of 3, with the real `remove()`. A numbered run
+cannot do this, because clearing its number changes a key column. **A
+lock-order argument is about lock MODES, and whether an UPDATE changes a key
+column decides the mode it takes** — setting a key column to the value it
+already holds does not count as changing it.
+
+**THE TWO RESIDUALS WERE FIRST NAMED RATHER THAN FIXED, AND THEN FIXED ON THE
+SAME BRANCH — EACH BY A CASE THAT DEADLOCKED AGAINST THE CODE BEFORE IT.** Both
+were Postgres aborting one side with 40P01, never a hang, and the three new
+worker cases reproduce them with forced interleavings, red on the earlier code
+and green after:
+
+```
+  residual                                  the case                                  before
+  a NUMBERED run joins T mid-delete,        "... keeping the number of a run          40P01
+    finalized before the cascade reaches it  that joined mid-delete"
+  the same, through the real finalize       "finalizes a run already numbered in      "waited on
+                                             its test without waiting on the test row"  the test row"
+  a self-heal run whose finalize had        "... self-healing finalize that already   40P01
+    inserted its assertion rows              wrote its assertions"
+```
+
+**THE KEEP ARM WRITES NOTHING.** `numberRunForTest` rewrote a kept row to the
+values it already held, and that alone made the pipeline's terminal UPDATE
+re-check the run's foreign key — Postgres re-checks a row the same transaction
+already wrote — which locks the test row. So a finalize that only KEPT a number
+waited on a test a delete held, while the delete's cascade waited on the run.
+The keep row is now answered from `cur` (which still locks the run) and not
+written; the terminal UPDATE, `test_id` unchanged, runs no check. The third
+case proves it through the REAL `PipelineService` rather than a stand-in:
+another transaction holds the test row FOR UPDATE, and the finalize has to
+finish before anything is seen waiting on the holder — raced, not timed.
+
+**`remove()`'s FIRST STATEMENT NOW UNGROUPS, AND ITS LOCK MODE IS THE WHOLE
+FIX.** It rewrote an unnumbered run's number NULL to NULL — no key column
+changed, so FOR NO KEY UPDATE, which a finalize's FOR KEY SHARE does not block.
+Setting `test_id` to NULL changes a key column (half of the unique index on
+`(test_id, run_number)`), so it takes FOR UPDATE and waits behind the KEY SHARE
+BEFORE the delete holds the test; the finalize then upgrades its own lock as
+the run's sole locker without queueing behind the delete, and commits first.
+That upgrade was a claim read out of `heap_lock_tuple` until the case forced
+the interleaving and it held. It is written as SQL (`$executeRaw`) so the
+predicate is visibly the test's own — `test_id = (the slug's test)` in the
+UPDATE's WHERE, which Postgres re-checks on the row version it finds after
+waiting: a run the finalize moved to another test meanwhile is skipped, not
+ungrouped. How a Prisma relation filter would spell it is not something this
+code controls.
+
+**THE CANDIDATE FIX LIST HAD FIVE ITEMS, AND TWO WERE WRONG OR EMPTY:**
+
+  - **`40P01` in `TRANSIENT_CODES` would have saved nothing.**
+    `#processHoldingLock` calls `runs.fail()` BEFORE rethrowing, so the retry
+    BullMQ schedules finds the run `failed` and returns at its terminal-status
+    check. That is true of EVERY transient code thrown inside `#ingest`, which
+    is a pre-existing gap taken as its own branch rather than widened into this
+    (transient-ingest-retries, PR #245).
+  - **Matching the first statement by slug is not distinguishable by any
+    case**: matched by the id `findBySlug` read, all 17 run-number cases pass
+    (confirmed in `dist` first — a mutation that must stay green proves
+    nothing unless it applied). Kept because the two statements must name the
+    same row across a delete-and-recreate, and the ungrouping statement needed
+    rewriting anyway.
+  - The pre-lock and the no-op-skip are the two fixes above; the pid-scoped
+    waits are below.
+
+**ONE WINDOW IS LEFT, MEASURED RATHER THAN ARGUED, AND IT IS TRANSITIONAL.** A
+run an OLDER, pre-numbering worker attached — in the test with no number —
+joining mid-delete: its finalize self-heals it and must take the test to
+allocate. With a third transaction numbering another run into the same test, so
+that the delete and the finalize both queue behind it, a throwaway probe
+against the fixed code deadlocked **3 of 3**, the victim varying (the finalize
+twice, the delete once). No lock order closes it — the finalize must take the
+test to allocate, and the joiner is a run the delete's first statement cannot
+have seen. It exists only while a deployment of this version rolls out, and
+its outcomes are the ordinary race's but for one: a delete that loses answers
+an error, and retrying it succeeds.
+
+**AND THE CASE THAT LOOKED LIKE THE GUARD WAS A RACE.** The earlier entry
+records "deleting the statement again is 40P01 3 of 3" and "14 times in 14".
+Re-measured with the first statement removed it is **5 of 6**: the delete and
+the finalize both queue for the test behind the third transaction, and when it
+commits they RACE for the row's new version; the finalize sometimes wins and
+everything commits. **A forced interleaving is forced only up to the last step
+the harness orders** — past that, "every run" was a streak. The first
+statement's existence is now pinned by the self-heal case, a cycle with nothing
+racing (40P01 every time), and by the joiner case's attach, which fails its
+lock_timeout.
+
+**AND THAT MUTATION HUNG THE WHOLE SUITE FOR TEN MINUTES, WHICH IS THE LESSON
+WORTH MOST.** With the first statement removed, the delete held the test while
+the joiner case's attach waited for it — and the delete itself was waiting on a
+transaction the HARNESS held open, released only in a `finally` that could not
+run until the attach returned. Postgres sees no cycle, because the harness's
+transaction is idle rather than waiting on a lock. Every later case then timed
+out behind the leftover locks. **A deadlock test's harness is a participant**:
+a step that must not wait now carries a `lock_timeout` (a second pool with
+`?options=-c lock_timeout=5000`, and `SET LOCAL` on the finalize's client), so
+it fails with 55P03 and names itself, and each `finally` releases an idle
+holder before awaiting the statements queued behind it.
+
+**AND A pg CLIENT QUEUES ITS QUERIES.** The pid-scoped waits read each
+client's `pg_backend_pid()` — and asking a client that is BLOCKED for its pid
+queues behind the blocked statement and waits for ever. Every pid is read
+before any statement is in flight.
+
+**THE WAITS ARE SCOPED TO BACKENDS NOW.** `lockWaiters(n)` counted every Lock
+waiter in the database, so a statement queued behind somebody else could
+satisfy it and run the next step early. `blockedBy(pid)` waits for a backend
+blocked by a named one (`pg_blocking_pids`), and `blocked(pid)` for a named
+backend to be waiting at all.
+
+**RED-VERIFIED, EACH FIX ON ITS OWN, PERSISTENCE REBUILT AROUND EVERY
+MUTATION AND ITS EMITTED `dist` GREPPED:**
+
+```
+  the first statement back to rewriting the number   the self-heal case ALONE, 40P01
+  the keep arm rewrites the row again                the joiner case, 40P01, and the
+                                                     real-pipeline case: "waited on the test row"
+  the first statement matched by id, not slug        nothing — 17 of 17, dist confirmed
+  the first statement removed                        the self-heal case (40P01) and the
+                                                     joiner case (its attach, 55P03)
+```
+
+**WHAT WAS RUN FOR THE RESIDUAL FIXES**, on the final tree: `typecheck` and
+`lint` exit 0 by their own exit codes; `test:unit` **174 / 2232**, unchanged
+as predicted (every file touched is an `.integration.test.ts` or source),
+zero `Errors` lines; the worker run-number file 3 of 3 on its own. **The two
+suites that need the stack were measured by CI, not here**: the `build` job on
+`c403d36`, read off its own log —
+
+```
+  pnpm test:unit         Test Files 174 passed (174)   Tests 2232 passed (2232)
+  pnpm test:integration  Test Files 159 passed (159)   Tests 1991 passed (1991)
+  pnpm test:e2e          166 passed
+```
+
+every total the one predicted from the source before either local run began.
+
+**BECAUSE THIS MACHINE SLEPT THROUGH BOTH LOCAL INTEGRATION RUNS, AND NOTHING
+IN EITHER OUTPUT SAID SO.** Both collected exactly the predicted
+**159 / 1991** — and then took hours, failing dozens of cases across a dozen
+and more files, every one a sub-second test "taking" a quarter of an hour.
+That is not contention: `pmset -g log` shows the Mac entering sleep mid-run,
+and a test timer measures wall-clock time across a suspend. The tell is the
+SHAPE — near-identical multi-minute durations on tests that normally take
+milliseconds — which no amount of load produces.
+
+**AND THE DOCKER VM'S CLOCK DOES NOT ADVANCE WHILE THE HOST SLEEPS**, which
+turns a sleep into a second, stranger failure. Measured after one: the
+containers' clock stood **844 s, then 979 s behind the host**, and MinIO
+refuses a request signed more than fifteen minutes from its own clock —
+`RequestTimeTooSkewed`, a storage error surfacing in files whose subject is
+the pipeline. It resynced by itself a few minutes later. **Compare
+`date -u +%s` on the host and inside a container before believing any
+integration result from a laptop that has been asleep**, and keep the
+machine awake for the run — an idle keep-awake does not survive a closed lid.
+**AND THE BUILD RULING I GAVE THE IMPLEMENTERS WAS WRONG; ONE OF THEM CAUGHT
+IT.** I told them vitest resolves workspace packages from `src` through the
+`perfportal-source` condition, so no red-verify needs a rebuild. Under
+`vitest.integration.config.ts` a package imported BY NAME resolves through
+`dist` — proven with a module-load print after a persistence mutation came back
+falsely GREEN. This file already records that fact three times; I had read the
+config's `conditions` and not asked what they reach. Every red-verify after it
+rebuilt the package before running and after restoring.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE:**
+
+```
+  migration    backfill ORDER BY started_at            the backfill case: [2,3,1]
+               counter set to max, not max + 1         the backfill case: 3 against 4
+  persistence  remove() without its clearing statements the deletion case alone
+               remove() without statement (1)          the worker deadlock case, 40P01 3/3 —
+                                                       a race, 5 of 6 when re-measured
+               remove() without statement (3)          the worker deadlock case, on R0
+  worker       attach without its EXISTS guard         the re-claim case: counter 3 not 2
+               keep arm allocates                      the keep case alone
+               ELSE keeps instead of allocating        4 cases, the one claim at four inputs
+               terminal-status guard dropped           the terminal case alone
+               max-plus-one instead of the counter     the concurrent case, 5/5 — the
+                                                       unique index refused the duplicate
+               self-heal OR / keep-arm guard dropped   the self-heal case alone, each
+               pipeline never calls numberRunForTest   the end-to-end case alone
+               fold owner's raw UPDATE restored        the header case alone
+  contracts    .positive() -> .nonnegative()           2 cases, both asserting 0 is refused
+               identity .optional() dropped            the rolling-deploy case alone
+               TrendRun field dropped                  the trend-row case alone
+  api          toResponse without it                   the terminal-builder case alone
+               the 202 without it                      the 202 case and the null case
+               list SELECT without run_number          the list case alone
+               trends inner SELECT without it          the trends case, a SQL error
+               catalogue selects without it            the catalogue case alone
+  web          runName spells "Run #n"                 4 cases asserting the one spelling
+               runLabels delegates to compareLabels    4 cases
+               six render guards, one at a time        each its own case, 136 / 1
+  browser      runName returns "Run n."                the new spec + copy-ids' /^Run \d+$/
+               the pipeline never numbers              the new spec: "Received: 1ec9c0ec"
+```
+
+**WHAT WAS RUN**, on the final tree, every total the one counted from the
+source before any suite ran: `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **174 / 2232** under the local zone and again under
+`TZ=UTC` (the Compare chips now print a start time), zero `Errors` lines;
+`test:integration` **159 / 1988, exit 0, zero failures**, started behind the
+load gate at 6.84 / 7.48; `pnpm test:e2e` **166 passed, exit 0**, on its first
+run with no retries — against a SCRATCH DATABASE (`perfportal_runno`,
+dropped, recreated and migrated before integration), a scratch Redis INDEX
+(db 7) and e2e port 3200. The real runs used the developer database with the
+API, worker and runner on their own Redis index (db 12); the token minted for
+them was revoked afterwards, and the two runs stay as its eleventh and twelfth.
 
 The test-page-phone-overflow branch added no unit FILE, no unit case and no
 spec — it WIDENED one existing e2e case — so it moves no floor. Cut at

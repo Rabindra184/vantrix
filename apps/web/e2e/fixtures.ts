@@ -248,7 +248,7 @@ export async function parseUploadedRun(orgId: string): Promise<string> {
   }
 
   const pipeline = new PipelineService(workerConfig, prisma, pool, blobs);
-  await pipeline.process(runId);
+  await pipeline.process(runId, { queueWillRetry: false });
 
   const finished = await prisma.run.findUnique({ where: { id: runId } });
   if (finished?.status !== 'complete') {
@@ -300,7 +300,7 @@ async function ingestAndProcess(token: string): Promise<string> {
   const body = (await res.json()) as { id: string };
 
   const pipeline = new PipelineService(workerConfig, prisma, pool, blobs);
-  await pipeline.process(body.id);
+  await pipeline.process(body.id, { queueWillRetry: false });
 
   // process() throws on a real ingest failure (PipelineService's #ingest
   // rethrows after recording it — see the comment above), so a caller who
@@ -1071,6 +1071,9 @@ export async function seedRunWithProvenance(
  * deterministic, and `startedOn` mirrors its date because that column is the
  * ingest-date partition key (see schema.prisma) — the same rules
  * `seedProjectWithRuns` follows.
+ *
+ * Numbered as if the runs arrived oldest first, the arrival rule applied to
+ * seeded history (spec 2026-09-27-run-number).
  */
 export async function seedTestWithRuns(
   orgId: string,
@@ -1091,6 +1094,7 @@ export async function seedTestWithRuns(
       slug: opts.slug,
       name: opts.name,
       simulationClass: opts.simulationClass,
+      nextRunNumber: opts.runs + 1,
     },
   });
 
@@ -1103,6 +1107,7 @@ export async function seedTestWithRuns(
           orgId,
           projectId,
           testId: test.id,
+          runNumber: opts.runs - i,
           status: 'complete',
           verdict: opts.verdict === undefined ? 'passed' : opts.verdict,
           tool: 'gatling',

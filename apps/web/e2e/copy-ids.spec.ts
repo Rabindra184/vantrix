@@ -49,15 +49,16 @@ test('a test’s slug and a run’s full id reach the clipboard from their rows'
   await expect(testRow.getByRole('status')).toHaveText(/copied/i);
   await expect.poll(readClipboard).toBe('payments-sweep');
 
-  // A TEST'S OWN RUN LIST shows an 8-character prefix, which no endpoint
-  // accepts — so this is the list where copying the display would be wrong.
+  // A TEST'S OWN RUN LIST names each run by its number — "Run 2" — which no
+  // endpoint accepts, so this is the list where copying the display would be
+  // wrong.
   await page.goto('/projects/checkout/tests/payments-sweep');
   const runRow = page.getByTestId('run-row').first();
   await expect(runRow).toBeVisible();
   const id = await runRow.getAttribute('data-run-id');
   expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   await expect(runRow.getByRole('link', { name: `View run ${id}`, exact: true })).toHaveText(
-    id!.slice(0, 8),
+    /^Run \d+$/,
   );
 
   await runRow.getByRole('button', { name: `Copy run id ${id}`, exact: true }).click();

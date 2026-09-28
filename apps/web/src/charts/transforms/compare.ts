@@ -2,6 +2,7 @@ import type { SeriesResponse } from '@perfportal/contracts';
 import type { ChartData, ChartSeries, ChartTableRow } from '../types';
 import { clampPercentile } from '../../percentile';
 import { runMinuteLabel } from './runLabel';
+import { runName, runTag } from '../../runNumber';
 
 /**
  * Two to five runs of one simulation, overlaid on a single metric.
@@ -314,4 +315,32 @@ function shortestUniquePrefix(group: readonly string[]): number {
     if (new Set(group.map((id) => id.slice(0, length))).size === group.length) return length;
   }
   return longest;
+}
+
+/**
+ * A label per run: its NUMBER where it has one, and exactly `compareLabels`'
+ * minute label where it does not.
+ *
+ * Numbers never collide within a test (a unique index says so), so a numbered
+ * run needs no suffix. The numberless runs are passed to `compareLabels` as a
+ * group of their own, so its collision suffix is decided among them alone —
+ * and a minute label (`08-07 11:00`) can never equal `Run 12` or `#12`, so the
+ * two populations cannot collide with each other either.
+ */
+export function runLabels(
+  runs: readonly { id: string; at: string; runNumber?: number | null }[],
+  form: 'name' | 'tag',
+): string[] {
+  const numberless = runs.flatMap((run, index) =>
+    run.runNumber === null || run.runNumber === undefined ? [{ id: run.id, at: run.at, index }] : [],
+  );
+  const fallback = compareLabels(numberless);
+  const fallbackAt = new Map(numberless.map((run, k) => [run.index, fallback[k]!]));
+  return runs.map((run, index) =>
+    run.runNumber === null || run.runNumber === undefined
+      ? fallbackAt.get(index)!
+      : form === 'name'
+        ? runName(run.runNumber)
+        : runTag(run.runNumber),
+  );
 }

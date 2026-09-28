@@ -141,7 +141,7 @@ describe('PipelineService', () => {
   it('processes a live run\'s raw simulation.log directly, with no tar.gz wrapper', async () => {
     const rawLog = readFileSync(FIXTURE_LOG);
     const ctx = await seedLiveRun(rawLog);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.status).toBe('complete');
@@ -157,7 +157,7 @@ describe('PipelineService', () => {
 
   it('reproduces the fixture statistics end to end', async () => {
     const ctx = await seedRun(bundle);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.status).toBe('complete');
@@ -183,7 +183,7 @@ describe('PipelineService', () => {
     // genuinely differ in the fixture, so this proves the worker reads the
     // parsed value rather than copying startedAt or leaving the column null.
     const ctx = await seedRun(bundle);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.status).toBe('complete');
@@ -199,7 +199,7 @@ describe('PipelineService', () => {
 
   it('persists the error table with the fixture counts', async () => {
     const ctx = await seedRun(bundle);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const errors = await new MetricReader(pool).errors(
       { orgId: ctx.orgId, projectId: ctx.projectId },
@@ -211,7 +211,7 @@ describe('PipelineService', () => {
 
   it('persists series buckets readable through the partition key', async () => {
     const ctx = await seedRun(bundle);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const buckets = await new MetricReader(pool).series(
       { orgId: ctx.orgId, projectId: ctx.projectId },
@@ -231,7 +231,7 @@ describe('PipelineService', () => {
         family: 'response_time', metric: 'p95', comparator: 'lte', threshold: 1,
       },
     });
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.verdict).toBe('failed');
@@ -244,7 +244,7 @@ describe('PipelineService', () => {
 
   it('reports not_evaluated when a project has no rules', async () => {
     const ctx = await seedRun(bundle);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.verdict).toBe('not_evaluated');
   });
@@ -253,7 +253,7 @@ describe('PipelineService', () => {
     const ctx = await seedRun(Buffer.from('not a tarball at all'));
     // process() rethrows a deterministic failure after recording it, so the
     // consumer can classify it with isTransient — expected here, not a bug.
-    await expect(pipeline().process(ctx.runId)).rejects.toThrow();
+    await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).rejects.toThrow();
 
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.status).toBe('failed');
@@ -268,7 +268,7 @@ describe('PipelineService', () => {
     // blob store — simulating corruption that happened after upload, on the
     // storage side, not a bad upload from the caller (spec §6.2 step 2).
     const ctx = await seedRun(bundle, {}, 'f'.repeat(64));
-    await expect(pipeline().process(ctx.runId)).rejects.toThrow();
+    await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).rejects.toThrow();
 
     const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(run?.status).toBe('failed');
@@ -283,7 +283,7 @@ describe('PipelineService', () => {
 
   it('writes nothing at all when the run fails — no half-persisted statistics', async () => {
     const ctx = await seedRun(Buffer.from('not a tarball at all'));
-    await expect(pipeline().process(ctx.runId)).rejects.toThrow();
+    await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).rejects.toThrow();
 
     const { rows } = await pool.query('SELECT count(*)::int AS n FROM run_stat WHERE run_id = $1', [
       ctx.runId,
@@ -293,7 +293,7 @@ describe('PipelineService', () => {
 
   it('records the tool run header alongside the statistics', async () => {
     const ctx = await seedRun(bundle);
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const { rows } = await pool.query(
       `SELECT simulation, description, duration_ms FROM run WHERE id = $1`,
@@ -318,8 +318,8 @@ describe('PipelineService', () => {
     const ctx = await seedRun(bundle);
 
     const results = await Promise.allSettled([
-      pipeline().process(ctx.runId),
-      pipeline().process(ctx.runId),
+      pipeline().process(ctx.runId, { queueWillRetry: false }),
+      pipeline().process(ctx.runId, { queueWillRetry: false }),
     ]);
     // At least one side may legitimately throw (unique-constraint rollback);
     // what matters is that the winner's row survives untouched.
@@ -364,7 +364,7 @@ describe('PipelineService', () => {
       expect(lockRows[0]?.got).toBe(true);
 
       const rejection = await pipeline()
-        .process(ctx.runId)
+        .process(ctx.runId, { queueWillRetry: false })
         .then(() => null, (err: unknown) => err);
       expect(rejection).not.toBeNull();
       expect((rejection as { code?: unknown }).code).toBe('RUN_LOCKED');
@@ -383,7 +383,7 @@ describe('PipelineService', () => {
 
     // The lock is genuinely free now (mirrors what the owner's own next
     // tick would do) -- BullMQ's retry lands here, and it must succeed.
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
     const finished = await prisma.run.findUnique({ where: { id: ctx.runId } });
     expect(finished?.status).toBe('complete');
   });
@@ -407,7 +407,7 @@ describe('PipelineService', () => {
       );
       expect(lockRows[0]?.got).toBe(true);
 
-      await expect(pipeline().process(ctx.runId)).resolves.toBeUndefined();
+      await expect(pipeline().process(ctx.runId, { queueWillRetry: false })).resolves.toBeUndefined();
 
       // Nothing changed -- the loser did nothing at all.
       const run = await prisma.run.findUnique({ where: { id: ctx.runId } });
@@ -643,7 +643,7 @@ describe('Sweeper', () => {
     const ctx = await seedRun(bundle);
     await pool.query(`UPDATE run SET stream_abandoned_at = now() WHERE id = $1`, [ctx.runId]);
 
-    await pipeline().process(ctx.runId);
+    await pipeline().process(ctx.runId, { queueWillRetry: false });
 
     const { rows } = await pool.query<{ status: string; verdict: string | null }>(
       'SELECT status, verdict FROM run WHERE id = $1',

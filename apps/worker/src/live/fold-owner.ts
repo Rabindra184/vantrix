@@ -8,7 +8,9 @@ import { LiveEngine, type EngineOptions, type EngineResult } from '@perfportal/s
 import type { LiveChunkStore } from '@perfportal/storage';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
+import { holdClient, sqlState, type HeldClient } from '../held-client.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
+import { attachLiveRunToTest } from '../pipeline/run-number.js';
 import { resolveTestId } from '../pipeline/test-resolver.js';
 import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor, type SlaInput } from './delta.js';
 
@@ -93,10 +95,24 @@ function blankResume(): ResumeState {
 interface FoldState {
   decoder: StreamingLogDecoder;
   engine: LiveEngine;
-  /** Holds the advisory lock for `runId`. Taken and released on THIS client,
+  /**
+   * Holds the advisory lock for `runId`. Taken and released on THIS client,
    * never a different one drawn from the pool -- see `#claim` and
-   * `#release`. */
-  client: pg.PoolClient;
+   * `#release`.
+   *
+   * ═══ `held.lost` MEANS THE LOCK IS GONE ═══
+   *
+   * An advisory lock lives in the SESSION, and a session ends with its
+   * connection -- a database restart, a failover, `pg_terminate_backend`.
+   * From that instant another replica can take the run, and so can
+   * `PipelineService`. So a run whose `held.lost` is set is no longer this
+   * owner's in any sense that matters: it publishes nothing more for it
+   * (`#doTick`'s publish loop), and its next tick releases it and, if no one
+   * else took the lock, re-claims it on a fresh session with the same resume
+   * a crash gets (`#resumeState`). Folding on regardless would put two
+   * owners' deltas into one sequence the moment another replica claimed it.
+   */
+  held: HeldClient;
   /**
    * What the NEXT delta's `buildDelta` call needs to know about the LAST
    * one published for this run -- `seq`, and the response-time series'
@@ -771,7 +787,7 @@ export class LiveFoldOwner {
    * never held).
    *
    * Releasing while a `#fold` for the same run is in flight is safe and
-   * already accounted for: `#fold` never touches `state.client`, and a
+   * already accounted for: `#fold` never touches `state.held`, and a
    * `readFrom` racing the `finalize` that `close()` is running right now
    * throws (`LiveChunkGapError`, or a deleted key's `get`) into the
    * `#guarded` wrapper that already surrounds every fold. `close()`'s own
@@ -934,8 +950,12 @@ export class LiveFoldOwner {
     // Isolated per run for the same reason the claim and fold passes below
     // are: one run's unlock failing (a dead connection, a network blip)
     // must not strand every OTHER owned run's release for this tick too.
-    for (const runId of this.#owned.keys()) {
-      if (!runningIds.has(runId)) {
+    // A run whose lock SESSION ended goes too, running or not -- see
+    // `FoldState.held`. Released here, it is back in play for the claim pass
+    // just below, which re-takes the lock on a fresh session in this same
+    // tick unless another replica got there first.
+    for (const [runId, state] of this.#owned) {
+      if (!runningIds.has(runId) || state.held.lost) {
         await this.#guarded('release', runId, () => this.#release(runId));
       }
     }
@@ -992,6 +1012,11 @@ export class LiveFoldOwner {
     // per `#publish`'s own doc comment on why "after, never between reads"
     // matters for what a delta describes.
     for (const [runId, state] of this.#owned) {
+      // A lock session that ended AFTER this tick's release pass -- during a
+      // claim or a fold above -- is caught here instead: publishing without
+      // the lock is exactly what the lock exists to prevent, since another
+      // replica may already have claimed the run. The next tick retires it.
+      if (state.held.lost) continue;
       await this.#guarded('publish', runId, () => this.#publish(runId, state));
     }
   }
@@ -1286,7 +1311,7 @@ export class LiveFoldOwner {
    * `readFrom` await, if any, keeps running in the background using its
    * captured `state` reference -- harmless in itself (nothing reads that
    * `state` again once its run is gone from `#owned`, and `#fold` never
-   * touches `state.client`) -- but releasing that run's advisory lock while
+   * touches `state.held`) -- but releasing that run's advisory lock while
    * its own `readFrom` may still be reading the SAME chunk keys reopens the
    * exact race `#fold`'s doc comment already documents as ordinary
    * operation for `LiveChunkStore.finalize` (a listed key deleted by a
@@ -1425,7 +1450,11 @@ export class LiveFoldOwner {
    * gate can be `return`-based and the release can be one `finally` -- the
    * lock/insert/unwind logic below is unchanged. */
   async #claimReserved(runId: string, known?: RunClaimContext): Promise<void> {
-    const client = await this.#pool.connect();
+    // Held from the moment it is checked out -- the longest-lived checkouts
+    // in this process, so the likeliest to be holding a connection when the
+    // database restarts. See `FoldState.held`.
+    const held = holdClient(await this.#pool.connect(), (err) => this.#reportLockSessionLost(runId, err));
+    const client = held.client;
     let got = false;
     try {
       const { rows } = await client.query<{ got: boolean }>(
@@ -1434,14 +1463,14 @@ export class LiveFoldOwner {
       );
       got = rows[0]?.got ?? false;
     } catch (err) {
-      client.release();
+      held.release();
       throw err;
     }
     if (!got) {
       // Another owner (this process or another worker) already holds the
       // lock -- or PipelineService is parsing this run right now. Either
       // way, not ours this tick.
-      client.release();
+      held.release();
       return;
     }
 
@@ -1459,6 +1488,19 @@ export class LiveFoldOwner {
     const context = await this.#claimContext(runId, client, known);
     const { rules, rulesLoadFailed } = await this.#claimRules(runId, context);
 
+    // The session that won the lock can end during the three reads above,
+    // and every one of them swallows its own failure (each degrades rather
+    // than throwing), so nothing here would notice. Inserting now would take
+    // ownership of a run whose lock is already free -- the next tick would
+    // retire it again, but not before it had counted against the cap and
+    // been claimed with whatever the dead session failed to read. Not ours;
+    // the next tick claims it properly. Synchronous with the `#owned.set`
+    // below, like the `#closing` check.
+    if (held.lost) {
+      held.release();
+      return;
+    }
+
     if (this.#closing) {
       // Won the lock, but close() already started (or finished) draining
       // #owned -- inserting now would never be seen by it. Unwind exactly
@@ -1474,10 +1516,10 @@ export class LiveFoldOwner {
           runId,
         ]);
       } catch (err) {
-        client.release(true);
+        held.release(err instanceof Error ? err : new Error(String(err)));
         throw err;
       }
-      client.release();
+      held.release();
       return;
     }
 
@@ -1489,7 +1531,7 @@ export class LiveFoldOwner {
       // has already logged, and which also leaves this claim with no rules to
       // evaluate against those statistics anyway.
       engine: new LiveEngine(context?.engineOptions ?? {}),
-      client,
+      held,
       fetchedBytes: 0,
       // NOT `INITIAL_CURSOR`, and NOT an empty breach map -- see
       // `#resumeState`. A re-claim after a crash or a rolling deploy has to
@@ -1894,15 +1936,17 @@ export class LiveFoldOwner {
     if (testId === null) return;
 
     try {
-      // The run row, so a reader watching this run sees its test in the
-      // breadcrumb rather than waiting for the parse. `test_id IS NULL` in the
-      // WHERE, so this can never overwrite an answer somebody else already
-      // reached — `PipelineService` at finalize is the authority, and a
-      // re-claim mid-stream must not thrash the column.
-      await this.#pool.query(
-        `UPDATE run SET test_id = $2 WHERE id = $1 AND test_id IS NULL`,
-        [runId, testId],
-      );
+      // The run row — its test and its number — so a reader watching this
+      // run sees its test in the breadcrumb rather than waiting for the
+      // parse. `test_id IS NULL` in the WHERE, so this can never overwrite
+      // an answer somebody else already reached — `PipelineService` at
+      // finalize is the authority, and a re-claim mid-stream must not
+      // thrash the column.
+      //
+      // …and its NUMBER, in the same statement (run-number.ts). A run that
+      // already has a test is left alone, number included — so a re-claim
+      // mid-stream burns nothing.
+      await attachLiveRunToTest(this.#pool, runId, testId);
     } catch (err) {
       console.warn(`LiveFoldOwner: could not record the test for ${runId}:`, err);
     }
@@ -1970,15 +2014,42 @@ export class LiveFoldOwner {
     const state = this.#owned.get(runId);
     if (!state) return;
     this.#owned.delete(runId);
+    // A session that has already ended took the lock with it, and an unlock
+    // on it could only fail -- as a release failure `#guarded` or `close()`
+    // would then report, for a loss `#reportLockSessionLost` already has.
+    // Nothing is left to undo but returning the client, which the pool
+    // destroys because it was lost.
+    if (state.held.lost) {
+      state.held.release();
+      return;
+    }
     try {
-      await state.client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
+      await state.held.client.query('SELECT pg_advisory_unlock($1, hashtext($2))', [
         RUN_INGEST_LOCK_NAMESPACE,
         runId,
       ]);
     } catch (err) {
-      state.client.release(true);
+      state.held.release(err instanceof Error ? err : new Error(String(err)));
       throw err;
     }
-    state.client.release();
+    state.held.release();
+  }
+
+  /**
+   * The session holding `runId`'s lock ended. Said once, as it happens --
+   * `HeldClient` reports only the first of the pair of errors a dead
+   * connection raises -- because an operator whose database restarted should
+   * be able to see which runs changed hands, and what this owner will do.
+   * Acting on it is left to the tick (`#doTick`'s release pass) rather than
+   * done here: this runs inside an event handler, at any point in a tick,
+   * and `#owned` is only ever changed at the points that already change it.
+   */
+  #reportLockSessionLost(runId: string, err: Error): void {
+    console.warn(
+      `LiveFoldOwner: the session holding run ${runId}'s advisory lock ended ` +
+        `(${sqlState(err)}: ${err.message}); the lock went with it, so this owner ` +
+        'publishes nothing more for the run and releases it on its next tick, ' +
+        're-claiming it if no other owner has',
+    );
   }
 }

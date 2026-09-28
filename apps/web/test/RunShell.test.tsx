@@ -375,6 +375,15 @@ describe('RunShell', () => {
     fetchSpy.mockRestore();
   });
 
+  /** Two tabs on two runs of one test used to read alike (both the
+   *  simulation). A numbered run's tab names the test and the run. */
+  it('titles the document with the test and the run’s number', () => {
+    renderShellWith({
+      identity: { ...RUN, test: { id: '33333333-3333-4333-8333-333333333333', slug: 'checkout-smoke', name: 'Checkout smoke' }, runNumber: 12 },
+    });
+    expect(document.title).toBe('Checkout smoke · Run 12 · PerfPortal');
+  });
+
   it('trusts terminal=true over a `status` the old allowlist called non-terminal', () => {
     // `status: 'running'` used to be non-terminal on its own; `terminal:
     // true` here proves the shell fetches and hides the strip regardless.
