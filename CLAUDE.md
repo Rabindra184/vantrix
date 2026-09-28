@@ -146,6 +146,42 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The audit-multer-undici branch added no test and moves no floor: unit stays
+**174 / 2233**, integration **162 / 2006** and **e2e 166**. Its diff is two
+`pnpm.overrides` lines and the lockfile they regenerate.
+
+**CI WENT RED ON A BRANCH WHOSE DIFF COULD NOT HAVE CAUSED IT, AND THE STEP
+THAT FAILED SAID WHY.** The pipeline-holds-its-client PR's `build` job failed
+in under two minutes, on `pnpm audit --prod`, a few hours after the API
+branch's run had passed the same step with the same lockfile. Two moderate
+advisories had been published in between: multer before 2.4.0
+(GHSA-3pph-fpjx-jg34, a denial of service through orphaned disk writes on
+aborted uploads, reached through `@nestjs/platform-express`) and undici 8.1.0
+to 8.10.1 (GHSA-3wwx-pv8p-q78v, a denial of service through WebSocket
+decompression, reached through the `better-auth > vitest > jsdom` chain this
+file already explains pnpm counts as production). **That gate measures the
+WORLD, not the diff**: from the moment an advisory is published, every branch
+fails it, `main` included. Read WHICH step failed before reading a red build
+as the change's fault.
+
+**THE FIX IS THE MECHANISM ALREADY RECORDED FOR THIS GATE.** The existing
+`multer@2` override moves from `^2.3.0` to `^2.4.0`, and `undici@8` gains one
+at `^8.10.2`; they resolve to 2.4.0 and 8.11.2, and multer 2.4.0 drops three
+transitive packages (`concat-stream`, `buffer-from`, `typedarray`) it no
+longer uses. Checked in the lockfile diff that nothing else moved. Not an
+`ignoreGhsas` entry: both have patched versions inside the ranges already in
+use, so there is nothing to argue for keeping them.
+
+**AND ALL FIVE GATES RAN, NOT JUST THE AUDIT**, because both packages run
+code a suite reaches: multer parses every multipart upload the API accepts,
+and undici sits under jsdom, which every component test loads. **WHAT WAS
+RUN.** `pnpm audit --prod` "No known vulnerabilities found"; `typecheck` and
+`lint` exit 0; `test:unit` **174 / 2233**, zero `Errors` lines;
+`test:integration` **162 / 2006, exit 0, zero failures**; `pnpm test:e2e`
+**166 passed, exit 0** — against a SCRATCH DATABASE (`perfportal_audit`), a
+scratch Redis INDEX (db 13) and e2e port 3700, from a worktree at an undotted
+path, with no sleep during the run.
+
 The api-survives-pg-restart branch added no unit FILE and no unit case —
 unit stays **172 / 2217** — and 3 cases to
 `apps/api/test/terminal-waiter.integration.test.ts`, from **154 / 1959 to
