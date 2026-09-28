@@ -146,6 +146,131 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
+The transient-ingest-retries branch added no unit FILE and no unit case —
+unit stays **172 / 2217** — and ONE integration file,
+`apps/worker/test/pipeline-retry.integration.test.ts` (4), from
+**154 / 1959 to 155 / 1963**. **e2e stays 165**: the fixtures gained an
+argument, not a case. It is a defect this file had already named — the
+run-number branch recorded "`40P01` in `TRANSIENT_CODES` would have saved
+nothing" and took the reason as its own task.
+
+**EVERY TRANSIENT FAILURE INSIDE `#ingest` FAILED ITS RUN FOR GOOD, AND THE
+JOB REPORTED SUCCESS.** `#processHoldingLock` called `runs.fail()` on ANY
+error out of `#ingest` and only then rethrew, so the retry BullMQ scheduled
+for a transient one found the run terminal at its own status check and
+returned. An object store that timed out, a pool with no client to hand out,
+a Prisma `P1001`, a database restart: each became `failed` / `INTERNAL` /
+"Retry the upload", on the attempt whose whole purpose was to spare the
+reader that. **`RUN_LOCKED` was the one transient that worked**, because it
+is thrown in `process()` before `#processHoldingLock` is ever reached — the
+retry machinery was real, and it had exactly one caller that could use it.
+
+**CLASSIFIED BEFORE `fail()`, AND ONLY WHEN THE QUEUE WILL COME BACK.** A
+transient failure with a retry to come leaves the run at `parsing` and
+rethrows; on the LAST attempt, or for a deterministic failure, the run fails
+as before — a run left at `parsing` with nothing coming back for it waits
+fifteen minutes for the sweeper. Whether BullMQ will retry is its own
+arithmetic, `Job#shouldRetryJob`'s `attemptsMade + 1 < opts.attempts`, and
+the consumer reads it BEFORE the attempt (`queueWillRetry`). The pipeline
+takes it as a REQUIRED `{ queueWillRetry }`, this file's rule for a parameter
+whose wrong value is silent: "no" to a retrying caller is the defect, "yes"
+to a non-retrying one strands the run. The 23 tests and fixtures that call
+`process()` directly state `false`.
+
+**AND A REAL TRANSIENT ERROR NEVER REACHED THE CLASSIFIER, WHICH ONLY
+KILLING A REAL CONNECTION SHOWED.** Measured with a throwaway probe against
+the compose Postgres before any code changed: a backend terminated
+mid-transaction makes the in-flight query reject with `57P01` — transient —
+and then:
+
+```
+  ROLLBACK on the dead client     rejects: "Connection terminated unexpectedly", NO code
+  what the finalize's catch threw  that one — isTransient reads it as deterministic
+  the client's `error` event       UNHANDLED: an uncaught exception, the worker dies
+```
+
+So fixing the classification alone would have done nothing for the error a
+restart actually delivers. The finalize's `ROLLBACK` and `process()`'s
+advisory unlock no longer replace the error that brought them there, and
+release the client WITH their own error so the pool destroys it — never
+lending out a session still in a transaction or still holding the lock.
+**pg-pool removes its own error listener while a client is checked out**
+(pg-pool 3.14.0, `_acquireClient`) and re-adds it at release, so both
+checkouts carry a no-op listener while they hold the client.
+
+**A TRIGGER RAISING `57P01` WOULD HAVE BEEN THE EASY INJECTION, AND IT WOULD
+HAVE HIDDEN TWO OF THE THREE DEFECTS.** The same SQLSTATE on a LIVE
+connection lets `ROLLBACK` succeed and emits no event. The test injects the
+real thing: a holder transaction takes `run_stat` in SHARE mode — the
+finalize's first write, so nothing earlier parks — an observer finds the
+backend it blocks with `pg_blocking_pids`, and `pg_terminate_backend` ends
+it inside its transaction. **The fixture that cannot distinguish the answers
+is the one where the wrong one survives**, and here the distinguishing
+input was the dead connection itself.
+
+**AND IT IS DRIVEN THROUGH THE REAL CONSUMER, WHICH NO TEST HAD EVER DONE.**
+Every one of the 23 existing `process()` calls hands the pipeline its
+arguments; a case that supplied `queueWillRetry: true` itself would prove
+the pipeline honours it and nothing about whether the consumer computes it.
+The four cases start `startConsumer` on a real BullMQ worker and enqueue
+with the API's own `INGEST_JOB_OPTIONS`. Case 1 asserts `attemptsMade === 2`
+— one failed attempt, one completion — beside a check that the terminated
+backend was mid-`INSERT INTO "run_stat"`, so a kill that landed anywhere
+else cannot pass it.
+
+**`pg_stat_activity` READ INSIDE A TRANSACTION IS A SNAPSHOT FROZEN AT ITS
+FIRST READ, AND THE FIRST RED WAS RED FOR THAT.** The harness polled for the
+parked finalize from the SAME connection that held the table lock, inside
+its `BEGIN`. Whenever its first poll beat the finalize there, every later
+poll re-read "nothing parked" — measured as a 180-second wait on a finalize
+parked the whole time, with the run at `parsing` and the job `active`. The
+restart case passed only because its first poll happened to land after the
+park. The observer polls and kills from autocommit now. **A red test is
+evidence about the product only once you know which assertion failed and
+why** — the timeout named the harness, and instrumenting the pipeline's
+stages (`BEGIN` reached 40 ms in) is what said so.
+
+**SEVEN MUTATIONS, EACH ON ITS OWN CASE, THE REPLACEMENT COUNT ASSERTED
+BEFORE EVERY RUN:**
+
+```
+  fail() before classifying (the before-state)   the retry case + the restart case
+  leave 'parsing' on ANY error the queue retries the deterministic case alone
+  leave 'parsing' even on the last attempt       the no-attempts-left case alone
+  the consumer off by one (attemptsMade < ...)   the no-attempts-left case alone
+  the finalize ROLLBACK masks again              the retry case + the restart case
+  the advisory unlock masks again                the restart case alone
+  no listener on either checkout                 4 of 4 assertions PASS; the file
+                                                 fails on 3 unhandled errors
+```
+
+The fifth fails the same two cases as the first, on the same symptom — a run
+recorded `failed` — by a different mechanism; stated rather than counted as
+two proofs. **The seventh is guarded by vitest failing a file on an unhandled
+error, not by an assertion**, which is the honest limit of that half.
+
+**KNOWN AND LEFT, EACH ITS OWN CHANGE:**
+
+  - **A SWEPT RUN GETS ONE ATTEMPT.** `Sweeper`'s own `Queue` is the one
+    construction that does not pass `INGEST_JOB_OPTIONS` — the API and the
+    runner both do — so a run the sweeper re-enqueues carries no `attempts`,
+    `queueWillRetry` reads it as the last, and a transient failure there
+    still fails it. Correct under this change, and one line from better.
+  - **`40P01` AND `40001` ARE STILL NOT IN `TRANSIENT_CODES`.** Postgres's own
+    advice for both is to retry the transaction, and this change is what
+    makes adding them worth anything.
+  - **A POSTGRES RESTART CAN STILL CRASH THE WORKER** through the pool (no
+    `pool.on('error')` in `createPool`, so an IDLE client's death is an
+    unhandled `error` on the pool), the sweeper's checkout and the fold
+    owner's per-run checkouts. Taken as its own branch
+    (`fix/worker-survives-pg-restart`), with the harness above as its
+    starting point.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **172 / 2217**, unchanged as predicted, zero `Errors` lines; `test:integration` **155 / 1963, exit 0, zero failures** -- the prediction exactly, in 663 s; `pnpm test:e2e` **165 passed, exit 0** — against a SCRATCH DATABASE (`perfportal_retry`,
+dropped, recreated and migrated first), a scratch Redis INDEX (db 8) and e2e
+port 3300, from a worktree at an undotted path.
+
 The test-page-phone-overflow branch added no unit FILE, no unit case and no
 spec — it WIDENED one existing e2e case — so it moves no floor. Cut at
 171 / 2209, integration 154 / 1959 and e2e 163, it sits on copyable-ids,
