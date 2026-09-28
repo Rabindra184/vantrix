@@ -276,6 +276,20 @@ describe('RunHeader', () => {
     );
     expect(screen.getByTestId('run-verdict')).toBeInTheDocument();
   });
+
+  /** The breadcrumb's current rung names WHICH run of the test this is — by
+   *  its number now, "Run 12", where it used to show an 8-character id. */
+  it('ends the breadcrumb at the run’s number when it has one', () => {
+    renderHeader({
+      ...RUN,
+      test: { id: TEST_ID, slug: 'checkout-smoke', name: 'Checkout smoke' },
+      runNumber: 12,
+    });
+    const crumb = screen.getByTestId('run-crumb');
+    expect(crumb).toHaveTextContent('Run 12');
+    expect(crumb).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByText('a66548b7')).toBeNull();
+  });
 });
 
 /**

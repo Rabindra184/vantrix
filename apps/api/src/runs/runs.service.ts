@@ -96,6 +96,7 @@ export class RunsService {
       // Joined on the RunRecord already (`include: { test: true }`), so this
       // costs no query of its own — the same free ride `project` takes.
       test: run.test,
+      runNumber: run.runNumber,
       simulation: run.simulation ?? null,
       description: run.description ?? null,
       durationMs: run.durationMs ?? null,

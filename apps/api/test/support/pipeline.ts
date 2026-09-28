@@ -7,5 +7,5 @@ export async function runPipelineFor(ctx: TestContext, runId: string): Promise<v
   const config = loadWorkerConfig();
   const blobs = new BlobStore(config.blob);
   const pipeline = new PipelineService(config, ctx.prisma, ctx.pool, blobs);
-  await pipeline.process(runId).catch(() => undefined);   // failures are recorded on the run
+  await pipeline.process(runId, { queueWillRetry: false }).catch(() => undefined);   // failures are recorded on the run
 }

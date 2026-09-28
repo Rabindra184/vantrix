@@ -183,7 +183,7 @@ describe('the live and batch SLA call sites', () => {
       await owner.close();
     }
 
-    await new PipelineService(config, prisma, pool, blobs).process(runId);
+    await new PipelineService(config, prisma, pool, blobs).process(runId, { queueWillRetry: false });
 
     const run = await prisma.run.findUnique({ where: { id: runId } });
     const persisted = await prisma.runAssertion.findMany({ where: { runId }, orderBy: { ruleId: 'asc' } });

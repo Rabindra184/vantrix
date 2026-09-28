@@ -245,6 +245,7 @@ function toSummary(row: TestRow): TestSummary {
             id: row.latestRun.id,
             status: row.latestRun.status as RunStatus,
             verdict: row.latestRun.verdict as RunVerdict | null,
+            runNumber: row.latestRun.runNumber,
           },
   });
 }

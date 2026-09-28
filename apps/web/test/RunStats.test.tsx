@@ -227,6 +227,22 @@ describe('RunStats', () => {
    * unconditional — without it this would pass just as happily against a
    * component that rendered nothing at all.
    */
+  it('names the baseline by its number, with when it started', () => {
+    renderStats(
+      <RunStats
+        stats={stats}
+        current={trendRun({ runNumber: 12 })}
+        baseline={trendRun({ id: '22222222-2222-4222-8222-222222222222', runNumber: 11 })}
+      />,
+    );
+    const note = screen.getByTestId('baseline-note');
+    expect(note).toHaveTextContent(/“vs previous” is Run 11 \(started /);
+    expect(screen.getByRole('link', { name: /^Run 11 \(started / })).toHaveAttribute(
+      'href',
+      '/runs/22222222-2222-4222-8222-222222222222',
+    );
+  });
+
   it('says nothing about conditions when the baseline matches on every one', () => {
     const shared = { environment: 'staging', branch: 'main', commitSha: 'abcdef1234' };
     renderStats(

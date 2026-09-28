@@ -165,6 +165,7 @@ export class MetricsController {
         commitSha: r.commitSha,
         tool: r.tool,
         simulation: r.simulation,
+        runNumber: r.runNumber,
         count: r.count,
         okCount: r.okCount,
         koCount: r.koCount,

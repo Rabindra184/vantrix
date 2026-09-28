@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RunStatusSchema, RunVerdictSchema } from './run.js';
+import { RunNumberSchema } from './run-number.js';
 
 /**
  * A test: the named thing a project runs repeatedly, and the layer between a
@@ -45,6 +46,9 @@ export const TestSummarySchema = z.object({
       id: z.string().uuid(),
       status: RunStatusSchema,
       verdict: RunVerdictSchema.nullable(),
+      /** "Run 12" in the catalogue's last-run cell. Optional: an older pod
+       *  omits it, and the browser drops a body that fails the schema. */
+      runNumber: RunNumberSchema.nullable().optional(),
     })
     .nullable(),
 });

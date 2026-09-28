@@ -445,3 +445,21 @@ describe('a trend breaks where the conditions changed', () => {
     expect(d.limitation).toBeUndefined();
   });
 });
+
+describe('run numbers on the axis', () => {
+  /** Every run of one test numbered, all started in ONE minute: the axis and
+   *  the data table's row headers read the numbers, so a timestamp-built label
+   *  cannot pass. */
+  it('tags a numbered cohort "#n" on the axis and in the table', () => {
+    const at = '2026-08-07T11:00:00.000Z';
+    const data = toStatusTrend(
+      response([
+        run({ id: 'c', startedAt: at, runNumber: 3 }),
+        run({ id: 'b', startedAt: at, runNumber: 2 }),
+        run({ id: 'a', startedAt: at, runNumber: 1 }),
+      ]),
+    );
+    expect(data.axisLabels).toEqual(['#1', '#2', '#3']);
+    expect(data.rows.map((r) => r.label)).toEqual(['#1', '#2', '#3']);
+  });
+});

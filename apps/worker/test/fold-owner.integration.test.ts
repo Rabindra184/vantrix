@@ -2097,6 +2097,18 @@ describe('LiveFoldOwner', () => {
         expect(row?.testId).toBe(test.id);
       });
 
+      /** And NUMBERS it there: a live run shows "Run 1" while it streams, as a
+       *  Gatling Enterprise run does from launch — not only once it ends. */
+      it('numbers the run at its header, in the same statement that records its test', async () => {
+        const test = await seedTest('test.Sim', 'the-sim');
+        await owner.tick();
+
+        const row = await prisma.run.findUnique({ where: { id: runId } });
+        expect(row?.testId).toBe(test.id);
+        expect(row?.runNumber).toBe(1);
+        expect((await prisma.test.findUniqueOrThrow({ where: { id: test.id } })).nextRunNumber).toBe(2);
+      });
+
       /**
        * CREATED, not merely matched. A live run is usually the FIRST run of
        * its simulation — nobody has authored a test for a class that has never

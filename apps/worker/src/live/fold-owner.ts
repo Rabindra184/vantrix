@@ -10,6 +10,7 @@ import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
 import { holdClient, sqlState, type HeldClient } from '../held-client.js';
 import { RUN_INGEST_LOCK_NAMESPACE } from '../pipeline/pipeline.service.js';
+import { attachLiveRunToTest } from '../pipeline/run-number.js';
 import { resolveTestId } from '../pipeline/test-resolver.js';
 import { buildDelta, buildSnapshot, INITIAL_CURSOR, type DeltaCursor, type SlaInput } from './delta.js';
 
@@ -1935,15 +1936,17 @@ export class LiveFoldOwner {
     if (testId === null) return;
 
     try {
-      // The run row, so a reader watching this run sees its test in the
-      // breadcrumb rather than waiting for the parse. `test_id IS NULL` in the
-      // WHERE, so this can never overwrite an answer somebody else already
-      // reached — `PipelineService` at finalize is the authority, and a
-      // re-claim mid-stream must not thrash the column.
-      await this.#pool.query(
-        `UPDATE run SET test_id = $2 WHERE id = $1 AND test_id IS NULL`,
-        [runId, testId],
-      );
+      // The run row — its test and its number — so a reader watching this
+      // run sees its test in the breadcrumb rather than waiting for the
+      // parse. `test_id IS NULL` in the WHERE, so this can never overwrite
+      // an answer somebody else already reached — `PipelineService` at
+      // finalize is the authority, and a re-claim mid-stream must not
+      // thrash the column.
+      //
+      // …and its NUMBER, in the same statement (run-number.ts). A run that
+      // already has a test is left alone, number included — so a re-claim
+      // mid-stream burns nothing.
+      await attachLiveRunToTest(this.#pool, runId, testId);
     } catch (err) {
       console.warn(`LiveFoldOwner: could not record the test for ${runId}:`, err);
     }
