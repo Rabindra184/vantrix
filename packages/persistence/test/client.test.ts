@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPool, withConnectionLimit } from '../src/client.js';
 
 /**
@@ -47,6 +47,29 @@ describe('createPool', () => {
       expect(pool.options.max).toBe(5);
       expect(pool.options.connectionTimeoutMillis).toBeUndefined();
     } finally {
+      await pool.end();
+    }
+  });
+
+  it('logs a failed idle connection instead of letting the error kill the process', async () => {
+    // pg-pool reports an IDLE client whose connection dies -- a database
+    // restart, a failover, `pg_terminate_backend` -- as an `error` event on
+    // the POOL, and an EventEmitter with no `error` listener THROWS it. So
+    // a pool nobody listens to turns a routine restart into a crash of
+    // whatever process holds it. `pool-errors.integration.test.ts` proves it
+    // against a real terminated session; this is the same claim with no
+    // database, at the one place the listener is installed.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pool = createPool('postgresql://example.invalid/db');
+    try {
+      const err = Object.assign(new Error('terminating connection due to administrator command'), {
+        code: '57P01',
+      });
+      expect(() => pool.emit('error', err, {})).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toMatch(/57P01/);
+    } finally {
+      warn.mockRestore();
       await pool.end();
     }
   });
