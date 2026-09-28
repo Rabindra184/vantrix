@@ -258,8 +258,6 @@ of five**, at a 1-minute load of 14, higher than the failing run's. Against a
 SCRATCH DATABASE (`perfportal_waiter`), a scratch Redis INDEX (db 3) and e2e
 port 3500, from a worktree at an undotted path, with no sleep during the run.
 
-@@REMEASURED@@
-
 The test-page-phone-overflow branch added no unit FILE, no unit case and no
 spec — it WIDENED one existing e2e case — so it moves no floor. Cut at
 171 / 2209, integration 154 / 1959 and e2e 163, it sits on copyable-ids,
