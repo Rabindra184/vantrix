@@ -108,7 +108,7 @@ describe('two pipelines racing one run', () => {
     const a = new PipelineService(config, prismaA, poolA, blobs);
     const b = new PipelineService(config, prismaB, poolB, blobs);
 
-    const settled = await Promise.allSettled([a.process(runId), b.process(runId)]);
+    const settled = await Promise.allSettled([a.process(runId, { queueWillRetry: false }), b.process(runId, { queueWillRetry: false })]);
     const reasons = settled.map((r) =>
       r.status === 'rejected' ? String(r.reason).slice(0, 160) : 'fulfilled',
     );
@@ -123,7 +123,7 @@ describe('two pipelines racing one run', () => {
     const a = new PipelineService(config, prismaA, poolA, blobs);
     const b = new PipelineService(config, prismaB, poolB, blobs);
 
-    await Promise.allSettled([a.process(runId), b.process(runId)]);
+    await Promise.allSettled([a.process(runId, { queueWillRetry: false }), b.process(runId, { queueWillRetry: false })]);
 
     const dupes = await poolA.query(
       `SELECT scope, name, family, count(*) AS n

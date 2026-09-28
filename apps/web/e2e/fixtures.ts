@@ -248,7 +248,7 @@ export async function parseUploadedRun(orgId: string): Promise<string> {
   }
 
   const pipeline = new PipelineService(workerConfig, prisma, pool, blobs);
-  await pipeline.process(runId);
+  await pipeline.process(runId, { queueWillRetry: false });
 
   const finished = await prisma.run.findUnique({ where: { id: runId } });
   if (finished?.status !== 'complete') {
@@ -300,7 +300,7 @@ async function ingestAndProcess(token: string): Promise<string> {
   const body = (await res.json()) as { id: string };
 
   const pipeline = new PipelineService(workerConfig, prisma, pool, blobs);
-  await pipeline.process(body.id);
+  await pipeline.process(body.id, { queueWillRetry: false });
 
   // process() throws on a real ingest failure (PipelineService's #ingest
   // rethrows after recording it — see the comment above), so a caller who
