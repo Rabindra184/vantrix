@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **172 files / 2217 tests**, it
+`nvm use` first, and if a run reports fewer than **174 files / 2232 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,193 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The run-number branch added TWO unit files —
+`packages/contracts/test/run-number.test.ts` (4) and
+`apps/web/test/runNumber.test.ts` (3) — plus 1 case each to
+`transforms.trends.test.ts`, `RunCompare.test.tsx`, `RunHeader.test.tsx`,
+`RunShell.test.tsx`, `RunList.test.tsx`, `RunList.compact.test.tsx`,
+`RunStats.test.tsx` and `ProjectTests.test.tsx`, from **172 / 2217 to
+174 / 2232**. Integration moves with the three `.ts` files (8 cases) plus THREE
+integration files — `apps/api/test/run-number.integration.test.ts` (6),
+`apps/worker/test/run-number.integration.test.ts` (11) and
+`packages/persistence/test/run-number.integration.test.ts` (3) — and 1 case in
+`fold-owner.integration.test.ts`, from **154 / 1959 to 159 / 1988**, and **e2e
+rises to 166** (`apps/web/e2e/run-number.spec.ts`). It is backlog item #5 of
+the Gatling Enterprise comparison: "Run 12", a run's number within its test.
+
+**GATLING ENTERPRISE WAS MEASURED BEFORE A LINE WAS WRITTEN**, in the user's
+own browser and read-only: the number counts per TEST, not per project; it is
+spelled `#12` where space is short and `Run 12` as a name; and a run's start
+time rides beside it as a second line rather than being replaced by it.
+
+**ARRIVAL ORDER, NEVER RENUMBERED.** A run takes its number the moment it JOINS
+its test and keeps it for ever. Numbering by when a test RAN would renumber
+every later run whenever an old bundle is uploaded late, and "#12" in last
+week's thread would name a different run today. The price is that a late
+upload's number can be higher than the run it preceded — which is why the
+baseline note says "the one that STARTED immediately before this in this
+test", naming the rule it follows, rather than "the one before".
+
+**A COUNTER ON THE TEST, BUMPED IN THE STATEMENT THAT SETS THE TEST.**
+`test.next_run_number` is advanced by an UPDATE whose row lock serialises two
+runs of one test; a max-plus-one read would hand both the same number. A run's
+test is set in exactly two places, and so is its number, in the SAME
+statement: `attachLiveRunToTest` at the live log's header
+(`LiveFoldOwner#identify`) and `numberRunForTest` inside the pipeline's
+finalize transaction. A unique index on `(test_id, run_number)` is the
+backstop. **UNGROUPED ⇒ UNNUMBERED is the invariant; "every run in a test has
+a number" is only the goal**, with one exception: a run an older,
+pre-numbering worker attached during an upgrade, which the finalize numbers
+when it meets it (the self-heal arm).
+
+**A NUMBER NAMES A RUN ONLY INSIDE ITS TEST, SO THE ORG-WIDE AND PROJECT LISTS
+DO NOT SHOW IT.** "Run 3" in a list drawn from twelve tests names nothing.
+Those keep the simulation. A test's own list, the run page's breadcrumb and
+title, Compare's chips, series and matrix columns, the Trends axis (`#12`), the
+baseline note and the catalogue's latest run show the number, and a run with
+none yet falls back to its short id everywhere.
+
+**THE LIVE RUN IS NUMBERED WHILE IT STREAMS, MEASURED ON REAL RUNS.** The
+developer database's ten real runs, migrated with this branch in about 1.2 s
+(Prisma's own start-up included), came back numbered in creation order within
+each test — creation order being the closest proxy history offers for join
+order. A Gradle-plugin live run then read `runNumber: null` for ten polls,
+before its log header arrived, became **Run 4 while still running** for
+nineteen more, and finished as Run 4. An on-prem runner run became **Run 5**
+sixteen seconds after it started running and finished as Run 5, counter 6.
+The 202 body a streaming run is read through carries the number, and
+`toResponse` does too — both builders, guard written first, the `warmupMs`
+lesson.
+
+**GEOMETRY, MEASURED ON ONE TREE WITH `runNumber` STRIPPED FROM EVERY RESPONSE**
+(which is `main`'s rendering) against the same tree as shipped:
+
+```
+                          stripped        numbered
+  phone run page          totals 804      804; breadcrumb 20px, scrollWidth 375
+  a test's cards at 375   116             116
+  table rows at 768/1024  75              56     the number is narrower than the id
+  p95 / Errors right edge 393 / 459       393 / 459   (of 726 / 694 visible)
+  catalogue row           62              62
+  Compare chips           34              52     the start time as a second line
+  Compare overlay top     1035            1054
+```
+
+The one cost is Compare: the chips gain a line and push the overlay 19 px
+down. That is Gatling Enterprise's own layout, taken on purpose.
+
+**THE FINAL REVIEW FOUND THE LOCK-ORDER COMMENT WRONG, AND MY FIX LIST FOR IT
+CREATED A DEADLOCK.** The first comments said both writers lock RUN then TEST
+"and so does `TestRepository.remove`, so nothing can deadlock". `remove` does
+not: its delete takes the TEST row and the `ON DELETE SET NULL` cascade then
+locks runs. My fix list (F2) dropped `remove`'s first statement — clearing the
+numbers on the test's runs BEFORE the delete — as redundant with the third,
+and (F3) added the self-heal arm to the finalize. Each was right alone.
+Together, a finalize self-healing run R (in T, no number) held R and queued on
+T behind the delete, and the cascade then needed R: the re-review reproduced
+**40P01**.
+
+**THE FIRST STATEMENT WAS NEVER REDUNDANT — IT WAS LOCK ORDER.** Its END STATE
+is subsumed by the third statement, which is what the review had measured; its
+LOCKS are not: it takes the test's runs while the delete holds no lock on the
+test, so a writer holding one is waited for BEFORE the test is. Restored, with
+a worker case that forces the interleaving deterministically — three clients,
+the real `TestRepository.remove`, and `pg_stat_activity` polled for Lock
+waiters instead of a sleep. Against the two-statement `remove` it deadlocked
+**14 times in 14**; with the statement back it is green 3 of 3 (the finalize
+ends `23503`, the outcome a finalize racing its test's deletion has always
+met); deleting the statement again is 40P01 3 of 3. **Two statements with the
+same end state are not interchangeable when either takes locks** — compare what
+each LOCKS, not only what each leaves behind.
+
+**AND THE RE-MADE ARGUMENT WAS WRONG ABOUT LOCK MODES, WHICH THE THIRD REVIEW
+REPRODUCED.** "remove waits on a writer holding one of those runs only before
+it holds T" is true of a writer holding the run FOR UPDATE. A finalize that
+has already inserted its `run_assertion` rows holds the run FOR KEY SHARE
+through their foreign-key checks, and the first statement, rewriting an
+unnumbered run's number NULL to NULL, changes no key column and so takes only
+FOR NO KEY UPDATE — which does not wait behind a KEY SHARE. It passes, the
+delete takes T, the cascade (changing `test_id`, a key column) needs FOR UPDATE
+and waits on the KEY SHARE, and the finalize's `SELECT … FOR UPDATE` waits on
+the first statement: 40P01, 3 of 3, with the real `remove()`. A numbered run
+cannot do this, because clearing its number changes a key column. **A
+lock-order argument is about lock MODES, and whether an UPDATE changes a key
+column decides the mode it takes** — setting a key column to the value it
+already holds does not count as changing it.
+
+**TWO RESIDUALS ARE NAMED RATHER THAN FIXED**, each resolved by Postgres
+aborting one side — never a hang — and both written into `run-number.ts`,
+`TestRepository.remove` and the spec:
+
+  - a run that joins T after the first statement read and is finalized before
+    the cascade reaches it. Its NUMBERED variant is not limited to an upgrade:
+    `numberRunForTest` rewrites the row, and Postgres re-runs a foreign-key
+    check on an UPDATE of a row the same transaction already wrote, so the
+    terminal UPDATE locks T even with `test_id` unchanged;
+  - the KEY SHARE case above — upgrade window only, needs an SLA rule the run
+    matches, milliseconds wide.
+
+The fixes are recorded as follow-ups rather than attempted untested: take the
+test's runs FOR UPDATE ahead of the first statement; skip `numberRunForTest`'s
+UPDATE when test and number are unchanged; add `40P01` to the pipeline's
+`TRANSIENT_CODES` (a finalize chosen as the victim otherwise fails its run for
+good); scope the worker case's Lock-waiter poll to its own backends; match the
+first statement through the slug, so a delete-and-recreate cannot slip between
+the read and the transaction.
+
+**AND THE BUILD RULING I GAVE THE IMPLEMENTERS WAS WRONG; ONE OF THEM CAUGHT
+IT.** I told them vitest resolves workspace packages from `src` through the
+`perfportal-source` condition, so no red-verify needs a rebuild. Under
+`vitest.integration.config.ts` a package imported BY NAME resolves through
+`dist` — proven with a module-load print after a persistence mutation came back
+falsely GREEN. This file already records that fact three times; I had read the
+config's `conditions` and not asked what they reach. Every red-verify after it
+rebuilt the package before running and after restoring.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE:**
+
+```
+  migration    backfill ORDER BY started_at            the backfill case: [2,3,1]
+               counter set to max, not max + 1         the backfill case: 3 against 4
+  persistence  remove() without its clearing statements the deletion case alone
+               remove() without statement (1)          the worker deadlock case, 40P01 3/3
+               remove() without statement (3)          the worker deadlock case, on R0
+  worker       attach without its EXISTS guard         the re-claim case: counter 3 not 2
+               keep arm allocates                      the keep case alone
+               ELSE keeps instead of allocating        4 cases, the one claim at four inputs
+               terminal-status guard dropped           the terminal case alone
+               max-plus-one instead of the counter     the concurrent case, 5/5 — the
+                                                       unique index refused the duplicate
+               self-heal OR / keep-arm guard dropped   the self-heal case alone, each
+               pipeline never calls numberRunForTest   the end-to-end case alone
+               fold owner's raw UPDATE restored        the header case alone
+  contracts    .positive() -> .nonnegative()           2 cases, both asserting 0 is refused
+               identity .optional() dropped            the rolling-deploy case alone
+               TrendRun field dropped                  the trend-row case alone
+  api          toResponse without it                   the terminal-builder case alone
+               the 202 without it                      the 202 case and the null case
+               list SELECT without run_number          the list case alone
+               trends inner SELECT without it          the trends case, a SQL error
+               catalogue selects without it            the catalogue case alone
+  web          runName spells "Run #n"                 4 cases asserting the one spelling
+               runLabels delegates to compareLabels    4 cases
+               six render guards, one at a time        each its own case, 136 / 1
+  browser      runName returns "Run n."                the new spec + copy-ids' /^Run \d+$/
+               the pipeline never numbers              the new spec: "Received: 1ec9c0ec"
+```
+
+**WHAT WAS RUN**, on the final tree, every total the one counted from the
+source before any suite ran: `typecheck` and `lint` exit 0 by their own exit
+codes; `test:unit` **174 / 2232** under the local zone and again under
+`TZ=UTC` (the Compare chips now print a start time), zero `Errors` lines;
+`test:integration` **159 / 1988, exit 0, zero failures**, started behind the
+load gate at 6.84 / 7.48; `pnpm test:e2e` **166 passed, exit 0**, on its first
+run with no retries — against a SCRATCH DATABASE (`perfportal_runno`,
+dropped, recreated and migrated before integration), a scratch Redis INDEX
+(db 7) and e2e port 3200. The real runs used the developer database with the
+API, worker and runner on their own Redis index (db 12); the token minted for
+them was revoked afterwards, and the two runs stay as its eleventh and twelfth.
 
 The test-page-phone-overflow branch added no unit FILE, no unit case and no
 spec — it WIDENED one existing e2e case — so it moves no floor. Cut at
