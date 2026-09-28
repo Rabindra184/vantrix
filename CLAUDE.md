@@ -154,9 +154,10 @@ The run-number branch added TWO unit files —
 `RunStats.test.tsx` and `ProjectTests.test.tsx`, from **172 / 2217 to
 174 / 2232**. Integration moves with the three `.ts` files (8 cases) plus THREE
 integration files — `apps/api/test/run-number.integration.test.ts` (6),
-`apps/worker/test/run-number.integration.test.ts` (11) and
+`apps/worker/test/run-number.integration.test.ts` (14) and
 `packages/persistence/test/run-number.integration.test.ts` (3) — and 1 case in
-`fold-owner.integration.test.ts`, from **154 / 1959 to 159 / 1988**, and **e2e
+`fold-owner.integration.test.ts`, from **154 / 1959 to 159 / 1991** (1988
+before the residual fixes below added three worker cases), and **e2e
 rises to 166** (`apps/web/e2e/run-number.spec.ts`). It is backlog item #5 of
 the Gatling Enterprise comparison: "Run 12", a run's number within its test.
 
@@ -241,9 +242,10 @@ the real `TestRepository.remove`, and `pg_stat_activity` polled for Lock
 waiters instead of a sleep. Against the two-statement `remove` it deadlocked
 **14 times in 14**; with the statement back it is green 3 of 3 (the finalize
 ends `23503`, the outcome a finalize racing its test's deletion has always
-met); deleting the statement again is 40P01 3 of 3. **Two statements with the
-same end state are not interchangeable when either takes locks** — compare what
-each LOCKS, not only what each leaves behind.
+met); deleting the statement again was 40P01 3 of 3 — **and that case turned
+out to be a race, not a guard; see the residual fixes below.** **Two statements
+with the same end state are not interchangeable when either takes locks** —
+compare what each LOCKS, not only what each leaves behind.
 
 **AND THE RE-MADE ARGUMENT WAS WRONG ABOUT LOCK MODES, WHICH THE THIRD REVIEW
 REPRODUCED.** "remove waits on a writer holding one of those runs only before
@@ -260,26 +262,156 @@ lock-order argument is about lock MODES, and whether an UPDATE changes a key
 column decides the mode it takes** — setting a key column to the value it
 already holds does not count as changing it.
 
-**TWO RESIDUALS ARE NAMED RATHER THAN FIXED**, each resolved by Postgres
-aborting one side — never a hang — and both written into `run-number.ts`,
-`TestRepository.remove` and the spec:
+**THE TWO RESIDUALS WERE FIRST NAMED RATHER THAN FIXED, AND THEN FIXED ON THE
+SAME BRANCH — EACH BY A CASE THAT DEADLOCKED AGAINST THE CODE BEFORE IT.** Both
+were Postgres aborting one side with 40P01, never a hang, and the three new
+worker cases reproduce them with forced interleavings, red on the earlier code
+and green after:
 
-  - a run that joins T after the first statement read and is finalized before
-    the cascade reaches it. Its NUMBERED variant is not limited to an upgrade:
-    `numberRunForTest` rewrites the row, and Postgres re-runs a foreign-key
-    check on an UPDATE of a row the same transaction already wrote, so the
-    terminal UPDATE locks T even with `test_id` unchanged;
-  - the KEY SHARE case above — upgrade window only, needs an SLA rule the run
-    matches, milliseconds wide.
+```
+  residual                                  the case                                  before
+  a NUMBERED run joins T mid-delete,        "... keeping the number of a run          40P01
+    finalized before the cascade reaches it  that joined mid-delete"
+  the same, through the real finalize       "finalizes a run already numbered in      "waited on
+                                             its test without waiting on the test row"  the test row"
+  a self-heal run whose finalize had        "... self-healing finalize that already   40P01
+    inserted its assertion rows              wrote its assertions"
+```
 
-The fixes are recorded as follow-ups rather than attempted untested: take the
-test's runs FOR UPDATE ahead of the first statement; skip `numberRunForTest`'s
-UPDATE when test and number are unchanged; add `40P01` to the pipeline's
-`TRANSIENT_CODES` (a finalize chosen as the victim otherwise fails its run for
-good); scope the worker case's Lock-waiter poll to its own backends; match the
-first statement through the slug, so a delete-and-recreate cannot slip between
-the read and the transaction.
+**THE KEEP ARM WRITES NOTHING.** `numberRunForTest` rewrote a kept row to the
+values it already held, and that alone made the pipeline's terminal UPDATE
+re-check the run's foreign key — Postgres re-checks a row the same transaction
+already wrote — which locks the test row. So a finalize that only KEPT a number
+waited on a test a delete held, while the delete's cascade waited on the run.
+The keep row is now answered from `cur` (which still locks the run) and not
+written; the terminal UPDATE, `test_id` unchanged, runs no check. The third
+case proves it through the REAL `PipelineService` rather than a stand-in:
+another transaction holds the test row FOR UPDATE, and the finalize has to
+finish before anything is seen waiting on the holder — raced, not timed.
 
+**`remove()`'s FIRST STATEMENT NOW UNGROUPS, AND ITS LOCK MODE IS THE WHOLE
+FIX.** It rewrote an unnumbered run's number NULL to NULL — no key column
+changed, so FOR NO KEY UPDATE, which a finalize's FOR KEY SHARE does not block.
+Setting `test_id` to NULL changes a key column (half of the unique index on
+`(test_id, run_number)`), so it takes FOR UPDATE and waits behind the KEY SHARE
+BEFORE the delete holds the test; the finalize then upgrades its own lock as
+the run's sole locker without queueing behind the delete, and commits first.
+That upgrade was a claim read out of `heap_lock_tuple` until the case forced
+the interleaving and it held. It is written as SQL (`$executeRaw`) so the
+predicate is visibly the test's own — `test_id = (the slug's test)` in the
+UPDATE's WHERE, which Postgres re-checks on the row version it finds after
+waiting: a run the finalize moved to another test meanwhile is skipped, not
+ungrouped. How a Prisma relation filter would spell it is not something this
+code controls.
+
+**THE CANDIDATE FIX LIST HAD FIVE ITEMS, AND TWO WERE WRONG OR EMPTY:**
+
+  - **`40P01` in `TRANSIENT_CODES` would have saved nothing.**
+    `#processHoldingLock` calls `runs.fail()` BEFORE rethrowing, so the retry
+    BullMQ schedules finds the run `failed` and returns at its terminal-status
+    check. That is true of EVERY transient code thrown inside `#ingest`, which
+    is a pre-existing gap taken as its own branch rather than widened into this
+    (transient-ingest-retries, PR #245).
+  - **Matching the first statement by slug is not distinguishable by any
+    case**: matched by the id `findBySlug` read, all 17 run-number cases pass
+    (confirmed in `dist` first — a mutation that must stay green proves
+    nothing unless it applied). Kept because the two statements must name the
+    same row across a delete-and-recreate, and the ungrouping statement needed
+    rewriting anyway.
+  - The pre-lock and the no-op-skip are the two fixes above; the pid-scoped
+    waits are below.
+
+**ONE WINDOW IS LEFT, MEASURED RATHER THAN ARGUED, AND IT IS TRANSITIONAL.** A
+run an OLDER, pre-numbering worker attached — in the test with no number —
+joining mid-delete: its finalize self-heals it and must take the test to
+allocate. With a third transaction numbering another run into the same test, so
+that the delete and the finalize both queue behind it, a throwaway probe
+against the fixed code deadlocked **3 of 3**, the victim varying (the finalize
+twice, the delete once). No lock order closes it — the finalize must take the
+test to allocate, and the joiner is a run the delete's first statement cannot
+have seen. It exists only while a deployment of this version rolls out, and
+its outcomes are the ordinary race's but for one: a delete that loses answers
+an error, and retrying it succeeds.
+
+**AND THE CASE THAT LOOKED LIKE THE GUARD WAS A RACE.** The earlier entry
+records "deleting the statement again is 40P01 3 of 3" and "14 times in 14".
+Re-measured with the first statement removed it is **5 of 6**: the delete and
+the finalize both queue for the test behind the third transaction, and when it
+commits they RACE for the row's new version; the finalize sometimes wins and
+everything commits. **A forced interleaving is forced only up to the last step
+the harness orders** — past that, "every run" was a streak. The first
+statement's existence is now pinned by the self-heal case, a cycle with nothing
+racing (40P01 every time), and by the joiner case's attach, which fails its
+lock_timeout.
+
+**AND THAT MUTATION HUNG THE WHOLE SUITE FOR TEN MINUTES, WHICH IS THE LESSON
+WORTH MOST.** With the first statement removed, the delete held the test while
+the joiner case's attach waited for it — and the delete itself was waiting on a
+transaction the HARNESS held open, released only in a `finally` that could not
+run until the attach returned. Postgres sees no cycle, because the harness's
+transaction is idle rather than waiting on a lock. Every later case then timed
+out behind the leftover locks. **A deadlock test's harness is a participant**:
+a step that must not wait now carries a `lock_timeout` (a second pool with
+`?options=-c lock_timeout=5000`, and `SET LOCAL` on the finalize's client), so
+it fails with 55P03 and names itself, and each `finally` releases an idle
+holder before awaiting the statements queued behind it.
+
+**AND A pg CLIENT QUEUES ITS QUERIES.** The pid-scoped waits read each
+client's `pg_backend_pid()` — and asking a client that is BLOCKED for its pid
+queues behind the blocked statement and waits for ever. Every pid is read
+before any statement is in flight.
+
+**THE WAITS ARE SCOPED TO BACKENDS NOW.** `lockWaiters(n)` counted every Lock
+waiter in the database, so a statement queued behind somebody else could
+satisfy it and run the next step early. `blockedBy(pid)` waits for a backend
+blocked by a named one (`pg_blocking_pids`), and `blocked(pid)` for a named
+backend to be waiting at all.
+
+**RED-VERIFIED, EACH FIX ON ITS OWN, PERSISTENCE REBUILT AROUND EVERY
+MUTATION AND ITS EMITTED `dist` GREPPED:**
+
+```
+  the first statement back to rewriting the number   the self-heal case ALONE, 40P01
+  the keep arm rewrites the row again                the joiner case, 40P01, and the
+                                                     real-pipeline case: "waited on the test row"
+  the first statement matched by id, not slug        nothing — 17 of 17, dist confirmed
+  the first statement removed                        the self-heal case (40P01) and the
+                                                     joiner case (its attach, 55P03)
+```
+
+**WHAT WAS RUN FOR THE RESIDUAL FIXES**, on the final tree: `typecheck` and
+`lint` exit 0 by their own exit codes; `test:unit` **174 / 2232**, unchanged
+as predicted (every file touched is an `.integration.test.ts` or source),
+zero `Errors` lines; the worker run-number file 3 of 3 on its own. **The two
+suites that need the stack were measured by CI, not here**: the `build` job on
+`c403d36`, read off its own log —
+
+```
+  pnpm test:unit         Test Files 174 passed (174)   Tests 2232 passed (2232)
+  pnpm test:integration  Test Files 159 passed (159)   Tests 1991 passed (1991)
+  pnpm test:e2e          166 passed
+```
+
+every total the one predicted from the source before either local run began.
+
+**BECAUSE THIS MACHINE SLEPT THROUGH BOTH LOCAL INTEGRATION RUNS, AND NOTHING
+IN EITHER OUTPUT SAID SO.** Both collected exactly the predicted
+**159 / 1991** — and then took hours, failing dozens of cases across a dozen
+and more files, every one a sub-second test "taking" a quarter of an hour.
+That is not contention: `pmset -g log` shows the Mac entering sleep mid-run,
+and a test timer measures wall-clock time across a suspend. The tell is the
+SHAPE — near-identical multi-minute durations on tests that normally take
+milliseconds — which no amount of load produces.
+
+**AND THE DOCKER VM'S CLOCK DOES NOT ADVANCE WHILE THE HOST SLEEPS**, which
+turns a sleep into a second, stranger failure. Measured after one: the
+containers' clock stood **844 s, then 979 s behind the host**, and MinIO
+refuses a request signed more than fifteen minutes from its own clock —
+`RequestTimeTooSkewed`, a storage error surfacing in files whose subject is
+the pipeline. It resynced by itself a few minutes later. **Compare
+`date -u +%s` on the host and inside a container before believing any
+integration result from a laptop that has been asleep**, and keep the
+machine awake for the run — an idle keep-awake does not survive a closed lid.
 **AND THE BUILD RULING I GAVE THE IMPLEMENTERS WAS WRONG; ONE OF THEM CAUGHT
 IT.** I told them vitest resolves workspace packages from `src` through the
 `perfportal-source` condition, so no red-verify needs a rebuild. Under
@@ -295,7 +427,8 @@ rebuilt the package before running and after restoring.
   migration    backfill ORDER BY started_at            the backfill case: [2,3,1]
                counter set to max, not max + 1         the backfill case: 3 against 4
   persistence  remove() without its clearing statements the deletion case alone
-               remove() without statement (1)          the worker deadlock case, 40P01 3/3
+               remove() without statement (1)          the worker deadlock case, 40P01 3/3 —
+                                                       a race, 5 of 6 when re-measured
                remove() without statement (3)          the worker deadlock case, on R0
   worker       attach without its EXISTS guard         the re-claim case: counter 3 not 2
                keep arm allocates                      the keep case alone
