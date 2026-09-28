@@ -25,8 +25,20 @@ const config = loadWorkerConfig({ ...process.env, DATABASE_URL: process.env.DATA
 const pool = createPool(config.databaseUrl);
 const prisma = createPrisma(config.databaseUrl);
 
+/** For a step that must NOT wait on a lock. The deadlock cases below hold
+ *  transactions open from the harness itself, so a change that makes such a
+ *  step wait would wait behind the harness for ever — the run hangs rather
+ *  than failing. With a lock_timeout the step fails (55P03) and names itself. */
+const withLockTimeout = (url: string): string => {
+  const u = new URL(url);
+  u.searchParams.set('options', '-c lock_timeout=5000');
+  return u.toString();
+};
+const bounded = createPool(withLockTimeout(config.databaseUrl));
+
 afterAll(async () => {
   await pool.end();
+  await bounded.end();
   await prisma.$disconnect();
 });
 
@@ -214,24 +226,48 @@ function codeOf(err: unknown): string {
   return line === '' ? code : `${code}: ${line}`;
 }
 
-/** Waits until at least `n` backends of this database are blocked on a lock,
- *  which is the only honest way to know a statement has QUEUED rather than
- *  merely been sent — a fixed sleep is a guess that a loaded machine loses. */
-async function lockWaiters(n: number): Promise<void> {
+const pidOf = async (client: import('pg').PoolClient): Promise<number> =>
+  (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+
+/** Polls `sql` (one boolean column, `ok`) until it answers true. Waiting on
+ *  `pg_stat_activity` is the only honest way to know a statement has QUEUED
+ *  rather than merely been sent — a fixed sleep is a guess a loaded machine
+ *  loses. */
+async function until(what: string, sql: string, params: unknown[]): Promise<void> {
   const deadline = Date.now() + 5_000;
   for (;;) {
-    const { rows } = await pool.query<{ waiting: number }>(
-      `SELECT count(*)::int AS waiting FROM pg_stat_activity
-        WHERE datname = current_database() AND wait_event_type = 'Lock'`,
-    );
-    const waiting = rows[0]?.waiting ?? 0;
-    if (waiting >= n) return;
-    if (Date.now() > deadline) {
-      throw new Error(`expected ${n} backend(s) waiting on a lock within 5 s; saw ${waiting}`);
-    }
+    const { rows } = await pool.query<{ ok: boolean }>(sql, params);
+    if (rows[0]?.ok === true) return;
+    if (Date.now() > deadline) throw new Error(`expected ${what} within 5 s`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+/** Some backend is waiting on a lock `holder` holds. Scoped to a pid rather
+ *  than counting every Lock waiter in the database, so a statement queued
+ *  behind somebody else — another file's leftover, an unrelated backend —
+ *  cannot satisfy the wait and let the case run its next step early. */
+const BLOCKED_BY = `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                     WHERE $1::int = ANY (pg_blocking_pids(pid))) AS ok`;
+const blockedBy = (holder: number) => until(`a backend blocked by pid ${holder}`, BLOCKED_BY, [holder]);
+
+/** `waiter` itself is waiting on a lock, whoever holds it. */
+const blocked = (waiter: number) =>
+  until(
+    `pid ${waiter} blocked on a lock`,
+    `SELECT cardinality(pg_blocking_pids($1::int)) > 0 AS ok`,
+    [waiter],
+  );
+
+/** The pipeline's terminal UPDATE, in the one respect these cases need: it
+ *  writes `test_id` to the test the finalize resolved, which is the SAME value
+ *  for a run already in it. Whether that UPDATE locks the test row depends
+ *  only on whether the row was written earlier in the same transaction —
+ *  Postgres re-runs a foreign-key check then, and skips it otherwise — so any
+ *  UPDATE of the row carries the property. The pipeline case at the bottom of
+ *  this file proves the same thing through the real `PipelineService`. */
+const TERMINAL = `UPDATE run SET status = 'complete', test_id = $2
+                   WHERE id = $1 AND status NOT IN ('complete', 'failed')`;
 
 describe('deleting a test while its runs finish', () => {
   /** ═══ THE CYCLE `TestRepository.remove`'s FIRST STATEMENT BREAKS ═══
@@ -250,10 +286,13 @@ describe('deleting a test while its runs finish', () => {
    *  queues on R instead, D finishes, and A's statement then finds T deleted.
    *
    *  The real `remove`, the real `numberRunForTest`, and waits on
-   *  `pg_stat_activity` rather than sleeps: the interleaving is forced, not
-   *  hoped for, so against the defect the case fails with 40P01 on every run.
-   *  Which side Postgres aborts varies from run to run — the delete or the
-   *  finalize — and either one fails an assertion below. */
+   *  `pg_stat_activity` rather than sleeps. The interleaving up to W's commit
+   *  is forced; what follows is not. D and A both queue for T behind W, and
+   *  when W commits they race for T's new row version — so with the first
+   *  statement removed this deadlocks only when D wins, measured 5 of 6.
+   *  Which side Postgres then aborts varies, and either fails an assertion
+   *  below. The case that pins the first statement DETERMINISTICALLY is the
+   *  self-healing one further down, a cycle with nothing racing. */
   it('does not deadlock a delete against a finalize that numbers a run already in the test', async () => {
     const test = await testRow('checkout-smoke', 6);
     const r0 = await runRow('parsing');
@@ -262,6 +301,10 @@ describe('deleting a test while its runs finish', () => {
 
     const w = await pool.connect();
     const a = await pool.connect();
+    // Read before either client has a statement in flight: a pg client queues
+    // its queries, so asking a BLOCKED client for its pid would wait forever.
+    const wPid = await pidOf(w);
+    const aPid = await pidOf(a);
     let removal: Promise<string> | undefined;
     let finalize: Promise<string> | undefined;
     let outcome = { remove: 'not started', finalize: 'not started' };
@@ -273,7 +316,7 @@ describe('deleting a test while its runs finish', () => {
         (removed) => (removed === null ? 'resolved null' : 'resolved'),
         (err: unknown) => `rejected ${codeOf(err)}`,
       );
-      await lockWaiters(1);
+      await blockedBy(wPid);
 
       await a.query('BEGIN');
       finalize = numberRunForTest(a, r.id, test.id)
@@ -282,7 +325,7 @@ describe('deleting a test while its runs finish', () => {
           () => 'committed',
           (err: unknown) => codeOf(err).split(':')[0]!,
         );
-      await lockWaiters(2);
+      await blocked(aPid);
 
       await w.query('COMMIT');
       outcome = { remove: await removal, finalize: await finalize };
@@ -314,6 +357,157 @@ describe('deleting a test while its runs finish', () => {
     expect(
       await prisma.run.count({ where: { projectId, testId: null, runNumber: { not: null } } }),
     ).toBe(0);
+  });
+
+  /** ═══ THE FIRST RESIDUAL: A NUMBERED RUN THAT JOINS THE TEST MID-DELETE ═══
+   *
+   *  A live run R joins T after the delete's first statement has read, and its
+   *  finalize takes R before the delete's cascade reaches it:
+   *
+   *    L  holds another run of T, so the delete's first statement waits on it
+   *       having already read — R is not in T yet
+   *    -  R's log header joins it to T as Run 6 (attachLiveRunToTest)
+   *    A  R's finalize: numberRunForTest keeps Run 6, and holds R
+   *
+   *  Then L commits: the delete finishes its first statement, takes T, and its
+   *  cascade waits on R. A's terminal UPDATE then writes test_id = T. If the
+   *  keep arm REWROTE the row, Postgres re-runs the foreign-key check on that
+   *  UPDATE — the row was written earlier in the same transaction — which
+   *  needs T, held by the delete: 40P01. A keep arm that writes nothing leaves
+   *  the UPDATE with no check to run, so A commits and the delete follows. */
+  it('does not deadlock a delete against a finalize keeping the number of a run that joined mid-delete', async () => {
+    const test = await testRow('checkout-smoke', 6);
+    const rx = await runRow('parsing', test.id, 5);
+    const r = await runRow('running');
+    const repository = new TestRepository(prisma);
+
+    const l = await pool.connect();
+    const a = await pool.connect();
+    const lPid = await pidOf(l);
+    const aPid = await pidOf(a);
+    let removal: Promise<string> | undefined;
+    let finalize: Promise<string> | undefined;
+    let outcome = { remove: 'not started', finalize: 'not started' };
+    try {
+      await l.query('BEGIN');
+      await l.query('SELECT id FROM run WHERE id = $1 FOR UPDATE', [rx.id]);
+
+      removal = repository.remove({ orgId, projectId }, test.slug).then(
+        (removed) => (removed === null ? 'resolved null' : 'resolved'),
+        (err: unknown) => `rejected ${codeOf(err)}`,
+      );
+      await blockedBy(lPid);
+
+      expect(await attachLiveRunToTest(bounded, r.id, test.id)).toBe(6);
+      await a.query('BEGIN');
+      await a.query("SET LOCAL lock_timeout = '5s'");
+      expect(await numberRunForTest(a, r.id, test.id)).toBe(6);
+
+      await l.query('COMMIT');
+      await blockedBy(aPid);
+
+      finalize = a
+        .query(TERMINAL, [r.id, test.id])
+        .then(() => a.query('COMMIT'))
+        .then(
+          () => 'committed',
+          (err: unknown) => codeOf(err).split(':')[0]!,
+        );
+      outcome = { remove: await removal, finalize: await finalize };
+    } finally {
+      await l.query('ROLLBACK').catch(() => undefined);
+      // Until its terminal UPDATE is sent A sits idle holding R, and the
+      // delete may be waiting on it: release A first, or this waits for ever.
+      if (finalize === undefined) await a.query('ROLLBACK').catch(() => undefined);
+      await removal;
+      await finalize;
+      await a.query('ROLLBACK').catch(() => undefined);
+      l.release();
+      a.release();
+    }
+
+    // Both finish, in that order: the finalize never needs anything the
+    // delete holds, so it commits Run 6 — and the delete then ungroups it.
+    expect(outcome, JSON.stringify(outcome)).toEqual({ remove: 'resolved', finalize: 'committed' });
+    expect(await prisma.test.findUnique({ where: { id: test.id } })).toBeNull();
+    expect(await numberOf(r.id)).toEqual({ testId: null, runNumber: null });
+    expect(await numberOf(rx.id)).toEqual({ testId: null, runNumber: null });
+    expect(
+      await prisma.run.count({ where: { projectId, testId: null, runNumber: { not: null } } }),
+    ).toBe(0);
+  });
+
+  /** ═══ THE SECOND RESIDUAL: A SELF-HEAL THAT HAS WRITTEN ITS ASSERTIONS ═══
+   *
+   *  R sits in T with no number — an older worker attached it — and its
+   *  finalize has inserted a run_assertion row, whose foreign-key check holds
+   *  R FOR KEY SHARE. Then the delete starts, and only then does the finalize
+   *  reach numberRunForTest, which takes R FOR UPDATE and numbers it from T.
+   *
+   *  The delete's first statement has to wait behind that KEY SHARE BEFORE it
+   *  holds T. A statement that only rewrote R's number, NULL to NULL, changed
+   *  no key column, took FOR NO KEY UPDATE — which a KEY SHARE does not block —
+   *  and passed; the delete then held T, its cascade waited on the KEY SHARE,
+   *  and the finalize's FOR UPDATE waited on the delete: 40P01. A first
+   *  statement that UNGROUPS R changes test_id, a key column, so it takes FOR
+   *  UPDATE and queues. The finalize is then R's sole locker and upgrades its
+   *  own lock without queuing behind the delete (Postgres does not make a
+   *  transaction wait on itself), numbers R from a T nobody holds, and
+   *  commits. */
+  it('does not deadlock a delete against a self-healing finalize that already wrote its assertions', async () => {
+    const test = await testRow('checkout-smoke', 6);
+    const r = await runRow('parsing', test.id, null);
+    const repository = new TestRepository(prisma);
+
+    const a = await pool.connect();
+    const aPid = await pidOf(a);
+    let removal: Promise<string> | undefined;
+    let finalize: Promise<string> | undefined;
+    let numbered: number | null = null;
+    let outcome = { remove: 'not started', finalize: 'not started' };
+    try {
+      await a.query('BEGIN');
+      await a.query("SET LOCAL lock_timeout = '5s'");
+      await a.query(
+        `INSERT INTO run_assertion
+           (id, run_id, org_id, project_id, rule_id, rule_snapshot, outcome, actual_value, message)
+         VALUES ($1, $2, $3, $4, $5, '{}', 'passed', 1, 'p95 within its limit')`,
+        [randomUUID(), r.id, orgId, projectId, randomUUID()],
+      );
+
+      removal = repository.remove({ orgId, projectId }, test.slug).then(
+        (removed) => (removed === null ? 'resolved null' : 'resolved'),
+        (err: unknown) => `rejected ${codeOf(err)}`,
+      );
+      await blockedBy(aPid);
+
+      finalize = numberRunForTest(a, r.id, test.id)
+        .then((n) => {
+          numbered = n;
+          return a.query(TERMINAL, [r.id, test.id]);
+        })
+        .then(() => a.query('COMMIT'))
+        .then(
+          () => 'committed',
+          (err: unknown) => codeOf(err).split(':')[0]!,
+        );
+      outcome = { remove: await removal, finalize: await finalize };
+    } finally {
+      // As above: an A that never reached numberRunForTest still holds the
+      // KEY SHARE the delete may be waiting behind.
+      if (finalize === undefined) await a.query('ROLLBACK').catch(() => undefined);
+      await removal;
+      await finalize;
+      await a.query('ROLLBACK').catch(() => undefined);
+      a.release();
+    }
+
+    expect(outcome, JSON.stringify(outcome)).toEqual({ remove: 'resolved', finalize: 'committed' });
+    // The finalize numbered R from T before the delete ran; the delete then
+    // ungrouped it and cleared the number — UNGROUPED => UNNUMBERED.
+    expect(numbered).toBe(6);
+    expect(await prisma.test.findUnique({ where: { id: test.id } })).toBeNull();
+    expect(await numberOf(r.id)).toEqual({ testId: null, runNumber: null });
   });
 });
 
@@ -366,5 +560,69 @@ describe('the pipeline, end to end', () => {
     expect(a.testId).not.toBeNull();
     expect(b.testId).toBe(a.testId);
     expect([a.runNumber, b.runNumber]).toEqual([1, 2]);
+  });
+
+  /** ═══ KEEPING A NUMBER NEVER NEEDS THE TEST ROW — THE REAL FINALIZE ═══
+   *
+   *  A run its live header already numbered in T, finalized by the real
+   *  `PipelineService` while another transaction holds T's row FOR UPDATE, as
+   *  a delete holds it. Keeping a number writes nothing, so the terminal
+   *  UPDATE — test_id unchanged, the row not yet written by this transaction —
+   *  runs no foreign-key check and never asks for T. A keep arm that REWROTE
+   *  the row made that UPDATE re-check the key and queue behind the holder:
+   *  the wait the first residual turns into a deadlock.
+   *
+   *  Raced rather than awaited: the finalize either finishes, or some backend
+   *  is seen waiting on the holder — never a timeout standing in for either. */
+  it('finalizes a run already numbered in its test without waiting on the test row', async () => {
+    const pipeline = new PipelineService(config, prisma, pool, blobs);
+    const first = await pendingUpload();
+    await pipeline.process(first);
+    const testId = (await numberOf(first)).testId!;
+    const second = await pendingUpload();
+    expect(await attachLiveRunToTest(pool, second, testId)).toBe(2);
+
+    const holder = await pool.connect();
+    const holderPid = await pidOf(holder);
+    let processed: Promise<string> | undefined;
+    let race = 'not started';
+    let result = 'not started';
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM test WHERE id = $1 FOR UPDATE', [testId]);
+
+      let settled = false;
+      processed = pipeline.process(second).then(
+        () => 'finished',
+        (err: unknown) => `rejected ${codeOf(err)}`,
+      );
+      void processed.finally(() => {
+        settled = true;
+      });
+
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        if (settled) {
+          race = 'finished first';
+          break;
+        }
+        const { rows } = await pool.query<{ ok: boolean }>(BLOCKED_BY, [holderPid]);
+        if (rows[0]?.ok === true) {
+          race = 'waited on the test row';
+          break;
+        }
+        if (Date.now() > deadline) throw new Error('the finalize neither finished nor waited');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      result = (await processed) ?? result;
+      holder.release();
+    }
+
+    expect(race).toBe('finished first');
+    expect(result).toBe('finished');
+    expect(await numberOf(second)).toEqual({ testId, runNumber: 2 });
+    expect(await counterOf(testId)).toBe(3);
   });
 });

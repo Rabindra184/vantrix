@@ -179,54 +179,68 @@ export class TestRepository {
    *
    * A run's number counts within its test (spec 2026-09-27-run-number), and
    * `ON DELETE SET NULL` can clear `test_id` but not a second column. So the
-   * delete is one transaction of THREE statements: (1) clear `run_number` on
-   * the runs committed in this test, (2) delete the test, whose cascade
-   * ungroups them, and (3) clear `run_number` on every ungrouped-but-numbered
-   * run in the project — which, by the invariant below, is exactly the runs
-   * that joined this test after (1) read it, ungrouped by (2)'s cascade still
-   * carrying their numbers. Together they keep the invariant the worker's numbering relies
-   * on — UNGROUPED ⇒ UNNUMBERED, a run never reports a number with no test to
-   * count it in. A test later recreated under the same slug is a new row and
-   * starts at 1.
+   * delete is one transaction of THREE statements: (1) UNGROUP the runs
+   * committed in this test, test_id and run_number both to NULL, (2) delete
+   * the test, and (3) clear `run_number` on every ungrouped-but-numbered run
+   * in the project — which, by the invariant below, is exactly the runs that
+   * joined this test after (1) read it, ungrouped by (2)'s cascade still
+   * carrying their numbers. Together they keep the invariant the worker's
+   * numbering relies on — UNGROUPED ⇒ UNNUMBERED, a run never reports a
+   * number with no test to count it in. A test later recreated under the same
+   * slug is a new row and starts at 1.
    *
-   * ═══ (1) IS THERE FOR LOCK ORDER, NOT ONLY FOR CLEARING ═══
+   * ═══ (1) IS THERE FOR LOCK ORDER, AND ITS LOCK MODE IS THE POINT ═══
    *
    * `attachLiveRunToTest` and `numberRunForTest` (`apps/worker`) lock a RUN
-   * row and then the TEST row; the delete in (2) locks the test first and its
-   * cascade then locks runs. (1) takes the runs committed in this test BEFORE
-   * the test row, while this transaction holds no lock on it — including a
-   * run already in the test with no number, which it rewrites unchanged. So a
-   * finalize holding one of those runs FOR UPDATE is waited for here, before
-   * (2) asks for the test, and it can get the test and finish; afterwards its
-   * statement finds the test gone and fails its foreign key (23503), the
-   * outcome a finalize racing its test's deletion has always met. Without (1), a
-   * finalize numbering a run already in this test (the self-heal arm) takes
-   * that run, queues on the test behind this delete, and the cascade then
-   * needs the run it holds: 40P01. The worker's run-number suite pins it —
-   * "does not deadlock a delete against a finalize that numbers a run already
-   * in the test" fails on every run with (1) removed.
+   * row and then, sometimes, the TEST row; the delete in (2) locks the test
+   * first and its cascade then locks runs. (1) takes the runs committed in
+   * this test BEFORE the test row, while this transaction holds no lock on
+   * it. A finalize already holding one of them is waited for here — before
+   * (2) asks for the test — so it can get the test and commit, and (1) then
+   * ungroups the run it numbered. A finalize arriving after (1) waits on (1)
+   * instead, and once the delete commits its statement finds the test gone
+   * and fails its foreign key (23503): the outcome a finalize losing the
+   * race to its test's deletion has always met.
+   *
+   * It UNGROUPS rather than only clearing the number, and that is what makes
+   * the wait happen every time. Changing test_id, a key column (half of the
+   * unique index on test_id and run_number), takes the run FOR UPDATE, which
+   * waits behind every lock a writer can hold — including the FOR KEY SHARE a
+   * finalize's run_assertion inserts take through their foreign key. The
+   * earlier form only rewrote the number; on a run with none that is NULL to
+   * NULL, changes no key column, takes FOR NO KEY UPDATE and passes a KEY
+   * SHARE, so the delete then held the test while its cascade waited on the
+   * KEY SHARE and the finalize waited on (1): 40P01. Now the finalize, the
+   * run's sole locker, upgrades its own lock without queueing behind (1),
+   * numbers the run from a test nobody holds, and commits first.
+   *
+   * (1) names the test by its SLUG, inside the transaction, as (2) does — not
+   * by the id `findBySlug` read before it — so both statements address the
+   * same row even if the test was deleted and re-created in between.
+   *
+   * The worker's run-number suite pins both halves. "does not deadlock a
+   * delete against a self-healing finalize that already wrote its
+   * assertions" deadlocks with (1) removed OR back to rewriting the number
+   * alone, every time — a pure cycle, nothing racing. With (1) removed, "...
+   * keeping the number of a run that joined mid-delete" also fails, its
+   * attach refused by a lock_timeout rather than let wait. The older "...
+   * numbers a run already in the test" deadlocks with (1) removed only when
+   * the delete wins a race for the test row's new version once the third
+   * transaction commits: measured 5 of 6, so it is not the guard.
    *
    * Once (2) holds the test, this transaction waits only on runs committed in
-   * the test that (1) did not lock — runs that joined it after (1) read, whose
-   * joining writer needed a lock on the test row and so has already committed
+   * the test that (1) did not see — runs that joined after (1) read, whose
+   * joining writer needed the test row to join and so has already committed
    * — and on ungrouped-but-numbered runs, which by the invariant are only the
-   * ones its own cascade made. TWO RESIDUALS are not covered, and in each
-   * Postgres aborts one side with 40P01. FIRST, a live run that joins the
-   * test after (1) read and is then taken by its FINALIZE before the cascade
-   * reaches it: that finalize waits on the test (in its allocation if an older
-   * worker attached the run unnumbered, or in the terminal UPDATE's
-   * foreign-key check if it is numbered) while this transaction waits on the
-   * run. SECOND, upgrade window only: a run already in the test with NO
-   * number whose finalize has inserted its assertion rows, whose foreign-key
-   * checks hold the run FOR KEY SHARE. (1) rewrites that number NULL to NULL,
-   * changes no key column, takes only FOR NO KEY UPDATE and so does not wait
-   * behind the KEY SHARE; (2) then holds the test, the cascade (test_id is a
-   * key column) waits on the KEY SHARE, and the finalize waits on (1). A
-   * NUMBERED run cannot do this — clearing its number changes a key column,
-   * so (1) takes FOR UPDATE and waits before (2).
-   * The full argument is in `numberRunForTest`'s module docstring
+   * ones its own cascade made. A joiner that arrived numbered is finalized by
+   * `numberRunForTest`'s keep arm, which writes nothing and never asks for
+   * the test. ONE WINDOW is left, while a deployment of this version rolls
+   * out: a joiner an OLDER worker attached with no number, whose finalize
+   * must take the test to number it; with a third transaction numbering into
+   * the same test it deadlocks, Postgres aborting one side (40P01, never a
+   * hang). The full argument is in `numberRunForTest`'s module docstring
    * (apps/worker/src/pipeline/run-number.ts). Widening either clearing
-   * statement — (1)'s `testId` match or (3)'s ungrouped-but-numbered match —
+   * statement — (1)'s test match or (3)'s ungrouped-but-numbered match —
    * needs that argument re-made.
    */
   async remove(scope: ProjectScope, slug: string): Promise<TestRow | null> {
@@ -234,21 +248,22 @@ export class TestRepository {
     if (existing === null) return null;
 
     const [, { count }] = await this.prisma.$transaction([
-      // (1) The runs committed in this test, BEFORE the test row — for LOCK
-      // ORDER as much as for clearing. It takes their RUN rows while this
-      // transaction holds no lock on the test, so a writer holding one of
-      // them FOR UPDATE is waited for here, before (2) asks for the test, and
-      // can get the test and finish. Delete it and a finalize that self-heals
-      // a run already in this test deadlocks against the delete (see the
-      // docstring above; the worker's run-number suite pins it). It does NOT
-      // wait behind a finalize's FOR KEY SHARE on an unnumbered run — the
-      // docstring's SECOND residual.
-      this.prisma.run.updateMany({
-        where: { orgId: scope.orgId, projectId: scope.projectId, testId: existing.id },
-        data: { runNumber: null },
-      }),
+      // (1) UNGROUP the runs committed in this test, BEFORE the test row — for
+      // LOCK ORDER as much as for clearing. Changing test_id takes each run
+      // FOR UPDATE while this transaction holds no lock on the test, so a
+      // finalize holding one of them — even only by the KEY SHARE its
+      // assertion rows take — is waited for here, before (2) asks for the
+      // test, and can get the test and finish (see the docstring above; the
+      // worker's run-number suite pins it). Named by slug, as (2) is.
+      this.prisma.$executeRaw`
+        UPDATE run SET test_id = NULL, run_number = NULL
+         WHERE org_id = ${scope.orgId}::uuid AND project_id = ${scope.projectId}::uuid
+           AND test_id = (SELECT id FROM test
+                           WHERE org_id = ${scope.orgId}::uuid
+                             AND project_id = ${scope.projectId}::uuid
+                             AND slug = ${slug})`,
       // (2) The test. Its cascade (`run.test_id ON DELETE SET NULL`)
-      // ungroups every run committed in it by now.
+      // ungroups any run that joined it after (1) read.
       this.prisma.test.deleteMany({
         where: { orgId: scope.orgId, projectId: scope.projectId, slug },
       }),

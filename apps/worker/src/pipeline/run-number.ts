@@ -30,7 +30,7 @@ import type pg from 'pg';
  * table below.
  *
  * ═══ WHY THESE STATEMENTS DO NOT DEADLOCK `TestRepository.remove` — AND THE
- *     TWO WINDOWS WHERE THEY CAN ═══
+ *     ONE WINDOW WHERE THEY STILL CAN ═══
  *
  * Both statements lock a RUN row first and only then, sometimes, a TEST row.
  * `remove(T)` cannot follow that order all the way — its delete locks T, and
@@ -40,58 +40,51 @@ import type pg from 'pg';
  *
  *   - a writer waits on test T only while holding its own run R, where R is
  *     either NOT committed in T (an attach, or a finalize moving R into T), or
- *     committed in T without a number (the self-heal row, in `allocated`), or
- *     committed in T with a number the finalize keeps — that one waits in the
- *     pipeline's terminal UPDATE, whose foreign-key check locks T because the
- *     finalize statement below rewrote the row earlier in the same
- *     transaction (measured: a second UPDATE of one row in one transaction,
- *     test_id unchanged, waits on a test row held FOR UPDATE, as a delete
- *     holds it);
- *   - `remove(T)` takes the runs committed in T FIRST, in a statement that
- *     holds no lock on T. So it waits on a writer holding one of them FOR
- *     UPDATE only BEFORE it holds T, and that writer can then get T and
- *     finish. That first statement exists for LOCK ORDER as much as for
- *     clearing numbers, and the worker suite's "does not deadlock a delete
- *     against a finalize that numbers a run already in the test" pins it:
- *     without it, that case's interleaving deadlocks (40P01) on every run.
- *     "Holding" is doing work in that sentence — see the SECOND residual;
+ *     committed in T without a number (the self-heal row, in "allocated").
+ *     A finalize that KEEPS R's number never asks for T at all: the keep arm
+ *     writes nothing, so the pipeline's terminal UPDATE (test_id unchanged,
+ *     the row not yet written by this transaction) runs no foreign-key check.
+ *     Had the keep arm rewritten the row, Postgres would re-check the key on
+ *     that UPDATE — it re-checks a row the same transaction already wrote —
+ *     and the check locks T;
+ *   - `remove(T)`'s first statement UNGROUPS the runs committed in T while it
+ *     holds no lock on T, and changing test_id — a key column, half of the
+ *     unique index on (test_id, run_number) — takes each run FOR UPDATE,
+ *     which waits behind ANY lock a writer holds on it, the FOR KEY SHARE of a
+ *     finalize's run_assertion inserts included. So `remove` waits on such a
+ *     writer only BEFORE it holds T, and that writer can then get T and
+ *     finish. A writer holding only that KEY SHARE upgrades it as the run's
+ *     sole locker without queueing behind `remove` (Postgres does not make a
+ *     transaction wait on itself). The worker suite's "does not deadlock a
+ *     delete against a self-healing finalize that already wrote its
+ *     assertions" pins the lock mode and the statement's existence alike —
+ *     it deadlocks, every time, with the statement removed or back to
+ *     rewriting the number alone;
  *   - once `remove` holds T, it waits only on runs committed in T that its
- *     first statement did not lock — runs that joined T after that statement
+ *     first statement did not see — runs that joined T after that statement
  *     read — and on ungrouped-but-numbered runs, which by the invariant are
  *     only the ones its own cascade just ungrouped. A writer that JOINED a run
- *     to T needed a lock on T's row to do it, so it has committed before
- *     `remove` holds T, and holds nothing.
+ *     to T needed a lock on T's row to do it (the counter, or the foreign-key
+ *     check's KEY SHARE), so it has committed before `remove` holds T, and
+ *     holds nothing. If the joiner arrived NUMBERED, its finalize keeps the
+ *     number and never asks for T ("... keeping the number of a run that
+ *     joined mid-delete" pins it).
  *
- * TWO RESIDUALS THIS DOES NOT COVER, each resolved by Postgres aborting one
- * side with 40P01 — never a hang:
+ * THE ONE WINDOW LEFT is a joiner WITHOUT a number — attached by an older,
+ * pre-numbering worker, so it exists only while a deployment of this version
+ * rolls out — whose finalize self-heals it: that finalize holds the run and
+ * needs T in "allocated". It deadlocks when it takes the run and then asks for
+ * T after `remove` has taken or queued for it: inside one statement of the
+ * finalize, or with a third transaction numbering another run into T so that
+ * both queue behind it. Measured with the fixes in place, that interleaving is
+ * 40P01 3 of 3, the victim varying. Its outcomes are the ordinary race's, but
+ * for one: a finalize that loses fails its run, as it would losing to the
+ * delete without a deadlock (its test is gone, 23503); a delete that loses
+ * answers an error, and retrying it succeeds. No lock order closes it — the
+ * finalize must take T to allocate, and the joiner is a run `remove`'s first
+ * statement cannot have seen.
  *
- * FIRST, a run that joins T after `remove`'s first statement read and is then
- * taken by its FINALIZE before `remove`'s cascade reaches it. That finalize
- * holds the run and waits on T — in `allocated` if an older worker attached it
- * without a number, in the terminal UPDATE's foreign-key check if it already
- * has one — while `remove` holds T and waits on the run. The numbered variant
- * is NOT limited to an upgrade window; both were reproduced against this code
- * with forced interleavings. Reaching either needs a live run's header to join
- * T AND its stream to close and be picked up by the pipeline, all inside one
- * delete's window between its first statement and its cascade.
- *
- * SECOND, a self-heal run — committed in T with no number, which only an older
- * worker produces, so upgrade window only — whose finalize has already
- * inserted its run_assertion rows. Those inserts' foreign-key checks hold the
- * run FOR KEY SHARE. `remove`'s first statement rewrites that run's number
- * from NULL to NULL, changes no key column, and so takes only FOR NO KEY
- * UPDATE, which does NOT wait behind a KEY SHARE: it passes. `remove` then
- * holds T, and its cascade changes test_id — a key column — so it needs FOR
- * UPDATE on the run and waits on the KEY SHARE, while the finalize's `cur`
- * waits on `remove`'s first statement. A numbered run does not do this: there
- * the first statement changes a key column, takes FOR UPDATE, and waits BEFORE
- * `remove` holds T. Reaching it needs a project with an SLA rule the run
- * matches (no rule, no assertion rows) and the two transactions within
- * milliseconds; reproduced 3/3 with the real `remove()` against a forced
- * interleaving. Taking the test's runs FOR UPDATE ahead of the first
- * statement would close it; that is recorded as a follow-up, not done here.
- *
- * Widening either of `remove`'s clearing statements, or `target`'s/`cur`'s
+ * Widening either of `remove`'s clearing statements, or "target"'s/"cur"'s
  * filter below, needs this argument re-made from scratch.
  *
  * No backticks anywhere in the SQL below: it sits in template literals.
@@ -139,6 +132,17 @@ export async function attachLiveRunToTest(
  *     predates numbering)                 -> the resolved test's next
  *   the resolver answered null            -> no test, no number
  *
+ * ═══ THE KEEP ARM WRITES NOTHING ═══
+ *
+ * The second row is answered from "cur", which still locks the run, and the
+ * row is NOT rewritten — not even to the values it already holds. A rewrite
+ * made the pipeline's terminal UPDATE re-check the run's foreign key, which
+ * locks the test row, so a finalize that only kept a number waited on a test a
+ * delete held while the delete's cascade waited on the run: 40P01. See the
+ * module docstring above, and "finalizes a run already numbered in its test
+ * without waiting on the test row", which drives the real pipeline against a
+ * held test row.
+ *
  * Returns the run's number afterwards, or null (no test, or no row updated).
  */
 export async function numberRunForTest(
@@ -146,25 +150,28 @@ export async function numberRunForTest(
   runId: string,
   testId: string | null,
 ): Promise<number | null> {
+  // "moves" is every case but the keep: the run arrives in another test, in
+  // none, or in this one with no number. The keep row is answered from "cur"
+  // and WRITES NOTHING — see "THE KEEP ARM WRITES NOTHING" above.
   const { rows } = await client.query<{ run_number: number | null }>(
     `WITH cur AS (
        SELECT test_id, run_number FROM run
         WHERE id = $1::uuid AND status NOT IN ('complete', 'failed') FOR UPDATE
+     ), moves AS (
+       SELECT 1 FROM cur
+        WHERE cur.test_id IS DISTINCT FROM $2::uuid OR cur.run_number IS NULL
      ), allocated AS (
        UPDATE test SET next_run_number = next_run_number + 1
-        WHERE id = $2::uuid
-          AND EXISTS (SELECT 1 FROM cur
-                       WHERE cur.test_id IS DISTINCT FROM $2::uuid OR cur.run_number IS NULL)
+        WHERE id = $2::uuid AND EXISTS (SELECT 1 FROM moves)
        RETURNING next_run_number - 1 AS n
+     ), written AS (
+       UPDATE run SET test_id = $2::uuid, run_number = (SELECT n FROM allocated)
+        WHERE id = $1::uuid AND EXISTS (SELECT 1 FROM moves)
+       RETURNING run_number
      )
-     UPDATE run
-        SET test_id = $2::uuid,
-            run_number = CASE WHEN run.test_id IS NOT DISTINCT FROM $2::uuid
-                                AND run.run_number IS NOT NULL
-                              THEN run.run_number
-                              ELSE (SELECT n FROM allocated) END
-      WHERE id = $1::uuid AND EXISTS (SELECT 1 FROM cur)
-      RETURNING run_number`,
+     SELECT run_number FROM written
+     UNION ALL
+     SELECT run_number FROM cur WHERE NOT EXISTS (SELECT 1 FROM moves)`,
     [runId, testId],
   );
   return rows[0]?.run_number ?? null;

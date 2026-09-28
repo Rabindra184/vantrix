@@ -153,58 +153,70 @@ before `COMMIT`, the test's row lock is held for two short statements rather
 than for the whole finalize, and two runs of one test finishing together queue
 for milliseconds, not for a full finalize each.
 
+**The keep row writes nothing.** A run already in the resolved test with a
+number is answered from `cur`, which still locks it, and is not rewritten —
+not even to the values it holds. A rewrite made the terminal UPDATE re-check
+the run's foreign key (Postgres re-checks a row the same transaction already
+wrote, measured with `test_id` unchanged), and that check locks the test row;
+without the rewrite the terminal UPDATE runs no check and never asks for the
+test.
+
 **Neither writer above deadlocks `TestRepository.remove` below, with one
-residual window — and it is not because of a shared lock order.** `remove`'s
+window left — and it is not because of a shared lock order.** `remove`'s
 delete locks the TEST row and its cascade then locks RUN rows, the reverse of
 both writers' RUN then TEST. What rules out a cycle is WHICH rows each side can
 be waiting for:
 
 - **A writer waits on test T only while holding its own run R**, where R is
   either not committed in T (an attach, or a finalize moving R into T), or
-  committed in T without a number (the self-heal row, in `allocated`), or
-  committed in T with a number the finalize keeps — which waits in the
-  pipeline's terminal UPDATE: that UPDATE rewrites a row `numberRunForTest`
-  already rewrote in the same transaction, so its foreign-key check locks T
-  even though `test_id` is unchanged (measured).
-- **`remove(T)` takes the runs committed in T FIRST**, in a statement that
-  holds no lock on T (statement (1) under "Deleting a test"). It waits on a
-  writer holding one of those runs FOR UPDATE only before it holds T, and that
-  writer can then get T and finish. Statement (1) exists for this LOCK ORDER as
-  well as for clearing; without it the self-heal arm deadlocks the delete
-  (40P01) in the interleaving
-  `apps/worker/test/run-number.integration.test.ts`'s "does not deadlock a
-  delete against a finalize that numbers a run already in the test" forces,
-  on every run. With it, one self-heal interleaving still deadlocks — the
-  second residual below.
+  committed in T without a number (the self-heal row, in `allocated`). A
+  finalize that keeps R's number never asks for T, because the keep row
+  writes nothing (above).
+- **`remove(T)` ungroups the runs committed in T FIRST**, in a statement that
+  holds no lock on T (statement (1) under "Deleting a test"). Changing
+  `test_id` — a key column, half of the unique index on `(test_id,
+  run_number)` — takes each run FOR UPDATE, which waits behind any lock a
+  writer holds, the FOR KEY SHARE of a finalize's `run_assertion` inserts
+  included. So `remove` waits on such a writer only before it holds T, and
+  that writer can then get T and finish; a writer holding only the KEY SHARE
+  upgrades it as the run's sole locker without queueing behind `remove`.
 - **Once `remove` holds T** it waits only on runs committed in T that (1) did
-  not lock — runs that joined T after (1) read; the writer that joined each
+  not see — runs that joined T after (1) read; the writer that joined each
   needed a lock on T's row, so it has already committed and holds nothing —
   and on ungrouped-but-numbered runs, which by the invariant are only the ones
-  its own cascade made.
+  its own cascade made. A joiner that arrived numbered is finalized by the
+  keep row and never asks for T.
 
-**Two residuals.** In each, Postgres aborts one side with `40P01`; nothing
-hangs.
+**The two residuals this section used to record are closed**, each pinned by
+a case in `apps/worker/test/run-number.integration.test.ts` that deadlocked
+(40P01) against the earlier code and passes now:
 
-1. A live run that joins T after (1) read and is then taken by its FINALIZE
-   before `remove`'s cascade reaches it. That finalize waits on T — in
-   `allocated` if an older worker attached the run unnumbered, in the terminal
-   UPDATE's foreign-key check if the run is numbered — while `remove` holds T
-   and waits on the run. Both variants were reproduced with forced
-   interleavings; the numbered one is not limited to an upgrade window.
-   Reaching either needs a live run's header to join T and its stream to close
-   and be picked up by the pipeline, all inside one delete's window between
-   (1) and its cascade.
-2. Upgrade window only: a self-heal run (in T, no number) whose finalize has
-   already inserted its `run_assertion` rows, whose foreign-key checks hold the
-   run FOR KEY SHARE. (1) rewrites that run's number NULL to NULL, changes no
-   key column, takes only FOR NO KEY UPDATE, and so does not wait behind the
-   KEY SHARE. `remove` then holds T; its cascade changes `test_id`, a key
-   column, needs FOR UPDATE on the run and waits on the KEY SHARE, while the
-   finalize's `cur` waits on (1). A numbered run cannot do this — clearing its
-   number changes a key column, so (1) takes FOR UPDATE and waits before
-   `remove` holds T. It needs an SLA rule the run matches and a window of
-   milliseconds; reproduced 3/3 with the real `remove()`. Taking the test's
-   runs FOR UPDATE ahead of (1) would close it — a recorded follow-up.
+1. *A numbered run that joins T after (1) read, finalized before the cascade
+   reaches it* — the finalize's terminal UPDATE re-checked the key on a row the
+   keep arm had rewritten, and waited on T. Closed by the keep row writing
+   nothing; pinned by "does not deadlock a delete against a finalize keeping
+   the number of a run that joined mid-delete", and by "finalizes a run
+   already numbered in its test without waiting on the test row", which drives
+   the real `PipelineService` while another transaction holds the test row.
+2. *A self-heal run whose finalize had inserted its assertion rows* — (1)
+   rewrote the number NULL to NULL, took only FOR NO KEY UPDATE, passed the
+   KEY SHARE, and the delete then held T while its cascade waited on the KEY
+   SHARE and the finalize waited on (1). Closed by (1) ungrouping, which takes
+   FOR UPDATE; pinned by "does not deadlock a delete against a self-healing
+   finalize that already wrote its assertions".
+
+**One window is left, while a deployment of this version rolls out.** A joiner
+that an OLDER, pre-numbering worker attached — in T with no number — is
+finalized by the self-heal row, which must take T to allocate. If that
+finalize takes the run and then asks for T after `remove` has taken or queued
+for it — inside one statement, or with a third transaction numbering another
+run into T so that both queue behind it — Postgres aborts one side (40P01,
+never a hang): measured 3 of 3 with the fixes in place, the victim varying. The
+outcomes match the ordinary race's but for one: a finalize that loses fails its
+run, as it would losing to the delete without a deadlock (its test is gone,
+23503); a delete that loses answers an error, and retrying it succeeds. No lock
+order closes it — the finalize must take T to allocate, and the joiner is a run
+(1) could not have seen — and it ends once no older worker is attaching runs.
 
 Widening either of `remove`'s clearing statements, or either writer's
 `target`/`cur` filter, needs this argument re-made.
@@ -215,9 +227,11 @@ Widening either of `remove`'s clearing statements, or either writer's
 statements; `run.test_id` is `ON DELETE SET NULL`, which cannot clear a second
 column:
 
-1. clear `run_number` on the runs committed in the test — BEFORE the test
-   row, for the lock order above as much as for clearing;
-2. delete the test, whose cascade ungroups its runs;
+1. ungroup the runs committed in the test — `test_id` and `run_number` both
+   to NULL, the test named by its slug — BEFORE the test row, for the lock
+   order above as much as for clearing;
+2. delete the test, whose cascade ungroups any run that joined after (1)
+   read;
 3. clear `run_number` on every ungrouped-but-numbered run in the project —
    which, by the invariant, is exactly the runs that joined the test after (1)
    read (a writer that committed in between) and were ungrouped by (2)'s
