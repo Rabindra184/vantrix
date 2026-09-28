@@ -287,6 +287,18 @@ undotted path. The machine did not sleep during the run, checked with
 `pmset -g log` rather than assumed, and the host and MinIO clocks agreed when
 integration started.
 
+**RE-MEASURED AFTER MERGING `main`**, where the run-number and
+transient-ingest-retries branches had both landed: unit **174 / 2233**,
+integration **162 / 2003, exit 0, zero failures** and `pnpm test:e2e`
+**166 passed, exit 0**, typecheck and lint exit 0 — each the arithmetic of
+the three branches, predicted before the run. **MEASURED BEFORE THE MERGE
+COMMIT EXISTED, AND PROVEN THE SAME TREE:** the gates ran on a temporary
+local merge of `main` with both branches' pushed heads while the second one's
+CI finished, and the real merge, resolved the same way, has the identical git
+TREE hash (`7deabbe`). A floor is a property of a tree, and a tree hash is the
+one way to carry a measurement from one commit to another without re-running
+it — equal hashes mean equal bytes, everywhere.
+
 The transient-ingest-retries branch added no unit FILE and no unit case —
 unit stays **172 / 2217** — and ONE integration file,
 `apps/worker/test/pipeline-retry.integration.test.ts` (4), from
