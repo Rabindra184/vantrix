@@ -30,7 +30,7 @@ import type pg from 'pg';
  * table below.
  *
  * ═══ WHY THESE STATEMENTS DO NOT DEADLOCK `TestRepository.remove` — AND THE
- *     ONE WINDOW WHERE THEY CAN ═══
+ *     TWO WINDOWS WHERE THEY CAN ═══
  *
  * Both statements lock a RUN row first and only then, sometimes, a TEST row.
  * `remove(T)` cannot follow that order all the way — its delete locks T, and
@@ -48,12 +48,13 @@ import type pg from 'pg';
  *     test_id unchanged, waits on a test row held FOR UPDATE, as a delete
  *     holds it);
  *   - `remove(T)` takes the runs committed in T FIRST, in a statement that
- *     holds no lock on T. So it can wait on a writer holding one of them only
- *     BEFORE it holds T, and that writer can then get T and finish. That first
- *     statement exists for LOCK ORDER as much as for clearing numbers, and
- *     the worker suite's "does not deadlock a delete against a finalize that
- *     numbers a run already in the test" pins it: without it, that case's
- *     interleaving deadlocks (40P01) on every run;
+ *     holds no lock on T. So it waits on a writer holding one of them FOR
+ *     UPDATE only BEFORE it holds T, and that writer can then get T and
+ *     finish. That first statement exists for LOCK ORDER as much as for
+ *     clearing numbers, and the worker suite's "does not deadlock a delete
+ *     against a finalize that numbers a run already in the test" pins it:
+ *     without it, that case's interleaving deadlocks (40P01) on every run.
+ *     "Holding" is doing work in that sentence — see the SECOND residual;
  *   - once `remove` holds T, it waits only on runs committed in T that its
  *     first statement did not lock — runs that joined T after that statement
  *     read — and on ungrouped-but-numbered runs, which by the invariant are
@@ -61,16 +62,34 @@ import type pg from 'pg';
  *     to T needed a lock on T's row to do it, so it has committed before
  *     `remove` holds T, and holds nothing.
  *
- * THE RESIDUAL THIS DOES NOT COVER: a run that joins T after `remove`'s first
- * statement read and is then taken by its FINALIZE before `remove`'s cascade
- * reaches it. That finalize holds the run and waits on T — in `allocated` if an
- * older worker attached it without a number, in the terminal UPDATE's
- * foreign-key check if it already has one — while `remove` holds T and waits
- * on the run. The numbered variant is NOT limited to an upgrade window; both
- * were reproduced against this code with forced interleavings. Reaching either
- * needs a live run's header to join T AND its stream to close and be picked up
- * by the pipeline, all inside one delete's window between its first statement
- * and its cascade. Postgres resolves it by aborting one side with 40P01.
+ * TWO RESIDUALS THIS DOES NOT COVER, each resolved by Postgres aborting one
+ * side with 40P01 — never a hang:
+ *
+ * FIRST, a run that joins T after `remove`'s first statement read and is then
+ * taken by its FINALIZE before `remove`'s cascade reaches it. That finalize
+ * holds the run and waits on T — in `allocated` if an older worker attached it
+ * without a number, in the terminal UPDATE's foreign-key check if it already
+ * has one — while `remove` holds T and waits on the run. The numbered variant
+ * is NOT limited to an upgrade window; both were reproduced against this code
+ * with forced interleavings. Reaching either needs a live run's header to join
+ * T AND its stream to close and be picked up by the pipeline, all inside one
+ * delete's window between its first statement and its cascade.
+ *
+ * SECOND, a self-heal run — committed in T with no number, which only an older
+ * worker produces, so upgrade window only — whose finalize has already
+ * inserted its run_assertion rows. Those inserts' foreign-key checks hold the
+ * run FOR KEY SHARE. `remove`'s first statement rewrites that run's number
+ * from NULL to NULL, changes no key column, and so takes only FOR NO KEY
+ * UPDATE, which does NOT wait behind a KEY SHARE: it passes. `remove` then
+ * holds T, and its cascade changes test_id — a key column — so it needs FOR
+ * UPDATE on the run and waits on the KEY SHARE, while the finalize's `cur`
+ * waits on `remove`'s first statement. A numbered run does not do this: there
+ * the first statement changes a key column, takes FOR UPDATE, and waits BEFORE
+ * `remove` holds T. Reaching it needs a project with an SLA rule the run
+ * matches (no rule, no assertion rows) and the two transactions within
+ * milliseconds; reproduced 3/3 with the real `remove()` against a forced
+ * interleaving. Taking the test's runs FOR UPDATE ahead of the first
+ * statement would close it; that is recorded as a follow-up, not done here.
  *
  * Widening either of `remove`'s clearing statements, or `target`'s/`cur`'s
  * filter below, needs this argument re-made from scratch.

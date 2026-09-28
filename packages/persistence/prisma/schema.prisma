@@ -249,8 +249,10 @@ model Run {
   /// than a live foreign key — history has to survive the thing that organised
   /// it.
   testId           String?   @map("test_id") @db.Uuid
-  /// This run's number within its test, or null exactly when testId is null.
-  /// Assigned when the run JOINS its test and never renumbered; cleared when
+  /// This run's number within its test. Never set without a testId; a run in a
+  /// test has one except a run an older worker attached during an upgrade,
+  /// until its finalize numbers it. Assigned when the run JOINS its test and
+  /// never renumbered; cleared when
   /// the test is deleted (TestRepository.remove), because SET NULL on the
   /// foreign key cannot reach a second column.
   runNumber        Int?      @map("run_number")

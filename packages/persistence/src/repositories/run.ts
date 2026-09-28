@@ -26,9 +26,10 @@ export interface RunRecord {
    * for any row that predates the worker recording a simulation.
    */
   test: { id: string; slug: string; name: string } | null;
-  /** This run's number within `test` ("Run 12"), or null exactly when `test`
-   *  is null. Taken on joining the test, never renumbered — see
-   *  apps/worker/src/pipeline/run-number.ts. */
+  /** This run's number within `test` ("Run 12"). Never set without a test;
+   *  a run in a test has one except a run an older worker attached during an
+   *  upgrade, until its finalize numbers it. Taken on joining the test,
+   *  never renumbered — see apps/worker/src/pipeline/run-number.ts. */
   runNumber: number | null;
   status: string;
   verdict: string | null;

@@ -196,10 +196,10 @@ export class TestRepository {
    * cascade then locks runs. (1) takes the runs committed in this test BEFORE
    * the test row, while this transaction holds no lock on it — including a
    * run already in the test with no number, which it rewrites unchanged. So a
-   * finalize holding one of those runs is waited for here, before (2) asks for
-   * the test, and it can get the test and finish; afterwards its statement
-   * finds the test gone and fails its foreign key (23503), the outcome a
-   * finalize racing its test's deletion has always met. Without (1), a
+   * finalize holding one of those runs FOR UPDATE is waited for here, before
+   * (2) asks for the test, and it can get the test and finish; afterwards its
+   * statement finds the test gone and fails its foreign key (23503), the
+   * outcome a finalize racing its test's deletion has always met. Without (1), a
    * finalize numbering a run already in this test (the self-heal arm) takes
    * that run, queues on the test behind this delete, and the cascade then
    * needs the run it holds: 40P01. The worker's run-number suite pins it —
@@ -210,12 +210,20 @@ export class TestRepository {
    * the test that (1) did not lock — runs that joined it after (1) read, whose
    * joining writer needed a lock on the test row and so has already committed
    * — and on ungrouped-but-numbered runs, which by the invariant are only the
-   * ones its own cascade made. ONE RESIDUAL is not covered: a live run that
-   * joins the test after (1) read and is then taken by its FINALIZE before
-   * the cascade reaches it. That finalize waits on the test (in its
-   * allocation if an older worker attached the run unnumbered, or in the
-   * terminal UPDATE's foreign-key check if it is numbered) while this
-   * transaction waits on the run, and Postgres aborts one side with 40P01.
+   * ones its own cascade made. TWO RESIDUALS are not covered, and in each
+   * Postgres aborts one side with 40P01. FIRST, a live run that joins the
+   * test after (1) read and is then taken by its FINALIZE before the cascade
+   * reaches it: that finalize waits on the test (in its allocation if an older
+   * worker attached the run unnumbered, or in the terminal UPDATE's
+   * foreign-key check if it is numbered) while this transaction waits on the
+   * run. SECOND, upgrade window only: a run already in the test with NO
+   * number whose finalize has inserted its assertion rows, whose foreign-key
+   * checks hold the run FOR KEY SHARE. (1) rewrites that number NULL to NULL,
+   * changes no key column, takes only FOR NO KEY UPDATE and so does not wait
+   * behind the KEY SHARE; (2) then holds the test, the cascade (test_id is a
+   * key column) waits on the KEY SHARE, and the finalize waits on (1). A
+   * NUMBERED run cannot do this — clearing its number changes a key column,
+   * so (1) takes FOR UPDATE and waits before (2).
    * The full argument is in `numberRunForTest`'s module docstring
    * (apps/worker/src/pipeline/run-number.ts). Widening either clearing
    * statement — (1)'s `testId` match or (3)'s ungrouped-but-numbered match —
@@ -229,10 +237,12 @@ export class TestRepository {
       // (1) The runs committed in this test, BEFORE the test row — for LOCK
       // ORDER as much as for clearing. It takes their RUN rows while this
       // transaction holds no lock on the test, so a writer holding one of
-      // them is waited for here, before (2) asks for the test, and can get
-      // the test and finish. Delete it and a finalize that self-heals a run
-      // already in this test deadlocks against the delete (see the docstring
-      // above; the worker's run-number suite pins it).
+      // them FOR UPDATE is waited for here, before (2) asks for the test, and
+      // can get the test and finish. Delete it and a finalize that self-heals
+      // a run already in this test deadlocks against the delete (see the
+      // docstring above; the worker's run-number suite pins it). It does NOT
+      // wait behind a finalize's FOR KEY SHARE on an unnumbered run — the
+      // docstring's SECOND residual.
       this.prisma.run.updateMany({
         where: { orgId: scope.orgId, projectId: scope.projectId, testId: existing.id },
         data: { runNumber: null },

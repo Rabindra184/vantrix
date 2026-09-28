@@ -167,30 +167,47 @@ be waiting for:
   already rewrote in the same transaction, so its foreign-key check locks T
   even though `test_id` is unchanged (measured).
 - **`remove(T)` takes the runs committed in T FIRST**, in a statement that
-  holds no lock on T (statement (1) under "Deleting a test"). It can wait on a
-  writer holding one of those runs only before it holds T, and that writer
-  can then get T and finish. Statement (1) exists for this LOCK ORDER as well
-  as for clearing; without it the self-heal arm deadlocks the delete (40P01),
-  and `apps/worker/test/run-number.integration.test.ts`'s "does not deadlock a
-  delete against a finalize that numbers a run already in the test" forces
-  that interleaving and fails on every run without it.
+  holds no lock on T (statement (1) under "Deleting a test"). It waits on a
+  writer holding one of those runs FOR UPDATE only before it holds T, and that
+  writer can then get T and finish. Statement (1) exists for this LOCK ORDER as
+  well as for clearing; without it the self-heal arm deadlocks the delete
+  (40P01) in the interleaving
+  `apps/worker/test/run-number.integration.test.ts`'s "does not deadlock a
+  delete against a finalize that numbers a run already in the test" forces,
+  on every run. With it, one self-heal interleaving still deadlocks — the
+  second residual below.
 - **Once `remove` holds T** it waits only on runs committed in T that (1) did
   not lock — runs that joined T after (1) read; the writer that joined each
   needed a lock on T's row, so it has already committed and holds nothing —
   and on ungrouped-but-numbered runs, which by the invariant are only the ones
   its own cascade made.
 
-**The residual:** a live run that joins T after (1) read and is then taken by
-its FINALIZE before `remove`'s cascade reaches it. That finalize waits on T —
-in `allocated` if an older worker attached the run unnumbered, in the terminal
-UPDATE's foreign-key check if the run is numbered — while `remove` holds T and
-waits on the run. Both variants were reproduced with forced interleavings; the
-numbered one is not limited to an upgrade window. Reaching either needs a live
-run's header to join T and its stream to close and be picked up by the
-pipeline, all inside one delete's window between (1) and its cascade. Postgres
-resolves it by aborting one side with `40P01`. Widening either of `remove`'s
-clearing statements, or either writer's `target`/`cur` filter, needs this
-argument re-made.
+**Two residuals.** In each, Postgres aborts one side with `40P01`; nothing
+hangs.
+
+1. A live run that joins T after (1) read and is then taken by its FINALIZE
+   before `remove`'s cascade reaches it. That finalize waits on T — in
+   `allocated` if an older worker attached the run unnumbered, in the terminal
+   UPDATE's foreign-key check if the run is numbered — while `remove` holds T
+   and waits on the run. Both variants were reproduced with forced
+   interleavings; the numbered one is not limited to an upgrade window.
+   Reaching either needs a live run's header to join T and its stream to close
+   and be picked up by the pipeline, all inside one delete's window between
+   (1) and its cascade.
+2. Upgrade window only: a self-heal run (in T, no number) whose finalize has
+   already inserted its `run_assertion` rows, whose foreign-key checks hold the
+   run FOR KEY SHARE. (1) rewrites that run's number NULL to NULL, changes no
+   key column, takes only FOR NO KEY UPDATE, and so does not wait behind the
+   KEY SHARE. `remove` then holds T; its cascade changes `test_id`, a key
+   column, needs FOR UPDATE on the run and waits on the KEY SHARE, while the
+   finalize's `cur` waits on (1). A numbered run cannot do this — clearing its
+   number changes a key column, so (1) takes FOR UPDATE and waits before
+   `remove` holds T. It needs an SLA rule the run matches and a window of
+   milliseconds; reproduced 3/3 with the real `remove()`. Taking the test's
+   runs FOR UPDATE ahead of (1) would close it — a recorded follow-up.
+
+Widening either of `remove`'s clearing statements, or either writer's
+`target`/`cur` filter, needs this argument re-made.
 
 ## Deleting a test
 
