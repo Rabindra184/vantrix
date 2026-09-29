@@ -15,6 +15,7 @@ import { BlobStore, openTarGzBundle } from '@perfportal/storage';
 import type { PrismaClient } from '@prisma/client';
 import type pg from 'pg';
 import type { WorkerConfig } from '../config.js';
+import { holdClient } from '../held-client.js';
 import { selectPlugin } from './plugins.js';
 import { isTransient } from './retry.js';
 import { numberRunForTest } from './run-number.js';
@@ -106,24 +107,6 @@ export interface PipelineAttempt {
   queueWillRetry: boolean;
 }
 
-/**
- * ═══ A CHECKED-OUT CLIENT'S `error` EVENT NEEDS A LISTENER ═══
- *
- * pg-pool removes its own error listener while a client is checked out
- * (pg-pool 3.14.0, `_acquireClient`) and puts it back at release. A server
- * that ends the connection in between — a restart, a failover,
- * `pg_terminate_backend` — makes the client emit `error`, and an EventEmitter
- * `error` with no listener THROWS, so the worker process died mid-job.
- * Measured: the in-flight query rejects with 57P01, and the event then arrives
- * as an uncaught `Connection terminated unexpectedly`.
- *
- * This swallows the EVENT only. The error that matters reaches the caller as
- * the rejected query, where it is classified. It is removed before release,
- * because pg-pool re-attaches its own there and a no-op left on a healthy
- * client would pile up one per checkout.
- */
-function ignoreCheckedOutError(): void {}
-
 class RunLockedError extends Error {
   readonly code = 'RUN_LOCKED';
   constructor(runId: string) {
@@ -164,9 +147,13 @@ export class PipelineService {
    */
   async process(runId: string, attempt: PipelineAttempt): Promise<void> {
     // The lock lives on ONE connection and is released on it, so it cannot be
-    // taken on one pooled connection and orphaned on another.
-    const client = await this.pool.connect();
-    client.on('error', ignoreCheckedOutError);
+    // taken on one pooled connection and orphaned on another. HELD, because a
+    // connection that dies while it is checked out -- a restart, a failover --
+    // emits an `error` nothing else listens for (`held-client.ts`). The error
+    // that matters still reaches the caller as the rejected query, where it is
+    // classified; the guard only keeps the event from ending the process.
+    const held = holdClient(await this.pool.connect());
+    const client = held.client;
     let broken: Error | undefined;
     try {
       const { rows } = await client.query<{ got: boolean }>(
@@ -199,8 +186,7 @@ export class PipelineService {
         }
       }
     } finally {
-      client.removeListener('error', ignoreCheckedOutError);
-      client.release(broken);
+      held.release(broken);
     }
   }
 
@@ -409,8 +395,8 @@ export class PipelineService {
 
     // Statistics, assertions, and the terminal status commit together. A run is
     // never observable with statistics but no verdict, or the reverse.
-    const client = await this.pool.connect();
-    client.on('error', ignoreCheckedOutError);
+    const held = holdClient(await this.pool.connect());
+    const client = held.client;
     let broken: Error | undefined;
     try {
       await client.query('BEGIN');
@@ -511,8 +497,7 @@ export class PipelineService {
       }
       throw err;
     } finally {
-      client.removeListener('error', ignoreCheckedOutError);
-      client.release(broken);
+      held.release(broken);
     }
   }
 
