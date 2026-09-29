@@ -207,6 +207,15 @@ beneath it, whose two earlier runs each carried a different one-off
 failure: the only difference between the two trees is the pipeline's own
 file.
 
+**RE-MEASURED AFTER MERGING `main`**, where the audit-multer-undici branch
+had landed underneath it — a dependency bump and this refactor, each measured
+alone and never together: `typecheck` and `lint` exit 0, unit **174 / 2233**,
+integration **162 / 2006, exit 0, zero failures**, `pnpm test:e2e` **166
+passed, exit 0**, from a fresh `pnpm install` against the new lockfile. That
+merge is also why this PR's first CI run was red: its `pnpm audit --prod`
+step met two advisories published after the last green run, which the audit
+branch's entry records.
+
 The audit-multer-undici branch added no test and moves no floor: unit stays
 **174 / 2233**, integration **162 / 2006** and **e2e 166**. Its diff is two
 `pnpm.overrides` lines and the lockfile they regenerate.
