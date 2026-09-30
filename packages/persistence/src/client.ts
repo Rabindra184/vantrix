@@ -155,6 +155,7 @@ export const SCHEMA_TABLES = [
   'run_assertion',
   'runner_artifact',
   'runner_job',
+  'runner_job_event',
   'user',
   'session',
   'account',

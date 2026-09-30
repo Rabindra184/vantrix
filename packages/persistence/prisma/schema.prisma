@@ -196,6 +196,7 @@ model RunnerJob {
   project  Project        @relation(fields: [projectId, orgId], references: [id, orgId], onDelete: Cascade, onUpdate: NoAction, map: "runner_job_project_tenant_fk")
   artifact RunnerArtifact @relation(fields: [artifactId, orgId, projectId], references: [id, orgId, projectId], onDelete: Restrict, onUpdate: NoAction, map: "runner_job_artifact_tenant_fk")
   run      Run?           @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  events   RunnerJobEvent[]
 
   @@index([projectId, createdAt(sort: Desc)], map: "runner_job_project_created_at_idx")
   @@index([status, createdAt])
@@ -209,6 +210,29 @@ model RunnerJob {
   // run's job up by `run_id` and the partial index serves it, since
   // `run_id = $1` implies `run_id IS NOT NULL`.
   @@map("runner_job")
+}
+
+/// One line of a runner run's Logs tab (docs/superpowers/specs/2026-09-29-run-logs-design.md).
+///
+/// A MESSAGE or a PHASE separator, never both and never neither — the CHECK
+/// constraints that say so are in the migration, because Prisma cannot model
+/// them. `seq` is the ORDER: two events written in one millisecond keep the
+/// order they were written in. Goes with its job, and so with the runner's
+/// retention sweep.
+model RunnerJobEvent {
+  seq       BigInt   @id @default(autoincrement())
+  jobId     String   @map("job_id") @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  at        DateTime @default(now()) @db.Timestamptz(3)
+  source    String
+  message   String?
+  phase     String?
+
+  job RunnerJob @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([jobId, seq])
+  @@map("runner_job_event")
 }
 
 model ApiToken {
