@@ -38,7 +38,6 @@ export function formatPackageSize(bytes: number): string {
  * simulation class is operator-chosen: without this a name with a newline in
  * it draws what reads as a separate `[runner] ...` line — a forged event.
  */
-// eslint-disable-next-line no-control-regex -- the control characters ARE the subject
 const CONTROL_RUN = /[\u0000-\u001f\u007f]+/g;
 
 function oneLine(text: string): string {
