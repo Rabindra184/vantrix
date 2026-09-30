@@ -54,7 +54,7 @@ export default function RunLogs() {
   const data = events.data;
 
   return (
-    <section aria-labelledby="run-logs-heading" className="flex flex-col gap-3">
+    <section aria-labelledby="run-logs-heading" className="flex flex-col">
       <h2 id="run-logs-heading" className="sr-only">Logs</h2>
       {data === undefined ? (
         events.isError ? (
@@ -74,11 +74,15 @@ export default function RunLogs() {
           ) : (
             <LogPanel events={data.events} />
           )}
-          {events.isError && (
-            <p role="status" className="text-[0.8125rem] text-muted">
-              Could not refresh this run’s events; showing the last ones read.
-            </p>
-          )}
+          {/* MOUNTED WITH THE LOG, EMPTY UNTIL A REFRESH FAILS. A live region
+              is announced when it CHANGES; one inserted already holding its
+              message is usually not announced at all (ProjectRail records the
+              same lesson). There is one per page, so it is always here while
+              there is a log, and the sentence arrives in it. `empty:mt-0`
+              keeps a silent region from costing the layout a gap. */}
+          <p role="status" className="mt-3 text-[0.8125rem] text-muted empty:mt-0">
+            {events.isError ? 'Could not refresh this run’s events; showing the last ones read.' : null}
+          </p>
         </>
       )}
     </section>
@@ -95,6 +99,9 @@ function LogPanel({ events }: { readonly events: readonly RunEvent[] }) {
     <div
       role="log"
       aria-label="Run events"
+      // Focusable so a keyboard user can scroll it: a phase row is wider than
+      // a phone's viewport and the panel scrolls sideways.
+      tabIndex={0}
       className="overflow-x-auto rounded-xl bg-log-bg p-4 font-mono text-[0.8125rem] leading-relaxed text-log-text"
     >
       {events.map((event, index) => (
@@ -106,8 +113,8 @@ function LogPanel({ events }: { readonly events: readonly RunEvent[] }) {
 
 /**
  * One event. A PHASE row is Gatling Enterprise's separator — the dashes fill
- * the line, and are `aria-hidden` so a screen reader hears the phase once
- * rather than a hundred and fifty hyphens.
+ * the line, and they and the `---|` / `|` around the name are `aria-hidden`, so
+ * a screen reader hears the phase once rather than a hundred and fifty hyphens.
  */
 function LogLine({ event }: { readonly event: RunEvent }) {
   const time = <span className="text-log-time">[{formatLogTime(Date.parse(event.at))}]</span>;
@@ -115,7 +122,12 @@ function LogLine({ event }: { readonly event: RunEvent }) {
     return (
       <div data-testid="run-log-line" data-phase={event.phase} className="flex whitespace-nowrap">
         {time}
-        <span className="whitespace-pre text-log-muted">{` ---| ${event.phase} |`}</span>
+        {/* The ornaments are `aria-hidden` for the same reason the dashes
+            are: a screen reader hears the phase name, not punctuation. The
+            spaces stay OUTSIDE them so the visible text is unchanged. */}
+        <span className="whitespace-pre text-log-muted">
+          {' '}<span aria-hidden>---|</span>{' '}{event.phase}{' '}<span aria-hidden>|</span>
+        </span>
         <span aria-hidden className="min-w-0 flex-1 overflow-hidden text-log-muted">{'-'.repeat(160)}</span>
       </div>
     );

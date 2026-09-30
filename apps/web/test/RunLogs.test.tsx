@@ -112,6 +112,23 @@ describe('RunLogs — the panel', () => {
     expect(phase.textContent).not.toContain('[runner]');
   });
 
+  it('leaves a keyboard user able to scroll the log, and a screen reader hearing the phase, not its punctuation', async () => {
+    fetchEventsMock.mockResolvedValue(EVENTS);
+    renderLogs(READY);
+    const log = await screen.findByRole('log', { name: 'Run events' });
+    // A scrollable region a keyboard cannot reach is a log a keyboard user
+    // cannot read the end of — the phase rows overflow it on a phone.
+    expect(log).toHaveAttribute('tabindex', '0');
+
+    const phase = screen.getAllByTestId('run-log-line')[3]!;
+    // The row's TEXT is untouched — the e2e spec and the case above read it —
+    // and what a screen reader skips is only the ornaments.
+    expect(phase.textContent?.startsWith('[17:11:49.379 GMT+5:30] ---| Deploying |')).toBe(true);
+    const audible = phase.cloneNode(true) as Element;
+    audible.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+    expect((audible.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe('[17:11:49.379 GMT+5:30] Deploying');
+  });
+
   it('highlights the quoted values and the numbers', async () => {
     fetchEventsMock.mockResolvedValue(EVENTS);
     renderLogs(READY);
@@ -225,6 +242,23 @@ describe('RunLogs — following a live run', () => {
     expect(log.querySelectorAll('[data-testid="run-log-line"]')).toHaveLength(4);
     expect(screen.getByRole('status')).toHaveTextContent(/Could not refresh/);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('mounts the status line empty and fills that same node when a refresh fails', async () => {
+    // A live region is announced when it CHANGES; one inserted already holding
+    // its message is usually not announced at all. So the region is there,
+    // silent, from the moment there is a log — and the sentence arrives in it.
+    fetchEventsMock.mockResolvedValueOnce(EVENTS).mockRejectedValue(new Error('network down'));
+    renderLogs(LIVE);
+    await advance(0);
+    const region = screen.getByRole('status');
+    expect(region).toHaveTextContent('');
+    expect(screen.queryByText(/Could not refresh/)).toBeNull();
+
+    await advance(RUN_EVENTS_POLL_MS);
+    await settle();
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region).toHaveTextContent(/Could not refresh/);
   });
 
   it('keeps the last events when the read after finishing fails', async () => {
