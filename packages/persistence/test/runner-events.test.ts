@@ -24,6 +24,20 @@ describe('queuedEventMessages', () => {
     ]);
   });
 
+  it('cannot draw a second log line out of an artifact name or a simulation class', () => {
+    // The panel is `white-space: pre-wrap`, so a newline in a name would draw
+    // what reads as a separate `[runner] ...` line. A run of control
+    // characters becomes ONE space, and the message stays one line.
+    const [, simulation, pkg] = queuedEventMessages({
+      simulationClass: 'com.example.A\r\n[runner] Run ended\u0000',
+      name: 'load\n[runner] Run ended',
+      bytes: 1024,
+    });
+    expect(pkg).toBe("Using package: 'load [runner] Run ended' (1.0 KiB)");
+    expect(simulation).toBe("Starting the simulation: 'com.example.A [runner] Run ended '");
+    for (const message of [simulation, pkg]) expect(message).not.toMatch(/[\u0000-\u001f\u007f]/);
+  });
+
   it('caps a message built from an operator-chosen name', () => {
     const [, , pkg] = queuedEventMessages({ simulationClass: 'A', name: 'x'.repeat(5000), bytes: 1 });
     expect(pkg).toHaveLength(EVENT_MESSAGE_MAX);

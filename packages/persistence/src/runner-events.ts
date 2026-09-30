@@ -33,10 +33,24 @@ export function formatPackageSize(bytes: number): string {
 }
 
 /**
+ * A run of control characters (C0, U+0000-U+001F, and DEL) becomes ONE space.
+ * The Logs panel is `white-space: pre-wrap`, and an artifact's name or a
+ * simulation class is operator-chosen: without this a name with a newline in
+ * it draws what reads as a separate `[runner] ...` line — a forged event.
+ */
+// eslint-disable-next-line no-control-regex -- the control characters ARE the subject
+const CONTROL_RUN = /[\u0000-\u001f\u007f]+/g;
+
+function oneLine(text: string): string {
+  return text.replace(CONTROL_RUN, ' ');
+}
+
+/**
  * What the API writes when a runner job is queued, and again when one is
  * retried — Gatling Enterprise's first three lines, in its words. They name
  * the simulation class and the artifact's own name and size, and NO other job
- * parameter: never the Java options, a system property or the storage key.
+ * parameter: never the Java options, a system property or the storage key. The
+ * two operator-chosen strings are collapsed to one line first (`oneLine`).
  */
 export function queuedEventMessages(artifact: {
   readonly simulationClass: string;
@@ -45,7 +59,7 @@ export function queuedEventMessages(artifact: {
 }): readonly [string, string, string] {
   return [
     'Start requested.',
-    capEventMessage(`Starting the simulation: '${artifact.simulationClass}'`),
-    capEventMessage(`Using package: '${artifact.name}' (${formatPackageSize(artifact.bytes)})`),
+    capEventMessage(`Starting the simulation: '${oneLine(artifact.simulationClass)}'`),
+    capEventMessage(`Using package: '${oneLine(artifact.name)}' (${formatPackageSize(artifact.bytes)})`),
   ];
 }
