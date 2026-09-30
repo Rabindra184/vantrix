@@ -32,8 +32,10 @@ export type RunEvent = z.infer<typeof RunEventSchema>;
 
 export const RunEventsResponseSchema = z.object({
   runId: z.string().uuid(),
-  /** False when the run has no on-prem runner job — an upload, or a run the
-   *  Gradle plugin streamed — so there was nothing to record. */
+  /** False when PerfPortal holds no on-prem runner job for the run — an
+   *  upload, a run the Gradle plugin streamed, or a runner run whose job the
+   *  runner's retention sweep has since removed — so there are no events to
+   *  read. It cannot tell those apart. */
   recorded: z.boolean(),
   /** Oldest first. */
   events: z.array(RunEventSchema),

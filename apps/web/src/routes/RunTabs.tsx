@@ -135,9 +135,10 @@ export default function RunTabs({
           Logs
         </Tab>
       )}
-      {/* LAST PAIR, AND THE POSITION IS THE ARGUMENT. The first four tabs answer
-          questions about THIS run, narrowing as they go — what happened, what
-          it looked like, what generated the load, what went wrong. Trends is
+      {/* LAST PAIR, AND THE POSITION IS THE ARGUMENT. Every tab before them
+          answers a question about THIS run, narrowing as it goes — what
+          happened, what it looked like, what generated the load, what went
+          wrong, and (for a runner run) what the runner did. Trends is
           the cohort view, and Compare is the editable overlay that follows
           from it, so they sit together at the end rather than beside Charts,
           which they superficially resemble. */}

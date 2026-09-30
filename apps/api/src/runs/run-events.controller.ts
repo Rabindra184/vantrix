@@ -13,9 +13,12 @@ import { notFound, uuidParam } from '../common/validation.js';
  * in the two guards derived from that prefix: session-auth's cross-org list
  * and the OpenAPI route/document join.
  *
- * `recorded: false` is a run no on-prem runner job produced — an upload, or a
- * run the Gradle plugin streamed. The run page offers no Logs tab for one; a
- * typed URL still reaches this, and the answer says why there is nothing.
+ * `recorded: false` is a run for which PerfPortal holds no on-prem runner job
+ * — an upload, a run the Gradle plugin streamed, or a runner run whose job the
+ * retention sweep (`RunnerRepository.deleteTerminalArtifactsOlderThan`) has
+ * since deleted while the run remained. The run page offers no Logs tab for
+ * one; a typed URL still reaches this, and the answer says why there is
+ * nothing.
  */
 @Controller('/v1/runs/:id')
 export class RunEventsController {

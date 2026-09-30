@@ -67,7 +67,7 @@ export default function RunLogs() {
           {!data.recorded ? (
             <EmptyState
               title="This run has no events"
-              body="Only a run the on-prem runner executes records its lifecycle events; this one was uploaded or streamed by a client."
+              body="PerfPortal holds no on-prem runner job for this run — it was uploaded or streamed by a client, or its runner job has since been removed by retention."
             />
           ) : data.events.length === 0 ? (
             <EmptyState title="No events were recorded for this run — it ran before PerfPortal began recording them." />

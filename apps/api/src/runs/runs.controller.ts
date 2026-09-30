@@ -258,8 +258,9 @@ export async function respondWithRun(
   if (status === 202) {
     // IDENTITY, NOT MEASUREMENTS. Every field here is on the RunRecord this
     // function was handed — `project` is joined (see RunRecord's own comment
-    // on why the worker pays that indexed join) — except `queuedAt`, which is
-    // ONE indexed runner-job lookup (`lifecycleOf`). That is the whole reason
+    // on why the worker pays that indexed join) — except `queuedAt` and
+    // `runnerJobId`, which share ONE indexed runner-job lookup (`lifecycleOf`).
+    // That is the whole reason
     // this is a widened 202 rather than a full `toResponse` at every status:
     // toResponse runs runAssertion.findMany and the isWindowable EXISTS, which
     // a poller would pay for every five seconds, per watcher, per live run.

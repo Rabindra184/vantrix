@@ -1009,8 +1009,9 @@ const paths: Record<string, PathItemObject> = {
         'Requires the "read" scope. What the Logs tab shows: the events the platform and the ' +
         'on-prem runner recorded for this run\'s runner job, oldest first — the job queued, ' +
         'claimed, the Deploying, Injecting and Ending phases, and how the run ended. Each event ' +
-        'is a message or a phase separator, never both. "recorded" is false for a run the ' +
-        'on-prem runner did not execute (an upload, or a Gradle-plugin run), which has none. ' +
+        'is a message or a phase separator, never both. "recorded" is false when ' +
+        'PerfPortal holds no on-prem runner job for the run — an upload, a Gradle-plugin run, or ' +
+        'a runner run whose job retention has since removed — and the cases cannot be told apart. ' +
         'Never carries Gatling\'s console, the command line, Java options or system properties.',
       parameters: [parameters['RunId']!],
       responses: {
