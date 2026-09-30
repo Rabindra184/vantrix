@@ -10,9 +10,10 @@ export function fetchRunEvents(runId: string): Promise<RunEventsResponse> {
 }
 
 /**
- * `terminal` is IN the key, deliberately: the moment a run finishes the key
- * changes, so the tab fetches exactly once more — the events the runner wrote
- * while it was finishing — and the new query carries no polling.
+ * ONE key per run, stable across the run's whole life — never a function of
+ * whether it has finished. A key that changed at the terminal flip would give
+ * the tab a brand-new, empty query for its last read, and a failure there
+ * would replace the events on screen with an error instead of leaving them
+ * standing. The read on finishing is an explicit `refetch()` in `RunLogs`.
  */
-export const runEventsQueryKey = (runId: string, terminal: boolean) =>
-  ['run', runId, 'events', terminal] as const;
+export const runEventsQueryKey = (runId: string) => ['run', runId, 'events'] as const;

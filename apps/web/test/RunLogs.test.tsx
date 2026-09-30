@@ -147,6 +147,14 @@ describe('RunLogs — the panel', () => {
     renderLogs(READY);
     expect(await screen.findByRole('alert')).toHaveTextContent(/events could not be loaded/i);
   });
+
+  it('fetches once when mounted on a finished run', async () => {
+    fetchEventsMock.mockResolvedValue(EVENTS);
+    renderLogs(READY);
+    await screen.findByRole('log', { name: 'Run events' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fetchEventsMock.mock.calls.length).toBe(1);
+  });
 });
 
 describe('RunLogs — following a live run', () => {
@@ -158,6 +166,17 @@ describe('RunLogs — following a live run', () => {
 
   async function advance(ms: number) {
     await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  }
+
+  /**
+   * A settled read reaches the DOM only after TWO turns of the fake clock: one
+   * for the read to resolve, one for react-query to hand the settled state to
+   * React on a zero-delay timer of its own. Each turn is far below the 2s
+   * poll, so settling can never trigger a read of its own.
+   */
+  async function settle() {
+    await advance(50);
+    await advance(50);
   }
 
   it('re-reads every 2s while the run is live, once more when it finishes, then stops', async () => {
@@ -178,5 +197,36 @@ describe('RunLogs — following a live run', () => {
 
     await advance(RUN_EVENTS_POLL_MS * 3);
     expect(fetchEventsMock.mock.calls.length).toBe(beforeFinish + 1);
+  });
+
+  it('keeps the log when a later read fails, and says so quietly', async () => {
+    fetchEventsMock.mockResolvedValueOnce(EVENTS).mockRejectedValue(new Error('network down'));
+    renderLogs(LIVE);
+    await advance(0);
+    expect(screen.getByRole('log', { name: 'Run events' })).toBeInTheDocument();
+
+    await advance(RUN_EVENTS_POLL_MS);
+    await settle();
+    expect(fetchEventsMock.mock.calls.length).toBeGreaterThan(1);
+    const log = screen.getByRole('log', { name: 'Run events' });
+    expect(log.querySelectorAll('[data-testid="run-log-line"]')).toHaveLength(4);
+    expect(screen.getByRole('status')).toHaveTextContent(/Could not refresh/);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps the last events when the read after finishing fails', async () => {
+    fetchEventsMock.mockResolvedValueOnce(EVENTS).mockRejectedValue(new Error('network down'));
+    const client = renderLogs(LIVE);
+    await advance(0);
+    expect(screen.getByRole('log', { name: 'Run events' })).toBeInTheDocument();
+
+    current = READY;
+    await act(async () => { client.setQueryData(runQueryKey(RUN), READY); });
+    await settle();
+
+    const log = screen.getByRole('log', { name: 'Run events' });
+    expect(log.querySelectorAll('[data-testid="run-log-line"]')).toHaveLength(4);
+    expect(screen.getByRole('status')).toHaveTextContent(/Could not refresh/);
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

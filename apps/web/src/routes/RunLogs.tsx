@@ -1,4 +1,5 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import type { RunEvent } from '@perfportal/contracts';
 import { ProblemError } from '../api/fetch';
@@ -16,9 +17,18 @@ import { useRunTerminal } from './useRunWindow';
  * `---| Phase |---` separators, nothing else on the tab, no controls. Never
  * Gatling's console.
  *
- * LIVE: while the run is not terminal the events are re-read every 2s; the
- * run's terminal flip changes the query key, so the tab reads once more and
- * stops (`runEventsQueryKey`).
+ * LIVE: while the run is not terminal the events are re-read every 2s. The
+ * query key is stable for the run's whole life, so the events already read
+ * outlive every later read: when the run finishes, an effect watching the
+ * previous `terminal` in a ref (initialised to the CURRENT value, so mounting
+ * on a finished run reads once, not twice) calls `refetch()` exactly once —
+ * the events the runner wrote while it was finishing — and the polling stops.
+ *
+ * FREEZE, DO NOT BLANK. A failed read never takes the log off the screen: with
+ * events already read, the panel stays and a quiet status line says the last
+ * refresh failed. Only a first read that fails, with nothing to show, is an
+ * alert. react-query keeps `data` beside `status: 'error'` after a failed
+ * refetch, which is why the data — not `isError` — decides what is drawn.
  *
  * `role="log"` so a screen reader announces new events politely, and an
  * `sr-only` heading so a reader moving by heading can reach the section — the
@@ -28,29 +38,48 @@ export default function RunLogs() {
   const { runId } = useParams<{ runId: string }>();
   const { terminal } = useRunTerminal(runId);
   const events = useQuery({
-    queryKey: runEventsQueryKey(runId ?? '', terminal),
+    queryKey: runEventsQueryKey(runId ?? ''),
     queryFn: () => fetchRunEvents(runId!),
     enabled: runId !== undefined,
     refetchInterval: terminal ? false : RUN_EVENTS_POLL_MS,
-    placeholderData: keepPreviousData,
   });
+
+  const wasTerminal = useRef(terminal);
+  const { refetch } = events;
+  useEffect(() => {
+    if (terminal && !wasTerminal.current) void refetch();
+    wasTerminal.current = terminal;
+  }, [terminal, refetch]);
+
+  const data = events.data;
 
   return (
     <section aria-labelledby="run-logs-heading" className="flex flex-col gap-3">
       <h2 id="run-logs-heading" className="sr-only">Logs</h2>
-      {events.isPending ? (
-        <LoadingState label="Loading this run’s events…" />
-      ) : events.isError ? (
-        <ErrorState title="This run’s events could not be loaded" detail={explain(events.error)} />
-      ) : !events.data.recorded ? (
-        <EmptyState
-          title="This run has no events"
-          body="Only a run the on-prem runner executes records its lifecycle events; this one was uploaded or streamed by a client."
-        />
-      ) : events.data.events.length === 0 ? (
-        <EmptyState title="No events were recorded for this run — it ran before PerfPortal began recording them." />
+      {data === undefined ? (
+        events.isError ? (
+          <ErrorState title="This run’s events could not be loaded" detail={explain(events.error)} />
+        ) : (
+          <LoadingState label="Loading this run’s events…" />
+        )
       ) : (
-        <LogPanel events={events.data.events} />
+        <>
+          {!data.recorded ? (
+            <EmptyState
+              title="This run has no events"
+              body="Only a run the on-prem runner executes records its lifecycle events; this one was uploaded or streamed by a client."
+            />
+          ) : data.events.length === 0 ? (
+            <EmptyState title="No events were recorded for this run — it ran before PerfPortal began recording them." />
+          ) : (
+            <LogPanel events={data.events} />
+          )}
+          {events.isError && (
+            <p role="status" className="text-[0.8125rem] text-muted">
+              Could not refresh this run’s events; showing the last ones read.
+            </p>
+          )}
+        </>
       )}
     </section>
   );
