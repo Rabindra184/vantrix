@@ -232,8 +232,8 @@ describe('cancel — one event for a job it actually moved', () => {
   it('writes Cancel requested once, and nothing for a cancel that changes nothing', async () => {
     const { orgId, projectId } = await seedProject();
     const created = await repo.createQueued(queueInput(orgId, projectId));
-    expect(await repo.cancel(orgId, projectId, created.job.id)).not.toBeNull();
-    expect(await repo.cancel(orgId, projectId, created.job.id)).not.toBeNull();   // already cancelled: a no-op
+    expect(await repo.cancel(orgId, projectId, created.job.id, { recordRequest: true })).not.toBeNull();
+    expect(await repo.cancel(orgId, projectId, created.job.id, { recordRequest: true })).not.toBeNull();   // already cancelled: a no-op
     const cancels = (await eventsOf(created.job.id)).filter((e) => e.message === 'Cancel requested.');
     expect(cancels).toHaveLength(1);
     expect(cancels[0]?.source).toBe('perfportal');
@@ -243,8 +243,20 @@ describe('cancel — one event for a job it actually moved', () => {
     const { orgId, projectId } = await seedProject();
     const created = await repo.createQueued(queueInput(orgId, projectId));
     await prisma.runnerJob.update({ where: { id: created.job.id }, data: { status: 'complete' } });
-    expect(await repo.cancel(orgId, projectId, created.job.id)).toBeNull();
+    expect(await repo.cancel(orgId, projectId, created.job.id, { recordRequest: true })).toBeNull();
     expect((await eventsOf(created.job.id)).map((e) => e.message)).not.toContain('Cancel requested.');
+  });
+
+  it('writes nothing when the cancel is not a person’s request', async () => {
+    // The runner's own shutdown cancels its active job; that is a node
+    // restarting, not somebody pressing Cancel, so the log must not say so.
+    const { orgId, projectId } = await seedProject();
+    const created = await repo.createQueued(queueInput(orgId, projectId));
+    const moved = await repo.cancel(orgId, projectId, created.job.id, { recordRequest: false });
+    expect(moved?.job.status).toBe('cancelled');
+    expect((await eventsOf(created.job.id)).map((e) => e.message)).toEqual(
+      QUEUED('com.example.CheckoutSimulation', 'checkout load', '4.0 KiB'),
+    );
   });
 });
 

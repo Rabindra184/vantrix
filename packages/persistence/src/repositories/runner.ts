@@ -532,10 +532,28 @@ export class RunnerRepository {
     return { jobId: job.id, events };
   }
 
-  async cancel(orgId: string, projectId: string, jobId: string): Promise<RunnerJobWithArtifact | null> {
+  /**
+   * Cancels a job. `opts.recordRequest` says whether this cancel is somebody's
+   * REQUEST, which the run's log then records as Cancel requested.
+   *
+   * It is required, with no default, because its wrong value is silent: the
+   * API's cancel handler is a person pressing Cancel (true), while the
+   * runner's own shutdown step cancels its active job when a node restarts
+   * (false) -- and a default of either would have the log tell a reader that
+   * somebody cancelled a run when a node merely restarted, or say nothing when
+   * somebody did. Either way the job moves exactly the same; only the event
+   * differs. The runner's mid-run cancel path records how the run ended.
+   */
+  async cancel(
+    orgId: string,
+    projectId: string,
+    jobId: string,
+    opts: { readonly recordRequest: boolean },
+  ): Promise<RunnerJobWithArtifact | null> {
     // One statement: lock the row, move it, and write Cancel requested only
     // when the status it moved FROM was not already cancelled -- a cancel
-    // that changes nothing says nothing.
+    // that changes nothing says nothing -- and only when the caller says this
+    // cancel is a request.
     const moved = await this.prisma.$queryRaw<{ previousStatus: string }[]>`
       WITH locked AS (
         SELECT id, status
@@ -558,6 +576,7 @@ export class RunnerRepository {
         SELECT id, org_id, project_id, 'perfportal', 'Cancel requested.'
         FROM moved
         WHERE previous_status <> 'cancelled'
+          AND ${opts.recordRequest}::boolean
       )
       SELECT previous_status AS "previousStatus" FROM moved
     `;
