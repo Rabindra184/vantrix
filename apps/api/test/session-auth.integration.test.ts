@@ -266,6 +266,7 @@ describe('cross-org isolation on every session-reachable endpoint', () => {
     `/v1/runs/${id}/trends`,
     `/v1/runs/${id}/errors/series`,
     `/v1/runs/${id}/telemetry`,
+    `/v1/runs/${id}/events`,
   ];
 
   /**

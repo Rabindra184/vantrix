@@ -305,6 +305,9 @@ export async function respondWithRun(
         parsingStartedAt: lifecycle.parsingStartedAt,
         streamUpdatedAt: lifecycle.streamUpdatedAt,
         queuedAt: lifecycle.queuedAt,
+        // THE LIVE HALF of the Logs tab: a streaming runner run is read
+        // through THIS body, and its events are worth most while it runs.
+        runnerJobId: lifecycle.runnerJobId,
         // THE LIVE HALF of the run note, for the reason the lifecycle stamps
         // above give: a note written while a run streams is read through THIS
         // body, and one sent only by toResponse would vanish until it ended.

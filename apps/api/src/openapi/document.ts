@@ -1000,6 +1000,31 @@ const paths: Record<string, PathItemObject> = {
     },
   },
 
+  '/v1/runs/{id}/events': {
+    get: {
+      operationId: 'getRunEvents',
+      summary: 'The lifecycle events of a run the on-prem runner executed',
+      tags: ['runs'],
+      description:
+        'Requires the "read" scope. What the Logs tab shows: the events the platform and the ' +
+        'on-prem runner recorded for this run\'s runner job, oldest first — the job queued, ' +
+        'claimed, the Deploying, Injecting and Ending phases, and how the run ended. Each event ' +
+        'is a message or a phase separator, never both. "recorded" is false for a run the ' +
+        'on-prem runner did not execute (an upload, or a Gradle-plugin run), which has none. ' +
+        'Never carries Gatling\'s console, the command line, Java options or system properties.',
+      parameters: [parameters['RunId']!],
+      responses: {
+        '200': {
+          description: 'This run\'s events, oldest first.',
+          content: json(schemaRef('RunEventsResponse')),
+        },
+        '400': ref('BadRequest'),
+        '404': ref('NotFound'),
+        ...authFailureResponses,
+      },
+    },
+  },
+
   '/v1/runs/{id}/series': {
     get: {
       operationId: 'getRunSeries',

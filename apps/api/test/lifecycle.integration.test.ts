@@ -81,6 +81,7 @@ describe('the lifecycle stamps, on both identity builders', () => {
     expect(after.body.streamUpdatedAt).toMatch(ISO);
     expect(after.body.parsingStartedAt).toBeNull();
     expect(after.body.queuedAt).toBeNull();
+    expect(after.body.runnerJobId).toBeNull();
   });
 
   it('a stream being closed carries when processing began, still on the 202', async () => {
@@ -113,6 +114,7 @@ describe('the lifecycle stamps, on both identity builders', () => {
     expect(Date.parse(res.body.parsingStartedAt)).toBeLessThanOrEqual(Date.parse(res.body.ingestedAt));
     expect(res.body.streamUpdatedAt).toBeNull();
     expect(res.body.queuedAt).toBeNull();
+    expect(res.body.runnerJobId).toBeNull();
   });
 
   it('an incomplete stream keeps its last chunk on the finished body', async () => {
@@ -147,7 +149,7 @@ describe('the lifecycle stamps, on both identity builders', () => {
       },
     });
     const queuedAt = new Date(Date.now() - 41_000);
-    await ctx.prisma.runnerJob.create({
+    const job = await ctx.prisma.runnerJob.create({
       data: {
         orgId: ctx.orgId,
         projectId: ctx.projectId,
@@ -161,6 +163,7 @@ describe('the lifecycle stamps, on both identity builders', () => {
 
     const live = await read(runId);
     expect(live.status).toBe(202);
+    expect(live.body.runnerJobId).toBe(job.id);
     expect(live.body.queuedAt).toBe(queuedAt.toISOString());
 
     await ctx.prisma.run.update({
@@ -169,6 +172,7 @@ describe('the lifecycle stamps, on both identity builders', () => {
     });
     const done = await read(runId);
     expect(done.status).toBe(200);
+    expect(done.body.runnerJobId).toBe(job.id);
     expect(done.body.queuedAt).toBe(queuedAt.toISOString());
   });
 });
