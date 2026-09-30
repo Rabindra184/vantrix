@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunEventsResponse, RunResponse } from '@perfportal/contracts';
 import { fetchRun, runQueryKey, type RunDetail } from '../src/api/run';
-import { fetchRunEvents, RUN_EVENTS_POLL_MS } from '../src/api/runEvents';
+import { fetchRunEvents, RUN_EVENTS_POLL_MS, runEventsQueryKey } from '../src/api/runEvents';
 import RunLogs from '../src/routes/RunLogs';
 
 vi.mock('../src/api/run.js', async (importOriginal) => ({
@@ -54,11 +54,12 @@ const EVENTS: RunEventsResponse = {
 
 let current: RunDetail = READY;
 
-function renderLogs(detail: RunDetail): QueryClient {
+function renderLogs(detail: RunDetail, cachedEvents?: RunEventsResponse): QueryClient {
   current = detail;
   fetchRunMock.mockImplementation(async () => current);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(runQueryKey(RUN), detail);
+  if (cachedEvents !== undefined) client.setQueryData(runEventsQueryKey(RUN), cachedEvents);
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/runs/${RUN}/logs`]}>
@@ -151,6 +152,18 @@ describe('RunLogs — the panel', () => {
   it('fetches once when mounted on a finished run', async () => {
     fetchEventsMock.mockResolvedValue(EVENTS);
     renderLogs(READY);
+    await screen.findByRole('log', { name: 'Run events' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fetchEventsMock.mock.calls.length).toBe(1);
+  });
+
+  // The cold mount above cannot tell a right ref from a wrong one: a refetch
+  // while the FIRST read is still in flight is joined to it, not repeated.
+  // With events already cached — coming back to the tab — the mount read is a
+  // refresh, and a refetch on top of it would cancel it and read again.
+  it('fetches once when mounted on a finished run whose events are already cached', async () => {
+    fetchEventsMock.mockResolvedValue(EVENTS);
+    renderLogs(READY, EVENTS);
     await screen.findByRole('log', { name: 'Run events' });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(fetchEventsMock.mock.calls.length).toBe(1);
