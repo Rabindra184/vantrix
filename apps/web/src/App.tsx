@@ -37,6 +37,7 @@ const NewRunnerRun = lazy(() => import('./routes/NewRunnerRun'));
 const RequestDetail = lazy(() => import('./routes/RequestDetail'));
 const RunCompare = lazy(() => import('./routes/RunCompare'));
 const RunTelemetry = lazy(() => import('./routes/RunTelemetry'));
+const RunLogs = lazy(() => import('./routes/RunLogs'));
 const RunTrends = lazy(() => import('./routes/RunTrends'));
 const RunSectionNotFound = lazy(() => import('./routes/RunSectionNotFound'));
 const RunList = lazy(() => import('./routes/RunList'));
@@ -100,6 +101,7 @@ export default function App() {
               <Route path="charts" element={<RunChartsTab />} />
               <Route path="load-generators" element={<RunTelemetry />} />
               <Route path="errors" element={<RunErrorsTab />} />
+              <Route path="logs" element={<RunLogs />} />
               <Route path="trends" element={<RunTrends />} />
               <Route path="compare" element={<RunCompare />} />
               {/* A section this run does not have — a stale link to a renamed

@@ -5,6 +5,7 @@ import {
   formatElapsedClock,
   formatInstant,
   formatInstantSeconds,
+  formatLogTime,
   formatOffset,
   formatZoneName,
   formatZoneOffset,
@@ -261,6 +262,30 @@ describe('formatInstantSeconds — both ends of a window', () => {
       // `17:12:09` in a 24-hour locale, `5:12:09 PM` in a 12-hour one.
       expect(out).toMatch(/\b(17|5):12:09\b/);
       expect(out).toMatch(/2026/);
+    });
+  });
+});
+
+describe('formatLogTime — a Logs-tab line’s instant', () => {
+  it('reads the reader’s own clock to the millisecond, with the offset', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      // Gatling Enterprise's own first line read [17:11:11.113 GMT+5:30].
+      expect(formatLogTime(Date.UTC(2026, 8, 29, 11, 41, 11, 113))).toBe('17:11:11.113 GMT+5:30');
+    });
+  });
+
+  it('pads the milliseconds, so .007 never reads .7', () => {
+    inZone('Asia/Kolkata', () => {
+      kolkataTook();
+      expect(formatLogTime(Date.UTC(2026, 8, 29, 11, 41, 11, 7))).toBe('17:11:11.007 GMT+5:30');
+    });
+  });
+
+  it('names the offset at the event, not now', () => {
+    inZone('America/New_York', () => {
+      expect(new Date('2026-07-01T12:00:00Z').getHours()).toBe(8);
+      expect(formatLogTime(Date.UTC(2026, 6, 1, 12, 0, 0, 250))).toBe('08:00:00.250 GMT-4');
     });
   });
 });

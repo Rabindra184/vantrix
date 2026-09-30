@@ -121,6 +121,18 @@ export function formatZoneOffset(epochMs: number): string {
   return `GMT${sign}${h}${m === 0 ? '' : `:${two(m)}`}`;
 }
 
+/**
+ * A Logs-tab line's instant, as Gatling Enterprise prints one:
+ * `17:11:11.113 GMT+5:30` — the reader's own clock to the millisecond, and
+ * the offset AT that instant. Built from the `Date`'s own fields on every
+ * call, never a module-scope `Intl.DateTimeFormat`, which freezes the zone at
+ * import (CLAUDE.md's Asia/Kolkata trap).
+ */
+export function formatLogTime(epochMs: number): string {
+  const millis = String(new Date(epochMs).getMilliseconds()).padStart(3, '0');
+  return `${formatClockTime(epochMs)}.${millis} ${formatZoneOffset(epochMs)}`;
+}
+
 /** The reader's IANA zone as the browser names it, e.g. `Asia/Calcutta`. */
 export function formatZoneName(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
