@@ -158,7 +158,7 @@ export class RunnerController {
   ): Promise<RunnerJobActionResponse> {
     const tenant = req.tenant!;
     const project = await this.resolveProject(tenant.orgId, tenant.projectId, slug);
-    const row = await this.runner.cancel(tenant.orgId, project.id, jobId);
+    const row = await this.runner.cancel(tenant.orgId, project.id, jobId, { recordRequest: true });
     if (!row)
       throw notFound(`No cancellable runner job ${jobId} in this project.`, 'Only a queued or running job can be cancelled. GET /v1/projects/{slug}/runner/runs '
         + 'lists this project\u2019s jobs with their status.');

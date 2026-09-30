@@ -817,3 +817,24 @@ describe("the dark palette holds the light palette’s hue angles", () => {
     expect(Math.abs(drift)).toBeLessThan(1);
   });
 });
+
+/**
+ * THE LOGS TAB'S PANEL IS DARK IN BOTH THEMES, as Gatling Enterprise's is, so
+ * its tokens are declared ONCE — at the top-level :root, never redefined in a
+ * dark block — and every colour drawn on it clears AA against its own ground.
+ */
+describe('the log panel', () => {
+  const css = readFileSync(fileURLToPath(new URL('../src/styles/tokens.css', import.meta.url)), 'utf8');
+  const declared = (name: string): string => {
+    const values = [...css.matchAll(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})\\s*;`, 'g'))].map((m) => m[1]!);
+    expect(values, `${name} must be declared exactly once`).toHaveLength(1);
+    return values[0]!;
+  };
+
+  it.each(['--log-panel-text', '--log-panel-muted', '--log-panel-time', '--log-panel-value'])(
+    '%s clears AA on the panel',
+    (token) => {
+      expect(contrast(declared(token), declared('--log-panel-bg'))).toBeGreaterThanOrEqual(AA);
+    },
+  );
+});

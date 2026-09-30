@@ -68,7 +68,9 @@ function stop(reason: string): Promise<void> {
           const job = activeJob;
           const run = activeRun;
           if (!job || !run) return;
-          await runner.cancel(job.job.orgId, job.job.projectId, job.job.id).catch((err: unknown) => {
+          // A restart is not a person's request, so it writes no Cancel requested;
+          // the executor's own mid-run cancel path records how the run ended.
+          await runner.cancel(job.job.orgId, job.job.projectId, job.job.id, { recordRequest: false }).catch((err: unknown) => {
             console.error(`failed to cancel active runner job ${job.job.id} during shutdown`, err);
           });
           await run;

@@ -36,6 +36,7 @@ import {
   Square,
   Sun,
   Table2,
+  Terminal,
   TrendingUp,
   TriangleAlert,
   type LucideIcon,
@@ -166,7 +167,8 @@ export const InboxIcon = icon(Inbox);
 /** An action in flight — pair with `animate-spin` and `aria-busy`. */
 export const SpinnerIcon = icon(LoaderCircle);
 
-/* The run page's six sections, in tab order (`routes/RunTabs.tsx`). Decorative
+/* The run page's sections, in tab order (`routes/RunTabs.tsx`) — six, and a
+ * seventh, Logs, for a run the on-prem runner executed. Decorative
  * like everything else here: the tab's accessible name stays its text. */
 export const OverviewTabIcon = icon(Gauge);
 export const ChartsTabIcon = icon(ChartSpline);
@@ -174,6 +176,7 @@ export const TelemetryTabIcon = icon(Server);
 export const ErrorsTabIcon = icon(CircleAlert);
 export const TrendsTabIcon = icon(TrendingUp);
 export const CompareTabIcon = icon(GitCompareArrows);
+export const LogsTabIcon = icon(Terminal);
 
 /* The project rail's desktop collapse control (`ProjectRail.tsx`). */
 /* The chart card's overflow menu (`ChartActions.tsx`, review M17). An ellipsis

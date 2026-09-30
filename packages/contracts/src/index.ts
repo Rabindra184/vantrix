@@ -3,6 +3,7 @@ export * from './ingest.js';
 export * from './run.js';
 export * from './run-note.js';
 export * from './run-number.js';
+export * from './run-events.js';
 export * from './project.js';
 export * from './metrics.js';
 export * from './settings.js';

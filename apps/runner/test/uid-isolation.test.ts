@@ -50,6 +50,7 @@ function makeExecutor(configOver: Partial<RunnerConfig>) {
     markComplete: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     status: vi.fn().mockResolvedValue('running'),
+    recordRunnerEvent: vi.fn().mockResolvedValue(undefined),
   };
 
   // The first thing sink.open() does; if it runs, the guard let execution begin.

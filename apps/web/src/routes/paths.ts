@@ -46,6 +46,11 @@ export function runTelemetryPath(runId: string): string {
   return `${runPath(runId)}/load-generators`;
 }
 
+/** The Logs tab — only a run the on-prem runner executed offers it. */
+export function runLogsPath(runId: string): string {
+  return `${runPath(runId)}/logs`;
+}
+
 /**
  * Compare, optionally carrying the selection.
  *

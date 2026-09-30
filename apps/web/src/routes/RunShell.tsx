@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import TimeBrush from '../charts/TimeBrush';
 import { TimeAxisProvider } from '../charts/TimeAxisContext';
 import { useRunWindow, type RunWindowContext } from './useRunWindow';
-import { runComparePath, runTrendsPath } from './paths';
+import { runComparePath, runLogsPath, runTrendsPath } from './paths';
 import type { Assertion, RunProcessing, RunResponse } from '@perfportal/contracts';
 import { errorsQuery, usersQuery } from '../api/metrics';
 import RunHeader from './RunHeader';
@@ -145,8 +145,9 @@ export default function RunShell({
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
    * The brush lives in the shell so one selection serves every tab — which
-   * also put it above the two tabs that cannot honour it. Trends' cohort query
-   * is historical and takes no window; Compare's is the same. The control
+   * also put it above the tabs that cannot honour it. Trends' cohort query
+   * is historical and takes no window; Compare's is the same; Logs reads a
+   * run's events whole. The control
    * accepted 10–30s there, announced that window, and changed nothing, so a
    * reader had no way to tell a trend line still covered the whole run.
    *
@@ -157,8 +158,17 @@ export default function RunShell({
    * tab — so this hides the control without discarding the selection, and
    * Overview restores it on return. */
   const { pathname } = useLocation();
-  const windowApplies =
-    pathname !== runTrendsPath(identity.id) && pathname !== runComparePath(identity.id);
+  // A NAMED SET, not a third `&&` clause: Logs is the third section to ignore
+  // a window (`GET /v1/runs/{id}/events` takes no `from`/`to`, and the panel
+  // says nothing else is on the tab), and a hand-written two-member list
+  // is exactly how the third caller gets missed. A new window-free section
+  // joins by being named here.
+  const windowFreeSections = [
+    runTrendsPath(identity.id),
+    runComparePath(identity.id),
+    runLogsPath(identity.id),
+  ];
+  const windowApplies = !windowFreeSections.includes(pathname);
 
   // THE ONE FETCH OVERVIEW MAKES WHOSE ONLY CONSUMER HERE IS A LINE OF
   // HEADER TEXT. `/users` exists for the two charts on the Charts tab
@@ -227,7 +237,11 @@ export default function RunShell({
           and reading it forever if the fetch failed while the panel beneath
           it rendered `role="alert"` (`payload.tsx`'s `TableSection`) — a
           confident zero over a stated failure. */}
-      <RunTabs runId={identity.id} errorCount={errors.data ? errors.data.errors.length : null} />
+      <RunTabs
+        runId={identity.id}
+        errorCount={errors.data ? errors.data.errors.length : null}
+        hasLogs={identity.runnerJobId !== null && identity.runnerJobId !== undefined}
+      />
 
       {/* WHAT THE PAGE IS DOING, above the tab content and below the strip
           that selects it, so it is on screen whichever tab is open. Rendered

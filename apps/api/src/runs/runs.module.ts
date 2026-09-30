@@ -3,12 +3,13 @@ import { MetricReader } from '@perfportal/persistence';
 import pg from 'pg';
 import { CONFIG } from '../auth/auth.module.js';
 import type { AppConfig } from '../config.js';
+import { RunEventsController } from './run-events.controller.js';
 import { ProjectRunsController, RunsController } from './runs.controller.js';
 import { RunsService } from './runs.service.js';
 import { TerminalWaiter } from './terminal-waiter.js';
 
 @Module({
-  controllers: [RunsController, ProjectRunsController],
+  controllers: [RunsController, ProjectRunsController, RunEventsController],
   providers: [
     RunsService,
     // `windowable` on a run response is one EXISTS against that run's own

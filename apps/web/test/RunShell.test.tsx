@@ -108,6 +108,7 @@ function renderShellWith(
             <Route path="compare" element={<div />} />
             <Route path="charts" element={<div />} />
             <Route path="errors" element={<div />} />
+            <Route path="logs" element={<div />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -523,6 +524,14 @@ describe('RunShell — the window control only appears where it applies', () => 
     expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
   });
 
+  it('withholds it on Logs, whose events are read whole', async () => {
+    // `GET /v1/runs/{id}/events` takes no `from`/`to`, so a drag over the log
+    // would change nothing — the third section to ignore a window.
+    renderShellWith({ windowable: true, identity: { ...RUN, runnerJobId: 'job-1' } }, `/runs/${RUN.id}/logs`);
+    await screen.findByRole('navigation', { name: /run sections/i });
+    expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
+  });
+
   it('still offers it on Overview', async () => {
     renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
     expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
@@ -586,6 +595,16 @@ describe('RunShell — the time brush on a narrow viewport', () => {
     // written down, so a different link moves the assertion with it.
     expect(notice).toHaveTextContent('10–30 s');
     expect(notice.textContent ?? '').toMatch(/whole run/i);
+  });
+
+  it('does not announce a window over the Logs tab, which shows the whole log', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    renderShellWith(
+      { windowable: true, identity: { ...RUN, runnerJobId: 'job-1' } },
+      `/runs/${RUN.id}/logs?from=10000&to=30000`,
+    );
+    await screen.findByRole('navigation', { name: /run sections/i });
+    expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
   });
 
   it('carries the window into the tabs, so the data really is narrowed', async () => {
@@ -729,5 +748,27 @@ describe('RunShell — an open note editor does not survive a change of run', ()
     expect(screen.queryByRole('textbox', { name: 'Run note' })).not.toBeInTheDocument();
     expect(screen.queryByText(/draft for A/)).not.toBeInTheDocument();
     expect(screen.queryByText(NOTE_A.text)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The shell is what decides — from the run's own identity — whether the tab
+ * strip offers Logs. `RunTabs.test.tsx` hands the strip its answer; this is
+ * the seam that computes it.
+ */
+describe('RunShell — the Logs tab follows the run’s runner job', () => {
+  const JOB = '7d9b8c85-1111-4111-8111-111111111111';
+
+  it('offers Logs for a run its runner job produced', () => {
+    renderShellWith({ identity: { ...RUN, runnerJobId: JOB } });
+    expect(screen.getByRole('link', { name: 'Logs' })).toHaveAttribute('href', `/runs/${RUN.id}/logs`);
+  });
+
+  it('offers none for a run no runner job produced, or one whose API predates the field', () => {
+    renderShellWith({ identity: { ...RUN, runnerJobId: null } });
+    expect(screen.queryByRole('link', { name: 'Logs' })).toBeNull();
+    cleanup();
+    renderShellWith({ identity: RUN });
+    expect(screen.queryByRole('link', { name: 'Logs' })).toBeNull();
   });
 });

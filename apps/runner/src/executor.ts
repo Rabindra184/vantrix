@@ -1,5 +1,6 @@
 import { rm } from 'node:fs/promises';
-import type { RunnerJobWithArtifact } from '@perfportal/persistence';
+import os from 'node:os';
+import type { RunnerJobEventInput, RunnerJobWithArtifact } from '@perfportal/persistence';
 import {
   ProjectRepository,
   RunnerRepository,
@@ -15,6 +16,14 @@ import { SimulationLogTailer } from './log-tailer.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
 import { RunnerLiveSink } from './live-sink.js';
 import { spawnAndWait } from './process.js';
+import { failureEventMessage, injectionEndReason } from './run-events.js';
+
+/**
+ * How far a job got, which is what decides how a cancelled job's log ends: a
+ * run that never opened, one that opened but never started Gatling, one whose
+ * process was running.
+ */
+type RunStage = 'claimed' | 'opened' | 'spawned';
 
 export class RunnerExecutor {
   readonly #config: RunnerConfig;
@@ -60,15 +69,36 @@ export class RunnerExecutor {
     let logger: JobLogger | null = null;
     let tailer: SimulationLogTailer | null = null;
     let workDir: string | null = null;
+    let stage: RunStage = 'claimed';
+    // The records made when the process starts. Hoisted so the catch can wait
+    // for them: an ending must never land before the start lines.
+    let started: Promise<void> = Promise.resolve();
     const logError = (message: string) => {
       if (logger) logger.error(message);
       else console.error(`[runner] [error] ${message}`);
+    };
+
+    // ═══ THE RUN'S EVENTS — BEST-EFFORT, BY DESIGN ═══
+    // (docs/superpowers/specs/2026-09-29-run-logs-design.md)
+    //
+    // These exist to explain a run on its Logs tab. A database hiccup must not
+    // cost somebody the load test they are trying to watch, so a failed write
+    // is logged to the job log and the job goes on. async + try, not
+    // `.catch()`: a writer that throws SYNCHRONOUSLY must be caught too.
+    const record = async (event: RunnerJobEventInput): Promise<void> => {
+      try {
+        await this.#runner.recordRunnerEvent(jobId, event);
+      } catch (err) {
+        logError(`failed to record run event "${event.phase ?? event.message}": ${String(err)}`);
+      }
     };
 
     try {
       logger = await JobLogger.create(this.#config.logDir, jobId);
       await this.#runner.setLogPath(jobId, logger.path);
       logger.info(`claimed job ${jobId} (${job.artifact.name})`);
+      await record({ message: `Claimed by the runner on '${os.hostname()}'` });
+      await record({ phase: 'Deploying' });
 
       // Fail closed BEFORE opening a live run: never execute uploaded code as
       // the runner's own uid. Throwing here marks the job failed with an
@@ -81,20 +111,25 @@ export class RunnerExecutor {
       if (!opened) {
         await sink.abortIncomplete();
         logger.info(`job ${jobId} was cancelled before live run ${runId} could attach`);
+        await this.#recordCancelledEnding(record, 'claimed');
         return;
       }
+      stage = 'opened';
       logger.info(`opened live run ${runId}`);
       if (await this.#isCancelled(jobId)) {
         await sink.abortIncomplete();
         logger.info(`cancelled job ${jobId} before Gatling started`);
+        await this.#recordCancelledEnding(record, 'opened');
         return;
       }
 
       const prepared = await prepareGatlingRun(this.#config, job.job, job.artifact, () => this.#isCancelled(jobId));
       workDir = prepared.workDir;
+      await record({ message: 'Package prepared' });
       if (await this.#isCancelled(jobId)) {
         await sink.abortIncomplete();
         logger.info(`cancelled job ${jobId} before process launch`);
+        await this.#recordCancelledEnding(record, 'opened');
         return;
       }
       tailer = new SimulationLogTailer({
@@ -106,22 +141,37 @@ export class RunnerExecutor {
       tailer.start();
 
       logger.info(`starting Gatling: ${prepared.command.command} ${prepared.command.args.join(' ')}`);
+      // "Started" is recorded when the OS reports the process running, not
+      // when this line asks for it, so a command that cannot be launched never
+      // gets the line. It is AWAITED before the end is recorded, so the two can
+      // never land out of order.
       const result = await spawnAndWait(prepared.command, {
         stdoutPrefix: `[gatling ${jobId}] `,
         stderrPrefix: `[gatling ${jobId}] `,
         logOutput: logger.stream,
         stopPollMs: this.#config.pollIntervalMs,
         shouldStop: () => this.#heartbeatAndCheckCancelled(jobId),
+        onSpawn: () => {
+          stage = 'spawned';
+          started = (async () => {
+            await record({ message: 'Gatling process started and ready to inject traffic' });
+            await record({ phase: 'Injecting' });
+          })();
+        },
       });
+      await started;
       await tailer.stop();
       tailer = null;
 
       if (result.stopped || (await this.#isCancelled(jobId))) {
         await sink.abortIncomplete();
         logger.info(`cancelled job ${jobId}`);
+        await this.#recordCancelledEnding(record, 'spawned');
         return;
       }
 
+      await record({ message: `Run injection ended with reason '${injectionEndReason(result)}'` });
+      await record({ phase: 'Ending' });
       await this.#runner.markClosing(jobId);
       if (sink.bytesWritten === 0) {
         await sink.abortIncomplete();
@@ -144,6 +194,7 @@ export class RunnerExecutor {
       await sink.close();
       await this.#runner.markComplete(jobId);
       logger.info(`completed job ${jobId} as run ${sink.runId}`);
+      await record({ message: 'Run ended' });
     } catch (err) {
       if (tailer) {
         await tailer.stop().catch((tailErr) => logError(`failed to stop simulation.log tailer: ${String(tailErr)}`));
@@ -159,10 +210,43 @@ export class RunnerExecutor {
         logError(`failed to mark job ${jobId} failed: ${String(markErr)}`);
       });
       logError(`failed job ${jobId}: ${jobError.code}: ${jobError.message}`);
+      // The job's own state decides how the log ends, not the error thrown: a
+      // cancel during extraction or launch fails the step, `markFailed` leaves
+      // a cancelled job cancelled, and a log saying "failed" would contradict
+      // it. Whatever the ending, the start lines land first.
+      await started;
+      if (await this.#isCancelled(jobId).catch(() => false)) {
+        await this.#recordCancelledEnding(record, stage);
+      } else {
+        await record({ message: failureEventMessage(jobError, job.artifact.storagePath) });
+      }
     } finally {
       if (workDir) await rm(workDir, { recursive: true, force: true }).catch((err) => logError(`failed to clean work dir: ${String(err)}`));
       await logger?.close().catch((err) => console.error('failed to close runner job log', err));
     }
+  }
+
+  /**
+   * How a cancelled job's log ends, by how far it got (spec ruling 3). One
+   * definition for the early returns and for the catch, so the two cannot
+   * drift into telling different stories about the same cancel.
+   */
+  async #recordCancelledEnding(
+    record: (event: RunnerJobEventInput) => Promise<void>,
+    stage: RunStage,
+  ): Promise<void> {
+    if (stage === 'claimed') {
+      await record({ message: 'Cancelled before the run opened' });
+      return;
+    }
+    if (stage === 'opened') {
+      await record({ message: 'Cancelled before Gatling started' });
+      await record({ message: 'Run ended without results' });
+      return;
+    }
+    await record({ message: "Run injection ended with reason 'Cancelled'" });
+    await record({ phase: 'Ending' });
+    await record({ message: 'Run ended without results' });
   }
 
   async #isCancelled(jobId: string): Promise<boolean> {

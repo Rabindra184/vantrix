@@ -185,6 +185,14 @@
      2.8:1), and `on-brand` cannot collide with its runtime token's name. */
   --color-on-brand: var(--color-brand-foreground);
 
+  /* The Logs tab's panel. Aliased under DIFFERENT names than the runtime
+     tokens, per this block's own rule, or the utilities would be inert. */
+  --color-log-bg: var(--log-panel-bg);
+  --color-log-text: var(--log-panel-text);
+  --color-log-muted: var(--log-panel-muted);
+  --color-log-time: var(--log-panel-time);
+  --color-log-value: var(--log-panel-value);
+
   --font-sans: var(--font-family-sans);
   --font-mono: var(--font-family-mono);
   /* Generates `font-display` — the DISPLAY face (Space Grotesk) for the few
@@ -265,6 +273,18 @@
   --chart-pct-p95: #f59e0b;
   --chart-pct-p99: #f97316;
   --chart-pct-max: #ef4444;
+
+  /*
+   * THE LOGS TAB'S PANEL (RunLogs.tsx) — dark in BOTH themes, as Gatling
+   * Enterprise's is, so these are declared here once and deliberately not
+   * redefined in either dark block below. `palette.test.ts` holds each colour
+   * to AA against the panel's own ground.
+   */
+  --log-panel-bg: #0d1220;
+  --log-panel-text: #e8edf6;
+  --log-panel-muted: #8c99af;
+  --log-panel-time: #059ddf;
+  --log-panel-value: #fbbf24;
 
   --font-family-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-family-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;

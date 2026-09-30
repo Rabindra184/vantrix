@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **174 files / 2233 tests**, it
+`nvm use` first, and if a run reports fewer than **181 files / 2313 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,200 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The run-logs branch added SEVEN unit files —
+`packages/contracts/test/run-events.test.ts` (10),
+`packages/persistence/test/runner-events.test.ts` (13),
+`apps/runner/test/process.test.ts` (2), `apps/runner/test/run-events.test.ts`
+(5), `apps/runner/test/executor-events.test.ts` (16),
+`apps/web/test/logLine.test.ts` (5) and `apps/web/test/RunLogs.test.tsx` (14)
+— plus 3 cases to `format.test.ts`, 4 to `palette.test.ts`, 4 to
+`RunShell.test.tsx` and 4 to `RunTabs.test.tsx`, from **174 / 2233 to
+181 / 2313**. Integration moves with the six new `.ts` unit files, the `.ts`
+cases, `packages/persistence/test/runner-events.integration.test.ts` (18) and
+`apps/api/test/run-events.integration.test.ts` (4), from **162 / 2006 to
+170 / 2086**, and **e2e rises to 168** (`apps/web/e2e/run-logs.spec.ts`, 2).
+It is backlog item #6 of the Gatling Enterprise comparison: a Logs tab on the
+run page.
+
+**MEASURED ON GATLING ENTERPRISE FIRST, READ-ONLY, ON TWO FINISHED RUNS.** The
+tab is one dark monospace block and nothing else: a line is
+`[17:11:11.113 GMT+5:30] [gatling-enterprise] Start requested.` (local time to
+the millisecond with the zone offset, a source in brackets, the message),
+phases are separator lines IN the log (`---| Deploying |-----…`, then
+Injecting, then Ending), timestamps are blue and quoted values highlighted,
+and there are no controls at all. **The content is orchestration events, and
+no JVM console on either test type** — so the tab shows the run's lifecycle
+events and never Gatling's output. That is also the property worth keeping:
+the runner's job log records the full Gatling command line, every `-D` value
+included, and none of it reaches the run page.
+
+**RUNNER RUNS ONLY, AND THE TAB IS WITHHELD ELSEWHERE.** Only an on-prem
+runner job passes through a process PerfPortal controls from start to end; a
+Gradle-plugin or upload run has nobody to write its events, and a Logs tab
+that can never have content is the false claim C03 exists to prevent.
+`RunIdentity` gains `runnerJobId` (`.nullable().optional()`, the
+rolling-deploy reason), both identity builders send it from
+`RunsService.lifecycleOf`, and `RunTabs`' `hasLogs` is REQUIRED so the shell
+has to state its answer. Logs for the other two paths are a later sub-project
+(a new ingest path in the Kotlin plugin), not an omission.
+
+**ONE TABLE, THREE WRITERS.** `runner_job_event` (`BIGSERIAL seq`, a source of
+`perfportal` or `runner`, a message XOR a phase, `ON DELETE CASCADE` from the
+job so events go with it at retention). The API writes the three queue events
+(Start requested, the simulation class, the package and its size), the cancel
+handler writes `Cancel requested.`, and the runner writes the rest straight
+through `RunnerRepository.recordRunnerEvent` — best effort, so a failed insert
+logs and never fails the job. `GET /v1/runs/{id}/events` reads them back.
+
+**THE QUEUE EVENTS ARE WRITTEN IN THE JOB'S OWN STATEMENT.** `createQueued` and
+`retry` are data-modifying CTEs, so a job can never exist without its first
+three lines. The case pins it by `xmin`: the job row and its events carry the
+same transaction id, and the mutation that moved the events into a second
+`$executeRaw` after the query failed there alone
+(`expected [ '1067657' ] to deeply equal [ '1067656' ]`).
+
+**TWO REVIEW FINDINGS WERE A LOG DISAGREEING WITH THE JOB'S OWN STATUS.**
+
+  - `RunnerRepository.cancel`'s new `Cancel requested.` CTE also fired from the
+    runner's SIGINT/SIGTERM shutdown, so restarting a node wrote a
+    `perfportal`-sourced line nobody requested. `cancel` takes a REQUIRED
+    `{ recordRequest }` — the API passes true, the shutdown false — which is
+    this file's no-default rule for a parameter whose wrong value is silent.
+  - A cancel landing during bundle extraction reached the executor's catch as
+    `BUNDLE_EXTRACT_FAILED`, which logged "Run failed" over a job whose status
+    read `cancelled`. The catch now ends the log by the job's ACTUAL state and
+    by how far the run got (claimed, run opened, Gatling spawned), each stage
+    with its own cancel ending.
+
+**AND THE WEB HALF'S DEFECT WAS THE LIVE-VIEW ONE THIS FILE KEEPS RECORDING.**
+The first `RunLogs` put `terminal` in its query key and tested `isError` before
+`data`, so one failed poll (`retry: false` app-wide) replaced the log with an
+alert — and a failed read AFTER the terminal flip left the new key with no data
+at all, losing the run's last events for good. The key is the run id alone; a
+ref catches the false-to-true flip and reads once more; a failed refresh keeps
+the panel with a quiet `role="status"` line under it. Freeze, do not blank.
+
+**THE WHOLE-BRANCH REVIEW (OPUS) FOUND THREE THINGS NO TASK REVIEW COULD.** The
+time brush and its window notice sat over the Logs tab, whose endpoint takes
+no window — C03's control-over-a-section-that-ignores-it, one caller short,
+because `RunShell`'s window-free list named Trends and Compare only. An
+artifact's NAME reaches a queue message verbatim, so a newline in it could
+draw a fake line in the log; `queuedEventMessages` collapses C0 and DEL to a
+space. And the `recorded: false` state said only that no runner produced the
+run, which is false of a runner run whose job retention has since removed.
+
+**`pnpm --filter @perfportal/<pkg> build` DOES NOTHING AND EXITS 0.** The
+workspace packages have no `build` script, so pnpm prints
+`None of the selected packages has a "build" script` and succeeds — and a dist
+greps as stale afterwards. What builds one is the project-reference build:
+
+```
+find packages/contracts -name '*.tsbuildinfo' -delete && pnpm exec tsc -b packages/contracts
+```
+
+The ingest-trims and demarcate-the-warmup-window entries below both record
+that filter-form build exiting 0 over a stale `dist`, and credit a stale
+`.tsbuildinfo`. **`packages/contracts/package.json` has never had a `build`
+script** (`git log -S'"build"'` over it finds nothing), so that command could
+never have built anything: their fix worked because it was the `tsc -b` above,
+not because the cache was cleared. The rule they draw holds, and caught it
+here too — grep the emitted file, never the exit code.
+
+**THE PANEL'S GROUND IS THE DARK PAGE CANVAS, WHICH ONLY A BROWSER SHOWED.**
+The panel is dark in BOTH themes, as Gatling Enterprise's is, so
+`--log-panel-*` is declared once and deliberately not redefined per theme, and
+`palette.test.ts` holds each colour to AA against its own ground. That ground
+is `#0d1220` — exactly the dark page's `--color-surface-page` — so in dark
+mode the lines floated on the page with no edge. It carries `border-default`
+now, which blends into the page in light mode.
+
+**RED-VERIFIED LAYER BY LAYER**, every mutation applied after a checkpoint
+commit with its replacement count asserted, and each landing on its own case
+unless noted:
+
+```
+  contracts   runnerJobId required, not optional   the rolling-deploy case
+              .uuid() dropped                      the not-a-uuid case
+              a fourth phase 'Warmup'              the phase case
+  persistence message-XOR-phase CHECK dropped      both XOR cases
+              the FK back to NO ACTION             the cascade case
+              queue CTE removed from createQueued  its case + retry + list
+              retry's CTE removed                  the retry case
+              events in a second statement         the xmin case
+              cancel writes on an already-cancelled the once-only case
+              job lookup on run_id without org     the other-org case
+              recordRequest ignored                the shutdown case
+  runner      onSpawn never called                 the started-before-ended case
+              onSpawn before 'spawn' fires         the ENOENT case
+              command line in the started message  the leak guard (+ 2 that
+                                                   print that line)
+              record rethrows                      the survives-failed-records case
+              failure message unredacted           both storage-key cases
+              a cancel during preparation "failed" every cancelled-catch case
+  api         runnerJobId off the 202              the runner case, on `live`
+              runnerJobId off toResponse           the runner case, on `done`
+              the events route undocumented        both OpenAPI route joins
+              events out of session-auth's list    the derived coverage case
+  web         ms not padded                        the .007 case
+              \b anchors dropped                   the digits-in-a-word case
+              polling never stops                  the live case, on its count
+              a phase drawn as a message           the separator case
+              --log-panel-muted at 3.40:1          its AA case
+              --log-panel-bg redeclared for dark   the declared-once case
+              hasLogs forced either way            the matching RunShell case
+  browser     role="log" to "region"               Expected 11, Received 0
+              runnerJobId off toResponse           the Logs link never offered
+```
+
+**THE REAL RUNNER RUN.** The developer database with the API, worker and
+runner from this worktree on their own Redis index (db 11), and a real Gatling
+`ParitySimulation` jar against a local target. A finished job wrote eleven
+lines in order — three `perfportal`, then `Claimed by the runner on '<host>'`,
+Deploying, `Package prepared`, `Gatling process started and ready to inject
+traffic`, Injecting, the injection's end, Ending, `Run ended`. A second job
+cancelled mid-injection wrote twelve, `Cancel requested.` between Injecting and
+`Run injection ended with reason 'Cancelled'`, ending `Run ended without
+results`. The first job was submitted with a `-Dleak.check=PARAM-LEAK-real`
+Java option and a `leak.key=PARAM-LEAK-real-prop` system property, and no
+event of either job carries either marker, nor any `-D` at all. The tab drew
+the finished run's log with no time brush, in both themes. The token it minted was revoked
+afterwards.
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - The finished run's end reason read `'Gatling exited with code 2'`, where
+    Gatling Enterprise would say `'Run completed normally'`: this fixture
+    fails one of its own assertions on purpose, and Gatling exits 2 for
+    that. Only exit 0 maps to the normal phrase; exit 2 means the injection
+    completed and a Gatling assertion failed, and could be named so.
+  - A run turns terminal a few milliseconds before the runner writes its
+    ending lines, so the panel's one post-terminal read can miss them until
+    the next visit — fixing it means reordering abort against record on every
+    runner path.
+  - The Logs poll ignores the run page's own polling cap, so a tab left open
+    on a run stuck non-terminal reads every 2 s indefinitely.
+  - `oneLine` collapses C0 and DEL, not C1 or U+2028/2029 (writing an artifact
+    needs ingest rights); `formatPackageSize` prints `1024.0 KiB` for the ~50
+    bytes below each boundary; `capEventMessage` can leave a lone surrogate
+    before its ellipsis.
+  - No backfill for jobs that ran before this change: their runs get the tab
+    with an explained empty state.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2313**, the prediction counted from the source exactly,
+zero `Errors` lines, on the final tree (after the panel-border commit), and
+the three zone-sensitive files 46/46 under `TZ=UTC`; `test:integration`
+COLLECTED **170 / 2086**, the prediction exactly, with ONE failure:
+`session-auth.integration.test.ts`'s "filters by project slug for a session",
+a **501** from `POST /v1/runs` in its SETUP — the machine-answering signature
+this file records — and the file then passed **19/19 five times out of five**
+alone; `pnpm test:e2e` **168 passed, exit 0**; the schema-matches-migrations
+guard exit 0. Integration and e2e ran on the tree before the border commit,
+which changes one `className` in a `.tsx` that no integration config includes
+and no spec asserts. All against a SCRATCH DATABASE (`perfportal_runlogs`), a
+scratch Redis INDEX (db 7) and e2e port 3700; integration started at a
+1-minute load of 7.93.
 
 The pipeline-holds-its-client branch added no unit FILE, no unit case and no
 spec, and moves no floor: unit stays **174 / 2233**, integration **162 /
