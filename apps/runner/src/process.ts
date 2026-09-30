@@ -30,6 +30,9 @@ export function spawnAndWait(
     stopPollMs?: number;
     shouldStop?: () => Promise<boolean>;
     timeoutMs?: number;
+    /** Called once the OS reports the process running — never for a command
+     *  that could not be launched. */
+    onSpawn?: () => void;
   } = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
@@ -56,6 +59,7 @@ export function spawnAndWait(
       reject(err);
       return;
     }
+    child.once('spawn', () => opts.onSpawn?.());
 
     const stdoutOutputs = opts.logOutput ? [process.stdout, opts.logOutput] : [process.stdout];
     const stderrOutputs = opts.logOutput ? [process.stderr, opts.logOutput] : [process.stderr];
