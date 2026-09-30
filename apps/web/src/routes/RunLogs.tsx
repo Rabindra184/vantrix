@@ -102,7 +102,10 @@ function LogPanel({ events }: { readonly events: readonly RunEvent[] }) {
       // Focusable so a keyboard user can scroll it: a phase row is wider than
       // a phone's viewport and the panel scrolls sideways.
       tabIndex={0}
-      className="overflow-x-auto rounded-xl bg-log-bg p-4 font-mono text-[0.8125rem] leading-relaxed text-log-text"
+      // The border is for the DARK theme: this panel's ground is dark in both
+      // themes and equals the dark page canvas exactly (#0d1220), so without an
+      // edge the lines float on the page with nothing saying where the panel is.
+      className="overflow-x-auto rounded-xl border border-default bg-log-bg p-4 font-mono text-[0.8125rem] leading-relaxed text-log-text"
     >
       {events.map((event, index) => (
         <LogLine key={`${event.at}-${index}`} event={event} />
