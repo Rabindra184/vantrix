@@ -200,6 +200,68 @@ describe('the runner’s events, path by path', () => {
     expect(spawnAndWait).not.toHaveBeenCalled();
   });
 
+  // A cancel reaches the executor's catch too: `prepareGatlingRun` hands the
+  // cancel check to the extractor, which kills tar/unzip and fails the step.
+  // `markFailed` is guarded `status <> 'cancelled'`, so the JOB stays cancelled;
+  // the log has to end by what the job actually is, not by the error thrown.
+  it('ends a cancel during preparation as cancelled, not failed', async () => {
+    // status() is read once after the run opens, then once by the catch.
+    const { executor, runner } = harness({
+      statuses: ['running', 'cancelled'],
+      prepare: async () => {
+        throw new RunnerExecutionError('BUNDLE_EXTRACT_FAILED', 'Bundle extraction exited with code signal SIGTERM.', 'x');
+      },
+    });
+    await executor.run(job());
+    expect(recorded(runner)).toEqual([
+      CLAIMED, '--- Deploying', 'Cancelled before Gatling started', 'Run ended without results',
+    ]);
+    expect(recorded(runner).some((line) => line.startsWith('Run failed'))).toBe(false);
+  });
+
+  it('ends a cancel that fails the run before it opened as cancelled, not failed', async () => {
+    // status() is read once, by the catch: nothing before the open reads it.
+    const { executor, runner, sink } = harness({ statuses: ['cancelled'] });
+    sink.open.mockRejectedValue(new RunnerExecutionError('LIVE_OPEN_FAILED', 'the API refused the open', 'x'));
+    await executor.run(job());
+    expect(recorded(runner)).toEqual([CLAIMED, '--- Deploying', 'Cancelled before the run opened']);
+  });
+
+  it('ends a cancel that fails a running process as cancelled, after its start lines', async () => {
+    // status(): after the open, after the package, then the catch. The start
+    // lines are slow to write, so an ending that did not wait for them would
+    // land first.
+    const { executor, runner } = harness({ statuses: ['running', 'running', 'cancelled'] });
+    vi.mocked(spawnAndWait).mockImplementation(async (_command, spawnOpts) => {
+      spawnOpts?.onSpawn?.();
+      throw new RunnerExecutionError('GATLING_LAUNCH_FAILED', 'the process failed after it started', 'x');
+    });
+    runner.recordRunnerEvent.mockImplementation(async (_jobId: string, event: RunnerJobEventInput) => {
+      if (event.message === STARTED) await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    await executor.run(job());
+    expect(recorded(runner)).toEqual([
+      CLAIMED, '--- Deploying', 'Package prepared', STARTED, '--- Injecting',
+      "Run injection ended with reason 'Cancelled'", '--- Ending', 'Run ended without results',
+    ]);
+  });
+
+  it('ends a failure of a running process on the failure, after its start lines', async () => {
+    const { executor, runner } = harness();
+    vi.mocked(spawnAndWait).mockImplementation(async (_command, spawnOpts) => {
+      spawnOpts?.onSpawn?.();
+      throw new RunnerExecutionError('GATLING_LAUNCH_FAILED', 'the process failed after it started', 'x');
+    });
+    runner.recordRunnerEvent.mockImplementation(async (_jobId: string, event: RunnerJobEventInput) => {
+      if (event.message === STARTED) await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    await executor.run(job());
+    expect(recorded(runner)).toEqual([
+      CLAIMED, '--- Deploying', 'Package prepared', STARTED, '--- Injecting',
+      'Run failed: GATLING_LAUNCH_FAILED: the process failed after it started',
+    ]);
+  });
+
   it('ends a run cancelled mid-injection as cancelled, without results', async () => {
     const { executor, runner } = harness({ result: { code: null, signal: 'SIGTERM', stopped: true } });
     await executor.run(job());
