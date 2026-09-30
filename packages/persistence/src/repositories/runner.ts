@@ -1,4 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import type { RunEventPhase, RunEventSource } from '@perfportal/contracts';
+import { capEventMessage, queuedEventMessages } from '../runner-events.js';
 
 export interface RunnerArtifactRecord {
   id: string;
@@ -125,11 +127,33 @@ export interface DeletedRunnerArtifact {
   logPaths: string[];
 }
 
+/**
+ * One event the RUNNER records (docs/superpowers/specs/2026-09-29-run-logs-design.md):
+ * a message or a phase separator, never both. The source is not a field — this
+ * writer always writes `runner`, so the runner can never speak as `perfportal`.
+ */
+export type RunnerJobEventInput =
+  | { readonly message: string; readonly phase?: undefined }
+  | { readonly phase: RunEventPhase; readonly message?: undefined };
+
+export interface RunnerJobEventRecord {
+  at: Date;
+  source: RunEventSource;
+  message: string | null;
+  phase: RunEventPhase | null;
+}
+
+export interface RunnerJobEvents {
+  jobId: string;
+  events: RunnerJobEventRecord[];
+}
+
 export class RunnerRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async createQueued(input: CreateRunnerJobInput): Promise<RunnerJobWithArtifact> {
     const systemProperties = JSON.stringify(input.job.systemProperties);
+    const [start, simulation, pkg] = queuedEventMessages(input.artifact);
     const [row] = await this.prisma.$queryRaw<RunnerRow[]>`
       WITH artifact AS (
         INSERT INTO runner_artifact (
@@ -171,6 +195,16 @@ export class RunnerRepository {
           ${systemProperties}::jsonb
         FROM artifact
         RETURNING *
+      ),
+      -- The three queue events, IN THIS STATEMENT: a job never exists without
+      -- them, and a job insert that fails leaves none. ORDER BY is what makes
+      -- seq follow the order Gatling Enterprise prints them in.
+      queued_events AS (
+        INSERT INTO runner_job_event (job_id, org_id, project_id, source, message)
+        SELECT job.id, job.org_id, job.project_id, 'perfportal', m.message
+        FROM job
+        CROSS JOIN (VALUES (1, ${start}::text), (2, ${simulation}::text), (3, ${pkg}::text)) AS m(ord, message)
+        ORDER BY m.ord
       )
       SELECT
         artifact.id AS "artifactId",
@@ -454,62 +488,158 @@ export class RunnerRepository {
     return row?.status ?? null;
   }
 
-  async cancel(orgId: string, projectId: string, jobId: string): Promise<RunnerJobWithArtifact | null> {
-    const updated = await this.prisma.$executeRaw`
-      UPDATE runner_job
-      SET status = 'cancelled', updated_at = now()
+  /**
+   * The runner's writer. Always source `runner`. The caller treats a failure
+   * as best-effort (the executor logs it and runs the job anyway); this method
+   * itself does not swallow anything.
+   */
+  async recordRunnerEvent(jobId: string, event: RunnerJobEventInput): Promise<void> {
+    const message = event.message === undefined ? null : capEventMessage(event.message);
+    const phase = event.phase ?? null;
+    await this.prisma.$executeRaw`
+      INSERT INTO runner_job_event (job_id, org_id, project_id, source, message, phase)
+      SELECT id, org_id, project_id, 'runner', ${message}::text, ${phase}::text
+      FROM runner_job
+      WHERE id = ${jobId}::uuid
+    `;
+  }
+
+  /**
+   * A run's events, through the runner job that produced it, oldest first --
+   * or null when no runner job in this tenant produced the run. The job is
+   * found the way RunsService.lifecycleOf finds it (earliest by created_at),
+   * and both reads carry the tenant, the rule every repository here follows.
+   */
+  async listEventsForRun(orgId: string, projectId: string, runId: string): Promise<RunnerJobEvents | null> {
+    const [job] = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id
+      FROM runner_job
       WHERE org_id = ${orgId}::uuid
         AND project_id = ${projectId}::uuid
-        AND id = ${jobId}::uuid
-        AND status IN ('queued', 'starting', 'running', 'closing', 'cancelled')
+        AND run_id = ${runId}::uuid
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
     `;
-    return updated === 1 ? this.find(orgId, projectId, jobId) : null;
+    if (!job) return null;
+    const events = await this.prisma.$queryRaw<RunnerJobEventRecord[]>`
+      SELECT at, source, message, phase
+      FROM runner_job_event
+      WHERE job_id = ${job.id}::uuid
+        AND org_id = ${orgId}::uuid
+        AND project_id = ${projectId}::uuid
+      ORDER BY seq ASC
+    `;
+    return { jobId: job.id, events };
+  }
+
+  async cancel(orgId: string, projectId: string, jobId: string): Promise<RunnerJobWithArtifact | null> {
+    // One statement: lock the row, move it, and write Cancel requested only
+    // when the status it moved FROM was not already cancelled -- a cancel
+    // that changes nothing says nothing.
+    const moved = await this.prisma.$queryRaw<{ previousStatus: string }[]>`
+      WITH locked AS (
+        SELECT id, status
+        FROM runner_job
+        WHERE org_id = ${orgId}::uuid
+          AND project_id = ${projectId}::uuid
+          AND id = ${jobId}::uuid
+        FOR UPDATE
+      ),
+      moved AS (
+        UPDATE runner_job j
+        SET status = 'cancelled', updated_at = now()
+        FROM locked l
+        WHERE j.id = l.id
+          AND l.status IN ('queued', 'starting', 'running', 'closing', 'cancelled')
+        RETURNING j.id, j.org_id, j.project_id, l.status AS previous_status
+      ),
+      cancel_event AS (
+        INSERT INTO runner_job_event (job_id, org_id, project_id, source, message)
+        SELECT id, org_id, project_id, 'perfportal', 'Cancel requested.'
+        FROM moved
+        WHERE previous_status <> 'cancelled'
+      )
+      SELECT previous_status AS "previousStatus" FROM moved
+    `;
+    return moved.length === 1 ? this.find(orgId, projectId, jobId) : null;
   }
 
   async retry(input: RetryRunnerJobInput): Promise<RunnerJobWithArtifact | null> {
-    const inserted = await this.prisma.$executeRaw`
-      -- ═══ EVERY FIELD THE OPERATOR CHOSE, INCLUDING test_slug ═══
-      --
-      -- A retry is the SAME JOB run again, so it carries the whole of what
-      -- was asked for. test_slug was the one omission, and it is the one that
-      -- changes what the RUN means rather than how it executes: a declared
-      -- test exists precisely so two configurations of one simulation can be
-      -- told apart, so a retry that loses it files the run under the
-      -- auto-created test named after the simulation class. Silently -- the
-      -- job succeeds, the run completes, and the cohort the reader is
-      -- watching simply does not contain it.
-      --
-      -- Found by retrying a real job on a real runner. Nothing could have
-      -- caught it: no test in this repository called this method.
-      --
-      -- NO BACKTICKS IN THIS COMMENT. It sits inside a $executeRaw TEMPLATE
-      -- LITERAL, so one would end the string and fail as TS1005 two lines
-      -- down -- which is exactly how the first draft of it failed, and which
-      -- CLAUDE.md already records happening twice before.
-      INSERT INTO runner_job (
-        id, org_id, project_id, artifact_id, status, requested_by,
-        environment, branch, commit_sha, test_slug, java_options, system_properties
-      )
-      SELECT
-        ${input.id}::uuid,
-        j.org_id,
-        j.project_id,
-        j.artifact_id,
-        'queued',
-        ${input.requestedBy},
-        j.environment,
-        j.branch,
-        j.commit_sha,
-        j.test_slug,
-        j.java_options,
-        j.system_properties
+    // The queue events name the ARTIFACT the retry runs, so they are built
+    // from its row. Read with no status predicate: whether the source job may
+    // be retried is decided by the INSERT below, which writes the events in
+    // the same statement, so a refused retry writes neither.
+    const [artifact] = await this.prisma.$queryRaw<{ simulationClass: string; name: string; bytes: bigint }[]>`
+      SELECT a.simulation_class AS "simulationClass", a.name, a.bytes
       FROM runner_job j
+      JOIN runner_artifact a ON a.id = j.artifact_id
       WHERE j.org_id = ${input.orgId}::uuid
         AND j.project_id = ${input.projectId}::uuid
         AND j.id = ${input.sourceJobId}::uuid
-        AND j.status IN ('failed', 'cancelled')
     `;
-    return inserted === 1 ? this.find(input.orgId, input.projectId, input.id) : null;
+    if (!artifact) return null;
+    const [start, simulation, pkg] = queuedEventMessages({
+      simulationClass: artifact.simulationClass,
+      name: artifact.name,
+      bytes: Number(artifact.bytes),
+    });
+    const inserted = await this.prisma.$queryRaw<{ id: string }[]>`
+      WITH job AS (
+        -- ═══ EVERY FIELD THE OPERATOR CHOSE, INCLUDING test_slug ═══
+        --
+        -- A retry is the SAME JOB run again, so it carries the whole of what
+        -- was asked for. test_slug was the one omission, and it is the one that
+        -- changes what the RUN means rather than how it executes: a declared
+        -- test exists precisely so two configurations of one simulation can be
+        -- told apart, so a retry that loses it files the run under the
+        -- auto-created test named after the simulation class. Silently -- the
+        -- job succeeds, the run completes, and the cohort the reader is
+        -- watching simply does not contain it.
+        --
+        -- Found by retrying a real job on a real runner. Nothing could have
+        -- caught it: no test in this repository called this method.
+        --
+        -- NO BACKTICKS IN THIS COMMENT. It sits inside a $queryRaw TEMPLATE
+        -- LITERAL, so one would end the string and fail as TS1005 two lines
+        -- down -- which is exactly how the first draft of it failed, and which
+        -- CLAUDE.md already records happening twice before.
+        INSERT INTO runner_job (
+          id, org_id, project_id, artifact_id, status, requested_by,
+          environment, branch, commit_sha, test_slug, java_options, system_properties
+        )
+        SELECT
+          ${input.id}::uuid,
+          j.org_id,
+          j.project_id,
+          j.artifact_id,
+          'queued',
+          ${input.requestedBy},
+          j.environment,
+          j.branch,
+          j.commit_sha,
+          j.test_slug,
+          j.java_options,
+          j.system_properties
+        FROM runner_job j
+        WHERE j.org_id = ${input.orgId}::uuid
+          AND j.project_id = ${input.projectId}::uuid
+          AND j.id = ${input.sourceJobId}::uuid
+          AND j.status IN ('failed', 'cancelled')
+        RETURNING id, org_id, project_id
+      ),
+      -- The retry's own three queue events, written by this statement for
+      -- the same reason createQueued writes them in its own: the second
+      -- writer this repository keeps finding one short.
+      queued_events AS (
+        INSERT INTO runner_job_event (job_id, org_id, project_id, source, message)
+        SELECT job.id, job.org_id, job.project_id, 'perfportal', m.message
+        FROM job
+        CROSS JOIN (VALUES (1, ${start}::text), (2, ${simulation}::text), (3, ${pkg}::text)) AS m(ord, message)
+        ORDER BY m.ord
+      )
+      SELECT id FROM job
+    `;
+    return inserted.length === 1 ? this.find(input.orgId, input.projectId, input.id) : null;
   }
 
   async find(orgId: string, projectId: string, jobId: string): Promise<RunnerJobWithArtifact | null> {
