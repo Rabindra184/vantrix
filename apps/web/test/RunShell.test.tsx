@@ -731,3 +731,25 @@ describe('RunShell — an open note editor does not survive a change of run', ()
     expect(screen.queryByText(NOTE_A.text)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * The shell is what decides — from the run's own identity — whether the tab
+ * strip offers Logs. `RunTabs.test.tsx` hands the strip its answer; this is
+ * the seam that computes it.
+ */
+describe('RunShell — the Logs tab follows the run’s runner job', () => {
+  const JOB = '7d9b8c85-1111-4111-8111-111111111111';
+
+  it('offers Logs for a run its runner job produced', () => {
+    renderShellWith({ identity: { ...RUN, runnerJobId: JOB } });
+    expect(screen.getByRole('link', { name: 'Logs' })).toHaveAttribute('href', `/runs/${RUN.id}/logs`);
+  });
+
+  it('offers none for a run no runner job produced, or one whose API predates the field', () => {
+    renderShellWith({ identity: { ...RUN, runnerJobId: null } });
+    expect(screen.queryByRole('link', { name: 'Logs' })).toBeNull();
+    cleanup();
+    renderShellWith({ identity: RUN });
+    expect(screen.queryByRole('link', { name: 'Logs' })).toBeNull();
+  });
+});

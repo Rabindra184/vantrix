@@ -36,6 +36,7 @@ import {
   Square,
   Sun,
   Table2,
+  Terminal,
   TrendingUp,
   TriangleAlert,
   type LucideIcon,
@@ -174,6 +175,7 @@ export const TelemetryTabIcon = icon(Server);
 export const ErrorsTabIcon = icon(CircleAlert);
 export const TrendsTabIcon = icon(TrendingUp);
 export const CompareTabIcon = icon(GitCompareArrows);
+export const LogsTabIcon = icon(Terminal);
 
 /* The project rail's desktop collapse control (`ProjectRail.tsx`). */
 /* The chart card's overflow menu (`ChartActions.tsx`, review M17). An ellipsis

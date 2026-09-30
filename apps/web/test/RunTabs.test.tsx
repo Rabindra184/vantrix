@@ -11,10 +11,10 @@ afterEach(cleanup);
 
 const RUN = 'a66548b7-2962-43ff-8b93-7149a6f2a1b8';
 
-function renderAt(path: string, errorCount: number | null) {
+function renderAt(path: string, errorCount: number | null, hasLogs = false) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <RunTabs runId={RUN} errorCount={errorCount} />
+      <RunTabs runId={RUN} errorCount={errorCount} hasLogs={hasLogs} />
     </MemoryRouter>,
   );
 }
@@ -146,5 +146,38 @@ describe('RunTabs — the analysis window rides along', () => {
     expect(href).toContain('from=10000');
     expect(href).not.toContain('runs=abc');
     expect(href).not.toContain('metric=p99');
+  });
+});
+
+/**
+ * LOGS ONLY WHERE THERE CAN BE ANY (docs/superpowers/specs/2026-09-29-run-logs-design.md).
+ * A control over a section that can never have content is a false claim, so a
+ * run the on-prem runner did not execute gets no Logs tab at all.
+ */
+describe('RunTabs — the Logs tab', () => {
+  it('offers Logs after Errors on a run the on-prem runner executed', () => {
+    renderAt(`/runs/${RUN}`, 2, true);
+    expect(screen.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Overview', 'Charts', 'Load generators', 'Errors (2)', 'Logs', 'Trends', 'Compare',
+    ]);
+  });
+
+  it('offers no Logs tab on any other run', () => {
+    renderAt(`/runs/${RUN}`, 2, false);
+    expect(screen.queryByRole('link', { name: 'Logs' })).toBeNull();
+  });
+
+  it('marks Logs current on its own URL', () => {
+    renderAt(`/runs/${RUN}/logs`, 2, true);
+    expect(screen.getByRole('link', { name: 'Logs' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Overview' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('carries the window onto Logs too', () => {
+    renderAt(`/runs/${RUN}?from=10000&to=30000`, 2, true);
+    const href = screen.getByRole('link', { name: 'Logs' }).getAttribute('href') ?? '';
+    expect(href.startsWith(`/runs/${RUN}/logs?`)).toBe(true);
+    expect(href).toMatch(/[?&]from=10000(&|$)/);
+    expect(href).toMatch(/[?&]to=30000(&|$)/);
   });
 });

@@ -4,6 +4,7 @@ import {
   ChartsTabIcon,
   CompareTabIcon,
   ErrorsTabIcon,
+  LogsTabIcon,
   OverviewTabIcon,
   TelemetryTabIcon,
   TrendsTabIcon,
@@ -14,13 +15,14 @@ import {
   runChartsPath,
   runComparePath,
   runErrorsPath,
+  runLogsPath,
   runPath,
   runTelemetryPath,
   runTrendsPath,
 } from './paths';
 
 /**
- * A run's six sections, as navigation.
+ * A run's six sections — seven on a run the on-prem runner executed, which also has Logs — as navigation.
  *
  * `NavLink` supplies `aria-current="page"` itself when its `to` matches — and
  * `end` on the Overview link is what stops it matching `/charts` and
@@ -58,9 +60,14 @@ import {
 export default function RunTabs({
   runId,
   errorCount,
+  hasLogs,
 }: {
   readonly runId: string;
   readonly errorCount: number | null;
+  /** Whether the run has a runner job, and so a Logs tab. REQUIRED, not
+   *  defaulted: a caller that forgot it would silently hide the tab on every
+   *  runner run — or show it on every run, which is worse. */
+  readonly hasLogs: boolean;
 }) {
   /* The window rides along so a tab change does not discard the reader's
      selection — see `useWindowSuffix`, which owns the rule about which
@@ -118,6 +125,16 @@ export default function RunTabs({
             a `getByText('2')` target on a page full of numbers. */}
         {errorCount === null ? 'Errors' : `Errors (${errorCount})`}
       </Tab>
+      {/* LOGS ONLY WHERE THERE CAN BE ANY. A run the on-prem runner did not
+          execute has no events and never will, and a tab over a section that
+          can never have content is a false claim — so it is withheld, not
+          shown empty. It sits after Errors because it is still about THIS
+          run, and before the two tabs that leave it. */}
+      {hasLogs && (
+        <Tab to={withWindow(runLogsPath(runId))} icon={LogsTabIcon}>
+          Logs
+        </Tab>
+      )}
       {/* LAST PAIR, AND THE POSITION IS THE ARGUMENT. The first four tabs answer
           questions about THIS run, narrowing as they go — what happened, what
           it looked like, what generated the load, what went wrong. Trends is

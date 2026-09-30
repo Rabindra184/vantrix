@@ -227,7 +227,11 @@ export default function RunShell({
           and reading it forever if the fetch failed while the panel beneath
           it rendered `role="alert"` (`payload.tsx`'s `TableSection`) — a
           confident zero over a stated failure. */}
-      <RunTabs runId={identity.id} errorCount={errors.data ? errors.data.errors.length : null} />
+      <RunTabs
+        runId={identity.id}
+        errorCount={errors.data ? errors.data.errors.length : null}
+        hasLogs={identity.runnerJobId !== null && identity.runnerJobId !== undefined}
+      />
 
       {/* WHAT THE PAGE IS DOING, above the tab content and below the strip
           that selects it, so it is on screen whichever tab is open. Rendered
