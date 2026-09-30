@@ -358,6 +358,26 @@ export async function seedRunWithData(orgId: string): Promise<string> {
 }
 
 /**
+ * The events the runner writes for a clean run, in the order it writes them.
+ * EXPORTED so a spec derives its expectations from this list rather than
+ * restating it: add or remove an event here and the Logs case follows, where a
+ * copied `11` would fail without saying why.
+ */
+export const RUNNER_RUN_EVENTS = [
+  { message: "Claimed by the runner on 'e2e-node'" },
+  { phase: 'Deploying' },
+  { message: 'Package prepared' },
+  { message: 'Gatling process started and ready to inject traffic' },
+  { phase: 'Injecting' },
+  { message: "Run injection ended with reason 'Run completed normally'" },
+  { phase: 'Ending' },
+  { message: 'Run ended' },
+] as const;
+
+/** `createQueued` writes three events itself: Start requested, the simulation and the package. */
+export const QUEUED_EVENT_COUNT = 3;
+
+/**
  * A finished run owned by an on-prem runner job, with the events a clean run
  * records — the API's three at queue time and the runner's eight — so the
  * Logs tab has something to show.
@@ -380,21 +400,16 @@ export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
     },
     job: {
       id: randomUUID(), requestedBy: 'e2e', environment: null, branch: null, commitSha: null,
-      testSlug: null, javaOptions: null, systemProperties: {},
+      // DISTINCTIVE ON PURPOSE. A log that must never carry the job's
+      // parameters is only proven to when the job HAS some to leak: with
+      // `null` and `{}` the absence assertion in run-logs.spec.ts passes
+      // against a writer that copies every field into a message.
+      testSlug: null, javaOptions: '-Xmx7g -Dleak.secret=PARAM-LEAK-e2e',
+      systemProperties: { 'leak.key': 'PARAM-LEAK-e2e-prop' },
     },
   });
   await prisma.runnerJob.update({ where: { id: created.job.id }, data: { runId, status: 'complete' } });
-  const events = [
-    { message: "Claimed by the runner on 'e2e-node'" },
-    { phase: 'Deploying' },
-    { message: 'Package prepared' },
-    { message: 'Gatling process started and ready to inject traffic' },
-    { phase: 'Injecting' },
-    { message: "Run injection ended with reason 'Run completed normally'" },
-    { phase: 'Ending' },
-    { message: 'Run ended' },
-  ] as const;
-  for (const event of events) await runner.recordRunnerEvent(created.job.id, event);
+  for (const event of RUNNER_RUN_EVENTS) await runner.recordRunnerEvent(created.job.id, event);
   return runId;
 }
 
