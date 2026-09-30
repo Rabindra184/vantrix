@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashToken, mintToken } from '@perfportal/core';
 import {
-  createAuth, createPool, createPrisma, OrgMemberRepository, TelemetryStore,
+  createAuth, createPool, createPrisma, OrgMemberRepository, RunnerRepository, TelemetryStore,
   type InboundTelemetrySample,
 } from '@perfportal/persistence';
 import { BlobStore } from '@perfportal/storage';
@@ -355,6 +355,47 @@ export async function seedRunWithData(orgId: string): Promise<string> {
   const projectId = await projectFor(orgId);
   const token = await mintIngestToken(orgId, projectId);
   return ingestAndProcess(token);
+}
+
+/**
+ * A finished run owned by an on-prem runner job, with the events a clean run
+ * records — the API's three at queue time and the runner's eight — so the
+ * Logs tab has something to show.
+ *
+ * THE RUN IS AN UPLOAD, ADOPTED BY A JOB. Executing a real runner job needs
+ * Java, a bundle and the runner process, none of which this harness starts;
+ * what the browser case proves is the seam from `runner_job_event` to the
+ * page, and a real runner execution is Task 9's job. The job is queued through
+ * the real repository, so the queue events are the real writer's.
+ */
+export async function seedRunnerRunWithEvents(orgId: string): Promise<string> {
+  const runId = await seedRunWithData(orgId);
+  const projectId = await projectFor(orgId);
+  const runner = new RunnerRepository(prisma);
+  const created = await runner.createQueued({
+    artifact: {
+      id: randomUUID(), orgId, projectId, name: 'checkout load', filename: 'checkout.jar',
+      kind: 'gatling_jar', simulationClass: 'example.ParitySimulation', gatlingVersion: '3.15.1',
+      sha256: 'a'.repeat(64), bytes: 1_887_437, storagePath: `runner-artifacts/${randomUUID()}.jar`,
+    },
+    job: {
+      id: randomUUID(), requestedBy: 'e2e', environment: null, branch: null, commitSha: null,
+      testSlug: null, javaOptions: null, systemProperties: {},
+    },
+  });
+  await prisma.runnerJob.update({ where: { id: created.job.id }, data: { runId, status: 'complete' } });
+  const events = [
+    { message: "Claimed by the runner on 'e2e-node'" },
+    { phase: 'Deploying' },
+    { message: 'Package prepared' },
+    { message: 'Gatling process started and ready to inject traffic' },
+    { phase: 'Injecting' },
+    { message: "Run injection ended with reason 'Run completed normally'" },
+    { phase: 'Ending' },
+    { message: 'Run ended' },
+  ] as const;
+  for (const event of events) await runner.recordRunnerEvent(created.job.id, event);
+  return runId;
 }
 
 /**
