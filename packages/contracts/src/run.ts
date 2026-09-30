@@ -306,6 +306,11 @@ export const RunIdentitySchema = z.object({
   /** When the on-prem runner job that produced this run was queued. Null for
    *  a run the runner did not produce. */
   queuedAt: z.string().datetime().nullable().optional(),
+  /** The on-prem runner job that produced this run, or null for a run the
+   *  runner did not produce — which is what decides whether the run page
+   *  offers a Logs tab. OPTIONAL as well as nullable, for the rolling-deploy
+   *  reason the stamps above give. */
+  runnerJobId: z.string().uuid().nullable().optional(),
   /** The note a person wrote on this run (run-note.ts), or null for none.
    *  OPTIONAL as well as nullable, for the rolling-deploy reason the lifecycle
    *  stamps above give: a required field blanks the run page against an API
