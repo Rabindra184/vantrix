@@ -129,10 +129,13 @@ test('a run’s Summary leads with its decision, and its numbers start on the fi
    *      928  after C01 shortened the decision band
    *      876  after M02 withheld the band's prose restatement on a phone
    *      802  after M02 folded the header's secondary metadata away
+   *      804.4 after the run-lifecycle-strip branch, which is where main stood
+   *           when the split began: its one line, grouped under the header
    *      820  after the Summary/Report split (backlog #7): OVER THE BOUND by 8px —
    *           the lifecycle line sat in the shell's 24px above the band
-   *      804  once the line and the band were grouped (8px on a phone), fixing the
-   *           product rather than the bound
+   *      804.4 once the line and the band were grouped (8px on a phone), fixing
+   *           the product rather than the bound — so the split's net change to
+   *           this number is zero
    *      812  the viewport
    *
    * Every earlier bound in this file was the MEASUREMENT rather than the goal,
