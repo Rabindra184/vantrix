@@ -440,6 +440,19 @@ describe('RunShell — GE’s Summary and Report around the tab strip', () => {
     expect(screen.queryByTestId('time-brush')).toBeNull();
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   });
+
+  /** A TRAILING SLASH IS THE SAME PAGE to the router and a different string to
+   *  a comparison, so the shell strips it before deciding which page this is.
+   *  Without that, `/runs/<id>/` — a link pasted with the slash its address bar
+   *  grew — would draw neither the Summary's band nor the Report's window, and
+   *  the page would look like a section that exists and has nothing on it. */
+  it('treats a trailing slash as the same page', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/`);
+    expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    cleanup();
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/report/`);
+    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+  });
 });
 
 /**
