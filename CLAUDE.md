@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **186 files / 2412 tests**, it
+`nvm use` first, and if a run reports fewer than **188 files / 2484 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -146,19 +146,23 @@ firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
 
-The summary-report branch added EIGHT unit files —
+The summary-report branch added TEN unit files —
 `apps/web/test/CollapsibleSection.test.tsx`, `AssertionBars.test.tsx`,
 `RatesChart.combined.test.tsx`, `RunReport.test.tsx`,
 `RunSectionRedirect.test.tsx`, `RunSummary.test.tsx`,
-`RunSummary.live.test.tsx` and `groupRows.test.ts` — and DELETED three
+`RunSummary.live.test.tsx` and `groupRows.test.ts`, then, in its last two
+items, `ChartWindowSelected.test.tsx` and `distributionQuery.windowed.test.ts`
+— and DELETED three
 (`RunErrorsTab.live`, `RunOverviewTab.live`, `ToolAssertions`, whose claims
 moved into the new files), renaming two more, plus one case to
-`DesktopOnly.test.tsx`, from **181 / 2313 to 186 / 2412**. Integration moves with the one new `.ts` file and the `.ts`
-cases (`paths`, `transforms.rates`, `transforms.users`), from **170 / 2086 to
-171 / 2103**, and **e2e rises to 177**: 168, minus 2 cases deleted, plus 1
-(`run-tables.spec.ts`' heading outline split in two), plus the ten cases of the
-new `apps/web/e2e/run-summary-report.spec.ts` (177 measured; ten more specs
-were moved onto the new pages without changing their count). It is
+`DesktopOnly.test.tsx`, from **181 / 2313 to 188 / 2484**. Integration moves with the two new `.ts` files and the `.ts`
+cases (`paths`, `transforms.rates`, `transforms.users`, and the empty-window
+pairs in the seven `transforms.*` files), from **170 / 2086 to
+172 / 2142**, and **e2e rises to 179**: 168, minus 2 cases deleted, plus 1
+(`run-tables.spec.ts`' heading outline split in two), plus the twelve cases of the
+new `apps/web/e2e/run-summary-report.spec.ts` (179 measured; ten more specs
+were moved onto the new pages without changing their count). The branch was
+first measured at 186 / 2412, 171 / 2103 and 177, before its last two items. It is
 backlog item #7 of the Gatling Enterprise comparison: the run page becomes
 GE's two pages, a **Summary** that is always the whole run and a **Report**
 that carries the time window and the charts in collapsible sections. Seven
@@ -330,22 +334,19 @@ with its replacement count asserted:
     gate's sentence and the failed simulation assertion's. The band's layout
     did not change on this branch (its link's `to` did, below), so that is the
     M02 shape rather than a new one, and it is measured rather than bound.
-  - The Report's Requests charts say "this run" sentences under an empty
-    window ("No requests failed in this run." and others) — pre-existing on
-    `main`'s Charts tab and not touched here; its own task.
   - A second click on the band's "See the failed simulation assertion" after
     the reader has shut the bar leaves it shut: the fragment is already the
     URL's, so nothing re-opens it. And the live Platform gates bar's wording is
     as the final review found it.
-  - THE `/errors` REDIRECT LANDS THE TABLE BELOW THE FOLD at 1280x720, and its
-    landing is the one redirect case that does not assert arrival. The reveal
-    fires the frame `#errors` exists — page 2,167px tall, scrolled to its
-    maximum of 1,447, target at top 441 — and the tiles, bars and charts above it
-    then arrive over ~75ms, grow the page to 2,544px and leave the target at top
-    784 of a 720px viewport (891 of 900 at 1440x900). `/load-generators` is
-    asserted: the page bottom clamps its scroll, so it lands at top 293. A fix
-    is a reveal that waits for the page above it to settle, which is a
-    product change and was not made here.
+  - `keepInPlace` holds a revealed fragment only while the layout keeps
+    changing: 1s without a change ends it, and 5s from the reveal is the cap. A
+    Summary whose `/stats` takes longer than a second to answer after the reveal
+    is not held, and the reveal lands where the one-shot always did. The 1s was
+    measured against a ~75ms settle on a local API, not against a slow one.
+  - `/distribution` still answers 404 for a windowed read that selects no
+    buckets; the client now reads that as an empty window rather than the
+    handler answering 200 with an empty distribution, which is a contract change
+    and was not made.
 
 **THE REAL RUN FOUND ONE MORE, AND IT WAS A SENTENCE THIS BRANCH MADE FALSE.**
 `DesktopOnly`'s phone placeholder ends "The summary above carries the verdict
@@ -393,9 +394,9 @@ ONLY A REDIRECT REACHES, AND A TEST THAT PINNED A HOOK INSTEAD OF A PAGE.**
   - **A REDIRECT'S TARGET WAS NEVER ASSERTED TO BE ON SCREEN.** The three
     old-URL cases read the URL and the section's open state, and the reveal that
     actually brings the reader to the fragment is exercised by none of those
-    lines. Asserting it found the landing numbers in the known-and-left list
-    above. **A test that follows a link and checks the address has proved the
-    link, not the arrival.**
+    lines. Asserting it found the landing numbers recorded in the paragraph
+    below, which the branch's last item then fixed. **A test that follows a link
+    and checks the address has proved the link, not the arrival.**
   - **`useWholeRunDomainFromShell` WAS PINNED THROUGH A PROBE, NOT THROUGH THE
     PAGE.** The case read the hook directly, so switching `RunSummary` itself to
     the Report's windowed hook left every unit case green. The file wraps the real
@@ -413,23 +414,172 @@ ONLY A REDIRECT REACHES, AND A TEST THAT PINNED A HOOK INSTEAD OF A PAGE.**
     removed — the legend comment on the navigator was the one that had become
     false rather than stale, since the chart below no longer names its lines.
 
+**THE LAST TWO ITEMS TOOK WHAT THE FINAL REVIEW LEFT, AND ONE OF THEM HID A
+SECOND DEFECT BEHIND ITS OWN ASSERTION.**
+
+**I6: A REVEAL THAT HOLDS ITS TARGET WHILE THE PAGE ABOVE IT SETTLES.** The
+reveal scrolled `#errors` into view once, the frame it existed, and the
+Summary's tiles, bars and charts then arrived over ~75ms and pushed it back.
+`keepInPlace` in `AppShell.tsx` re-runs the SAME `scrollIntoView` (so
+`scroll-margin-top` still applies) from a `ResizeObserver` on the root element
+and `<main>` whenever the target has moved, measuring each shift from where the
+last correction left it. Measured per frame on the reference run, with the fix:
+
+```
+                 reveal                          after the page settles
+  1280x720       207ms scrollY 1447 top 441      doc 2544, scrollY 1824, top 407 (bottom 697)
+  1440x900       143ms scrollY 1210 top 621      doc 2410, scrollY 1510, top 586 (bottom 876)
+```
+
+Without it the same two runs ended at top 784 of 720 and 891 of 900. The
+observer fires on the root element and on `<main>` at identical instants on this
+page; both are kept because `<main>` grows even where a taller rail keeps the
+root's height unchanged. It stops for good at the reader's first `wheel`,
+`touchstart`, `keydown` or `pointerdown` (programmatic scrolls raise none of
+them, so its own corrections never cancel it), after 1s without a layout change,
+at a 5s cap, and with the effect; it scrolls and never re-focuses; and without a
+`ResizeObserver` the one-shot reveal is as it was.
+
+**THE LANDING IS ASSERTED AS "FULLY IN VIEW", NOT "IN THE UPPER HALF", AND THE
+REASON IS THE PAGE.** The errors section is the last thing on the Summary, so
+the page bottom clamps the scroll before the section can reach the top: top 407
+of 720 and 586 of 900 are the best any implementation can do. `ratio: 1` is also
+the stricter bound, because the 1440x900 miss was nine pixels visible
+(`ratio 0.0298`), which a bare `toBeInViewport()` passes.
+
+**THE READER-WINS CASE HOLDS ITS TIMING AT THE NETWORK, WITH NO SLEEPS.** The
+window between the reveal and the growth is ~75ms, too short to land a wheel in
+by luck, so the four requests that grow the page (`/stats`, `/trends`, `/users`,
+`/series`) wait on one deferred promise: reveal (`waitForFunction`, rAF polling),
+`mouse.wheel(0, -600)`, release, wait for the tiles and plots, two frames, then
+assert. Its guards against a vacuous pass are that the reveal scrolled the page
+(1447), the document grew after the release (2167 to 2544), and the reader's
+position (842) is below where the reveal left it; and the table is not in view.
+It needs the release inside the keeper's 1s idle window, which the sequence
+meets by a wide margin (it fails 6 of 6 against the mutation and the three
+`/errors` cases passed 30 of 30), so on a machine slow enough to exceed it the
+mutation would pass rather than the product fail. The filter-after-redirect
+case no longer scrolls the table into view itself: it relies on the landing.
+
+**TWO UNIT GAPS WERE FOUND BY THE RED-VERIFY, NOT BY READING.** The first
+unmount case compared listener TYPES, and removing `{ capture: true }` from the
+`removeEventListener` call (which removes nothing, since capture is part of a
+listener's identity) passed it; it compares the listener and the flag now. And
+adding a second `target.focus()` to every correction passed all twenty cases,
+because nothing asserted focus moves once; a case does.
+
+**THE REPORT'S CHARTS NAME THE WINDOW WHEN IT SELECTS NOTHING.** Under
+`?from=62000&to=63000` (a real, in-range second of the reference run holding no
+requests) the Requests charts said "No requests failed in this run." on a run
+with 24 failures, and the rest in kind, while the Table and Groups already said
+"in the selected window". Each of the ten charts takes a REQUIRED
+`windowSelected` and passes it to its transform as a field of an options object;
+the repo's rule is that a parameter whose wrong value is silent gets no default,
+so `tsc` found every caller (about 115 test sites among them). The rule per
+branch is that the sentence which says "nothing in this run" flips to one naming
+the window, and a sentence about the run's INGESTION or STORAGE stays, because a
+window cannot make it false:
+
+```
+  flips   no failures, no bands, no counts, no distribution, no curve (both
+          branches of each), no percentiles, no rates, no user activity
+  stays   "ingested before failures were recorded over time", the fixed-bands
+          and overflow notes, "no percentile bands are selected" (a control),
+          the data-resolution notes
+  never   the request- and group-scoped indicator sentences: the drill-downs
+          are never windowed, and `toRowIndicators` takes no flag
+```
+
+`toDistribution`'s second branch flips too ("No response time in this run fell
+inside the recorded range"): the window may hold only the responses that
+overflowed, so "in this run" is false of it. `toPercentiles` took its options as
+the SECOND argument, with `bands` and `outcome` inside the bag, because a
+required fourth behind two defaults would have meant `undefined, undefined, {...}`
+at every call.
+
+**THE ASSERTION THE BRIEF ASKED FOR COULD NOT HOLD, BECAUSE TWO CHARTS WERE NOT
+SAYING ANY OF THIS.** A probe printed every figure's sentence before the e2e was
+written, and the two distribution charts read `No response_time histogram for run
+"" in run <id>. … which lists every row this run recorded.`: `/distribution`
+answers 404 for a windowed read that selects no buckets (the handler cannot tell
+a name that never existed from a quiet window), and `Payload` relays a failed
+query's own text. That contains "this run", and it meant the two transforms'
+window sentences were unreachable on the page. `distributionQuery` now reads a
+404 on a WINDOWED read, and only that, as the empty payload the transforms
+explain; an unwindowed 404 (a run with no histogram) is still relayed and any
+other status still throws. The endpoint was not changed: answering 200 with an
+empty distribution is the alternative, and is a contract change.
+
+**A COMPONENT THAT IS HANDED A FLAG CAN STILL DROP IT, SO A SEAM FILE RENDERS
+ALL TEN.** The transform pairs prove each sentence when given the flag, and say
+nothing about whether the component above passes the one it received; a chart
+that calls its transform with `windowSelected: false` passes all of them.
+`ChartWindowSelected.test.tsx` renders every chart under both flags with an empty
+payload (an empty chart creates no ECharts instance, so nothing is mocked) and
+reads the `role="status"` sentence. The browser case proves the page derives the
+flag from the URL, on the default Charts view, and pairs "no chart says 'this
+run'" with seven sentences collected so it cannot pass against figures that did
+not draw. Claims are asserted, not wording (`expectAboutTheWindow` /
+`expectAboutTheRun`), each case an exclusive pair.
+
+**RED-VERIFIED, EVERY MUTATION AFTER A CHECKPOINT COMMIT WITH ITS REPLACEMENT
+COUNT ASSERTED:**
+
+```
+  I6 unit      no re-scroll on drift                     the re-scroll case + next-shift case
+               drift threshold removed                   the leaves-alone case + next-shift case
+               threshold < 1 -> < 0.0001                 the leaves-alone case alone (sub-pixel)
+               top not re-read after a correction        the next-shift case alone
+               each of wheel / touchstart / keydown /    that input's stop case (wheel and
+               pointerdown dropped                       touchstart also the unmount case)
+               stopKeeping removed from cleanup          the unmount case
+               removeEventListener without capture       the unmount case (passed it before the
+                                                         case compared listener and flag)
+               idle stop / hard cap removed              the idle case / the cap case
+               #main / the root element not observed     the observes-both case
+               a second focus() on each correction       the focus case (20 passed before it)
+  I6 browser   keepInPlace not called                    the /errors redirect case: ratio 0, and
+                                                         the filter case without its workaround
+               same, 1440x900 only                       ratio 0.0298 (nine pixels visible)
+               wheel not an input, six runs              the reader-wins case 6 of 6
+  charts       each transform's flag ignored             that transform's window cases + that
+                                                         chart's seam case (7 transforms)
+               errors "always window"                    the run-sentence pair
+               ingestion sentence also switched          the keeps-the-ingestion case alone
+               distribution / per-outcome second branch  that branch's cases alone
+               flag not forwarded (4 components)         the seam case for that chart ALONE
+               windowed 404 relayed again                the query case + the e2e (on the
+                                                         distribution chart)
+               404 converted with no window              the still-relays case alone
+               RunReport passes false (all / errors)     the e2e case; the Table case stays green
+               indicators sentence "...window of this    the e2e's final no-"this run" collection
+               run"                                      alone, after every other line passed
+```
+
 **WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
-`test:unit` **186 / 2412**, the prediction counted from the source exactly
-(2401 plus eleven cases), zero `Errors` lines, and the zone-sensitive files the
-fix wave touched (`lifecycle`, `RunShell`, `RunSummary`; 84 tests) under
-`TZ=UTC`; `test:integration` **171 / 2103, exit 0, zero failures**, re-run on
-the final tree because the wave edited a comment in `lifecycle.test.ts`, a `.ts`
-file that config includes — unchanged, as a comment must leave it;
-`pnpm test:e2e` **177 passed, exit 0**, the prediction exactly (176 plus the one
-new case). All against a SCRATCH DATABASE (`perfportal_summary`), a scratch
-Redis INDEX (db 8) and e2e port 3800, while two other worktrees ran their own
-gates on their own stores. **AND CI MEASURED THE TREE BEFORE THIS WAVE**,
-dispatched on `8e85697` before the placeholder-sentence fix: `build` read unit
-**186 / 2400**, integration
+`test:unit` **188 / 2484**, the prediction counted from the source exactly (2412
+plus twelve AppShell cases and sixty for the charts: thirty-six pairs in the
+seven transform files, twenty-one in the seam file and three for the query),
+zero `Errors` lines; `test:integration` **172 / 2142, exit 0, zero failures**,
+the prediction exactly (171 plus the new `.ts` file; 2103 plus the thirty-six
+transform cases and the query's three, none of the `.tsx` ones);
+`pnpm test:e2e` **179 passed, exit 0**, the prediction exactly (177 plus the
+reader-wins case and the charts case). All against a SCRATCH DATABASE
+(`perfportal_summary`), a scratch Redis INDEX (db 8) and e2e port 3800, while
+another worktree ran its own integration gate on its own stores; the 1-minute
+load was 14.5 when integration started and 6.4 when it ended. The tree before
+the last two items measured 186 / 2412, 171 / 2103 and 177, each exact against
+its own prediction (2401 plus eleven cases; 176 plus the one new case) — the
+final-review fix wave's run, kept here because CI measured that tree:
+all five gates exit 0 on it, and **CI MEASURED THE
+TREE BEFORE THAT WAVE**, dispatched on `8e85697` before the placeholder-sentence
+fix: `build` read unit **186 / 2400**, integration
 **171 / 2103** and e2e **176 passed**, and `e2e-cross-browser` collected
 **528** (176 × three engines) and passed **523 with 5 skipped, none failed or
 flaky**, in 23.3 minutes — the collapsible sections are where WebKit's
-visibility workaround has bitten this repository before, and it did not.
+visibility workaround has bitten this repository before, and it did not. The
+cross-browser job has not seen the last two items: a `ResizeObserver` that
+scrolls and a wheel are exactly what an engine could disagree about.
 
 **THE REAL RUN.** The developer database with the API, worker and on-prem
 runner from this worktree on Node 22 and their own Redis index (db 11), and a
