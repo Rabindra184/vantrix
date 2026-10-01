@@ -30,14 +30,21 @@ import type { ReactNode } from 'react';
  * chrome: column labels, overlines, status pills, the things that frame data
  * rather than being it. `Simulation assertions` set in capitals would read as
  * a label for the section rather than as its title.
+ *
+ * A section nested inside another section's heading takes `level={3}`, so the
+ * outline says it belongs to that section — the Report's Statistics table sits
+ * under Requests, not beside it. The `<h3>` rung is the 15px one above.
  */
 export default function SectionHeading({
   children,
   id,
+  level = 2,
   overline,
 }: {
   readonly children: ReactNode;
   readonly id?: string;
+  /** `3` for a heading inside a section; the size follows the level, so the visual ladder and the outline cannot disagree. */
+  readonly level?: 2 | 3;
   /**
    * A short uppercase kicker above the heading, naming what KIND of thing the
    * section holds — "Evidence" over Assertions, "Run telemetry" over
@@ -52,11 +59,13 @@ export default function SectionHeading({
    */
   readonly overline?: string;
 }) {
+  const Heading = level === 3 ? 'h3' : 'h2';
+  const size = level === 3 ? 'text-[0.9375rem]' : 'text-base';
   if (overline === undefined) {
     return (
-      <h2 id={id} className="text-base font-semibold tracking-tight text-primary">
+      <Heading id={id} className={`${size} font-semibold tracking-tight text-primary`}>
         {children}
-      </h2>
+      </Heading>
     );
   }
   return (
@@ -64,9 +73,9 @@ export default function SectionHeading({
       <p className="text-[0.75rem] font-medium text-muted">
         {overline}
       </p>
-      <h2 id={id} className="text-base font-semibold tracking-tight text-primary">
+      <Heading id={id} className={`${size} font-semibold tracking-tight text-primary`}>
         {children}
-      </h2>
+      </Heading>
     </div>
   );
 }
