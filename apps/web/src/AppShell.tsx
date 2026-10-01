@@ -10,6 +10,91 @@ import { ActivityIcon } from './components/icons';
 import { DEFAULT_ROUTE } from './routes/paths';
 
 /**
+ * ═══ A ONE-SHOT REVEAL IS RIGHT ONLY ON A PAGE ALREADY LAID OUT ═══
+ *
+ * `scrollIntoView` places the target where it is THE FRAME IT IS CALLED. On the
+ * run Summary that frame is early: the errors table is ready within a few
+ * hundred milliseconds, while the headline tiles wait on `/stats` and the two
+ * charts on their own queries, and all of them sit ABOVE `#errors`. Measured
+ * on the e2e reference run for an old `/errors` link, per animation frame:
+ *
+ *     1280x720   200ms  scrollY 1447 (the page's own maximum), target top 441,
+ *                       document 2167px
+ *                275ms  document 2544px, target top 784 of a 720px viewport
+ *                       -> the table settles ENTIRELY BELOW THE FOLD
+ *     1440x900   reveal at target top 621; settles at top 891 of 900
+ *                       -> nine pixels visible, by luck
+ *
+ * ~377px arrives over ~75ms and pushes the target away from where the reveal
+ * put it. `/load-generators` escaped only because the page bottom clamps the
+ * scroll (target top 293). A reveal that is correct for an already-settled page
+ * was the wrong tool for a page that settles under it.
+ *
+ * SO IT KEEPS THE TARGET WHERE THE REVEAL PUT IT while the page above settles:
+ * a `ResizeObserver` on the document re-runs the same `scrollIntoView` (so
+ * `scroll-margin-top` still applies) whenever the target has drifted. The
+ * observed boxes are the root element and `<main>`; the target's own position,
+ * not their size, decides whether to move, because most growth (a table below
+ * the target) changes a height and moves nothing.
+ *
+ * ═══ AND THE READER ALWAYS WINS ═══
+ *
+ * Taking the page away from someone who has started scrolling is worse than the
+ * defect, so the first `wheel`, `touchstart`, `keydown` or `pointerdown` ends
+ * it for good. Programmatic scrolls raise none of those, so our own corrections
+ * never cancel us. Otherwise it stops once the layout has been still for
+ * `SETTLE_IDLE_MS`, and never runs past `SETTLE_CAP_MS` from the reveal, so a
+ * page that keeps changing (a live run) is not held for ever.
+ *
+ * Scroll only: focus moved once at the reveal and is not taken back on every
+ * correction. No `ResizeObserver` (jsdom) leaves the one-shot reveal exactly as
+ * it was. Returns the teardown the effect's cleanup calls.
+ */
+const SETTLE_IDLE_MS = 1000;
+const SETTLE_CAP_MS = 5000;
+const READER_INPUTS = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+
+function keepInPlace(target: HTMLElement): () => void {
+  if (typeof ResizeObserver === 'undefined') return () => {};
+
+  let top = target.getBoundingClientRect().top;
+  let idle = 0;
+  let cap = 0;
+  let observer: ResizeObserver | null = null;
+
+  const stop = (): void => {
+    window.clearTimeout(idle);
+    window.clearTimeout(cap);
+    observer?.disconnect();
+    observer = null;
+    // The same options the listeners were added with: `capture` is part of a
+    // listener's identity, and a mismatch removes nothing.
+    for (const type of READER_INPUTS) document.removeEventListener(type, stop, { capture: true });
+  };
+
+  observer = new ResizeObserver(() => {
+    window.clearTimeout(idle);
+    idle = window.setTimeout(stop, SETTLE_IDLE_MS);
+    // Sub-pixel noise is not drift; a real shift is tens of pixels.
+    if (Math.abs(target.getBoundingClientRect().top - top) < 1) return;
+    target.scrollIntoView({ block: 'start' });
+    // Re-read rather than assume: a clamped scroll lands short of the margin,
+    // and the NEXT drift is measured from where the target actually is.
+    top = target.getBoundingClientRect().top;
+  });
+  observer.observe(document.documentElement);
+  const main = document.getElementById('main');
+  if (main !== null) observer.observe(main);
+
+  // `capture` so a handler that stops propagation cannot hide the reader's
+  // input from us; `passive` because we never cancel it.
+  for (const type of READER_INPUTS) document.addEventListener(type, stop, { capture: true, passive: true });
+  idle = window.setTimeout(stop, SETTLE_IDLE_MS);
+  cap = window.setTimeout(stop, SETTLE_CAP_MS);
+  return stop;
+}
+
+/**
  * The chrome around every authenticated page: rendered only inside
  * `AuthGate`, so its presence on screen is itself the proof that a session
  * survived — which is what the reload test asserts.
@@ -151,6 +236,7 @@ export default function AppShell() {
     const id = decodeURIComponent(hash.slice(1));
     let cancelled = false;
     let frame = 0;
+    let stopKeeping = (): void => {};
 
     const reveal = (attemptsLeft: number): void => {
       if (cancelled) return;
@@ -162,6 +248,9 @@ export default function AppShell() {
       target.scrollIntoView({ block: 'start' });
       if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
       target.focus({ preventScroll: true });
+      // After the focus, and only once: a correction is a scroll, never a
+      // second focus move.
+      stopKeeping = keepInPlace(target);
     };
 
     // ~60 frames is about a second at 60Hz: long enough for a lazy chunk and
@@ -170,6 +259,7 @@ export default function AppShell() {
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
+      stopKeeping();
     };
   }, [pathname, hash]);
 

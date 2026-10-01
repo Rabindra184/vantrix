@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import AppShell from '../src/AppShell';
 
 afterEach(cleanup);
@@ -257,5 +257,245 @@ describe('AppShell — scroll restoration is keyed on the path', () => {
     renderAt('/runs/abc');
     await screen.findByRole('heading', { name: 'Errors' });
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ═══ A REVEAL KEEPS THE TARGET WHERE IT PUT IT, UNTIL THE READER TAKES OVER ═══
+ *
+ * The one-shot reveal is right only on a page already laid out, and the run
+ * Summary is not: its tiles and charts arrive after `#errors` exists and push
+ * it back below the fold (measured numbers in `AppShell.tsx`, which `keepInPlace`
+ * is documented in; the browser case in `run-summary-report.spec.ts` is the one
+ * that measures where the table ends up).
+ *
+ * jsdom has no layout and no `ResizeObserver`, so what these cases pin is the
+ * CONTRACT with the observer: the stub records what the page observes, the test
+ * fires it by hand, and the target's `getBoundingClientRect().top` is the
+ * variable a real layout shift would move. The call is the witness —
+ * `scrollIntoView`, because that is the same call the reveal makes and so
+ * `scroll-margin-top` still applies.
+ *
+ * WITHOUT A `ResizeObserver` the one-shot reveal is exactly as it was: every
+ * case in the describe above runs in that state, which is the guard.
+ */
+describe('AppShell — a revealed fragment holds its place while the page settles', () => {
+  /** Every observer the shell created, in order, so a case can fire or inspect it. */
+  class FakeResizeObserver {
+    static instances: FakeResizeObserver[] = [];
+    private connected = true;
+    readonly observe = vi.fn();
+    readonly unobserve = vi.fn();
+    /* A disconnected observer delivers nothing, as the real one does — so a
+       `fire()` after the shell has stopped is a no-op unless the shell forgot
+       to disconnect, which is exactly what the stop cases are asking. */
+    readonly disconnect = vi.fn(() => {
+      this.connected = false;
+    });
+    constructor(private readonly callback: () => void) {
+      FakeResizeObserver.instances.push(this);
+    }
+    /** A layout change, as the browser would deliver it. */
+    fire(): void {
+      if (this.connected) this.callback();
+    }
+  }
+
+  let scrollIntoView: Mock<(options?: ScrollIntoViewOptions) => void>;
+  /** Where the target sits in the viewport — the thing a shift above it moves. */
+  let top: number;
+  /** Where a `scrollIntoView` leaves it: the page bottom clamps the scroll, so
+   *  a correction lands short of the margin. */
+  let landsAt: number;
+
+  beforeEach(() => {
+    FakeResizeObserver.instances = [];
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    top = 0;
+    landsAt = 441; // where the REVEAL leaves the target: the page is still short
+    scrollIntoView = vi.fn(() => {
+      top = landsAt;
+    });
+    Element.prototype.scrollIntoView = scrollIntoView;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ top, bottom: top + 290, left: 0, right: 0, width: 0, height: 290, x: 0, y: top }) as DOMRect,
+    );
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function renderRevealed() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/abc#errors']}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route
+                path="/runs/:runId"
+                element={
+                  <section id="errors">
+                    <h2>Errors</h2>
+                  </section>
+                }
+              />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return view;
+  }
+
+  /** The reveal has run and the shell is watching the layout. */
+  async function revealed() {
+    const view = renderRevealed();
+    await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect(FakeResizeObserver.instances).toHaveLength(1);
+    expect(top).toBe(441);
+    return view;
+  }
+
+  it('scrolls the target again when content above it pushes it away', async () => {
+    await revealed();
+
+    top = 784; // the tiles and charts arrived: the same section, 343px lower
+    FakeResizeObserver.instances[0]!.fire();
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(scrollIntoView.mock.instances[1]).toBe(screen.getByRole('heading', { name: 'Errors' }).closest('section'));
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'start' });
+  });
+
+  /** Most growth is NOT above the target — a table below it changes a height
+   *  and moves nothing — and scrolling on every such callback would be a
+   *  jolt for no reason. The target's own position decides. */
+  it('leaves the scroll alone when the layout changed but the target did not move', async () => {
+    await revealed();
+
+    FakeResizeObserver.instances[0]!.fire();
+    top += 0.4; // sub-pixel noise is not a shift either
+    FakeResizeObserver.instances[0]!.fire();
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  /** A correction lands the target somewhere new (clamped by the page bottom,
+   *  it is not at the margin), and the NEXT shift is measured from there — not
+   *  from the reveal's position, which would re-scroll on every callback after
+   *  the first. */
+  it('measures the next shift from where the last correction left it', async () => {
+    await revealed();
+
+    landsAt = 407; // the page has grown: its bottom now clamps the scroll lower
+    top = 784;
+    FakeResizeObserver.instances[0]!.fire();
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(top).toBe(407); // the corrected scroll landed short of the margin
+
+    // A stray callback with nothing moved must not scroll again: measured from
+    // the reveal's 441, 407 would read as a shift and every callback after the
+    // first would re-scroll.
+    FakeResizeObserver.instances[0]!.fire();
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+
+    // And a REAL shift from there is still followed.
+    top = 600;
+    FakeResizeObserver.instances[0]!.fire();
+    expect(scrollIntoView).toHaveBeenCalledTimes(3);
+  });
+
+  /** Observes what it should: the root element and `<main>` — the two boxes a
+   *  page settling above the target can grow. */
+  it('observes the document and the main column', async () => {
+    await revealed();
+    const observed = FakeResizeObserver.instances[0]!.observe.mock.calls.map(([el]) => el);
+    expect(observed).toContain(document.documentElement);
+    expect(observed).toContain(document.getElementById('main'));
+  });
+
+  /** THE READER WINS. Taking the page away from someone who has started to
+   *  scroll is worse than the defect, and all four are how a reader says so. */
+  it.each(['wheel', 'touchstart', 'keydown', 'pointerdown'])(
+    'stops for good at the first %s',
+    async (type) => {
+      await revealed();
+
+      document.dispatchEvent(new Event(type, { bubbles: true }));
+      expect(FakeResizeObserver.instances[0]!.disconnect).toHaveBeenCalled();
+
+      // Even if the observer were delivered a late callback, the page is theirs.
+      top = 784;
+      FakeResizeObserver.instances[0]!.fire();
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  /** A fragment the reader navigated away from is not ours to hold. */
+  it('tears the observer and the input listeners down on unmount', async () => {
+    const removed = vi.spyOn(document, 'removeEventListener');
+    const view = await revealed();
+
+    view.unmount();
+
+    expect(FakeResizeObserver.instances[0]!.disconnect).toHaveBeenCalled();
+    const removedTypes = removed.mock.calls.map(([type]) => type);
+    for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) {
+      expect(removedTypes, `${type} listener`).toContain(type);
+    }
+    // And nothing the shell left behind can pull a page it no longer owns.
+    top = 784;
+    FakeResizeObserver.instances[0]!.fire();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  /** A page that goes still is done settling: holding it for ever would fight
+   *  a reader who has simply not scrolled yet. */
+  it('stops once the layout has been still, and never outlives its cap', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      renderRevealed();
+      await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+      const observer = FakeResizeObserver.instances[0]!;
+      expect(observer.disconnect).not.toHaveBeenCalled();
+
+      // A callback restarts the idle window, so a page still settling is held.
+      vi.advanceTimersByTime(900);
+      observer.fire();
+      vi.advanceTimersByTime(900);
+      expect(observer.disconnect).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(200); // 1.1s since the last change
+      expect(observer.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up at the hard cap even while the layout keeps changing', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      renderRevealed();
+      await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+      const observer = FakeResizeObserver.instances[0]!;
+
+      // A live page: a change every 500ms for ever, so the idle window never expires.
+      for (let elapsed = 0; elapsed < 4_500; elapsed += 500) {
+        vi.advanceTimersByTime(500);
+        observer.fire();
+      }
+      expect(observer.disconnect).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(600); // past 5s from the reveal
+      expect(observer.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

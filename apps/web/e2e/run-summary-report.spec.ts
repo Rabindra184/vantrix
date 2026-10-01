@@ -36,6 +36,22 @@ async function seeded(page: Page): Promise<string> {
 const TOTAL = 'stat-total-requests';
 
 /**
+ * THE SUMMARY HAS FINISHED ARRIVING: its headline tiles (gated on `/stats`) are
+ * showing and its two charts (their own query) have drawn. Everything that can
+ * push the errors section down — the tiles and the baseline note under them, the
+ * bars, the charts — is above it, so this is "nothing left to move the target".
+ *
+ * The chart counts are `plot()`, not the figure ids: `Payload` draws the
+ * figures with their final ids from first paint (a placeholder reading
+ * "Loading…"), so an id is not evidence the thing it names drew.
+ */
+async function summarySettled(page: Page): Promise<void> {
+  await expect(page.getByTestId(TOTAL)).toHaveText(/\d/);
+  await expect(plot(page.getByTestId('chart-requests-and-responses'))).toHaveCount(1);
+  await expect(plot(page.getByTestId('chart-percentiles'))).toHaveCount(1);
+}
+
+/**
  * THE VACUITY GUARD IS THE HALF THAT MAKES THIS A CLAIM. "The Summary reads the
  * same with a window in its URL" is satisfied by a window that narrows nothing —
  * a bundle with no requests in those five seconds, or a run that is not
@@ -168,7 +184,7 @@ for (const [old, rest, hash] of [
      * hash navigation — so what brings the reader to the target is AppShell's
      * reveal, which no earlier line here exercised.
      *
-     * CHECKED ONLY ONCE THE CHARTS ABOVE HAVE DRAWN. The reveal runs the frame
+     * CHECKED ONLY ONCE THE PAGE ABOVE HAS SETTLED. The reveal runs the frame
      * the target exists, which is before the figures above it have painted; a
      * target measured before that settles could read in or out of view for
      * reasons that are about timing and not about the redirect. The plot
@@ -176,14 +192,21 @@ for (const [old, rest, hash] of [
      * loading" instead, because inside this case's 0-10 s window the reference
      * run has no errors to draw and the chart says so rather than plotting.
      *
-     * ONLY `/load-generators` IS ASSERTED. The `/errors` landing is NOT in
-     * the viewport at 1280x720 once the Summary has settled, and that is a
-     * measurement rather than a guess: the reveal fires the frame `#errors`
-     * exists, with the page 2,167px tall and so scrolled to its maximum
-     * (1447); the tiles and bars above then arrive over the next ~75ms, the
-     * page grows to 2,544px and the target settles at top 784 of a 720px
-     * viewport (891 of 900 at 1440x900). It is left unasserted rather than
-     * loosened, until the reveal waits for the page above it to settle. */
+     * `/errors` WAS UNASSERTED FOR A WHILE, AND THE REASON WAS A DEFECT. The
+     * reveal fired the frame `#errors` existed, with the page 2,167px tall and
+     * so scrolled to its maximum (1447); the tiles and bars above then arrived
+     * over ~75ms, grew the page to 2,544px and left the target at top 784 of a
+     * 720px viewport (891 of 900 at 1440x900) — entirely below the fold at one
+     * size and nine pixels visible, by luck, at the other. AppShell now keeps
+     * the target where the reveal put it while the page settles
+     * (`keepInPlace`), and both sizes are asserted here.
+     *
+     * FULLY IN VIEW, NOT "IN THE UPPER HALF". The errors section is the last
+     * thing on the Summary, so the page bottom clamps the scroll before the
+     * section can reach the top: measured with the fix, top 407 of 720 and 586
+     * of 900, both below the middle. What the reader needs is the whole table
+     * on screen, which is also the stricter bound — nine visible pixels at
+     * 1440x900 pass a bare `toBeInViewport()` and fail `ratio: 1`. */
     if (old === 'load-generators') {
       for (const id of REPORT_REQUEST_CHARTS) {
         const figure = page.getByTestId(`chart-${id}`);
@@ -191,6 +214,24 @@ for (const [old, rest, hash] of [
         else await expect(plot(figure), id).toHaveCount(1);
       }
       await expect(page.locator('section#load-generators')).toBeInViewport();
+    }
+    if (old === 'errors') {
+      for (const viewport of [
+        { width: 1280, height: 720 },
+        { width: 1440, height: 900 },
+      ]) {
+        // The first pass is the suite's own 1280x720; the second is a fresh
+        // load of the same old link at the other size, where the miss was nine
+        // pixels rather than none.
+        if (viewport.height !== 720) {
+          await page.setViewportSize(viewport);
+          await page.goto(`${runPath(runId)}/errors?from=0&to=10000`);
+        }
+        await summarySettled(page);
+        await expect(page.locator('#errors'), `the errors section at ${viewport.width}x${viewport.height}`).toBeInViewport({
+          ratio: 1,
+        });
+      }
     }
   });
 }
@@ -236,15 +277,16 @@ test('changing the Investigate filter after an old /errors link keeps the reader
   await expect(page).toHaveURL(new RegExp(`${runPath(runId)}\\?request=Place%20Order#errors$`));
   const filter = page.getByTestId('errors-request-filter');
   await expect(filter).toHaveValue('Place Order');
-  // Settled: the charts above the table have drawn, so nothing is left to move it.
-  await expect(plot(page.getByTestId('chart-requests-and-responses'))).toHaveCount(1);
-  await expect(plot(page.getByTestId('chart-percentiles'))).toHaveCount(1);
+  // Settled: the tiles and charts above the table have arrived, so nothing is
+  // left to move it.
+  await summarySettled(page);
   const table = page.locator('#errors').getByRole('table');
-  /* SCROLLED THERE EXPLICITLY. The redirect's own reveal does not leave the
-   * table on screen at 1280x720 (see the redirect cases above), so this puts
-   * the reader where the case needs them — at the table, scrolled down — and
-   * leaves the reveal to its own coverage. */
-  await table.scrollIntoViewIfNeeded();
+  /* NOT SCROLLED THERE BY THE TEST. This used to bring the table into view
+   * itself, because the redirect's own reveal left it below the fold at
+   * 1280x720 once the page above had grown (see the redirect cases). The reveal
+   * now holds the target while the page settles, so the case relies on the
+   * product's own landing: the reader is where the old link put them, and the
+   * claim is that changing the filter does not move them. */
   await expect(table).toBeInViewport();
   const before = await page.evaluate(() => window.scrollY);
   expect(before, 'the reveal must have scrolled the page, or this proves nothing').toBeGreaterThan(0);
@@ -258,6 +300,84 @@ test('changing the Investigate filter after an old /errors link keeps the reader
 
   await expect(table).toBeInViewport();
   expect(await page.evaluate(() => window.scrollY), 'the page was thrown back to its top').toBeGreaterThan(0);
+});
+
+/**
+ * ═══ THE READER WINS ═══
+ *
+ * `keepInPlace` re-scrolls the target while the page above it settles, and that
+ * is only acceptable because the reader's first `wheel`, `touchstart`, `keydown`
+ * or `pointerdown` ends it for good: pulling a page back from someone who has
+ * started scrolling is worse than the defect it fixes. This is that rule, in a
+ * real browser, with a real wheel.
+ *
+ * THE TIMING IS HELD, NOT WAITED FOR. The tiles and the two charts arrive over
+ * ~75ms after the reveal — too short a window to land a wheel in by luck — so
+ * the four requests that grow the page above the table are paused at the
+ * network until the wheel has been delivered, and then released. Nothing here
+ * sleeps: the order is reveal, wheel, release, settle, and each step waits on
+ * the one before it.
+ *
+ * THREE GUARDS AGAINST A VACUOUS PASS, because "the page was not pulled back"
+ * is also true of a page that was never scrolled, never grew, or never asked:
+ *
+ *   - the reveal must have scrolled the page (`revealedAt > 0`) and the wheel
+ *     must have moved it back up from there, or the case proves nothing about
+ *     the reader taking over;
+ *   - the document must have GROWN after the release, or there was nothing to
+ *     correct and the reader "winning" is free;
+ *   - the check waits for the Summary to finish arriving and then two animation
+ *     frames, because the correction (if the reader did not win) runs in the
+ *     frame the growth lands in, and a read taken before that sees the table
+ *     already below the fold for the reader's own reasons.
+ *
+ * And the claim itself, after all that: the table is NOT in the viewport and the
+ * scroll is not back at (or past) where the reveal put it. Pulled back, the
+ * table is fully on screen and `scrollY` is at the page's new maximum.
+ */
+test('an old /errors link does not pull back a reader who has started scrolling', async ({ page }) => {
+  const runId = await seeded(page);
+
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // What sits above `#errors` and grows when it arrives: the tiles (`/stats`),
+  // the baseline note (`/trends`), the peak-users tile (`/users`) and both
+  // charts (`/series`).
+  for (const glob of ['**/v1/runs/*/stats*', '**/v1/runs/*/trends*', '**/v1/runs/*/users*', '**/v1/runs/*/series*']) {
+    await page.route(glob, async (route) => {
+      await held;
+      await route.continue();
+    });
+  }
+
+  await page.goto(`${runPath(runId)}/errors?from=0&to=10000`);
+  // The reveal scrolled the page. `raf` polling: the wheel has to land well
+  // inside the keeper's settle window, so this cannot wait on a 100ms poll.
+  await page.waitForFunction(() => window.scrollY > 0, undefined, { polling: 'raf' });
+  const before = await page.evaluate(() => ({
+    revealedAt: window.scrollY,
+    height: document.documentElement.scrollHeight,
+  }));
+
+  await page.mouse.move(640, 360);
+  await page.mouse.wheel(0, -600);
+  release();
+
+  await summarySettled(page);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  const after = await page.evaluate(() => ({
+    scrollY: window.scrollY,
+    height: document.documentElement.scrollHeight,
+  }));
+
+  expect(before.revealedAt, 'the reveal must have scrolled the page, or the reader has nothing to override').toBeGreaterThan(0);
+  expect(after.height, 'the page must have grown after the wheel, or there was nothing to pull back').toBeGreaterThan(before.height);
+  expect(after.scrollY, 'the reader scrolled up and must not have been returned to the reveal').toBeLessThan(before.revealedAt);
+  await expect(page.locator('#errors'), 'the table is where the reader left it, below the fold').not.toBeInViewport();
 });
 
 /**
