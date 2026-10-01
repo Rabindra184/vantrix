@@ -66,6 +66,27 @@ describe('CollapsibleSection', () => {
     expect(screen.getByRole('button', { name: 'Groups' })).toHaveAttribute('aria-expanded', 'true');
   });
 
+  it('keeps A open when B is opened, from a start where both are shut', async () => {
+    // The case above pins GE's measured scenario (Groups opened beside a
+    // Requests that starts open), but a click only ever happens on Groups, so a
+    // section that closes "the one opened before it" is not asked to close
+    // Requests. Here both start shut and BOTH are clicked, in order, so the
+    // second open has a first one to wrongly close.
+    renderAt(
+      '/r',
+      <>
+        <CollapsibleSection id="a" title="A">{() => <p>a</p>}</CollapsibleSection>
+        <CollapsibleSection id="b" title="B">{() => <p>b</p>}</CollapsibleSection>
+      </>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'A' }));
+    await userEvent.click(screen.getByRole('button', { name: 'B' }));
+    expect(screen.getByRole('button', { name: 'A' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'B' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('a')).toBeVisible();
+    expect(screen.getByText('b')).toBeVisible();
+  });
+
   it('opens when the URL’s fragment names it', () => {
     renderAt('/r#load-generators', <CollapsibleSection id="load-generators" title="Load generators">{() => <p>body</p>}</CollapsibleSection>);
     expect(screen.getByRole('button', { name: 'Load generators' })).toHaveAttribute('aria-expanded', 'true');
@@ -91,9 +112,10 @@ describe('CollapsibleSection', () => {
   // away. Measured by deleting each in turn: 8 of 8 passed both times.
   it('is already open on its first render when the fragment names it, not opened a frame later', () => {
     // A server render never runs effects, so this sees only what the initial
-    // state decided. An effect-only version paints one frame shut and then
-    // opens — a flash, and a closed section for the browser's own fragment
-    // scroll to land against.
+    // state decided. An effect-only version commits shut and opens a render
+    // later: one frame of a shut section under a link that named it, and the
+    // content builds a commit late. (The `<section id>` is in the DOM open or
+    // shut, so the browser's own fragment scroll never moves either way.)
     const html = renderToString(
       <StaticRouter location="/r#load-generators">
         <CollapsibleSection id="load-generators" title="Load generators">{() => <p>body</p>}</CollapsibleSection>
@@ -138,6 +160,12 @@ describe('CollapsibleSection', () => {
     const heading = screen.getByRole('heading', { level: 2, name: 'Platform gates' });
     expect(heading.textContent?.trim()).toBe('Platform gates');
     const section = screen.getByTestId('section-platform-gates');
+    // The identifiers later tasks consume. `AppShell` finds a fragment's
+    // target with `getElementById`, so a dropped `id={id}` would break fragment
+    // navigation without any other assertion here noticing.
+    expect(section.id).toBe('platform-gates');
+    expect(heading.id).toBe('platform-gates-heading');
+    expect(screen.getByRole('region', { name: 'Platform gates' })).toBe(section);
     expect(within(section).getByText('1 failed, 2 passed')).toBeVisible();
     expect(heading).not.toContainElement(within(section).getByRole('button', { name: 'Export CSV' }));
   });

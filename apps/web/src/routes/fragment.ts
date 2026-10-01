@@ -12,10 +12,12 @@
  * real fragment navigation that this file never sees, and it lands correctly
  * for free.
  *
- * The header is read from its token — this file may not spell `3.5rem`, and
- * `tokens.test.ts` enforces that. The tab strip's own 42px is not tokenised
- * and is measured rather than guessed; being a few pixels out here is a
- * cosmetic gap above a heading, not a defect, which is why it does not warrant
- * a second token.
+ * The header is read from its token because that is the convention the files
+ * that depend on its height are held to — `tokens.test.ts` forbids a spelled-out
+ * `3.5rem` in AppShell, ProjectRail and RunTabs. This module is not one of the
+ * three it scans, so nothing but this comment keeps the margin from drifting
+ * from the header. The tab strip's own 42px is not tokenised and is measured
+ * rather than guessed; being a few pixels out here is a cosmetic gap above a
+ * heading, not a defect, which is why it does not warrant a second token.
  */
 export const FRAGMENT_SCROLL_MARGIN = 'calc(var(--header-height) + 2.625rem)';
