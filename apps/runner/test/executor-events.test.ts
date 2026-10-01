@@ -312,6 +312,27 @@ describe('the runner’s events, path by path', () => {
     expect(recorded(runner)).not.toContain('Run ended without results');
   });
 
+  /**
+   * THE GUARD IS ABOUT THE STAGE, NOT ONLY THE EARLY EXIT. From `ending` on the
+   * log already holds the injection-ended line and the Ending phase, so a
+   * cancel racing ANY failure from there — here a Gatling that wrote nothing —
+   * must not write them again: the log ends on the failure, once.
+   */
+  it('does not write a second ending when a cancel lands on a failure after the injection ended', async () => {
+    const { executor, runner } = harness({
+      bytesWritten: 0,
+      statuses: ['running', 'running', 'running', 'cancelled'],
+    });
+    await executor.run(job());
+
+    expect(recorded(runner)).toEqual([
+      CLAIMED, '--- Deploying', 'Package prepared', STARTED, '--- Injecting',
+      "Run injection ended with reason 'Run completed normally'",
+      '--- Ending',
+      'Run failed: SIMULATION_LOG_NOT_FOUND: Gatling finished without producing a simulation.log file.',
+    ]);
+  });
+
   it('ends at the claim when the job was cancelled before its run opened', async () => {
     const { executor, runner } = harness({ opened: false });
     await executor.run(job());
