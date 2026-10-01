@@ -75,6 +75,18 @@ test('the Summary reads the same with a narrow window in its URL, as GE’s does
   await expect(page.getByTestId('errors-window-note')).toHaveCount(0);
 });
 
+/** The seven charts of the Report's Requests section, in the order it draws
+ *  them — the ones above `#load-generators`, whose settling can move it. */
+const REPORT_REQUEST_CHARTS = [
+  'requests-and-responses',
+  'percentiles',
+  'distribution',
+  'percentile-distribution',
+  'errors-over-time',
+  'indicators',
+  'request-counts',
+] as const;
+
 const SECTIONS = [
   ['requests', 'Requests', true],
   ['groups', 'Groups', false],
@@ -148,6 +160,38 @@ for (const [old, rest, hash] of [
         page.locator('section#load-generators').getByRole('button', { name: 'Load generators', exact: true }),
       ).toHaveAttribute('aria-expanded', 'true');
     }
+    /* ═══ AND THE READER IS BROUGHT TO IT, NOT JUST ADDRESSED TO IT ═══
+     *
+     * The assertions above read the URL and the section's state; neither says
+     * the viewport moved. A redirect to a fragment is a `replace` navigation,
+     * and a browser scrolls to a fragment only on a document load or a real
+     * hash navigation — so what brings the reader to the target is AppShell's
+     * reveal, which no earlier line here exercised.
+     *
+     * CHECKED ONLY ONCE THE CHARTS ABOVE HAVE DRAWN. The reveal runs the frame
+     * the target exists, which is before the figures above it have painted; a
+     * target measured before that settles could read in or out of view for
+     * reasons that are about timing and not about the redirect. The plot
+     * counts are the settle. Errors per second is waited on as "no longer
+     * loading" instead, because inside this case's 0-10 s window the reference
+     * run has no errors to draw and the chart says so rather than plotting.
+     *
+     * ONLY `/load-generators` IS ASSERTED. The `/errors` landing is NOT in
+     * the viewport at 1280x720 once the Summary has settled, and that is a
+     * measurement rather than a guess: the reveal fires the frame `#errors`
+     * exists, with the page 2,167px tall and so scrolled to its maximum
+     * (1447); the tiles and bars above then arrive over the next ~75ms, the
+     * page grows to 2,544px and the target settles at top 784 of a 720px
+     * viewport (891 of 900 at 1440x900). It is left unasserted rather than
+     * loosened, until the reveal waits for the page above it to settle. */
+    if (old === 'load-generators') {
+      for (const id of REPORT_REQUEST_CHARTS) {
+        const figure = page.getByTestId(`chart-${id}`);
+        if (id === 'errors-over-time') await expect(figure, id).not.toContainText('Loading…');
+        else await expect(plot(figure), id).toHaveCount(1);
+      }
+      await expect(page.locator('section#load-generators')).toBeInViewport();
+    }
   });
 }
 
@@ -163,6 +207,57 @@ test('an old /errors link keeps the request it was narrowed to', async ({ page }
   await page.goto(`${runPath(runId)}/errors?request=Place%20Order`);
   await expect(page).toHaveURL(new RegExp(`${runPath(runId)}\\?request=Place%20Order#errors$`));
   await expect(page.getByTestId('errors-request-filter')).toHaveValue('Place Order');
+});
+
+/**
+ * ═══ CHANGING THE FILTER MUST NOT THROW THE READER TO THE TOP ═══
+ *
+ * An old `/errors` link lands on `/runs/:id?request=…#errors`, and the filter's
+ * setter (`useSearchParams`) navigates to `"?" + params` — which DROPS the hash.
+ * AppShell used to read that same-path, empty-hash navigation as a new page and
+ * `scrollTo({ top: 0 })`: the reader, who had just been scrolled down to the
+ * table, was thrown ~1,500px up and away from it by the first thing they did
+ * there. The band's `#simulation-assertions` link and the `/load-generators`
+ * redirect followed by a sort or filter did the same.
+ *
+ * THREE GUARDS AGAINST A VACUOUS PASS. The hash is required to be GONE after the
+ * change (otherwise nothing navigated and the table stays put for free); the
+ * page is required to have been scrolled before it (otherwise `scrollY` is 0 for
+ * a reason that is not the bug); and the check follows two animation frames,
+ * because the URL is replaced synchronously and the scroll that used to follow it
+ * is a passive effect — an in-viewport read taken the instant the hash cleared
+ * would pass in the one window before the jump.
+ */
+test('changing the Investigate filter after an old /errors link keeps the reader at the table', async ({
+  page,
+}) => {
+  const runId = await seeded(page);
+  await page.goto(`${runPath(runId)}/errors?request=Place%20Order`);
+  await expect(page).toHaveURL(new RegExp(`${runPath(runId)}\\?request=Place%20Order#errors$`));
+  const filter = page.getByTestId('errors-request-filter');
+  await expect(filter).toHaveValue('Place Order');
+  // Settled: the charts above the table have drawn, so nothing is left to move it.
+  await expect(plot(page.getByTestId('chart-requests-and-responses'))).toHaveCount(1);
+  await expect(plot(page.getByTestId('chart-percentiles'))).toHaveCount(1);
+  const table = page.locator('#errors').getByRole('table');
+  /* SCROLLED THERE EXPLICITLY. The redirect's own reveal does not leave the
+   * table on screen at 1280x720 (see the redirect cases above), so this puts
+   * the reader where the case needs them — at the table, scrolled down — and
+   * leaves the reveal to its own coverage. */
+  await table.scrollIntoViewIfNeeded();
+  await expect(table).toBeInViewport();
+  const before = await page.evaluate(() => window.scrollY);
+  expect(before, 'the reveal must have scrolled the page, or this proves nothing').toBeGreaterThan(0);
+
+  await filter.selectOption({ label: 'All requests' });
+  await expect(filter).toHaveValue('');
+  await expect.poll(() => new URL(page.url()).hash, 'the setter drops the fragment').toBe('');
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+
+  await expect(table).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY), 'the page was thrown back to its top').toBeGreaterThan(0);
 });
 
 /**
