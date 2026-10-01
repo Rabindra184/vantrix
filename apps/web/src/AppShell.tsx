@@ -74,6 +74,17 @@ export default function AppShell() {
    * The FIRST render is skipped: a deep link should land where the browser
    * puts it, including on a fragment like the decision band's
    * `#simulation-assertions`, which this would otherwise undo.
+   *
+   * AND A FRAGMENT GOING AWAY IS NOT A NEW PAGE. `useSearchParams`' setter
+   * navigates to `"?" + params`, which DROPS the hash — so a reader who landed
+   * on `/runs/:id#errors` (the old `/errors` redirect, or the band's
+   * `#simulation-assertions` link) and then changed the Investigate select, or
+   * sorted a table, produced a same-path navigation with an empty hash. The
+   * effect used to read that as "no fragment, so scroll to the top" and threw
+   * them ~1,500px away from the table they were filtering. The decision is
+   * the path's alone: the previous one is held in a ref, and only a DIFFERENT
+   * pathname scrolls. The effect still depends on `hash` because it reads it
+   * for the new-path-with-a-fragment case below.
    */
   /* The SAME query `AuthGate` already made, under the same key — this shell
      only renders inside a resolved session, so it is a cache read rather than
@@ -88,14 +99,20 @@ export default function AppShell() {
   const identity = session.data?.user?.name || session.data?.user?.email || null;
 
   const { pathname, hash } = useLocation();
-  const first = useRef(true);
+  /* `null` until the first render has run, which is also how the first render
+     is told apart: nothing has been navigated FROM yet. (A strict-mode second
+     run of the effect sees the same path and falls out at the next check, where
+     the old `first` flag would have scrolled.) */
+  const lastPathname = useRef<string | null>(null);
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    // A fragment is a move WITHIN this page, and the effect below takes it.
-    // Scrolling to the top first would undo it.
+    const previous = lastPathname.current;
+    lastPathname.current = pathname;
+    if (previous === null) return;
+    // Same path: the SAME page asked again — a query refined, or a fragment
+    // dropped by a setter. Never a reason to move the reader.
+    if (previous === pathname) return;
+    // A fragment on a NEW path is a move within it, and the effect below takes
+    // it. Scrolling to the top first would undo it.
     if (hash !== '') return;
     window.scrollTo({ top: 0 });
   }, [pathname, hash]);

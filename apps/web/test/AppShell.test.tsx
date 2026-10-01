@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AppShell from '../src/AppShell';
 
@@ -163,5 +163,99 @@ describe('AppShell — a fragment reveals its target', () => {
     renderWithHash('/runs/abc');
     await screen.findByRole('heading', { name: 'Simulation assertions' });
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ═══ A FRAGMENT GOING AWAY IS NOT A NEW PAGE ═══
+ *
+ * `useSearchParams`' setter navigates to `"?" + params`, which drops the hash.
+ * A reader who landed on `/runs/:id#errors` — the old `/errors` redirect, or
+ * the band's `#simulation-assertions` link — and then changed a filter made a
+ * same-path navigation with an empty hash, and the scroll-to-top effect read
+ * that as a new page: measured in Chromium, ~1,500px up and away from the
+ * table they were filtering. The path alone decides.
+ *
+ * What these cases pin is the call, since jsdom has no layout: `scrollTo` is
+ * the witness, and the browser case in `run-summary-report.spec.ts` is the one
+ * that measures where the table ends up.
+ */
+describe('AppShell — scroll restoration is keyed on the path', () => {
+  let scrollTo: ReturnType<typeof vi.fn>;
+
+  function renderAt(entry: string) {
+    scrollTo = vi.fn();
+    vi.spyOn(window, 'scrollTo').mockImplementation(scrollTo as never);
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[entry]}>
+          <Routes>
+            <Route element={<AppShell />}>
+              <Route
+                path="/runs/:runId"
+                element={
+                  <section id="errors">
+                    <h2>Errors</h2>
+                    {/* What a `useSearchParams` setter does: the same path, a
+                        new query, and no hash. */}
+                    <Link to={{ search: '?request=Search' }}>narrow the table</Link>
+                    <Link to="/runs/other">open another run</Link>
+                    <Link to={{ pathname: '/runs/abc', hash: '#errors' }}>jump to errors</Link>
+                  </section>
+                }
+              />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('does not scroll when a same-path navigation only drops the fragment', async () => {
+    renderAt('/runs/abc#errors');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('link', { name: 'narrow the table' }));
+    // Wait on something the navigation changed — the focus the fragment effect
+    // took is gone from nothing, so give the router a turn and read the call.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  /** The behaviour this sits beside and must not have replaced: a different
+   *  path with no fragment is a new thing and starts at its own top. */
+  it('still scrolls to the top for a different path', async () => {
+    renderAt('/runs/abc#errors');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('link', { name: 'open another run' }));
+    await vi.waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0 }));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+  });
+
+  /** A fragment on the SAME path is the fragment effect's move, and the top is
+   *  not visited first. */
+  it('does not scroll to the top for a same-path fragment link', async () => {
+    renderAt('/runs/abc');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('link', { name: 'jump to errors' }));
+    await vi.waitFor(() =>
+      expect(Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).toHaveBeenCalled(),
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  /** A deep link lands where the browser puts it. */
+  it('does not scroll on the first render', async () => {
+    renderAt('/runs/abc');
+    await screen.findByRole('heading', { name: 'Errors' });
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });
