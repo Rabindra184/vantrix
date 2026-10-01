@@ -26,6 +26,9 @@ const useIsCompactMock = vi.mocked(useIsCompact);
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // `mockReturnValue` persists across cases: a phone case that forgot to hand
+  // the next describe a desktop would silently turn every later case compact.
+  useIsCompactMock.mockReturnValue(false);
 });
 
 const RUN: RunResponse = {
@@ -244,11 +247,12 @@ describe('RunShell', () => {
     // useLiveRun's applyDelta already writes usersQuery directly. A live REST
     // fetch answers emptier for a run whose rows do not exist yet, and TanStack
     // applies whichever write resolves last — so the socket's own numbers would
-    // lose a race to an empty payload. Rendered ON THE REPORT, the one place
-    // the shell asks for `/users` at all: on any other section the absence
-    // would hold for a reason that has nothing to do with the run being live.
+    // lose a race to an empty payload. Rendered ON THE REPORT with `windowable:
+    // true`, the one place and the one state where the shell would otherwise
+    // ask for `/users`: anywhere else the absence would hold for a reason that
+    // has nothing to do with the run being live.
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined }, `/runs/${RUN.id}/report`);
+    renderShellWith({ status: 'running', verdict: undefined, windowable: true }, `/runs/${RUN.id}/report`);
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     // `.some(...)`, NOT `expect(urls).not.toContain(expect.stringContaining(...))` —
     // toContain does not meaningfully take an asymmetric matcher, so that
@@ -314,10 +318,12 @@ describe('RunShell', () => {
   it('trusts terminal=false over a `status` the old allowlist called terminal', () => {
     // `status: 'complete'` used to be terminal on its own; `terminal: false`
     // here proves the shell no longer looks at `status` to decide that. No
-    // fetch mock is needed: `enabled: terminal` is `false`, so neither query
-    // should call `fetch` at all regardless of `status`.
+    // fetch mock is needed: `enabled` includes `terminal`, which is `false`, so
+    // the query should not call `fetch` at all regardless of `status` — and the
+    // run is windowable, on the Report, on a desktop, so `terminal` is the only
+    // reason it does not.
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    renderShellWith({ status: 'complete', terminal: false }, `/runs/${RUN.id}/report`);
+    renderShellWith({ status: 'complete', terminal: false, windowable: true }, `/runs/${RUN.id}/report`);
     // The non-terminal strip renders (its own "checks again" sentence for a
     // run that is neither streaming, frozen nor capped) — impossible for a
     // shell that still believed `status: 'complete'` meant terminal.
@@ -346,7 +352,7 @@ describe('RunShell', () => {
     );
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderShellWith(
-      { status: 'running', verdict: undefined, windowable: undefined, terminal: true },
+      { status: 'running', verdict: undefined, windowable: true, terminal: true },
       `/runs/${RUN.id}/report`,
     );
     // No live status strip at all — `!terminal &&` above it is false.
@@ -367,6 +373,12 @@ describe('RunShell', () => {
    * users tile fetches its own copy, and a second request from here is paid for
    * by every page that does not draw the brush. Asserted in both directions
    * because "never fetches" and "always fetches" each pass one of them.
+   *
+   * "Where the brush is" is narrower than "on the Report": a Report with no
+   * brush — a phone's (the compact block below), or a run that cannot honour a
+   * window — has no use for it either, and for a non-windowable run opened on a
+   * link carrying `?from=` the request would be a WINDOWED one, which the API
+   * answers 400 WINDOW_UNAVAILABLE.
    */
   it('fetches /users on the Report, where the brush’s applied window comes from', async () => {
     vi.stubGlobal('fetch', () =>
@@ -376,6 +388,20 @@ describe('RunShell', () => {
     renderShellWith({ windowable: true }, `/runs/${RUN.id}/report`);
     await screen.findByTestId('time-brush');
     expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/users'))).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it('fetches no /users for a run that cannot honour a window, even when the URL carries one', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })),
+    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderShellWith({ windowable: false }, `/runs/${RUN.id}/report?from=10000&to=30000`);
+    // The paired positive: this is the Report, and it is the `windowable` gate
+    // — not the page — that withheld both the brush and the request.
+    expect(await screen.findByRole('link', { name: 'Report' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByTestId('time-brush')).toBeNull();
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/users'))).toBe(false);
     fetchSpy.mockRestore();
   });
 
@@ -439,6 +465,25 @@ describe('RunShell — GE’s Summary and Report around the tab strip', () => {
     renderShellWith({ windowable: false }, `/runs/${RUN.id}/report`);
     expect(screen.queryByTestId('time-brush')).toBeNull();
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
+  });
+
+  /** THE ROUTER IGNORES CASE, SO THE SHELL MUST TOO. A hand-typed upper-case
+   *  UUID — or `/Report` — is the same run page to React Router and to the tab
+   *  strip's `NavLink`, while the run's own id arrives from the API in lower
+   *  case. Compared exactly, the shell would draw neither the Summary's band
+   *  nor the Report's window for a page everything else calls the Summary. */
+  it('finds the Summary at an upper-case run id', () => {
+    // The fixture id has letters, so upper-casing really changes the string.
+    expect(RUN.id).not.toBe(RUN.id.toUpperCase());
+    renderShellWith({ windowable: true }, `/runs/${RUN.id.toUpperCase()}`);
+    expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    expect(screen.getByTestId('run-lifecycle')).toBeInTheDocument();
+  });
+
+  it('finds the Report at an upper-case run id and segment', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id.toUpperCase()}/Report`);
+    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Release decision' })).toBeNull();
   });
 
   /** A TRAILING SLASH IS THE SAME PAGE to the router and a different string to
@@ -712,6 +757,23 @@ describe('RunShell — the time brush on a narrow viewport', () => {
     await screen.findByRole('navigation', { name: /run sections/i });
     expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
     expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
+  });
+
+  /** The notice states a window the data already carries; it has no use for
+   *  the snapped one the brush would report, so a phone on a narrowed Report
+   *  asks for no `/users` — the hardest case, since a window is in the URL. */
+  it('fetches no /users on a phone, which has no brush to state a window for', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })),
+    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    useIsCompactMock.mockReturnValue(true);
+    renderShellWith({ windowable: true }, windowed);
+    // The paired positive: the phone's notice is on screen, so the absent
+    // request is not an absent page.
+    expect(await screen.findByTestId('compact-window-notice')).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/users'))).toBe(false);
+    fetchSpy.mockRestore();
   });
 
   /** And a desktop is untouched — the brush, not the notice. */

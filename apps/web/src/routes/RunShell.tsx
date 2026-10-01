@@ -140,14 +140,20 @@ export default function RunShell({
    * read off the one pathname here, so what the tab strip says is current and
    * what the shell draws cannot disagree.
    *
-   * THE TRAILING SLASH IS STRIPPED because `/runs/:id/` and `/runs/:id` are the
-   * same page to the router and different strings to a comparison. The window
-   * parameters live in the SEARCH, which `pathname` does not carry, so a
-   * narrowed link still reads as the page it names. */
+   * THE TRAILING SLASH IS STRIPPED, AND CASE IS IGNORED, because the router
+   * and `NavLink` do both: `/runs/:id/` and `/runs/:id` are the same page to
+   * them, and so are `/runs/<ID>` and `/runs/<id>` (route matching is case
+   * insensitive unless asked otherwise). A hand-typed upper-case UUID, or a
+   * `/Report`, would otherwise be the Summary to the tab strip and to the
+   * router and neither page to this comparison — the page would draw no
+   * strip, no band and no brush and look like a section with nothing on it.
+   * The run's own id comes back from the API in lower case; the URL has no
+   * such guarantee. The window parameters live in the SEARCH, which `pathname`
+   * does not carry, so a narrowed link still reads as the page it names. */
   const { pathname } = useLocation();
-  const here = pathname.replace(/\/$/, '');
-  const onSummary = here === runPath(identity.id);
-  const onReport = here === runReportPath(identity.id);
+  const here = pathname.replace(/\/$/, '').toLowerCase();
+  const onSummary = here === runPath(identity.id).toLowerCase();
+  const onReport = here === runReportPath(identity.id).toLowerCase();
 
   /* ═══ THE BRUSH ONLY WHERE A WINDOW MEANS SOMETHING ═══
    *
@@ -168,20 +174,39 @@ export default function RunShell({
    * tab — so this hides the control without discarding the selection, and the
    * Report restores it on return. */
 
+  /* ═══ WHO IS OFFERED THE WINDOW, DECIDED ONCE ═══
+   *
+   * `windowOffered` is every reason a Report has a window control at all: the
+   * run can honour one (`windowable`, which a server predating the field leaves
+   * absent and so reads as unable), it knows how long it was, and the reader
+   * is on the Report. `brushOffered` adds the one thing that decides WHICH
+   * control: a phone gets the notice, never the drag control (review M18).
+   *
+   * ONE VALUE FEEDS BOTH THE RENDER AND THE FETCH BELOW, because the fetch
+   * exists only to serve the brush. The gate was `terminal && onReport` first,
+   * which is wider than the brush it serves: a phone on the Report, or a run
+   * ingested before per-bucket histograms, still asked for `/users` — and a
+   * non-windowable run opened on a link carrying `?from=` asked for a WINDOWED
+   * one, which the API answers 400 WINDOW_UNAVAILABLE. Two expressions deciding
+   * one thing drift; this is one. */
+  const durationMs = identity.durationMs;
+  const windowOffered = windowable === true && durationMs != null && onReport;
+  const brushOffered = windowOffered && !compact;
+
   // THE ONE FETCH THE SHELL MAKES, AND ITS ONLY CONSUMER IS THE BRUSH.
   // `/users` is asked for here to learn the SNAPPED window a response reports,
   // which the brush states as "Showing …" — every windowed response carries
   // the same snapped range, so any one of them will do. It shares its key with
   // the Report's Virtual users section, so while that section is open the two
   // are one request; the Report opens only Requests by default, so usually
-  // this is the one. Every other section has no use for it: the Summary sends
-  // no window and fetches its own unwindowed `/users` for its Peak users tile,
-  // and a request from here on those pages would be paid for by every reader
-  // who is not looking at a brush. `enabled` carries the gate and the hook
-  // stays unconditional — a conditional call would change the hook order on
-  // the very navigation between sections this shell exists to survive. For a
-  // terminal run only; see `terminal` above.
-  const users = useQuery({ ...usersQuery(identity.id, window), enabled: terminal && onReport });
+  // this is the one. Every other page, and every Report with no brush, has no
+  // use for it: the Summary sends no window and fetches its own unwindowed
+  // `/users` for its Peak users tile, and a request from here would be paid
+  // for by every reader who is not looking at a brush. `enabled` carries the
+  // gate and the hook stays unconditional — a conditional call would change
+  // the hook order on the very navigation between sections this shell exists
+  // to survive. For a terminal run only; see `terminal` above.
+  const users = useQuery({ ...usersQuery(identity.id, window), enabled: terminal && brushOffered });
 
   return (
     // THE RUN'S CLOCK, for every section and for the time window: the anchor
@@ -329,13 +354,11 @@ export default function RunShell({
        * reading a tenth of a run with nothing on screen admitting it. The
        * notice is one line and carries the one action that cannot be
        * reconstructed: widen back to the whole run. */}
-      {windowable === true && identity.durationMs != null && onReport &&
-        (compact ? (
-          <CompactWindowNotice window={window} onClear={() => setWindow(null)} />
-        ) : (
+      {windowOffered &&
+        (brushOffered ? (
           <TimeBrush
             runId={identity.id}
-            runDurationMs={identity.durationMs}
+            runDurationMs={durationMs}
             runActivityMs={identity.activityMs}
             window={window}
             // THE SNAPPED WINDOW A RESPONSE REPORTED, not the one that was
@@ -345,6 +368,8 @@ export default function RunShell({
             applied={users.data?.window ?? null}
             onChange={setWindow}
           />
+        ) : (
+          <CompactWindowNotice window={window} onClear={() => setWindow(null)} />
         ))}
 
       {/* THE WINDOW TRAVELS DOWN, it is not re-parsed per tab.
