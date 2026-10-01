@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { linkButtonClasses } from '../components/Button';
-import { Skeleton, SkeletonTable } from '../components/Skeleton';
+import { Skeleton } from '../components/Skeleton';
 import { ErrorState, LoadingState } from '../components/States';
 import { ChevronLeftIcon } from '../components/icons';
 import { ProblemError } from '../api/fetch';
 import { useLiveRun } from '../api/live';
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
-import { STATISTICS_SKELETON_COLUMNS } from '../tables/StatisticsTable';
 import { DEFAULT_ROUTE } from './paths';
 import { useRunTerminal } from './useRunWindow';
 import RunShell from './RunShell';
@@ -117,21 +116,30 @@ export default function RunDetail() {
     return (
       <LoadingState label="Loading run…">
         <div className="flex flex-col gap-6">
-          {/* The shape the run page actually takes: heading block, tab strip,
-              stat row, table. Reserving it is what stops the whole page
-              jumping when the payload lands. */}
+          {/* The shape the run page's first screen takes — the Summary's, which
+              is where `/runs/:id` lands: heading block, tab strip, GE's four
+              headline numbers, the two assertion bars, then the first chart.
+              Reserving it is what stops the whole page jumping when the
+              payload lands. The tile row follows `RunStats`' own grid rule
+              (two across, four from `@xl` of the row's own width) rather than
+              a viewport breakpoint, so a placeholder and the numbers it stands
+              in for change columns at the same width. */}
           <div className="flex flex-col gap-2">
             <Skeleton className="h-4 w-40" />
             <Skeleton className="h-7 w-80 max-w-full" />
             <Skeleton className="h-9 w-full" />
           </div>
           <Skeleton className="h-9 w-64" />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-            {Array.from({ length: 6 }, (_, i) => (
-              <Skeleton key={i} className="h-[92px]" />
-            ))}
+          <div className="@container">
+            <div className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-[92px]" />
+              ))}
+            </div>
           </div>
-          <SkeletonTable columns={STATISTICS_SKELETON_COLUMNS} rows={5} />
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+          <Skeleton className="h-72" />
         </div>
       </LoadingState>
     );

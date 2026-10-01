@@ -132,7 +132,7 @@ export const formatMs = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(value)) : '—';
 
 /** Two decimals, as Gatling writes `% KO` (2.68) and `Cnt/s` (14.21). */
-export const formatRate = (value: number): string =>
+const formatRate = (value: number): string =>
   Number.isFinite(value) ? value.toFixed(2) : '—';
 
 /** Gatling's own name for the leftmost column, and it holds groups too. */

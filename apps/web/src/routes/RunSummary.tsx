@@ -5,6 +5,7 @@ import type { LiveDelta, SeriesResponse } from '@perfportal/contracts';
 import { errorsQuery, seriesQuery, statsQuery, trendsQuery, usersQuery } from '../api/metrics';
 import PercentilesChart from '../charts/PercentilesChart';
 import { RequestRateChart, RequestsAndResponsesChart } from '../charts/RatesChart';
+import { ErrorState } from '../components/States';
 import StatTile from '../components/StatTile';
 import ErrorsTable, { ERRORS_TABLE_COLUMNS } from '../tables/ErrorsTable';
 import { formatCount, formatMs } from '../tables/StatisticsTable';
@@ -13,7 +14,7 @@ import { PlatformGatesBar, SimulationAssertionsBar } from './AssertionBars';
 import { rulesRan } from './decision';
 import { failingRequestNames } from './errorRequestFilter';
 import { FRAGMENT_SCROLL_MARGIN } from './fragment';
-import { Payload, TableSection } from './payload';
+import { Payload, TableSection, explain } from './payload';
 import { baselineRun, cohortRun } from './runBaseline';
 import RunStats from './RunStats';
 import { PERCENTILES, REQUESTS_AND_RESPONSES } from './runSlots';
@@ -118,14 +119,23 @@ export default function RunSummary() {
     <div className="flex flex-col gap-6">
       {/* ═══ THE NUMBERS FIRST, THEN THE VERDICTS, THEN THE SHAPE ═══
        *
-       * `RunStats` is gated on the data being PRESENT and says nothing while
-       * `/stats` is in flight or failed: the Summary has no statistics table
-       * under it to be the one place a failed fetch explains itself, and a
-       * tile row of dashes above an error panel would be the double-report that
-       * placement exists to avoid. The sparklines come with the tiles — §22.6
-       * names "key tiles, sparklines, verdict, error summary" as the mobile
-       * summary, and splitting that pair across two screens is what the rule
-       * exists to prevent. */}
+       * `RunStats` is gated on the data being PRESENT, and says nothing while
+       * `/stats` is still in flight — but a FAILED `/stats` is stated, in the
+       * section the numbers would have been in. The old Overview left that to
+       * the statistics table beside the tiles (`TableSection` explained a
+       * failure once, and the tiles stayed quiet so it was not reported twice);
+       * that table is in the Report now, so on this page the four numbers are
+       * the only thing asking for `/stats`. Without a branch here one failed
+       * request — `retry: false` app-wide — deletes the headline numbers and
+       * nothing says why, which is exactly what `Payload`'s docstring rules out:
+       * a figure whose fetch failed must not simply vanish. The server's own
+       * sentence is relayed through `explain`, the way every other failed
+       * payload on the run pages does it.
+       *
+       * The sparklines come with the tiles — §22.6 names "key tiles,
+       * sparklines, verdict, error summary" as the mobile summary, and
+       * splitting that pair across two screens is what the rule exists to
+       * prevent. */}
       <div className="flex flex-col gap-3">
         {stats.data !== undefined && (
           <RunStats
@@ -139,6 +149,14 @@ export default function RunSummary() {
             current={cohortRun(trends.data, runId)}
             assertions={body.assertions}
           />
+        )}
+        {/* `data === undefined` as well as `isError`: a background refetch that
+            fails leaves the last good numbers in place, and those are still
+            the honest thing to show. */}
+        {stats.data === undefined && stats.isError && (
+          <section aria-label="Run totals">
+            <ErrorState title="Run totals could not be loaded" detail={explain(stats.error, 'summary')} />
+          </section>
         )}
         {compact && <Sparklines series={series} />}
       </div>
@@ -221,9 +239,12 @@ function OverTimeCharts({ series, domainMs, warmupMs }: { readonly series: Serie
  * socket, not by this component) numbers, and it is the per-request TABLE a
  * phone cannot usefully render, not a handful of tiles.
  *
- * EXPORTED for the tests that mount it alone; nothing else renders it.
+ * NOT EXPORTED: only this page renders it, and the cases that cover it mount
+ * the page (`RunSummary.live.test.tsx`) rather than the row alone. It was
+ * exported while the Overview tab imported it from `RunDetail.tsx`; an export
+ * nothing reads is a claim somebody has to keep checking.
  */
-export function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
+function LiveSummary({ summary }: { readonly summary: LiveDelta['summary'] }) {
   return (
     <section aria-label="Run totals so far" className="@container">
       <dl className="grid grid-cols-2 gap-3 @xl:grid-cols-4">

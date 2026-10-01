@@ -70,12 +70,23 @@ function readyRun({
 /** Answers each endpoint from the captured fixture; anything else is a 404,
  *  which `Payload` renders as an undrawn slot — still a figure with its id.
  *  `/trends` answers an empty cohort: nothing here is about a baseline. */
-function stubFetch(statsBody: unknown): string[] {
+function stubFetch(statsBody: unknown, statsStatus: number): string[] {
   const seen: string[] = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
     const url = String(input);
     seen.push(url);
     const path = new URL(url, 'http://x').pathname;
+    // A failing `/stats` answers a problem document carrying the server's own
+    // `detail` and `remediation`, which is what `apiFetch` turns into a
+    // `ProblemError` and what the page is expected to relay.
+    if (path.endsWith('/stats') && statsStatus !== 200) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ status: statsStatus, title: 'Internal Server Error', code: 'INTERNAL', detail: 'The statistics could not be read.', remediation: 'Retry the request in a moment.' }),
+          { status: statsStatus, headers: { 'content-type': 'application/problem+json' } },
+        ),
+      );
+    }
     const body = path.endsWith('/users')
       ? reference.users
       : path.endsWith('/series')
@@ -105,6 +116,7 @@ function renderSummary({
   status,
   durationMs,
   statsBody = reference.stats,
+  statsStatus = 200,
   assertions,
   toolAssertions,
 }: {
@@ -114,10 +126,12 @@ function renderSummary({
   durationMs?: number | null;
   /** What `/stats` answers. */
   statsBody?: unknown;
+  /** The status `/stats` answers with; anything but 200 is a problem document. */
+  statsStatus?: number;
   assertions?: readonly Assertion[];
   toolAssertions?: readonly ToolAssertion[];
 } = {}) {
-  const seen = stubFetch(statsBody);
+  const seen = stubFetch(statsBody, statsStatus);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const run = readyRun({ status, durationMs, assertions, toolAssertions });
   client.setQueryData(runQueryKey(RUN_ID), { state: 'ready', run });
@@ -202,6 +216,20 @@ describe('RunSummary — always the whole run', () => {
     renderSummary({ status: 'incomplete', durationMs: null, statsBody: { ...reference.stats, stats: [] }, assertions: [] });
     expect(await screen.findByText('No statistics were retained for this run')).toBeVisible();
     expect(within(screen.getByTestId('section-platform-gates')).getByText('not evaluated — the run left nothing to judge')).toBeVisible();
+  });
+
+  // The statistics table that used to explain a failed `/stats` is in the
+  // Report, so on this page the four numbers are the only thing asking for it:
+  // with `retry: false` one failed request would otherwise delete them without a
+  // word, which is the "must not simply vanish" rule `Payload` states. The
+  // server's own sentence is relayed (`explain`), not an invented one.
+  it('says so when /stats fails, rather than dropping the four numbers without a word', async () => {
+    renderSummary({ statsStatus: 500 });
+    const totals = await screen.findByRole('region', { name: 'Run totals' });
+    const alert = await within(totals).findByRole('alert');
+    expect(alert).toHaveTextContent('Run totals could not be loaded');
+    expect(alert).toHaveTextContent('The statistics could not be read. Retry the request in a moment.');
+    expect(screen.queryByTestId('stat-p95')).toBeNull();
   });
 
   it('narrows the errors table to the request a link names', async () => {

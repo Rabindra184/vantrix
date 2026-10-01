@@ -229,7 +229,8 @@ export default function RunStats({
           histogram, which answers any rank — p95, p99, p99.9 — to within 1% of the true
           distribution. The tool&rsquo;s own report estimates from fixed bands and can drift
           further: on this fixture&rsquo;s p99 it reads 9.47% low, reporting a number that occurs
-          nowhere in the data. Minimum, maximum, mean and every count on this row are exact.
+          nowhere in the data. The error rate, the request count and the peak user count on this
+          row are counted, not estimated — p95 is the only estimate here.
         </p>
       </details>
     </section>
@@ -242,9 +243,10 @@ export default function RunStats({
  * sample's own minimum and maximum, and `clampPercentile` projects the raw
  * estimate onto the run row's own range (`clampPercentile`'s doc explains
  * why). Reusing it — rather than re-deriving the clamp here — is what keeps
- * the p99 tile from reading 2515 while the "All Requests" row directly below
- * it reads 2503, the exact disagreement this whole component exists to rule
- * out.
+ * the p95 tile from disagreeing with the "All Requests" row of the Report's
+ * statistics table, which clamps through the same function: the reference run's
+ * raw p99 reads 2515 against a maximum of 2503, and it is the exact
+ * disagreement this whole component exists to rule out.
  *
  * `—`, never `0`, for a project configured with no such percentile: a gap in
  * `row.percentiles` is not a measurement of zero.

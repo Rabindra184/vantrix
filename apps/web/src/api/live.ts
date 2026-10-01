@@ -29,11 +29,10 @@ import { errorsQueryKey, seriesQueryKey, usersQueryKey } from './metrics';
  * `meanMs`/`stddevMs`/`throughputRps`, and no source for `StatsResponse`'s
  * top-level `indicators`/`bounds` at all: those are folded from a histogram
  * against project-configured bounds neither the wire nor the browser has.
- * `RunStats`'s own docstring states the rule this file follows instead:
- * "null, not zeroed tiles, when the payload carries no run-scope row … six
- * tiles reading 0/0.00%/— above [the table] would assert measurements nobody
- * took." Writing a fabricated `StatRow` with invented zeros would be exactly
- * that assertion. `/stats` is left to its own REST fetch, which honestly
+ * `RunStats`'s own docstring states the rule this file follows instead: with
+ * no run-scope row it draws the table's own empty sentence, never zeroed
+ * tiles, because `0 requests` reads as a measurement nobody took. Writing a
+ * fabricated `StatRow` with invented zeros would be exactly that assertion. `/stats` is left to its own REST fetch, which honestly
  * returns empty rows for a running run (no `RunStat` rows exist until the
  * parse pipeline runs) and resolves for real once the run completes.
  */

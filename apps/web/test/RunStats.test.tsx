@@ -178,7 +178,8 @@ describe('RunStats', () => {
   /**
    * THE TILE AND THE PERCENTAGE UNDER IT READ THE SAME NUMBER.
    *
-   * The p95/p99 tiles display `clampPercentile(raw, row)` — an estimate
+   * The percentile tile (p95, with a p99 beside it until the Summary was cut
+   * to four) displays `clampPercentile(raw, row)` — an estimate
    * projected onto the sample's own exactly-tracked [min, max], for the
    * reasons `StatisticsTable`'s own docstring gives — while the delta was
    * computed from the RAW map on both sides. `StatisticsTable` records the
@@ -299,7 +300,7 @@ describe('RunStats', () => {
     expect(baselineClamped * 4).toBeGreaterThan(baselineClamped);
     // `.parentElement`: `stat-p95` names the <dd> that holds the VALUE, and
     // the delta is its sibling inside the tile — so the assertion has to be
-    // scoped to the tile to be about this metric rather than any of the six.
+    // scoped to the tile to be about this metric rather than any of the four.
     const tile = screen.getByTestId('stat-p95').parentElement!;
     // clamped vs 2 * clamped is -50.0%. Read off the raw map it would be
     // about -87.5%, a number matching neither value on screen.
@@ -370,9 +371,9 @@ describe('RunStats', () => {
     expect(document.body.textContent?.match(/within 1%/g) ?? []).toHaveLength(1);
   });
 
-  /** NO HEADING. `run-tables.spec.ts` asserts the Overview tab's heading
-   *  outline verbatim, and a disclosure that contributed one would break it on
-   *  every tab — the shell-must-not-add-an-h2 rule, one component over. */
+  /** NO HEADING. `RunSummary.test.tsx` asserts the Summary's heading outline
+   *  verbatim, and a disclosure that contributed one would break it — the
+   *  shell-must-not-add-an-h2 rule, one component over. */
   it('adds the disclosure without contributing a heading', () => {
     renderStats(<RunStats stats={stats} peakUsers={12} runStatus="complete" />);
     expect(screen.getByTestId('percentile-method').tagName).toBe('DETAILS');

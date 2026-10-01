@@ -71,9 +71,10 @@ export default function GroupsList({
   const rows = groupRows(stats);
   if (rows.length === 0) {
     // A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION — the rule
-    // `ErrorsTable` and `RunStats` already follow. A window that selects no
-    // group buckets leaves `rows` empty for a run whose groups all ran
-    // elsewhere, and "This run has no groups." would be false of it.
+    // `ErrorsTable` follows (and `RunStats` did, until the Summary stopped being
+    // windowable). A window that selects no group buckets leaves `rows` empty
+    // for a run whose groups all ran elsewhere, and "This run has no groups."
+    // would be false of it.
     return (
       <p className="text-[0.8125rem] text-muted">
         {windowSelected ? 'No groups ran in the selected window.' : 'This run has no groups.'}
