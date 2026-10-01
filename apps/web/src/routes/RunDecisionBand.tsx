@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { describeSlaOutcome } from '@perfportal/contracts';
 import type { Assertion, RunIdentity, RunResponse } from '@perfportal/contracts';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import Badge from '../components/Badge';
 import { CompareTabIcon, DownloadIcon } from '../components/icons';
 import Button, { linkButtonClasses } from '../components/Button';
@@ -76,6 +76,14 @@ export default function RunDecisionBand({
    */
   readonly toolAssertions?: RunResponse['toolAssertions'];
 }) {
+  /* THE CURRENT SEARCH TRAVELS WITH THE ASSERTIONS LINK. It is a move within
+     this page (`#simulation-assertions`), and a `to` built from the bare path
+     replaced the query string with nothing: a reader who had landed on
+     `?request=Place%20Order#errors` and followed this link got the errors
+     table's filter reset to every request, and a `from`/`to` they carried was
+     gone from the tab links. The hash is the only thing this link means to
+     change. */
+  const { search } = useLocation();
   /**
    * ═══ THE DISTINCTION `gatesText` ALREADY MADE, NOW MADE EVERYWHERE
    * (review 09-13 C01) ═══
@@ -374,7 +382,7 @@ export default function RunDecisionBand({
               action={
                 simulation.failedExpression === null ? null : (
                   <Link
-                    to={`${runPath(identity.id)}#simulation-assertions`}
+                    to={{ pathname: runPath(identity.id), search, hash: '#simulation-assertions' }}
                     className="transition-ui font-medium text-accent hover:underline hover:underline-offset-2"
                   >
                     {simulation.failedCount === 1

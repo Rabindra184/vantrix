@@ -11,6 +11,7 @@ import { describeAssertionRuleForReader } from './assertions';
 import { ASSERTION_OUTCOME, Marked } from './marks';
 import { projectRulesPath } from './paths';
 import { formatActual, toolAssertionParts } from './toolAssertion';
+import { useWindowSuffix } from './useRunWindow';
 
 type Outcome = 'passed' | 'failed' | 'not_applicable';
 
@@ -294,9 +295,13 @@ export function SimulationAssertionsBar({
  * run has a row for it — a `not_applicable` row names a request that is not
  * there, and a link is the last thing it should offer.
  *
- * NO WINDOW TRAVELS WITH THE LINK, unlike the table this was moved from: the
- * Summary is whole-run by design and never carries one, so a drill-down from it
- * introduces none.
+ * THE WINDOW TRAVELS WITH THE LINK, as it does from the statistics table's rows.
+ * The Summary never APPLIES a window, but its URL can carry `from`/`to` —
+ * every tab link carries them, so a reader arrives here from a windowed Report
+ * with them in the address bar — and a drill-down built from the bare path
+ * would drop them: the request page's "Back to this run" and the Report tab
+ * beside it would then have lost the interval they came with.
+ * `useWindowSuffix` owns which parameters travel.
  *
  * (This was a copy while `RunDetail.tsx` still rendered the table that owned the
  * original; that table went with the Overview tab, and this is the only one.)
@@ -310,6 +315,8 @@ function AssertionTarget({
   readonly runId: string;
   readonly recorded: ReadonlyMap<string, 'requests' | 'groups'>;
 }) {
+  // Above the early returns: the hook order must not depend on the assertion.
+  const windowSuffix = useWindowSuffix();
   const label = toolAssertionParts(assertion).target;
   if (label === null) return <>—</>;
 
@@ -324,7 +331,7 @@ function AssertionTarget({
 
   return (
     <Link
-      to={`/runs/${encodeURIComponent(runId)}/${section}/${encodeURIComponent(name)}`}
+      to={`/runs/${encodeURIComponent(runId)}/${section}/${encodeURIComponent(name)}${windowSuffix}`}
       className="underline"
     >
       {label}

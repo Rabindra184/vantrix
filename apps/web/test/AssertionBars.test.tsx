@@ -404,6 +404,30 @@ describe('SimulationAssertionsBar', () => {
     expect(within(ghost!).queryByRole('link')).toBeNull();
   });
 
+  /** The Summary never applies a window, but its URL can carry one (every tab
+   *  link does), and a drill-down built from the bare path drops it — so the
+   *  request page's "Back to this run" and the Report tab lose the interval
+   *  the reader arrived with. Only `from`/`to` travel, as from the statistics
+   *  table's rows. */
+  it('carries the URL’s window, and only the window, onto a target link', () => {
+    at(
+      '/r?from=1000&to=5000&request=Search',
+      <SimulationAssertionsBar
+        runId={RUN_ID}
+        assertions={[details(['Search'], 'failed'), details(['Catalog'], 'failed')]}
+        stats={STATS.stats}
+      />,
+    );
+    expect(screen.getByRole('link', { name: 'Search' })).toHaveAttribute(
+      'href',
+      `/runs/${RUN_ID}/requests/Search?from=1000&to=5000`,
+    );
+    expect(screen.getByRole('link', { name: 'Catalog' })).toHaveAttribute(
+      'href',
+      `/runs/${RUN_ID}/groups/Catalog?from=1000&to=5000`,
+    );
+  });
+
   it('puts a failed check first, whatever order the run recorded them in', () => {
     // Every other multi-card case is already failed-first in its input, which
     // is how replacing `failedFirst(assertions)` with `assertions` passed them.

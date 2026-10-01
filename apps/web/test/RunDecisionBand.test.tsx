@@ -47,6 +47,8 @@ function renderBand(
     verdict: RunResponse['verdict'] | undefined;
     assertions: readonly Assertion[] | undefined;
     toolAssertions: RunResponse['toolAssertions'];
+    /** Where the router is when the band renders; its search is the reader's. */
+    url: string;
   }> = {},
 ) {
   const props = {
@@ -55,10 +57,11 @@ function renderBand(
     verdict: RUN.verdict as RunResponse['verdict'] | undefined,
     assertions: ASSERTIONS as readonly Assertion[] | undefined,
     toolAssertions: undefined as RunResponse['toolAssertions'],
+    url: '/',
     ...over,
   };
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[props.url]}>
       <RunDecisionBand
         identity={props.identity}
         status={props.status}
@@ -366,6 +369,23 @@ describe('RunDecisionBand — two outcomes, not one word', () => {
     const link = screen.getByRole('link', { name: /simulation assertion/i });
     expect(link).toHaveAttribute('href', `/runs/${RUN.id}#simulation-assertions`);
     expect(screen.getByTestId('outcome-simulation')).toHaveTextContent(/Search/);
+  });
+
+  /** The link is a move within the page, so it changes the hash and nothing
+   *  else. Built from the bare path it replaced the query string: a reader on
+   *  `?request=Place%20Order#errors` who followed it had the errors filter reset
+   *  to every request, and a window in the address bar was gone from the tabs. */
+  it('keeps the reader’s query string when it links to the failing check', () => {
+    renderBand({
+      verdict: 'not_evaluated',
+      assertions: [],
+      toolAssertions: TOOL,
+      url: `/runs/${RUN.id}?request=Place%20Order&from=1000&to=5000`,
+    });
+    expect(screen.getByRole('link', { name: /simulation assertion/i })).toHaveAttribute(
+      'href',
+      `/runs/${RUN.id}?request=Place%20Order&from=1000&to=5000#simulation-assertions`,
+    );
   });
 
   it('says so plainly when every simulation check passed', () => {

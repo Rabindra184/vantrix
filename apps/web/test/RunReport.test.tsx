@@ -242,6 +242,25 @@ describe('RunReport — GE’s sections', () => {
     expect(link.getAttribute('href')).toContain('%2F');
   });
 
+  /** The window rides along on a drill-down, as it does from the statistics
+   *  table's rows — only `from`/`to`, never the rest of the query string. A
+   *  link built from the bare path drops it, and the group page's "Back to
+   *  this run" then lands on a Report that has forgotten the interval. */
+  it('carries the reader’s window, and only the window, onto a group link', async () => {
+    renderReport({
+      url: `/runs/${RUN_ID}/report?from=10000&to=20000&sort=p95`,
+      window: { fromMs: 10_000, toMs: 20_000, bucketWidthMs: 1_000 },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Groups' }));
+    const section = screen.getByTestId('section-groups');
+    const nested = reference.stats.stats.find((s) => s.scope === 'group' && s.name.includes('/'))!.name;
+    const link = await within(section).findByRole('link', { name: nested });
+    expect(link).toHaveAttribute(
+      'href',
+      `/runs/${RUN_ID}/groups/${encodeURIComponent(nested)}?from=10000&to=20000`,
+    );
+  });
+
   it('says so when the run has no groups, rather than drawing an empty table', async () => {
     renderReport({ stats: { ...reference.stats, stats: reference.stats.stats.filter((s) => s.scope !== 'group') } });
     await userEvent.click(screen.getByRole('button', { name: 'Groups' }));

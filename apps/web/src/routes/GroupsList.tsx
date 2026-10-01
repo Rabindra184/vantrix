@@ -4,6 +4,7 @@ import TableFrame from '../components/TableFrame';
 import { ROW, TABLE, TD, TD_NUM, TH, TH_NUM, THEAD } from '../components/tableStyles';
 import { clampPercentile } from '../percentile';
 import { formatCount, formatMs } from '../tables/StatisticsTable';
+import { useWindowSuffix } from './useRunWindow';
 
 export interface GroupRow {
   readonly name: string;
@@ -68,6 +69,13 @@ export default function GroupsList({
    *  reads as evidence. */
   readonly windowSelected: boolean;
 }) {
+  /* The reader's window travels with the drill-down, as it does from the
+     statistics table's rows: opening a group from a windowed Report must not
+     silently return them to the whole run on the group page and, through its
+     "Back to this run", the Report tab. `useWindowSuffix` owns which
+     parameters travel. Above the early return — a hook after it would not run
+     for an empty list. */
+  const windowSuffix = useWindowSuffix();
   const rows = groupRows(stats);
   if (rows.length === 0) {
     // A SCOPED EMPTY RESULT IS NOT A WHOLE-RUN CONCLUSION — the rule
@@ -103,7 +111,7 @@ export default function GroupsList({
             <tr key={row.name} data-testid="group-row" className={ROW}>
               <td className={TD}>
                 <Link
-                  to={`/runs/${encodeURIComponent(runId)}/groups/${encodeURIComponent(row.name)}`}
+                  to={`/runs/${encodeURIComponent(runId)}/groups/${encodeURIComponent(row.name)}${windowSuffix}`}
                   className="text-accent underline-offset-2 hover:underline"
                 >
                   {row.name}
