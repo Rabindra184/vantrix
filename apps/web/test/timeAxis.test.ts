@@ -199,8 +199,9 @@ describe('useTimeDomainFromShell', () => {
  * `RunWindowContext` off one.
  *
  * `Live` is gone — `RunShell` now mounts for every run status, processing
- * included, so `useTimeDomainFromShell` is `growingDomainMs`'s only
- * production caller. What this case still guards is narrower but real: it
+ * included, so `useWholeRunDomainFromShell` is `growingDomainMs`'s only
+ * production caller, and `useTimeDomainFromShell` reaches it through that
+ * hook. What this case still guards is narrower but real: it
  * calls `growingDomainMs` directly rather than hand-writing `[0, durationMs]`
  * as a second literal, so a change to the formula that this file did not
  * also make cannot silently pass by coincidence — and it exercises
