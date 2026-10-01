@@ -373,6 +373,20 @@ describe('AppShell — a revealed fragment holds its place while the page settle
     expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'start' });
   });
 
+  /** SCROLL ONLY. Focus moved once, at the reveal, and a correction taking it
+   *  again would pull a keyboard user back from whatever they had moved to. */
+  it('does not move focus again when it corrects', async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    await revealed();
+    expect(focus).toHaveBeenCalledTimes(1);
+
+    top = 784;
+    FakeResizeObserver.instances[0]!.fire();
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
   /** Most growth is NOT above the target — a table below it changes a height
    *  and moves nothing — and scrolling on every such callback would be a
    *  jolt for no reason. The target's own position decides. */
