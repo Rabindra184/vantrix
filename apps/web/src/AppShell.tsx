@@ -204,8 +204,9 @@ export default function AppShell() {
 
   /* ═══ A FRAGMENT LINK HAS TO BE HONOURED BY US (review 09-13 C04) ═══
    *
-   * The decision band's "See the failed simulation check" is a `<Link>` to
-   * `/runs/:id#simulation-assertions` — the SAME path the reader is already
+   * The decision band's "See the failed simulation assertion" is a `<Link>`
+   * to `/runs/:id#simulation-assertions` (keeping the reader's query) — the
+   * SAME path the reader is already
    * on. React Router answers that with `pushState`, and **a browser does not
    * scroll to a fragment on `pushState`**; native fragment scrolling happens
    * on a real hash navigation or a document load. So the URL gained the

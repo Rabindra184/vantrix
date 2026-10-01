@@ -161,8 +161,9 @@ pairs in the seven `transforms.*` files), from **170 / 2086 to
 172 / 2142**, and **e2e rises to 179**: 168, minus 2 cases deleted, plus 1
 (`run-tables.spec.ts`' heading outline split in two), plus the twelve cases of the
 new `apps/web/e2e/run-summary-report.spec.ts` (179 measured; ten more specs
-were moved onto the new pages without changing their count). The branch was
-first measured at 186 / 2412, 171 / 2103 and 177, before its last two items. It is
+were moved onto the new pages without changing their count). It measured
+186 / 2401, 171 / 2103 and 176 before the final review's fix wave, and
+186 / 2412, 171 / 2103 and 177 after it, before its last two items. It is
 backlog item #7 of the Gatling Enterprise comparison: the run page becomes
 GE's two pages, a **Summary** that is always the whole run and a **Report**
 that carries the time window and the charts in collapsible sections. Seven
@@ -343,6 +344,14 @@ with its replacement count asserted:
     Summary whose `/stats` takes longer than a second to answer after the reveal
     is not held, and the reveal lands where the one-shot always did. The 1s was
     measured against a ~75ms settle on a local API, not against a slow one.
+  - A scroll that raises none of `keepInPlace`'s four inputs — a scrollbar
+    drag in Firefox fires no pointerdown on the content, and assistive
+    technology scrolls without one — can be read as drift and pulled back if a
+    layout change lands inside the window. Bounded by the same 1s idle and 5s
+    cap; the scoped re-review found it and it is recorded rather than chased.
+  - The reader-wins e2e catches a missing cancel only when the wheel lands
+    inside that 1s window of the reveal; on a machine slow enough to miss it,
+    the mutation would pass rather than the product fail.
   - `/distribution` still answers 404 for a windowed read that selects no
     buckets; the client now reads that as an empty window rather than the
     handler answering 200 with an empty distribution, which is a contract change
