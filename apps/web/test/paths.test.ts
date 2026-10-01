@@ -7,6 +7,8 @@ import {
   projectPath,
   projectRunsPath,
   projectTestPath,
+  runPath,
+  runReportPath,
   safeNext,
 } from '../src/routes/paths.js';
 
@@ -83,6 +85,22 @@ describe('safeNext', () => {
  * `Catalog/Recommendations`, which reaches its route as `%2F` and decodes back
  * inside one segment.
  */
+/**
+ * A run's two pages, as paths. The Report is a child of the run's own path —
+ * not a sibling route — because `RunShell` is a layout route mounted at
+ * `/runs/:runId` and only its outlet swaps: the Summary is the index, and the
+ * Report is one segment under it. The old `/charts`, `/load-generators` and
+ * `/errors` URLs have no helper any more: they still resolve, as redirects
+ * `App.tsx` declares (`RunSectionRedirect`, covered by the route scan below),
+ * but nothing in the app links to them.
+ */
+describe('a run’s Summary and Report, as paths', () => {
+  it('puts the Report one segment under the run, and the Summary at the run itself', () => {
+    expect(runPath('r1')).toBe('/runs/r1');
+    expect(runReportPath('r1')).toBe('/runs/r1/report');
+  });
+});
+
 describe('the project → test → run hierarchy, as paths', () => {
   it('keeps the run list a child of the project, so a project bookmark still resolves', () => {
     expect(projectRunsPath('checkout')).toBe('/projects/checkout/runs');

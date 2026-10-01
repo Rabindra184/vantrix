@@ -9,9 +9,10 @@ import { Marked, VERDICT, type Mark } from './marks';
  * Gatling Enterprise opens a run with `Build successful ❯ Deployed · 14s ❯
  * Assertions failed · 2m 00s`; this is that shape with PerfPortal's own steps.
  *
- * NO HEADING. `RunShell` renders above the tab outlet, so anything here is on
- * every tab, and the Overview tab's heading outline is asserted as an exact
- * list. Named by `aria-label`, like `LiveStatusStrip` and the decision band.
+ * NO HEADING. `RunShell` renders it above the tab outlet, ahead of the
+ * Summary's own sections, whose heading outline is asserted as an exact list
+ * (Platform gates, Simulation assertions, Over time, Errors). Named by
+ * `aria-label`, like `LiveStatusStrip` and the decision band.
  *
  * STEP TIMES SIT BESIDE THE LIST, NEVER INSIDE A `<summary>`: a summary's
  * contents are presentational to a screen reader, so a list there would lose

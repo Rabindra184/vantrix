@@ -19,7 +19,14 @@ import { useTimeAxis } from '../src/charts/TimeAxisContext';
 vi.mock('../src/useIsCompact.js', () => ({ default: vi.fn(() => false) }));
 const useIsCompactMock = vi.mocked(useIsCompact);
 
-afterEach(cleanup);
+// `cleanup` AND the global stubs: this file stubs `fetch` per case, and without
+// the unstub a case inherited the previous case's stub — which hid whether the
+// shell fetched anything of its own, the one thing the `/users` cases below
+// are about.
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const RUN: RunResponse = {
   id: 'a66548b7-2962-43ff-8b93-7149a6f2a1b8',
@@ -104,10 +111,9 @@ function renderShellWith(
         <Routes>
           <Route path="/runs/:runId" element={<RunShell {...props} />}>
             <Route index element={<div />} />
+            <Route path="report" element={<div />} />
             <Route path="trends" element={<div />} />
             <Route path="compare" element={<div />} />
-            <Route path="charts" element={<div />} />
-            <Route path="errors" element={<div />} />
             <Route path="logs" element={<div />} />
           </Route>
         </Routes>
@@ -140,6 +146,7 @@ function renderProbeWith(
         <Routes>
           <Route path="/runs/:runId" element={<RunShell {...props} />}>
             <Route index element={<ContextProbe />} />
+            <Route path="report" element={<ContextProbe />} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -147,20 +154,18 @@ function renderProbeWith(
   );
 }
 
-/**
- * `RunShell` is what actually feeds `RunTabs` its `errorCount`, and nothing
- * before this test rendered it: `RunTabs.test.tsx` only ever exercised the
- * prop directly, never the `errors.data?.errors.length ?? 0` expression that
- * used to compute it — which is exactly the line that collapsed "not yet
- * known" and "genuinely none" into the same `Errors (0)`.
- */
 describe('RunShell', () => {
-  it('mounts the lifecycle strip between the header and the release decision', () => {
+  /** Header, then the tab strip, then — on the Summary — the journey and the
+   *  decision. GE draws its strip under the run's title; here it sits under the
+   *  tab strip so the strip stays in one place on every page. */
+  it('mounts the lifecycle strip below the tabs, above the release decision', () => {
     renderShell();
     const heading = screen.getByRole('heading', { level: 1 });
+    const tabs = screen.getByRole('navigation', { name: 'Run sections' });
     const strip = screen.getByRole('region', { name: 'Run lifecycle' });
     const band = screen.getByRole('region', { name: 'Release decision' });
-    expect(heading.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heading.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tabs.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(strip.compareDocumentPosition(band) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -199,58 +204,6 @@ describe('RunShell', () => {
     expect(screen.getByTestId('lifecycle-load-test')).toHaveTextContent('Load test · streaming · 42s');
   });
 
-  it('renders a bare Errors tab before the errors payload has resolved, not Errors (0)', () => {
-    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
-
-    renderShell();
-
-    expect(screen.getByRole('link', { name: 'Errors' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Errors \(/ })).not.toBeInTheDocument();
-  });
-
-  it('shows the resolved distinct-message count once the errors payload arrives', async () => {
-    vi.stubGlobal('fetch', (input: RequestInfo) => {
-      const url = String(input);
-      if (url.includes('/errors')) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              runId: RUN.id,
-              errors: [
-                { message: 'boom', count: 15 },
-                { message: 'bang', count: 9 },
-              ],
-            }),
-            { status: 200 },
-          ),
-        );
-      }
-      return Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 }));
-    });
-
-    renderShell();
-
-    expect(await screen.findByRole('link', { name: 'Errors (2)' })).toBeInTheDocument();
-  });
-
-  it('renders a bare Errors tab when the errors fetch fails, not a confident zero', async () => {
-    vi.stubGlobal('fetch', (input: RequestInfo) => {
-      const url = String(input);
-      if (url.includes('/errors')) {
-        return Promise.resolve(new Response('{}', { status: 500 }));
-      }
-      return Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 }));
-    });
-
-    renderShell();
-
-    // No `Errors (…)` of any kind ever appears — including the specific
-    // wrong answer `?? 0` used to produce, and produce permanently, since a
-    // failed fetch never resolves `errors.data`.
-    await screen.findByRole('link', { name: 'Errors' });
-    expect(screen.queryByRole('link', { name: 'Errors (0)' })).not.toBeInTheDocument();
-  });
-
   /**
    * A terminal run passes `live: null` (there is no socket for a run that
    * has already finished), so `liveDurationMs` — `live?.lastDelta?.summary
@@ -275,7 +228,7 @@ describe('RunShell', () => {
   it('mounts header and tabs for a running run', () => {
     renderShellWith({ status: 'running', verdict: undefined, windowable: undefined });
     expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Summary' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Trends' })).toBeInTheDocument();
   });
 
@@ -287,19 +240,20 @@ describe('RunShell', () => {
     expect(screen.queryByRole('slider')).toBeNull();
   });
 
-  it('does not FETCH the shared metric keys while a run is live', () => {
-    // useLiveRun's applyDelta already writes usersQuery and errorsQuery
-    // directly. A live REST fetch answers emptier for a run whose rows do not
-    // exist yet, and TanStack applies whichever write resolves last — so the
-    // socket's own numbers would lose a race to an empty payload.
+  it('does not FETCH the shared metric key while a run is live', () => {
+    // useLiveRun's applyDelta already writes usersQuery directly. A live REST
+    // fetch answers emptier for a run whose rows do not exist yet, and TanStack
+    // applies whichever write resolves last — so the socket's own numbers would
+    // lose a race to an empty payload. Rendered ON THE REPORT, the one place
+    // the shell asks for `/users` at all: on any other section the absence
+    // would hold for a reason that has nothing to do with the run being live.
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined });
+    renderShellWith({ status: 'running', verdict: undefined, windowable: undefined }, `/runs/${RUN.id}/report`);
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     // `.some(...)`, NOT `expect(urls).not.toContain(expect.stringContaining(...))` —
     // toContain does not meaningfully take an asymmetric matcher, so that
     // spelling passes whether or not the fetch happened.
     expect(urls.some((u) => u.includes('/users'))).toBe(false);
-    expect(urls.some((u) => u.includes('/errors'))).toBe(false);
     fetchSpy.mockRestore();
   });
 
@@ -363,7 +317,7 @@ describe('RunShell', () => {
     // fetch mock is needed: `enabled: terminal` is `false`, so neither query
     // should call `fetch` at all regardless of `status`.
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    renderShellWith({ status: 'complete', terminal: false });
+    renderShellWith({ status: 'complete', terminal: false }, `/runs/${RUN.id}/report`);
     // The non-terminal strip renders (its own "checks again" sentence for a
     // run that is neither streaming, frozen nor capped) — impossible for a
     // shell that still believed `status: 'complete'` meant terminal.
@@ -372,7 +326,6 @@ describe('RunShell', () => {
     ).toBeInTheDocument();
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => u.includes('/users'))).toBe(false);
-    expect(urls.some((u) => u.includes('/errors'))).toBe(false);
     fetchSpy.mockRestore();
   });
 
@@ -388,25 +341,104 @@ describe('RunShell', () => {
   it('trusts terminal=true over a `status` the old allowlist called non-terminal', () => {
     // `status: 'running'` used to be non-terminal on its own; `terminal:
     // true` here proves the shell fetches and hides the strip regardless.
-    vi.stubGlobal('fetch', (input: RequestInfo) => {
-      const url = String(input);
-      if (url.includes('/errors')) {
-        return Promise.resolve(new Response(JSON.stringify({ runId: RUN.id, errors: [] }), { status: 200 }));
-      }
-      return Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 }));
-    });
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })),
+    );
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    renderShellWith({
-      status: 'running', verdict: undefined, windowable: undefined, terminal: true,
-    });
+    renderShellWith(
+      { status: 'running', verdict: undefined, windowable: undefined, terminal: true },
+      `/runs/${RUN.id}/report`,
+    );
     // No live status strip at all — `!terminal &&` above it is false.
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
-    // The shell's own `users`/`errors` fetch fires — gated on `enabled:
-    // terminal`, which the old `status === 'running'` derivation would have
-    // forced to `false` regardless of what this test passes.
+    // The shell's own `users` fetch fires — gated on `enabled: terminal`,
+    // which the old `status === 'running'` derivation would have forced to
+    // `false` regardless of what this test passes.
     expect(urls.some((u) => u.includes('/users'))).toBe(true);
     fetchSpy.mockRestore();
+  });
+
+  /**
+   * THE SHELL ASKS FOR `/users` ONLY WHERE THE BRUSH IS. The query exists for
+   * one reason — the snapped window a response reports, which the brush states
+   * as "Showing …". Gatling Enterprise's Summary never sends a window, so the
+   * Summary and every other section have no use for it: the Summary's own Peak
+   * users tile fetches its own copy, and a second request from here is paid for
+   * by every page that does not draw the brush. Asserted in both directions
+   * because "never fetches" and "always fetches" each pass one of them.
+   */
+  it('fetches /users on the Report, where the brush’s applied window comes from', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })),
+    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/report`);
+    await screen.findByTestId('time-brush');
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/users'))).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it.each([
+    ['the Summary', ''],
+    ['Trends', '/trends'],
+    ['Compare', '/compare'],
+  ])('does not fetch /users on %s', async (_where, section) => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(new Response(JSON.stringify(EMPTY_USERS), { status: 200 })),
+    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}${section}`);
+    // The paired positive: the shell rendered, and (for the Summary) drew its
+    // decision, so an absent fetch is not an absent page.
+    await screen.findByRole('navigation', { name: 'Run sections' });
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/users'))).toBe(false);
+    fetchSpy.mockRestore();
+  });
+});
+
+/**
+ * ═══ GATLING ENTERPRISE'S SUMMARY AND REPORT, AROUND THE TAB STRIP ═══
+ *
+ * The lifecycle strip and the verdict band answer "how did the run go", which
+ * is the Summary's question; the time window is how the Report's charts are
+ * narrowed. The shell used to draw both above every section, so a reader on
+ * Trends was shown a release decision they had not asked for and a window
+ * control that changed nothing. Each now belongs to the one page it is about —
+ * and BELOW the tab strip, so the strip stays in one place on every page.
+ */
+describe('RunShell — GE’s Summary and Report around the tab strip', () => {
+  it('draws the lifecycle strip and the verdict band on the Summary only, below the tabs', () => {
+    renderShellWith({}, `/runs/${RUN.id}`);
+    const tabs = screen.getByRole('navigation', { name: 'Run sections' });
+    const strip = screen.getByTestId('run-lifecycle');
+    const band = screen.getByRole('region', { name: 'Release decision' });
+    expect(tabs.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tabs.compareDocumentPosition(band) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it.each(['report', 'logs', 'trends', 'compare'])('draws no lifecycle strip or band on %s', (section) => {
+    renderShellWith({}, `/runs/${RUN.id}/${section}`);
+    // The paired positive: the shell drew its tab strip, so the absences are
+    // not an absent page.
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Release decision' })).toBeNull();
+    expect(screen.queryByTestId('run-lifecycle')).toBeNull();
+  });
+
+  it('offers the time window on the Report and nowhere else', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/report`);
+    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+    cleanup();
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
+    expect(screen.getByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    expect(screen.queryByTestId('time-brush')).toBeNull();
+  });
+
+  it('renders the Report with no time window for a run that cannot honour one', () => {
+    renderShellWith({ windowable: false }, `/runs/${RUN.id}/report`);
+    expect(screen.queryByTestId('time-brush')).toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   });
 });
 
@@ -419,17 +451,17 @@ describe('RunShell', () => {
  * What has no other home is the PLACEMENT, and it needs one because the
  * banner moved. It shipped inside `Live`, the standalone live page, whose
  * only route was `/runs/:runId` — so it was reachable on exactly one screen.
- * `Live` is gone; the shell mounts once above the `<Outlet/>` and the five
- * tabs swap underneath it, which is what puts a breach in front of a reader
- * watching Charts as much as one watching Overview. A future change that
- * pushed this down into `RunOverviewTab` would leave every case in
- * `SlaBanner.test.tsx` green while making the banner invisible on four tabs
- * out of five; these cases are what would catch it.
+ * `Live` is gone; the shell mounts once above the `<Outlet/>` and the run's
+ * sections swap underneath it, which is what puts a breach in front of a
+ * reader watching the Report as much as one watching the Summary. A future
+ * change that pushed this down into `RunSummary` would leave every case in
+ * `SlaBanner.test.tsx` green while making the banner invisible on every
+ * section but one; these cases are what would catch it.
  */
 describe('RunShell — the SLA breach banner', () => {
   it('renders the banner above the outlet, so it is on screen whichever tab is open', () => {
-    // The index child is a bare `<div/>` — i.e. NOT the Overview tab, and not
-    // any tab at all. The banner still renders, which is the assertion: it
+    // The index child is a bare `<div/>` — i.e. NOT the Summary, and not
+    // any section at all. The banner still renders, which is the assertion: it
     // belongs to the shell, not to whatever the outlet happens to be showing.
     renderShellWith({
       status: 'running', verdict: undefined, windowable: undefined,
@@ -453,8 +485,7 @@ describe('RunShell — the SLA breach banner', () => {
    * streaming but is still `parsing` keeps its last delta, and the fold owner
    * has already released it, so nothing will ever re-evaluate those rules.
    * "currently breaching" would be a claim about a live evaluation that is no
-   * longer running. `LiveSummary`'s Duration tile draws the same distinction
-   * off the same flag and the two must never disagree on one render.
+   * longer running.
    */
   it('switches to the past tense once the run has stopped streaming', () => {
     renderShellWith({
@@ -496,20 +527,31 @@ describe('RunShell — the SLA breach banner', () => {
 /**
  * REVIEW C03 — THE WINDOW CONTROL MUST NOT APPEAR OVER SECTIONS THAT IGNORE IT.
  *
- * The brush is rendered by the shell, so it sat above every tab — including
- * Trends, whose cohort query is historical and takes no window at all, and
- * Compare, which is the same. The control accepted 10–30s there, announced
- * that window, and changed nothing: an engineer reading a trend line had no
- * way to know it still covered the whole run.
+ * The brush is rendered by the shell, so it once sat above every tab —
+ * including Trends, whose cohort query is historical and takes no window at
+ * all, and Compare, which is the same. The control accepted 10–30s there,
+ * announced that window, and changed nothing: an engineer reading a trend line
+ * had no way to know it still covered the whole run.
  *
- * Hiding it on those two is the honest half. The PARAMETERS still travel
- * (`RunTabs`), so returning to Overview restores the selection — the reader
+ * It is a NAMED PLACE now rather than a list of exceptions: the Report, where
+ * Gatling Enterprise puts it, and nowhere else. The Summary answers a
+ * whole-run question and never sends a window, so a control over it would be
+ * the same claim about a page that ignores it. The PARAMETERS still travel
+ * (`RunTabs`), so returning to the Report restores the selection — the reader
  * loses the control where it is meaningless, not their place.
  */
 describe('RunShell — the window control only appears where it applies', () => {
-  it('offers the brush on the tabs that honour a window', async () => {
-    renderShellWith({ windowable: true }, `/runs/${RUN.id}/charts`);
+  it('offers the brush on the Report, the one section that honours a window', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/report`);
     expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+  });
+
+  it('withholds it on the Summary, which answers a whole-run question', async () => {
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
+    // The paired positive: the Summary's own band is on screen, so an absent
+    // brush is not an absent page.
+    expect(await screen.findByRole('region', { name: 'Release decision' })).toBeInTheDocument();
+    expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
   });
 
   it('withholds it on Trends, whose query is whole-run by construction', async () => {
@@ -526,15 +568,32 @@ describe('RunShell — the window control only appears where it applies', () => 
 
   it('withholds it on Logs, whose events are read whole', async () => {
     // `GET /v1/runs/{id}/events` takes no `from`/`to`, so a drag over the log
-    // would change nothing — the third section to ignore a window.
+    // would change nothing.
     renderShellWith({ windowable: true, identity: { ...RUN, runnerJobId: 'job-1' } }, `/runs/${RUN.id}/logs`);
     await screen.findByRole('navigation', { name: /run sections/i });
     expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();
   });
+});
 
-  it('still offers it on Overview', async () => {
-    renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
-    expect(await screen.findByTestId('time-brush')).toBeInTheDocument();
+/**
+ * A RUN THAT CANNOT HONOUR A WINDOW STILL HAS A REPORT. A run ingested before
+ * per-bucket histograms answers every windowed call with 400 WINDOW_UNAVAILABLE,
+ * so offering it a brush would invite a drag the API then refuses; the sections
+ * themselves are unaffected, and a Report with no time window must still be a
+ * Report — the tab strip, and the outlet under it, intact. (`windowable: false`
+ * is pinned beside the Summary's own cases above.)
+ *
+ * `undefined` is the same answer: `windowable` is optional in the contract, so
+ * a server that predates the field is treated as unable.
+ */
+describe('RunShell — the Report of a run whose server predates `windowable`', () => {
+  it('offers no time window rather than guessing the run can honour one', async () => {
+    renderShellWith({ windowable: undefined }, `/runs/${RUN.id}/report`);
+    expect(await screen.findByRole('navigation', { name: 'Run sections' })).toBeVisible();
+    expect(screen.queryByTestId('time-brush')).toBeNull();
+    // On the Report, so it is the `windowable` gate and not the section that
+    // withheld it: the same props with `windowable: true` draw the brush.
+    expect(screen.getByRole('link', { name: 'Report' })).toHaveAttribute('aria-current', 'page');
   });
 });
 
@@ -549,7 +608,7 @@ describe('RunShell — the window control only appears where it applies', () => 
  */
 describe('RunShell — the navigator’s Duration', () => {
   it('reads the activity span the header calls Duration, not the series span', async () => {
-    renderShellWith({ identity: { ...RUN, activityMs: 62_136 }, windowable: true });
+    renderShellWith({ identity: { ...RUN, activityMs: 62_136 }, windowable: true }, `/runs/${RUN.id}/report`);
     expect(await screen.findByTestId('window-duration')).toHaveTextContent('Duration: 62s');
   });
 });
@@ -576,7 +635,9 @@ describe('RunShell — the navigator’s Duration', () => {
  * third.
  */
 describe('RunShell — the time brush on a narrow viewport', () => {
-  const windowed = `/runs/${RUN.id}?from=10000&to=30000`;
+  // On the Report: it is the one section that draws the brush on a desktop, so
+  // it is the one whose phone reader the notice is for.
+  const windowed = `/runs/${RUN.id}/report?from=10000&to=30000`;
 
   it('does not mount the brush', async () => {
     useIsCompactMock.mockReturnValue(true);
@@ -621,11 +682,20 @@ describe('RunShell — the time brush on a narrow viewport', () => {
     expect(context.window).toMatchObject({ fromMs: 10_000, toMs: 30_000 });
   });
 
+  /** Nor over the Summary, which never sends a window: "Showing 10–30 s of
+   *  this run" there would be a claim about a page that ignores it. */
+  it('does not announce a window over the Summary, which shows the whole run', async () => {
+    useIsCompactMock.mockReturnValue(true);
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}?from=10000&to=30000`);
+    await screen.findByRole('region', { name: 'Release decision' });
+    expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
+  });
+
   /** An unwindowed run is not told about a control it is not being offered:
    *  the notice exists for the reader who followed a narrowed link. */
   it('renders nothing at all when no window is applied', async () => {
     useIsCompactMock.mockReturnValue(true);
-    renderShellWith({ windowable: true }, `/runs/${RUN.id}`);
+    renderShellWith({ windowable: true }, `/runs/${RUN.id}/report`);
     await screen.findByRole('navigation', { name: /run sections/i });
     expect(screen.queryByTestId('compact-window-notice')).not.toBeInTheDocument();
     expect(screen.queryByTestId('time-brush')).not.toBeInTheDocument();

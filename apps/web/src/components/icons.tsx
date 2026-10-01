@@ -2,6 +2,7 @@ import type { SVGProps } from 'react';
 import {
   Activity,
   Box,
+  ChartArea,
   ChartSpline,
   Check,
   ChevronDown,
@@ -9,11 +10,10 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  CircleAlert,
   Clipboard,
   Download,
+  FileText,
   Funnel,
-  Gauge,
   GitCompareArrows,
   Inbox,
   KeyRound,
@@ -31,7 +31,6 @@ import {
   Plus,
   RefreshCw,
   Repeat,
-  Server,
   Settings,
   Square,
   Sun,
@@ -152,8 +151,9 @@ export const FilterIcon = icon(Funnel);
 
 /** Swap a plot for the table of the exact numbers behind it. */
 export const TableIcon = icon(Table2);
-/** Swap that table back for the plot. `ChartsTabIcon`'s glyph would collide
- *  with the tab strip's meaning ("go to the Charts tab"), which this is not. */
+/** Swap that table back for the plot. A different glyph from `ReportTabIcon`'s
+ *  area chart, which means "go to the Report" in the tab strip — what this
+ *  button means is "show the plot here". */
 export const PlotIcon = icon(ChartSpline);
 export const ExpandIcon = icon(Maximize2);
 export const CollapseIcon = icon(Minimize2);
@@ -167,13 +167,14 @@ export const InboxIcon = icon(Inbox);
 /** An action in flight — pair with `animate-spin` and `aria-busy`. */
 export const SpinnerIcon = icon(LoaderCircle);
 
-/* The run page's sections, in tab order (`routes/RunTabs.tsx`) — six, and a
- * seventh, Logs, for a run the on-prem runner executed. Decorative
- * like everything else here: the tab's accessible name stays its text. */
-export const OverviewTabIcon = icon(Gauge);
-export const ChartsTabIcon = icon(ChartSpline);
-export const TelemetryTabIcon = icon(Server);
-export const ErrorsTabIcon = icon(CircleAlert);
+/* The run page's sections, in tab order (`routes/RunTabs.tsx`) — Summary and
+ * Report, Trends and Compare, and a fifth, Logs, for a run the on-prem runner
+ * executed. The first two are Gatling Enterprise's own glyphs for its Summary
+ * (`summarize`) and Report (`area_chart`), which lucide spells `FileText` and
+ * `ChartArea`. Decorative like everything else here: the tab's accessible name
+ * stays its text. */
+export const SummaryTabIcon = icon(FileText);
+export const ReportTabIcon = icon(ChartArea);
 export const TrendsTabIcon = icon(TrendingUp);
 export const CompareTabIcon = icon(GitCompareArrows);
 export const LogsTabIcon = icon(Terminal);

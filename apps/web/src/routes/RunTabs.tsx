@@ -1,38 +1,39 @@
 import type { ComponentType, ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  ChartsTabIcon,
   CompareTabIcon,
-  ErrorsTabIcon,
   LogsTabIcon,
-  OverviewTabIcon,
-  TelemetryTabIcon,
+  ReportTabIcon,
+  SummaryTabIcon,
   TrendsTabIcon,
 } from '../components/icons';
 import { cn } from '../lib/cn';
 import { useWindowSuffix } from './useRunWindow';
 import {
-  runChartsPath,
   runComparePath,
-  runErrorsPath,
   runLogsPath,
   runPath,
-  runTelemetryPath,
+  runReportPath,
   runTrendsPath,
 } from './paths';
 
 /**
- * A run's six sections — seven on a run the on-prem runner executed, which also has Logs — as navigation.
+ * A run's four sections — five on a run the on-prem runner executed, which also
+ * has Logs — as navigation: Gatling Enterprise's Summary and Report, then the
+ * sections this product adds.
  *
  * `NavLink` supplies `aria-current="page"` itself when its `to` matches — and
- * `end` on the Overview link is what stops it matching `/charts` and
- * `/errors` too, since both start with the run's own path.
+ * `end` on the Summary link is what stops it matching `/report` too, since the
+ * Report's path starts with the run's own.
  *
- * Load generators sits between Charts and Errors: it answers a question about
- * THIS run (which is what the first tabs do), and it is the one a reader turns
- * to when the charts look wrong — so it belongs beside them, not after the
- * failures. Trends and Compare stay at the end because both leave the run:
+ * Summary and Report answer questions about THIS run, and Logs does too for a
+ * runner run. Trends and Compare stay at the end because both leave the run:
  * first the cohort story, then the selected overlay built from that cohort.
+ *
+ * WHAT USED TO BE FOUR TABS IS TWO. The Overview, Errors and Load generators
+ * tabs folded into the Summary and the Report, and the Charts tab became the
+ * Report itself. Their old URLs still resolve, as redirects (`App.tsx`), so a
+ * link pasted into a ticket lands on the content it named.
  *
  * STILL LINKS IN A `<nav>`, NOT AN ARIA TAB PATTERN, and the design pass did
  * not change that. `role="tablist"`/`role="tab"` is what this LOOKS like and
@@ -42,28 +43,12 @@ import {
  * panels swapped in place, brings a roving-tabindex keyboard contract this
  * repo has no test for, and would break middle-click. The underline is a
  * visual convention; the semantics are navigation.
- *
- * The error count is DISTINCT MESSAGES, which only `/errors` knows. The stats
- * row's `koCount` is failed requests — 24 where this is 2 on the reference
- * run — so using it would put a plausible wrong number on screen.
- *
- * `errorCount` is `number | null`, not defaulted to `0` by its caller: `null`
- * means "not yet known" — `errorsQuery` still pending, or failed — and `0`
- * means the run genuinely has no distinct error messages. `RunShell` used to
- * collapse the two with `?? 0`, which read "Errors (0)" for a run whose count
- * had not arrived, and read it forever if the fetch failed outright while the
- * panel beneath it rendered `role="alert"` — a confident zero over a stated
- * failure. `peakUsers` two lines up in `RunHeader` already draws this
- * distinction (`runUsers.ts`'s own "zero is a measurement"); this is the same
- * argument applied to the tab that sits right beside it.
  */
 export default function RunTabs({
   runId,
-  errorCount,
   hasLogs,
 }: {
   readonly runId: string;
-  readonly errorCount: number | null;
   /** Whether the run has a runner job, and so a Logs tab. REQUIRED, not
    *  defaulted: a caller that forgot it would silently hide the tab on every
    *  runner run — or show it on every run, which is worse. */
@@ -78,11 +63,11 @@ export default function RunTabs({
   const withWindow = (path: string): string => `${path}${suffix}`;
 
   return (
-    // `overflow-x-auto` because three tabs plus a count do not fit 320px once
-    // the count reaches four digits, and a tab strip that wraps to two lines
-    // stops reading as one control. `-mb-px` pulls the strip's own bottom
-    // border onto the container's, so the active tab's underline meets the
-    // rule rather than floating a pixel above it.
+    // `overflow-x-auto` because five tabs will not fit a 320px viewport — each
+    // is an icon, a word and 24px of padding — and a tab strip that wraps to
+    // two lines stops reading as one control. `-mb-px` pulls the strip's own
+    // bottom border onto the container's, so the active tab's underline meets
+    // the rule rather than floating a pixel above it.
     //
     // STICKY BENEATH THE SHELL HEADER — `top-header` here and `h-header` on
     // the header itself are the SAME token (`tokens.css`'s `--header-height`),
@@ -106,29 +91,18 @@ export default function RunTabs({
           `aria-hidden` (icons.tsx's default), so every tab's accessible name
           stays exactly its text — `RunTabs.test.tsx` asserts those names
           verbatim, and `run-detail.spec.ts` selects by them. The COMPONENT is
-          passed, not an element, so `Tab` sizes all six in one place and a
+          passed, not an element, so `Tab` sizes all five in one place and a
           future section cannot drift to the icon module's larger default. */}
-      <Tab to={withWindow(runPath(runId))} end icon={OverviewTabIcon}>
-        Overview
+      <Tab to={withWindow(runPath(runId))} end icon={SummaryTabIcon}>
+        Summary
       </Tab>
-      <Tab to={withWindow(runChartsPath(runId))} icon={ChartsTabIcon}>
-        Charts
-      </Tab>
-      <Tab to={withWindow(runTelemetryPath(runId))} icon={TelemetryTabIcon}>
-        Load generators
-      </Tab>
-      <Tab to={withWindow(runErrorsPath(runId))} icon={ErrorsTabIcon}>
-        {/* One text node, so the tab's accessible name is "Errors (2)" rather
-            than a name assembled from two children — `run-detail.spec.ts`
-            matches it with `getByRole('link', { name: /Errors/ })`, which
-            holds either way, but a count in its own element would also become
-            a `getByText('2')` target on a page full of numbers. */}
-        {errorCount === null ? 'Errors' : `Errors (${errorCount})`}
+      <Tab to={withWindow(runReportPath(runId))} icon={ReportTabIcon}>
+        Report
       </Tab>
       {/* LOGS ONLY WHERE THERE CAN BE ANY. A run the on-prem runner did not
           execute has no events and never will, and a tab over a section that
           can never have content is a false claim — so it is withheld, not
-          shown empty. It sits after Errors because it is still about THIS
+          shown empty. It sits after Report because it is still about THIS
           run, and before the two tabs that leave it. */}
       {hasLogs && (
         <Tab to={withWindow(runLogsPath(runId))} icon={LogsTabIcon}>
@@ -136,12 +110,11 @@ export default function RunTabs({
         </Tab>
       )}
       {/* LAST PAIR, AND THE POSITION IS THE ARGUMENT. Every tab before them
-          answers a question about THIS run, narrowing as it goes — what
-          happened, what it looked like, what generated the load, what went
-          wrong, and (for a runner run) what the runner did. Trends is
-          the cohort view, and Compare is the editable overlay that follows
-          from it, so they sit together at the end rather than beside Charts,
-          which they superficially resemble. */}
+          answers a question about THIS run — how it went (Summary), what it
+          looked like (Report), and, for a runner run, what the runner did
+          (Logs). Trends is the cohort view, and Compare is the editable
+          overlay that follows from it, so they sit together at the end rather
+          than beside the Report, whose charts they superficially resemble. */}
       <Tab to={withWindow(runTrendsPath(runId))} icon={TrendsTabIcon}>
         Trends
       </Tab>

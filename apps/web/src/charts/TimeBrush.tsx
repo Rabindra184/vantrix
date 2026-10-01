@@ -39,11 +39,27 @@ import {
 } from '../components/icons';
 
 /**
- * The run's time window, after Gatling Enterprise's time controls: an
- * always-visible range with presets, the Offset/Datetime mode every
- * single-run axis follows, and a timeline holding the navigator strip, its
- * six zoom and pan controls, and the exact From/To fields.
+ * The run's time window, after Gatling Enterprise's time controls: a range
+ * with presets, the Offset/Datetime mode every single-run axis follows, and
+ * beneath them the navigator strip, its six zoom and pan controls, and the
+ * exact From/To fields. All of it is on screen at once.
  * (docs/superpowers/specs/2026-09-26-time-window-gatling-style-design.md)
+ *
+ * ═══ ALWAYS OPEN, BECAUSE THE PAGE IT SITS ON NO LONGER CARRIES THE TOTALS ═══
+ *
+ * It was a disclosure — "Timeline", shut until a window was applied — and
+ * review M01 earned that: at 1440x900 the control ran 332px on the page that
+ * also held the run's headline numbers, which began 80px below the fold. That
+ * trade was made so the totals would fit above the fold on the page that
+ * carried them. The Report carries no totals (they are the Summary's), and
+ * Gatling Enterprise's window bar is always shown, so nothing is folded away:
+ * the navigator is the first thing under the Report's tab strip.
+ *
+ * What the fold had to guard — a reader looking at a tenth of a run with
+ * nothing on screen admitting it — cannot happen with nothing folded. The
+ * range line and the From/To fields state the window beside the strip they
+ * describe, and `RunShell` renders the control only on the Report, so it never
+ * sits over a section that ignores it (review C03).
  *
  * ═══ THE STRIP ALWAYS SHOWS THE WHOLE RUN ═══
  *
@@ -115,6 +131,7 @@ export default function TimeBrush({
   readonly applied?: Window | null;
   readonly onChange: (next: Window | null) => void;
 }) {
+  const headingId = useId();
   const fromId = useId();
   const toId = useId();
   const errorId = useId();
@@ -124,16 +141,6 @@ export default function TimeBrush({
   /** Set when `apply` refuses; cleared by a valid apply, and by any change to
    *  the selection itself so a stale complaint never outlives its input. */
   const [rangeError, setRangeError] = useState<string | null>(null);
-
-  /* Open when the run is already narrowed, closed when it is not. The EFFECT
-     keeps that true after the first render: the shell does not remount
-     between tabs, so a window arriving from a URL would otherwise leave an
-     active narrowing behind a closed timeline. It never closes the timeline
-     on its own; that is the reader's to do. */
-  const [open, setOpen] = useState(() => window !== null);
-  useEffect(() => {
-    if (window !== null) setOpen(true);
-  }, [window]);
 
   // THE WHOLE RUN, deliberately unwindowed; see the docstring.
   const series = useQuery(seriesQuery(runId, 'run', '', 'response_time', null));
@@ -299,18 +306,25 @@ export default function TimeBrush({
 
   return (
     <section
-      aria-label="Time window"
+      aria-labelledby={headingId}
       data-testid="time-brush"
       className="rounded border border-default bg-surface"
     >
-      {/* ═══ ALWAYS VISIBLE: WHICH STRETCH, AND WHICH CLOCK ═══
+      {/* THE SECTION'S NAME IS A REAL HEADING, `sr-only`. It was an `aria-label`
+          while the control was a disclosure; now that it is a page section the
+          Report's heading outline names it — Time window, then Requests, Groups
+          and the rest — so a screen-reader user navigating by heading reaches
+          the window the way a sighted reader reaches the bar. Visually hidden
+          because the range line below already says what this is, and a visible
+          title over it would be the second thing saying so. */}
+      <h2 id={headingId} className="sr-only">
+        Time window
+      </h2>
+      {/* ═══ WHICH STRETCH, AND WHICH CLOCK ═══
        *
-       * The range line states the window from outside the timeline, so a
-       * closed timeline never hides an active narrowing (review M01's safety
-       * property), and it opens Gatling's presets. The mode beside it relabels
-       * every single-run time axis; it is a reading preference and never
-       * enters the URL. Neither sits inside the `<summary>` below, whose
-       * descendants are presentational in the accessibility tree. */}
+       * The range line states the window and opens Gatling's presets. The mode
+       * beside it relabels every single-run time axis; it is a reading
+       * preference and never enters the URL. */}
       <div className="flex flex-wrap items-center gap-2 p-3">
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
@@ -368,178 +382,161 @@ export default function TimeBrush({
         )}
       </div>
 
-      <details
-        open={open}
-        onToggle={(event) => setOpen(event.currentTarget.open)}
-        className="group"
-      >
-        <summary
-          data-testid="time-window-toggle"
-          className="flex cursor-pointer list-none items-center gap-2 px-3 pb-3 text-[0.75rem] font-medium text-accent hover:underline hover:underline-offset-2"
-        >
-          <span className="group-open:hidden">Timeline</span>
-          <span className="hidden group-open:inline">Hide timeline</span>
-          {/* "Whole run" stays load-bearing (review M01): it tells a reader the
-              numbers below are the run's own before they open anything. */}
-          {window === null && <span className="font-normal text-muted">· whole run</span>}
-        </summary>
-
-        <div className="flex flex-col gap-3 p-3 pt-0">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="flex gap-4 text-[0.75rem] text-muted">
-              <span data-testid="window-resolution">
-                Resolution: {resolutionMs === null ? '—' : formatDuration(resolutionMs)}
-              </span>
-              <span data-testid="window-duration">
-                Duration: {formatDuration(runActivityMs ?? runDurationMs)}
-              </span>
-            </p>
-            <div role="group" aria-label="Move the window" className="flex gap-1">
-              {WINDOW_STEPS.map(({ step: which, label }) => {
-                const Icon = STEP_ICONS[which];
-                return (
-                  <button
-                    key={which}
-                    type="button"
-                    data-testid={`window-step-${which}`}
-                    aria-label={label}
-                    title={label}
-                    disabled={
-                      resolutionMs === null || !canStep(current, which, runDurationMs, resolutionMs)
-                    }
-                    onClick={() => step(which)}
-                    className="transition-ui inline-flex h-7 w-7 items-center justify-center rounded border border-default bg-surface text-primary hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Icon className="h-4 w-4" />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {rates !== null && (
-            <Chart
-              id="time-window"
-              // NAMES THE MEASURE, not the control; "whole run" because the
-              // strip never narrows with the selection (see the docstring).
-              title="Requests per second, whole run"
-              // A NAVIGATOR, NOT A FIGURE: axes kept so a reader can see where
-              // they are dragging, the legend dropped because the chart below
-              // names the same All/OK/KO.
-              navigator
-              data={rates}
-              kind="line"
-              // The app-wide status colours; without them the strip drew
-              // All/OK/KO in the categorical palette, disagreeing with
-              // `RatesChart` directly below.
-              roles={RATE_ROLES}
-              // A VALUE AXIS in elapsed milliseconds, which is what the slider
-              // reports and the URL speaks. `Chart` labels it as clock time and
-              // names it from the time mode.
-              xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
-              unit="/s"
-              brush={{
-                value: window,
-                onChange: commit,
-              }}
-            />
-          )}
-
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label htmlFor={fromId} className="text-[0.75rem] text-muted">
-                From (s)
-              </label>
-              <input
-                id={fromId}
-                data-testid="window-from"
-                inputMode="numeric"
-                aria-invalid={rangeError === null ? undefined : true}
-                aria-describedby={rangeError === null ? undefined : errorId}
-                value={from}
-                onChange={(e) => {
-                  setFrom(e.target.value);
-                  setFromEdited(true);
-                }}
-                placeholder="0"
-                className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label htmlFor={toId} className="text-[0.75rem] text-muted">
-                To (s)
-              </label>
-              <input
-                id={toId}
-                data-testid="window-to"
-                inputMode="numeric"
-                aria-invalid={rangeError === null ? undefined : true}
-                aria-describedby={rangeError === null ? undefined : errorId}
-                value={to}
-                onChange={(e) => {
-                  setTo(e.target.value);
-                  setToEdited(true);
-                }}
-                placeholder={asSeconds(runDurationMs)}
-                className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={apply}
-              data-testid="window-apply"
-              className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
-            >
-              Apply window
-            </button>
-
-            {window !== null && (
-              <button
-                type="button"
-                onClick={() => {
-                  cancelSettle();
-                  onChange(null);
-                }}
-                data-testid="window-clear"
-                className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
-              >
-                Whole run
-              </button>
-            )}
-
-            {/* `role="alert"`: a response to the reader's own action, and the
-                figures deliberately do NOT move to signal it. Rendered only
-                when there is something to say, so this never contributes an
-                empty live region to a page that already mounts several. */}
-            {rangeError !== null && (
-              <p
-                id={errorId}
-                role="alert"
-                data-testid="window-error"
-                className="w-full text-[0.75rem]"
-                /* `var()`, not a `text-status-failed` utility: the status
-                   tokens are declared on `:root` rather than inside
-                   `@theme inline`, so that spelling emits nothing at all. */
-                style={{ color: 'var(--color-status-failed)' }}
-              >
-                {rangeError}
-              </p>
-            )}
-
-            {/* THE SNAPPED RANGE, announced: `role="status"` so a screen
-                reader is told the figures now describe a different stretch,
-                in the same words the range line above uses. */}
-            {applied != null && (
-              <p role="status" data-testid="window-applied" className="text-[0.75rem] text-muted">
-                Showing {range.start} → {range.end}, snapped to{' '}
-                {formatDuration(applied.bucketWidthMs)} buckets
-              </p>
-            )}
+      <div className="flex flex-col gap-3 p-3 pt-0">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="flex gap-4 text-[0.75rem] text-muted">
+            <span data-testid="window-resolution">
+              Resolution: {resolutionMs === null ? '—' : formatDuration(resolutionMs)}
+            </span>
+            <span data-testid="window-duration">
+              Duration: {formatDuration(runActivityMs ?? runDurationMs)}
+            </span>
+          </p>
+          <div role="group" aria-label="Move the window" className="flex gap-1">
+            {WINDOW_STEPS.map(({ step: which, label }) => {
+              const Icon = STEP_ICONS[which];
+              return (
+                <button
+                  key={which}
+                  type="button"
+                  data-testid={`window-step-${which}`}
+                  aria-label={label}
+                  title={label}
+                  disabled={
+                    resolutionMs === null || !canStep(current, which, runDurationMs, resolutionMs)
+                  }
+                  onClick={() => step(which)}
+                  className="transition-ui inline-flex h-7 w-7 items-center justify-center rounded border border-default bg-surface text-primary hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Icon className="h-4 w-4" />
+                </button>
+              );
+            })}
           </div>
         </div>
-      </details>
+
+        {rates !== null && (
+          <Chart
+            id="time-window"
+            // NAMES THE MEASURE, not the control; "whole run" because the
+            // strip never narrows with the selection (see the docstring).
+            title="Requests per second, whole run"
+            // A NAVIGATOR, NOT A FIGURE: axes kept so a reader can see where
+            // they are dragging, the legend dropped because the chart below
+            // names the same All/OK/KO.
+            navigator
+            data={rates}
+            kind="line"
+            // The app-wide status colours; without them the strip drew
+            // All/OK/KO in the categorical palette, disagreeing with
+            // `RatesChart` directly below.
+            roles={RATE_ROLES}
+            // A VALUE AXIS in elapsed milliseconds, which is what the slider
+            // reports and the URL speaks. `Chart` labels it as clock time and
+            // names it from the time mode.
+            xAxis={{ type: 'value', tickUnit: 'ms-as-s' }}
+            unit="/s"
+            brush={{
+              value: window,
+              onChange: commit,
+            }}
+          />
+        )}
+
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor={fromId} className="text-[0.75rem] text-muted">
+              From (s)
+            </label>
+            <input
+              id={fromId}
+              data-testid="window-from"
+              inputMode="numeric"
+              aria-invalid={rangeError === null ? undefined : true}
+              aria-describedby={rangeError === null ? undefined : errorId}
+              value={from}
+              onChange={(e) => {
+                setFrom(e.target.value);
+                setFromEdited(true);
+              }}
+              placeholder="0"
+              className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor={toId} className="text-[0.75rem] text-muted">
+              To (s)
+            </label>
+            <input
+              id={toId}
+              data-testid="window-to"
+              inputMode="numeric"
+              aria-invalid={rangeError === null ? undefined : true}
+              aria-describedby={rangeError === null ? undefined : errorId}
+              value={to}
+              onChange={(e) => {
+                setTo(e.target.value);
+                setToEdited(true);
+              }}
+              placeholder={asSeconds(runDurationMs)}
+              className="w-24 rounded border border-default bg-surface px-2 py-1 text-sm text-primary"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={apply}
+            data-testid="window-apply"
+            className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
+          >
+            Apply window
+          </button>
+
+          {window !== null && (
+            <button
+              type="button"
+              onClick={() => {
+                cancelSettle();
+                onChange(null);
+              }}
+              data-testid="window-clear"
+              className="rounded border border-default bg-surface px-3 py-1 text-sm text-primary"
+            >
+              Whole run
+            </button>
+          )}
+
+          {/* `role="alert"`: a response to the reader's own action, and the
+              figures deliberately do NOT move to signal it. Rendered only
+              when there is something to say, so this never contributes an
+              empty live region to a page that already mounts several. */}
+          {rangeError !== null && (
+            <p
+              id={errorId}
+              role="alert"
+              data-testid="window-error"
+              className="w-full text-[0.75rem]"
+              /* `var()`, not a `text-status-failed` utility: the status
+                 tokens are declared on `:root` rather than inside
+                 `@theme inline`, so that spelling emits nothing at all. */
+              style={{ color: 'var(--color-status-failed)' }}
+            >
+              {rangeError}
+            </p>
+          )}
+
+          {/* THE SNAPPED RANGE, announced: `role="status"` so a screen
+              reader is told the figures now describe a different stretch,
+              in the same words the range line above uses. */}
+          {applied != null && (
+            <p role="status" data-testid="window-applied" className="text-[0.75rem] text-muted">
+              Showing {range.start} → {range.end}, snapped to{' '}
+              {formatDuration(applied.bucketWidthMs)} buckets
+            </p>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

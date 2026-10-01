@@ -186,14 +186,13 @@ export default function RunDecisionBand({
       <div className="grid grid-cols-1 gap-0 @4xl:grid-cols-[minmax(9rem,auto)_minmax(14rem,1fr)_minmax(18rem,auto)]">
         {/* THE VERDICT WORD — the redesign's signature, and NOT AN `<h2>`,
             though it is the largest text on the page. This band is SHELL
-            CHROME — `RunShell` renders it above the `<Outlet/>`, so it is on
-            all five tabs — and every `<h2>` on this page belongs to the tab
-            CONTENT's own sections (`run-tables.spec.ts` asserts the Overview
-            tab's outline is exactly Assertions / Simulation assertions /
-            Statistics, and the Errors tab's is exactly Errors). Its two
-            neighbours in the shell, `SlaBanner` and `LiveStatusStrip`,
-            contribute no heading for the same reason; `RunHeader` owns the
-            one `<h1>`. It would also be the only heading whose WORDS change
+            CHROME — `RunShell` renders it above the `<Outlet/>`, ahead of the
+            Summary's own content — and every `<h2>` on this page belongs to a
+            section's own content: the Summary's outline is an exact list
+            (Platform gates, Simulation assertions, Over time, Errors), and a
+            verdict heading would be a fifth rung in it. Its two neighbours in
+            the shell, `SlaBanner` and `LiveStatusStrip`, contribute no heading
+            for the same reason; `RunHeader` owns the one `<h1>`. It would also be the only heading whose WORDS change
             per run. The section stays reachable through
             `aria-label="Release decision"`, like both neighbours.
 

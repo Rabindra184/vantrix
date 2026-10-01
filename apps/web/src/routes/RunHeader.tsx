@@ -50,17 +50,14 @@ const COMPACT_STRIP = `flex flex-col gap-3 ${BOX}`;
  *
  * NOT ONE CHARACTER OF VISIBLE TEXT MAY BE ADDED INSIDE A CHIP'S VALUE NODE,
  * however much a "Branch:" or "Commit:" label would help a sighted reader.
- * The values are pinned by their own text content in three separate ways and
+ * The values are pinned by their own text content in two separate ways and
  * each would break differently:
  *
  *   `RunHeader.test.tsx` reads `getByTestId('run-commit')`'s text and asserts
  *   `commitSha.startsWith(visible)` — a label inside makes the visible string
  *   `Commit9b71f35`, which starts nothing.
  *
- *   `run-detail.spec.ts` asserts `getByText('8 peak users')` is visible, which
- *   requires that string to be one element's whole text.
- *
- *   The same spec reads the `<h1>` with `toHaveText`. That was an exact
+ *   `run-detail.spec.ts` reads the `<h1>` with `toHaveText`. That was an exact
  *   STRING, and it is a RegExp since review.md 6 put the run id into the
  *   heading — so the heading still holds no badge and no copy button, but
  *   "nothing but the simulation", which this said until that finding, is
@@ -85,7 +82,6 @@ export default function RunHeader({
   identity,
   status,
   verdict,
-  peakUsers,
   compact,
   note,
 }: {
@@ -105,10 +101,9 @@ export default function RunHeader({
    *
    * Collapsing the two would put "no verdict" on a running run, which reads as
    * evaluated-and-nothing-found — a claim about a run nobody has finished
-   * measuring. Same distinction `RunTabs`' `errorCount: number | null` draws.
+   * measuring.
    */
   readonly verdict: RunResponse['verdict'] | undefined;
-  readonly peakUsers: number | null;
   /**
    * `useIsCompact()`, PASSED IN — the shape `DesktopOnly` already uses and for
    * its stated reason: "so a caller can test both paths". `RunShell` already
@@ -160,8 +155,8 @@ export default function RunHeader({
    * finding, after M18 stopped mounting the brush here and C01 and M02's first
    * half shortened the band.
    *
-   * Version, branch, commit, started, duration and peak users are that
-   * secondary metadata. ENVIRONMENT IS NOT: the finding names it beside the
+   * Version, branch, commit, started and duration are that secondary
+   * metadata. ENVIRONMENT IS NOT: the finding names it beside the
    * run name and the outcome, and it is the one chip that changes what every
    * number below it MEANS — a p95 from staging and a p95 from production are
    * not the same measurement.
@@ -278,8 +273,8 @@ export default function RunHeader({
             `durationMs` is the span the SERIES OFFSETS live in — header start
             to last event — which the time axis needs and a reader does not
             mean by "Duration". Showing it here made this page contradict
-            itself: the throughput tile divides by the ACTIVITY span, so
-            `throughput x duration` did not equal the request count on the
+            itself: the statistics table's `Cnt/s` divides by the ACTIVITY span,
+            so `throughput x duration` did not equal the request count on the
             same screen (14.32 req/s over a stated 63s is 907, printed beside
             a stated 895). Gatling's own report anchors at the first event too
             and reads "1m 2s" where `durationMs` rounds to 63s.
@@ -290,20 +285,6 @@ export default function RunHeader({
         <Chip name="Duration" label={`Duration: ${formatDuration(runDurationMs)}`} testId="run-duration">
           <span className="tabular-nums">{formatDuration(runDurationMs)}</span>
         </Chip>
-        {peakUsers !== null && (
-          // The aria-label restates the visible text exactly, rather than
-          // prefixing a "Peak users:" name onto it — the same shape
-          // `NamedBadge` below uses, measured there not to double-announce
-          // (see its own docstring) precisely because the two strings match.
-          //
-          // ONE ELEMENT, ONE STRING. `run-detail.spec.ts` asserts
-          // `getByText('8 peak users')` is visible, which only resolves while
-          // the count and the words share a single text container — splitting
-          // the number into its own styled span would break it.
-          <Chip name="Peak users" label={`${peakUsers.toLocaleString()} peak users`}>
-            {peakUsers.toLocaleString()} peak users
-          </Chip>
-        )}
     </>
   );
 
@@ -455,18 +436,18 @@ export default function RunHeader({
           (see `NamedBadge`'s own docstring), so `aria-label` on one of these
           spans does nothing at all without `role="group"` alongside it.
 
-          The row is now a bordered strip rather than free-floating text: six
+          The row is now a bordered strip rather than free-floating text:
           unrelated values separated only by whitespace read as a sentence
           that has lost its punctuation, and the divider between each is what
-          says they are six things. `divide-x` draws it without adding an
+          says they are separate things. `divide-x` draws it without adding an
           element, and `gap-y` keeps the rows apart when it wraps on a phone —
           where the vertical dividers disappear, which is correct, because
           stacked chips need no separator. */}
       {/* `font-mono` on the whole strip: every chip is a VALUE — tool
-          version, branch, sha, timestamp, duration, user count — and the
+          version, branch, sha, timestamp, duration — and the
           redesign's rule is that data wears the mono face. One class here
-          rather than six, and the commit's own <code> stops being the odd
-          one out. Classes only; the chip TEXT is pinned three ways (module
+          rather than one per chip, and the commit's own <code> stops being the
+          odd one out. Classes only; the chip TEXT is pinned two ways (module
           docstring) and gains nothing. */}
       {compact ? (
         /* ═══ A PROP, NOT A CLASS, AND THE DISTINCTION IS THE POINT ═══
@@ -530,12 +511,12 @@ export default function RunHeader({
               <span className="group-open:hidden">Run details</span>
               <span className="hidden group-open:inline">Hide run details</span>
             </summary>
-            {/* CLOSED, ALWAYS — unlike the run list's filter disclosure and the
-                time window, both of which open themselves because a URL can
-                arrive already filtered or already narrowed, and a shortened
-                list under a shut control reads as data that is missing.
-                Nothing here is ever in a state a reader has to be told about:
-                these are the same six values on every run. */}
+            {/* CLOSED, ALWAYS — unlike the run list's filter disclosure, which
+                opens itself because a URL can arrive already filtered, and a
+                shortened list under a shut control reads as data that is
+                missing. Nothing here is ever in a state a reader has to be
+                told about: these are the run's own metadata, not a view of
+                it. */}
             <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
               {versionChip}
               {restChips}

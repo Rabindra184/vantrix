@@ -31,7 +31,7 @@ export default function RunSectionNotFound() {
       action={
         runId === undefined ? undefined : (
           <Link to={runPath(runId)} className={linkButtonClasses}>
-            Back to the overview
+            Back to the summary
           </Link>
         )
       }

@@ -23,6 +23,10 @@ export const NEW_PROJECT_ROUTE = '/projects/_new';
  * `RunTabs` links to them and the e2e suite navigates to them — three places
  * that must agree about a string, which is two more than can be kept in step
  * by hand.
+ *
+ * Only the sections a reader is LINKED to have a helper. The old `/charts`,
+ * `/load-generators` and `/errors` URLs still resolve, as redirects
+ * (`RunSectionRedirect`), but nothing builds a link to them any more.
  */
 export function runPath(runId: string): string {
   return `/runs/${encodeURIComponent(runId)}`;
@@ -31,23 +35,8 @@ export function runPath(runId: string): string {
 export function runReportPath(runId: string): string {
   return `${runPath(runId)}/report`;
 }
-export function runChartsPath(runId: string): string {
-  return `${runPath(runId)}/charts`;
-}
-export function runErrorsPath(runId: string): string {
-  return `${runPath(runId)}/errors`;
-}
 export function runTrendsPath(runId: string): string {
   return `${runPath(runId)}/trends`;
-}
-/**
- * `load-generators`, not `telemetry`. The URL is the reader's, and "load
- * generators" is what Gatling calls this section and what the question in the
- * reader's head sounds like — "was the generator the bottleneck?". The endpoint
- * keeps the engineering name.
- */
-export function runTelemetryPath(runId: string): string {
-  return `${runPath(runId)}/load-generators`;
 }
 
 /** The Logs tab — only a run the on-prem runner executed offers it. */

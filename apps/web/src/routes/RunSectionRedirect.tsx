@@ -12,6 +12,14 @@ import { runPath, runReportPath } from './paths';
  *
  * The fragment is how a section is named — `CollapsibleSection` opens the one
  * a fragment matches, and `AppShell` scrolls to it.
+ *
+ * `/load-generators`, not `/telemetry`, is the URL that still resolves here,
+ * and the naming is worth keeping. The URL is the reader's, and "load
+ * generators" is what Gatling calls this section and what the question in the
+ * reader's head sounds like — "was the generator the bottleneck?"; the
+ * endpoint keeps the engineering name. It sends the reader to the Report's
+ * Load generators section, which `paths.ts` no longer has a helper for because
+ * nothing links to the old address any more.
  */
 export default function RunSectionRedirect({
   to,
