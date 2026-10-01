@@ -84,7 +84,10 @@ export default function RunStats({
   if (run === undefined) {
     return (
       <section aria-label="Run totals" data-testid="stats-empty">
-        <StatisticsEmpty runStatus={runStatus} />
+        {/* `false`: the Summary is whole-run by construction — it sends no window
+            and ignores one in its URL — so "a window selected nothing" is not a
+            state it can be in, and the retained/recorded wording is the true one. */}
+        <StatisticsEmpty runStatus={runStatus} windowSelected={false} />
       </section>
     );
   }

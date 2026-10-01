@@ -237,7 +237,15 @@ function RequestsTable({ runId, runStatus }: { readonly runId: string; readonly 
       <TableSection title="Statistics" headingLevel={3} query={stats} columns={STATISTICS_SKELETON_COLUMNS}>
         {(data) => (
           <DesktopOnly compact={compact} what="The per-request statistics table" action="Open detailed table">
-            {() => <StatisticsTable stats={data} runId={runId} runStatus={runStatus} headingLevel={3} />}
+            {() => (
+              <StatisticsTable
+                stats={data}
+                runId={runId}
+                runStatus={runStatus}
+                windowSelected={window !== null}
+                headingLevel={3}
+              />
+            )}
           </DesktopOnly>
         )}
       </TableSection>

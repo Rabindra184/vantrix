@@ -538,8 +538,42 @@ export function statisticsCsv(
  * requests that none existed. Whether an abandoned run should keep
  * its partial data is a product decision and is not made here; what
  * is fixed is the product describing it wrongly.
+ *
+ * ═══ AND "RECORDED" IS FALSE UNDER A WINDOW TOO ═══
+ *
+ * A time window that selects no requests re-reads the statistics from the
+ * buckets inside it and finds none, so the payload is as empty as a run's that
+ * measured nothing — and "No statistics were recorded for this run" then says
+ * something false about the RUN, which recorded 895 requests. The Report is the
+ * only page that can be windowed, and its Groups section already says the right
+ * thing for the same state ("No groups ran in the selected window.", GroupsList).
+ * This is that sentence for the table, and it points at the one place the run's
+ * own figures are: the Summary, which is whole-run by construction.
+ *
+ * THE WINDOW BRANCH COMES FIRST, because it is true whatever the run's status:
+ * an incomplete run read through a window is still a window that selected
+ * nothing, and "retained" would be a second wrong claim stacked on the first.
+ *
+ * `windowSelected` is REQUIRED and has no default: a caller that forgets it
+ * reads as "no window", which prints a false sentence over a narrowed view and
+ * fails nothing — this repo's rule for a parameter whose wrong value is silent.
+ * The Summary's headline numbers pass `false` for the reason `RunStats` gives.
  */
-export function StatisticsEmpty({ runStatus }: { readonly runStatus: RunResponse['status'] | undefined }) {
+export function StatisticsEmpty({
+  runStatus,
+  windowSelected,
+}: {
+  readonly runStatus: RunResponse['status'] | undefined;
+  readonly windowSelected: boolean;
+}) {
+  if (windowSelected) {
+    return (
+      <EmptyState
+        title="No requests ran in the selected window"
+        body="The run's own figures are on the Summary, which always covers the whole run."
+      />
+    );
+  }
   return runStatus === 'incomplete' ? (
     <EmptyState
       title="No statistics were retained for this run"
@@ -554,6 +588,7 @@ export default function StatisticsTable({
   stats,
   runId,
   runStatus,
+  windowSelected,
   headingLevel = 2,
 }: {
   stats: StatsResponse;
@@ -569,6 +604,16 @@ export default function StatisticsTable({
    * Optional, so every other caller keeps the unconditional wording.
    */
   runStatus?: RunResponse['status'];
+  /**
+   * Whether a time window is narrowing these rows — the Report's, never the
+   * Summary's. REQUIRED, with no default, for the reason `StatisticsEmpty`
+   * gives: a caller that forgets it reads as "no window", which prints a false
+   * "recorded for this run" over a view that selected nothing, and nothing
+   * fails. Today it decides only the empty branch's wording; it is on the
+   * table, not on the caller's side of it, because only the table knows it is
+   * empty (`total === null && tree.length === 0`).
+   */
+  readonly windowSelected: boolean;
   /**
    * `3` when this sits under a section's own `<h2>` — the Report's Requests —
    * so the outline says the table belongs to it. The size follows the level.
@@ -842,7 +887,7 @@ export default function StatisticsTable({
         <SectionHeading id={headingId} level={headingLevel} overline="Run telemetry">Statistics</SectionHeading>
         {/* No table at all, rather than headings over nothing: an empty table
             reads as a run that was measured and found to have done nothing. */}
-        <StatisticsEmpty runStatus={runStatus} />
+        <StatisticsEmpty runStatus={runStatus} windowSelected={windowSelected} />
       </section>
     );
   }

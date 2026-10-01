@@ -118,7 +118,7 @@ const ALL_PATHS = [
 function renderTable(payload: StatsResponse = stats) {
   return render(
     <MemoryRouter>
-      <StatisticsTable stats={payload} runId={RUN_ID} />
+      <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} />
     </MemoryRouter>,
   );
 }
@@ -357,7 +357,7 @@ describe('StatisticsTable — the columns (G-12, §9 checkpoint 6)', () => {
     };
     render(
       <MemoryRouter>
-        <StatisticsTable stats={odd} runId={RUN_ID} />
+        <StatisticsTable stats={odd} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('columnheader', { name: /99\.9/ })).toBeTruthy();
@@ -540,7 +540,7 @@ describe('StatisticsTable — expand and collapse (G-13, §9 checkpoint 4)', () 
   it('starts with groups collapsed', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.queryByText('Recommendations')).toBeNull();
@@ -669,7 +669,7 @@ describe('StatisticsTable — the row links (G-16)', () => {
   it('links each row to its detail page (G-16)', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     // `List Products` is `Catalog/List Products` post-D-10, nested under a
@@ -1000,7 +1000,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   it('opens worst-first, not alphabetically', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     const first = screen.getAllByTestId('stat-row')[0]!;
@@ -1012,7 +1012,7 @@ describe('StatisticsTable — sortable columns (G-15, §9 checkpoint 3)', () => 
   it('toggles direction when the same column is clicked twice', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     const header = screen.getByRole('button', { name: /sort by 95th/i });
@@ -1265,7 +1265,7 @@ describe('StatisticsTable — the name filter (G-14)', () => {
   it('filters as you type, keeping ancestors', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     fireEvent.change(screen.getByLabelText(/filter/i), { target: { value: 'Recommend' } });
@@ -1418,7 +1418,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('says statistics were not RETAINED when the stream stopped early', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} runStatus="incomplete" />
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} runStatus="incomplete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no statistics were retained/i)).toBeTruthy();
@@ -1428,7 +1428,7 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('keeps "recorded" for a completed run that measured nothing', () => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={empty} runId={RUN_ID} runStatus="complete" />
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} runStatus="complete" />
       </MemoryRouter>,
     );
     expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
@@ -1440,6 +1440,46 @@ describe('StatisticsTable — why it is empty, when it is', () => {
   it('falls back to "recorded" when nobody says what happened', () => {
     renderTable(empty);
     expect(screen.getByText(/no statistics were recorded/i)).toBeTruthy();
+  });
+
+  /**
+   * ═══ A WINDOW THAT SELECTS NOTHING IS NOT A RUN THAT RECORDED NOTHING ═══
+   *
+   * The Report's table, read through `?from=62000&to=63000` — a real second of
+   * the reference run with no requests in it — is as empty as a run's that
+   * measured nothing, and said "No statistics were recorded for this run" about
+   * a run that recorded 895 requests. `GroupsList` already says the right thing
+   * for the same state; this is its sentence for the table.
+   *
+   * ASSERTED AS AN EXCLUSIVE PAIR, AND OVER THE SAME PAYLOAD. "Says the window
+   * sentence" alone passes against a table that says it for EVERY empty run —
+   * which would tell the Summary's reader, who has no window, that one was
+   * selected; "says recorded" alone passes against the defect. Each case also
+   * pins the half the other cannot: with a window the run's status is beside
+   * the point (the window branch comes first, so an INCOMPLETE run does not
+   * stack "retained" on top of a window), and without one the window sentence
+   * must not appear.
+   */
+  it('says the window selected nothing, and not that nothing was recorded', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected runStatus="incomplete" />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/no requests ran in the selected window/i)).toBeTruthy();
+    expect(screen.getByText(/always covers the whole run/i)).toBeTruthy();
+    expect(screen.queryByText(/recorded for this run/i)).toBeNull();
+    expect(screen.queryByText(/retained for this run/i)).toBeNull();
+  });
+
+  it('says "recorded" and never the window sentence when no window is selected', () => {
+    render(
+      <MemoryRouter>
+        <StatisticsTable stats={empty} runId={RUN_ID} windowSelected={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/recorded for this run/i)).toBeTruthy();
+    expect(screen.queryByText(/no requests ran in the selected window/i)).toBeNull();
   });
 });
 
@@ -1874,7 +1914,7 @@ describe('StatisticsTable — a shared link carries the question', () => {
   const at = (search: string) =>
     render(
       <MemoryRouter initialEntries={[`/runs/${RUN_ID}${search}`]}>
-        <StatisticsTable stats={stats} runId={RUN_ID} />
+        <StatisticsTable stats={stats} runId={RUN_ID} windowSelected={false} />
         <Where />
       </MemoryRouter>,
     );
@@ -1950,14 +1990,14 @@ describe('StatisticsTable — its heading level', () => {
   ])('is a section heading by default and one level down when told to (%s)', (_state, payload) => {
     render(
       <MemoryRouter>
-        <StatisticsTable stats={payload} runId={RUN_ID} />
+        <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 2, name: 'Statistics' })).toBeDefined();
     cleanup();
     render(
       <MemoryRouter>
-        <StatisticsTable stats={payload} runId={RUN_ID} headingLevel={3} />
+        <StatisticsTable stats={payload} runId={RUN_ID} windowSelected={false} headingLevel={3} />
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { level: 3, name: 'Statistics' })).toBeDefined();

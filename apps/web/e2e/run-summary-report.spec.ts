@@ -225,3 +225,27 @@ test('the Report’s first Requests chart begins on the first 1440x900 screen', 
   // top 886.5, bottom 1256.5 — see the comment above the case.
   expect(box.top, `the first chart starts at ${box.top}px (bottom ${box.bottom}px)`).toBeLessThan(900);
 });
+
+/**
+ * A WINDOW THAT SELECTS NOTHING IS NOT A RUN THAT RECORDED NOTHING. The Report's
+ * statistics table under `?from=62000&to=63000` — a real, in-range second of the
+ * 62s reference run that holds no requests (`parseWindow` clamps out-of-range
+ * windows to the whole run, so one of those would prove nothing) — used to say
+ * "No statistics were recorded for this run" about a run that recorded 895
+ * requests. Its Groups section already said "No groups ran in the selected
+ * window."; this is that sentence for the table, and the Summary is where the
+ * run's own figures are.
+ *
+ * ONLY A BROWSER SEES THE SEAM: the unit pair hands the table `windowSelected`,
+ * so it proves the table obeys the prop and says nothing about whether the
+ * Report derives it from the URL's window. The absence is paired with the
+ * sentence being visible, so it cannot pass against a table that failed to draw.
+ */
+test('a window that selects no requests says so, not that nothing was recorded', async ({ page }) => {
+  const runId = await seeded(page);
+  await page.goto(`${runReportPath(runId)}?from=62000&to=63000`);
+  await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
+
+  await expect(page.getByText('No requests ran in the selected window')).toBeVisible();
+  await expect(page.getByText(/no statistics were recorded/i)).toHaveCount(0);
+});
