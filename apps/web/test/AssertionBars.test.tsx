@@ -74,9 +74,10 @@ const PASSED_GATE: Assertion = {
 /**
  * Three gates, one of each outcome — `RunDetail.live.test.tsx`'s fixture, which
  * is where these cards' two lines were pinned until the table they sat in went.
- * The failed one is deliberately NOT first, so "failed sorts first" cannot be
- * what puts it at index 0. The passed one is a `gte` rule, so the comparator's
- * noun is not the only one in play.
+ * Already in failed-first order, so the cases below reach a card by its
+ * position and prove nothing about the ordering — "failures first" is pinned
+ * by the case that passes `[PASSED_GATE, PLATFORM_GATE]`. The passed one is a
+ * `gte` rule, so the comparator's noun is not the only one in play.
  */
 const THREE_GATES: readonly Assertion[] = [
   {
