@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **181 files / 2313 tests**, it
+`nvm use` first, and if a run reports fewer than **186 files / 2401 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,228 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The summary-report branch added EIGHT unit files —
+`apps/web/test/CollapsibleSection.test.tsx`, `AssertionBars.test.tsx`,
+`RatesChart.combined.test.tsx`, `RunReport.test.tsx`,
+`RunSectionRedirect.test.tsx`, `RunSummary.test.tsx`,
+`RunSummary.live.test.tsx` and `groupRows.test.ts` — and DELETED three
+(`RunErrorsTab.live`, `RunOverviewTab.live`, `ToolAssertions`, whose claims
+moved into the new files), renaming two more, plus one case to
+`DesktopOnly.test.tsx`, from **181 / 2313 to 186 / 2401**. Integration moves with the one new `.ts` file and the `.ts`
+cases (`paths`, `transforms.rates`, `transforms.users`), from **170 / 2086 to
+171 / 2103**, and **e2e rises to 176** (`apps/web/e2e/run-summary-report.spec.ts`,
+9, plus ten specs moved onto the new pages and two cases deleted). It is
+backlog item #7 of the Gatling Enterprise comparison: the run page becomes
+GE's two pages, a **Summary** that is always the whole run and a **Report**
+that carries the time window and the charts in collapsible sections. Seven
+tabs become five — Summary · Report · Logs · Trends · Compare — and no API,
+contract or database changed: every number on both pages was already served.
+
+**MEASURED ON GATLING ENTERPRISE FIRST, READ-ONLY, ON BOTH OF THE ACCOUNT'S
+RUNS.** The Summary ignores a window entirely — opened with a 30-second
+`from`/`to` it still read the whole run's 900 requests and drew no timeline —
+and carries four headline numbers (error ratio, total requests, max concurrent
+users, p95), an assertions bar collapsed until clicked EVEN WHEN IT HOLDS A
+FAILURE, two charts and the errors table. The Report carries the window bar
+alone, then Requests (open), Groups, Virtual users, Connections, DNS and Load
+Generators (shut). Sections open independently and **their state is kept
+nowhere** — not the URL, not `localStorage`, gone on reload. Every page link
+carries the whole query string; only the Report applies it. GE's MARKUP is
+thin — section headers are clickable `div`s with no button role and no
+`aria-expanded`, and no section has a heading — so the layout and behaviour
+are copied and the markup is not.
+
+**THREE DEVIATIONS, EACH A DECISION:**
+
+```
+  a bar holding a failure opens itself    GE keeps it shut; a failed check here is never a click away
+  /report, not GE's /details              every other tab's path here is its own label
+  a URL carrying sort or q opens Table    AC-DASH-4: a shared sorted link lands on what it shared
+```
+
+**A SECTION IS A HEADING HOLDING A BUTTON, AND A CLOSED ONE MOUNTS NOTHING.**
+`<details>` was declined for three recorded reasons — it keeps closed content
+mounted, so every chart in every shut section would query and draw into a
+0x0 box; a heading inside a `<summary>` leaves the outline; and nested
+disclosures have already broken a WebKit case here. `CollapsibleSection`
+opens on a URL fragment naming it, which is how the `/load-generators`
+redirect lands on its content and how the band's "See the failed simulation
+check" opens the bar it points into.
+
+**`useState(defaultOpen || named)` IS LOAD-BEARING, AND TESTING LIBRARY
+HIDES WHY.** The brief's own fragment case passed with the fragment read
+removed from the initial state, because `render()` flushes effects and the
+effect opened the section before the DOM was read. What the initial state
+buys is the FIRST paint — a section that opens a frame later has already
+drawn shut and jumped. Only a `renderToString` case can see it, so one does,
+and a second case navigates to the fragment after mount for the effect's
+half. **A `render()`-based test cannot tell first paint from first effect.**
+
+**THE OLD PATHS REDIRECT, KEEPING THEIR QUERY.** `/charts` → `/report`,
+`/load-generators` → `/report#load-generators`, `/errors` →
+`/runs/:id#errors`, each with `replace` so Back does not return to a page
+that only redirects. Dropping `${search}` from `RunSectionRedirect` failed
+three e2e cases and a fourth's redirect loop.
+
+**WHAT DIED WITH THE SPLIT, AND WHERE EACH CLAIM WENT:**
+
+```
+  the Errors tab's count            no tab; the table is on the Summary under #errors
+  the header's Peak users chip      a Summary tile now; a value shown twice says nothing new
+  Requests/s, p99 and Mean tiles    GE's four headline numbers; the three are in Report › Table
+  FinalizedVerdictNotice            the Summary never takes a window, so nothing to disclaim
+  the M01 collapsed time window     the Report carries no totals, and GE's bar is always shown
+  runCharts/Errors/TelemetryPath    nothing links to a section that is now a redirect
+```
+
+**THE PHONE'S 812 BOUND FAILED, AND THE PRODUCT MOVED RATHER THAN THE
+BOUND.** Task 6 lifted the lifecycle line out of the header's 8px group and
+into the shell's 24px gap, above AND below — and the run's first tile went
+from 802 to **820** against an 812 viewport. Grouping the line with the band
+it summarises (8px on a phone, 12px on a desktop) put it at **804.4**. A
+sibling in a flex gap pays the gap on both sides; a change that only MOVES an
+element can still cost the fold.
+
+**AN EMPTY WINDOW HAD LOST ITS SENTENCE.** The old Overview said so when a
+window selected nothing; that sentence lived in `RunStats`, which moved to
+the always-whole-run Summary. So the Report's Requests › Table, under
+`?from=62000&to=63000`, said "No statistics were recorded for this run" — a
+false claim about the run. `StatisticsTable` and `StatisticsEmpty` take a
+REQUIRED `windowSelected`, the window branch first. Required, because a
+default would have let the Summary and Report disagree silently; `tsc` then
+found all twelve test renders. **When a component moves pages, the sentences
+that answered for its absence have to move with it.**
+
+**`Payload` DRAWS PLACEHOLDER FIGURES WITH THE FINAL IDS FROM FIRST PAINT,
+WHICH TWO CASES LEANED ON WITHOUT KNOWING.** A unit case asserting the
+Summary's two charts passed with the percentiles chart deleted, because it
+read the ids while both were "Loading…" placeholders — found by its
+red-verify, and it waits for the region to settle now. The run-telemetry e2e
+case read which section held which figure by `evaluateAll` before awaiting
+the figure count, safe only for the same reason; the final review moved the
+wait above the read. **An id that exists from first paint is not evidence
+the thing it names drew.**
+
+**A GEOMETRY RED-VERIFY PASSED TWICE AND FAILED ONCE WITH ONE MUTATION.** The
+Report's first-chart bound measured before the window strip and the chart
+had drawn, so a 40px spacer was sometimes still unpainted. It waits for both
+plots now and fails 3 of 3. A mutation that passes intermittently is a race
+in the test, not evidence the bound works.
+
+**GEOMETRY, MEASURED BEFORE AND AFTER:**
+
+```
+                                 before      after
+  375x812 Summary, first tile     802        804.4   (820 before the grouping fix)
+  1440x900 Summary totals top     690        643.8   tile bottoms 718.8 / 722.8
+  1440x900 Report window          85 (shut)  338-751, 413px, always open
+  1440x900 Report first chart      —         886.5 top, 1256.5 bottom
+```
+
+**RED-VERIFIED LAYER BY LAYER**, every mutation after a checkpoint commit
+with its replacement count asserted:
+
+```
+  section     closed section builds its content       the starts-shut case
+              aria-expanded dropped                   six cases that assert it
+              fragment read only in the effect        the renderToString first-paint case
+              the fragment effect deleted             the navigate-after-mount case
+              open state persisted to sessionStorage  the e2e reload case
+  charts      OK line reads the started counter       the split-by-outcome case
+              per-second divides by 1                 the bucket-width case
+              users ended -> started                  the termination-rate case
+              RATE roles dropped                      the colour case (KO in a categorical hue)
+              the crosshair group renamed             the shared-crosshair case
+  report      Requests not open by default            the sections case
+              initial view always Charts              both sort/q Table cases
+              a windowed query passed null            the narrows-to-the-window cases, each alone
+  bars        a failing bar not open                  the open-on-arrival case
+              live -> finished keys removed           the finishes-with-a-failed-gate case
+              failures not first                      the failures-first case
+  summary     stats read the window                   the asks-for-nothing-narrowed case
+              Peak users and Requests swapped         GE's order, live and finished
+              the axis follows the window             the run's-own-span case
+              a failed /stats renders nothing         the Run totals error-state case
+  shell       strip and band on every page            the it.each over report/logs/trends/compare
+              tabs after the band                     the below-the-tabs order case
+              brush on every page                     the Report-and-nowhere-else case
+              Trends before Report                    GE's tab order case
+  stats       windowSelected ignored                  the empty-window case alone
+  browser     the Summary reads the window            Expected "895" Received "31"
+              redirects drop the query                three old-URL cases + a redirect loop
+              a failing simulation bar shut           open-on-arrival + two run-tables cases
+              the Report passes windowSelected false  the empty-window e2e case alone
+```
+
+**KNOWN AND LEFT, EACH A DECISION RATHER THAN AN OVERSIGHT:**
+
+  - GE's Scenario, Group and Request pickers are their own item — Errors
+    per second cannot be narrowed by its endpoint, and the engine files no
+    scenario statistics.
+  - GE's "AI run analysis" card is backlog #11; its button starts a
+    generation, so it was not clicked.
+  - A populated Groups section was never measured on GE: neither of the
+    account's runs had a group, and running one needs credits it no longer
+    has. Groups is built to this product's own data.
+  - DNS, GC, TCP-connect and TLS-handshake charts are OMITTED, never drawn
+    empty: nothing here collects them.
+  - "Back to this run" on a request or group page lands on the Summary. The
+    URL keeps `from`/`to` and the Report tab restores the window, so the
+    window travels as the spec says; a reader who drilled down from a
+    windowed table is one click further from it.
+  - The Report's always-open window is 413px at 1440x900, so its first chart
+    starts 13.5px inside the fold and ends 356.5px below it.
+  - A phone's first tile has 7.6px of headroom against 812 — on the fixture
+    run, which no rule judges. A real run that FAILED both systems draws its
+    first tile at **967.8** at 375px, because the band carries the failing
+    gate's sentence and the failed simulation assertion's. The band changed
+    only in comments on this branch, so that is the M02 shape rather than a
+    new one, and it is measured rather than bound.
+
+**THE REAL RUN FOUND ONE MORE, AND IT WAS A SENTENCE THIS BRANCH MADE FALSE.**
+`DesktopOnly`'s phone placeholder ends "The summary above carries the verdict
+and the headline numbers" — true while the verdict band drew above every run
+section, and false on every page that renders it once the band went
+Summary-only: its callers are the Report, Trends, Compare and the telemetry
+views. It names the run's Summary now, with a pair that fails on either the old
+sentence or "Summary above". No suite could see it: no test asserted that
+paragraph, and only reading the Report on a phone showed it.
+
+**AND `pkill -f <job id>` KILLED GATLING, WHICH FOUND A DEFECT THAT IS ITS OWN
+TASK.** The first real job's id was in a poller's command line AND in
+Gatling's, whose `-cp` carries the job's work directory, so stopping the poller
+SIGTERMed the load test 25 seconds in. The runner then kept the run ("Gatling
+exited with code 143; keeping the run because simulation.log was produced"),
+marked the job `complete`, and the pipeline failed the run `LOG_MALFORMED` on
+its truncated log, with a remediation about archiving that no reader did. The
+sweeper's abandoned-stream path already truncates to whole records
+(`truncateToWholeRecords`); this path never reaches it. **Kill by PID, never by
+a pattern that a child's command line can share.**
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **186 / 2401**, zero `Errors` lines, and the zone-sensitive files
+(10 files, 181 tests) under `TZ=UTC`; `test:integration` **171 / 2103, exit 0,
+zero failures** — the prediction counted from the source exactly, measured at
+`d6a7431`, and nothing after it touches a file that config includes;
+`pnpm test:e2e` **176 passed, exit 0**, the prediction exactly. All against a
+SCRATCH DATABASE (`perfportal_summary`), a scratch Redis INDEX (db 8) and e2e
+port 3800. The cross-browser run is CI's, dispatched on the branch: see the
+PR.
+
+**THE REAL RUN.** The developer database with the API, worker and on-prem
+runner from this worktree on Node 22 and their own Redis index (db 11), and a
+real `ParitySimulation` bundle against the local target: 895 requests, 28 KO,
+Gatling exit 2 for the fixture's deliberate assertion. Watched live — the
+Summary's four live tiles, the SLA banner and two live charts; the Report's two
+live charts and five named withheld views — then finished, at 1440x900 and 375
+in both themes: four tiles, both bars open on their failures, two charts, the
+errors table and its request filter; every Report section opened in turn
+(Groups' three rows, Virtual users' three charts, telemetry honestly empty, no
+agent having run); an old `/charts?from=10000&to=40000` link landing on the
+Report with that window, and Report › Table reading 434 requests inside it.
+The token it minted was revoked afterwards and the viewer's stored theme put
+back.
 
 The run-logs branch added SEVEN unit files —
 `packages/contracts/test/run-events.test.ts` (10),
