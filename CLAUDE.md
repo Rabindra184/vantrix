@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **181 files / 2313 tests**, it
+`nvm use` first, and if a run reports fewer than **181 files / 2317 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,116 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The runner-keeps-a-dying-run branch added no unit FILE and 4 unit cases — 3
+to `apps/runner/test/run-events.test.ts`, and one net in
+`executor-events.test.ts`, where two cases became one plus a two-row
+`it.each` — from **181 / 2313 to 181 / 2317**. Integration moves with those
+four, ONE new file (`apps/runner/test/live-sink.integration.test.ts`, 4) and
+1 case in `packages/persistence/test/run-live.integration.test.ts`, from
+**170 / 2086 to 171 / 2095**, and **e2e stays 168**. It is a defect found by
+accident during the summary-report branch's real-run check.
+
+**A RUNNER RUN WHOSE GATLING DIED PART-WAY WAS FAILED AS UNREADABLE, AND ITS
+JOB READ "complete".** A Gatling SIGTERMed 25 seconds in exited 143. The runner logged
+"keeping the run because simulation.log was produced", closed it as a
+finished stream and marked the job `complete`; the pipeline then met the
+half-record the dying process left and failed the run:
+
+```
+  400 LOG_MALFORMED  simulation.log could not be decoded: needed 4 bytes at 8190, have 0
+  remediation        "Confirm the Gatling run finished and that the whole results
+                      directory was archived without modification."
+```
+
+A run that had measured real requests, reported as unreadable, with a
+remediation about an archive no reader made, beside a job saying it worked.
+
+**AND THE QUIETER HALF WAS NEVER SEEN.** A Gatling killed between two flushes
+leaves a log ending on a record boundary, which parses fine — so that run
+ended `complete`, a claim that the load test ran to its end. The truncation
+was only what made the defect loud.
+
+**GATLING'S OWN EXIT CODES DECIDE IT, READ OUT OF ITS JAR.**
+`io.gatling.app.cli.StatusCode` in gatling-app 3.15.1 is Success 0,
+InvalidArguments 1, AssertionsFailed 2, so only 0 and 2 mean the simulation
+ran to its end — 2 being one of its own assertions failing, which
+`ParitySimulation` does on purpose. `endedEarly` is any other code, or a
+signal. **A JVM that handles SIGTERM exits 143 with NO signal reported**,
+measured on the real kill, so "a signal was reported" would have missed the
+one case that actually happened.
+
+**A PRODUCER THAT DIED IS AN ABANDONED STREAM, AND THE SWEEPER ALREADY KNEW
+WHAT TO DO WITH ONE.** `RunnerLiveSink.closeAbandoned` mirrors
+`Sweeper#claimForAssembly` and `#assembleAbandoned` step for step: claim the
+run with `stream_abandoned_at` in the SAME statement, assemble, cut to the
+last whole record with `truncateToWholeRecords` (the decoder that owns
+record framing — the runner depends on `@perfportal/plugin-gatling` now),
+store that, and hand it to the pipeline, which ends it `incomplete` WITH its
+statistics. The job then FAILS with `GATLING_ENDED_EARLY`, naming how Gatling
+ended, through the same settle-the-run-then-throw shape the
+no-`simulation.log` branch beside it already used. Run `incomplete`, job
+`failed`: the two say the same thing.
+
+**`claimForClose` TAKES A REQUIRED `{ abandoned }`.** A default would read
+every forgetting caller as a healthy close, with nothing anywhere saying so —
+this file's rule for a parameter whose wrong value is silent. The API's
+client-driven close passes `false`, because its protocol has no field for a
+producer that died.
+
+**FAILURE NEVER STRANDS THE RUN.** Before `finalizeLive`, any failure — the
+bucket, the chunks, a log with no whole record — finalizes it `incomplete`
+with no statistics. AFTER it, the stored log is whole and the row is at
+`parsing` carrying `stream_abandoned_at`, so a refusing queue leaves it
+there for the sweeper's `parsing` arm to re-enqueue — exactly how `close()`
+recovers past the same point — and the data survives. The first draft marked
+it incomplete there too, which would have thrown away a valid log.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE**, from a checkpoint commit
+with each replacement count asserted, persistence rebuilt around its
+mutation:
+
+```
+  executor   endedEarly never true (the before-state)  both it.each rows: closeAbandoned never called
+             close() instead of closeAbandoned()       the same two rows
+  rule       exit 2 counted as early                   the finished-run rule case + the exit-2 executor case
+             a signal ignored                          the signal rule case ALONE (a real SIGKILL's code
+                                                       is null, which is not 0 or 2 either)
+  sink       no truncation                             the whole-records case ("expected 18884 to be less
+                                                       than 18884") and the no-whole-record case
+             an empty log enqueued                     the no-whole-record case alone
+  claim      abandoned ignored                         the claim case + the sink's whole-records case
+```
+
+**AND A TEST DOUBLE HAD TO LEARN WHAT `closed` MEANS.** The executor's catch
+aborts a run whose sink is not `closed`; the harness's sink had `closed:
+false` as a constant, so the first green run failed on `abortIncomplete`
+being called — true of the mock, false of the real sink, whose
+`closeAbandoned` closes it in its `finally`. The mock's `closeAbandoned` sets
+`closed` now, which keeps the assertion about the executor's own check.
+
+**THE REAL RUN.** The developer database, the API, worker and runner from this
+worktree on Redis db 11, a real `ParitySimulation` bundle, and Gatling
+SIGTERMed by PID 25 seconds in — exit 143, the same 8,190 streamed bytes that
+failed before. The run ended `incomplete`, `stream_abandoned_at` set, its log
+cut to **8,177** bytes, **185 requests and 3 KO** kept, its SLA rules judged;
+the job `failed`, `GATLING_ENDED_EARLY`; the Logs tab ended on
+`Run failed: GATLING_ENDED_EARLY: Gatling exited with code 143 before the
+simulation finished.`; the run page read "Load test stopped early · 18s".
+The token it minted was revoked afterwards.
+
+**KNOWN AND LEFT:** the API's client-driven close (the Gradle plugin's live
+mode) still closes as healthy — its protocol has no way to say the producer
+died, and a client whose Gatling crashed sends its close anyway. That is a
+protocol change, its own branch.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2317**, zero `Errors` lines; `test:integration`
+**171 / 2095, exit 0, zero failures**; `pnpm test:e2e` **168 passed, exit 0** —
+every total the one counted from the source before any suite ran, against a
+SCRATCH DATABASE (`perfportal_runnerdeath`), a scratch Redis INDEX (db 14 — db
+9 held 164 keys of somebody else's) and e2e port 3900, from a worktree at an
+undotted path.
 
 The run-logs branch added SEVEN unit files —
 `packages/contracts/test/run-events.test.ts` (10),
