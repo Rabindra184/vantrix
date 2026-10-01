@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **186 files / 2401 tests**, it
+`nvm use` first, and if a run reports fewer than **186 files / 2412 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -153,10 +153,12 @@ The summary-report branch added EIGHT unit files —
 `RunSummary.live.test.tsx` and `groupRows.test.ts` — and DELETED three
 (`RunErrorsTab.live`, `RunOverviewTab.live`, `ToolAssertions`, whose claims
 moved into the new files), renaming two more, plus one case to
-`DesktopOnly.test.tsx`, from **181 / 2313 to 186 / 2401**. Integration moves with the one new `.ts` file and the `.ts`
+`DesktopOnly.test.tsx`, from **181 / 2313 to 186 / 2412**. Integration moves with the one new `.ts` file and the `.ts`
 cases (`paths`, `transforms.rates`, `transforms.users`), from **170 / 2086 to
-171 / 2103**, and **e2e rises to 176** (`apps/web/e2e/run-summary-report.spec.ts`,
-9, plus ten specs moved onto the new pages and two cases deleted). It is
+171 / 2103**, and **e2e rises to 177**: 168, minus 2 cases deleted, plus 1
+(`run-tables.spec.ts`' heading outline split in two), plus the ten cases of the
+new `apps/web/e2e/run-summary-report.spec.ts` (177 measured; ten more specs
+were moved onto the new pages without changing their count). It is
 backlog item #7 of the Gatling Enterprise comparison: the run page becomes
 GE's two pages, a **Summary** that is always the whole run and a **Report**
 that carries the time window and the charts in collapsible sections. Seven
@@ -192,7 +194,7 @@ mounted, so every chart in every shut section would query and draw into a
 disclosures have already broken a WebKit case here. `CollapsibleSection`
 opens on a URL fragment naming it, which is how the `/load-generators`
 redirect lands on its content and how the band's "See the failed simulation
-check" opens the bar it points into.
+assertion" opens the bar it points into.
 
 **`useState(defaultOpen || named)` IS LOAD-BEARING, AND TESTING LIBRARY
 HIDES WHY.** The brief's own fragment case passed with the fragment read
@@ -223,10 +225,13 @@ three e2e cases and a fourth's redirect loop.
 **THE PHONE'S 812 BOUND FAILED, AND THE PRODUCT MOVED RATHER THAN THE
 BOUND.** Task 6 lifted the lifecycle line out of the header's 8px group and
 into the shell's 24px gap, above AND below — and the run's first tile went
-from 802 to **820** against an 812 viewport. Grouping the line with the band
-it summarises (8px on a phone, 12px on a desktop) put it at **804.4**. A
-sibling in a flex gap pays the gap on both sides; a change that only MOVES an
-element can still cost the fold.
+from 804.4 (where the lifecycle-strip branch had left `main`) to **820**
+against an 812 viewport. Grouping the line with the band it summarises (8px on
+a phone, 12px on a desktop) put it back at **804.4**, so the branch's net
+change to that number is ZERO — an earlier draft of this table called 802 the
+"before", which is where M02 left it a branch earlier. A sibling in a flex gap
+pays the gap on both sides; a change that only MOVES an element can still cost
+the fold.
 
 **AN EMPTY WINDOW HAD LOST ITS SENTENCE.** The old Overview said so when a
 window selected nothing; that sentence lived in `RunStats`, which moved to
@@ -258,7 +263,7 @@ in the test, not evidence the bound works.
 
 ```
                                  before      after
-  375x812 Summary, first tile     802        804.4   (820 before the grouping fix)
+  375x812 Summary, first tile     804.4      804.4   (820 before the grouping fix; net zero)
   1440x900 Summary totals top     690        643.8   tile bottoms 718.8 / 722.8
   1440x900 Report window          85 (shut)  338-751, 413px, always open
   1440x900 Report first chart      —         886.5 top, 1256.5 bottom
@@ -286,7 +291,9 @@ with its replacement count asserted:
               failures not first                      the failures-first case
   summary     stats read the window                   the asks-for-nothing-narrowed case
               Peak users and Requests swapped         GE's order, live and finished
-              the axis follows the window             the run's-own-span case
+              the axis follows the window             the hands-its-charts-the-whole-span case
+                                                      (the page rendered under a window; the
+                                                      hook-only Probe case stays green)
               a failed /stats renders nothing         the Run totals error-state case
   shell       strip and band on every page            the it.each over report/logs/trends/compare
               tabs after the band                     the below-the-tabs order case
@@ -320,9 +327,25 @@ with its replacement count asserted:
   - A phone's first tile has 7.6px of headroom against 812 — on the fixture
     run, which no rule judges. A real run that FAILED both systems draws its
     first tile at **967.8** at 375px, because the band carries the failing
-    gate's sentence and the failed simulation assertion's. The band changed
-    only in comments on this branch, so that is the M02 shape rather than a
-    new one, and it is measured rather than bound.
+    gate's sentence and the failed simulation assertion's. The band's layout
+    did not change on this branch (its link's `to` did, below), so that is the
+    M02 shape rather than a new one, and it is measured rather than bound.
+  - The Report's Requests charts say "this run" sentences under an empty
+    window ("No requests failed in this run." and others) — pre-existing on
+    `main`'s Charts tab and not touched here; its own task.
+  - A second click on the band's "See the failed simulation assertion" after
+    the reader has shut the bar leaves it shut: the fragment is already the
+    URL's, so nothing re-opens it. And the live Platform gates bar's wording is
+    as the final review found it.
+  - THE `/errors` REDIRECT LANDS THE TABLE BELOW THE FOLD at 1280x720, and its
+    landing is the one redirect case that does not assert arrival. The reveal
+    fires the frame `#errors` exists — page 2,167px tall, scrolled to its
+    maximum of 1,447, target at top 441 — and the tiles, bars and charts above it
+    then arrive over ~75ms, grow the page to 2,544px and leave the target at top
+    784 of a 720px viewport (891 of 900 at 1440x900). `/load-generators` is
+    asserted: the page bottom clamps its scroll, so it lands at top 293. A fix
+    is a reveal that waits for the page above it to settle, which is a
+    product change and was not made here.
 
 **THE REAL RUN FOUND ONE MORE, AND IT WAS A SENTENCE THIS BRANCH MADE FALSE.**
 `DesktopOnly`'s phone placeholder ends "The summary above carries the verdict
@@ -344,15 +367,65 @@ sweeper's abandoned-stream path already truncates to whole records
 (`truncateToWholeRecords`); this path never reaches it. **Kill by PID, never by
 a pattern that a child's command line can share.**
 
+**THE FINAL WHOLE-BRANCH REVIEW FOUND A FALSE SENTENCE, A SCROLL BUG THAT
+ONLY A REDIRECT REACHES, AND A TEST THAT PINNED A HOOK INSTEAD OF A PAGE.**
+
+  - **`ErrorsTable`'S SCOPED EMPTY BODY SENT THE READER TO AN ERRORS TAB THAT
+    NO LONGER EXISTS.** It renders on every request page whose request recorded
+    no errors — five of the reference run's seven — so it was the most-read false
+    sentence on the branch, and the same shape as the phone placeholder above: a
+    pointer written when a page existed. The retired-string greps had been
+    reading test names and comments; this was prose inside a component. It names
+    the Summary now, and the case is an exclusive pair (the Summary is named, the
+    tab is not), red-verified against the old sentence AND against a sentence
+    naming both.
+  - **CLEARING A FRAGMENT SCROLLED THE PAGE TO THE TOP.** `useSearchParams`'
+    setter navigates to `"?" + params`, which drops the hash, and `AppShell`'s
+    scroll-to-top effect read that same-path, empty-hash navigation as a new page.
+    An old `/errors?request=Place%20Order` link lands at `#errors`; changing the
+    Investigate select then threw the reader ~1,500px away from the table they
+    were filtering, and the band's `#simulation-assertions` link and the
+    `/load-generators` redirect followed by a sort did the same. The effect holds
+    the previous pathname in a ref and only a DIFFERENT path scrolls — "a new
+    query is the same page asked again" was already this file's rule, written
+    about the query string and not about the hash. Four unit cases and a browser
+    case, each red against the old effect.
+  - **A REDIRECT'S TARGET WAS NEVER ASSERTED TO BE ON SCREEN.** The three
+    old-URL cases read the URL and the section's open state, and the reveal that
+    actually brings the reader to the fragment is exercised by none of those
+    lines. Asserting it found the landing numbers in the known-and-left list
+    above. **A test that follows a link and checks the address has proved the
+    link, not the arrival.**
+  - **`useWholeRunDomainFromShell` WAS PINNED THROUGH A PROBE, NOT THROUGH THE
+    PAGE.** The case read the hook directly, so switching `RunSummary` itself to
+    the Report's windowed hook left every unit case green. The file wraps the real
+    ECharts to keep each `setOption`, and a case renders the page under a window
+    and reads both charts' x-axis bounds; the Probe case stays green under that
+    mutation, which is the gap.
+  - **THE REST WERE ONE MISTAKE EACH.** The Report's group links and the Summary's
+    assertion-target links dropped the window the statistics table's rows carry,
+    and the band's `#simulation-assertions` link replaced the whole query string
+    (it would reset the errors filter it had just been landed on); the Report's
+    four phone gates shared two accessible names between them; a section's bar
+    counts sat beside the heading but were not announced with the button
+    (`aria-describedby`, only when a summary renders); and a dozen comments still
+    named the Charts and Errors tabs and a "Duration so far" tile this branch
+    removed — the legend comment on the navigator was the one that had become
+    false rather than stale, since the chart below no longer names its lines.
+
 **WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
-`test:unit` **186 / 2401**, zero `Errors` lines, and the zone-sensitive files
-(10 files, 181 tests) under `TZ=UTC`; `test:integration` **171 / 2103, exit 0,
-zero failures** — the prediction counted from the source exactly, measured at
-`d6a7431`, and nothing after it touches a file that config includes;
-`pnpm test:e2e` **176 passed, exit 0**, the prediction exactly. All against a
-SCRATCH DATABASE (`perfportal_summary`), a scratch Redis INDEX (db 8) and e2e
-port 3800. **AND CI MEASURED THE SAME TREE**, dispatched on `8e85697` before the
-placeholder-sentence fix: `build` read unit **186 / 2400**, integration
+`test:unit` **186 / 2412**, the prediction counted from the source exactly
+(2401 plus eleven cases), zero `Errors` lines, and the zone-sensitive files the
+fix wave touched (`lifecycle`, `RunShell`, `RunSummary`; 84 tests) under
+`TZ=UTC`; `test:integration` **171 / 2103, exit 0, zero failures**, re-run on
+the final tree because the wave edited a comment in `lifecycle.test.ts`, a `.ts`
+file that config includes — unchanged, as a comment must leave it;
+`pnpm test:e2e` **177 passed, exit 0**, the prediction exactly (176 plus the one
+new case). All against a SCRATCH DATABASE (`perfportal_summary`), a scratch
+Redis INDEX (db 8) and e2e port 3800, while two other worktrees ran their own
+gates on their own stores. **AND CI MEASURED THE TREE BEFORE THIS WAVE**,
+dispatched on `8e85697` before the placeholder-sentence fix: `build` read unit
+**186 / 2400**, integration
 **171 / 2103** and e2e **176 passed**, and `e2e-cross-browser` collected
 **528** (176 × three engines) and passed **523 with 5 skipped, none failed or
 flaky**, in 23.3 minutes — the collapsible sections are where WebKit's
