@@ -425,6 +425,41 @@ describe('SLA threshold units', () => {
   });
 });
 
+/**
+ * ═══ A MEASURED MILLISECOND IS NOT THIRTEEN DECIMAL PLACES ═══
+ *
+ * The `ms` and `req/s` arms printed the raw number, so a real run's p95 gate
+ * read "Actual: 645.5906777012351 ms" — and its sentence repeated it — while
+ * the p95 tile above said 646 ms and the simulation-assertions bar beside it
+ * printed "1686.14 ms". Two decimals, trailing zeros dropped, is that bar's
+ * own precision (`toolAssertion.ts`' `formatActual`): two kinds of check side
+ * by side now read their actuals the same way.
+ *
+ * Fine enough for a BOUND an author typed — `99.5` stays `99.5` — which is
+ * the half that rules out whole milliseconds: this function renders the
+ * threshold too, and rounding a typed limit would misstate the rule.
+ */
+describe('formatSlaValue — milliseconds and rates, rounded for reading', () => {
+  it('rounds a measured time to two decimals', () => {
+    expect(formatSlaValue('p95', 645.5906777012351)).toBe('645.59 ms');
+    expect(formatSlaValue('mean', 2515.4601126102525)).toBe('2515.46 ms');
+  });
+
+  it('rounds a measured rate to two decimals', () => {
+    expect(formatSlaValue('throughput_rps', 14.40123456)).toBe('14.4/s');
+  });
+
+  it('keeps a bound the author typed exactly as typed, and adds no trailing zeros', () => {
+    expect(formatSlaValue('p95', 99.5)).toBe('99.5 ms');
+    expect(formatSlaValue('p95', 800)).toBe('800 ms');
+    expect(formatSlaValue('throughput_rps', 50)).toBe('50/s');
+  });
+
+  it('passes a non-finite value through rather than inventing one', () => {
+    expect(formatSlaValue('p95', Number.NaN)).toBe('NaN ms');
+  });
+});
+
 /* ======================================================================== *
  * READING A RULE BACK IN WORDS (review M17)
  * ======================================================================== */
@@ -632,6 +667,22 @@ describe('describeSlaOutcome', () => {
    *  reader. `(response_time)` is the half review.md 3 calls not merely
    *  unreadable but FALSE, and the raw fraction is the half review.md 1 calls
    *  a correctness defect. */
+  /** The same rounding reaches the sentence, which is where the thirteen
+   *  digits were most conspicuous: the decision band and every gate card
+   *  print it. */
+  it('states a measured time at the precision the cards beside it use', () => {
+    const sentence = describeSlaOutcome({
+      outcome: 'passed',
+      actualValue: 645.5906777012351,
+      rule: {
+        scope: 'run', targetName: null, family: 'response_time',
+        metric: 'p95', comparator: 'lte', threshold: 2000,
+      },
+    });
+    expect(sentence).toBe('Whole-run p95 response time 645.59 ms is within the 2000 ms limit.');
+    expect(sentence).not.toMatch(/645\.5906/);
+  });
+
   it('lets no part of the stored expression through', () => {
     const sentence = describeSlaOutcome(errorRate('failed', 0.0223463687150838))!;
     expect(sentence).not.toMatch(/\(response_time\)/);

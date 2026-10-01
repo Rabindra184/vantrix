@@ -319,10 +319,32 @@ export type SlaRuleListResponse = z.infer<typeof SlaRuleListResponseSchema>;
 export function formatSlaValue(metric: string, value: number): string {
   const unit = slaMetricUnit(metric);
   if (unit === 'fraction') return `${fractionToPercent(value)}%`;
-  if (unit === 'ms') return `${value} ms`;
-  if (unit === 'req/s') return `${value}/s`;
+  if (unit === 'ms') return `${toReadingPrecision(value)} ms`;
+  if (unit === 'req/s') return `${toReadingPrecision(value)}/s`;
   if (unit === 'requests') return `${value}`;
   return `${value}`;
+}
+
+/**
+ * ═══ TWO DECIMALS, BECAUSE THE CHECKS BESIDE THESE PRINT TWO ═══
+ *
+ * The `ms` and `req/s` arms printed the raw number, so a real run's p95 gate
+ * read "Actual: 645.5906777012351 ms", and its sentence repeated it, beside a
+ * simulation-assertions bar printing "1686.14 ms". Two decimals with trailing
+ * zeros dropped is that bar's own precision (`formatActual` in the web app's
+ * `toolAssertion.ts`), so the two kinds of check now read alike.
+ *
+ * NOT WHOLE MILLISECONDS, though the tiles show whole ones: this function
+ * renders the author's THRESHOLD as well as the measurement, and a typed
+ * `99.5` must not read back as "≤ 100 ms". Two decimals keeps every bound a
+ * person types and still rounds away the floating-point tail.
+ *
+ * The CSV export's Actual column does not come through here, and stays the
+ * exact value the evaluator compared.
+ */
+function toReadingPrecision(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  return Number(value.toFixed(2));
 }
 
 /**
