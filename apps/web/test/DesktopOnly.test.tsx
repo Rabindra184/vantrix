@@ -106,6 +106,20 @@ describe('DesktopOnly', () => {
     expect(build).not.toHaveBeenCalled();
   });
 
+  /**
+   * THE POINTER HAS TO SURVIVE THE PAGE IT RENDERS ON. It said "the summary
+   * above carries the verdict", true while the verdict band drew above every
+   * run section and false once it moved onto the Summary alone — every caller
+   * is a Report, Trends, Compare or telemetry view. Asserted as a pair: naming
+   * the Summary, and not pointing "above".
+   */
+  it('points at the run’s Summary for the verdict, not at something above it', () => {
+    render(<DesktopOnly compact what="Seven charts of this run">{() => null}</DesktopOnly>);
+    const panel = screen.getByTestId('desktop-only');
+    expect(panel).toHaveTextContent(/the run['’]s Summary carries the verdict/i);
+    expect(panel).not.toHaveTextContent(/above/i);
+  });
+
   it('announces itself without interrupting — status, not alert', () => {
     // Nothing has gone wrong. An assertive live region would cut a screen
     // reader off mid-sentence to report a layout decision.
