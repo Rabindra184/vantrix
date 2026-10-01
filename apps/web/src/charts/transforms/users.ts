@@ -220,12 +220,17 @@ function widthNote(widthMs: number, measure: Measure): string {
   /* WHICH EDGE THE SENTENCE NAMES FOLLOWS THE CHART. This said "started"
      unconditionally while only the arrival rate was a rate; the termination
      rate draws the same buckets and would have told its reader a chart of users
-     that ENDED was an average of users that started. */
+     that ENDED was an average of users that started.
+
+     AND IT STATES THE RECORDED FACT, NOT A REASON FOR IT: it opened "This run
+     is long enough that…", which reads the run's duration off its bucket width
+     — `rates.ts`'s `widthNote` records why that is wrong. The width is what
+     the producer chose; the reader needs the resolution and its consequence. */
   const edge = measure === 'ended' ? 'ended' : 'started';
   return (
-    `This run is long enough that user activity was recorded in ${widthMs} ms buckets rather ` +
-    `than one-second ones, so each point is the average number of users ${edge} per second ` +
-    'across that window. A shorter spike inside a bucket is not visible at this resolution.'
+    `Data resolution: ${widthMs} ms — user activity was recorded in buckets of that width ` +
+    `rather than one-second ones, so each point is the average number of users ${edge} per ` +
+    'second across that window. A shorter spike inside a bucket is not visible at this resolution.'
   );
 }
 

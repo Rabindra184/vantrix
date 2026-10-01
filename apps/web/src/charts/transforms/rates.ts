@@ -305,16 +305,7 @@ export function toResponseRate(series: SeriesResponse, options?: RateOptions): C
   return rateChart(series, END_EDGE, options);
 }
 
-/**
- * GE's "Requests and Responses per Second", measured on its Summary and its
- * Report: four lines on one axis — requests STARTED, responses ENDED, and the
- * responses split by outcome.
- *
- * THE OUTCOME SPLIT IS THE END EDGE'S. `okCount`/`koCount` count responses as
- * they finish, so OK + KO is the Total line in every bucket; the start-edge
- * split (`startedOkCount`/`startedKoCount`) would put a request's outcome in
- * the second it began, which is a different chart and the one GE does not draw.
- */
+/** One colour per line of `toRequestsAndResponses`, in line order. */
 export const REQUESTS_AND_RESPONSES_ROLES: readonly StatusRole[] = [
   'neutral',
   // GE draws Total in orange. The amber status token is the nearest the
@@ -327,6 +318,16 @@ export const REQUESTS_AND_RESPONSES_ROLES: readonly StatusRole[] = [
 
 const COMBINED_LINES = ['Requests', 'Total', 'Responses OK', 'Responses KO'] as const;
 
+/**
+ * GE's "Requests and Responses per Second", measured on its Summary and its
+ * Report: four lines on one axis — requests STARTED, responses ENDED, and the
+ * responses split by outcome.
+ *
+ * THE OUTCOME SPLIT IS THE END EDGE'S. `okCount`/`koCount` count responses as
+ * they finish, so OK + KO is the Total line in every bucket; the start-edge
+ * split (`startedOkCount`/`startedKoCount`) would put a request's outcome in
+ * the second it began, which is a different chart and the one GE does not draw.
+ */
 export function toRequestsAndResponses(series: SeriesResponse): ChartData {
   const columns = [TIME_COLUMN, ...COMBINED_LINES];
   if (series.buckets.length === 0) {

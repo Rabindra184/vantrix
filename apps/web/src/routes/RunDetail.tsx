@@ -30,6 +30,7 @@ import {
 import { POLL_CAP_MS, pollIntervalFor } from '../api/run';
 import { formatActual, toolAssertionParts } from './toolAssertion';
 import DistributionChart from '../charts/DistributionChart';
+import { RUN_TIME_GROUP } from '../charts/crosshair';
 import ErrorsChart from '../charts/ErrorsChart';
 import PercentileDistributionChart from '../charts/PercentileDistributionChart';
 import IndicatorsChart from '../charts/IndicatorsChart';
@@ -919,24 +920,6 @@ export function RunErrorsTab() {
  * The Charts tab, §13.2 ③④⑦⑦ᵇ⑧⑨⑩⑪ — design §6
  * ------------------------------------------------------------------ */
 
-/**
- * THE ONE CROSSHAIR. Every chart whose x-axis is elapsed seconds carries this
- * `group`, and `Chart` calls `echarts.connect` with it, so hovering any one of
- * them moves the axis pointer on all of them.
- *
- * That linkage is not a nicety, it is the PRD's deliberate encoding change:
- * Gatling overlays active users on requests/s as a second y-axis, §22.4 forbids
- * dual axes outright, and Appendix A records the split as information parity
- * precisely BECAUSE the shared crosshair recovers the "read these two together"
- * affordance the dual axis was buying. Break the connection and the two charts
- * stop being one reading — which is what the e2e crosshair spec exists to catch.
- *
- * `PercentilesChart` and both rate charts hard-code the same string internally
- * (they have no `group` prop to pass one through); the two users charts take it
- * as a prop. Stated here as a named constant so the five agree on one spelling.
- */
-const RUN_TIME = 'run-time';
-
 const INDICATORS: Slot = { id: 'indicators', title: 'Response time ranges' };
 const REQUEST_COUNTS: Slot = { id: 'request-counts', title: 'Number of requests' };
 const CONCURRENT_USERS: Slot = { id: 'concurrent-users', title: 'Concurrent users over time' };
@@ -1140,9 +1123,9 @@ export function RunChartsTab() {
         {users.data !== undefined && (
           <>
             {/* Its OWN chart, sharing the crosshair — never an overlay on
-                requests/s. See RUN_TIME above. */}
-            <ConcurrentUsersChart users={users.data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-            <UserStartRateChart users={users.data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+                requests/s. See `RUN_TIME_GROUP`. */}
+            <ConcurrentUsersChart users={users.data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+            <UserStartRateChart users={users.data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
           </>
         )}
         {series.data !== undefined && (
@@ -1216,7 +1199,7 @@ export function RunChartsTab() {
        *
        * THE TWO PROPERTIES THE PREVIOUS ORDER DEFENDED BOTH SURVIVE, and they
        * are the reason `request-counts` moved rather than `percentiles`:
-       *   - the five charts sharing `RUN_TIME`'s crosshair and domain stay
+       *   - the five charts sharing `RUN_TIME_GROUP`'s crosshair and domain stay
        *     adjacent (positions 1-5), so one horizontal read still crosses all
        *     of them;
        *   - `distribution` and `percentile-distribution` stay adjacent, for the
@@ -1234,9 +1217,9 @@ export function RunChartsTab() {
           {(data) => (
             <>
               {/* Its OWN chart, sharing the crosshair — never an overlay on
-                  requests/s. See RUN_TIME above. */}
-              <ConcurrentUsersChart users={data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
-              <UserStartRateChart users={data} group={RUN_TIME} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+                  requests/s. See `RUN_TIME_GROUP`. */}
+              <ConcurrentUsersChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
+              <UserStartRateChart users={data} group={RUN_TIME_GROUP} domainMs={domainMs} warmupMs={warmupMs ?? undefined} />
             </>
           )}
         </Payload>

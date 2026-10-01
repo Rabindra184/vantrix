@@ -1,6 +1,7 @@
 import type { ErrorSeriesResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import { RUN_TIME_GROUP } from './crosshair';
 import type { TimeDomainMs } from './types';
 import { toErrorSeries } from './transforms/errorSeries';
 
@@ -47,7 +48,7 @@ export default function ErrorsChart(
       // clock, because that is what this measures too. (The compare overlay
       // deliberately opts out, but only because its x is elapsed time within
       // several different runs.)
-      group="run-time"
+      group={RUN_TIME_GROUP}
       // Already a value axis; now labelled in SECONDS like every other time
       // chart, and pinned to the same domain so the shared pointer lines up.
       // Its x is an INSTANT, not a measurement — the tooltip title names it.

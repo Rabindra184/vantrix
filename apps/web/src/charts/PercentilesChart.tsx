@@ -1,6 +1,7 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { useMemo, useState } from 'react';
 import Chart from './Chart';
+import { RUN_TIME_GROUP } from './crosshair';
 import type { TimeDomainMs } from './types';
 import { Chip, ControlBar, ControlGroup, Segmented, Switch } from './ChartControls';
 import type { MarkRole } from './theme';
@@ -180,7 +181,7 @@ export default function PercentilesChart({
       }}
       unit="ms"
       // Shares one crosshair with the other time-axis charts (§22.4/§22.5).
-      group="run-time"
+      group={RUN_TIME_GROUP}
       roles={roles}
     />
   );

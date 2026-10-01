@@ -1,6 +1,7 @@
 import type { TelemetryResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
+import { RUN_TIME_GROUP } from './crosshair';
 import type { TimeDomainMs } from './types';
 import {
   toBandwidthChart,
@@ -76,7 +77,7 @@ export default function TelemetryCharts({
         title="CPU usage"
         data={cpu}
         kind="line"
-        group="run-time"
+        group={RUN_TIME_GROUP}
         // Its x is an INSTANT, not a measurement — the tooltip title names it.
         pairValue="y"
         xAxis={{
@@ -93,7 +94,7 @@ export default function TelemetryCharts({
         title="Memory usage"
         data={memory}
         kind="line"
-        group="run-time"
+        group={RUN_TIME_GROUP}
         // Its x is an INSTANT, not a measurement — the tooltip title names it.
         pairValue="y"
         xAxis={{
@@ -110,7 +111,7 @@ export default function TelemetryCharts({
         title="Bandwidth"
         data={bandwidth}
         kind="line"
-        group="run-time"
+        group={RUN_TIME_GROUP}
         // Its x is an INSTANT, not a measurement — the tooltip title names it.
         pairValue="y"
         xAxis={{
@@ -127,7 +128,7 @@ export default function TelemetryCharts({
         title="TCP connection events"
         data={connectionEvents}
         kind="line"
-        group="run-time"
+        group={RUN_TIME_GROUP}
         // Its x is an INSTANT, not a measurement — the tooltip title names it.
         pairValue="y"
         xAxis={{
@@ -144,7 +145,7 @@ export default function TelemetryCharts({
         title="TCP segment events"
         data={segmentEvents}
         kind="line"
-        group="run-time"
+        group={RUN_TIME_GROUP}
         // Its x is an INSTANT, not a measurement — the tooltip title names it.
         pairValue="y"
         xAxis={{
@@ -161,7 +162,7 @@ export default function TelemetryCharts({
         title="Connections by state"
         data={tcpStates}
         kind="line"
-        group="run-time"
+        group={RUN_TIME_GROUP}
         // Its x is an INSTANT, not a measurement — the tooltip title names it.
         pairValue="y"
         xAxis={{

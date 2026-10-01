@@ -318,6 +318,16 @@ describe('toUserStartRate ⑦ᵇ — per SECOND, whatever the bucket width is', 
     expect(toUserStartRate(wide()).limitation).toMatch(/2000 ms/);
   });
 
+  // The reverse of `toUserEndRate`'s note: the sentence follows the chart, so
+  // the arrival rate must keep saying STARTED once the termination rate says
+  // ended. A note that was changed to say "ended" everywhere would pass the
+  // end-rate case and mislabel this chart.
+  it('keeps saying STARTED in that note, where the termination rate’s says ended', () => {
+    const note = toUserStartRate(wide()).limitation;
+    expect(note).toMatch(/users started per second/);
+    expect(note).not.toMatch(/ended/);
+  });
+
   /**
    * CONCURRENCY IS NOT SCALED, and this is not an oversight. `maxConcurrent`
    * is a level — the peak number of users standing at an instant inside the
@@ -462,6 +472,9 @@ describe('toUserEndRate — GE’s "Users Termination Rate"', () => {
     expect(note).toMatch(/2000 ms/);
     expect(note).toMatch(/users ended per second/);
     expect(note).not.toMatch(/started/);
+    // The recorded fact and its consequence, not a guess at why the run needed
+    // that width: a bucket width says nothing about how long the run was.
+    expect(note).not.toMatch(/run is long/i);
     // Divided by the 2 s width, like the arrival rate: 8 ended in the second bucket is 4/s.
     expect(toUserEndRate(wide).series.at(-1)!.data).toEqual([0, 4]);
   });

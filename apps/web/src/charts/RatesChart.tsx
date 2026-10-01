@@ -79,7 +79,7 @@ function RateChart({ id, title, yName, data, domainMs, warmupMs, compact }: {
       // This is the linkage that replaces Gatling's dual axis: active users is
       // its own chart directly above rather than an overlay on this one, and
       // the shared pointer is what recovers "read these two together".
-      group="run-time"
+      group={RUN_TIME_GROUP}
     />
   );
 }

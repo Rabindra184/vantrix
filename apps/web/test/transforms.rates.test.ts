@@ -476,6 +476,34 @@ describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"'
     expect(toRequestsAndResponses(wide).series[0]!.data).toEqual([[0, 4]]);
   });
 
+  // The data table is the parity surface: what a reader quotes, and what a
+  // screen-reader user gets instead of the lines. It is built from the same
+  // numbers as the drawing, but through its own `columns` and `rows`.
+  it('heads the data table with the time column, then the four lines', () => {
+    expect(toRequestsAndResponses(series).columns).toEqual([
+      'Elapsed (s)',
+      'Requests',
+      'Total',
+      'Responses OK',
+      'Responses KO',
+    ]);
+  });
+
+  it('gives each table row the bucket’s elapsed seconds and its four per-second values', () => {
+    expect(toRequestsAndResponses(series).rows).toEqual(
+      series.buckets.map((b) => ({
+        label: String(b.startOffsetMs / 1000),
+        values: [b.startedCount, b.endedCount, b.okCount, b.koCount].map((count) => count / perSecond),
+      })),
+    );
+  });
+
+  it('states the resolution beside the chart when the bucket is not a second wide', () => {
+    expect(toRequestsAndResponses(series).limitation).toBeUndefined();
+    const wide: SeriesResponse = { ...series, bucketWidthMs: 2000 };
+    expect(toRequestsAndResponses(wide).limitation).toMatch(/2000 ms/);
+  });
+
   it('says there is nothing to draw rather than drawing flat lines', () => {
     const data = toRequestsAndResponses({ ...series, buckets: [] });
     expect(data.series).toEqual([]);

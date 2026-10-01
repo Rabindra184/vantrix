@@ -73,7 +73,7 @@ const CHART_IDS = [
   // `request-counts` moved LAST in that change: it sat seventh, between
   // `indicators` and `distribution`, which split the response-time run in two.
   // The two properties the previous order defended both survive — the five
-  // charts sharing RUN_TIME's crosshair stay adjacent at 1-5, and the
+  // charts sharing RUN_TIME_GROUP's crosshair stay adjacent at 1-5, and the
   // distribution pair stays adjacent at 7-8.
   'concurrent-users', // ┐ Offered load
   'user-start-rate', // ┘

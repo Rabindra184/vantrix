@@ -1,12 +1,19 @@
-import type { SeriesResponse } from '@perfportal/contracts';
-import { cleanup, render } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import type { SeriesResponse, UsersResponse } from '@perfportal/contracts';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RequestsAndResponsesChart } from '../src/charts/RatesChart';
+import { UserEndRateChart } from '../src/charts/UsersChart';
 import { CATEGORICAL, CATEGORICAL_DARK, resolveChartMode, STATUS_MARK_COLORS } from '../src/charts/theme';
 import { REQUESTS_AND_RESPONSES_ROLES } from '../src/charts/transforms/rates';
 import fixture from './fixtures/reference-run.json';
 
 /**
+ * THE TWO CHARTS THIS TASK ADDED, as the component hands them to `Chart`: the
+ * transforms are proven in `transforms.*.test.ts` and the drawing in a real
+ * browser, so what is left for this file is the strings and colours that exist
+ * only at the binding — and that nothing else would notice drifting.
+ *
  * ═══ THE COMBINED CHART MUST SPEAK THE STATUS COLOUR LANGUAGE ═══
  *
  * `roles` is silently optional on `Chart`: a chart that forgets it falls back
@@ -80,6 +87,48 @@ describe('RequestsAndResponsesChart — the colours it hands ECharts', () => {
     // The literal the existing charts spell out. The new chart reads it from
     // `RUN_TIME_GROUP`; if that constant ever drifts from what they carry, the
     // pointer stops following this chart and nothing else notices.
+    expect(connectSpy).toHaveBeenCalledWith('run-time');
+  });
+});
+
+/**
+ * ═══ WHAT EACH CHART IS CALLED ═══
+ *
+ * The id is the figure's test id, the anchor later pages and every browser spec
+ * reach a chart by; the title and the y-axis name are the words a reader sees
+ * and the spec names (GE's own `Count/s` for the combined chart, whose lines
+ * are not all requests). All three are strings typed once, at the binding, so
+ * no transform test can see one drift.
+ */
+describe('RequestsAndResponsesChart — what it is called', () => {
+  it('is the figure, titled and axis-named as the spec says', () => {
+    render(<RequestsAndResponsesChart series={fixture.series as unknown as SeriesResponse} />);
+
+    const figure = screen.getByTestId('chart-requests-and-responses');
+    expect(
+      within(figure).getByRole('heading', { level: 3, name: 'Requests and responses per second over time' }),
+    ).toBeInTheDocument();
+    expect(lastOption()['yAxis']).toMatchObject({ name: 'Count/s' });
+  });
+});
+
+describe('UserEndRateChart — what it is called, and which crosshair it joins', () => {
+  const users = fixture.users as unknown as UsersResponse;
+
+  it('is the figure, titled and axis-named as the spec says', () => {
+    render(<UserEndRateChart users={users} />);
+
+    const figure = screen.getByTestId('chart-user-end-rate');
+    expect(
+      within(figure).getByRole('heading', { level: 3, name: 'Users ended per second' }),
+    ).toBeInTheDocument();
+    expect(lastOption()['yAxis']).toMatchObject({ name: 'Users/s' });
+  });
+
+  it('hands the crosshair group its page gives it on to `Chart`', () => {
+    // A prop, unlike the combined chart's: the users charts are drawn by pages
+    // that own the group (`UsersChartProps.group`).
+    render(<UserEndRateChart users={users} group="run-time" />);
     expect(connectSpy).toHaveBeenCalledWith('run-time');
   });
 });
