@@ -16,7 +16,7 @@ import { SimulationLogTailer } from './log-tailer.js';
 import type { RunnerLiveNotifier } from './live-notifier.js';
 import { RunnerLiveSink } from './live-sink.js';
 import { spawnAndWait } from './process.js';
-import { failureEventMessage, injectionEndReason } from './run-events.js';
+import { endedEarly, failureEventMessage, injectionEndReason } from './run-events.js';
 
 /**
  * How far a job got, which is what decides how a cancelled job's log ends: a
@@ -186,10 +186,27 @@ export class RunnerExecutor {
         );
       }
 
-      if (result.signal) {
-        logger.warn(`Gatling was terminated by ${result.signal}; keeping the run because simulation.log was produced.`);
-      } else if (result.code && result.code !== 0) {
-        logger.warn(`Gatling exited with code ${result.code}; keeping the run because simulation.log was produced.`);
+      // ═══ A GATLING THAT DIED PART-WAY IS AN ABANDONED STREAM ═══
+      //
+      // This closed every such run as finished and marked its job complete;
+      // the pipeline then met the half-record the dying process left and
+      // failed the run `LOG_MALFORMED`, blaming an archive nobody made, while
+      // the job read "complete". Closing it as abandoned keeps what it
+      // measured on an `incomplete` run, and the job fails naming how Gatling
+      // ended — the same pattern as the no-simulation.log branch above: settle
+      // the run, then throw so the catch fails the job and ends its log.
+      if (endedEarly(result)) {
+        const reason = injectionEndReason(result);
+        logger.warn(`${reason} before the simulation finished; keeping what it measured as an incomplete run.`);
+        await sink.closeAbandoned();
+        throw new RunnerExecutionError(
+          'GATLING_ENDED_EARLY',
+          `${reason} before the simulation finished.`,
+          'The run keeps what it measured up to that point and is marked incomplete. Check this job’s log and the host’s resource limits, then queue a new run.',
+        );
+      }
+      if (result.code === 2) {
+        logger.warn('Gatling exited with code 2: a Gatling assertion failed, and the run is complete.');
       }
       await sink.close();
       await this.#runner.markComplete(jobId);

@@ -16,6 +16,22 @@ export function injectionEndReason(result: Pick<ProcessResult, 'code' | 'signal'
 }
 
 /**
+ * ═══ WHETHER GATLING STOPPED BEFORE ITS SIMULATION DID ═══
+ *
+ * Gatling's own exit codes, read out of `io.gatling.app.cli.StatusCode` in
+ * gatling-app 3.15.1: Success 0, InvalidArguments 1, AssertionsFailed 2. A
+ * simulation that ran to its end therefore exits 0, or 2 when one of its own
+ * assertions failed — and that run is complete. Anything else ended early: a
+ * signal, a crash, or a SIGTERM the JVM handled itself, which it reports as
+ * exit 143 with no signal at all (measured on a real kill), so the rule
+ * cannot be "a signal was reported".
+ */
+export function endedEarly(result: Pick<ProcessResult, 'code' | 'signal'>): boolean {
+  if (result.signal !== null) return true;
+  return result.code !== 0 && result.code !== 2;
+}
+
+/**
  * How a failed run's log ends: `Run failed: <code>: <message>`.
  *
  * NEVER THE STORAGE KEY. `ARTIFACT_NOT_FOUND`'s message names the artifact's

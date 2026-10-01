@@ -101,6 +101,11 @@ function harness(opts: HarnessOptions = {}) {
     open: vi.fn().mockResolvedValue(RUN_ID),
     abortIncomplete: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
+    // Closes the sink, as the real one does in its `finally`: the executor's
+    // catch reads `closed` to decide whether a run still needs aborting.
+    closeAbandoned: vi.fn(async () => {
+      sink.closed = true;
+    }),
     appendAt: vi.fn().mockResolvedValue(undefined),
     bytesWritten: opts.bytesWritten ?? 2048,
     runId: RUN_ID,
@@ -160,19 +165,51 @@ describe('the runner’s events, path by path', () => {
     expect(runner.markComplete).toHaveBeenCalledTimes(1);
   });
 
-  it('names a non-zero exit, and keeps the run a simulation.log was produced for', async () => {
-    const { executor, runner } = harness({ result: { code: 2, signal: null, stopped: false } });
+  it('names exit 2 — a failed Gatling assertion — and closes the run as finished', async () => {
+    const { executor, runner, sink } = harness({ result: { code: 2, signal: null, stopped: false } });
     await executor.run(job());
     expect(recorded(runner).slice(-3)).toEqual([
       "Run injection ended with reason 'Gatling exited with code 2'", '--- Ending', 'Run ended',
     ]);
+    // The simulation ran to its end and only its own assertion failed, so the
+    // log is whole and the run is complete.
+    expect(sink.close).toHaveBeenCalledTimes(1);
+    expect(sink.closeAbandoned).not.toHaveBeenCalled();
+    expect(runner.markComplete).toHaveBeenCalledTimes(1);
+    expect(runner.markFailed).not.toHaveBeenCalled();
   });
 
-  it('names the signal that ended Gatling', async () => {
-    const { executor, runner } = harness({ result: { code: null, signal: 'SIGKILL', stopped: false } });
+  /**
+   * ═══ A GATLING THAT DIED PART-WAY IS AN ABANDONED STREAM ═══
+   *
+   * This closed the run normally and marked the job `complete`. The pipeline
+   * then met the half-record a dying process leaves and failed the run
+   * `LOG_MALFORMED`, telling the reader to check an archive nobody made,
+   * while the job beside it read "complete". Measured on a real run killed
+   * 25 s in: exit 143, `needed 4 bytes at 8190, have 0`.
+   *
+   * It closes the run as abandoned now — the sweeper's treatment of a
+   * producer that stopped — so the run ends `incomplete` with what it
+   * measured, and the job FAILS, naming how Gatling ended. Both states then
+   * say the same thing.
+   */
+  it.each([
+    ['a signal', { code: null, signal: 'SIGKILL' as const }, 'Gatling was terminated by SIGKILL'],
+    ['a JVM-handled SIGTERM', { code: 143, signal: null }, 'Gatling exited with code 143'],
+  ])('closes the run as abandoned and fails the job when Gatling ends early (%s)', async (_label, ended, reason) => {
+    const { executor, runner, sink } = harness({ result: { ...ended, stopped: false } });
     await executor.run(job());
+
+    expect(sink.closeAbandoned).toHaveBeenCalledTimes(1);
+    expect(sink.close).not.toHaveBeenCalled();
+    // Abandoned is not aborted: the run keeps its data.
+    expect(sink.abortIncomplete).not.toHaveBeenCalled();
+    expect(runner.markComplete).not.toHaveBeenCalled();
+    expect(runner.markFailed).toHaveBeenCalledWith(JOB_ID, expect.objectContaining({ code: 'GATLING_ENDED_EARLY' }));
     expect(recorded(runner).slice(-3)).toEqual([
-      "Run injection ended with reason 'Gatling was terminated by SIGKILL'", '--- Ending', 'Run ended',
+      `Run injection ended with reason '${reason}'`,
+      '--- Ending',
+      `Run failed: GATLING_ENDED_EARLY: ${reason} before the simulation finished.`,
     ]);
   });
 

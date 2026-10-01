@@ -291,7 +291,9 @@ export class LiveService {
     const run = await this.runs.findById(scope, runId);
     if (!run) return { kind: 'not_found' };
 
-    const claimed = await this.runs.claimForClose(runId);
+    // A client's own close: whether its producer finished is the client's to
+    // say, and this protocol has no field for it, so it closes as healthy.
+    const claimed = await this.runs.claimForClose(runId, { abandoned: false });
     if (!claimed) return { kind: 'not_running' };
 
     // HERE, not after `queue.add` below -- design §1.2's `live:closed`. The
