@@ -422,14 +422,19 @@ export default function TimeBrush({
             // strip never narrows with the selection (see the docstring).
             title="Requests per second, whole run"
             // A NAVIGATOR, NOT A FIGURE: axes kept so a reader can see where
-            // they are dragging, the legend dropped because the chart below
-            // names the same All/OK/KO.
+            // they are dragging, the legend dropped because this is a control
+            // and its title names the measure. The chart below does NOT name
+            // these lines for it: `RequestsAndResponsesChart`'s OK and KO are
+            // the RESPONSE (end-edge) split and this strip's are the START-edge
+            // one — the same colours, a different count — so the strip is read
+            // for where the load sits, and not matched line by line.
             navigator
             data={rates}
             kind="line"
             // The app-wide status colours; without them the strip drew
-            // All/OK/KO in the categorical palette, disagreeing with
-            // `RatesChart` directly below.
+            // All/OK/KO in the categorical palette, disagreeing with the
+            // outcome colours `RequestsAndResponsesChart` draws below it
+            // (`REQUESTS_AND_RESPONSES_ROLES`: green OK, red KO).
             roles={RATE_ROLES}
             // A VALUE AXIS in elapsed milliseconds, which is what the slider
             // reports and the URL speaks. `Chart` labels it as clock time and

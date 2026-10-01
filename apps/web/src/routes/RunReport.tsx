@@ -68,10 +68,10 @@ const GRID = 'grid grid-cols-1 gap-6 2xl:grid-cols-2';
 /**
  * `/runs/:runId/report` — GE's Report (backlog #7): GE's sections in GE's
  * order, under the time window. This page draws no window control of its own;
- * `RunShell` draws the one brush above it, as it does above every run page
- * that honours a window (all but Trends, Compare and Logs), and this page
- * reads the window it sets. DNS is left out: nothing this product collects could fill it,
- * and a section that can only be empty is a false claim about the run.
+ * `RunShell` draws the one brush above it — on this page and no other, since
+ * this is the only run page that applies a window — and this page reads the
+ * window it sets. DNS is left out: nothing this product collects could fill
+ * it, and a section that can only be empty is a false claim about the run.
  *
  * EACH SECTION BODY IS ITS OWN COMPONENT, because `CollapsibleSection` builds
  * its children only while open: the hooks a body runs — and so the queries it

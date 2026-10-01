@@ -91,8 +91,8 @@ describe('lifecycleSteps — each state says what it is', () => {
     expect(step(streaming, 'verdict')).toMatchObject({ state: 'pending', text: 'Verdict' });
   });
 
-  /** The "Duration so far" tile's number, not the stamps': a runner opens its
-   *  live run before it prepares the artifact and starts the JVM. */
+  /** The delta's live span, not the stamps': a runner opens its live run
+   *  before it prepares the artifact and starts the JVM. */
   it('measures a live load test by the live span when the page has one', () => {
     const live: LifecycleInput = {
       ...input({ startedAt: iso(T), streamUpdatedAt: iso(T + 42_000) }, 'running', undefined, undefined),

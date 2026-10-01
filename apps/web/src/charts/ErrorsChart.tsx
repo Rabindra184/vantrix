@@ -6,7 +6,9 @@ import type { TimeDomainMs } from './types';
 import { toErrorSeries } from './transforms/errorSeries';
 
 /**
- * Failures per second, above the errors table on the same tab.
+ * Failures per second, in the Report's Requests section. (The errors table
+ * it was drawn above lives on the Summary now; this chart is windowed with its
+ * neighbours and that table cannot be.)
  *
  * ═══ NO ICON, NO DECORATIVE SVG ═══
  *

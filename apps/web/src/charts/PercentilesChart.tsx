@@ -112,8 +112,8 @@ export default function PercentilesChart({
       // them to this chart rather than to the one above it.
       // A SPARKLINE HAS NO CONTROLS. Three groups of chips above a 96px
       // drawing is more chrome than figure, and §22.6's summary is read-only
-      // by definition — the full chart, controls and all, is one tap away on
-      // the Charts tab.
+      // by definition — the full chart, controls and all, is in the Report's
+      // Requests section.
       controls={
         compact ? undefined : (
         <ControlBar>

@@ -53,8 +53,9 @@
  * sketch, accurate to within 1%, against a tool whose own p99 reads 9.47% low
  * on this fixture. This one is WHICH WORD names which quantity. Folding a
  * methodology paragraph behind a vocabulary summary buries it, and absorbing
- * it would move it into `RunStats`, the one Summary component that mounts on
- * a phone. The last entry cross-references it instead. (They no longer sit on
+ * it would move it into `RunStats`, which mounts on a phone along with the
+ * rest of the Summary — the bars, the sparklines and the errors table too. The
+ * last entry cross-references it instead. (They no longer sit on
  * one page: that disclosure is under the Summary's tiles and this is in the
  * Report beside the table whose words it defines, so the cross-reference names
  * the Summary rather than saying "beside".)

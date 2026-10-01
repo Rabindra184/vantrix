@@ -40,9 +40,12 @@ import { runName } from '../runNumber';
  * all (`GET /v1/runs/:id` answers 202 for anything short of `complete`).
  */
 
-/** The live Load test's span, off the socket's latest delta — the "Duration so
- *  far" tile's own `activityMs ?? durationMs` (`RunDetail`), so the strip and
- *  the tile say one number. Null without a delta. */
+/** The live Load test's span, off the socket's latest delta: `activityMs ??
+ *  durationMs`, the expression `RunHeader`'s Duration chip computes once the
+ *  run finishes — so the strip's figure is the one the finished run keeps
+ *  rather than one that jumps when it ends. (The live Summary's four tiles
+ *  carry no duration; this strip is where a running run's span is read.) Null
+ *  without a delta. */
 function liveSpanOf(live: LiveRunState | null): number | null {
   const summary = live?.lastDelta?.summary;
   return summary === undefined ? null : (summary.activityMs ?? summary.durationMs);

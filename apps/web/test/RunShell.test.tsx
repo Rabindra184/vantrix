@@ -196,8 +196,9 @@ describe('RunShell', () => {
     expect(screen.getByTestId('lifecycle-processing')).toHaveTextContent('Processed · 2s');
   });
 
-  /** The strip's live Load test says the "Duration so far" tile's number: the
-   *  same `activityMs ?? durationMs`, off the same delta. */
+  /** The strip's live Load test reads the delta's `activityMs ?? durationMs` —
+   *  the span the Duration chip reports once the run finishes, so the figure
+   *  does not change basis when it ends. */
   it('reads a live load test off the socket’s latest delta', () => {
     const live = {
       connected: true, unauthorized: false, partial: false,

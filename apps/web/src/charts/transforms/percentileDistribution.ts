@@ -11,7 +11,7 @@ import type { Outcome } from './percentiles';
  * accumulating the counts answers "what share of observations came in at or
  * below this response time" — which is the definition of a percentile. So this
  * chart costs no endpoint, no query and no cache key: it reads the payload the
- * Charts tab is already holding for the histogram beside it.
+ * Report's Requests section is already holding for the histogram beside it.
  *
  * IT EARNS ITS PLACE BESIDE THAT HISTOGRAM rather than replacing it. The
  * histogram shows where the mass is; this shows THE SHAPE OF THE TAIL, which

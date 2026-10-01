@@ -84,11 +84,12 @@ export default function RunTrends() {
   }
 
   return (
-    // ONE COLUMN, unlike the Charts tab's two. These three are read DOWN, as
-    // one story about the same sequence of runs — status, then latency, then
-    // load — and side by side they would be three unrelated pictures that
-    // happen to share an axis. There are also only three, so the scroll depth
-    // the Charts tab is pairing away does not arise here.
+    // ONE COLUMN, unlike the Report's Requests charts, which pair into two
+    // from `2xl`. These three are read DOWN, as one story about the same
+    // sequence of runs — status, then latency, then load — and side by side
+    // they would be three unrelated pictures that happen to share an axis.
+    // There are also only three, so the scroll depth the Report's grid is
+    // pairing away does not arise here.
     <section aria-labelledby="trends-heading" className="grid grid-cols-1 gap-6">
       <h2 id="trends-heading" className="sr-only">
         Trends
