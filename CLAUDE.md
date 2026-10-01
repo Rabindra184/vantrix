@@ -351,8 +351,12 @@ zero failures** — the prediction counted from the source exactly, measured at
 `d6a7431`, and nothing after it touches a file that config includes;
 `pnpm test:e2e` **176 passed, exit 0**, the prediction exactly. All against a
 SCRATCH DATABASE (`perfportal_summary`), a scratch Redis INDEX (db 8) and e2e
-port 3800. The cross-browser run is CI's, dispatched on the branch: see the
-PR.
+port 3800. **AND CI MEASURED THE SAME TREE**, dispatched on `8e85697` before the
+placeholder-sentence fix: `build` read unit **186 / 2400**, integration
+**171 / 2103** and e2e **176 passed**, and `e2e-cross-browser` collected
+**528** (176 × three engines) and passed **523 with 5 skipped, none failed or
+flaky**, in 23.3 minutes — the collapsible sections are where WebKit's
+visibility workaround has bitten this repository before, and it did not.
 
 **THE REAL RUN.** The developer database with the API, worker and on-prem
 runner from this worktree on Node 22 and their own Redis index (db 11), and a
