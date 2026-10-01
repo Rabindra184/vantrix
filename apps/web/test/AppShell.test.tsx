@@ -439,15 +439,20 @@ describe('AppShell — a revealed fragment holds its place while the page settle
 
   /** A fragment the reader navigated away from is not ours to hold. */
   it('tears the observer and the input listeners down on unmount', async () => {
+    const added = vi.spyOn(document, 'addEventListener');
     const removed = vi.spyOn(document, 'removeEventListener');
     const view = await revealed();
 
     view.unmount();
 
     expect(FakeResizeObserver.instances[0]!.disconnect).toHaveBeenCalled();
-    const removedTypes = removed.mock.calls.map(([type]) => type);
     for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) {
-      expect(removedTypes, `${type} listener`).toContain(type);
+      const [, listener, options] = added.mock.calls.find(([t]) => t === type) ?? [];
+      expect(listener, `a ${type} listener was added`).toBeDefined();
+      // The SAME listener and the SAME `capture`: that flag is part of a
+      // listener's identity, and a removal that omits it removes nothing.
+      expect(options, `${type} is added in the capture phase`).toMatchObject({ capture: true });
+      expect(removed, `${type} listener removed`).toHaveBeenCalledWith(type, listener, expect.objectContaining({ capture: true }));
     }
     // And nothing the shell left behind can pull a page it no longer owns.
     top = 784;
