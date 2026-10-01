@@ -684,7 +684,7 @@ describe('RunShell — the navigator’s Duration', () => {
  * That distinction is the whole of what these cases guard. A link carrying
  * `?from=&to=` is exactly the link most likely to be opened on a phone —
  * somebody pasted it into a chat BECAUSE of what it shows — so the data stays
- * narrowed and every tab keeps reading the same range. Dropping the control
+ * narrowed and the Report keeps reading the same range. Dropping the control
  * silently would leave that reader looking at a tenth of a run with nothing
  * on screen admitting it.
  *

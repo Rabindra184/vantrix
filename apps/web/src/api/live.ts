@@ -294,9 +294,11 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  * ═══ WHAT THE SOCKET WROTE, HANDED BACK TO REST ═══
  *
  * The three keys `applyDelta` writes are BYTE-IDENTICAL to the ones the
- * FINISHED run page subscribes to: `RunShell` mounts `usersQuery(run.id)` and
- * `errorsQuery(run.id)`, and `RunReport` the same eight-element series key
- * `liveSeriesKey` builds. Every one of those factories carries `staleTime:
+ * FINISHED run page subscribes to: `RunSummary` mounts `usersQuery(run.id)`
+ * for its Peak users tile and `errorsQuery(run.id)` for its errors section
+ * (while no request is filtered), and `RunSummary` and `RunReport` the same
+ * eight-element series key `liveSeriesKey` builds (the Report's, while no
+ * window is narrowed). Every one of those factories carries `staleTime:
  * Infinity` (`api/metrics.ts`) — correct for a completed run, whose metrics
  * never change, and fatal for one this socket has been writing into: nothing
  * anywhere in `apps/web` invalidated a query before this call existed, so an
@@ -308,8 +310,8 @@ function applyDelta(queryClient: QueryClient, runId: string, delta: LiveDelta): 
  *
  * INVALIDATE, NEVER REMOVE. `invalidateQueries` marks the entry stale and
  * refetches only ACTIVE observers; the three queries named above are each
- * gated so none of them fetch while the run is non-terminal — `RunShell`'s
- * `users`/`errors` read `enabled: terminal` directly, and `RunReport`'s
+ * gated so none of them fetch while the run is non-terminal — `RunSummary`'s
+ * `users`/`series`/`errors` read `enabled: terminal` directly, and `RunReport`'s
  * `series` folds the identical `terminal` check into its own `enabled: on`
  * (`useRunTerminal`, `useRunWindow.ts`, is where that flag comes from) — so
  * the frozen dashboard (§4.4) keeps drawing the last delta while the run

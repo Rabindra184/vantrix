@@ -76,16 +76,6 @@ describe('safeNext', () => {
 });
 
 /**
- * `Organization → Project → Test → Run`, as URLs.
- *
- * The ENCODING is the part worth a test. A test slug arrives from the API and
- * is therefore data: `slugifySimulation` cannot produce a separator today, but
- * a path helper that relies on that is one migration away from routing
- * somewhere else entirely. Same rule `App.tsx` records for a group's
- * `Catalog/Recommendations`, which reaches its route as `%2F` and decodes back
- * inside one segment.
- */
-/**
  * A run's two pages, as paths. The Report is a child of the run's own path —
  * not a sibling route — because `RunShell` is a layout route mounted at
  * `/runs/:runId` and only its outlet swaps: the Summary is the index, and the
@@ -101,6 +91,16 @@ describe('a run’s Summary and Report, as paths', () => {
   });
 });
 
+/**
+ * `Organization → Project → Test → Run`, as URLs.
+ *
+ * The ENCODING is the part worth a test. A test slug arrives from the API and
+ * is therefore data: `slugifySimulation` cannot produce a separator today, but
+ * a path helper that relies on that is one migration away from routing
+ * somewhere else entirely. Same rule `App.tsx` records for a group's
+ * `Catalog/Recommendations`, which reaches its route as `%2F` and decodes back
+ * inside one segment.
+ */
 describe('the project → test → run hierarchy, as paths', () => {
   it('keeps the run list a child of the project, so a project bookmark still resolves', () => {
     expect(projectRunsPath('checkout')).toBe('/projects/checkout/runs');

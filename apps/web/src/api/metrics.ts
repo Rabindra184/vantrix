@@ -62,10 +62,11 @@ import {
  * and a newly mounted observer for stale data refetches on mount REGARDLESS
  * of whether another observer already holds the same key warm. That is not
  * hypothetical — it is what this page actually does. `RunShell` fetches
- * `usersQuery` and `errorsQuery` for the header and the tab strip; `stats`,
+ * `usersQuery` on the Report, for the brush's snapped window; `stats`,
  * `users`, `distribution` and `series` are each asked for again, under the
  * identical key, by whichever of `RunSummary` / `RunReport`
- * the reader opens — and because those are ROUTES that mount at
+ * the reader opens (the Summary's unwindowed ones are the Report's while no
+ * window is narrowed) — and because those are ROUTES that mount at
  * DIFFERENT times, not components sharing one render, a shared key alone only
  * dedupes observers that happen to mount while a fetch is still in flight. The
  * `staleTime` is what stops the later, separate mount from firing a second

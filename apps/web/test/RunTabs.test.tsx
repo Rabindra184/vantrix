@@ -91,8 +91,9 @@ describe('RunTabs', () => {
  *
  * The window lives in the URL as `?from=&to=` (`useRunWindow`), and these
  * links were built from bare section paths — no query string. So narrowing to
- * 10–30s on one tab and then opening another silently threw the selection away: the reader was returned to the whole run
- * mid-investigation, with the From/To fields empty and nothing saying why.
+ * 10–30s on one tab and then opening another silently threw the selection
+ * away: the reader was returned to the whole run mid-investigation, with the
+ * From/To fields empty and nothing saying why.
  *
  * Carrying the parameters is also what makes the RETURN journey work. Trends
  * and Compare deliberately answer whole-run questions (see C03), but they must

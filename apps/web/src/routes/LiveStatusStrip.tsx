@@ -7,8 +7,8 @@ import LiveNotice from './LiveNotice';
  * What the PAGE is doing, on every tab.
  *
  * Mounted by `RunShell` between the tab strip and the `<Outlet/>` rather than
- * on any one tab, because a dropped socket is not a fact about Overview: a
- * reader watching Charts needs it exactly as much.
+ * on any one tab, because a dropped socket is not a fact about the Summary: a
+ * reader watching the Report needs it exactly as much.
  *
  * ═══ `frozen` NEEDS EVIDENCE, NOT JUST `status === 'parsing'` ═══
  *

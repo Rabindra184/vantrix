@@ -77,9 +77,10 @@ export default function RunShell({
    * — an allowlist that silently falls through to "not terminal" for any
    * status it does not name, which is precisely the `statusFor` trap
    * `CLAUDE.md` records: a future terminal status added to `RunStatusSchema`
-   * without a matching branch HERE would render terminal tab content (the
-   * metric queries below fire on `terminal`) under a live status strip and a
-   * still-disabled socket, with nothing failing loudly. `RunDetail.tsx`
+   * without a matching branch HERE would render terminal section content
+   * (this shell's `/users` query and every section's own queries fire on
+   * `terminal`) under a live status strip and a still-disabled socket, with
+   * nothing failing loudly. `RunDetail.tsx`
    * already computes this exact boolean two lines from its call here
    * (`detail.state === 'ready'`, the SAME discriminant `useRunTerminal` uses
    * for every tab) — passing it through means there is exactly one place in

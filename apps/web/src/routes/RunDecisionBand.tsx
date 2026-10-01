@@ -192,9 +192,10 @@ export default function RunDecisionBand({
             (Platform gates, Simulation assertions, Over time, Errors), and a
             verdict heading would be a fifth rung in it. Its two neighbours in
             the shell, `SlaBanner` and `LiveStatusStrip`, contribute no heading
-            for the same reason; `RunHeader` owns the one `<h1>`. It would also be the only heading whose WORDS change
-            per run. The section stays reachable through
-            `aria-label="Release decision"`, like both neighbours.
+            for the same reason; `RunHeader` owns the one `<h1>`. It would also
+            be the only heading whose WORDS change per run. The section stays
+            reachable through `aria-label="Release decision"`, like both
+            neighbours.
 
             The word's colour is the decision mark's TEXT colour — the
             4.5:1-gated palette, as inline style from mark data, the same

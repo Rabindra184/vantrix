@@ -455,8 +455,9 @@ export default function RunHeader({
          * M02's first half WAS a class (`max-sm:hidden` on the band's prose),
          * and `RunDecisionBand` argues for that at length: this app has one JS
          * breakpoint, and it exists because a class can only HIDE what a phone
-         * has already paid to mount. Nothing here is expensive to mount —
-         * seven `<span>`s — so by that rule this should have been a class too.
+         * has already paid to mount. Nothing here is expensive to mount — at
+         * most seven value `<span>`s, one per chip — so by that rule this
+         * should have been a class too.
          *
          * A class cannot express it. The metadata must not be HIDDEN on a
          * phone, it must be ONE TAP AWAY, and `<details>` is how this repo
