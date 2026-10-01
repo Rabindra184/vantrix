@@ -128,7 +128,7 @@ loud. It is now two `projects` (`node` and `jsdom`) with their own include
 lists. `pnpm test:unit` still reports one combined total, so the floors below
 read exactly as they always did.
 
-`nvm use` first, and if a run reports fewer than **181 files / 2313 tests**, it
+`nvm use` first, and if a run reports fewer than **181 files / 2319 tests**, it
 did not run everything. (Update those two numbers when a sub-project adds
 suites, or the next reader calibrates against a stale floor and a
 silently-skipped run looks like a pass. The release-readiness branch added
@@ -145,6 +145,65 @@ still Chromium and still 102; `pnpm test:e2e:cross` is 306 (102 × chromium,
 firefox, webkit) and is what the `e2e-cross-browser` CI job runs on `main` and
 on demand. The WebKit third of that is worth its wall-clock all by itself —
 see the eighth lesson below.
+
+The sla-values-rounded branch added no unit FILE and 6 cases — 5 to
+`packages/contracts/test/rules.test.ts` and 1 to
+`apps/web/test/assertionExport.test.ts` — from **181 / 2313 to 181 / 2319**.
+Both are `.ts` files integration runs too, so integration moves from
+**170 / 2086 to 170 / 2092**, and **e2e stays 168**. It is a defect seen on
+the summary-report branch's real-run check, taken as its own branch.
+
+**A PLATFORM GATE PRINTED THIRTEEN DECIMAL PLACES.** A real run's p95 gate
+read `Actual: 645.5906777012351 ms`, and its sentence repeated it — "Whole-run
+p95 response time 645.5906777012351 ms is within the 2000 ms limit." — beside
+a p95 tile reading 646 ms and a simulation-assertions table printing
+`1686.14 ms` for Gatling's own check. `formatSlaValue` rounded its `fraction`
+arm (`fractionToPercent`, whose docstring argues exactly this) and printed the
+`ms` and `req/s` arms raw. The error-rate gate looked right, which is why the
+time gate's tail went unnoticed.
+
+**TWO DECIMALS, TRAILING ZEROS DROPPED, AND THE REASON IS THE NEIGHBOUR.**
+That is `toolAssertion.ts`' `formatActual` — the simulation assertions' own
+Actual column — so the two kinds of check on one page now read their
+actuals the same way.
+
+**NOT WHOLE MILLISECONDS, THOUGH THE TILES SHOW WHOLE ONES.** This function
+renders the author's THRESHOLD too, and a typed `99.5` must not read back as
+"≤ 100 ms" — rounding a bound misstates the rule. Two decimals keeps every
+bound a person types and still drops the floating-point tail. The paired
+case pins both halves: a measured time rounds, a typed bound survives, and
+no trailing zeros appear (`800 ms`, never `800.00 ms`).
+
+**THE EXPORT STAYS EXACT, AND A CASE NOW SAYS SO.** The CSV's Actual column
+writes `String(actualValue)` and never came through this function; the file
+is what somebody diffs or recomputes from, so it keeps the value the
+evaluator compared, digit for digit. That was true by accident of where the
+code lived, and nothing pinned it until now.
+
+**RED-VERIFIED, EVERY MUTATION ON ITS OWN CASE**, from a checkpoint commit
+with each replacement count asserted, `contracts` rebuilt around each:
+
+```
+  the ms arm raw again           the time case + the sentence case
+  the req/s arm raw again        the rate case alone
+  whole milliseconds             the typed-bound case, among the rounding cases
+  toFixed(2) kept as a string    the no-trailing-zeros case, and every rule
+                                 sentence that prints "800 ms" or "≥ 50/s"
+  the CSV routed through it      the exact-export case + the export's own case
+```
+
+**THE REAL RUN.** The developer database's own `ParitySimulation` run from
+the summary-report branch's check — a real Gatling execution through the
+on-prem runner — opened with this branch's API: the p95 gate's Actual cell
+read **645.59 ms** and its sentence "Whole-run p95 response time 645.59 ms is
+within the 2000 ms limit.", where it had printed `645.5906777012351` twice.
+
+**WHAT WAS RUN.** `typecheck` and `lint` exit 0 by their own exit codes;
+`test:unit` **181 / 2319**, zero `Errors` lines; `test:integration`
+**170 / 2092, exit 0, zero failures**; `pnpm test:e2e` **168 passed, exit 0** —
+every total the one counted from the source before any suite ran, against a
+SCRATCH DATABASE (`perfportal_slaround`), a scratch Redis INDEX (db 15) and
+e2e port 4000.
 
 The run-logs branch added SEVEN unit files —
 `packages/contracts/test/run-events.test.ts` (10),
