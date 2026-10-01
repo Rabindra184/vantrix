@@ -1,11 +1,18 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { seedAdmin, seedRunWithData, seedRunWithTelemetry } from './fixtures.js';
-import { plot, signIn } from './helpers.js';
-import { runTelemetryPath } from '../src/routes/paths.js';
+import { openSection, plot, signIn } from './helpers.js';
+import { runReportPath } from '../src/routes/paths.js';
 
 /**
- * `/runs/:runId/load-generators`, Task 10's six host-telemetry charts, in a
- * real browser.
+ * Task 10's six host-telemetry charts, in a real browser — in the Report's
+ * Connections (Bandwidth, TCP connections by state) and Load generators (CPU,
+ * memory, connection events, segment events) sections since backlog #7; they
+ * were one `/load-generators` tab before it, and that URL still redirects to
+ * `/report#load-generators`.
+ *
+ * Both sections are SHUT on arrival and a shut section builds nothing, so every
+ * case opens the one it reads — by the URL's fragment where the claim is about
+ * a link landing there, by `openSection` where it needs the pair.
  *
  * ═══ WHY THIS IS A BROWSER TEST AT ALL ═══
  *
@@ -19,9 +26,9 @@ import { runTelemetryPath } from '../src/routes/paths.js';
  * ═══ `figures()` EXCLUDES THE TIME-WINDOW STRIP, LIKE EVERY SIBLING SPEC ═══
  *
  * `RunShell` mounts `TimeBrush` — itself a `Chart`, `data-testid="chart-time-window"`
- * — ABOVE the tab outlet on every windowable run, on every tab, not only
- * Charts. A bare `page.getByRole('figure')` therefore counts SEVEN figures on
- * this page, not six, and its own data table never narrows with `?from=&to=`
+ * — ABOVE the section outlet on every windowable run, on the Report. A bare
+ * `page.getByRole('figure')` therefore counts SEVEN figures on this page, not
+ * six, and its own data table never narrows with `?from=&to=`
  * because `TimeBrush` deliberately always draws the WHOLE run (it is the
  * control a reader drags to CREATE that window, not a chart that obeys it —
  * see `TimeBrush.tsx`'s own "THE STRIP ALWAYS SHOWS THE WHOLE RUN" docstring).
@@ -48,22 +55,50 @@ import { runTelemetryPath } from '../src/routes/paths.js';
  * resolve against instead of the control a spec means to find.
  */
 
-/** The six telemetry figures, in document order — never the time-window strip
- *  above them (see the file docstring). Mirrors `run-charts.spec.ts`'s own
- *  `figures()` helper, scoped to this tab's own chart-id prefix instead. */
+/** The telemetry figures of every OPEN section, in document order — never the
+ *  time-window strip above them (see the file docstring). Mirrors
+ *  `run-charts.spec.ts`'s own `figures()` helper, scoped to this page's own
+ *  chart-id prefix instead. */
 function figures(page: Page): Locator {
   return page.locator('figure[data-testid^="chart-telemetry-"]');
 }
+
+/** The pair of sections that hold all six figures. */
+async function openBothSections(page: Page): Promise<void> {
+  await openSection(page, 'connections', 'Connections');
+  await openSection(page, 'load-generators', 'Load generators');
+}
+
+/** Load generators alone, the way an old `/load-generators` link lands: by the
+ *  fragment, which `CollapsibleSection` reads at mount. Four figures, one host
+ *  selector. */
+const LOAD_GENERATORS = `#load-generators`;
 
 test.describe('Load generators', () => {
   test('draws six charts for the selected host', async ({ page }) => {
     const admin = await seedAdmin();
     const runId = await seedRunWithTelemetry(admin.orgId);
     await signIn(page, admin);
-    await page.goto(runTelemetryPath(runId));
+    await page.goto(runReportPath(runId));
+    await openBothSections(page);
 
-    await expect(page.getByRole('link', { name: 'Load generators', exact: true }))
-      .toHaveAttribute('aria-current', 'page');
+    // WHICH SECTION HOLDS WHICH FIGURE, in GE's split: Bandwidth and TCP
+    // connections by state under Connections; the rest under Load generators.
+    // Containment, not presence — six figures drawn under one section would
+    // satisfy a bare count.
+    for (const [section, ids] of [
+      ['connections', ['telemetry-bandwidth', 'telemetry-tcp-states']],
+      [
+        'load-generators',
+        ['telemetry-cpu', 'telemetry-memory', 'telemetry-connection-events', 'telemetry-segment-events'],
+      ],
+    ] as const) {
+      const inside = await page
+        .locator(`section#${section}`)
+        .locator('figure[data-testid^="chart-telemetry-"]')
+        .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid')));
+      expect(inside, `${section} holds the wrong figures`).toEqual(ids.map((id) => `chart-${id}`));
+    }
 
     const chartFigures = figures(page);
     await expect(chartFigures).toHaveCount(6);
@@ -80,8 +115,11 @@ test.describe('Load generators', () => {
     const admin = await seedAdmin();
     const runId = await seedRunWithTelemetry(admin.orgId);
     await signIn(page, admin);
-    await page.goto(runTelemetryPath(runId));
+    await page.goto(`${runReportPath(runId)}${LOAD_GENERATORS}`);
 
+    // ONE selector, because only Load generators is open — each section that
+    // draws telemetry carries its own, and a host chosen in one is not chosen
+    // in the other.
     const select = page.getByRole('combobox', { name: 'Load generator', exact: true });
     await expect(select).toBeVisible();
 
@@ -102,7 +140,8 @@ test.describe('Load generators', () => {
     await expect(cpuTable.locator('tbody tr').first()).toBeAttached();
     await expect(cpuTable.getByText('—', { exact: true })).toHaveCount(0);
 
-    // Switching hosts must not lose or duplicate a chart: still exactly six.
+    // Switching hosts must not lose or duplicate a chart: still exactly the
+    // four this section owns.
     // The STRONGER proof the switch actually took effect, not merely that six
     // figures still happen to be on the page: lg-bravo is the ONLY host this
     // fixture seeds with a mid-run counter reset (seedRunWithTelemetry's
@@ -112,7 +151,7 @@ test.describe('Load generators', () => {
     // what actually distinguishes "the select re-rendered the page" from "the
     // select's onChange silently did nothing and the count matched anyway".
     await select.selectOption(options[1]!);
-    await expect(figures(page)).toHaveCount(6);
+    await expect(figures(page)).toHaveCount(4);
     await expect(cpuTable.getByText('—', { exact: true })).not.toHaveCount(0);
   });
 
@@ -121,7 +160,7 @@ test.describe('Load generators', () => {
     const runId = await seedRunWithTelemetry(admin.orgId);
     await signIn(page, admin);
 
-    await page.goto(runTelemetryPath(runId));
+    await page.goto(`${runReportPath(runId)}${LOAD_GENERATORS}`);
     const firstFigure = figures(page).first();
     // WAIT FOR THE TABLE TO BE POPULATED, not merely present — same reasoning
     // as run-charts.spec.ts's readTable(): the figure and its (collapsed, but
@@ -135,7 +174,7 @@ test.describe('Load generators', () => {
     // TimeBrush produces, without depending on a drag's pixel geometry. A
     // fresh `page.goto` (not a client-side navigation) so there is no stale
     // render from the wider window to race against the narrower one's.
-    await page.goto(`${runTelemetryPath(runId)}?from=0&to=4000`);
+    await page.goto(`${runReportPath(runId)}?from=0&to=4000${LOAD_GENERATORS}`);
     const afterFigure = figures(page).first();
     await expect(afterFigure.locator('tbody tr').first()).toBeAttached();
     const after = await afterFigure.locator('tbody tr').count();
@@ -152,7 +191,7 @@ test.describe('Load generators', () => {
     // window this run's own toolStartedAt implies (RunTelemetry.tsx).
     const runId = await seedRunWithData(admin.orgId);
     await signIn(page, admin);
-    await page.goto(runTelemetryPath(runId));
+    await page.goto(`${runReportPath(runId)}${LOAD_GENERATORS}`);
 
     /* ═══ THE CLAIM, NOT THE SENTENCE (review 09-13 M16) ═══
      *
@@ -174,7 +213,7 @@ test.describe('Load generators', () => {
     );
     // Zero TELEMETRY figures — not zero figures on the page. This run is
     // ordinarily windowable, so TimeBrush's own scrubber figure is still
-    // there; `figures()` excludes it for exactly this reason (see the file
+    // there, and so are Requests' own charts; `figures()` excludes it for exactly this reason (see the file
     // docstring), and a bare `getByRole('figure')` here would find that one
     // figure and fail even though the empty state rendered correctly.
     await expect(figures(page)).toHaveCount(0);
@@ -213,10 +252,12 @@ test('a window with no samples says so, rather than that nothing was recorded', 
   // The whole run first, so the run is known to HAVE telemetry — without this
   // the assertions below pass just as well against a run that recorded none,
   // which is the very state they exist to tell this one apart from.
-  await page.goto(runTelemetryPath(runId));
+  await page.goto(runReportPath(runId));
+  await openBothSections(page);
   await expect(figures(page).first().locator('tbody tr').first()).toBeAttached();
 
-  await page.goto(`${runTelemetryPath(runId)}?from=1000&to=2000`);
+  await page.goto(`${runReportPath(runId)}?from=1000&to=2000`);
+  await openBothSections(page);
 
   const note = page.getByText(/no telemetry samples fall within the selected time window/i);
   await expect(note.first()).toBeVisible();

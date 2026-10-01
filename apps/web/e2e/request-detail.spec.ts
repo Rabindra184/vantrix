@@ -39,7 +39,10 @@ test('the row link from the statistics table reaches the same page', async ({ pa
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(`/runs/${runId}`);
+  // The statistics table is in the Report's Requests section, behind its Table
+  // switch (backlog #7), not on the run's Summary.
+  await page.goto(`/runs/${runId}/report`);
+  await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
 
   // D-10: this request nests, so its row is a CHILD and starts collapsed.
   // Clicking the ROW ITSELF (as the brief originally wrote it) lands on

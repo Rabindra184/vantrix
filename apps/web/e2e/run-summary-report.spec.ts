@@ -1,0 +1,227 @@
+import { expect, test, type Page } from '@playwright/test';
+import { seedAdmin, seedRunWithData } from './fixtures.js';
+import { plot, signIn } from './helpers.js';
+import { runPath, runReportPath } from '../src/routes/paths.js';
+
+/**
+ * ═══ WHAT ONLY A BROWSER CAN PROVE ABOUT BACKLOG #7 ═══
+ * (docs/superpowers/specs/2026-10-01-summary-report-design.md)
+ *
+ * The unit layer hands each page its payload and its window and proves what it
+ * draws; these prove the seams no fixture can supply:
+ *
+ *   - GE's Summary ignores a window in its URL (measured on GE: with a 30 s
+ *     window the Summary still read the run's 900 requests), which only a real
+ *     router, a real API and a real narrowed Report can say is a property of the
+ *     PAGE and not of a mocked query;
+ *   - the Report's sections open by keyboard and reset on reload (measured on
+ *     GE: only Requests starts open, and nothing is remembered);
+ *   - the three retired tab URLs land where their content went, with the
+ *     reader's question (`from`/`to`, `request`) and not just the path;
+ *   - a bar holding a failure is open on arrival — this product's one deviation
+ *     from GE, whose bar stays shut over a failed assertion;
+ *   - the Report's first chart row begins on the first screen.
+ *
+ * `seedRunWithData` ingests the reference bundle (`ParitySimulation`, whose own
+ * `Search` p95 assertion fails), the same run `run-tables.spec.ts` opens.
+ */
+
+async function seeded(page: Page): Promise<string> {
+  const admin = await seedAdmin();
+  const runId = await seedRunWithData(admin.orgId);
+  await signIn(page, admin);
+  return runId;
+}
+
+const TOTAL = 'stat-total-requests';
+
+/**
+ * THE VACUITY GUARD IS THE HALF THAT MAKES THIS A CLAIM. "The Summary reads the
+ * same with a window in its URL" is satisfied by a window that narrows nothing —
+ * a bundle with no requests in those five seconds, or a run that is not
+ * windowable. So the same window is first applied to the Report's table and the
+ * count is required to MOVE there; only then does the Summary's not moving mean
+ * the Summary ignored something real.
+ *
+ * AND THE TWO THINGS A WINDOWED SUMMARY USED TO SAY ARE ASSERTED ABSENT, beside
+ * the number that did not move: the brush (drawn on the Report alone) and the
+ * errors table's whole-run notice (it exists to disclaim a window, and the
+ * Summary has none). Each is paired with its positive — the totals and the
+ * errors table on screen — so neither absence can pass against a page that
+ * failed to draw.
+ */
+test('the Summary reads the same with a narrow window in its URL, as GE’s does', async ({ page }) => {
+  const runId = await seeded(page);
+  await page.goto(runPath(runId));
+  const tile = page.getByTestId(TOTAL);
+  await expect(tile).toHaveText(/\d/);
+  const whole = (await tile.textContent())?.trim() ?? '';
+  expect(whole, 'the tile must read a number for this to compare anything').toMatch(/\d/);
+
+  // The same window really does narrow the Report's table.
+  await page.goto(`${runReportPath(runId)}?from=0&to=5000`);
+  await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
+  const totalCell = page.getByTestId('stat-row-total').locator('td').first();
+  await expect(totalCell).toHaveText(/\d/);
+  const narrowed = (await totalCell.textContent())?.trim();
+  expect(narrowed, 'the window must narrow the Report, or the Summary ignoring it proves nothing').not.toBe(
+    whole.match(/\d+/)?.[0],
+  );
+
+  await page.goto(`${runPath(runId)}?from=0&to=5000`);
+  await expect(tile).toHaveText(whole);
+  await expect(page.getByRole('table', { name: /errors/i })).toBeVisible();
+  await expect(page.getByTestId('time-brush')).toHaveCount(0);
+  await expect(page.getByTestId('errors-window-note')).toHaveCount(0);
+});
+
+const SECTIONS = [
+  ['requests', 'Requests', true],
+  ['groups', 'Groups', false],
+  ['virtual-users', 'Virtual users', false],
+  ['connections', 'Connections', false],
+  ['load-generators', 'Load generators', false],
+] as const;
+
+/**
+ * A SECTION HEADER IS A REAL BUTTON, NOT A CLICKABLE `div`. GE's headers are
+ * `div`s with no role (measured), so a keyboard cannot reach them; here the
+ * heading holds a button, which is what lets this open a section from the
+ * keyboard at all.
+ *
+ * `focus()` then Enter, not Tab: whether Tab reaches a control is a macOS
+ * keyboard preference that the three engines default differently (CLAUDE.md,
+ * the skip-link case, which is Chromium-only for exactly that reason). The
+ * claim is "once a keyboard reaches this control, the keyboard can finish the
+ * job", and that is engine-independent.
+ *
+ * AND ONLY REQUESTS IS OPEN AFTER A RELOAD, which is GE's own behaviour — open
+ * sections are kept nowhere, not in the URL and not across a load. The loop
+ * asserts all five states at once so a section that survived the reload, and
+ * Requests failing to open on its own, are both caught. It runs after the
+ * section's CONTENT has been seen, so the reload is of a section that really
+ * was open.
+ */
+test('a Report section opens by keyboard, and only Requests is open after a reload', async ({ page }) => {
+  const runId = await seeded(page);
+  await page.goto(runReportPath(runId));
+  const groups = page.locator('section#groups').getByRole('button', { name: 'Groups', exact: true });
+  await expect(groups).toHaveAttribute('aria-expanded', 'false');
+  await groups.focus();
+  await page.keyboard.press('Enter');
+  await expect(groups).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('section#groups').getByTestId('group-row').first()).toBeVisible();
+
+  await page.reload();
+  for (const [id, title, open] of SECTIONS) {
+    await expect(
+      page.locator(`section#${id}`).getByRole('button', { name: title, exact: true }),
+      `${title} after a reload`,
+    ).toHaveAttribute('aria-expanded', String(open));
+  }
+});
+
+/**
+ * THE THREE RETIRED TAB URLS, each asserted to land with the reader's window.
+ *
+ * A link pasted into a ticket carries `from`/`to`; a redirect that kept the path
+ * and dropped them would land the reader somewhere that looks right and answers a
+ * different question. `RunSectionRedirect` keeps the whole query string, and
+ * this is the only layer that crosses a real router doing it.
+ *
+ * `/load-generators` is also asserted to land with its section OPEN: the
+ * fragment is what names the section, `CollapsibleSection` opens the one a
+ * fragment matches, and a redirect that arrived at a shut Report with the right
+ * address would have kept the URL and lost the content.
+ */
+for (const [old, rest, hash] of [
+  ['charts', '/report', ''],
+  ['load-generators', '/report', '#load-generators'],
+  ['errors', '', '#errors'],
+] as const) {
+  test(`the old /${old} URL lands on its new place, window kept`, async ({ page }) => {
+    const runId = await seeded(page);
+    await page.goto(`${runPath(runId)}/${old}?from=0&to=10000`);
+    await expect(page).toHaveURL(new RegExp(`${runPath(runId)}${rest}\\?from=0&to=10000${hash}$`));
+    if (old === 'load-generators') {
+      await expect(
+        page.locator('section#load-generators').getByRole('button', { name: 'Load generators', exact: true }),
+      ).toHaveAttribute('aria-expanded', 'true');
+    }
+  });
+}
+
+/**
+ * AN OLD `/errors` LINK KEEPS THE REQUEST IT WAS NARROWED TO. `request` is the
+ * other query parameter a pasted errors link carries, and it is the one the
+ * Errors tab's filter wrote (review 09-13 M15): "the errors for Place Order"
+ * must open as that, not as every request's. `Place Order` is a request the
+ * reference run fails — `run-tables.spec.ts`' filter case narrows to it.
+ */
+test('an old /errors link keeps the request it was narrowed to', async ({ page }) => {
+  const runId = await seeded(page);
+  await page.goto(`${runPath(runId)}/errors?request=Place%20Order`);
+  await expect(page).toHaveURL(new RegExp(`${runPath(runId)}\\?request=Place%20Order#errors$`));
+  await expect(page.getByTestId('errors-request-filter')).toHaveValue('Place Order');
+});
+
+/**
+ * THIS PRODUCT'S ONE DEVIATION FROM GE: a bar that holds a failure is open on
+ * arrival. GE keeps its bar shut over a failed assertion (measured), which makes
+ * the one thing a reader opened the run to find a click away. The reference
+ * run's own `Search` p95 assertion fails, so its simulation bar is open and its
+ * first card is the failure.
+ */
+test('a failing simulation assertion is open on arrival', async ({ page }) => {
+  const runId = await seeded(page);
+  await page.goto(runPath(runId));
+  const bar = page.locator('section#simulation-assertions');
+  await expect(bar.getByRole('button', { name: 'Simulation assertions', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await expect(bar.getByTestId('simulation-outcome').first()).toContainText(/failed/i);
+});
+
+/**
+ * ═══ THE FOLD, MEASURED AT 1440x900 ═══
+ *
+ * The spec asks for the Report's first chart ROW inside the first screen. This
+ * is what the page actually does, on the reference run:
+ *
+ *     time window (always open)   top 338     bottom 751      413px tall
+ *     Requests section            top 775
+ *     requests-and-responses      top 886.5   bottom 1256.5
+ *
+ * So the chart BEGINS on the first screen with 13.5px to spare and does not
+ * FINISH on it: its bottom is 356.5px past the fold. The bound below asserts the
+ * measured fact — the top is inside 900 — and not the goal, because a threshold
+ * set to an unmet goal is a failing test describing work nobody has agreed to
+ * do. The 413px is the cost of the time window being always open (GE's is, and
+ * the collapse review M01 gave the Overview's has nothing left to buy now that
+ * the window is off the page that holds the headline numbers); closing that gap
+ * means shortening the window's own layout, which is a design decision rather
+ * than a correction, and is recorded rather than loosened around.
+ */
+test('the Report’s first Requests chart begins on the first 1440x900 screen', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const runId = await seeded(page);
+  await page.goto(runReportPath(runId));
+  const first = page.locator('section#requests').getByTestId('chart-requests-and-responses');
+  await expect(first).toBeVisible();
+  /* SETTLED BEFORE MEASURED. The time window above the section is 413px tall
+   * once its strip has drawn and far shorter while it is still a placeholder,
+   * and the chart's own box is its drawn size — so a measurement taken the
+   * moment the figure is visible can land before either has settled and read a
+   * top that is hundreds of pixels too high. A mutation that pushed the chart
+   * 56px lower passed twice and failed once on exactly this: the bound is only
+   * a claim about the page as a reader sees it, which is the drawn page. */
+  await expect(plot(page.getByTestId('chart-time-window'))).toHaveCount(1);
+  await expect(plot(first)).toHaveCount(1);
+  const box = await first.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom };
+  });
+  // top 886.5, bottom 1256.5 — see the comment above the case.
+  expect(box.top, `the first chart starts at ${box.top}px (bottom ${box.bottom}px)`).toBeLessThan(900);
+});

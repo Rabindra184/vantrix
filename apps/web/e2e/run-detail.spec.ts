@@ -10,15 +10,8 @@ import {
   seedRunWithNaAssertion,
   seedRunWithProvenance,
 } from './fixtures.js';
-import { apiJson, signIn } from './helpers.js';
-import {
-  runChartsPath,
-  runComparePath,
-  runErrorsPath,
-  runPath,
-  runTelemetryPath,
-  runTrendsPath,
-} from '../src/routes/paths.js';
+import { apiJson, openSection, signIn } from './helpers.js';
+import { runComparePath, runPath, runReportPath, runTrendsPath } from '../src/routes/paths.js';
 
 /**
  * The run detail page — the last screen of the parity shell, and the one the
@@ -81,7 +74,7 @@ test('shows the run header', async ({ page }) => {
   expect(seconds).toBeLessThan(3600);
 });
 
-test('the header states the run’s identity and its own peak', async ({ page }) => {
+test('the header states the run’s identity, and the Summary its peak', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
@@ -102,7 +95,14 @@ test('the header states the run’s identity and its own peak', async ({ page })
     `/v1/runs/${runId}/users`,
   );
   const peak = Math.max(...users.total.map((b) => b.maxConcurrent));
-  await expect(page.getByText(`${peak.toLocaleString()} peak users`)).toBeVisible();
+  // The peak is a headline TILE on the Summary now (GE's third number), not a
+  // chip in the header — so it is read where it is, and its absence from the
+  // header is asserted beside it: the same fact twice on one screen is the
+  // repetition the header's chips were thinned to avoid. `formatCount` writes
+  // no grouping separator (a locale-dependent one would make what a reader sees
+  // depend on where it ran), so the expectation is the bare number.
+  await expect(page.getByTestId('stat-peak-users')).toHaveText(String(peak));
+  await expect(page.getByText(/peak users$/)).toHaveCount(0);
 
   // Chromium, not jsdom: dom-accessibility-api does not consult a
   // descendant's aria-hidden the way a real AT tree does, so a badge whose
@@ -133,17 +133,28 @@ test('the header states the run’s identity and its own peak', async ({ page })
 });
 
 /**
- * Task 10's one content change: six stat tiles above the statistics table,
- * every value read from the same run-scope row the table's "All Requests"
- * row reads. This does not re-derive the number and compare it to a
- * written-down expectation — it reads the SAME CELL the tile is required not
- * to disagree with, off the SAME PAGE, and compares the two strings.
+ * Task 10's one content change: stat tiles above the statistics table, every
+ * value read from the same run-scope row the table's "All Requests" row reads.
+ * This does not re-derive the number and compare it to a written-down
+ * expectation — it reads the SAME CELL the tile is required not to disagree
+ * with and compares the two strings.
+ *
+ * THE TWO ARE ON DIFFERENT PAGES NOW (backlog #7): the tiles are the Summary's
+ * and the table is in the Report's Requests section, so the case reads the tile
+ * on the Summary, then the cell on the Report. A disagreement would be a reader
+ * seeing one request count on the page they open and another on the page that
+ * shows their work — worse than when both were on one screen, because nothing
+ * puts them side by side.
  */
-test('the stat tiles agree with the statistics table', async ({ page }) => {
+test('the Summary’s request count agrees with the Report’s statistics table', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
   await page.goto(runPath(runId));
+
+  const tileLocator = page.getByTestId('stat-total-requests');
+  await expect(tileLocator).toHaveText(/\d/);
+  const tile = await tileLocator.textContent();
 
   // `stat-row-total` is the All Requests row — the run's own totals, in its own
   // <tbody>, and the same row RunStats reads. NOT `stat-row`, which is the
@@ -151,8 +162,10 @@ test('the stat tiles agree with the statistics table', async ({ page }) => {
   //
   // Its first cell is a <th scope="row"> carrying "All Requests", so the Total
   // column is the first <td>.
-  const tile = await page.getByTestId('stat-total-requests').textContent();
+  await page.goto(runReportPath(runId));
+  await page.locator('section#requests').getByRole('button', { name: 'Table', exact: true }).click();
   const totalCell = page.getByTestId('stat-row-total').locator('td').first();
+  await expect(totalCell).toHaveText(/\d/);
   expect((await totalCell.textContent())?.trim()).toBe(tile?.trim());
 });
 
@@ -163,8 +176,11 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
 
   await signIn(page, admin);
   await page.goto(runPath(runId));
+  // A bar opens itself only when it holds a FAILURE, and this run's one gate is
+  // not applicable — so it is shut, as it should be, and a reader opens it.
+  await openSection(page, 'platform-gates', 'Platform gates');
 
-  const row = page.getByRole('row', { name: /not applicable/i });
+  const row = page.getByTestId('gate-card').filter({ hasText: /not applicable/i });
   // Every `not.*` in this file is paired with a POSITIVE assertion on the
   // same locator. Two reasons, and the SECOND is the load-bearing one:
   //
@@ -190,7 +206,7 @@ test('renders a not_applicable assertion distinctly from a pass', async ({ page 
   // the requirement: the outcome CELL, in isolation, must not render the
   // treatment a passed assertion renders. Text and shape, never colour alone
   // (WCAG 2.2 AA 1.4.1), so both are checked.
-  const outcome = page.getByTestId('assertion-outcome');
+  const outcome = page.getByTestId('gate-outcome');
   await expect(outcome).toHaveCount(1);
   await expect(outcome).toHaveText(/not applicable/i);
   await expect(outcome).toContainText(NOT_APPLICABLE_MARK.glyph);
@@ -234,8 +250,10 @@ test('a not_applicable outcome and a passed outcome render differently on the pa
 
   await signIn(page, admin);
   await page.goto(runPath(runId));
+  // Neither gate failed, so the bar is shut on arrival.
+  await openSection(page, 'platform-gates', 'Platform gates');
 
-  const outcomes = page.getByTestId('assertion-outcome');
+  const outcomes = page.getByTestId('gate-outcome');
   await expect(outcomes).toHaveCount(2);
 
   // The glyph is read from its own element rather than sliced off the cell
@@ -393,22 +411,51 @@ test('each tab is its own URL, reachable directly', async ({ page }) => {
 
   // A hard load of each tab, never a click — this is what makes a link
   // pasted into an incident channel land where it says it will.
-  await page.goto(runChartsPath(runId));
-  await expect(page.getByTestId('chart-percentiles')).toBeVisible();
-  await expect(page.getByTestId('stat-row-total')).toHaveCount(0);
+  //
+  // Each tab is told apart by what ONLY it draws. `chart-percentiles` is on
+  // both the Summary and the Report now (GE draws the percentile chart in
+  // both), so it can no longer say which page is open: the Summary has the
+  // headline numbers, the Report has the time window and its sections.
+  await page.goto(runReportPath(runId));
+  await expect(page.locator('section#requests')).toBeVisible();
+  await expect(page.getByTestId('window-from')).toBeVisible();
+  await expect(page.getByTestId('stat-error-rate')).toHaveCount(0);
 
-  await page.goto(runErrorsPath(runId));
-  await expect(page.getByTestId('error-row').first()).toBeVisible();
-  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+  await page.goto(runTrendsPath(runId));
+  await expect(page.getByTestId('chart-trend-percentiles')).toBeVisible();
+  await expect(page.locator('section#requests')).toHaveCount(0);
+  await expect(page.getByTestId('stat-error-rate')).toHaveCount(0);
 
   await page.goto(runComparePath(runId));
   await expect(page.getByText(/nothing to compare yet|runs to compare/i)).toBeVisible();
-  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+  await expect(page.locator('section#requests')).toHaveCount(0);
+  await expect(page.getByTestId('stat-error-rate')).toHaveCount(0);
 
-  // The bare path is Overview, so every link that predates tabs still works.
+  // The bare path is the Summary, so every link that predates tabs still works.
   await page.goto(runPath(runId));
-  await expect(page.getByTestId('stat-row-total')).toBeVisible();
-  await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
+  await expect(page.getByTestId('stat-error-rate')).toBeVisible();
+  await expect(page.locator('section#requests')).toHaveCount(0);
+  await expect(page.getByTestId('window-from')).toHaveCount(0);
+
+  // There is no Errors tab and no error count on the strip any more: the
+  // errors table is on the Summary. Paired with the table being there, so the
+  // absence cannot pass against a Summary that failed to draw it.
+  await expect(page.getByTestId('error-row').first()).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'Run sections' }).getByRole('link', { name: /errors/i }),
+  ).toHaveCount(0);
+
+  // THE THREE RETIRED TAB URLS land where their content went, and take the
+  // reader's question with them (`from`/`to`, which a pasted link carries).
+  // Each is a redirect, not a page: the address bar ends on the new place.
+  for (const [old, landing] of [
+    ['charts', `${runReportPath(runId)}?from=0&to=10000`],
+    ['load-generators', `${runReportPath(runId)}?from=0&to=10000#load-generators`],
+    ['errors', `${runPath(runId)}?from=0&to=10000#errors`],
+  ] as const) {
+    await page.goto(`${runPath(runId)}/${old}?from=0&to=10000`);
+    await expect(page, `/${old} redirects`).toHaveURL((url) => `${url.pathname}${url.search}${url.hash}` === landing);
+  }
 });
 
 test('a run that failed its SLA renders as a run, not as an error', async ({ page }) => {
@@ -425,9 +472,10 @@ test('a run that failed its SLA renders as a run, not as an error', async ({ pag
   // The specific way this breaks: apiFetch's synthetic branch, which fires
   // when a non-2xx body is not problem-shaped — and a 422 run body never is.
   await expect(page.getByText(/CLIENT_UNREADABLE_ERROR|could not be parsed/i)).toHaveCount(0);
-  // The run is readable AND the failure is legible: the rule that failed is
-  // in the table, not merely summarised in the header.
-  await expect(page.getByTestId('assertion-outcome')).toHaveText(/failed/i);
+  // The run is readable AND the failure is legible: the rule that failed is a
+  // card in the Platform gates bar — open on arrival, because it holds a
+  // failure — not merely summarised in the header.
+  await expect(page.getByTestId('gate-outcome')).toHaveText(/failed/i);
 });
 
 test('switching tabs does not remount the shell', async ({ page }) => {
@@ -438,7 +486,7 @@ test('switching tabs does not remount the shell', async ({ page }) => {
 
   // The heading is `RunHeader`'s, rendered by `RunShell` — the layout route
   // that is supposed to mount once and never again for as long as the run's
-  // three tabs are visited. If the layout route were three sibling routes
+  // tabs are visited. If the layout route were three sibling routes
   // instead, this exact DOM node would be destroyed and a fresh one built on
   // every tab click.
   const heading = page.getByRole('heading', { level: 1 });
@@ -453,8 +501,8 @@ test('switching tabs does not remount the shell', async ({ page }) => {
   // truly persisted keeps carrying it across the click below.
   await heading.evaluate((el) => el.setAttribute('data-remount-probe', 'still-here'));
 
-  await page.getByRole('link', { name: 'Charts' }).click();
-  await expect(page.getByTestId('chart-percentiles')).toBeVisible();
+  await page.getByRole('link', { name: 'Report', exact: true }).click();
+  await expect(page.locator('section#requests')).toBeVisible();
   await expect(heading).toHaveAttribute('data-remount-probe', 'still-here');
 });
 
@@ -464,7 +512,7 @@ test('switching tabs does not remount the shell', async ({ page }) => {
  * `toHaveCount(0)` on the navigation — the exact opposite of this whole
  * sub-project's purpose. Before Task 7, `RunDetail` rendered a standalone
  * `Processing` screen with no `<Outlet/>` in it at all, so `/runs/:id/charts`
- * repeated that same screen instead of resolving; that WAS "no tab strip",
+ * (the Report's old address) repeated that same screen instead of resolving; that WAS "no tab strip",
  * and it was the bug. `RunShell` mounts for a processing run now, so the
  * strip is on screen and the tab URLs resolve to something real — this test
  * proves both halves, not just the strip's presence.
@@ -478,52 +526,53 @@ test('a processing run shows its tab strip, and the tabs resolve to something re
   await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   await expect(page.getByText(/still processing/i)).toBeVisible();
 
-  await page.getByRole('link', { name: 'Charts' }).click();
-  await expect(page).toHaveURL(runChartsPath(runId));
+  await page.getByRole('link', { name: 'Report', exact: true }).click();
+  await expect(page).toHaveURL(runReportPath(runId));
   // Not blank, and not four error panels (CRITICAL 1's own fix, same round):
-  // the Charts tab shows the same `WaitingPanel` Overview does, rather than
+  // the Report shows the same `WaitingPanel` the Summary does, rather than
   // firing its metric queries against a run whose rows do not exist yet.
   await expect(page.getByText(/still processing/i)).toBeVisible();
   await expect(page.getByTestId('chart-percentiles')).toHaveCount(0);
 });
 
-test('the errors tab counts distinct messages, not failed requests', async ({ page }) => {
+/**
+ * Spec §9-4, which used to be about the Errors TAB's count and is about the
+ * errors TABLE's own tally now: there is no Errors tab and no number on the
+ * strip (backlog #7), but the same two quantities still sit a few lines apart —
+ * distinct error MESSAGES and failed REQUESTS — and still read as one number to
+ * a reader who assumes they are. `ErrorsTable` names them in one line ("N error
+ * types · M recorded errors"), so this asserts that line's first number follows
+ * the table's rows and NOT the run's KO count.
+ *
+ * On the reference run these are 2 and 24. Both are derived from the page's own
+ * payloads rather than written down, so a re-captured fixture moves them
+ * together. KO comes from `/stats` rather than from a table cell: the cell is in
+ * the Report now, and the claim is about the number, not about where it was
+ * read.
+ */
+test('the errors table counts distinct messages, not failed requests', async ({ page }) => {
   const admin = await seedAdmin();
   const runId = await seedRunWithData(admin.orgId);
   await signIn(page, admin);
-  await page.goto(runPath(runId));
 
-  // Spec §9-4. On the reference run these are 2 and 24 — distinct error
-  // messages versus failed requests. Both are derived from the page's own
-  // payloads rather than written down, so a re-captured fixture moves them
-  // together: the count must follow the errors table's row count, and must
-  // NOT follow the statistics row's KO column.
-  //
-  // `stat-row-total` is read HERE, on the Overview tab, not after navigating
-  // to `/errors`: `RunShell` is a layout route, and `RunOverviewTab` — the
-  // only tab that renders `StatisticsTable` — unmounts the moment the
-  // `<Outlet/>` swaps to `RunErrorsTab`. Reading it after the navigation
-  // waits forever for a node the errors tab never renders (confirmed at this
-  // file's "each tab is its own URL" test, which asserts `stat-row-total`
-  // has count 0 off the Overview tab).
-  const tab = page.getByRole('link', { name: /Errors/ });
-  const ko = Number(
-    (await page.getByTestId('stat-row-total').locator('td').nth(2).textContent())?.trim(),
+  const stats = await apiJson<{ stats: { scope: string; koCount: number }[] }>(
+    page,
+    `/v1/runs/${runId}/stats`,
   );
+  const ko = stats.stats.find((row) => row.scope === 'run')!.koCount;
 
-  await page.goto(runErrorsPath(runId));
+  await page.goto(runPath(runId));
   // `.count()` reads the DOM as it stands, with none of `expect(locator)`'s
-  // auto-retry — unlike the `ko` read above, whose `.textContent()` DOES
-  // auto-wait for its locator to attach. Without this, `.count()` can run
-  // before the errors table's own fetch has resolved and read back 0 rows,
-  // same pattern as "each tab is its own URL, reachable directly" above.
+  // auto-retry. Without this, it can run before the errors table's own fetch
+  // has resolved and read back 0 rows.
   await expect(page.getByTestId('error-row').first()).toBeVisible();
   const distinct = await page.getByTestId('error-row').count();
   expect(distinct).toBeGreaterThan(0);
   expect(distinct).not.toBe(ko);
 
-  await page.goto(runPath(runId));
-  await expect(tab).toHaveText(`Errors (${distinct})`);
+  await expect(page.getByTestId('errors-tally')).toContainText(
+    new RegExp(`^${distinct} error types? ·`),
+  );
 });
 
 test('the commit chip is named by the whole sha, not the seven visible characters', async ({ page }) => {
@@ -562,22 +611,13 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
   // own URL, reachable directly" makes for a terminal run above, so a link
   // pasted while the run is still streaming lands on something real too.
   //
-  // The Errors case tolerates EITHER 'Errors' or 'Errors (0)' here
-  // (`/^Errors( \(0\))?$/`), not the pinned `Errors (0)` a fix round used to
-  // assert in this loop. `LiveGateway`'s `emptyDelta` seeds a fresh socket
-  // to a `running` run with a synthetic zero-activity delta as soon as it
-  // connects, and `RunShell`'s errors query picks that up on every tab once
-  // it lands — but THIS test's claim is URL reachability, not socket timing,
-  // and making one iteration of it depend on a WebSocket round trip landing
-  // inside the default expect timeout would fail it for a reason that has
-  // nothing to do with what it asserts. The exact post-seed shape — "Errors
-  // (0)", with the partial-seed disclosure that is what makes that zero
-  // honest — is pinned once, on its own, below.
+  // The Errors tab and its count are gone (backlog #7): the strip is Summary,
+  // Report, Trends and Compare for a run no runner executed. What the loop used
+  // to say about `Errors (0)` — that a zero is honest only DISCLOSED — still
+  // holds for the zeros the live Summary shows, and is pinned once below.
   for (const [path, heading] of [
-    [runPath(runId), 'Overview'],
-    [runChartsPath(runId), 'Charts'],
-    [runTelemetryPath(runId), 'Load generators'],
-    [runErrorsPath(runId), /^Errors( \(0\))?$/],
+    [runPath(runId), 'Summary'],
+    [runReportPath(runId), 'Report'],
     [runTrendsPath(runId), 'Trends'],
     [runComparePath(runId), 'Compare'],
   ] as const) {
@@ -588,26 +628,20 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
     // This org's one project is `seedAdmin`'s own "Checkout" (`projectFor`),
     // which shares no word with any tab name, but `exact: true` is the belt
     // as well as the braces and costs nothing to keep on every heading here.
-    // (It has no effect on the Errors case's RegExp — a regex already
-    // defines its own exact match — so it is left on for every entry rather
-    // than special-cased.)
     await expect(page.getByRole('link', { name: heading, exact: true })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Run sections' })).toBeVisible();
   }
 
-  // THE EXACT POST-SEED SHAPE, PINNED ONCE, OUTSIDE THE REACHABILITY LOOP.
-  // By now the socket has had five full page loads to deliver its seed, so
-  // this is not a race — it is the claim the Errors case in the loop above
-  // was deliberately left too loose to make. `Errors (0)` is honest only
-  // DISCLOSED: `live-notice-partial` is `LiveStatusStrip`'s relay of the
-  // gateway's own verdict on this seed ("neither key existed and the seed is
-  // emptyDelta, a full dashboard of zeros" — LiveNotice.tsx's own docstring),
-  // and it renders above the `<Outlet/>` so it is on screen on every tab,
-  // including this one. Asserting the zero without it would let a spec pass
-  // while `/errors` showed a bare, undisclosed "Errors (0)" over a fold
-  // nobody has ticked — indistinguishable from the run genuinely having
-  // zero errors.
-  await expect(page.getByRole('link', { name: 'Errors (0)', exact: true })).toBeVisible();
+  // THE PARTIAL-SEED DISCLOSURE, PINNED ONCE, OUTSIDE THE REACHABILITY LOOP.
+  // By now the socket has had four full page loads to deliver its seed, so
+  // this is not a race. `live-notice-partial` is `LiveStatusStrip`'s relay of
+  // the gateway's own verdict on this seed ("neither key existed and the seed
+  // is emptyDelta, a full dashboard of zeros" — LiveNotice.tsx's own
+  // docstring), and it renders above the `<Outlet/>` so it is on screen on
+  // every section, including this one. A zero on the Summary's live tiles is
+  // honest only DISCLOSED: without it a spec could pass while a bare zero sat
+  // over a fold nobody has ticked — indistinguishable from the run genuinely
+  // having zero errors.
   await expect(page.getByTestId('live-notice-partial')).toBeVisible();
 });
 
@@ -615,7 +649,8 @@ test('each tab of a LIVE run is its own URL, reachable directly', async ({ page 
  * A STALE LINK TO A RENAMED SECTION KEEPS THE RUN.
  *
  * The Load generators tab lived at `/telemetry` before it was
- * `/load-generators`, and any such URL used to match nothing under
+ * `/load-generators` — and that is a Report section now — and any such URL used
+ * to match nothing under
  * `/runs/:runId` and fall through to `App.tsx`'s global `<Route path="*">`,
  * which redirects to `/runs`. The reader was silently moved from the run they
  * had open to the top of the run list.
@@ -643,8 +678,11 @@ test('an unknown run section keeps the run on screen instead of redirecting to t
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 
   // The real tab is one click away, from the strip rather than from the copy.
-  await page.getByRole('link', { name: 'Load generators', exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`${runId}/load-generators$`));
+  // The Report is where this section's content is now: Load generators is one
+  // of ITS sections, and the old address redirects there rather than being
+  // the unknown section this case needs, which is why this uses `/telemetry`.
+  await page.getByRole('link', { name: 'Report', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${runId}/report$`));
 });
 
 test('a live run shows its identity in the header, not a bare id', async ({ page }) => {
