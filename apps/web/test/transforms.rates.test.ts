@@ -1,6 +1,6 @@
 import type { SeriesResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
-import { toRequestRate, toResponseRate } from '../src/charts/transforms/rates';
+import { toRequestRate, toRequestsAndResponses, toResponseRate } from '../src/charts/transforms/rates';
 import type { ChartData } from '../src/charts/types';
 import fixture from './fixtures/reference-run.json';
 
@@ -428,5 +428,57 @@ describe('nothing to draw', () => {
     // Not the same sentence: "nothing was sent" and "nothing came back" are
     // different facts, and on a run that timed out entirely only one is true.
     expect(res.empty).toMatch(/no responses/i);
+  });
+});
+
+describe('toRequestsAndResponses — GE’s "Requests and Responses per Second"', () => {
+  const perSecond = series.bucketWidthMs / 1000;
+
+  it('draws GE’s four lines, in GE’s order', () => {
+    expect(toRequestsAndResponses(series).series.map((s) => s.name)).toEqual([
+      'Requests',
+      'Total',
+      'Responses OK',
+      'Responses KO',
+    ]);
+  });
+
+  it('reads each line off its own counter, per second, at the bucket’s offset', () => {
+    const data = toRequestsAndResponses(series);
+    const counters = ['startedCount', 'endedCount', 'okCount', 'koCount'] as const;
+    counters.forEach((counter, s) => {
+      expect(data.series[s]!.data).toEqual(
+        series.buckets.map((b) => [b.startOffsetMs, b[counter] / perSecond]),
+      );
+    });
+  });
+
+  it('splits the RESPONSES by outcome, never the requests as they started', () => {
+    // One bucket where the two edges disagree, so reading the start-edge split
+    // cannot pass: 4 requests started (all OK as they began), 3 finished — 1 OK, 2 KO.
+    const disagreeing: SeriesResponse = {
+      ...series,
+      bucketWidthMs: 1000,
+      buckets: [{ ...series.buckets[0]!, startOffsetMs: 0, startedCount: 4, startedOkCount: 4, startedKoCount: 0, endedCount: 3, okCount: 1, koCount: 2 }],
+    };
+    const [, total, ok, ko] = toRequestsAndResponses(disagreeing).series;
+    expect(total!.data).toEqual([[0, 3]]);
+    expect(ok!.data).toEqual([[0, 1]]);
+    expect(ko!.data).toEqual([[0, 2]]);
+  });
+
+  it('divides by the payload’s own bucket width', () => {
+    const wide: SeriesResponse = {
+      ...series,
+      bucketWidthMs: 2000,
+      buckets: [{ ...series.buckets[0]!, startOffsetMs: 0, startedCount: 8, endedCount: 6, okCount: 6, koCount: 0 }],
+    };
+    expect(toRequestsAndResponses(wide).series[0]!.data).toEqual([[0, 4]]);
+  });
+
+  it('says there is nothing to draw rather than drawing flat lines', () => {
+    const data = toRequestsAndResponses({ ...series, buckets: [] });
+    expect(data.series).toEqual([]);
+    expect(data.empty).toMatch(/no requests were recorded/i);
   });
 });

@@ -42,8 +42,8 @@ const TIME_COLUMN = 'Elapsed (s)';
 /** One bucket of either the per-scenario or the total array — the same shape. */
 type UserBucket = UsersResponse['total'][number];
 
-/** The two measures these charts draw, and the only fields either one reads. */
-type Measure = 'maxConcurrent' | 'started';
+/** The measures these charts draw, and the only fields any of them reads. */
+type Measure = 'maxConcurrent' | 'started' | 'ended';
 
 /**
  * The bucket width, in milliseconds, inferred from the offsets.
@@ -205,7 +205,8 @@ function usersChart(
     axisLabels: offsets.map((offset) => offset / 1000),
     columns,
     rows,
-    limitation: spec.perSecond && widthMs !== 1000 ? widthNote(widthMs) : undefined,
+    limitation:
+      spec.perSecond && widthMs !== 1000 ? widthNote(widthMs, spec.measure) : undefined,
   };
 }
 
@@ -215,10 +216,15 @@ function usersChart(
  * window that is not a second, so a one-second spike inside a wide bucket is
  * flattened and cannot be recovered from what is drawn.
  */
-function widthNote(widthMs: number): string {
+function widthNote(widthMs: number, measure: Measure): string {
+  /* WHICH EDGE THE SENTENCE NAMES FOLLOWS THE CHART. This said "started"
+     unconditionally while only the arrival rate was a rate; the termination
+     rate draws the same buckets and would have told its reader a chart of users
+     that ENDED was an average of users that started. */
+  const edge = measure === 'ended' ? 'ended' : 'started';
   return (
     `This run is long enough that user activity was recorded in ${widthMs} ms buckets rather ` +
-    'than one-second ones, so each point is the average number of users started per second ' +
+    `than one-second ones, so each point is the average number of users ${edge} per second ` +
     'across that window. A shorter spike inside a bucket is not visible at this resolution.'
   );
 }
@@ -269,5 +275,21 @@ export function toUserStartRate(
     measure: 'started',
     perSecond: true,
     empty: 'No user activity was recorded for this run, so there is no arrival rate to show.',
+  }, opts);
+}
+
+/**
+ * GE's "Users Termination Rate" — users ENDED per second, the twin of
+ * `toUserStartRate`. Read off the same bucket's `ended` count the users
+ * payload has always carried, live and finished.
+ */
+export function toUserEndRate(
+  u: UsersResponse,
+  opts: { readonly x?: 'index' | 'ms' } = {},
+): ChartData {
+  return usersChart(u, {
+    measure: 'ended',
+    perSecond: true,
+    empty: 'No user activity was recorded for this run, so there is no termination rate to show.',
   }, opts);
 }

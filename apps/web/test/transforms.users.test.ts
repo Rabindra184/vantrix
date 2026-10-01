@@ -1,7 +1,7 @@
 import type { UsersResponse } from '@perfportal/contracts';
 import { describe, expect, it } from 'vitest';
 import { assignPalette } from '../src/charts/theme.js';
-import { toConcurrentUsers, toUserStartRate } from '../src/charts/transforms/users.js';
+import { toConcurrentUsers, toUserEndRate, toUserStartRate } from '../src/charts/transforms/users.js';
 import type { ChartData } from '../src/charts/types.js';
 import fixture from './fixtures/reference-run.json';
 
@@ -433,5 +433,36 @@ describe('a run with no recorded users', () => {
     // scenarios is the time column and the total.
     expect(d.columns).toEqual(['Elapsed (s)', 'All users']);
     expect(JSON.stringify(d)).not.toMatch(/NaN|Infinity/);
+  });
+});
+
+describe('toUserEndRate — GE’s "Users Termination Rate"', () => {
+  it('has a bucket where users started and ended differently, or this proves nothing', () => {
+    expect(users.total.some((b) => b.started !== b.ended)).toBe(true);
+  });
+
+  it('plots users ENDED per second, totalled across scenarios', () => {
+    const data = toUserEndRate(users, { x: 'ms' });
+    const total = data.series.find((s) => s.name === 'All users');
+    const widthS = (users.total[1]!.startOffsetMs - users.total[0]!.startOffsetMs) / 1000;
+    expect(total!.data).toEqual(users.total.map((b) => [b.startOffsetMs, b.ended / widthS]));
+  });
+
+  it('names ENDED in its resolution note, because the arrival rate’s sentence says "started"', () => {
+    // 2000 ms buckets: `UserSeries` halved its resolution, as `toUserStartRate ⑦ᵇ` above.
+    const wide: UsersResponse = {
+      ...users,
+      scenarios: [],
+      total: [
+        { startOffsetMs: 0, started: 6, ended: 0, maxConcurrent: 6 },
+        { startOffsetMs: 2000, started: 4, ended: 8, maxConcurrent: 2 },
+      ],
+    };
+    const note = toUserEndRate(wide).limitation;
+    expect(note).toMatch(/2000 ms/);
+    expect(note).toMatch(/users ended per second/);
+    expect(note).not.toMatch(/started/);
+    // Divided by the 2 s width, like the arrival rate: 8 ended in the second bucket is 4/s.
+    expect(toUserEndRate(wide).series.at(-1)!.data).toEqual([0, 4]);
   });
 });

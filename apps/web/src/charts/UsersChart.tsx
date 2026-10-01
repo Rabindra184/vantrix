@@ -2,7 +2,7 @@ import type { UsersResponse } from '@perfportal/contracts';
 import { useMemo } from 'react';
 import Chart from './Chart';
 import type { TimeDomainMs } from './types';
-import { toConcurrentUsers, toUserStartRate } from './transforms/users';
+import { toConcurrentUsers, toUserEndRate, toUserStartRate } from './transforms/users';
 
 /**
  * §13.2 ⑦ concurrent users over time (Appendix A G-18/G-19) and ⑦ᵇ users
@@ -104,6 +104,26 @@ export function UserStartRateChart({ users, group, domainMs, warmupMs }: UsersCh
         max: domainMs?.[1],
         warmupMs,
       }}
+      unit="users/s"
+    />
+  );
+}
+
+/** GE's "Users Termination Rate". Plots `ended` per second; see `toUserEndRate`. */
+export function UserEndRateChart({ users, group, domainMs, warmupMs }: UsersChartProps) {
+  const data = useMemo(() => toUserEndRate(users, { x: 'ms' }), [users]);
+
+  return (
+    <Chart
+      id="user-end-rate"
+      title="Users ended per second"
+      data={data}
+      group={group}
+      yAxis={{ name: 'Users/s' }}
+      // A value axis in ms, labelled as clock time, for the reason
+      // `UserStartRateChart` gives: the shared crosshair syncs by the number.
+      pairValue="y"
+      xAxis={{ type: 'value', tickUnit: 'ms-as-s', min: domainMs?.[0], max: domainMs?.[1], warmupMs }}
       unit="users/s"
     />
   );

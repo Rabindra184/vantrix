@@ -17,6 +17,11 @@ import type { ChartData, ChartSeries, ChartTableRow } from '../types';
  * reference run contains it in miniature: 33 of its 62 seconds started a
  * different number of requests than they finished, and its last second started
  * none at all while finishing one.
+ *
+ * GE'S OWN SUMMARY AND REPORT DRAW BOTH EDGES ON ONE CHART, and the divergence
+ * is just as visible between two lines on one axis — so the run page now draws
+ * GE's combined chart (`toRequestsAndResponses`), and the two single-edge
+ * charts remain for the request and group pages.
  */
 
 /**
@@ -298,4 +303,64 @@ export function toRequestRate(series: SeriesResponse, options?: RateOptions): Ch
  */
 export function toResponseRate(series: SeriesResponse, options?: RateOptions): ChartData {
   return rateChart(series, END_EDGE, options);
+}
+
+/**
+ * GE's "Requests and Responses per Second", measured on its Summary and its
+ * Report: four lines on one axis — requests STARTED, responses ENDED, and the
+ * responses split by outcome.
+ *
+ * THE OUTCOME SPLIT IS THE END EDGE'S. `okCount`/`koCount` count responses as
+ * they finish, so OK + KO is the Total line in every bucket; the start-edge
+ * split (`startedOkCount`/`startedKoCount`) would put a request's outcome in
+ * the second it began, which is a different chart and the one GE does not draw.
+ */
+export const REQUESTS_AND_RESPONSES_ROLES: readonly StatusRole[] = [
+  'neutral',
+  // GE draws Total in orange. The amber status token is the nearest the
+  // palette has, and no line on this chart is an outcome that could be
+  // "pending" — the legend names every line.
+  'pending',
+  'passed',
+  'failed',
+];
+
+const COMBINED_LINES = ['Requests', 'Total', 'Responses OK', 'Responses KO'] as const;
+
+export function toRequestsAndResponses(series: SeriesResponse): ChartData {
+  const columns = [TIME_COLUMN, ...COMBINED_LINES];
+  if (series.buckets.length === 0) {
+    return {
+      series: [],
+      axisLabels: [],
+      columns,
+      rows: [],
+      empty: 'No requests were recorded for this run, so there are no request or response rates to show.',
+    };
+  }
+  // The payload's own width — see `rateChart`'s divisor note.
+  const perSecond = series.bucketWidthMs / 1000;
+  const measured: readonly (readonly number[])[] = [
+    series.buckets.map((b) => b.startedCount / perSecond),
+    series.buckets.map((b) => b.endedCount / perSecond),
+    series.buckets.map((b) => b.okCount / perSecond),
+    series.buckets.map((b) => b.koCount / perSecond),
+  ];
+  return {
+    series: COMBINED_LINES.map((name, s) => ({
+      name,
+      data: series.buckets.map((b, i) => [b.startOffsetMs, measured[s]![i]!] as [number, number]),
+    })),
+    // Pairs on a value axis carry their own x, so there are no category labels.
+    axisLabels: [],
+    columns,
+    rows: series.buckets.map((b, i) => ({
+      label: String(b.startOffsetMs / 1000),
+      values: measured.map((line) => line[i]!),
+    })),
+    limitation:
+      series.bucketWidthMs === 1000
+        ? undefined
+        : widthNote(series.bucketWidthMs, 'requests and responses were counted'),
+  };
 }
